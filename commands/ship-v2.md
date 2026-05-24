@@ -43,6 +43,7 @@ After the implementer subagent finishes its edits in the worktree:
 - Invoke `compound-engineering:ce-commit-push-pr` to generate the conventional-commit message, push the branch, and open the PR with a value-first description.
 - Branch naming and worktree isolation invariants from v1 Step 5a still apply (branch off `origin/develop`, worktree outside the primary checkout, `Closes #<N>` in PR body, opened as draft).
 - The PR title MUST follow conventional-commit format (`type(scope): summary`).
+- **CLI delegation skip (`delegate:codex` / `delegate:agy`):** if the issue carries `delegate:codex` or `delegate:agy`, the CLI tool already handles commit, push, and PR creation as part of v1 Step 5a.codex/5a.agy. Skip S1 entirely for CLI-delegated issues — the PR is already open when the CLI path returns the JSON contract.
 - **Fallback:** if `ce-commit-push-pr` is unavailable, fall back to v1 Step 5a's inline `gh pr create --draft` path. Log `ship-v2: ce-commit-push-pr unavailable, fell back to v1 PR-open` to stdout.
 
 ### S2 — Self-review simplification pass (replaces v1 Step 5a's inline self-review)
@@ -53,6 +54,7 @@ After PR is open, before CI starts:
 - Then invoke `compound-engineering:ce-code-simplicity-reviewer` on the (possibly simplified) diff for a focused YAGNI / minimal-implementation final check before review fan-out. The reviewer returns findings; if any are accepted, the implementer applies them as a follow-up commit on the same branch.
 - If either skill produces changes, the implementer pushes them as a follow-up commit on the same branch. Step 5a.1's branch-scope validation re-runs on the new HEAD.
 - Then run the existing v1 self-review checklist (`AGENTS.md` § Standard Issue Lifecycle step 6 — Self-Review).
+- **CLI delegation skip (`delegate:codex` / `delegate:agy`):** skip S2 for CLI-delegated issues. The CLI tool manages its own workflow; running ce-simplify-code against CLI-produced diffs post-facto risks unsolicited follow-up commits outside the CLI's sandbox boundary.
 - **Fallback:** if `ce-simplify-code` and/or `ce-code-simplicity-reviewer` are unavailable, fall back to v1 Step 5a's inline self-review only. Log to stdout which skills fell back.
 
 ### S3 — Reviewer fan-out (replaces v1 Step 5c's fixed A/B/C focus map)
