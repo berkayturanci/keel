@@ -83,7 +83,17 @@ test -f "$LEGACY_QUEUE_FILE" && cat "$LEGACY_QUEUE_FILE" || echo "(none)"
 
 ## Step 1.5 — Completed-work summary (shipped since last brief)
 
-Determine the cutoff: use the `generated_at` field from the most recent `docs/reports/*-morning.md` file (read via Bash: `ls -t docs/reports/*-morning.md 2>/dev/null | head -1`). If no prior brief exists, default to 24h ago (`CUTOFF_ISO` from Step 0).
+Determine the cutoff: find the most recent prior brief via Bash and extract the date from its filename (format `YYYY-MM-DD-morning.md`). Convert that date to an ISO-8601 timestamp (start of that day, UTC+3). Use the Bash tool:
+
+```bash
+PREV_BRIEF=$(ls -t docs/reports/*-morning.md 2>/dev/null | head -2 | tail -1)
+if [[ -n "$PREV_BRIEF" && "$PREV_BRIEF" != *"$DATE"* ]]; then
+  # Extract date from filename, e.g. "docs/reports/2026-05-23-morning.md" → "2026-05-23"
+  PREV_DATE=$(basename "$PREV_BRIEF" | sed 's/-morning\.md//')
+  CUTOFF_ISO="${PREV_DATE}T09:00:00Z"
+fi
+# If no prior brief found, CUTOFF_ISO remains as set in Step 0 (24h ago)
+```
 
 Query GitHub for work completed since the cutoff. Run in parallel:
 
