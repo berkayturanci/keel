@@ -237,7 +237,15 @@ For each issue `N` in the active set, run 5a → 5f sequentially. The reviewer f
 
 ### 5a. Implementer subagent (delegate to /implement logic)
 
-Pick `android-developer` or `web-developer` from issue labels/path (see `.claude/commands/implement.md` Step 3).
+**Implementer mode — check issue labels before dispatching:**
+
+| Label | Implementer | Details |
+|-------|-------------|---------|
+| `delegate:codex` | Codex CLI (`codex exec`) | § 5a.codex below |
+| `delegate:agy` | Antigravity CLI (`agy`) | § 5a.agy below |
+| *(neither)* | Claude subagent | Default path — continue reading this section |
+
+**Default path (no delegation label):** Pick `android-developer` or `web-developer` from issue labels/path (see `.claude/commands/implement.md` Step 3).
 
 Generate codename `<ROLE>-<N>-<UTC_TIMESTAMP>` (`AGENTS.md` § "Agent Run Codenames").
 
@@ -265,6 +273,43 @@ Spawn the chosen subagent with the same prompt block as `/implement` Step 5, plu
 - If `--dry-run`: "Do NOT push, do NOT open a PR. Return the diff and intended PR title/body. Orchestrator will skip subsequent steps."
 
 If `--dry-run` is set, after the implementer returns the dry-run diff, log it and skip 5b–5f.
+
+### 5a.codex — Codex CLI delegation path
+
+When issue labels include `delegate:codex`:
+
+1. Generate codename `CODEX-<N>-<UTC_TIMESTAMP>`.
+2. Post the agent-start comment and flip labels (`status:backlog` → `status:in-progress`), same as the default path (skip under `--dry-run`).
+3. Build the task prompt string from the issue title + body + the standard implementation brief (worktree isolation, branch-from-develop, `Closes #<N>`, scope-check, JSON return contract). Include the full JSON schema at the end of the prompt so Codex emits it in its final response.
+4. Invoke Codex from the project root:
+   ```bash
+   codex exec "<task prompt>"
+   ```
+   Codex auto-applies `approval = "never"` and `sandbox = "workspace-write"` from `~/.codex/config.toml`; no extra flags are needed. The `.codex/hooks.json` PreToolUse hook is the primary command-level security guard (reads `.claude/settings.json` deny list and blocks matching commands before execution).
+5. Parse the JSON code-fence from Codex's stdout — same schema as the default-path JSON contract (`pr_number`, `branch`, `files_changed`, `test_results`, `codename`, `worktree_path`). All downstream steps (5a.1 scope gate, 5b CI, 5f merge) operate on this JSON identically to the default path.
+6. **Unavailability / error fallback:** if `codex` is not installed (`command -v codex` exits non-zero) or exits non-zero with no parseable JSON block: fall back to the default Claude subagent path. Log `ship: codex unavailable or errored, fell back to android-developer/web-developer`.
+7. **`--dry-run`:** include `"Do NOT push, do NOT open a PR. Return the diff and intended PR title/body."` in the task prompt. After Codex returns, log and skip 5b–5f as with the default path.
+
+### 5a.agy — Antigravity CLI delegation path
+
+When issue labels include `delegate:agy`:
+
+1. Generate codename `AGY-<N>-<UTC_TIMESTAMP>`.
+2. Post the agent-start comment and flip labels, same as the default path (skip under `--dry-run`).
+3. Build the task prompt string (same as the Codex path — full issue brief + JSON return schema at end).
+4. Invoke agy via the shell alias (which applies `--dangerously-skip-permissions`):
+   ```bash
+   agy --print "<task prompt>"
+   ```
+   If the shell alias is not in scope, invoke directly:
+   ```bash
+   agy --dangerously-skip-permissions --print "<task prompt>"
+   ```
+   Security guard: `~/.gemini/antigravity-cli/settings.json` `permissions.deny` list blocks destructive commands. See `docs/claude-code-global-setup.md` § Antigravity CLI for the full deny list.
+5. Parse the JSON code-fence from stdout — same schema as the default-path JSON contract. All downstream steps operate on this JSON identically to the default path.
+6. **Quota fallback (HTTP 429 / RESOURCE_EXHAUSTED):** if agy exits with a 429 error, fall back to the default Claude subagent path immediately — do NOT retry (quota reset takes ~62 hours). Log `ship: agy quota exhausted (429), fell back to android-developer/web-developer`.
+7. **Availability fallback:** if `agy` is not installed, fall back to the default Claude subagent path. Log `ship: agy unavailable, fell back to android-developer/web-developer`.
+8. **`--dry-run`:** same as Codex path — include dry-run semantics in the task prompt and skip 5b–5f after agy returns.
 
 ### 5a.1 — Branch scope validation gate
 
