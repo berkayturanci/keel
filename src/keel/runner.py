@@ -8,6 +8,7 @@ runner is fully unit-testable offline; agentic gates are dispatched elsewhere.
 
 from __future__ import annotations
 
+import re
 import subprocess
 from dataclasses import dataclass
 
@@ -15,6 +16,18 @@ from .findings import Finding
 from .gates import GateRunner, GateSpec
 
 _ON_FAIL_SEVERITY = {"block": "major", "suggest": "minor", "warn": "nit"}
+
+#: reviewdog-style errorformat: ``path:line[:col]: message`` (first hit wins).
+_LOCATION_RE = re.compile(r"^\s*(?P<path>[^\s:][^:]*?):(?P<line>\d+)(?::\d+)?[:\s]")
+
+
+def first_location(text: str) -> tuple[str | None, int | None]:
+    """Extract the first ``path:line`` location from tool output (``(None, None)`` if none)."""
+    for raw in text.splitlines():
+        m = _LOCATION_RE.match(raw)
+        if m:
+            return m.group("path"), int(m.group("line"))
+    return None, None
 
 
 @dataclass(frozen=True)
@@ -76,6 +89,10 @@ def command_gate_runner(
         tail = _tail(result.output)
         if tail:
             message += f": {tail}"
-        return False, [Finding(severity, message, spec.id)]
+        path, line = first_location(result.output)
+        return False, [Finding(
+            severity, message, spec.id,
+            path=path, line=line, anchorable=path is not None and line is not None,
+        )]
 
     return runner

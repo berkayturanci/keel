@@ -115,6 +115,57 @@ class TestAssess(unittest.TestCase):
                         timezone="Europe/Istanbul", merge_window="07:00-01:30", now=night)
         self.assertFalse(a.window_open)
         self.assertEqual(a.merge.action, "defer")
+        self.assertFalse(a.halted)
+
+
+from datetime import datetime  # noqa: E402
+
+NIGHT = datetime(2026, 6, 5, 3, 0)
+TZ = "Europe/Istanbul"
+WIN = "07:00-01:30"
+
+
+class TestHotfix(unittest.TestCase):
+    def test_is_hotfix(self):
+        self.assertTrue(ship.is_hotfix(["bug", "Hotfix"]))
+        self.assertTrue(ship.is_hotfix(["hotfix"]))
+        self.assertFalse(ship.is_hotfix(["bug", "feature"]))
+        self.assertFalse(ship.is_hotfix([]))
+
+    def test_hotfix_bypasses_closed_window(self):
+        a = ship.assess(changed_files=["x.py"], gate_verdict=CLEAN, timezone=TZ,
+                        merge_window=WIN, now=NIGHT, is_blocker=True)
+        self.assertEqual(a.merge.action, "merge")
+        self.assertTrue(a.bypassed_window)
+
+    def test_hotfix_never_bypasses_findings(self):
+        a = ship.assess(changed_files=["x.py"], gate_verdict=BLOCKED, timezone=TZ,
+                        merge_window=WIN, now=NIGHT, is_blocker=True)
+        self.assertEqual(a.merge.action, "block")
+        self.assertFalse(a.bypassed_window)
+
+    def test_no_bypass_flag_when_window_open(self):
+        a = ship.assess(changed_files=["x.py"], gate_verdict=CLEAN, is_blocker=True)
+        self.assertFalse(a.bypassed_window)
+
+
+class TestPauseMode(unittest.TestCase):
+    def test_pause_halts_outside_window(self):
+        a = ship.assess(changed_files=["x.py"], gate_verdict=CLEAN, timezone=TZ,
+                        merge_window=WIN, merge_window_mode="pause", now=NIGHT)
+        self.assertTrue(a.halted)
+        self.assertEqual(a.merge.action, "defer")
+
+    def test_freeze_does_not_halt(self):
+        a = ship.assess(changed_files=["x.py"], gate_verdict=CLEAN, timezone=TZ,
+                        merge_window=WIN, merge_window_mode="freeze", now=NIGHT)
+        self.assertFalse(a.halted)
+
+    def test_pause_hotfix_not_halted(self):
+        a = ship.assess(changed_files=["x.py"], gate_verdict=CLEAN, timezone=TZ,
+                        merge_window=WIN, merge_window_mode="pause", now=NIGHT, is_blocker=True)
+        self.assertFalse(a.halted)
+        self.assertEqual(a.merge.action, "merge")
 
 
 if __name__ == "__main__":

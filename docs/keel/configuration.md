@@ -17,6 +17,7 @@ by `keel validate`. Unknown keys are rejected, so typos fail loudly.
 | `platform` | string | | free-form tag (`android-web`, `flutter-supabase`, `python`) |
 | `timezone` | string | | IANA tz for the merge window (`Europe/Istanbul`, `Etc/GMT-3`) |
 | `merge_window` | string `HH:MM-HH:MM` | | open merge window; the complement is the night no-merge window |
+| `merge_window_mode` | `freeze` \| `pause` | `freeze` | outside the window: `freeze` blocks the merge but keeps gates/CI running; `pause` halts the pipeline |
 | `gates` | string[] | | built-in gates to run: any of `build`, `lint`, `jury` |
 | `extensions` | object | | add-only Lego pieces keyed by named slot |
 | `extensions_dir` | string | | dir holding extension files (default `.keel/extensions`) |

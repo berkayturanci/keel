@@ -108,6 +108,21 @@ keel ship projects/keel.yaml --root .
 Exits non-zero when the decision is `BLOCK` (failing gates, blocking findings, or failing
 CI), so it can gate a runner before it attempts a real merge.
 
+`--hotfix` marks an emergency change so it may merge **outside** the merge window (an audit
+line is printed). It never bypasses failing gates, blocking findings, or failing CI.
+
+## `keel init [--root DIR] [--force]`
+
+Scaffold a default `.keel/project.yaml` for the repo. keel detects the stack from marker
+files (`pubspec.yaml`→Flutter, `pyproject.toml`/`setup.py`→Python, `package.json`→Node,
+`build.gradle*`→Android, else generic) and writes a config that already passes
+`keel validate`. Refuses to overwrite an existing config unless `--force`.
+
+```bash
+keel init                 # scaffold .keel/project.yaml for the detected stack
+keel init --root ../app   # scaffold elsewhere
+```
+
 ## Exit codes
 
 | code | meaning |
