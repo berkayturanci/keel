@@ -1,123 +1,124 @@
-# ai-infra
+# keel
 
-Portable Claude Code AI workflow infrastructure, extracted from [SmartInventory](https://github.com/berkayturanci/smartinventory).
+> **keel** is a project-neutral, multi-agent **workflow core**. A *fixed backbone*
+> of steps drives a unit of work — a GitHub issue — from backlog to done
+> (branch → implement → CI → review → test → merge → close). Projects never fork the
+> backbone: they set per-project **values** in `project.yaml` and snap their own
+> **Lego pieces** into named extension slots.
 
-This repository is the shared source of truth for slash commands, agents, Gemini CE personas, hooks, scripts, and docs that travel across multiple projects. Each project maintains its own adaptations in its own repo; `ai-infra` holds the canonical upstream versions.
+The keel is a ship's backbone — the fixed spine every project builds on. The flagship
+command is `keel:ship`; keel is where ships are built.
 
-## Directory structure
+> Formerly **`ai-infra`** (a one-way file-copy sync of "portable" commands). keel replaces
+> that with a thin-consumer model: the core is installed + pinned, never copied, so the
+> drift/overwrite class of bug is structurally gone. Background:
+> [`docs/proposals/divergence-audit-2035.md`](docs/proposals/divergence-audit-2035.md),
+> [`docs/proposals/keel-architecture.md`](docs/proposals/keel-architecture.md).
+
+## Three layers
 
 ```
-ai-infra/
-  commands/          Portable slash commands for Claude Code (/ship, /implement, /pr-loop, etc.)
-  agents/            Generic Claude Code subagent definitions (code-reviewer, tester)
-  gemini-agents/     49 compound-engineering persona files for Gemini Code Assist
-  hooks/
-    session-start.sh Bootstrap hook for Claude Code Web sandbox sessions
-  scripts/
-    compound-learning.sh  PR context bundler for the /ship compound-learning step
-    sync.sh               Propagate ai-infra files to a target project repo
-  docs/
-    compound-learning-spec.md    Spec for the compound-learning step in /ship
-    claude-code-global-setup.md  Recommended global Claude Code settings
-    parallel-agents.md           iTerm2 + tmux setup for running parallel agents
-  projects/
-    smartinventory.json  Project config for berkayturanci/smartinventory
-    ingreview.json       Project config for berkayturanci/ingreview
+Layer 3  EXTENSIONS   project-owned Lego pieces, ADD-ONLY into named slots
+Layer 2  CONFIG       project.yaml — per-project values (branch, build cmd, globs, agents…)
+Layer 1  BACKBONE     keel-core — fixed ordered step machine + invariants (this package)
 ```
 
-## File categories
+Changing the backbone is a keel-core change. Projects only ever touch layers 2–3.
 
-### Portable (safe to sync as-is)
+### The backbone
 
-These files are genuinely project-neutral and can be pushed verbatim to any project repo:
+| step | name | slot | |
+|---|---|---|---|
+| s0 | config | | |
+| s1 | select | | |
+| s2 | branch | | |
+| s3 | guard | | |
+| s4 | implement | `after-implement` | agent |
+| s5 | classify | | agent |
+| s6 | ci | | |
+| s7 | review | `reviewers` | agent |
+| s8 | test | `tester` | |
+| s9 | fixloop | | |
+| s10 | merge | `pre-merge` | |
+| s11 | capture | `post-merge` | |
+| s12 | close | | |
 
-- `gemini-agents/` — CE persona definitions; contain no project-specific references
-- `hooks/session-start.sh` — bootstraps the compound-engineering plugin in Claude Code Web; idempotent
-- `scripts/compound-learning.sh` — reads a merged PR and emits a structured learning bundle; uses `gh` with `{owner}/{repo}` expansion so it works in any repo
-- `docs/` — conceptual documentation; project-neutral
+Invariants the backbone always preserves: merge lock, night no-merge window, fail-soft,
+orchestrator-only-writes, vendor+model attribution.
 
-### Adapted (review before syncing)
+## Install
 
-These files have project-specific content and should be reviewed before propagating:
-
-- `commands/` — slash commands reference specific repo names, branch conventions (`develop`), platform toolchains (Gradle, npm), and label taxonomies. Each project should maintain its own version. `sync.sh` requires `--force` to push command files, prompting manual review.
-- `agents/` — agent definitions reference `AGENTS.md` and platform context files (`android/CLAUDE.md`, `web/CLAUDE.md`). Review before syncing to a project with a different structure.
-
-## How to use sync.sh
-
-`scripts/sync.sh` propagates files from `ai-infra` to a target project repo via the GitHub API.
+keel is a Python (≥3.11) package with one runtime dependency (PyYAML). Private install:
 
 ```bash
-# Sync all portable files to smartinventory (dry run first)
-./scripts/sync.sh smartinventory --dry-run
-
-# Sync for real
-./scripts/sync.sh smartinventory
-
-# Sync commands too (requires --force since commands have project-specific content)
-./scripts/sync.sh smartinventory --force
-
-# Sync all configured projects
-./scripts/sync.sh --all
-
-# Sync all projects including commands
-./scripts/sync.sh --all --force
+pip install "git+https://github.com/berkayturanci/keel@v0.1.0"
 ```
 
-The script reads project config from `projects/<name>.json`, fetches each file's current content from the target repo, compares with the local version, and pushes only changed files.
+In a cloud agent session, install it from a `SessionStart` hook (or add keel to the
+session's repo scope) so the pinned core is available before a run.
 
-Output:
-- `CREATED  <path>` — file did not exist in target repo; created
-- `UPDATED  <path>` — file differed from local; pushed update
-- `SKIPPED  <path>` — file identical to local; no action
-- `DRY-RUN  <path>` — would create/update (only in --dry-run mode)
-- `FAILED   <path>` — API call failed; check output for details
+## Quickstart
 
-Exit code: `0` on success, `1` if any push failed.
-
-## How to add a new project
-
-1. Create `projects/<name>.json` following the schema in `projects/smartinventory.json`.
-2. Run `./scripts/sync.sh <name> --dry-run` to preview what would be pushed.
-3. Run `./scripts/sync.sh <name>` to push portable files.
-4. Manually adapt `commands/` for the new project's toolchain and push them separately.
-
-### projects/<name>.json schema
-
-```json
-{
-  "owner": "github-username",
-  "repo": "repo-name",
-  "default_branch": "main",
-  "platform": "description of platform stack",
-  "build_test": "shell command to run tests",
-  "build_lint": "shell command to run linter",
-  "platform_agents": ["agent-name-1", "agent-name-2"],
-  "substitutions": {
-    "REPO": "repo-name",
-    "OWNER": "github-username",
-    "DEFAULT_BRANCH": "main"
-  },
-  "skip_commands": ["command-names-to-exclude-from-sync"]
-}
+```bash
+keel validate projects/ingreview.yaml          # validate a config against the schema
+keel plan      projects/ingreview.yaml          # show the backbone plan for a project
+keel version
 ```
 
-`skip_commands` lists command filenames (without `.md`) that should never be synced to this project (e.g. platform-specific commands that don't apply).
+`keel plan` renders the fixed backbone with each project's gates/extensions slotted in —
+exactly what a dry-run executes:
 
-## Sync behavior for commands
+```
+keel plan — ingreview
+  base_branch: main   core_version: ^0.1
+  backbone:
+     s4  implement  [agent]
+     ...
+     s8  test
+           - gate: build
+           - gate: lint
+           - gate: design-parity
+    s10  merge
+           - gate: design-parity-gate
+```
 
-By default, `sync.sh` runs command files in **dry-run mode**: it reports what would change but does not push. Pass `--force` to actually push command files.
+## Invocation (`keel:ship`)
 
-This is intentional: commands often contain project-specific tool invocations, branch names, label taxonomies, and repo coordinates. The operator should diff the local `commands/` against the project's current versions and decide which changes to propagate.
+`keel` is the namespace; each workflow is invoked under it, and the **same string works in
+every project** — only that project's `project.yaml` + extensions change the behaviour:
 
-Gemini agents, hooks, scripts, and docs do **not** require `--force` — they are treated as portable and pushed on every sync.
+- Claude Code: `/keel:ship`, `/keel:wrap`, `/keel:morning`
+- Gemini: the `keel:ship` skill · Codex / Antigravity: the corresponding prompt
 
-## Relationship to SmartInventory
+## Docs
 
-The canonical source for most files in this repo is `berkayturanci/smartinventory`. When SmartInventory updates a portable file (e.g. a new CE persona, an improved hook), the change should be:
+- [`docs/keel/configuration.md`](docs/keel/configuration.md) — `project.yaml` reference
+- [`docs/keel/extensions.md`](docs/keel/extensions.md) — authoring Lego extensions
+- [`docs/keel/cli.md`](docs/keel/cli.md) — CLI reference
+- [`docs/proposals/keel-architecture.md`](docs/proposals/keel-architecture.md) — full design
 
-1. Committed to SmartInventory as usual.
-2. Copied into this repo manually (or via a future pull-from-source script).
-3. Propagated to other projects via `./scripts/sync.sh --all`.
+## Development
 
-This repo does **not** auto-pull from SmartInventory; it is a manually-curated snapshot. The operator decides when to absorb upstream changes.
+Stdlib-first, pure-core + thin-I/O, deterministic, fully covered (ai-jury ethos).
+
+```bash
+make test       # offline unit suite (no network, no credentials)
+make lint       # ruff
+make coverage   # coverage gate (fail_under in pyproject)
+make validate   # validate every projects/*.yaml
+```
+
+The pure core (`config`, `model`, `extensions`, `findings`, `gates`, `orchestrator`,
+`cli`) is held at **100% line + branch coverage**; the coverage gate (`fail_under = 95`)
+runs in CI.
+
+## Repo layout
+
+```
+src/keel/            the core package (config, model, extensions, findings, gates, orchestrator, cli)
+src/keel/schema/     project.schema.json (bundled)
+projects/*.yaml      seed configs (smartinventory, ingreview, keel)
+tests/               unit suite
+commands/ agents/ gemini-agents/   workflow assets (rendered per agent; mid-migration)
+docs/                docs + proposals
+```

@@ -1,0 +1,42 @@
+# Changelog
+
+All notable changes to keel are documented here. The format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/); keel adheres to
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Added
+- **keel-core** Python package (`src/keel`), stdlib-first with a single runtime
+  dependency (PyYAML):
+  - `jsonschema_min` — dependency-free JSON-Schema (draft-07 subset) validator.
+  - `config` — load + validate `project.yaml` into a typed, immutable
+    `ProjectConfig` (knobs + add-only extension slots) with a deterministic
+    `config_hash`.
+  - `model` — the fixed backbone (steps s0–s12), named slots, and invariants
+    (single source of truth; the schema's slots are asserted against it).
+  - `findings` — structured `Finding` + severity→decision mapping
+    (critical/major=block, minor=suggest, nit=advisory) + `summarize`.
+  - `extensions` — parse + validate project Lego extensions (add-only into named
+    slots; `on_fail: block` only in `pre-merge`; agentic/command contract) with a
+    fail-soft loader.
+  - `gates` — plan built-in (build/lint/jury) + extension gates and run them
+    through an injected runner with fail-soft semantics.
+  - `orchestrator` — pure `build_plan`/`render_plan` mapping a project's
+    gates/extensions onto the fixed backbone (deterministic, dry-run view).
+  - `cli` — `keel version | validate | plan`.
+- Bundled schema `src/keel/schema/project.schema.json`.
+- Seed configs `projects/{smartinventory,ingreview,keel}.yaml`.
+- Docs: README, `docs/keel/{configuration,extensions,cli}.md`,
+  `docs/proposals/{keel-architecture,divergence-audit-2035}.md`.
+- CI: cross-OS × Python matrix running tests, ruff, and the coverage gate.
+- Test suite: 105 unit tests at 100% line + branch coverage on the core.
+
+### Changed
+- Repository repositioned from **ai-infra** (one-way file-copy sync) to **keel**
+  (thin-consumer: pinned install + per-project config/extensions). Direction
+  reversed: changes originate centrally and propagate down to projects.
+
+### Removed
+- `scripts/sync.sh` and the `/sync-to-ai-infra` mechanism (retired; superseded by
+  the thin-consumer model).
