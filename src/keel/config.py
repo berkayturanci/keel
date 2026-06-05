@@ -17,19 +17,14 @@ from typing import Any
 import yaml
 
 from . import jsonschema_min
+from .model import SLOTS  # single source of truth for the named slots (re-exported)
 
 SCHEMA_PATH = Path(__file__).parent / "schema" / "project.schema.json"
 
-#: The named backbone slots an extension may register into (add-only).
-SLOTS: tuple[str, ...] = (
-    "after-implement",
-    "reviewers",
-    "tester",
-    "pre-merge",
-    "post-merge",
-)
-
 DEFAULT_EXTENSIONS_DIR = ".keel/extensions"
+
+__all__ = ["SLOTS", "DEFAULT_EXTENSIONS_DIR", "Knobs", "ProjectConfig", "ConfigError",
+           "load_config", "parse_config", "validate_data", "load_schema", "config_hash"]
 
 
 class ConfigError(ValueError):
