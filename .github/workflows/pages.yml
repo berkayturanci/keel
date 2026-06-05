@@ -1,11 +1,18 @@
 name: pages
 
 # Build the keel website + coverage report and deploy to GitHub Pages.
-# Manual-only (workflow_dispatch): this repo is private and serves the site
-# locally (`make site`), so we don't auto-deploy. Enable GitHub Pages
-# (Settings → Pages → Source: GitHub Actions) and run this manually to publish.
+# keel is public, so we auto-deploy on push to main. `configure-pages` with
+# enablement enables Pages programmatically (build type: GitHub Actions), so no
+# manual Settings step is required.
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "website/**"
+      - "src/**"
+      - "tests/**"
+      - ".github/workflows/pages.yml"
   workflow_dispatch:
 
 permissions:
@@ -22,6 +29,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
