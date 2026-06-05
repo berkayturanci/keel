@@ -6,6 +6,13 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-06-05
+
+### Changed
+- Reverted the experimental post-merge **branch deletion** added after 0.2.0 (#38 → #39):
+  deleting a merged head branch is GitHub's *"Automatically delete head branches"* repo
+  setting, not keel's job. No other functional change since 0.2.0.
+
 ## [0.2.0] — 2026-06-05
 
 ### Added

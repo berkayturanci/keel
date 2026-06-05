@@ -51,7 +51,7 @@ orchestrator-only-writes, vendor+model attribution.
 keel is a Python (≥3.11) package with one runtime dependency (PyYAML). Private install:
 
 ```bash
-pip install "git+https://github.com/berkayturanci/keel@v0.2.0"
+pip install "git+https://github.com/berkayturanci/keel@v0.2.1"
 ```
 
 In a cloud agent session, install it from a `SessionStart` hook (or add keel to the
