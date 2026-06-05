@@ -36,6 +36,10 @@ All notable changes to keel are documented here. The format follows
     (`keel ship` = dry assessment of the agent-free backbone slice).
 - Adapter: `adapters/claude/keel-ship.md` (thin, project-neutral `keel:ship`) +
   `adapters/README.md` (the adapter model).
+- CI: `keel-ship` GitHub Actions workflow — runs `keel ship` live on the free hosted
+  runner for every PR (uses the runner's `git` + `gh`/`GITHUB_TOKEN`), comments the
+  assessment, and fails the check on a `BLOCK` decision. Docs in
+  `docs/keel/github-actions.md`.
 - Bundled schema `src/keel/schema/project.schema.json`.
 - Seed configs `projects/{smartinventory,ingreview,keel}.yaml`.
 - Docs: README, `docs/keel/{configuration,extensions,cli,comparison}.md`,
