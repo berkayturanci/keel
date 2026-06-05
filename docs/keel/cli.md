@@ -133,6 +133,29 @@ With `--wizard`, keel prompts for each value (base branch, timezone, **merge win
 `HH:MM-HH:MM`**, build/lint commands); press Enter to accept the stack default, or leave a
 field blank to skip it. The result still passes `keel validate`.
 
+## `keel install-adapter <agent> [--root DIR] [--force]`
+
+Install the agentic **`/keel:<command>`** adapters (which ship with the keel package) into a
+project's agent command directory, so they appear as slash/prompt commands:
+
+| agent | installs into |
+|---|---|
+| `claude` | `.claude/commands/keel/` |
+| `codex` | `.codex/prompts/keel/` |
+| `gemini` | `.gemini/commands/keel/` |
+| `agy` | `.agents/keel/` |
+
+```bash
+keel install-adapter claude          # → /keel:ship, /keel:regression, /keel:morning, …
+keel install-adapter claude --force  # overwrite existing adapters
+```
+
+The CLI (`keel ship`, `keel run-gates`, …) does the deterministic work; these adapters are
+the **agentic** flows (per-round review, inline comments, delegation) the agent runs. The
+shipped set: `ship`, `regression`, `implement`, `review-cycle`, `pr-loop`, `morning`,
+`overnight`, `wrap`, `triage`, `stale-prs`, `ci-check`, `deps-audit`, `flake-audit`,
+`coverage`. Existing files are skipped unless `--force` (so your edits are never clobbered).
+
 ## Exit codes
 
 | code | meaning |

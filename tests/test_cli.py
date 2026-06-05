@@ -325,6 +325,37 @@ class TestGateRunner(unittest.TestCase):
         self.assertIn("jury", out)
 
 
+class TestInstallAdapter(unittest.TestCase):
+    def test_installs_claude_adapters(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["install-adapter", "claude", "--root", d])
+            self.assertEqual(rc, 0)
+            self.assertIn("/keel:", out)
+            self.assertTrue((Path(d) / ".claude/commands/keel/ship.md").exists())
+
+    def test_unknown_agent(self):
+        rc, _, err = run(["install-adapter", "nope"])
+        self.assertEqual(rc, 1)
+        self.assertIn("unknown agent", err)
+
+    def test_force_reinstall(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            run(["install-adapter", "claude", "--root", d])
+            rc, out, _ = run(["install-adapter", "claude", "--root", d, "--force"])
+            self.assertEqual(rc, 0)
+            self.assertIn("installed", out)
+
+    def test_second_run_skips(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            run(["install-adapter", "claude", "--root", d])
+            rc, out, _ = run(["install-adapter", "claude", "--root", d])  # no --force
+            self.assertEqual(rc, 0)
+            self.assertIn("skipped", out)
+
+
 class TestParser(unittest.TestCase):
     def test_subcommands_present(self):
         parser = cli.build_parser()
@@ -332,7 +363,8 @@ class TestParser(unittest.TestCase):
         actions = [a for a in parser._actions if a.dest == "command"]
         self.assertTrue(actions)
         self.assertEqual(set(actions[0].choices),
-                         {"version", "validate", "plan", "run-gates", "window", "ship", "init"})
+                         {"version", "validate", "plan", "run-gates", "window", "ship",
+                          "init", "install-adapter"})
 
 
 if __name__ == "__main__":

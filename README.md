@@ -82,13 +82,22 @@ keel plan — example-flutter
            - gate: design-parity-gate
 ```
 
-## Invocation (`keel:ship`)
+## Invocation (`/keel:<command>`)
 
-`keel` is the namespace; each workflow is invoked under it, and the **same string works in
-every project** — only that project's `project.yaml` + extensions change the behaviour:
+The agentic workflows ship **with the package** as project-neutral adapters and install into
+a project's agent command directory, so they appear as `/keel:<command>` — the same string
+works in every project; only that project's `.keel/project.yaml` + extensions change the
+behaviour:
 
-- Claude Code: `/keel:ship`, `/keel:wrap`, `/keel:morning`
-- Gemini: the `keel:ship` skill · Codex / Antigravity: the corresponding prompt
+```bash
+keel install-adapter claude   # → /keel:ship, /keel:regression, /keel:morning, /keel:wrap, …
+#  (also: codex | gemini | agy)
+```
+
+Shipped commands: `ship` (flagship), `regression`, `implement`, `review-cycle`, `pr-loop`,
+`morning`, `overnight`, `wrap`, `triage`, `stale-prs`, `ci-check`, `deps-audit`,
+`flake-audit`, `coverage`. The `keel` CLI does the deterministic work; the adapters are the
+agentic flows (per-round review, inline comments, delegation).
 
 ## Dogfooding
 

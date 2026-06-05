@@ -28,7 +28,7 @@ keel = "keel.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-keel = ["schema/*.json"]
+keel = ["schema/*.json", "adapters/commands/*.md"]
 
 [tool.coverage.run]
 branch = true

@@ -7,6 +7,14 @@ All notable changes to keel are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Agentic `/keel:<command>` adapters + `keel install-adapter`** (#34) — keel now ships a set
+  of project-neutral agentic workflow commands (`ship` at full parity — per-round review,
+  inline comments, `--delegate`/`--review-delegate`/`--review-comments`/`--dry-run`, the jury
+  gate — plus `regression`, `implement`, `review-cycle`, `pr-loop`, `morning`, `overnight`,
+  `wrap`, `triage`, `stale-prs`, `ci-check`, `deps-audit`, `flake-audit`, `coverage`). They are
+  packaged with keel; `keel install-adapter <claude|codex|gemini|agy>` drops them into the
+  project's agent command dir so they appear as `/keel:<command>` (installed, never hand-copied
+  → no file-copy drift). Existing files are skipped unless `--force`.
 - **`jury` gate runner** (#34) — the built-in `jury` gate now invokes the ai-jury CLI on the
   change's diff when it is installed, mapping its findings (file/line/severity) into keel
   Findings (critical/major block); when `jury` is absent the gate is a fail-soft no-op, so

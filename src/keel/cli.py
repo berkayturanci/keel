@@ -13,7 +13,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from . import __version__, gates, git, github, jury, scaffold, ship, window
+from . import __version__, gates, git, github, install, jury, scaffold, ship, window
 from . import config as cfg
 from . import findings as fnd
 from . import orchestrator as orch
@@ -222,6 +222,21 @@ def _cmd_init(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_install_adapter(args: argparse.Namespace) -> int:
+    if args.agent not in install.AGENT_DIRS:
+        print(f"unknown agent {args.agent!r}; valid: {', '.join(install.AGENT_DIRS)}",
+              file=sys.stderr)
+        return 1
+    installed, skipped = install.install(args.agent, args.root, force=args.force)
+    target = install.AGENT_DIRS[args.agent]
+    for name in installed:
+        print(f"  installed  {target}/{name}")
+    for name in skipped:
+        print(f"  skipped    {target}/{name}  (exists; --force to overwrite)")
+    print(f"{len(installed)} adapter(s) in {target} — invoke as /keel:<command>")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="keel", description="keel — workflow core")
     parser.add_argument("--version", action="version", version=f"keel {__version__}")
@@ -262,6 +277,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_init.add_argument("--force", action="store_true", help="overwrite an existing config")
     p_init.add_argument("--wizard", action="store_true", help="prompt for values interactively")
     p_init.set_defaults(func=_cmd_init)
+
+    p_ia = sub.add_parser("install-adapter", help="install the /keel:<command> adapters")
+    p_ia.add_argument("agent", help=f"one of: {', '.join(install.AGENT_DIRS)}")
+    p_ia.add_argument("--root", default=".", help="project root to install into")
+    p_ia.add_argument("--force", action="store_true", help="overwrite existing adapters")
+    p_ia.set_defaults(func=_cmd_install_adapter)
 
     return parser
 
