@@ -36,7 +36,7 @@ All notable changes to keel are documented here. The format follows
   `adapters/README.md` (the adapter model).
 - Bundled schema `src/keel/schema/project.schema.json`.
 - Seed configs `projects/{smartinventory,ingreview,keel}.yaml`.
-- Docs: README, `docs/keel/{configuration,extensions,cli}.md`,
+- Docs: README, `docs/keel/{configuration,extensions,cli,comparison}.md`,
   `docs/proposals/{keel-architecture,divergence-audit-2035}.md`.
 - CI: cross-OS × Python matrix running tests, ruff, and the coverage gate.
 - Test suite: 105 unit tests at 100% line + branch coverage on the core.

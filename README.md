@@ -95,6 +95,7 @@ every project** — only that project's `project.yaml` + extensions change the b
 - [`docs/keel/configuration.md`](docs/keel/configuration.md) — `project.yaml` reference
 - [`docs/keel/extensions.md`](docs/keel/extensions.md) — authoring Lego extensions
 - [`docs/keel/cli.md`](docs/keel/cli.md) — CLI reference
+- [`docs/keel/comparison.md`](docs/keel/comparison.md) — competitive landscape (Mergify, GitHub merge queue, Qodo/PR-Agent, CodeRabbit, Sweep, OpenHands, Danger, …) + ranked borrow-ideas
 - [`docs/proposals/keel-architecture.md`](docs/proposals/keel-architecture.md) — full design
 
 ## Development
