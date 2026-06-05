@@ -1,0 +1,34 @@
+# keel project config — ingreview (Flutter + Supabase, default branch main)
+# No Android/Kotlin/Realm/gradle here by construction — those would be foreign leaks.
+extends: keel
+core_version: "^0.1"
+owner: berkayturanci
+repo: ingreview
+base_branch: main
+platform: flutter-supabase
+timezone: Europe/Istanbul
+merge_window: "07:00-01:30"
+
+knobs:
+  implementer_agents:
+    mobile: flutter-developer
+    backend: supabase-developer
+  build_gate_cmd: "cd apps/mobile && flutter test 2>&1 | tail -50"
+  lint_cmd: "cd apps/mobile && flutter analyze 2>&1 | tail -30"
+  tier3_globs:
+    - "supabase/migrations/**"
+    - "supabase/functions/**"
+    - "apps/mobile/lib/**/*.dart"
+    - ".github/workflows/**"
+  ci_workflows:
+    "Flutter CI": "apps/mobile/**"
+    "Supabase CI": "supabase/**"
+  docs_gate_paths: ["docs/**", "*.md"]
+  sot_doc: AGENTS.md
+
+gates: [build, lint, design-parity]
+
+extensions:
+  tester: [design-parity.md]            # ingreview's "design-equality" test Lego
+  pre-merge: [design-parity-gate.md]    # no merge unless design-parity passes
+extensions_dir: .keel/extensions

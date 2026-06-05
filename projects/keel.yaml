@@ -1,0 +1,29 @@
+# keel project config — keel itself (Python; dogfoods its own backbone)
+extends: keel
+core_version: "^0.1"
+owner: berkayturanci
+repo: keel
+base_branch: main
+platform: python
+timezone: Europe/Istanbul
+merge_window: "07:00-01:30"
+
+knobs:
+  implementer_agents:
+    core: backend-developer
+  build_gate_cmd: "make test"
+  lint_cmd: "make lint"
+  tier3_globs:
+    - "src/keel/orchestrator.py"
+    - "src/keel/config.py"
+    - "src/keel/extensions.py"
+    - ".github/workflows/**"
+  ci_workflows:
+    "CI": "**"
+  docs_gate_paths: ["docs/**", "*.md", "README.md"]
+  sot_doc: CLAUDE.md
+
+gates: [build, lint]
+
+extensions: {}
+extensions_dir: .keel/extensions

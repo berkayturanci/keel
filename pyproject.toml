@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "keel"
+version = "0.1.0"
+description = "Project-neutral, multi-agent workflow core: a fixed backbone of steps that drives an issue from backlog to done, customised per project via config + add-only Lego extensions."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "berkayturanci" }]
+keywords = ["workflow", "automation", "ci", "agents", "code-review"]
+dependencies = [
+    "PyYAML>=6",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff",
+    "coverage",
+]
+
+[project.scripts]
+keel = "keel.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+keel = ["schema/*.json"]
+
+[tool.coverage.run]
+branch = true
+source = ["keel"]
+omit = ["src/keel/__main__.py"]
+
+[tool.coverage.report]
+# keel keeps a high bar — the pure core must stay near-fully covered.
+fail_under = 95
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

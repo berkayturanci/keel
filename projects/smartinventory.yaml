@@ -1,0 +1,35 @@
+# keel project config — SmartInventory (Android + Web)
+# Seeded from the frozen smartinventory@0297bb9 behaviour. Consumer holds this
+# file + project-only Lego; the keel core is installed (pinned), never copied.
+extends: keel
+core_version: "^0.1"
+owner: berkayturanci
+repo: smartinventory
+base_branch: develop
+platform: android-web
+timezone: Etc/GMT-3            # POSIX inverted sign for UTC+3
+merge_window: "07:00-01:30"   # night no-merge window is the complement
+
+knobs:
+  implementer_agents:
+    android: android-developer
+    web: web-developer
+  build_gate_cmd: "cd android && ./gradlew test --no-daemon 2>&1 | tail -30"
+  lint_cmd: "cd android && ./gradlew lint --no-daemon 2>&1 | tail -30"
+  tier3_globs:
+    - "android/smartinventory/src/main/**/object/db/**"   # Realm models
+    - "**/billing/**"
+    - "**/lifecycle/**"
+    - ".github/workflows/**"
+  ci_workflows:
+    "Android CI": "android/**"
+    "Web CI": "web/**"
+  docs_gate_paths: ["docs/**", "*.md"]
+  sot_doc: AGENTS.md
+
+gates: [build, lint, jury]
+
+extensions:
+  tester: []
+  pre-merge: []
+extensions_dir: .keel/extensions
