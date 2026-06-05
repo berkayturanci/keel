@@ -43,13 +43,13 @@ by `keel validate`. Unknown keys are rejected, so typos fail loudly.
   backbone slots. They are add-only and run at their slot's step. See
   [extensions.md](extensions.md).
 
-## Example (ingreview — Flutter/Supabase)
+## Example (example-flutter — Flutter/Supabase)
 
 ```yaml
 extends: keel
 core_version: "^0.1"
 owner: berkayturanci
-repo: ingreview
+repo: example-flutter
 base_branch: main
 platform: flutter-supabase
 timezone: Europe/Istanbul

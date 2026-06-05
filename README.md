@@ -60,8 +60,8 @@ session's repo scope) so the pinned core is available before a run.
 ## Quickstart
 
 ```bash
-keel validate projects/ingreview.yaml          # validate a config against the schema
-keel plan      projects/ingreview.yaml          # show the backbone plan for a project
+keel validate projects/example-flutter.yaml          # validate a config against the schema
+keel plan      projects/example-flutter.yaml          # show the backbone plan for a project
 keel version
 ```
 
@@ -69,7 +69,7 @@ keel version
 exactly what a dry-run executes:
 
 ```
-keel plan — ingreview
+keel plan — example-flutter
   base_branch: main   core_version: ^0.1
   backbone:
      s4  implement  [agent]
@@ -138,8 +138,9 @@ runs in CI.
 ```
 src/keel/            the core package (config, model, extensions, findings, gates, orchestrator, cli)
 src/keel/schema/     project.schema.json (bundled)
-projects/*.yaml      seed configs (smartinventory, ingreview, keel)
+projects/*.yaml      example configs (example-android, example-flutter, keel)
+adapters/            thin per-agent adapters (claude, codex, gemini, agy)
+website/             static site + coverage report (make site)
 tests/               unit suite
-commands/ agents/ gemini-agents/   workflow assets (rendered per agent; mid-migration)
 docs/                docs + proposals
 ```

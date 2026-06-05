@@ -19,15 +19,15 @@ class TestBuildPlan(unittest.TestCase):
         self.assertEqual(plan[-1].step_id, "s12")
 
     def test_builtin_gates_land_on_test_step(self):
-        config = cfg.load_config(PROJECTS / "smartinventory.yaml")
+        config = cfg.load_config(PROJECTS / "example-android.yaml")
         plan = orch.build_plan(config, {})
         test_step = next(p for p in plan if p.step_name == "test")
         self.assertEqual(test_step.gates, ("build", "lint", "jury"))
         merge_step = next(p for p in plan if p.step_name == "merge")
         self.assertEqual(merge_step.gates, ())
 
-    def test_ingreview_design_parity_lego_lands_in_slots(self):
-        config = cfg.load_config(PROJECTS / "ingreview.yaml")
+    def test_example_flutter_design_parity_lego_lands_in_slots(self):
+        config = cfg.load_config(PROJECTS / "example-flutter.yaml")
         # Provide the extensions the config references (parsed inline; no disk).
         loaded = {
             "tester": [parse_extension(
@@ -54,15 +54,15 @@ class TestBuildPlan(unittest.TestCase):
 class TestNoForeignLeak(unittest.TestCase):
     """Config-injection: a project's plan must not contain another's specifics."""
 
-    def test_ingreview_plan_has_no_gradle(self):
-        config = cfg.load_config(PROJECTS / "ingreview.yaml")
+    def test_example_flutter_plan_has_no_gradle(self):
+        config = cfg.load_config(PROJECTS / "example-flutter.yaml")
         text = orch.render_plan(config, orch.build_plan(config, {})).lower()
         # render_plan shows repo/base/core; the gradle build cmd must not appear.
         self.assertNotIn("gradle", text)
-        self.assertIn("ingreview", text)
+        self.assertIn("example-flutter", text)
 
     def test_render_is_deterministic(self):
-        config = cfg.load_config(PROJECTS / "smartinventory.yaml")
+        config = cfg.load_config(PROJECTS / "example-android.yaml")
         a = orch.render_plan(config, orch.build_plan(config, {}))
         b = orch.render_plan(config, orch.build_plan(config, {}))
         self.assertEqual(a, b)
@@ -70,14 +70,14 @@ class TestNoForeignLeak(unittest.TestCase):
 
 
 class TestRealExtensionFiles(unittest.TestCase):
-    """If the ingreview extension files exist on disk, they must parse + plan."""
+    """If the example-flutter extension files exist on disk, they must parse + plan."""
 
     def test_load_is_failsoft_when_absent(self):
-        config = cfg.load_config(PROJECTS / "ingreview.yaml")
-        # keel repo does not ship ingreview's .keel/extensions; fail-soft -> problems.
+        config = cfg.load_config(PROJECTS / "example-flutter.yaml")
+        # keel repo does not ship example-flutter's .keel/extensions; fail-soft -> problems.
         loaded, problems = load_extensions(config, PROJECTS.parent, strict=False)
         self.assertEqual(loaded["tester"], [])
-        self.assertTrue(problems)  # files live in the ingreview repo, not here
+        self.assertTrue(problems)  # files live in the example-flutter repo, not here
 
 
 if __name__ == "__main__":

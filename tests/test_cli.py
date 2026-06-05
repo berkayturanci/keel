@@ -35,7 +35,7 @@ class TestNoCommand(unittest.TestCase):
 class TestValidate(unittest.TestCase):
     def test_valid_configs(self):
         rc, out, _ = run(["validate", str(PROJECTS / "keel.yaml"),
-                          str(PROJECTS / "smartinventory.yaml")])
+                          str(PROJECTS / "example-android.yaml")])
         self.assertEqual(rc, 0)
         self.assertEqual(out.count("OK"), 2)
 
@@ -54,8 +54,9 @@ class TestValidate(unittest.TestCase):
         self.assertIn("INVALID", out)
 
     def test_strict_extensions_missing_root(self):
-        # ingreview references extension files not present in this repo -> strict fail.
-        rc, out, _ = run(["validate", str(PROJECTS / "ingreview.yaml"), "--root", str(REPO_ROOT)])
+        # example-flutter references extension files not present in this repo -> strict fail.
+        rc, out, _ = run(["validate", str(PROJECTS / "example-flutter.yaml"),
+                          "--root", str(REPO_ROOT)])
         self.assertEqual(rc, 1)
         self.assertIn("extensions", out)
 
@@ -63,7 +64,7 @@ class TestValidate(unittest.TestCase):
 class TestPlan(unittest.TestCase):
     def test_plan_renders_backbone(self):
         rc, out, err = run(
-            ["plan", str(PROJECTS / "smartinventory.yaml"), "--root", str(REPO_ROOT)]
+            ["plan", str(PROJECTS / "example-android.yaml"), "--root", str(REPO_ROOT)]
         )
         self.assertEqual(rc, 0)
         self.assertIn("s10  merge", out)
@@ -75,8 +76,9 @@ class TestPlan(unittest.TestCase):
         self.assertIn("no such config", err)
 
     def test_plan_reports_extension_problems_on_stderr(self):
-        # ingreview's extension files are not in this repo -> fail-soft warnings.
-        rc, out, err = run(["plan", str(PROJECTS / "ingreview.yaml"), "--root", str(REPO_ROOT)])
+        # example-flutter's extension files are not in this repo -> fail-soft warnings.
+        rc, out, err = run(["plan", str(PROJECTS / "example-flutter.yaml"),
+                            "--root", str(REPO_ROOT)])
         self.assertEqual(rc, 0)
         self.assertIn("extension not loaded", err)
 
@@ -160,7 +162,7 @@ class TestPlanErrors(unittest.TestCase):
 
 class TestWindow(unittest.TestCase):
     def test_configured(self):
-        rc, out, _ = run(["window", str(PROJECTS / "smartinventory.yaml")])
+        rc, out, _ = run(["window", str(PROJECTS / "example-android.yaml")])
         self.assertEqual(rc, 0)
         self.assertIn("merge window", out)
         self.assertIn("Etc/GMT-3", out)

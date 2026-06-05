@@ -77,9 +77,9 @@ Each extension declares the agent that runs it (`agent:`, default `inherit`). So
 `tester` Lego can run on `ollama:qwen` while review runs on `claude` — all on the same
 backbone.
 
-## Worked example: ingreview's "design-equality" test
+## Worked example: example-flutter's "design-equality" test
 
-ingreview wants every UI PR to pass a design-parity check before merge. That is **one
+example-flutter wants every UI PR to pass a design-parity check before merge. That is **one
 `tester` piece** (runs the comparison, reports deltas) plus **one `pre-merge` gate**
 (`on_fail: block`, fails the merge if parity is not met). The backbone is untouched;
-SmartInventory — with no such files — simply has empty slots there.
+example-android — with no such files — simply has empty slots there.

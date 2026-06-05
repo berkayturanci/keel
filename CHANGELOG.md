@@ -54,7 +54,7 @@ All notable changes to keel are documented here. The format follows
   assessment, and fails the check on a `BLOCK` decision. Docs in
   `docs/keel/github-actions.md`.
 - Bundled schema `src/keel/schema/project.schema.json`.
-- Seed configs `projects/{smartinventory,ingreview,keel}.yaml`.
+- Seed configs `projects/{example-android,example-flutter,keel}.yaml`.
 - Docs: README, `docs/keel/{configuration,extensions,cli,comparison}.md`,
   `docs/proposals/{keel-architecture,divergence-audit-2035}.md`.
 - CI: cross-OS × Python matrix running tests, ruff, and the coverage gate.

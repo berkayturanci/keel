@@ -39,7 +39,7 @@ keel plan .claude/project.yaml
 Example output:
 
 ```
-keel plan — ingreview
+keel plan — example-flutter
   base_branch: main   core_version: ^0.1
   backbone:
      s0  config

@@ -1,9 +1,9 @@
-# keel project config — ingreview (Flutter + Supabase, default branch main)
+# keel project config — example-flutter (Flutter + Supabase, default branch main)
 # No Android/Kotlin/Realm/gradle here by construction — those would be foreign leaks.
 extends: keel
 core_version: "^0.1"
 owner: berkayturanci
-repo: ingreview
+repo: example-flutter
 base_branch: main
 platform: flutter-supabase
 timezone: Europe/Istanbul
@@ -31,6 +31,6 @@ knobs:
 gates: [build, lint]
 
 extensions:
-  tester: [design-parity.md]            # ingreview's "design-equality" test Lego
+  tester: [design-parity.md]            # example-flutter's "design-equality" test Lego
   pre-merge: [design-parity-gate.md]    # no merge unless design-parity passes
 extensions_dir: .keel/extensions

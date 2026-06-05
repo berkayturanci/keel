@@ -44,16 +44,16 @@ class TestSeedConfigs(unittest.TestCase):
                 self.assertEqual(config.extends, "keel")
                 self.assertTrue(config.knobs.build_gate_cmd)
 
-    def test_ingreview_has_no_android_leak(self):
-        config = cfg.load_config(PROJECTS_DIR / "ingreview.yaml")
+    def test_example_flutter_has_no_android_leak(self):
+        config = cfg.load_config(PROJECTS_DIR / "example-flutter.yaml")
         blob = (config.knobs.build_gate_cmd + " " + (config.knobs.lint_cmd or "")
                 + " " + " ".join(config.knobs.tier3_globs)
                 + " " + " ".join(config.knobs.implementer_agents.values())).lower()
         for foreign in ("gradle", "kotlin", "realm", "android"):
-            self.assertNotIn(foreign, blob, f"foreign token {foreign!r} leaked into ingreview")
+            self.assertNotIn(foreign, blob, f"foreign token {foreign!r} leaked in")
 
-    def test_ingreview_registers_design_parity_lego(self):
-        config = cfg.load_config(PROJECTS_DIR / "ingreview.yaml")
+    def test_example_flutter_registers_design_parity_lego(self):
+        config = cfg.load_config(PROJECTS_DIR / "example-flutter.yaml")
         self.assertIn("design-parity.md", config.slot("tester"))
         self.assertIn("design-parity-gate.md", config.slot("pre-merge"))
 

@@ -1,11 +1,11 @@
 # keel — architecture & extension contract
 
-> Status: **proposal** (design tour for smartinventory#2035, Phase 2.5).
-> Canonical home for the workflow core's design. The smartinventory#2035 issue is the
+> Status: **proposal** (design tour for example-android#2035, Phase 2.5).
+> Canonical home for the workflow core's design. The example-android#2035 issue is the
 > cross-repo **coordination** point and links here; this doc is the **spec**.
 >
 > Convergence note: two independent design passes (the ai-infra/keel side and the
-> smartinventory/#2035 side) reached the same conclusion — the roadmap captured
+> example-android/#2035 side) reached the same conclusion — the roadmap captured
 > *fixed backbone + config values* but not *project-added steps*. The missing pillar is a
 > first-class **extension-point (Lego) model**. This doc specifies it.
 
@@ -27,7 +27,7 @@ close — through a **fixed backbone** of steps. Projects don't fork the backbon
 | Kind | Mechanism | Example |
 |---|---|---|
 | **Value** (a knob) | `project.yaml` config | `base_branch: main`, `build_gate_cmd: flutter test`, `timezone` |
-| **Step** (a Lego piece) | **extension into a named slot** | ingreview adds a *design-parity* test + a *no-merge-without-design-parity* gate |
+| **Step** (a Lego piece) | **extension into a named slot** | example-flutter adds a *design-parity* test + a *no-merge-without-design-parity* gate |
 
 The original #2035 roadmap modelled only the first. keel's core addition is the second.
 
@@ -118,7 +118,7 @@ extensions_dir: .keel/extensions
 extensions:
   after-implement: []
   reviewers:  [a11y-review.md]            # add a reviewer dimension
-  tester:     [design-parity.md]          # ingreview: design-equality test suite
+  tester:     [design-parity.md]          # example-flutter: design-equality test suite
   pre-merge:  [design-parity-gate.md]     # no merge unless design-parity passes
   post-merge: []
 ```
@@ -154,10 +154,10 @@ run: "flutter test --tags golden"
 decision). The cross-vendor **jury (ship Step 5d.jury) becomes just another built-in
 `pre-merge` gate** under the same contract — the model unifies what already exists.
 
-> **ingreview worked example.** "Design-equality test" = one `tester` piece
+> **example-flutter worked example.** "Design-equality test" = one `tester` piece
 > (`design-parity.md`, runs golden/screenshot diff) + one `pre-merge` gate
-> (`design-parity-gate.md`, `on_fail: block`). The backbone is untouched; ingreview gets
-> its own step. SmartInventory, with no such file, simply has empty slots there.
+> (`design-parity-gate.md`, `on_fail: block`). The backbone is untouched; example-flutter gets
+> its own step. example-android, with no such file, simply has empty slots there.
 
 ## 2. Agent-neutral distribution
 
@@ -179,16 +179,16 @@ decision). The cross-vendor **jury (ship Step 5d.jury) becomes just another buil
 | 1 | Cross-repo audit ✅ | done |
 | 2 | **Import** Tier-A/B bodies to SI tip (final seed); drop Tier-C + retire `sync-to-ai-infra` ✅ | keel (PR #5) |
 | **2.5** | **Extension-point model** — backbone slot IDs, extension contract, config↔extension binding (**this doc**) | keel |
-| 3 | Config schema + JSON-Schema validator — incl. the `extensions:` block; seed SI + ingreview | keel |
+| 3 | Config schema + JSON-Schema validator — incl. the `extensions:` block; seed SI + example-flutter | keel |
 | 4 | **keel-core** skeleton CLI + step-runner + extension loader (+ tests) | keel |
 | 5 | `ship` POC: render as a thin adapter over keel-core; SI golden-diff identical | keel |
-| 6 | De-contaminate ingreview → Flutter/Supabase + its first Lego (design-parity) | ingreview |
+| 6 | De-contaminate example-flutter → Flutter/Supabase + its first Lego (design-parity) | example-flutter |
 | 7 | Tests in keel CI — config-injection snapshots + **extension-injection** (inject a test-extension; assert the backbone still runs + invariants hold) + dry-run smoke; publish gate | keel |
 | 8 | Adapters (Codex/Gemini/agy) + cutover: pinned install; retire file-copy sync | keel → projects |
 
 **Direction note:** the flow now originates centrally (keel → projects via pinned
 install). There is no upstream project→core sync; `sync-to-ai-infra` is retired (PR #5).
-PR #5 is the final seed from smartinventory.
+PR #5 is the final seed from example-android.
 
 ## 4. Open items
 
