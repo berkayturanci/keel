@@ -53,6 +53,34 @@ keel plan — ingreview
     ...
 ```
 
+## `keel run-gates <project.yaml> [--root DIR]`
+
+Run the project's **command gates** (the `command`/`build`/`lint` Lego) under `--root DIR`
+(default `.`) and report each as a structured finding. Agentic gates (review, design
+parity) are not run here — this is the deterministic, runnable slice of the test step (s8).
+
+Each gate runs its configured shell command; a non-zero exit becomes a blocking finding
+(`gate:<name>`), a zero exit a pass. The command's output tail is captured for context.
+
+```bash
+keel run-gates .keel/project.yaml --root .
+```
+
+Exits non-zero if any gate blocks (so it can be wired straight into CI).
+
+## `keel window <project.yaml>`
+
+Report whether the project's **merge window** is open right now, in the project's
+timezone. The window (e.g. `07:00-01:30`) is the *open* window; its complement is the
+night no-merge window. A window may wrap midnight. Prints `OPEN` / `CLOSED` and the
+`timezone merge_window` it evaluated; prints a notice (and exits 0) if the project sets no
+window.
+
+```bash
+keel window .keel/project.yaml
+# merge window OPEN  [Europe/Istanbul 07:00-01:30]
+```
+
 ## Exit codes
 
 | code | meaning |
