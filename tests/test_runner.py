@@ -116,6 +116,52 @@ class TestCommandGateRunner(unittest.TestCase):
         self.assertTrue(findings[0].anchorable)
 
 
+def _dispatch(diff="patch", jury_json='{"findings":[]}'):
+    def _run(argv, **kwargs):
+        if argv and argv[0] == "git":
+            return _Proc(0, diff)
+        if argv and argv[0] == "jury":
+            return _Proc(0, jury_json)
+        return _Proc(0, "")
+    return _run
+
+
+class TestGateRunner(unittest.TestCase):
+    def _jury_spec(self):
+        return GateSpec("jury", "builtin", "test", "block")
+
+    def test_jury_builtin_blocks_on_major(self):
+        out = '{"findings":[{"severity":"major","file":"x.py","line":1,"claim":"bad"}]}'
+        run = runner.gate_runner(".", base="main", _run=_dispatch(jury_json=out))
+        ok, findings = run(self._jury_spec())
+        self.assertFalse(ok)
+        self.assertEqual(findings[0].source, "jury")
+
+    def test_jury_builtin_clean(self):
+        run = runner.gate_runner(".", base="main", _run=_dispatch())
+        ok, findings = run(self._jury_spec())
+        self.assertTrue(ok)
+        self.assertEqual(findings, [])
+
+    def test_jury_without_base(self):
+        run = runner.gate_runner(".", base=None, _run=_dispatch())
+        ok, findings = run(self._jury_spec())
+        self.assertTrue(ok)
+
+    def test_jury_diff_failsoft(self):
+        def _run(argv, **kwargs):
+            if argv and argv[0] == "git":
+                return _Proc(1, "", "not a repo")  # diff fails -> empty diff
+            return _Proc(0, "{}")
+        ok, findings = runner.gate_runner(".", base="main", _run=_run)(self._jury_spec())
+        self.assertTrue(ok)
+
+    def test_command_gate_delegates(self):
+        run = runner.gate_runner(_run=_ok)
+        ok, findings = run(GateSpec("build", "command", "test", "block", run="make test"))
+        self.assertTrue(ok)
+
+
 class TestFirstLocation(unittest.TestCase):
     def test_path_line_col(self):
         self.assertEqual(runner.first_location("lib/x.dart:7:3: bad"), ("lib/x.dart", 7))

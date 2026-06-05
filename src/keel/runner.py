@@ -96,3 +96,29 @@ def command_gate_runner(
         )]
 
     return runner
+
+
+def gate_runner(
+    repo_root: str | None = None, *, base: str | None = None, jury_mock: bool = False,
+    timeout: int = 600, _run=subprocess.run,
+) -> GateRunner:
+    """Like :func:`command_gate_runner`, but also executes the ``jury`` built-in gate.
+
+    The ``jury`` gate runs the external reviewer on the diff against ``base``
+    (``git diff base...HEAD``) and maps its findings in; everything else delegates to the
+    command runner. Fail-soft throughout.
+    """
+    commands = command_gate_runner(repo_root, timeout=timeout, _run=_run)
+
+    def runner(spec: GateSpec) -> tuple[bool, list[Finding]]:
+        if spec.kind == "builtin" and spec.id == "jury":
+            from . import jury  # lazy: jury imports run_argv from this module
+            diff = ""
+            if base:
+                result = run_argv(["git", "diff", f"{base}...HEAD"], cwd=repo_root,
+                                  timeout=timeout, _run=_run)
+                diff = result.output if result.ok else ""
+            return jury.run_jury(diff, mock=jury_mock, timeout=timeout, _run=_run)
+        return commands(spec)
+
+    return runner

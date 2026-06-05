@@ -66,6 +66,11 @@ Each gate runs its configured shell command; a non-zero exit becomes a blocking 
 keel run-gates .keel/project.yaml --root .
 ```
 
+If the project lists `jury` in its `gates:`, the built-in **jury gate** runs the external
+ai-jury multi-agent reviewer (`jury --diff-file <diff> --format json`) on the diff against
+the base branch and maps its findings in (blocking on `critical`/`major`). It is fail-soft —
+a missing `jury` CLI is a no-op — and `--jury-mock` runs it offline.
+
 Exits non-zero if any gate blocks (so it can be wired straight into CI).
 
 ## `keel window <project.yaml>`

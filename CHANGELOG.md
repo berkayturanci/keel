@@ -7,6 +7,10 @@ All notable changes to keel are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **`jury` built-in gate now executes** the external ai-jury multi-agent reviewer (#31).
+  `keel/jury.py` runs `jury --diff-file <diff> --format json` on the PR diff and maps its
+  findings into keel findings (blocking on `critical`/`major`); fail-soft if the `jury` CLI
+  is absent. Opt in via `jury` in a project's `gates:`; `--jury-mock` runs it offline.
 - **AI entry points** — a canonical, cross-AI `AGENTS.md` (the durable source of truth:
   backbone + invariants, pure-core/thin-I/O split, the 100% coverage bar, the
   single-runtime-dependency rule, conventions, and keel's config-driven agent dispatch)

@@ -18,7 +18,7 @@ from . import config as cfg
 from . import findings as fnd
 from . import orchestrator as orch
 from .extensions import ExtensionError, load_extensions
-from .runner import command_gate_runner
+from .runner import gate_runner
 
 
 def _cmd_version(args: argparse.Namespace) -> int:
@@ -95,7 +95,8 @@ def _cmd_run_gates(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
 
-    outcomes = gates.run_gates(specs, command_gate_runner(args.root))
+    outcomes = gates.run_gates(
+        specs, gate_runner(args.root, base=config.base_branch, jury_mock=args.jury_mock))
     for o in outcomes:
         status = "ok" if o.ok else "FAIL"
         print(f"  {status:>4}  {o.gate}")
@@ -148,7 +149,8 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     except gates.GateError as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    outcomes = gates.run_gates(specs, command_gate_runner(args.root))
+    outcomes = gates.run_gates(
+        specs, gate_runner(args.root, base=config.base_branch, jury_mock=args.jury_mock))
     verdict = fnd.summarize(gates.collect_findings(outcomes))
     ci_conclusion = github.ci_conclusion(args.pr, cwd=args.root) if args.pr else None
 
@@ -229,6 +231,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_run = sub.add_parser("run-gates", help="run a project's command gates")
     p_run.add_argument("path", help="path to project.yaml")
     p_run.add_argument("--root", default=".", help="repo root for commands + extensions")
+    p_run.add_argument("--jury-mock", action="store_true", help="run the jury gate in mock mode")
     p_run.set_defaults(func=_cmd_run_gates)
 
     p_window = sub.add_parser("window", help="is the merge window open now?")
@@ -240,6 +243,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_ship.add_argument("--root", default=".", help="repo root for git, gates + extensions")
     p_ship.add_argument("--pr", type=int, default=None, help="PR number for CI status (gh)")
     p_ship.add_argument("--hotfix", action="store_true", help="emergency: bypass the merge window")
+    p_ship.add_argument("--jury-mock", action="store_true", help="run the jury gate in mock mode")
     p_ship.set_defaults(func=_cmd_ship)
 
     p_init = sub.add_parser("init", help="scaffold a default .keel/project.yaml for this repo")
