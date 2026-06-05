@@ -128,6 +128,13 @@ ingreview/.claude/
 
 | Cmd | Tier | SI | AI | IN | SI↔AI | AI↔IN | ingreview verdict |
 |---|---|---|---|---|---|---|---|
+> ⤴ = smartinventory value advanced **after** the first audit snapshot. `ship`/`ship-v2`
+> moved again in **#2037** (`6da6190`, attribution/vendor+model labels, issue #2036):
+> `ship` `77cabcd2`→`e4cfbbad`, `ship-v2` `233fdad0`→`d680d1be`. ai-infra (`9f97ec61`/
+> `786ec0b7`) and ingreview were **not** updated — the gap to the stale "canon" only widened,
+> and the SI body now carries **more** hardcodes (ship: 18 Android / 11 UTC+3 / 40 `develop`).
+> Every other command's SI checksum is unchanged from the first snapshot.
+
 | `ci-check` | A | `469c283b` | `469c283b` | `469c283b` | = | = | **IDENTICAL (portable)** ✅ |
 | `sync-to-ai-infra` | A | `94368f64` | `94368f64` | `94368f64` | = | = | **IDENTICAL (portable)** ✅ |
 | `pr-loop` | A | `beeaa23b` | `28847512` | `28847512` | ≠ | = | **OVERWRITTEN (leaked)** — Android (5 refs) |
@@ -138,8 +145,8 @@ ingreview/.claude/
 | `review-cycle-to-pr` | A | `87f3b2dc` | `a9fe44f6` | `4cac0051` | ≠ | ≠ | **DRIFTED (adapted)** ✅ Flutter-ish |
 | `morning` | A | `81d00248` | `5172841c` | `00d7a645` | ≠ | ≠ | **DRIFTED (adapted)** ⚠ UTC+3 leak (×3) |
 | `overnight` | A | `54c59c3d` | `54c59c3d` | `55355e59` | = | ≠ | **OVERWRITTEN (leaked)** — Kotlin + UTC+3 |
-| `ship` | B | `77cabcd2` | `9f97ec61` | `084fb3a7` | ≠ | ≠ | **OVERWRITTEN (leaked)** — 17 Android, 10 UTC+3 |
-| `ship-v2` | B | `233fdad0` | `786ec0b7` | `cb8e07d2` | ≠ | ≠ | **OVERWRITTEN (leaked)** — Realm/UTC+3 |
+| `ship` | B | `e4cfbbad` ⤴ | `9f97ec61` | `084fb3a7` | ≠ | ≠ | **OVERWRITTEN (leaked)** — IN: 17 Android, 10 UTC+3 |
+| `ship-v2` | B | `d680d1be` ⤴ | `786ec0b7` | `cb8e07d2` | ≠ | ≠ | **OVERWRITTEN (leaked)** — IN: Realm/UTC+3 |
 | `implement` | B | `8af3827e` | `c94d3c85` | `c94d3c85` | ≠ | = | **OVERWRITTEN (leaked)** — 12 Android |
 | `regression` | B | `650498aa` | `650498aa` | `650498aa` | = | = | **IDENTICAL (overwritten)** — Kotlin/Realm verbatim |
 | `review-all-day` | B | `778c0b80` | `778c0b80` | `83cad568` | = | ≠ | **DRIFTED (adapted)** ⚠ UTC+3 leak (×4) |
@@ -261,7 +268,11 @@ can be called "portable."
 
 smartinventory is the source; its bodies are intact. (It has, in places, *drifted ahead*
 of ai-infra — `ship`, `ship-v2`, `implement`, `pr-loop`, `review-cycle-to-pr`, `morning`
-differ — so even the "canon" in ai-infra is a stale smartinventory snapshot.)
+differ — so even the "canon" in ai-infra is a stale smartinventory snapshot.) **This drift
+is ongoing:** during this audit, smartinventory **#2037** (`6da6190`) revised `ship.md`
+(+39/−10) and `ship-v2.md` again for vendor+model attribution (issue #2036), without any
+corresponding ai-infra/ingreview update. This is the recurring cost the thin-consumer model
+eliminates — every smartinventory ship PR silently re-widens the divergence the audit measures.
 
 ---
 
@@ -355,4 +366,6 @@ the project config · **project-only** = belongs in the project, never synced.
   Flutter (`flutter|dart|.dart|supabase|pubspec|pub get|deno`), timezone (`UTC+3|Etc/GMT-3|GMT-3`),
   branch (`develop`).
 - Project configs read from `ai-infra/projects/{smartinventory,ingreview}.json`.
+- Snapshot refs: smartinventory `origin/develop` @ `6da6190` (post-#2037); ai-infra and
+  ingreview at their audit-branch tips. `ship`/`ship-v2` checksums marked ⤴ reflect `6da6190`.
 - **No writes** to any command file, no sync run, no downstream push. Audit only.
