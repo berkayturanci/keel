@@ -55,6 +55,7 @@ Post a start comment on the issue before delegating:
 Agent run started
 Codename: `$CODENAME`
 Agent: `<chosen-agent>`
+Implementer system: `claude-code`
 Branch: `feature/issue-$ARGUMENTS-[slug]`
 ```
 
@@ -65,6 +66,7 @@ Use `date -u +%Y%m%d-%H%M%S` to generate the timestamp, then post the start comm
   gh issue comment "$ARGUMENTS" --body "Agent run started
   Codename: \`<CODENAME>\`
   Agent: \`<chosen-agent>\`
+  Implementer system: \`claude-code\`
   Branch: \`feature/issue-$ARGUMENTS-[slug]\`"
   ```
 - `GH_MODE=mcp`: call `mcp__github__add_issue_comment` (owner=`berkayturanci`, repo=`smartinventory`, issue_number=`$ARGUMENTS`, body=the same multi-line string used in the cli branch).

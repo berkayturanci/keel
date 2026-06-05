@@ -201,7 +201,11 @@ Merge recommendation rule:
 Note: a reviewer returning `LGTM` while still emitting `minor` findings
 downgrades the recommendation to ⚠️ via the count clause — this is
 intentional. Verdict strings are advisory; the histogram is the source
-of truth for the recommendation.
+of truth for the recommendation. SUGGESTIONs (`major`/`minor`) are
+gated like blockers per the reviewer rubric (`AGENTS.md` § Reviewer
+Rubric): a non-zero `major + minor` count is never an `approve`. This
+command is review-only (no merge), so resolution/deferral is the
+operator's follow-up; it does not approve while any SUGGESTION stands.
 
 Post the consolidated summary:
 

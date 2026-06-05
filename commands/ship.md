@@ -1,7 +1,7 @@
 ---
-description: End-to-end issue ship — branch, PR, self-review, CI, N parallel reviewers, time-windowed merge, issue close. UTC+3 07:00–01:30 merge window (night no-merge window 01:30–07:00).
+description: End-to-end issue ship — branch, PR, self-review, CI, N parallel reviewers, optional advisory cross-vendor AI Jury stage, time-windowed merge, issue close. UTC+3 07:00–01:30 merge window (night no-merge window 01:30–07:00).
 allowed-tools: Bash(gh:*), Bash(git:*), Bash(date:*), Bash(./gradlew:*), Bash(./scripts/compound-learning.sh:*), Bash(mkdir:*), Bash(rmdir:*), Bash(rm:*), Bash(cat:*), Bash(test:*), Bash(sleep:*), Bash(seq:*), Bash(timeout:*), Bash(gtimeout:*), Bash(kill:*), Bash(printf:*), Bash(echo:*), Bash(grep:*), Bash(sed:*), Read, Edit, Write, Agent, mcp__github__issue_read, mcp__github__issue_write, mcp__github__list_issues, mcp__github__search_issues, mcp__github__add_issue_comment, mcp__github__pull_request_read, mcp__github__list_pull_requests, mcp__github__search_pull_requests, mcp__github__get_file_contents, mcp__github__list_commits, mcp__github__get_commit, mcp__github__list_branches, mcp__github__get_label, mcp__github__create_pull_request, mcp__github__update_pull_request, mcp__github__push_files, mcp__github__add_reply_to_pull_request_comment, mcp__github__pull_request_review_write, mcp__github__enable_pr_auto_merge, mcp__github__merge_pull_request, mcp__github__update_pull_request_branch, mcp__github__subscribe_pr_activity
-argument-hint: [issue numbers...] [--reviewers N] [--blocker] [--dry-run] [--preview]
+argument-hint: [issue numbers...] [--reviewers N] [--blocker] [--dry-run] [--preview] [--jury] [--no-jury] [--jury-advisory] [--delegate <claude|codex|agy|ollama:MODEL>] [--review-delegate <claude|codex|agy|ollama:MODEL>] [--wizard]
 ---
 
 You are the SmartInventory end-to-end shipping orchestrator. Drive each GitHub issue from `status:backlog` to `status:done` (merged + closed) through the full lifecycle in `AGENTS.md` § "Standard Issue Lifecycle".
@@ -72,6 +72,14 @@ Argument grammar:
 - `--blocker` ⇒ boolean flag; treat every queued issue as blocker (human override).
 - `--dry-run` ⇒ boolean flag; perform every read but redirect every state-changing GitHub call (`gh pr comment`, `gh pr merge`, `gh pr ready`, `gh issue close`, `gh issue comment`, label edits) to stdout as `DRY-RUN: <command>` lines. Implementer subagent is also instructed to honour dry-run (no push, no PR open).
 - `--preview` ⇒ boolean flag; after the PR is opened, add the `deploy:preview` label so the Firebase Hosting preview channel is deployed. Without this flag no preview channel is deployed (opt-in, per CI change #1315). Also skipped under `--dry-run` (logged to stdout).
+- `--jury` ⇒ boolean flag; force-enable the cross-vendor AI Jury stage (Step 5d.jury) for every queued issue, regardless of risk tier. By default the jury now runs in **gating mode** (issue #2033 Phase B): verified `critical`/`major`/`minor` consensus findings gate the merge (see Step 5d.jury / 5e). Use `--jury-advisory` for the old advisory-only behaviour.
+- `--no-jury` ⇒ boolean flag; force-disable the jury stage even on TIER-3 PRs (where it would otherwise auto-enable). `--no-jury` always wins over `--jury`, `--jury-advisory`, and the TIER-3 auto-enable. Default when neither flag is passed: jury off, unless Step 5a.2 classifies the PR as TIER-3 (then auto-on, gating).
+- `--jury-advisory` ⇒ boolean flag; when the jury is enabled, run it in **advisory-only mode** (Phase A) — it posts a report and logs a verdict but never gates the merge and never consumes a review-fix round. Only meaningful on runs where the jury is enabled (`--jury` or TIER-3 auto); a no-op when the jury is off. `--no-jury` still wins over it.
+- `--delegate <impl>` ⇒ consumes one value immediately after the flag, the **implementer** (who writes the code). Valid: `claude`, `codex`, `agy`, or `ollama:<model>` (a local Ollama model — the orchestrator-driven harness of § 5a.ollama). The flag is a **per-run override** of the issue's `delegate:*` label (Step 5a): when present it wins over any label for every queued issue. **Default (no flag, no label): the host agent** — whichever CLI is driving this `/ship` run (`HOST_AGENT`; see § Host-agent default). So a Codex-driven run defaults to `codex` writing the code, an Antigravity-driven run to `agy`, a Claude-Code-driven run to `claude`. Reject any other value. `ollama:<model>` requires a non-empty model name and is **refused on TIER-3** issues (falls back to the host agent — see § 5a.ollama).
+- `--review-delegate <vendor>` ⇒ consumes one value immediately after the flag, the **Step 5c reviewer vendor**. Valid: `claude`, `codex`, `agy`, or `ollama:<model>`. A non-host value routes the 5c review through that vendor's CLI in **read-only** mode (the jury-style external invocation), returning findings only — the orchestrator-only-writes contract still holds (only the orchestrator posts comments). **Default (no flag): the host agent** (`HOST_AGENT`) — review runs in whatever CLI you launched `/ship` from. Reject any other value.
+
+**Host-agent default (`HOST_AGENT`).** `/ship` runs inside one agentic CLI — Claude Code, Codex, or Antigravity. That executing CLI is the `HOST_AGENT`, and it is the default for both `--delegate` and `--review-delegate`: by default you implement and review with the same agent whose terminal you launched the run from. `HOST_AGENT` is NOT an operator-set environment variable — the orchestrator resolves it from its own runtime context (it IS the host): `claude` when running on Claude Code, `codex` on Codex, `agy` on Antigravity. The historical hardcoded `claude` default is replaced by `HOST_AGENT` — on Claude Code the two coincide, so existing behaviour is unchanged. A `delegate:*` label or an explicit `--delegate`/`--review-delegate` flag still overrides this default (precedence in Step 5a / Step 5c).
+- `--wizard` ⇒ boolean flag; **interactive opt-in only**. Run the guided configuration wizard (Step 0.wizard) which collects the run's options through interactive prompts and converts them into the normal flag/issue set BEFORE Step 1. Modelled on `jury init --wizard`. It is purely a front layer — it changes nothing about the pipeline below, it only assembles the same arguments the grammar above accepts. The wizard MUST NOT run in any non-interactive context (watch mode, `/overnight`, background jobs); see Step 0.wizard for the hard guard. In any such context `--wizard` degrades to a logged no-op (never a rejection, never a hang) and the run proceeds with the literal flags as parsed. `--dry-run` is fully compatible with `--wizard`: it is just one of the values the wizard can set (or pass through), so `--wizard --dry-run` runs the wizard interactively and then executes the pipeline in dry-run.
 
 Flags and their value MUST appear together; positional integers are everything not consumed by a flag. Worked examples:
 
@@ -82,6 +90,13 @@ Flags and their value MUST appear together; positional integers are everything n
 /ship 42 --reviewers 2 56  → ISSUES=[42,56]             REVIEWERS=2
 /ship --dry-run 42         → ISSUES=[42]                REVIEWERS=auto   DRY_RUN=true
 /ship --preview 42         → ISSUES=[42]                REVIEWERS=auto   PREVIEW=true
+/ship --jury 42            → ISSUES=[42]                REVIEWERS=auto   JURY=true (advisory)
+/ship --no-jury 42         → ISSUES=[42]                REVIEWERS=auto   JURY=false (even if TIER-3)
+/ship --delegate codex 42  → ISSUES=[42]                IMPLEMENTER=codex (overrides any delegate:* label)
+/ship --delegate ollama:qwen 42  → ISSUES=[42]          IMPLEMENTER=ollama:qwen (local model writes; § 5a.ollama; refused on TIER-3)
+/ship --review-delegate ollama:qwen 42  → ISSUES=[42]   5c reviewer = local qwen (read-only, findings-only)
+/ship --wizard             → interactive prompts → resolves to a normal flag/issue set, then Step 1
+/ship --wizard 42          → interactive prompts pre-seeded with ISSUES=[42] → normal flag set, then Step 1
 /ship                      → ISSUES=[] (watch mode)     REVIEWERS=auto (resolved per-issue at Step 5a.2)
 ```
 
@@ -90,13 +105,15 @@ Reject:
 - Unknown flags (anything starting with `--` not in the list above).
 - `--reviewers` value outside `{1, 2, 3}`.
 - `--reviewers` without an integer immediately following.
+- `--delegate` value outside `{claude, codex, agy, ollama:<model>}` (the `ollama:` model name must be non-empty — `ollama:` alone is rejected), or no value following.
+- `--review-delegate` value outside `{claude, codex, agy, ollama:<model>}` (the `ollama:` model name must be non-empty — `ollama:` alone is rejected), or no value following.
 - Negative or zero positional integers.
 
-**CLI delegation (label-based, not a flag):** add `delegate:codex` or `delegate:agy` to the issue before running `/ship`. The label is detected at Step 5a; the argument grammar is unchanged.
+**CLI delegation (label OR `--delegate` flag):** the **implementer** can be chosen two ways — add a `delegate:codex` / `delegate:agy` label to the issue (detected at Step 5a), or pass `--delegate <claude|codex|agy>` on the command line. The flag is a per-run override and **wins over the label** when both are present. `--delegate claude` forces the default Claude subagent even if the issue carries a `delegate:*` label.
 
 ```
 # Issue #42 has label delegate:codex → Codex CLI handles implementation
-/ship 42                   → Step 5a routes to codex exec "<prompt>"
+/ship 42                   → Step 5a routes to codex exec -s danger-full-access < "$prompt_file"
 
 # Issue #56 has label delegate:agy  → Antigravity CLI handles implementation
 /ship 56                   → Step 5a routes to agy --print "<prompt>"
@@ -107,6 +124,64 @@ Reject:
 # Fallback: if codex is unavailable or quota exhausted on agy, /ship falls
 #            back to the default Claude subagent and logs the reason.
 ```
+
+## Step 0.wizard — Interactive configuration wizard (only when `--wizard`)
+
+Runs **only when `--wizard` was passed** at Step 0, and **only in an interactive session**. Skip this entire step when `--wizard` is absent. The wizard is a front layer that produces the same `ISSUES` / `REVIEWERS` / `BLOCKER` / `DRY_RUN` / `PREVIEW` / `JURY` / `IMPLEMENTER` (`--delegate`) / reviewer-vendor (`--review-delegate`) state the grammar above produces — it does NOT add new behaviour to Steps 1–6.
+
+**Hard interactivity guard (safety invariant).** The wizard uses the `AskUserQuestion` tool, which requires a human to answer. `/ship` is frequently driven autonomously (watch mode, `/overnight`, `/lfg`, background `run_in_background` jobs) where no human is present. The orchestrator MUST NOT enter the wizard in any such context:
+
+- If the run is non-interactive (no operator able to answer prompts — e.g. invoked from `/overnight`, a scheduled job, a background task, or any headless `claude -p` pipeline), do NOT prompt. Instead log `ship: --wizard ignored (non-interactive session); proceeding with the literal flags as parsed` and continue to Step 1 with whatever flags were parsed at Step 0 (i.e. `--wizard` degrades to a no-op, never a hang).
+- The wizard never blocks an autonomous pipeline. When in doubt about interactivity, treat the session as non-interactive and skip the wizard.
+
+**Tool/model detection (runs before the questions, best-effort, never blocks).** So the wizard only offers what is actually runnable, probe the environment once and build the available-choice lists. The snippet below requires **bash 4+** (it uses array `+=` and `< <(...)` process substitution — not POSIX `sh`); on an `sh`-only host treat detection as "nothing detected beyond `HOST_AGENT`" and degrade gracefully (the lists just stay short — never an error):
+
+```bash
+# Installed agentic CLIs (implementer-capable AND read-only-reviewer-capable).
+AVAIL_CLIS=()
+for c in claude codex agy; do command -v "$c" >/dev/null 2>&1 && AVAIL_CLIS+=("$c"); done
+# Local Ollama models — both review-capable (--review-delegate) and implementer-capable (§ 5a.ollama).
+OLLAMA_MODELS=()
+if command -v ollama >/dev/null 2>&1; then
+  # `ollama list` first column (skip header); tolerate ollama not running.
+  while IFS= read -r m; do [ -n "$m" ] && OLLAMA_MODELS+=("$m"); done \
+    < <(ollama list 2>/dev/null | awk 'NR>1{print $1}')
+fi
+```
+
+The `HOST_AGENT` (the CLI driving this run; see § Host-agent default) is always treated as available and is the default/recommended choice in the Implementer and Reviewer-vendor questions. Detection failures (no `ollama`, daemon down, `command -v` misses) just yield shorter lists — never an error, never a block.
+
+**Quick-start vs Customize (asked first).** The wizard's FIRST question is always a fast-path chooser so the operator never has to answer every question to proceed:
+
+- `Use recommended defaults (default)` — resolve EVERY option below to its default (`IMPLEMENTER=HOST_AGENT`, `REVIEW_DELEGATE=HOST_AGENT`, `REVIEWERS=auto`, `JURY=auto`, run mode `Normal`, no preview), skip the detailed questions, and proceed. The only thing still collected is **Issues** (and only when none were given positionally). This is equivalent to a bare `/ship <issues>`.
+- `Customize` — present the full batched question set below so the operator can change any individual option.
+
+If the operator picks `Use recommended defaults`, the wizard does NOT show questions 2–6 at all — it goes straight to the resolved-config echo and Step 1. This makes "just run it with the safe defaults" a one-tap path, while still surfacing every knob for those who want it.
+
+**What it collects when `Customize` is chosen (one `AskUserQuestion` call, batched questions).** Each answer maps directly onto an existing Step 0 variable/flag; the wizard performs no validation the grammar does not already perform.
+
+**Default-marking requirement (every question).** Each question MUST present its default choice **first** in the option list, with `(default)` appended to that option's label, and its description MUST state what the default does so an operator who just accepts it knows the outcome (e.g. `Normal — runs to merge, respects the night no-merge window`). The default value equals what `/ship` would use if the flag were not passed at all (so the wizard with all-defaults reproduces a bare `/ship <issues>`). This makes every choice's safe baseline explicit rather than implicit.
+
+1. **Issues** — only asked when no positional issue numbers were given on the command line. If `--wizard 42 56` was passed, `ISSUES=[42,56]` is pre-seeded and this question is skipped. Free-form answer parsed as space/comma-separated positive integers (same validation as the Step 0 grammar; reject zero/negative). The wizard does NOT offer "watch mode" as a choice — watch mode is the no-args non-wizard path; a wizard run always targets explicit issues. (No fixed default — issues are required for a wizard run.)
+2. **Implementer** (who writes the code) — options are built from `AVAIL_CLIS`. The **`HOST_AGENT` is the default** (labelled `<host> (default)`, description: "the CLI you launched `/ship` from writes the code"), listed first, followed by the other installed CLIs. Detected `OLLAMA_MODELS` are listed as `ollama:<model>` choices — a **free local-model implementer** for easy/low-risk issues (the orchestrator-driven harness of § 5a.ollama), description e.g. "local <model> writes the code (best for low-risk issues; refused on TIER-3)". Any choice maps to `--delegate <claude|codex|agy|ollama:<model>>`. An `ollama:<model>` choice on a TIER-3 issue falls back to `HOST_AGENT` at § 5a.ollama (logged). Omit the whole question if `HOST_AGENT` is the only available implementer.
+3. **Reviewer vendor** (Step 5c review) — the **`HOST_AGENT` is the default** (labelled `<host> (default)`, description: "5c review runs in the CLI you launched `/ship` from"), listed first, plus any other installed `codex`/`agy`/`claude` and any detected `ollama:<model>` as **read-only cross-vendor reviewer** choices. Maps to `--review-delegate`. A non-host vendor runs the 5c review through that vendor's CLI read-only (jury-style invocation), returns findings only, and the orchestrator still posts the comment (orchestrator-only-writes holds). Omit if `HOST_AGENT` is the only available CLI.
+4. **Reviewers** — `auto (default)` (description: "reviewer count auto-resolved by risk tier at Step 5a.2 — TIER-3=3, TIER-2=2, TIER-1 docs=1") / `1` / `2` / `3`. Maps to `REVIEWERS`.
+5. **AI Jury** — `auto (default)` (description: "off unless the PR is TIER-3, then auto-on") / `force on (--jury)` / `force off (--no-jury)`. Maps to `JURY` / the `--jury`/`--no-jury` precedence at Step 5a.2.
+6. **Run mode** — single-select primary mode (default first), plus `preview` as an independent add-on:
+   - `Normal (default)` — description: "runs to merge; respects the night no-merge window (01:30–07:00 UTC+3) — non-blocker merges defer to the morning queue inside it". No flag (the bare-`/ship` behaviour).
+   - `Force-merge (--blocker)` — description: "runs to merge and ignores the window — merges even inside the night no-merge window".
+   - `Dry-run (--dry-run)` — description: "no GitHub writes, no merge — logs the would-be actions only".
+   - *(independent add-on, separate toggle)* `Preview channel (--preview)` — adds the `deploy:preview` label after the PR opens; orthogonal to the merge mode above.
+
+**After collecting:** echo the resolved configuration back to the user as a single confirmation line in the same shape as the Step 0 worked examples, e.g.:
+
+```
+Wizard resolved: ISSUES=[2027] IMPLEMENTER=claude REVIEW_DELEGATE=claude REVIEWERS=auto JURY=auto DRY_RUN=false PREVIEW=false BLOCKER=false
+```
+
+Then proceed to Step 1 exactly as if those flags had been typed. The wizard adds no state that Steps 1–6 do not already understand; it is impossible for the wizard to produce a configuration the normal grammar could not. Do NOT re-prompt mid-pipeline — the wizard is a one-shot pre-Step-1 collector.
+
+**`--dry-run` interaction:** if the operator selects dry-run in the wizard (or passed `--dry-run` alongside `--wizard`), the wizard still runs interactively to collect the config, then the pipeline executes in dry-run as usual. The wizard itself writes nothing to GitHub.
 
 ## Step 1 — Time-window detect
 
@@ -251,23 +326,49 @@ If Step 5 has nothing to process (every issue was closed/dropped at Step 2 or
 
 ## Step 5 — Per-issue lifecycle (sequential)
 
-For each issue `N` in the active set, run 5a → 5f sequentially. The reviewer fan-out at 5c is the only parallel step.
+For each issue `N` in the active set, run the steps sequentially: 5a → 5b → 5c → 5d → 5d.jury (if `JURY=true`) → 5e → 5e.bis → 5f. The reviewer fan-out at 5c is the only parallel step.
 
 ### 5a. Implementer subagent (delegate to /implement logic)
 
-**Implementer mode — check issue labels before dispatching:**
+**Implementer mode — resolve `IMPLEMENTER`, then dispatch:**
 
-| Label | Implementer | Details |
-|-------|-------------|---------|
-| `delegate:codex` | Codex CLI (`codex exec`) | § 5a.codex below |
-| `delegate:agy` | Antigravity CLI (`agy`) | § 5a.agy below |
-| *(neither)* | Claude subagent | Default path — continue reading this section |
+Precedence (first match wins): **`--delegate` flag > `delegate:*` label > `HOST_AGENT` default**. The wizard's Implementer choice resolves to the same `--delegate` flag, so it sits at the top tier. If neither flag nor label is present, the implementer is the host agent (the CLI driving this run — see § Host-agent default).
 
-**Default path (no delegation label):** Pick `android-developer` or `web-developer` from issue labels/path (see `.claude/commands/implement.md` Step 3).
+| Resolved `IMPLEMENTER` | Source | Implementer | Details |
+|------------------------|--------|-------------|---------|
+| `codex` | `--delegate codex`, OR `delegate:codex` label, OR `HOST_AGENT=codex` | Codex CLI (`codex exec`) | § 5a.codex below |
+| `agy` | `--delegate agy`, OR `delegate:agy` label, OR `HOST_AGENT=agy` | Antigravity CLI (`agy`) | § 5a.agy below |
+| `ollama:<model>` | `--delegate ollama:<model>`, OR `delegate:ollama` label (+ `delegate-model:<name>`) | Local Ollama model via orchestrator-driven harness | § 5a.ollama below |
+| `claude` | `--delegate claude`, OR `HOST_AGENT=claude` with no flag/label | Claude subagent | Default path — continue reading this section |
+
+`--delegate claude` forces the Claude subagent even when the issue carries a `delegate:codex`/`delegate:agy` label (the explicit per-run override wins). When no flag and no label are present, `IMPLEMENTER=HOST_AGENT` — a Codex-driven run writes with Codex, an Antigravity-driven run with agy, a Claude-Code-driven run with the Claude subagent. `ollama:<model>` routes to § 5a.ollama, but is **refused on TIER-3** (high-risk) issues — there it falls back to `HOST_AGENT` with a logged note (§ 5a.ollama).
+
+**Attribution contract (MANDATORY on every path — issue #2036).** Whichever path runs (default Claude subagent / 5a.codex / 5a.agy / 5a.ollama, delegate or not), the orchestrator MUST record the implementer attribution. This is structurally mandatory — a plain `/ship` with no delegate is NOT exempt. Resolve and record:
+
+- `AGENT_LABEL = agent:<vendor>` where `<vendor>` is the RESOLVED implementer, never a hardcoded value: `claude-code` (default Claude subagent) · `codex` · `agy` · `ollama` (§ 5a.ollama). Add it as a persistent label at label-flip time (alongside `status:in-progress`); it is never removed.
+- `IMPLEMENTER_SYSTEM` = the full system string incl. model when known: `claude-code` · `codex` · `agy` · `ollama:<model>` (e.g. `ollama:qwen2.5`). For codex/agy, append the model when a `delegate-model:<name>` label is set or the CLI reports one (`codex:<model>` / `agy:<model>`); else just the vendor.
+- `MODEL_BASE` (optional) — when a specific model is known, also add a **versionless** `model:<base>` label. **Stripping algorithm:** (1) drop any ollama `:tag` suffix (`qwen2.5:7b` → `qwen2.5`); (2) if the family is `<word><digits…>` with **no hyphen**, drop the entire trailing numeric run → `qwen2.5`→`qwen`, `gemma2`→`gemma`, `llama3.1`→`llama`; (3) if the family is **hyphenated** `<word>-<major>[.<minor>]`, keep `<word>-<major>` and drop the `.<minor>` → `gpt-5.5`→`gpt-5`, `gpt-4o`→`gpt-4o` (no `.minor` to drop). Lowercase the result. Labels stay coarse (no version explosion); the full version lives in `IMPLEMENTER_SYSTEM` and the closure comment. Omit `model:` when no specific model is known (e.g. plain Claude host with no override).
+
+**Attribution reflects the EFFECTIVE implementer.** Whenever any path falls back (ollama → host on unavailability/retry-exhaustion; codex/agy → Claude on unavailability/quota), the orchestrator MUST set `AGENT_LABEL` / `IMPLEMENTER_SYSTEM` / `MODEL_BASE` to the implementer that **actually ran**, BEFORE the labels are applied at label-flip time — never the one that was requested-but-fell-back. (Same effective-not-requested rule the reviewer attribution uses at Step 5c.)
+
+The agent-start comment (below) and these labels are skipped only under `--dry-run` (logged instead). Outside `--dry-run`, a run that reaches Step 5b without an `agent:<vendor>` label is a defect.
+
+**Default path (`IMPLEMENTER=claude`):** Pick `android-developer` or `web-developer` from issue labels/path (see `.claude/commands/implement.md` Step 3).
+
+Set `AGENT_LABEL=agent:claude-code` and `IMPLEMENTER_SYSTEM=claude-code` (no `model:` label unless a specific Claude model is known and worth recording).
 
 Generate codename `<ROLE>-<N>-<UTC_TIMESTAMP>` (`AGENTS.md` § "Agent Run Codenames").
 
-Post the agent-start comment to the issue (skip if `--dry-run`; log instead). Add label `status:in-progress` (remove `status:backlog`) — also skipped under `--dry-run`.
+Post the agent-start comment to the issue (skip if `--dry-run`; log instead). Add labels `status:in-progress` and `agent:claude-code` (remove `status:backlog`) — also skipped under `--dry-run`. The `agent:claude-code` label persists through the full lifecycle and is never removed.
+
+The agent-start comment MUST include an `Implementer system:` line:
+```
+Agent run started
+Codename: `<codename>`
+Agent: `<android-developer|web-developer>`
+Implementer system: `claude-code`
+Branch: `<branch>`
+```
 
 Spawn the chosen subagent with the same prompt block as `/implement` Step 5, plus:
 
@@ -288,6 +389,7 @@ Spawn the chosen subagent with the same prompt block as `/implement` Step 5, plu
   }
   ```
   Orchestrator parses this JSON via `jq` for Step 5a.1 / 5f.0 consumption. Free-text in the response above the JSON block is fine (human-readable summary); the JSON envelope is the machine-readable contract. `worktree_path` MUST be an absolute path (the same one passed to `git worktree add`)."
+- "Use `Co-Authored-By: Claude Code <noreply+claude-code@anthropic.com>` as a trailer on every commit."
 - If `--dry-run`: "Do NOT push, do NOT open a PR. Return the diff and intended PR title/body. Orchestrator will skip subsequent steps."
 - If `--preview`: after the PR is opened (and not under `--dry-run`), add the `deploy:preview` label via `gh pr edit <PR> --add-label deploy:preview`. This triggers the Firebase Hosting preview channel workflow. Under `--dry-run`, log `DRY-RUN: gh pr edit <PR> --add-label deploy:preview` to stdout instead.
 
@@ -295,11 +397,13 @@ If `--dry-run` is set, after the implementer returns the dry-run diff, log it an
 
 ### 5a.codex — Codex CLI delegation path
 
-When issue labels include `delegate:codex`:
+When `IMPLEMENTER=codex` (resolved per the Step 5a precedence table — i.e. `--delegate codex`, OR a `delegate:codex` label, OR `HOST_AGENT=codex` with no overriding flag/label):
+
+Set `AGENT_LABEL=agent:codex` and `IMPLEMENTER_SYSTEM=codex` (append the model when known — `codex:<model>` from a `delegate-model:<name>` label or the CLI's reported model — and add the versionless `model:<base>` label per the Attribution contract).
 
 1. Generate codename `CODEX-<N>-<UTC_TIMESTAMP>`.
-2. Post the agent-start comment and flip labels (`status:backlog` → `status:in-progress`), same as the default path (skip under `--dry-run`).
-3. Build the task prompt string from the issue title + body + the standard implementation brief (worktree isolation, branch-from-develop, `Closes #<N>`, scope-check, JSON return contract). Include the full JSON schema at the end of the prompt so Codex emits it in its final response.
+2. Post the agent-start comment (include `Implementer system: \`$IMPLEMENTER_SYSTEM\`` — the full value, e.g. `codex:gpt-5.5` when a model is known, else `codex`) and flip labels (`status:backlog` → `status:in-progress`, add `agent:codex` + the `model:<base>` label when known) — same cadence as the default path (skip under `--dry-run`). The `agent:codex` label persists and is never removed.
+3. Build the task prompt string from the issue title + body + the standard implementation brief (worktree isolation, branch-from-develop, `Closes #<N>`, scope-check, JSON return contract). Include the full JSON schema at the end of the prompt so Codex emits it in its final response. Include the instruction: `"Use Co-Authored-By: Codex <noreply+codex@openai.com> as a trailer on every commit."`
 4. Invoke Codex from the project root. Write the prompt to a temp file and pipe via stdin — passing the prompt as a positional argument causes Codex to hang waiting for additional stdin. Use `-s danger-full-access` so `gh` CLI can reach `api.github.com`; the default `sandbox = "workspace-write"` in `~/.codex/config.toml` blocks outbound HTTP to GitHub's API. If the issue has a `delegate-model:<name>` label, extract `<name>` and pass `-c model=<name>` to override the model for this run:
    ```bash
    # Use $CLAUDE_JOB_DIR in background sessions to avoid /tmp collisions across parallel jobs
@@ -323,11 +427,13 @@ When issue labels include `delegate:codex`:
 
 ### 5a.agy — Antigravity CLI delegation path
 
-When issue labels include `delegate:agy`:
+When `IMPLEMENTER=agy` (resolved per the Step 5a precedence table — i.e. `--delegate agy`, OR a `delegate:agy` label, OR `HOST_AGENT=agy` with no overriding flag/label):
+
+Set `AGENT_LABEL=agent:agy` and `IMPLEMENTER_SYSTEM=agy` (append the model when known — `agy:<model>` from a `delegate-model:<name>` label or the configured model in `~/.gemini/antigravity-cli/settings.json` — and add the versionless `model:<base>` label per the Attribution contract).
 
 1. Generate codename `AGY-<N>-<UTC_TIMESTAMP>`.
-2. Post the agent-start comment and flip labels, same as the default path (skip under `--dry-run`).
-3. Build the task prompt string (same as the Codex path — full issue brief + JSON return schema at end).
+2. Post the agent-start comment (include `Implementer system: \`$IMPLEMENTER_SYSTEM\`` — the full value, e.g. `agy:<model>` when known, else `agy`) and flip labels (`status:backlog` → `status:in-progress`, add `agent:agy` + the `model:<base>` label when known) — same cadence as the default path (skip under `--dry-run`). The `agent:agy` label persists and is never removed.
+3. Build the task prompt string (same as the Codex path — full issue brief + JSON return schema at end). Include the instruction: `"Use Co-Authored-By: Antigravity <noreply+antigravity@google.com> as a trailer on every commit."`
 4. Invoke agy by writing the prompt to a temp file and piping via stdin. The `agy` shell alias is only available in interactive shells — Claude Code subprocesses don't inherit it. Use the full binary path directly. Do NOT pass `--sandbox` (blocks network/terminal tools). Set `--print-timeout 90m` — the default 5m is too short for implementation tasks:
    ```bash
    PROMPT_FILE="$CLAUDE_JOB_DIR/agy-prompt-<N>.txt"
@@ -345,6 +451,34 @@ When issue labels include `delegate:agy`:
 7. **Availability fallback:** if `agy` is not installed, fall back to the default Claude subagent path. Log `ship: agy unavailable, fell back to android-developer/web-developer`.
 8. **`--dry-run`:** same as Codex path — include dry-run semantics in the task prompt and skip 5b–5f after agy returns.
 9. **`--preview`:** same as Codex path — after parsing the JSON contract from agy's stdout (step 5), the orchestrator adds `deploy:preview` to the PR. Under `--dry-run`, log to stdout instead.
+
+### 5a.ollama — Local Ollama model (orchestrator-driven harness)
+
+When `IMPLEMENTER=ollama:<model>` (resolved per the Step 5a precedence table — i.e. `--delegate ollama:<model>`, OR a `delegate:ollama` label with a `delegate-model:<name>` label). A bare Ollama model is a text endpoint — it cannot run tools, edit files, or open a PR — so **unlike 5a.codex/5a.agy, the orchestrator does every git/`gh`/PR step itself and delegates only code generation to the local model.** This path is for **easy / low-risk issues** (cost-free local inference).
+
+**Set the ollama attribution ONLY once the local model is committed to run** — i.e. after the TIER-3 risk gate and the availability check below both pass, and the model actually produces an applied diff. At that point set `AGENT_LABEL=agent:ollama` (the local model wrote the code — the label reflects the real implementer, NOT the orchestrator host) and `IMPLEMENTER_SYSTEM=ollama:<model>` (full version, e.g. `ollama:qwen2.5`), plus the versionless `model:<base>` label (e.g. `qwen2.5`→`model:qwen`, `gemma2`→`model:gemma`) per the Attribution contract. If any fallback below fires, do NOT set (or unset) the ollama attribution — the host-agent path sets its own per the effective-implementer rule.
+
+**Risk gate (refuse on TIER-3).** 5a.ollama runs at Step 5a — *before* 5a.1/5a.2, so the definitive 5a.2 tier (computed from the diff) does not exist yet. Instead the orchestrator performs an **early pre-dispatch tier classification** from the issue's stated target paths + labels, using the **same TIER-3 pattern list as Step 5a.2** (Realm models, billing, lifecycle, `.github/workflows/` — the elevated-scrutiny set). If that pre-classification is **TIER-3**, do NOT run the local model: log `5a.ollama: TIER-3 is too high-risk for a local-model implementer — falling back to <HOST_AGENT>` and run the host-agent path instead (the default Claude subagent on Claude Code, or 5a.codex/5a.agy if `HOST_AGENT` is codex/agy). Otherwise proceed. When the issue's target paths are ambiguous, treat the pre-classification as **TIER-2** (proceed) and let the downstream 5c review gate the result. The definitive 5a.2 classification still runs later from the actual diff, exactly as for every path.
+
+**Availability fallback.** If `ollama` is not installed (`command -v ollama` fails) or the model is not present (`ollama list` lacks `<model>`), log `5a.ollama: ollama/<model> unavailable — fell back to <HOST_AGENT>` and run the host-agent path. The host-agent path sets `AGENT_LABEL`/`IMPLEMENTER_SYSTEM`/`MODEL_BASE` to ITS own (effective-implementer rule); ollama attribution is never applied here. Never abort.
+
+**Harness flow (orchestrator-driven):**
+1. Create the worktree + branch off `origin/develop` (same isolation/path convention as the default path: `worktrees/issue-<N>`).
+2. Build the generation prompt: issue title + body + acceptance criteria, plus a **scoped, size-limited** slice of the relevant repo files (local models have small context windows — include only the files named in the issue scope, truncate aggressively). Ask the model to return **a unified diff** (or full file contents for new files).
+3. Invoke the model via the Ollama API — `ollama run <model>` with the prompt on stdin, or the HTTP `POST /api/generate` endpoint (reuse the endpoint/model conventions from `jury.local.toml`). Wrap in the portable `timeout` (Step 5b pattern) so a hung model cannot stall the run.
+4. **Orchestrator applies** the returned edits in the worktree (`git apply` the diff, or write the files), then runs the gates (build/lint/test per the platform).
+5. On success, the **orchestrator** commits with trailer `Co-Authored-By: <model> via Ollama <noreply+ollama@example.com>`, pushes (git push first, `mcp__github__push_files` on 403), and opens the **draft PR** with `Closes #<N>`. Then returns the same JSON contract (`pr_number`, `branch`, `files_changed`, `test_results`, `codename`, `worktree_path`) as the default path, with `codename = OLLAMA-<N>-<UTC_TIMESTAMP>`.
+6. Step 5a.1 branch-scope validation runs exactly as for every other path.
+
+**Retry + fallback budget.** If the model's output is not a valid/applicable diff, or the gates fail, re-prompt the model with the error appended, up to **2 retries**. On exhaustion, discard the partial work and fall back to the host-agent path; log `5a.ollama: local model failed after 2 retries — fell back to <HOST_AGENT>`. The host-agent path then sets the attribution to the effective implementer (it ran, not ollama) — do NOT leave `agent:ollama`/`ollama:<model>` set. The run never aborts on a local-model failure.
+
+**Worktree cleanup before fallback (mandatory).** Unlike 5a.codex/5a.agy (which never create a worktree — the CLI does), 5a.ollama creates the worktree at step 1. So **any** fallback to the host-agent path that happens *after* step 1 (retry-budget exhaustion) MUST first remove the partial worktree — `git worktree remove worktrees/issue-<N> --force` — so the host path can create its own at the same conventional `worktrees/issue-<N>` path without a `git worktree add` collision. The TIER-3 refusal and availability fallback happen *before* step 1, so no worktree exists there and no cleanup is needed.
+
+**`--dry-run`:** prefer to skip worktree creation entirely — generate the diff with a read-only model call against the current checkout (the model only needs to *read* the scoped files), do NOT apply/commit/push/open a PR, log the would-be diff and PR title/body, then skip 5b–5f like the other paths. If the orchestrator did create the step-1 worktree before the dry-run guard, it MUST remove it before returning (`git worktree remove worktrees/issue-<N> --force`) so a later real run does not hit a `worktrees/issue-<N>` collision — same cleanup obligation as the fallback path above.
+
+**`--preview`:** after the orchestrator opens the PR (step 5), add `deploy:preview` (skip under `--dry-run`).
+
+**What does NOT change:** the downstream 5c review (and optional 5d.jury) still gate the merge regardless of who wrote the code — a local-model PR is reviewed and gated exactly like any other. The merge lock, window gate, and tester gate are unchanged.
 
 ### 5a.1 — Branch scope validation gate
 
@@ -376,17 +510,17 @@ One correction pass is intentional and more conservative than the CI retry budge
 - `docs/architecture.md`, `docs/subsystems.md`, `docs/subsystems/` — architecture docs required by the docs gate
 - `shared/schema/firebase/` — Firebase schema docs required by the docs gate
 
-**Docs-only PRs:** if all changed paths match the Step 5b docs-only allowlist (`^\.claude/`, `^\.codex/`, `^docs/`, `^scripts/`, `.*\.md$`, `^AGENTS\.md$`, `^CLAUDE\.md$`), treat the scope check as advisory — log but do not block. These PRs are validated holistically by the 5b docs-only CI path.
+**Docs-only PRs:** if all changed paths match the Step 5b docs-only allowlist (`^\.claude/`, `^\.codex/`, `^docs/`, `^scripts/`, `.*\.md$`, `^AGENTS\.md$`, `^CLAUDE\.md$`, `^jury\.toml$`), treat the scope check as advisory — log but do not block. These PRs are validated holistically by the 5b docs-only CI path.
 
 **Dry-run:** log `$CHANGED` to stdout; do not block.
 
 This gate is the primary defence against branch contamination — the root cause of PR #317 being abandoned. It catches scope creep before review begins, preventing wasted reviewer-round budget.
 
-### 5a.2 — Reviewer count auto-detect
+### 5a.2 — Reviewer count auto-detect + jury enablement
 
-If `--reviewers` was explicitly passed, skip this step and use that value.
+**Reviewer count (early exit on `--reviewers`).** If `--reviewers` was explicitly passed, skip the tier classification below and use that value for `REVIEWERS`. **The jury-enablement decision further down still runs in every case** — it is NOT inside this early-exit guard (see "Jury enablement"). When `--reviewers` was passed, the tier is never computed, so the TIER-3 jury auto-trigger does not apply; jury enablement then falls back to `--jury` / `--no-jury` only.
 
-Otherwise, classify the PR diff by risk tier using the file list from Step 5a.1:
+Otherwise (no explicit `--reviewers`), classify the PR diff by risk tier using the file list from Step 5a.1:
 
 **TIER-3 (always 3 reviewers — high-risk files require elevated-scrutiny gates):** any changed path matches:
   - `android/smartinventory/src/main/.*/object/db/` (Realm models)
@@ -397,12 +531,32 @@ Otherwise, classify the PR diff by risk tier using the file list from Step 5a.1:
   - `.github/workflows/` (CI workflow changes)
 
 **TIER-1 (1 reviewer):** ALL changed paths match the docs-only allowlist:
-  `^\.claude/`, `^\.codex/`, `^docs/`, `^scripts/`, `.*\.md$`, `^AGENTS\.md$`, `^CLAUDE\.md$`
+  `^\.claude/`, `^\.codex/`, `^docs/`, `^scripts/`, `.*\.md$`, `^AGENTS\.md$`, `^CLAUDE\.md$`, `^jury\.toml$`
 
 **TIER-2 (2 reviewers):** everything else (Android non-critical, web, shared schema, etc.)
 
 Set `REVIEWERS` to the detected tier value. Log the detection result:
   `Auto-detect: TIER-<N> → REVIEWERS=<N> (reason: <matched pattern or "docs-only">)`
+
+**Jury enablement (gating by default — issue #2033 Phase B; `--jury-advisory` for the issue #1746 advisory mode).** This decision **always runs**, regardless of whether `--reviewers` was passed — it lives OUTSIDE the `--reviewers` early-exit guard so `--jury` is never ignored. Decide whether the advisory cross-vendor AI Jury stage (Step 5d.jury) runs for this issue, in this precedence (`--no-jury` > `--jury` > TIER-3 auto > off):
+
+- If `--no-jury` was passed ⇒ `JURY=false` (force-disable always wins).
+- Else if `--jury` was passed ⇒ `JURY=true`, `JURY_REASON="--jury"`.
+- Else if a tier was computed above (i.e. `--reviewers` was NOT passed) AND the detected tier is TIER-3 ⇒ `JURY=true`, `JURY_REASON="TIER-3 auto"`.
+- Else ⇒ `JURY=false`.
+
+**Jury mode (Phase B, issue #2033).** When `JURY=true`, also set `JURY_MODE`:
+- `JURY_MODE=advisory` if `--jury-advisory` was passed (Phase A behaviour — posts a report, never gates).
+- Else `JURY_MODE=gating` (default — verified `critical`/`major`/`minor` consensus findings gate the merge via Step 5e).
+
+`JURY_REASON` is consumed by Step 5d.jury to pick the run depth. In **advisory** mode: `TIER-3 auto` ⇒ native risk-scaled `--auto`, any other reason ⇒ the fast `--rounds 1 --no-verify` variant. In **gating** mode the depth is always the full verify run (`rounds=2`, `verify=true` from `jury.toml`) regardless of reason — the gate signal must be verified.
+
+Note: the TIER-3 auto-trigger depends on the tier, which is only computed when `--reviewers` was NOT passed. So when `--reviewers N` IS passed, there is no tier-based auto-enable — jury enablement falls back to `--jury` / `--no-jury` only.
+
+Log the decision:
+  `Jury: enabled (reason: --jury | TIER-3 auto; mode: gating | advisory) / disabled`
+
+The jury never changes `REVIEWERS`. In **advisory** mode it never gates the merge and never consumes a review-fix round. In **gating** mode (default) its *verified consensus* `critical`/`major`/`minor` findings DO gate the merge and a jury-driven fix consumes one review-fix round, exactly like a 5c finding (see Step 5d.jury / 5e).
 
 ### 5b. CI gate
 
@@ -410,7 +564,7 @@ Set `REVIEWERS` to the detected tier value. Log the detection result:
 
 **Evaluate the rules below in order; the first matching rule wins.** A mixed state (some runs `queued`/`in_progress` plus at least one `failure`) fires the failure rule, NOT the pending rule — never poll while a failure has already been observed.
 
-- **Empty `check_runs` array** ⇒ behaves like branch 1 (no checks scheduled). Apply the docs-only allowlist check; otherwise mark `status:blocked` per branch 1.
+- **Empty `check_runs` array** ⇒ behaves like branch 1 (no checks scheduled). Apply the same docs-only allowlist check as branch 1 (the set including the anchored `^jury\.toml$` entry); otherwise mark `status:blocked` per branch 1.
 - **Any run has `conclusion` in `{failure, cancelled, timed_out, action_required}`** ⇒ behaves like branch 3 (failed), enter the fix-and-reply loop. **Residual-gap caveat:** raw failure logs (`gh run view --log-failed`) are not exposed via MCP — the implementer subagent gets only the check name + `details_url` and must reproduce the failure locally. If reproduction is not feasible, mark `status:blocked` with the `details_url`(s) quoted (per § CI Health degrade).
 - **Any run still has `status` in `{queued, in_progress}`** ⇒ behaves like the pending sub-branch of branch 3. Poll with a 30 s delay between calls; honour the same 30-minute hard timeout (no MCP equivalent of `--watch`).
 - **All runs have `conclusion` in `{success, skipped, neutral, stale}`** ⇒ behaves like branch 2 (all checks succeeded), proceed to 5c. `stale` is included as non-blocking per GitHub's own UI semantics (Dependabot / merge-queue mark superseded check runs `stale`).
@@ -428,9 +582,9 @@ Three branches:
 1. **Empty array** (no checks scheduled — typical for path-filtered PRs that touch only `.claude/`, `.codex/`, `*.md`, `AGENTS.md`, `CLAUDE.md`, `scripts/`, `.github/` non-workflow files):
    - Allow if every changed path matches the docs-only allowlist:
      ```
-     ^\.claude/   ^\.codex/   ^docs/   ^scripts/   .*\.md$   ^AGENTS\.md$   ^CLAUDE\.md$   ^\.github/(?!workflows/)
+     ^\.claude/   ^\.codex/   ^docs/   ^scripts/   .*\.md$   ^AGENTS\.md$   ^CLAUDE\.md$   ^jury\.toml$   ^\.github/(?!workflows/)
      ```
-     The `^\.github/(?!workflows/)` clause covers `CODEOWNERS`, `dependabot.yml`, `ISSUE_TEMPLATE/`, `PULL_REQUEST_TEMPLATE.md` while keeping the strict gate on workflow files. `^scripts/` covers repo-portable dev tooling shell helpers that have their own minimal CI (`scripts-ci.yml`) — the gate still fires if `scripts-ci.yml` itself fails or stays pending.
+     The `^jury\.toml$` entry is anchored so it exempts ONLY the root jury config from CI — it does NOT use a broad `.*\.toml$`, which would wrongly exempt build config such as `gradle/libs.versions.toml`. The `^\.github/(?!workflows/)` clause covers `CODEOWNERS`, `dependabot.yml`, `ISSUE_TEMPLATE/`, `PULL_REQUEST_TEMPLATE.md` while keeping the strict gate on workflow files. `^scripts/` covers repo-portable dev tooling shell helpers that have their own minimal CI (`scripts-ci.yml`) — the gate still fires if `scripts-ci.yml` itself fails or stays pending.
    - Otherwise mark `status:blocked`, comment on the issue ("CI did not run on a non-docs PR — investigate workflow path filters"), skip this issue.
 
 2. **All checks succeeded:** proceed to 5c.
@@ -452,11 +606,13 @@ Three branches:
 
 **Per-issue CI retry budget:** 3 fix-and-push rounds. Exceeding it sets `status:blocked` and skips this issue.
 
-**Per-issue review-round budget:** 3 review-fix rounds in Step 5e (full A/B/C BLOCKER loop OR narrowed Should-fix re-review). Tester-triggered loop-back (Step 5e.bis) and merge-conflict resolution (Step 5f.0) DO NOT consume budget by default — they are defensive rather than remediating. However, if a tester or merge-conflict reviewer surfaces a BLOCKER that requires an implementer fix, that fix consumes a budget round. Exceeding the budget sets `status:blocked` with the latest blocker list quoted in the comment and skips this issue.
+**Per-issue review-round budget:** 3 review-fix rounds in Step 5e (full A/B/C BLOCKER loop OR narrowed Should-fix re-review). Tester-triggered loop-back (Step 5e.bis) and merge-conflict resolution (Step 5f.0) DO NOT consume budget by default — they are defensive rather than remediating. However, if a tester or merge-conflict reviewer surfaces a BLOCKER that requires an implementer fix, that fix consumes a budget round. Exceeding the budget sets `status:blocked` with the latest blocker/SUGGESTION list quoted in the comment (if the rounds were consumed by SUGGESTION fix cycles with no outstanding BLOCKERs, the pending SUGGESTIONs are quoted instead) and skips this issue.
 
 **Session-wide CI cooldown:** 3 consecutive issues hitting either per-issue budget without recovery ⇒ abort the session, write the partial report. The session-wide counter resets after any successful merge.
 
 ### 5c. N reviewer agents (return-only, parallel within issue)
+
+**Reviewer vendor (`--review-delegate`, default `HOST_AGENT`).** The reviewer vendor defaults to the host agent (the CLI driving this run; see § Host-agent default) — so a Claude-Code run reviews with Claude, a Codex run with Codex, unless overridden. When the resolved vendor is `claude`, run the canonical path below — `REVIEWERS` `code-reviewer` Claude subagents. When it is `codex`, `agy`, or `ollama:<model>`, run the **same focus map and reviewer count** but route each reviewer through that vendor's CLI in **read-only** mode (the jury-style external invocation: codex `-s read-only`, agy `--sandbox`, or the local ollama endpoint), passing the canonical reviewer rubric as the prompt. The vendor reviewer **returns findings only** — it never writes to the PR; the orchestrator posts the per-reviewer comment at Step 5d exactly as for the Claude path (orchestrator-only-writes holds for every vendor). If the chosen vendor CLI is missing or errors, log `5c: review-delegate <vendor> unavailable — falling back to claude code-reviewer` and run the canonical Claude path. This reviewer-vendor routing is distinct from Step 5d.jury (which convenes ALL vendors as an advisory panel); `--review-delegate` swaps the vendor of the *gating* 5c reviewers.
 
 Spawn `REVIEWERS` `code-reviewer` subagents in **a single Agent tool message** so they run concurrently in Claude Code. Codex executing this command should also issue a single batched call where possible; if Codex serialises, that is acceptable as long as no reviewer reads another reviewer's output (each must get a fresh codename and the `do-not-read` instruction below).
 
@@ -492,12 +648,20 @@ per-reviewer comments instead.
 
 Generate a fresh codename per reviewer (`REVIEW-<N>-<UTC_TIMESTAMP>-<focus>`).
 
+**Capture reviewer attribution (issue #2036).** Record `REVIEWER_VENDOR` (the resolved `--review-delegate` value, default `HOST_AGENT`: `claude` / `codex` / `agy` / `ollama`) and `REVIEWER_MODEL` (the model when known — the `ollama:<model>` model string, or the vendor CLI's reported/`delegate-model` model; else `unknown`) for each reviewer. These feed the Step 5d comment header and the Step 5f.1 closure comment. If a `--review-delegate` vendor fell back to claude (CLI missing), record the EFFECTIVE vendor that actually ran (`claude`), not the requested one.
+
+Maintain three **parallel arrays in lock-step** — append all three atomically per reviewer so the Step 5f.1 closure loop can zip them by index:
+
+```bash
+REVIEWER_CODENAMES+=("$CODENAME"); REVIEWER_VENDORS+=("$REVIEWER_VENDOR"); REVIEWER_MODELS+=("${REVIEWER_MODEL:-unknown}")
+```
+
 ### 5d. Post per-reviewer comments (orchestrator does this)
 
 After all reviewers return, post **one PR comment per reviewer** so the timeline shows N independent reviews:
 
 ```bash
-gh pr comment <PR> --body "## Review Round <X> — Reviewer <CODENAME> (focus: <A|B|C>)
+gh pr comment <PR> --body "## Review Round <X> — Reviewer <CODENAME> (vendor: <REVIEWER_VENDOR>[, model: <REVIEWER_MODEL>], focus: <A|B|C>)
 
 **Verdict:** <verdict>
 
@@ -510,6 +674,147 @@ Reviewers never write to the PR; only the orchestrator does. (`AGENTS.md` step 9
 
 If `--dry-run`: skip the `gh pr comment` calls; log the would-be bodies to stdout.
 
+### 5d.jury — Advisory cross-vendor jury (opt-in / TIER-3 auto)
+
+Runs **only when `JURY=true`** (set at Step 5a.2), **after Step 5d posts the reviewer comments and before the Step 5e loop-exit decision**. It produces a cross-vendor review report, the orchestrator posts it as one PR comment, and the chair verdict is logged. Behaviour depends on `JURY_MODE` (Step 5a.2):
+- **Gating** (default, issue #2033 Phase B): verified consensus `critical`/`major`/`minor` findings feed Step 5e and gate the merge (a jury-driven fix consumes one review-fix round), exactly like 5c findings.
+- **Advisory** (`--jury-advisory`, issue #1746 Phase A): never gates, never consumes a round.
+Either way it is a *sibling* of the Step 5c reviewers, not a replacement; the canonical 5c fan-out always participates in the Step 5e decision. **Fail-soft is absolute:** any jury run that does not complete cleanly contributes nothing and cannot gate.
+
+**Preflight (never block):**
+
+- `command -v jury` — if absent, log `jury: CLI not installed, skipping advisory stage` and continue. The jury never blocks the pipeline. This is the ONLY *required* preflight check; vendor participation cannot be known pre-hoc (the orchestrator only learns which agents actually ran after the jury finishes), so the sub-2-vendor case is detected POST-HOC below rather than as a preflight gate.
+- *(optional, advisory)* `jury --config-validate` (ai-jury ≥ 1.1.0) confirms the committed `jury.toml` parses under the installed CLI version; a non-zero exit is logged (`jury: config validation failed — skipping advisory stage`) and the stage is skipped like any other failure. This is best-effort diagnostics only and MUST NOT block `/ship`.
+
+**Fail-soft guarantee (operator requirement):** the advisory jury is strictly best-effort. ANY failure of the stage — CLI not installed, `jury.toml` missing, a non-zero exit, a timeout, or ai-jury failing because too few agents are available — is logged and skipped; `/ship` continues through Step 5e exactly as if the jury stage did not exist. The jury can never block, delay, or fail the issue or the merge. The pre-jury (canonical 5c reviewer) flow is fully self-sufficient and is what gates the merge.
+
+**Invoke (read-only — orchestrator-only-writes):** the jury runs read-only against the open PR using the committed root `jury.toml` panel, producing a markdown report to a temp file. The panel degrades gracefully: the `jury` CLI skips missing agents with a warning and the run continues (the orchestrator does NOT pass `--strict`). Do NOT pass `--post-summary` — the `/ship` orchestrator posts the comment itself via the same `gh pr comment` path as Step 5d.
+
+```bash
+JURY_REPORT="${CLAUDE_JOB_DIR:-$TMPDIR}/tmp/jury-report-<PR>.md"
+mkdir -p "$(dirname "$JURY_REPORT")"
+# Resolve a portable timeout wrapper the same way Step 5b does (macOS does not
+# ship GNU `timeout`) so a hung agent cannot stall the merge. A timeout is
+# treated identically to any other failure: log + skip.
+if command -v timeout >/dev/null 2>&1; then
+  TIMEOUT_BIN=timeout
+elif command -v gtimeout >/dev/null 2>&1; then
+  TIMEOUT_BIN=gtimeout
+else
+  TIMEOUT_BIN=""   # no wrapper available — run unwrapped rather than gate the advisory stage
+fi
+# Optional best-effort config validation (ai-jury >= 1.1.0). Self-contained so a
+# validation failure skips the stage here rather than falling through into the
+# main invocation. Advisory only — never blocks /ship. `--config-validate` is a
+# no-op on CLIs older than 1.1.0 that don't recognise it (non-zero exit ⇒ skip,
+# same fail-soft path). Set JURY_SKIP to short-circuit the invocation below.
+JURY_SKIP=false
+if ! jury --config-validate >/dev/null 2>"$JURY_REPORT.err"; then
+  echo "jury: config validation failed — skipping advisory stage, pipeline continues. See $JURY_REPORT.err"
+  JURY_SKIP=true
+fi
+# Mode + depth selection (issue #2033 Phase B), from JURY_MODE / JURY_REASON (Step 5a.2).
+# Build the run args as a bash ARRAY so paths with spaces (TMPDIR / CLAUDE_JOB_DIR)
+# survive the `-o <path>` pairing — an unquoted string would word-split and break it.
+JURY_JSON="${CLAUDE_JOB_DIR:-$TMPDIR}/tmp/jury-findings-<PR>.json"
+if [ "$JURY_MODE" = gating ]; then
+  # GATING (default): full debate + verify (rounds=2, verify=true from jury.toml)
+  # so the gate signal is verified; --ci sets the severity-gated exit code per
+  # [jury.ci] fail_on=["critical","major","minor"] + ignore_unverified=true.
+  # Structured JSON is the source of truth for both the gate and the posted summary.
+  JURY_RUN_ARGS=(--ci --format json -o "$JURY_JSON")
+elif [ "$JURY_REASON" = "TIER-3 auto" ]; then
+  # ADVISORY (--jury-advisory), TIER-3: risk-scaled native depth.
+  JURY_RUN_ARGS=(--auto --format markdown -o "$JURY_REPORT")
+else
+  # ADVISORY (--jury-advisory), non-TIER-3: fast, cheap. Never gates.
+  JURY_RUN_ARGS=(--rounds 1 --no-verify --format markdown -o "$JURY_REPORT")
+fi
+# Native execution budgets + transient-failure retry (ai-jury >= 1.1.0) so a
+# slow/hung vendor cannot stall the merge from inside the CLI. The external
+# TIMEOUT_BIN wrapper below stays as a hard backstop and fires LAST: its 1800s
+# is deliberately greater than --total-timeout (1740s) so ai-jury times out
+# gracefully first and only a truly wedged process hits the wrapper's hard kill.
+JURY_BUDGET_ARGS=(--total-timeout 1740 --phase-timeout 600 --retries 1)
+# Capture the REAL exit code (a negated `if ! ...` would clobber $? with the test
+# result). Skip the invocation if config validation already failed above.
+if [ "$JURY_SKIP" = true ]; then
+  JURY_EXIT=2   # config-validate failed; treat as a hard failure (fail-soft skip)
+else
+  ${TIMEOUT_BIN:+$TIMEOUT_BIN 1800} jury --pr <PR> "${JURY_RUN_ARGS[@]}" "${JURY_BUDGET_ARGS[@]}" 2>"$JURY_REPORT.err"
+  JURY_EXIT=$?
+fi
+# Exit-code interpretation — fail-soft is paramount: a jury that did not run
+# CLEANLY can NEVER gate (an absent/erroring jury must not manufacture a block).
+#   exit 0   => clean: advisory ran, OR gating ran with NO gating findings.
+#   exit 1   => GATING ONLY: the [jury.ci] gate fired (verified critical/major/minor
+#               consensus present) — real findings to escalate into Step 5e. In
+#               ADVISORY mode exit 1 is just a run failure (advisory has no gate).
+#   exit >=2 => bad config / timeout (124) / interrupt (130) => HARD FAILURE in
+#               either mode => log + skip, the jury contributes nothing and does
+#               NOT gate.
+JURY_GATE_FINDINGS=false
+if [ "$JURY_MODE" = gating ] && [ "$JURY_EXIT" -eq 1 ] && [ -f "$JURY_JSON" ]; then
+  JURY_GATE_FINDINGS=true   # provisionally gating; sub-2-vendor downgrade below may clear it
+elif [ "$JURY_EXIT" -ne 0 ]; then
+  echo "jury: run failed (exit $JURY_EXIT) — skipping jury stage, pipeline continues; jury does NOT gate. See $JURY_REPORT.err"
+  JURY_REPORT=""; JURY_JSON=""   # signal: nothing to post, nothing to gate
+fi
+# Sub-2-vendor downgrade — MUST run BEFORE the comment is assembled so the posted
+# verdict matches what is actually enforced. A single-vendor "jury" is weak
+# cross-vendor signal and must not block a merge: count distinct vendors that
+# actually participated (from the JSON in gating mode) and, if <2, downgrade the
+# gate to advisory for this run.
+if [ "$JURY_GATE_FINDINGS" = true ]; then
+  VENDOR_COUNT=$(jq -r '[.reviewers[]?.vendor] | unique | length' "$JURY_JSON" 2>/dev/null || echo 0)
+  if [ "${VENDOR_COUNT:-0}" -lt 2 ]; then
+    echo "jury: <2 vendors participated — gating downgraded to advisory (low-confidence panel)"
+    JURY_GATE_FINDINGS=false
+  fi
+fi
+```
+
+**Depth by mode.** In **gating** mode (default) the run is always the full debate-plus-verify panel (`rounds=2`, `verify=true` from `jury.toml`) with `--ci --format json` — the gate signal must be *verified*, so the cheap variants are not used. In **advisory** mode (`--jury-advisory`) the cheap Phase A variants apply: `--rounds 1 --no-verify` for explicit `--jury` on non-TIER-3 PRs, native risk-scaled `--auto` on TIER-3 (ai-jury ≥ 1.1.0). Advisory never gates regardless of depth.
+
+**Post (orchestrator):** assemble exactly ONE PR comment and post it with `--body-file` (never interpolate untrusted report text into a `--body "$(...)"` argument — shell-injection hazard). The header reflects the mode and, in gating mode, the gate outcome:
+- **Advisory mode:** header `## Advisory AI Jury — JURY-<N>-<UTC_TIMESTAMP>` + an "advisory only — does not gate this merge" line + the markdown `$JURY_REPORT`.
+- **Gating mode:** header `## AI Jury (gating) — JURY-<N>-<UTC_TIMESTAMP>` + a one-line verdict (`Gate: PASS` when `JURY_GATE_FINDINGS=false`, or `Gate: BLOCKED — N verified finding(s)` when true) + a findings table rendered from `$JURY_JSON` (`consensus[]`: severity / file:line / claim / verification_status). Render the table from the JSON; do not re-run the jury.
+
+The verdict line below reflects the FINAL `JURY_GATE_FINDINGS` (after the sub-2-vendor downgrade above), so the posted comment never claims a block the pipeline then ignores:
+
+```bash
+ASSEMBLED="${CLAUDE_JOB_DIR:-$TMPDIR}/tmp/jury-comment-<PR>.md"
+if [ "$JURY_MODE" = gating ] && [ -n "$JURY_JSON" ] && [ -f "$JURY_JSON" ]; then
+  if [ "$JURY_GATE_FINDINGS" = true ]; then
+    VERDICT_LINE="Gate: BLOCKED — $(jq -r '[.consensus[]? | select(.severity=="critical" or .severity=="major" or .severity=="minor")] | length' "$JURY_JSON" 2>/dev/null || echo '?') verified finding(s)"
+  else
+    VERDICT_LINE="Gate: PASS"
+  fi
+  { printf '## AI Jury (gating) — JURY-<N>-<UTC_TIMESTAMP>\n\n%s\n\n' "$VERDICT_LINE"
+    printf '| Severity | Location | Claim | Verified |\n|---|---|---|---|\n'
+    # Render the consensus[] findings table straight from the JSON (no jury re-run):
+    jq -r '.consensus[]? | "| \(.severity) | \(.file // "—"):\(.line // "—") | \(.claim) | \(.verification_status) |"' "$JURY_JSON" 2>/dev/null
+  } > "$ASSEMBLED"
+  gh pr comment <PR> --body-file "$ASSEMBLED"
+elif [ -n "$JURY_REPORT" ] && [ -f "$JURY_REPORT" ]; then
+  { printf '## Advisory AI Jury — JURY-<N>-<UTC_TIMESTAMP>\n\n'
+    printf 'Advisory only — does not gate this merge (--jury-advisory).\n\n'
+    cat "$JURY_REPORT"
+  } > "$ASSEMBLED"
+  gh pr comment <PR> --body-file "$ASSEMBLED"
+else
+  echo "jury: no report to post — skipping comment, pipeline continues."
+fi
+```
+
+Then **log** which agents actually participated and the chair verdict, e.g. `Jury verdict: <verdict> (mode: gating; participants: claude, codex; agy skipped)`.
+
+**Feed Step 5e (gating mode only).** When `JURY_GATE_FINDINGS=true`, hand the verified `consensus[]` findings to Step 5e: `critical`/`major` ⇒ BLOCKER, `minor` ⇒ SUGGESTION (gated like a 5c SUGGESTION), `nit` ⇒ advisory (logged, not gating). Step 5e treats them exactly like 5c findings — a jury-driven fix consumes one review-fix round (cap 3). In **advisory** mode the stage does NOT consume budget and does NOT gate; Step 5e ignores it.
+
+**`--dry-run`:** skip the `gh pr comment --body-file` call; log the would-be comment body and the `jury ...` command. The jury MAY still run read-only to produce findings (it writes nothing to GitHub); under `--dry-run` the gate is **logged but not enforced** (no merge happens under dry-run anyway).
+
+**Re-run efficiency (gating loop).** When the gating jury re-runs after a 5e fix, ai-jury ≥ 1.1.0 keeps it cheap: `--incremental` reviews only the changes since the last jury run, `--cache` reuses prior per-agent results (`jury cache clear` resets). Keep the deterministic `decision = "chair"` + `verify` path (jury.toml) so the gate is reproducible against the committed `seed`.
+
 ### 5e. Decide loop exit
 
 Parse each reviewer's findings tolerantly — accept both the `BLOCKER | …` form (Step 5c template) and standard markdown table rows that prepend a leading `|`. Recommended regex (PCRE/extended):
@@ -520,21 +825,23 @@ Parse each reviewer's findings tolerantly — accept both the `BLOCKER | …` fo
 
 Substring matches in description text do NOT count — anchor at the row start. The `Must fix` alternative covers the `code-reviewer` agent's canonical output vocabulary (see AGENTS.md § Standard Issue Lifecycle step 9 vocabulary-reconciliation note: BLOCKER ≡ Must fix).
 
-Then:
+**Jury gating findings (issue #2033 Phase B).** If Step 5d.jury ran in **gating** mode and set `JURY_GATE_FINDINGS=true`, fold its verified `consensus[]` findings into the aggregation below alongside the 5c reviewer findings, mapping severity to the 5c vocabulary: jury `critical`/`major` ⇒ **BLOCKER**, jury `minor` ⇒ **SUGGESTION**, jury `nit` ⇒ advisory (logged, never gates). A jury-driven fix consumes one review-fix round exactly like a 5c finding (cap 3). When re-running the loop, the gating jury re-runs at Step 5d.jury on the new HEAD (with `--incremental`/`--cache`) just as the 5c reviewers re-run. In **advisory** mode (or when the jury did not run / failed), there are no jury gating findings and this paragraph is a no-op — the jury never gates. Unverified jury findings and `nit`s are never folded in.
+
+Then (aggregating 5c reviewer findings AND any gating-jury findings per the paragraph above):
 
 - **Any reviewer has a blocker finding** ⇒ full loop:
   1. Aggregate all blocker findings across reviewers and hand them to the implementer subagent.
   2. Implementer fixes, runs gates, self-reviews (`AGENTS.md` step 6), pushes.
   3. Restart **5b → 5c (full A/B/C fan-out) → 5d → 5e**. Increment round counter `<X>`.
-  4. If round counter exceeds the per-issue review-round budget (3, see Step 5b), set `status:blocked` with the latest blocker list quoted in the issue comment and skip this issue.
-- **No blockers, but Should-fix / SUGGESTION items WILL be applied** ⇒ **narrowed re-review** (introduced in issue #257):
+  4. If round counter exceeds the per-issue review-round budget (3, see Step 5b), set `status:blocked` with the latest blocker/SUGGESTION list quoted in the issue comment and skip this issue.
+- **Any reviewer has a SUGGESTION (Should-fix) finding** ⇒ it is gated **the same as a BLOCKER** (operator decision 2026-05-31): the orchestrator MUST apply every SUGGESTION before merge. It may NOT unilaterally decline to apply one, relabel it "advisory / non-blocking / flake", or skip it. The ONLY way to leave a SUGGESTION unapplied is an **explicit user decision to defer** it (recorded as a tracked GitHub issue AND surfaced to the user) — exactly as a BLOCKER can only be waived by the user. Apply via the **narrowed re-review** mechanism (introduced in issue #257):
   1. The orchestrator must retain the Round-1 reviewer codename → focus map in session state (already needed for Step 5d comment posting) so the narrowed re-review prompt can name the original reviewer the fix-up answers. Identify the originating reviewer focus(es) for the Should-fix items being applied. Carry the source codename forward (e.g. `REVIEW-247-…-C`) so the audit trail names which review each fix-up answers.
   2. Aggregate the to-be-applied Should-fix findings; hand them to the implementer subagent. Implementer fixes, runs gates, self-reviews (step 6), pushes.
   3. Restart **5b** (CI gate on the new HEAD).
   4. Compute the next round number (`<X> + 1`) and use it in the prompt's `Round <X> re-review` template; commit the increment in sub-step 6 below. Then restart a **narrowed** Step 5c: spawn ONLY the originating reviewer focus(es) — NOT a full A/B/C fan-out. Each narrowed reviewer gets a fresh codename (`REVIEW-<N>-<UTC_TIMESTAMP>-<focus>`) and a prompt that explicitly says: "Round `<X>` re-review. Verify ONLY the Should-fix items applied in commit `<sha>`. Do NOT re-review the parts of the PR you already approved in your prior review (codename `<original codename>`)." This keeps the audit trail honest while not consuming reviewer A/B slots when only C had findings. If multiple originating focuses are being narrowed, spawn them in a single Agent-tool message (parallel fan-out, same as full Step 5c). If only one, a single Agent invocation is sufficient.
   5. Post the narrowed reviews via Step 5d (one comment per narrowed reviewer).
-  6. Increment round counter (the narrowed re-review always consumes one round per the cap). Then decide loop exit per the same logic — if the narrowed reviewer now flags a `BLOCKER`, escalate back to the full loop above. If narrowed reviewer returns no findings or only SUGGESTIONS the implementer chooses NOT to apply, exit and proceed to tester. If new SUGGESTIONS WILL be applied, restart this narrowed branch (subject to the budget cap).
-- **No blockers AND no Should-fix items being applied AND CI green** ⇒ exit loop. Proceed to tester.
+  6. Increment round counter (the narrowed re-review always consumes one round per the cap). Then decide loop exit per the same logic — if the narrowed reviewer now flags a `BLOCKER`, escalate back to the full loop above. If the narrowed reviewer surfaces NEW SUGGESTIONs, they are gated the same way (apply them, or obtain explicit user deferral) before exit. NITs SHOULD be applied where reasonable; an unapplied NIT should be noted in the exit summary but does NOT gate the exit. Restart this narrowed branch for each new applied finding (subject to the budget cap).
+- **No blockers AND every SUGGESTION applied (or explicitly user-deferred) AND CI green** ⇒ exit loop. Proceed to tester. Before exiting, the orchestrator MUST surface any deferred SUGGESTION/NIT items together with the user decision or tracked-issue number that authorised each deferral — a silent skip is a process violation.
 
 The narrowed re-review consumes one round of the per-issue review-round budget (still capped at 3, per Step 5b). The full A/B/C BLOCKER loop and the narrowed Should-fix re-review both count; the merge-conflict re-review in Step 5f.0 and the tester loop-back in Step 5e.bis do NOT count by default (they are defensive). However, a BLOCKER surfaced by either defensive reviewer DOES consume a round when the implementer applies the fix. If a Round-3 narrowed reviewer flags `BLOCKER`, the fix consumes the final budget slot and any further escalation hits the cap and produces `status:blocked`. This is intentional — three independent reviewer-touch rounds is the design ceiling. Rationale: every code commit after Round 1 introduces unverified state; CI green and the tester gate are not substitutes for a focused independent review of the new diff. Full A/B/C re-review would be wasteful when only one focus's findings drove the fix-up.
 
@@ -730,9 +1037,18 @@ Inside the lock — **merge serialisation gate (MERGE_GATE_ONLY)**. The literal 
 
 4. Build the closure comment and post it to BOTH the issue AND the PR (AGENTS.md § 11). The `Compound learning:` field is **mandatory** per #655 — populate it with the Step 5g outcome BEFORE building the closure body. If Step 5g has not yet executed when this point is reached, the orchestrator MUST run it (or determine its precondition / runtime-availability outcome) first to know the value:
    ```bash
-   REVIEWED_BY=$(printf '`%s`, ' "${REVIEWER_CODENAMES[@]}")
+   # Zip each reviewer codename with its captured vendor/model (Step 5c), e.g.
+   # `REVIEW-42-…-A` (vendor: codex, model: gpt-5.5). REVIEWER_VENDORS /
+   # REVIEWER_MODELS are the parallel arrays captured at Step 5c; use
+   # `model: unknown` when a model is not known (keep the field present).
+   REVIEWED_BY=""
+   for i in "${!REVIEWER_CODENAMES[@]}"; do
+     REVIEWED_BY+="\`${REVIEWER_CODENAMES[$i]}\` (vendor: ${REVIEWER_VENDORS[$i]}, model: ${REVIEWER_MODELS[$i]:-unknown}), "
+   done
    REVIEWED_BY="${REVIEWED_BY%, }"  # strip trailing comma+space
-   CLOSURE_BODY="Implemented by \`<implementer-codename>\`, reviewed by ${REVIEWED_BY}, tested by \`<tester-codename>\`.
+   # $IMPLEMENTER_SYSTEM already carries the implementer model when known
+   # (e.g. `ollama:qwen2.5`, `codex:gpt-5.5`); falls back to the bare vendor.
+   CLOSURE_BODY="Implemented by \`<implementer-codename>\` (system: \`$IMPLEMENTER_SYSTEM\`), reviewed by ${REVIEWED_BY}, tested by \`<tester-codename>\`.
    PR: #<PR>
    Changed: <file list>
    Docs: <updated docs or 'none — reason'>
@@ -1036,6 +1352,11 @@ On exit (success or partial), log a one-line summary per processed/deferred/bloc
   `status:done`; the issue stays at `status:needs-test` until the merge
   actually happens (this lets us run review/tester overnight without faking
   closure).
+- The jury stage (Step 5d.jury) is read-only and runs regardless of the merge window like the 5c reviewers. In **advisory** mode (`--jury-advisory`, Phase A) it never gates and never consumes a review-fix round. In **gating** mode (default, issue #2033 Phase B) only **verified consensus** findings at `critical`/`major`/`minor` gate the merge (via Step 5e), and a jury-driven fix consumes one review-fix round; unverified findings and `nit`s never gate, a sub-2-vendor panel is downgraded to advisory, and any jury run that did not complete cleanly (CLI absent, config-invalid, timeout, crash) NEVER gates — fail-soft means an absent/erroring jury cannot manufacture a block.
+- The `--wizard` configuration step (Step 0.wizard) is interactive-only and MUST be skipped (degraded to a logged no-op) in any non-interactive context — watch mode, `/overnight`, `/lfg`, background or headless runs. The wizard never blocks an autonomous pipeline and never produces a configuration the normal Step 0 grammar could not.
+- Tool/model detection in the wizard (and the `--review-delegate` reviewer routing) is best-effort: an absent CLI or Ollama model is never offered (wizard) and always falls back to the Claude path (5c) with a logged note — it never blocks or fails the run.
+- A non-`claude` `--review-delegate` reviewer is still read-only and findings-only; the orchestrator-only-writes contract holds for every reviewer vendor.
+- A local Ollama implementer (`--delegate ollama:<model>`, § 5a.ollama) is **orchestrator-driven** (the host does all git/`gh`/PR steps; the model only generates code) and is **gated to non-TIER-3 issues** — a TIER-3 issue falls back to `HOST_AGENT`. It always falls back to `HOST_AGENT` on unavailability or after its retry budget, never bypasses the 5c review / tester / merge gates or the merge lock, and never aborts the run.
 - Do not edit `AGENTS.md` § lifecycle from this command; it is the source of truth.
 - `--dry-run` propagates to the implementer subagent; reviewers always run for real (read-only) so dry-run still produces meaningful findings.
 
@@ -1051,3 +1372,4 @@ These are deliberate scope boundaries, not bugs to fix in this PR. Each is addre
 - **Implementer subagent does not formally know `--dry-run`.** `/implement.md` has no dry-run section; the orchestrator passes the verbal "Do NOT push, do NOT open a PR" instruction in the prompt. Works in Claude Code; Codex playbook runners reading `/implement.md` alone will not honour it. Follow-up: add a `--dry-run` section to `/implement.md` mirroring `/ship`'s flag semantics.
 - **Orchestrator cannot open follow-up issues.** Per AGENTS.md § Tool Permissions, orchestrator is ✗ for `Create GitHub issues` — when an issue ends `status:blocked`, the orchestrator can only comment, not open a tracking issue. Deliberate: keeps a human in the loop on `/ship` abandons.
 - **git push may fail with HTTP 403 in sandboxed environments.** The self-hosted runner's git credential helper sometimes returns 403 for push operations while MCP GitHub tools remain authenticated. When `git push` fails with 403, use `mcp__github__push_files` (MCP GitHub server tool) as the fallback push method instead of retrying git. The implementer subagent should attempt `git push` first; on 403 failure, immediately fall back to `mcp__github__push_files` without retrying git more than once.
+- **The jury requires the `jury` CLI and the committed panel.** Step 5d.jury needs the `jury` CLI installed in the runtime (`pipx install 'ai-jury>=1.1.0'`) and the committed root `jury.toml` panel present. If the CLI is missing, the stage is skipped (logged, never blocks — and in gating mode an absent jury NEVER gates). Missing panel agents degrade the panel silently; a sub-2-vendor panel is downgraded to advisory for that run. Gating (Phase B, issue #2033) blocks the merge only on *verified consensus* `critical`/`major`/`minor` findings; `--jury-advisory` restores the non-gating Phase A behaviour (issue #1746).

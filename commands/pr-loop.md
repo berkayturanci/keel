@@ -122,8 +122,8 @@ If `GH_MODE=mcp`, CI polling is unavailable (see the **CI-related degrade** abov
 
 ## Step 9 — Collect findings and close loop
 - **BLOCKER found** → return to Step 4, fix, re-commit; then run Steps 5 → 6 → 7 → 8 → 9 again
-- **Only Must-fix / Should-fix resolved, CI green** → exit loop
-- **All reviewers LGTM (no blockers) AND CI green** → exit loop
+- **SUGGESTION (Should-fix) found** → gated the same as a BLOCKER (operator decision 2026-05-31): every SUGGESTION MUST be applied (return to Step 4, fix, re-commit, re-run Steps 5 → 6 → 7 → 8 → 9) or be explicitly user-deferred (recorded as a tracked GitHub issue AND surfaced to the user) before exit. The loop may NOT exit on "Should-fix resolved" while any SUGGESTION remains unapplied and not user-deferred.
+- **No blockers AND every SUGGESTION applied (or explicitly user-deferred) AND CI green** → exit loop. NITs SHOULD be applied where reasonable; an unapplied NIT should be noted in the Step 10 summary but does NOT gate the exit.
 
 CI green is required on ALL exit paths. Never exit this loop with CI red.
 
