@@ -6,11 +6,6 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
-### Added
-- **Post-merge cleanup in `/keel:ship`** — the close step now removes the issue's worktree
-  **and deletes the now-merged branch** (local `git branch -d` — safe, refuses unmerged —
-  plus the remote). `git.delete_branch` wrapper added; `pr-loop` cleans up the same way.
-
 ## [0.2.0] — 2026-06-05
 
 ### Added

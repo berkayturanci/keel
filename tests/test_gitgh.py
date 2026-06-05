@@ -67,19 +67,6 @@ class TestGit(unittest.TestCase):
     def test_diff_failsoft(self):
         self.assertEqual(git.diff("a", "b", _run=_Recorder(code=1)), "")
 
-    def test_delete_branch_local(self):
-        rec = _Recorder()
-        git.delete_branch("feature", _run=rec)
-        self.assertEqual(rec.calls[0], ["git", "branch", "-d", "feature"])
-
-    def test_delete_branch_remote(self):
-        rec = _Recorder()
-        git.delete_branch("feature", remote=True, _run=rec)
-        self.assertEqual(rec.calls[0], ["git", "push", "origin", "--delete", "feature"])
-
-    def test_delete_branch_failsoft(self):
-        self.assertFalse(git.delete_branch("x", _run=_Recorder(code=1)).ok)
-
 
 class TestGitHub(unittest.TestCase):
     def test_open_pr_argv(self):
