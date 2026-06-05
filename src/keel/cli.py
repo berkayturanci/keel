@@ -11,8 +11,9 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
-from . import __version__, gates, git, github, ship, window
+from . import __version__, gates, git, github, scaffold, ship, window
 from . import config as cfg
 from . import findings as fnd
 from . import orchestrator as orch
@@ -158,21 +159,41 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         docs_globs=config.knobs.docs_gate_paths,
         timezone=config.timezone,
         merge_window=config.merge_window,
+        merge_window_mode=config.merge_window_mode,
         ci_conclusion=ci_conclusion,
+        is_blocker=args.hotfix,
     )
 
     name = config.repo or config.extends
     print(f"keel ship — {name}  (base {config.base_branch})")
     print(f"  changed files : {len(changed)}")
     print(f"  risk tier     : TIER-{a.tier}  → {a.reviewers} reviewer(s)")
-    print(f"  merge window  : {'OPEN' if a.window_open else 'CLOSED (night no-merge)'}")
+    window = "OPEN" if a.window_open else f"CLOSED ({config.merge_window_mode}, night no-merge)"
+    print(f"  merge window  : {window}")
     ci_str = "unknown" if a.ci_ok is None else ("passing" if a.ci_ok else "FAILING")
     print(f"  ci            : {ci_str}")
     for o in outcomes:
         print(f"  gate {o.gate:<14} {'ok' if o.ok else 'FAIL'}")
+    if a.halted:  # pragma: no cover - display only; logic covered in ship.assess tests
+        print("  pipeline      : HALTED (merge window paused)")
+    if a.bypassed_window:  # pragma: no cover - display only; logic covered in ship.assess
+        print("  audit         : hotfix bypassed the merge window")
     print(f"  decision      : {a.merge.action.upper()} — {a.merge.reason}")
     print("  note: dry assessment; live merge (s10) needs a configured runner (git + gh auth).")
     return 0 if a.merge.action != "block" else 1
+
+
+def _cmd_init(args: argparse.Namespace) -> int:
+    root = Path(args.root)
+    target = root / ".keel" / "project.yaml"
+    if target.exists() and not args.force:
+        print(f"{target} already exists (use --force to overwrite)", file=sys.stderr)
+        return 1
+    stack = scaffold.detect_stack(root)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(scaffold.default_config(stack, repo=root.resolve().name), encoding="utf-8")
+    print(f"wrote {target}  (detected stack: {stack})")
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -207,7 +228,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_ship.add_argument("path", help="path to project.yaml")
     p_ship.add_argument("--root", default=".", help="repo root for git, gates + extensions")
     p_ship.add_argument("--pr", type=int, default=None, help="PR number for CI status (gh)")
+    p_ship.add_argument("--hotfix", action="store_true", help="emergency: bypass the merge window")
     p_ship.set_defaults(func=_cmd_ship)
+
+    p_init = sub.add_parser("init", help="scaffold a default .keel/project.yaml for this repo")
+    p_init.add_argument("--root", default=".", help="repo root to scaffold into")
+    p_init.add_argument("--force", action="store_true", help="overwrite an existing config")
+    p_init.set_defaults(func=_cmd_init)
 
     return parser
 

@@ -7,6 +7,15 @@ All notable changes to keel are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Enhancements from the competitive analysis** (see `docs/keel/comparison.md`):
+  - `keel init` — golden-path scaffolder: detects the stack (Flutter/Python/Node/
+    Android/generic) and writes a valid default `.keel/project.yaml` (#19).
+  - Gate findings now carry **`path`/`line`** parsed reviewdog-style from tool
+    output, so the fix-loop and inline comments get real locations (#17).
+  - `merge_window_mode: freeze|pause` — `freeze` (default) blocks the merge but
+    keeps gates running; `pause` halts the pipeline outside the window (#18).
+  - **Hotfix bypass**: `keel ship --hotfix` (or a `hotfix` label) merges outside the
+    window — never bypassing findings or CI — with an audit line (#20).
 - **keel-core** Python package (`src/keel`), stdlib-first with a single runtime
   dependency (PyYAML):
   - `jsonschema_min` — dependency-free JSON-Schema (draft-07 subset) validator.

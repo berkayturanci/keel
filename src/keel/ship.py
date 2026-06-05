@@ -61,6 +61,11 @@ def ci_passing(ci_conclusion: str | None) -> bool | None:
     return all(p in CI_OK_STATES for p in parts)
 
 
+def is_hotfix(labels: list[str] | tuple[str, ...], *, hotfix_label: str = "hotfix") -> bool:
+    """True if the issue/PR carries the hotfix label (case-insensitive)."""
+    return any(label.strip().lower() == hotfix_label.lower() for label in labels)
+
+
 @dataclass(frozen=True)
 class ShipAssessment:
     tier: int
@@ -68,6 +73,8 @@ class ShipAssessment:
     window_open: bool
     ci_ok: bool | None
     merge: MergeDecision
+    halted: bool = False           # pause mode + outside window ⇒ pipeline halted
+    bypassed_window: bool = False  # hotfix merged outside the window (audited)
 
 
 def assess(
@@ -78,20 +85,27 @@ def assess(
     docs_globs: tuple[str, ...] = (),
     timezone: str | None = None,
     merge_window: str | None = None,
+    merge_window_mode: str = "freeze",
     ci_conclusion: str | None = None,
     now=None,
     is_blocker: bool = False,
 ) -> ShipAssessment:
     """The whole deterministic ship decision in one place: tier → reviewers, window,
-    CI, and the final merge action. Pure — identical inputs give identical output."""
+    CI, and the final merge action. Pure — identical inputs give identical output.
+
+    ``merge_window_mode`` 'pause' halts the pipeline outside the window; 'freeze'
+    (default) only blocks the merge. ``is_blocker`` (a hotfix) bypasses the window —
+    but never the findings or a failing CI."""
     tier = classify.tier_for_files(changed_files, tier3_globs=tier3_globs, docs_globs=docs_globs)
     reviewers = reviewer_count(tier)
     window_open = (
         is_merge_open(timezone, merge_window, now=now) if (timezone and merge_window) else True
     )
+    halted = (merge_window_mode == "pause") and not window_open and not is_blocker
     ci_ok = ci_passing(ci_conclusion)
     if ci_ok is False:
         merge = MergeDecision("block", "CI failing")
     else:
         merge = decide_merge(gate_verdict, window_open=window_open, is_blocker=is_blocker)
-    return ShipAssessment(tier, reviewers, window_open, ci_ok, merge)
+    bypassed = is_blocker and not window_open and merge.action == "merge"
+    return ShipAssessment(tier, reviewers, window_open, ci_ok, merge, halted, bypassed)

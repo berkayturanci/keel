@@ -101,6 +101,35 @@ class TestCommandGateRunner(unittest.TestCase):
         self.assertTrue(ok)
         self.assertEqual(findings, [])
 
+    def test_fail_without_location_has_no_path(self):
+        run = runner.command_gate_runner(_run=_fail)
+        _, findings = run(self._spec())
+        self.assertIsNone(findings[0].path)
+        self.assertFalse(findings[0].anchorable)
+
+    def test_fail_with_location_is_anchorable(self):
+        def _located(*a, **k):
+            return _Proc(1, "src/app.py:42:5: undefined name 'x'", "")
+        _, findings = runner.command_gate_runner(_run=_located)(self._spec())
+        self.assertEqual(findings[0].path, "src/app.py")
+        self.assertEqual(findings[0].line, 42)
+        self.assertTrue(findings[0].anchorable)
+
+
+class TestFirstLocation(unittest.TestCase):
+    def test_path_line_col(self):
+        self.assertEqual(runner.first_location("lib/x.dart:7:3: bad"), ("lib/x.dart", 7))
+
+    def test_path_line_only(self):
+        self.assertEqual(runner.first_location("a/b.py:12: oops"), ("a/b.py", 12))
+
+    def test_first_match_wins(self):
+        self.assertEqual(runner.first_location("no loc\nsrc/a.py:1: x\nsrc/b.py:2: y"),
+                         ("src/a.py", 1))
+
+    def test_none_when_absent(self):
+        self.assertEqual(runner.first_location("just a message"), (None, None))
+
 
 if __name__ == "__main__":
     unittest.main()

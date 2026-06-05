@@ -231,6 +231,58 @@ class TestShip(unittest.TestCase):
         self.assertIn("extension not loaded", err)
 
 
+class TestInit(unittest.TestCase):
+    def test_scaffolds_and_validates(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "pubspec.yaml").write_text("name: app\n")
+            rc, out, _ = run(["init", "--root", d])
+            self.assertEqual(rc, 0)
+            self.assertIn("flutter", out)
+            written = Path(d) / ".keel" / "project.yaml"
+            self.assertTrue(written.exists())
+            # the generated config must validate
+            vrc, _, _ = run(["validate", str(written)])
+            self.assertEqual(vrc, 0)
+
+    def test_refuses_existing_without_force(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            keel = Path(d) / ".keel"
+            keel.mkdir()
+            (keel / "project.yaml").write_text("x")
+            rc, _, err = run(["init", "--root", d])
+            self.assertEqual(rc, 1)
+            self.assertIn("already exists", err)
+
+    def test_force_overwrites(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            keel = Path(d) / ".keel"
+            keel.mkdir()
+            (keel / "project.yaml").write_text("old")
+            rc, _, _ = run(["init", "--root", d, "--force"])
+            self.assertEqual(rc, 0)
+            self.assertIn("extends: keel", (keel / "project.yaml").read_text())
+
+
+class TestShipHotfix(unittest.TestCase):
+    def _cfg(self):
+        return _write_raw(
+            "extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: x\n"
+            "timezone: Europe/Istanbul\nmerge_window: '07:00-01:30'\n"
+            "merge_window_mode: pause\ngates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+        )
+
+    def test_hotfix_flag_runs(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["ship", self._cfg(), "--root", d, "--hotfix"])
+        # decision depends on the wall-clock window, but the flag must be accepted
+        self.assertIn("keel ship", out)
+        self.assertIn("DECISION", out.upper())
+
+
 class TestParser(unittest.TestCase):
     def test_subcommands_present(self):
         parser = cli.build_parser()
@@ -238,7 +290,7 @@ class TestParser(unittest.TestCase):
         actions = [a for a in parser._actions if a.dest == "command"]
         self.assertTrue(actions)
         self.assertEqual(set(actions[0].choices),
-                         {"version", "validate", "plan", "run-gates", "window", "ship"})
+                         {"version", "validate", "plan", "run-gates", "window", "ship", "init"})
 
 
 if __name__ == "__main__":

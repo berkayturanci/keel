@@ -36,6 +36,10 @@
       "pattern": "^[0-2][0-9]:[0-5][0-9]-[0-2][0-9]:[0-5][0-9]$",
       "description": "Open merge window HH:MM-HH:MM (the complement is the night no-merge window)."
     },
+    "merge_window_mode": {
+      "enum": ["freeze", "pause"],
+      "description": "Outside the window: 'freeze' blocks the merge but keeps gates/CI running (default); 'pause' halts the pipeline entirely."
+    },
     "knobs": {
       "type": "object",
       "additionalProperties": false,

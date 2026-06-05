@@ -16,6 +16,22 @@ VALID = {
 }
 
 
+class TestMergeWindowMode(unittest.TestCase):
+    def test_default_is_freeze(self):
+        self.assertEqual(cfg.parse_config(copy.deepcopy(VALID)).merge_window_mode, "freeze")
+
+    def test_pause_parsed(self):
+        data = copy.deepcopy(VALID)
+        data["merge_window_mode"] = "pause"
+        self.assertEqual(cfg.parse_config(data).merge_window_mode, "pause")
+
+    def test_invalid_mode_rejected(self):
+        data = copy.deepcopy(VALID)
+        data["merge_window_mode"] = "nope"
+        with self.assertRaises(cfg.ConfigError):
+            cfg.parse_config(data)
+
+
 class TestSeedConfigs(unittest.TestCase):
     """Every shipped projects/*.yaml must be valid against the schema."""
 

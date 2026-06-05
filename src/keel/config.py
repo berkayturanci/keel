@@ -74,6 +74,7 @@ class ProjectConfig:
     platform: str | None = None
     timezone: str | None = None
     merge_window: str | None = None
+    merge_window_mode: str = "freeze"
     gates: tuple[str, ...] = ()
     extensions: dict[str, tuple[str, ...]] = field(default_factory=dict)
     extensions_dir: str = DEFAULT_EXTENSIONS_DIR
@@ -108,6 +109,7 @@ def _build(data: dict) -> ProjectConfig:
         platform=data.get("platform"),
         timezone=data.get("timezone"),
         merge_window=data.get("merge_window"),
+        merge_window_mode=data.get("merge_window_mode", "freeze"),
         gates=tuple(data.get("gates", [])),
         extensions=extensions,
         extensions_dir=data.get("extensions_dir", DEFAULT_EXTENSIONS_DIR),
@@ -147,6 +149,7 @@ def _canonical(config: ProjectConfig) -> dict:
         "platform": config.platform,
         "timezone": config.timezone,
         "merge_window": config.merge_window,
+        "merge_window_mode": config.merge_window_mode,
         "gates": list(config.gates),
         "extensions_dir": config.extensions_dir,
         "extensions": {k: list(v) for k, v in sorted(config.extensions.items())},
