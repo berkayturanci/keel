@@ -1,17 +1,11 @@
 name: pages
 
-# Build the keel website + the coverage report and deploy to GitHub Pages on the
-# free hosted runner. The site lives in website/; the coverage HTML is generated
-# into website/coverage/ so it ships alongside the docs.
+# Build the keel website + coverage report and deploy to GitHub Pages.
+# Manual-only (workflow_dispatch): this repo is private and serves the site
+# locally (`make site`), so we don't auto-deploy. Enable GitHub Pages
+# (Settings → Pages → Source: GitHub Actions) and run this manually to publish.
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "website/**"
-      - "src/**"
-      - "tests/**"
-      - ".github/workflows/pages.yml"
   workflow_dispatch:
 
 permissions:

@@ -7,10 +7,10 @@ All notable changes to keel are documented here. The format follows
 ## [Unreleased]
 
 ### Added
-- **Website + live coverage** — a static site in `website/` and a `pages.yml` workflow that
-  builds the coverage HTML into `website/coverage/` and deploys both to GitHub Pages on the
-  free runner. `keel init --wizard` interactively sets the base branch, **merge-window
-  hours**, timezone, and build/lint commands (#23).
+- **Website + live coverage** — a static site in `website/`; `make site` builds the coverage
+  HTML into `website/coverage/` and serves it locally. A manual (`workflow_dispatch`)
+  `pages.yml` can publish to GitHub Pages when enabled. `keel init --wizard` interactively
+  sets the base branch, **merge-window hours**, timezone, and build/lint commands (#23).
 - **Enhancements from the competitive analysis** (see `docs/keel/comparison.md`):
   - `keel init` — golden-path scaffolder: detects the stack (Flutter/Python/Node/
     Android/generic) and writes a valid default `.keel/project.yaml` (#19).
