@@ -107,6 +107,8 @@ If a step's gate fails, keel blocks its own merge — the same backbone every co
 
 ## Docs
 
+- 🌐 **Website + live coverage report** — `website/` deploys to GitHub Pages on the free
+  runner (workflow `pages.yml`; coverage HTML is built into `website/coverage/`).
 - [`docs/keel/configuration.md`](docs/keel/configuration.md) — `project.yaml` reference
 - [`docs/keel/extensions.md`](docs/keel/extensions.md) — authoring Lego extensions
 - [`docs/keel/cli.md`](docs/keel/cli.md) — CLI reference

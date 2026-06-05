@@ -121,7 +121,12 @@ files (`pubspec.yaml`→Flutter, `pyproject.toml`/`setup.py`→Python, `package.
 ```bash
 keel init                 # scaffold .keel/project.yaml for the detected stack
 keel init --root ../app   # scaffold elsewhere
+keel init --wizard        # prompt for base branch, merge-window hours, timezone, commands
 ```
+
+With `--wizard`, keel prompts for each value (base branch, timezone, **merge window
+`HH:MM-HH:MM`**, build/lint commands); press Enter to accept the stack default, or leave a
+field blank to skip it. The result still passes `keel validate`.
 
 ## Exit codes
 

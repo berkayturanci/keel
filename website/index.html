@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>keel — project-neutral multi-agent workflow core</title>
+<style>
+  :root { --bg:#0d1117; --panel:#161b22; --fg:#e6edf3; --muted:#9aa7b4; --accent:#58a6ff; --green:#3fb950; --border:#30363d; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+  a { color:var(--accent); text-decoration:none; } a:hover { text-decoration:underline; }
+  .wrap { max-width:860px; margin:0 auto; padding:0 20px; }
+  header { padding:64px 0 32px; border-bottom:1px solid var(--border); }
+  h1 { font-size:44px; margin:0 0 8px; letter-spacing:-1px; }
+  .tag { color:var(--muted); font-size:19px; margin:0; }
+  .badges { margin-top:20px; display:flex; gap:10px; flex-wrap:wrap; }
+  .badge { background:var(--panel); border:1px solid var(--border); border-radius:6px; padding:4px 10px; font-size:13px; color:var(--muted); }
+  .badge b { color:var(--green); }
+  h2 { margin:40px 0 12px; font-size:24px; border-bottom:1px solid var(--border); padding-bottom:6px; }
+  h3 { margin:24px 0 6px; font-size:17px; color:var(--fg); }
+  p { color:var(--fg); } .muted { color:var(--muted); }
+  pre { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:14px 16px; overflow-x:auto; font:13.5px/1.55 "SF Mono",Menlo,Consolas,monospace; }
+  code { font-family:"SF Mono",Menlo,Consolas,monospace; font-size:90%; }
+  p code, li code { background:var(--panel); border:1px solid var(--border); border-radius:4px; padding:1px 5px; }
+  table { width:100%; border-collapse:collapse; margin:12px 0; font-size:14px; }
+  th,td { text-align:left; padding:7px 10px; border-bottom:1px solid var(--border); }
+  th { color:var(--muted); font-weight:600; }
+  .cols { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  @media(max-width:640px){ .cols{ grid-template-columns:1fr; } h1{font-size:34px;} }
+  footer { margin:56px 0 40px; color:var(--muted); font-size:14px; border-top:1px solid var(--border); padding-top:16px; }
+  .pill { color:var(--green); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>keel ⚓</h1>
+  <p class="tag">A project-neutral, multi-agent <b>workflow core</b>. One fixed backbone drives a GitHub issue from backlog to merged — every project just sets values and snaps in its own Lego.</p>
+  <div class="badges">
+    <span class="badge"><b>100%</b> line + branch coverage</span>
+    <span class="badge">stdlib-first · 1 runtime dep</span>
+    <span class="badge">Python ≥ 3.11</span>
+    <a class="badge" href="./coverage/">📊 coverage report →</a>
+    <a class="badge" href="https://github.com/berkayturanci/ai-infra">GitHub →</a>
+  </div>
+</header>
+
+<h2>What it is</h2>
+<p>keel is a ship's backbone — the fixed spine every project builds on. The same flow runs whether the coding agent is Claude Code, Codex, Gemini or Antigravity; projects never fork the backbone, they only:</p>
+<div class="cols">
+  <div>
+    <h3>① set values</h3>
+    <p class="muted">A small <code>.keel/project.yaml</code>: base branch, build/lint commands, timezone &amp; merge window, file globs.</p>
+  </div>
+  <div>
+    <h3>② snap in Lego</h3>
+    <p class="muted">Add-only extensions into named slots (<code>reviewers</code>, <code>tester</code>, <code>pre-merge</code>…). The backbone stays fixed.</p>
+  </div>
+</div>
+
+<h2>The backbone</h2>
+<table>
+  <tr><th>step</th><th>does</th><th>slot</th></tr>
+  <tr><td>branch → implement</td><td>cut a branch, agent writes the code</td><td><code>after-implement</code></td></tr>
+  <tr><td>classify → ci</td><td>risk tier (→ reviewer count), wait on CI</td><td></td></tr>
+  <tr><td>review</td><td>multi-agent debate → verify → synthesize</td><td><code>reviewers</code></td></tr>
+  <tr><td>test</td><td>build / lint / project gates</td><td><code>tester</code></td></tr>
+  <tr><td>merge → close</td><td>merge-window + lock, then close the issue</td><td><code>pre-merge</code></td></tr>
+</table>
+
+<h2>Install</h2>
+<pre>pip install "git+https://github.com/berkayturanci/keel@v0.1.0"</pre>
+
+<h2>Quickstart</h2>
+<h3>Scaffold a config (with the wizard)</h3>
+<pre>keel init --wizard
+# Base branch [main]: main
+# Merge window HH:MM-HH:MM [07:00-01:30]: 07:00-01:30
+# Build/test command [flutter test]: flutter test
+# → wrote .keel/project.yaml  (detected stack: flutter)</pre>
+
+<h3>See what ship would do, right now</h3>
+<pre>keel ship .keel/project.yaml --root .
+# keel ship — myapp  (base main)
+#   risk tier     : TIER-3  → 3 reviewer(s)
+#   merge window  : <span class="pill">OPEN</span>
+#   gate build          ok
+#   gate lint           ok
+#   decision      : MERGE — clear to merge</pre>
+
+<h2>Commands</h2>
+<table>
+  <tr><th>command</th><th>what</th></tr>
+  <tr><td><code>keel init [--wizard]</code></td><td>scaffold <code>.keel/project.yaml</code> (detects the stack)</td></tr>
+  <tr><td><code>keel validate &lt;cfg&gt;</code></td><td>validate a config against the schema</td></tr>
+  <tr><td><code>keel plan &lt;cfg&gt;</code></td><td>render the backbone with this project's gates</td></tr>
+  <tr><td><code>keel run-gates &lt;cfg&gt;</code></td><td>run the project's build/lint/command gates</td></tr>
+  <tr><td><code>keel window &lt;cfg&gt;</code></td><td>is the merge window open now?</td></tr>
+  <tr><td><code>keel ship &lt;cfg&gt;</code></td><td>full dry assessment: tier, window, gates, decision</td></tr>
+</table>
+
+<h2>Runs on the free runner</h2>
+<p>The <a href="https://github.com/berkayturanci/ai-infra/blob/main/.github/workflows/keel-ship.yml"><code>keel-ship</code></a> GitHub Action runs keel against every PR on GitHub's free hosted runner — using the runner's own <code>git</code> + <code>gh</code> — and posts the assessment as a comment. This very site &amp; its <a href="./coverage/">coverage report</a> are built and deployed the same way.</p>
+
+<footer>
+  keel — formerly <code>ai-infra</code>. Stdlib-first, deterministic, fully covered.
+  · <a href="https://github.com/berkayturanci/ai-infra">source</a>
+  · <a href="./coverage/">coverage</a>
+</footer>
+
+</div>
+</body>
+</html>

@@ -183,6 +183,11 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     return 0 if a.merge.action != "block" else 1
 
 
+def _ask(prompt: str, default: str) -> str:  # pragma: no cover - interactive I/O
+    raw = input(f"{prompt} [{default}]: " if default else f"{prompt}: ").strip()
+    return raw or default
+
+
 def _cmd_init(args: argparse.Namespace) -> int:
     root = Path(args.root)
     target = root / ".keel" / "project.yaml"
@@ -190,8 +195,14 @@ def _cmd_init(args: argparse.Namespace) -> int:
         print(f"{target} already exists (use --force to overwrite)", file=sys.stderr)
         return 1
     stack = scaffold.detect_stack(root)
+    repo = root.resolve().name
+    if args.wizard:
+        print(f"keel init wizard — detected stack: {stack} (Enter accepts each default)")
+        text = scaffold.wizard(stack, _ask, repo=repo)
+    else:
+        text = scaffold.default_config(stack, repo=repo)
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(scaffold.default_config(stack, repo=root.resolve().name), encoding="utf-8")
+    target.write_text(text, encoding="utf-8")
     print(f"wrote {target}  (detected stack: {stack})")
     return 0
 
@@ -234,6 +245,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_init = sub.add_parser("init", help="scaffold a default .keel/project.yaml for this repo")
     p_init.add_argument("--root", default=".", help="repo root to scaffold into")
     p_init.add_argument("--force", action="store_true", help="overwrite an existing config")
+    p_init.add_argument("--wizard", action="store_true", help="prompt for values interactively")
     p_init.set_defaults(func=_cmd_init)
 
     return parser

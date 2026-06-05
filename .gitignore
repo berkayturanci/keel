@@ -10,6 +10,7 @@ dist/
 .coverage
 .coverage.*
 htmlcov/
+website/coverage/
 .pytest_cache/
 .ruff_cache/
 

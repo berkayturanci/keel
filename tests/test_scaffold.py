@@ -59,5 +59,43 @@ class TestDefaultConfig(unittest.TestCase):
         self.assertIn("gates: [build]", scaffold.default_config("cobol"))
 
 
+class TestWizard(unittest.TestCase):
+    def test_sets_window_and_validates(self):
+        import yaml
+        answers = iter(["develop", "Etc/GMT-3", "09:00-18:00", "pytest", "ruff check ."])
+
+        def ask(prompt, default):
+            return next(answers)
+
+        text = scaffold.wizard("python", ask, repo="demo")
+        config = cfg.parse_config(yaml.safe_load(text))
+        self.assertEqual(config.base_branch, "develop")
+        self.assertEqual(config.timezone, "Etc/GMT-3")
+        self.assertEqual(config.merge_window, "09:00-18:00")
+        self.assertEqual(config.knobs.build_gate_cmd, "pytest")
+        self.assertIn("--wizard", text)
+
+    def test_blank_answers_skip_optional(self):
+        import yaml
+
+        def ask(prompt, default):
+            if any(k in prompt for k in ("Timezone", "Merge window", "Lint")):
+                return ""  # user clears optional fields
+            return default
+
+        text = scaffold.wizard("generic", ask, repo="demo")
+        config = cfg.parse_config(yaml.safe_load(text))
+        self.assertIsNone(config.timezone)
+        self.assertIsNone(config.merge_window)
+        self.assertEqual(config.gates, ("build",))
+
+
+class TestRenderConfig(unittest.TestCase):
+    def test_minimal_validates(self):
+        import yaml
+        text = scaffold.render_config(repo="x")
+        self.assertEqual(cfg.parse_config(yaml.safe_load(text)).repo, "x")
+
+
 if __name__ == "__main__":
     unittest.main()

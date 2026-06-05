@@ -265,6 +265,22 @@ class TestInit(unittest.TestCase):
             self.assertEqual(rc, 0)
             self.assertIn("extends: keel", (keel / "project.yaml").read_text())
 
+    def test_wizard_mode(self):
+        import tempfile
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "pyproject.toml").write_text("x")
+            answers = ["develop", "Etc/GMT-3", "09:00-18:00", "pytest", ""]
+            with patch("builtins.input", side_effect=answers):
+                rc, out, _ = run(["init", "--root", d, "--wizard"])
+            self.assertEqual(rc, 0)
+            written = (Path(d) / ".keel" / "project.yaml").read_text()
+            self.assertIn("base_branch: develop", written)
+            self.assertIn('merge_window: "09:00-18:00"', written)
+            # validates
+            vrc, _, _ = run(["validate", str(Path(d) / ".keel" / "project.yaml")])
+            self.assertEqual(vrc, 0)
+
 
 class TestShipHotfix(unittest.TestCase):
     def _cfg(self):
