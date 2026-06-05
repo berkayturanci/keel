@@ -21,7 +21,7 @@ knobs:
   ci_workflows:
     "CI": "**"
   docs_gate_paths: ["docs/**", "*.md", "README.md"]
-  sot_doc: CLAUDE.md
+  sot_doc: AGENTS.md
 
 gates: [build, lint]
 

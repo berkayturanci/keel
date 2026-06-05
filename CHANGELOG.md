@@ -7,6 +7,15 @@ All notable changes to keel are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **AI entry points** — a canonical, cross-AI `AGENTS.md` (the durable source of truth:
+  backbone + invariants, pure-core/thin-I/O split, the 100% coverage bar, the
+  single-runtime-dependency rule, conventions, and keel's config-driven agent dispatch)
+  with a thin `CLAUDE.md` pointer. `projects/keel.yaml` `sot_doc` now points at
+  `AGENTS.md`, matching the other configs.
+
+## [0.1.0] — 2026-06-05
+
+### Added
 - **Website + live coverage** — a static site in `website/`; `make site` builds the coverage
   HTML into `website/coverage/` and serves it locally. A manual (`workflow_dispatch`)
   `pages.yml` can publish to GitHub Pages when enabled. `keel init --wizard` interactively
