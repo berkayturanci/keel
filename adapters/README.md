@@ -16,11 +16,15 @@ surface (this mirrors ai-jury's "orchestrator owns the rounds; adapters are thin
 
 ```
 adapters/
-  claude/keel-ship.md     Claude Code slash command  (/keel:ship)
-  codex/   …              Codex prompt                (planned)
-  gemini/  …              Gemini SKILL.md             (planned)
-  agy/     …              Antigravity entry           (planned)
+  claude/keel-ship.md     Claude Code slash command  (/keel:ship)  — canonical
+  codex/keel-ship.md      Codex prompt                (thin re-skin)
+  gemini/keel-ship.md     Gemini skill                (thin re-skin)
+  agy/keel-ship.md        Antigravity entry           (thin re-skin)
 ```
+
+The Claude adapter is the canonical, fully-spelled flow; the others are thin re-skins that
+keep Step 0 (the `keel` CLI calls) identical and only re-map the agent-specific dispatch and
+PR/CI/merge surface.
 
 ## Invocation
 
