@@ -1,7 +1,7 @@
 # keel project config — example-flutter (Flutter + Supabase, default branch main)
 # No Android/Kotlin/Realm/gradle here by construction — those would be foreign leaks.
 extends: keel
-core_version: "^0.3"
+core_version: "^0.4"
 owner: berkayturanci
 repo: example-flutter
 base_branch: main

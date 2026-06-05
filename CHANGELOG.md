@@ -6,6 +6,8 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-06-05
+
 ### Added
 - **`keel install-adapter all`** — install the `/keel:<command>` adapters into **every** known
   agent dir (Claude + Codex + Gemini + agents) in a single run, instead of one agent at a time.
