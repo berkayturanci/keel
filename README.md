@@ -90,6 +90,20 @@ every project** — only that project's `project.yaml` + extensions change the b
 - Claude Code: `/keel:ship`, `/keel:wrap`, `/keel:morning`
 - Gemini: the `keel:ship` skill · Codex / Antigravity: the corresponding prompt
 
+## Dogfooding
+
+keel drives **itself**: its config is `projects/keel.yaml` (Python, `make test` + `make lint`
+gates) and CI runs keel on keel-core on every push —
+
+```bash
+keel plan      projects/keel.yaml          # render keel's own backbone
+keel run-gates projects/keel.yaml --root . # keel runs its own test + lint gates
+#     ok  build
+#     ok  lint
+```
+
+If a step's gate fails, keel blocks its own merge — the same backbone every consumer gets.
+
 ## Docs
 
 - [`docs/keel/configuration.md`](docs/keel/configuration.md) — `project.yaml` reference

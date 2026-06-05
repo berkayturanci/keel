@@ -32,3 +32,7 @@ jobs:
           coverage report
       - name: Validate seed configs
         run: python -m keel.cli validate projects/*.yaml
+      - name: Dogfood — keel runs its own gates on keel-core
+        run: |
+          python -m keel.cli plan projects/keel.yaml
+          python -m keel.cli run-gates projects/keel.yaml --root .
