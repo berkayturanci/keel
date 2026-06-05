@@ -9,7 +9,7 @@ by `keel validate`. Unknown keys are rejected, so typos fail loudly.
 | field | type | required | description |
 |---|---|---|---|
 | `extends` | `"keel"` (const) | ✅ | marks the file as a keel consumer config |
-| `core_version` | string | ✅ | pinned keel core range, e.g. `^0.4` |
+| `core_version` | string | ✅ | pinned keel core range, e.g. `^0.5` |
 | `base_branch` | string | ✅ | branch PRs target (`develop`, `main`, …) |
 | `knobs` | object | ✅ | per-project values (see below) |
 | `owner` | string | | GitHub owner |
@@ -47,7 +47,7 @@ by `keel validate`. Unknown keys are rejected, so typos fail loudly.
 
 ```yaml
 extends: keel
-core_version: "^0.4"
+core_version: "^0.5"
 owner: berkayturanci
 repo: example-flutter
 base_branch: main

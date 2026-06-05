@@ -40,7 +40,7 @@ Example output:
 
 ```
 keel plan — example-flutter
-  base_branch: main   core_version: ^0.4
+  base_branch: main   core_version: ^0.5
   backbone:
      s0  config
      ...
@@ -133,24 +133,30 @@ With `--wizard`, keel prompts for each value (base branch, timezone, **merge win
 `HH:MM-HH:MM`**, build/lint commands); press Enter to accept the stack default, or leave a
 field blank to skip it. The result still passes `keel validate`.
 
-## `keel install-adapter <agent> [--root DIR] [--force]`
+## `keel install-adapter <target> [--root DIR] [--force]`
 
 Install the agentic **`/keel:<command>`** adapters (which ship with the keel package) into a
-project's agent command directory, so they appear as slash/prompt commands:
+project, so they appear as slash commands (Claude) or skills (every other agent):
 
-| agent | installs into |
-|---|---|
-| `claude` | `.claude/commands/keel/` |
-| `codex` | `.codex/prompts/keel/` |
-| `gemini` | `.gemini/commands/keel/` |
-| `agy` | `.agents/keel/` |
-| `all` | every dir above, in one run |
+keel installs into the **two surfaces** that match how agents actually discover commands —
+never one copy per agent (that would re-introduce file-copy drift):
+
+| target | installs into | who reads it |
+|---|---|---|
+| `claude` | `.claude/commands/keel/<cmd>.md` | Claude Code, as native `/keel:<cmd>` |
+| `skills` | `.agents/skills/keel-<cmd>/SKILL.md` | **every non-Claude agent** (Codex, Antigravity, Gemini, …) via its skill discovery / chat-command wrapper — **one shared copy** |
+| `all` | both of the above | |
 
 ```bash
-keel install-adapter claude          # → /keel:ship, /keel:regression, /keel:morning, …
-keel install-adapter all             # set up Claude + Codex + Gemini + agents together
+keel install-adapter claude          # → /keel:ship, /keel:regression, …
+keel install-adapter skills          # → one shared keel-<cmd> skill set under .agents/skills/
+keel install-adapter all             # both surfaces
 keel install-adapter claude --force  # overwrite existing adapters
 ```
+
+The `skills` surface is a **single** universal skill set (`keel-<cmd>`), not a dir per agent:
+non-Claude agents all read `.agents/skills/`, so one copy serves Codex, Antigravity and Gemini
+together. The skill body is the same project-neutral adapter, wrapped with skill frontmatter.
 
 The CLI (`keel ship`, `keel run-gates`, …) does the deterministic work; these adapters are
 the **agentic** flows (per-round review, inline comments, delegation) the agent runs. The

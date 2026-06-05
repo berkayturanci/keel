@@ -6,6 +6,22 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-06-05
+
+### Changed
+- **`install-adapter` now targets two real surfaces, not one dir per agent** (**breaking**).
+  Agents don't each read their own command dir — Claude reads `.claude/commands/`, while every
+  other agent (Codex, Antigravity, Gemini, …) discovers a **shared** skill set under
+  `.agents/skills/`. So keel installs into exactly those two surfaces:
+  - `keel install-adapter claude` → `.claude/commands/keel/<cmd>.md` (native `/keel:<cmd>`).
+  - `keel install-adapter skills` → **one** shared `.agents/skills/keel-<cmd>/SKILL.md` set
+    (rendered from the same adapter via `install.render_skill`), read by all non-Claude agents.
+  - `keel install-adapter all` → both.
+  The previous per-agent targets (`codex`/`gemini`/`agy` → their own `keel/` dirs, and the
+  0.4.0 `all` fan-out over them) are **removed**: they were inert (no agent read them) and
+  re-introduced the file-copy duplication keel exists to eliminate. One skill copy now serves
+  Codex + Antigravity + Gemini together.
+
 ## [0.4.0] — 2026-06-05
 
 ### Added

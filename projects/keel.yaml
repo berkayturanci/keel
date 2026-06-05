@@ -1,6 +1,6 @@
 # keel project config — keel itself (Python; dogfoods its own backbone)
 extends: keel
-core_version: "^0.4"
+core_version: "^0.5"
 owner: berkayturanci
 repo: keel
 base_branch: main

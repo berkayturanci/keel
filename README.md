@@ -51,7 +51,7 @@ orchestrator-only-writes, vendor+model attribution.
 keel is a Python (≥3.11) package with one runtime dependency (PyYAML). Private install:
 
 ```bash
-pip install "git+https://github.com/berkayturanci/keel@v0.4.0"
+pip install "git+https://github.com/berkayturanci/keel@v0.5.0"
 ```
 
 In a cloud agent session, install it from a `SessionStart` hook (or add keel to the
@@ -70,7 +70,7 @@ exactly what a dry-run executes:
 
 ```
 keel plan — example-flutter
-  base_branch: main   core_version: ^0.4
+  base_branch: main   core_version: ^0.5
   backbone:
      s4  implement  [agent]
      ...
@@ -85,13 +85,14 @@ keel plan — example-flutter
 ## Invocation (`/keel:<command>`)
 
 The agentic workflows ship **with the package** as project-neutral adapters and install into
-a project's agent command directory, so they appear as `/keel:<command>` — the same string
-works in every project; only that project's `.keel/project.yaml` + extensions change the
-behaviour:
+the **two surfaces** agents actually read — so the same `/keel:<command>` works in every
+project; only that project's `.keel/project.yaml` + extensions change the behaviour:
 
 ```bash
-keel install-adapter claude   # → /keel:ship, /keel:regression, /keel:morning, /keel:wrap, …
-#  (also: codex | gemini | agy — or `all` to set up every agent dir at once)
+keel install-adapter claude   # native Claude commands → /keel:ship, /keel:regression, …
+keel install-adapter skills   # one shared keel-<cmd> skill set under .agents/skills/
+#                               (read by every non-Claude agent: Codex, Antigravity, Gemini)
+keel install-adapter all      # both surfaces
 ```
 
 Shipped commands: `ship` (flagship), `regression`, `implement`, `review-cycle`, `pr-loop`,

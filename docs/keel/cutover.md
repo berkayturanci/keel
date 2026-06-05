@@ -19,10 +19,11 @@ the installed keel — never copied, so the drift/overwrite class of bug is gone
 ## Step 1 — install + pin keel
 
 ```bash
-pipx install "git+https://github.com/berkayturanci/keel@v0.4.0"   # or @main
+pipx install "git+https://github.com/berkayturanci/keel@v0.5.0"   # or @main
 keel --version
-keel install-adapter all             # → Claude + Codex + Gemini + agents in one run
-#   (or a single agent: keel install-adapter claude  → .claude/commands/keel/)
+keel install-adapter all             # → both surfaces: Claude commands + the shared skill set
+#   claude → .claude/commands/keel/<cmd>.md      (native /keel:<cmd>)
+#   skills → .agents/skills/keel-<cmd>/SKILL.md  (every non-Claude agent — one shared copy)
 ```
 
 Now both the old `/<command>` and the new `/keel:<command>` exist side by side — so you can
@@ -61,8 +62,9 @@ genuinely project-only** ones:
 |---|---|
 | `ship`, `ship-v2`, `implement`, `pr-loop`, `review-cycle*`, `review-all-day`, `morning`, `overnight`, `wrap`, `triage`, `stale-prs`, `ci-check`, `deps-audit`, `flake-audit`, `coverage`, `regression` | platform builds (e.g. an app build/release command), app-specific regressions, UI/device tests, anything tied to one app's stack |
 
-Do it across every agent dir you use (`.claude/commands/`, `.codex/prompts/`, `.gemini/`,
-`.agents/`). The retirement is a normal PR — review the diff, merge when green.
+Retire the old bodies in **both** surfaces keel now owns: `.claude/commands/` (Claude) and the
+shared `.agents/skills/<command>/` skills (every non-Claude agent). The retirement is a normal
+PR — review the diff, merge when green.
 
 ## Step 4 — move project-specific behavior into config / Lego
 

@@ -326,7 +326,7 @@ class TestGateRunner(unittest.TestCase):
 
 
 class TestInstallAdapter(unittest.TestCase):
-    def test_installs_claude_adapters(self):
+    def test_installs_claude_commands(self):
         import tempfile
         with tempfile.TemporaryDirectory() as d:
             rc, out, _ = run(["install-adapter", "claude", "--root", d])
@@ -334,10 +334,18 @@ class TestInstallAdapter(unittest.TestCase):
             self.assertIn("/keel:", out)
             self.assertTrue((Path(d) / ".claude/commands/keel/ship.md").exists())
 
-    def test_unknown_agent(self):
-        rc, _, err = run(["install-adapter", "nope"])
+    def test_installs_skills(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["install-adapter", "skills", "--root", d])
+            self.assertEqual(rc, 0)
+            self.assertIn("keel-<command>", out)
+            self.assertTrue((Path(d) / ".agents/skills/keel-ship/SKILL.md").exists())
+
+    def test_unknown_target(self):
+        rc, _, err = run(["install-adapter", "codex"])
         self.assertEqual(rc, 1)
-        self.assertIn("unknown agent", err)
+        self.assertIn("unknown target", err)
 
     def test_force_reinstall(self):
         import tempfile
@@ -355,17 +363,14 @@ class TestInstallAdapter(unittest.TestCase):
             self.assertEqual(rc, 0)
             self.assertIn("skipped", out)
 
-    def test_install_all_agents(self):
+    def test_install_all_surfaces(self):
         import tempfile
         with tempfile.TemporaryDirectory() as d:
             rc, out, _ = run(["install-adapter", "all", "--root", d])
             self.assertEqual(rc, 0)
-            self.assertIn("across", out)
             self.assertIn("/keel:", out)
             self.assertTrue((Path(d) / ".claude/commands/keel/ship.md").exists())
-            self.assertTrue((Path(d) / ".codex/prompts/keel/ship.md").exists())
-            self.assertTrue((Path(d) / ".gemini/commands/keel/ship.md").exists())
-            self.assertTrue((Path(d) / ".agents/keel/ship.md").exists())
+            self.assertTrue((Path(d) / ".agents/skills/keel-ship/SKILL.md").exists())
 
 
 class TestParser(unittest.TestCase):
