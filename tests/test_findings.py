@@ -30,7 +30,8 @@ class TestDecision(unittest.TestCase):
 
 class TestAnchorable(unittest.TestCase):
     def test_anchorable_requires_path_and_line(self):
-        self.assertTrue(fnd.is_anchorable(Finding("nit", "m", "s", path="a.py", line=3, anchorable=True)))
+        anchored = Finding("nit", "m", "s", path="a.py", line=3, anchorable=True)
+        self.assertTrue(fnd.is_anchorable(anchored))
         self.assertFalse(fnd.is_anchorable(Finding("nit", "m", "s", anchorable=True)))
         self.assertFalse(fnd.is_anchorable(Finding("nit", "m", "s", path="a.py", line=3)))
         self.assertFalse(fnd.is_anchorable(Finding("nit", "m", "s", path="a.py", anchorable=True)))

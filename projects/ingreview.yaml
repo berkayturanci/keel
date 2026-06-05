@@ -26,7 +26,9 @@ knobs:
   docs_gate_paths: ["docs/**", "*.md"]
   sot_doc: AGENTS.md
 
-gates: [build, lint, design-parity]
+# gates: = built-in gates only (build/lint/jury). Project gates (design-parity)
+# come in via the extension slots below.
+gates: [build, lint]
 
 extensions:
   tester: [design-parity.md]            # ingreview's "design-equality" test Lego

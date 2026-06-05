@@ -80,7 +80,9 @@ def parse_extension(text: str, *, source: str, expected_slot: str | None = None)
     elif slot not in SLOTS:
         errors.append(f"unknown slot {slot!r}; valid: {', '.join(SLOTS)}")
     elif expected_slot is not None and slot != expected_slot:
-        errors.append(f"slot {slot!r} does not match the slot it is registered in ({expected_slot!r})")
+        errors.append(
+            f"slot {slot!r} does not match its registered slot ({expected_slot!r})"
+        )
 
     if kind not in KINDS:
         errors.append(f"invalid kind {kind!r}; valid: {', '.join(KINDS)}")
