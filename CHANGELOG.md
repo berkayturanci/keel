@@ -6,6 +6,12 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Cutover guide** (`docs/keel/cutover.md`) — the staged, verified process for a consumer to
+  retire its copied command bodies: install + `keel install-adapter` → A/B verify `/keel:ship`
+  on a low-risk test issue → retire the portable bodies (keep project-only) → move project
+  specifics to knobs/Lego. Rollback = revert the PR. Lose nothing.
+
 ## [0.3.0] — 2026-06-05
 
 ### Changed
