@@ -158,6 +158,31 @@ class TestPlanErrors(unittest.TestCase):
         self.assertIn("invalid keel config", err)
 
 
+class TestWindow(unittest.TestCase):
+    def test_configured(self):
+        rc, out, _ = run(["window", str(PROJECTS / "smartinventory.yaml")])
+        self.assertEqual(rc, 0)
+        self.assertIn("merge window", out)
+        self.assertIn("Etc/GMT-3", out)
+
+    def test_not_configured(self):
+        p = _write_raw("extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
+                       "knobs:\n  build_gate_cmd: 'true'\n")
+        rc, out, _ = run(["window", p])
+        self.assertEqual(rc, 0)
+        self.assertIn("no merge window", out)
+
+    def test_missing_config(self):
+        rc, _, err = run(["window", "/no/such.yaml"])
+        self.assertEqual(rc, 1)
+        self.assertIn("no such config", err)
+
+    def test_invalid_config(self):
+        rc, _, err = run(["window", _write_raw("extends: keel\n")])
+        self.assertEqual(rc, 1)
+        self.assertIn("invalid keel config", err)
+
+
 class TestParser(unittest.TestCase):
     def test_subcommands_present(self):
         parser = cli.build_parser()
@@ -165,7 +190,7 @@ class TestParser(unittest.TestCase):
         actions = [a for a in parser._actions if a.dest == "command"]
         self.assertTrue(actions)
         self.assertEqual(set(actions[0].choices),
-                         {"version", "validate", "plan", "run-gates"})
+                         {"version", "validate", "plan", "run-gates", "window"})
 
 
 if __name__ == "__main__":

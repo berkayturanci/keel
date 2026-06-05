@@ -24,7 +24,16 @@ All notable changes to keel are documented here. The format follows
     through an injected runner with fail-soft semantics.
   - `orchestrator` — pure `build_plan`/`render_plan` mapping a project's
     gates/extensions onto the fixed backbone (deterministic, dry-run view).
-  - `cli` — `keel version | validate | plan`.
+  - `agents` — dispatch resolution + #2036 attribution (model-base stripping).
+  - `runner` — thin, fail-soft subprocess wrapper + `command_gate_runner` that
+    executes `command` gates (build/lint/command Lego).
+  - `window` — merge-window logic (the night no-merge invariant, timezone-aware).
+  - `lock` — the `mkdir`-based merge lock (context manager).
+  - `ship` — deterministic ship decisions (reviewer count, merge/defer/block,
+    fix-loop budget).
+  - `cli` — `keel version | validate | plan | run-gates | window`.
+- Adapter: `adapters/claude/keel-ship.md` (thin, project-neutral `keel:ship`) +
+  `adapters/README.md` (the adapter model).
 - Bundled schema `src/keel/schema/project.schema.json`.
 - Seed configs `projects/{smartinventory,ingreview,keel}.yaml`.
 - Docs: README, `docs/keel/{configuration,extensions,cli}.md`,

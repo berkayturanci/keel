@@ -12,7 +12,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from . import __version__, gates
+from . import __version__, gates, window
 from . import config as cfg
 from . import findings as fnd
 from . import orchestrator as orch
@@ -108,6 +108,25 @@ def _cmd_run_gates(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_window(args: argparse.Namespace) -> int:
+    try:
+        config = cfg.load_config(args.path)
+    except FileNotFoundError:
+        print(f"no such config: {args.path}", file=sys.stderr)
+        return 1
+    except cfg.ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    if not config.timezone or not config.merge_window:
+        print("no merge window configured (needs timezone + merge_window)")
+        return 0
+    is_open = window.is_merge_open(config.timezone, config.merge_window)
+    state = "OPEN" if is_open else "CLOSED (night no-merge)"
+    print(f"merge window {state}  [{config.timezone} {config.merge_window}]")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="keel", description="keel — workflow core")
     parser.add_argument("--version", action="version", version=f"keel {__version__}")
@@ -131,6 +150,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("path", help="path to project.yaml")
     p_run.add_argument("--root", default=".", help="repo root for commands + extensions")
     p_run.set_defaults(func=_cmd_run_gates)
+
+    p_window = sub.add_parser("window", help="is the merge window open now?")
+    p_window.add_argument("path", help="path to project.yaml")
+    p_window.set_defaults(func=_cmd_window)
 
     return parser
 
