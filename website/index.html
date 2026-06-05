@@ -89,15 +89,38 @@
 #   gate lint           ok
 #   decision      : MERGE — clear to merge</pre>
 
-<h2>Commands</h2>
+<h2>CLI</h2>
 <table>
   <tr><th>command</th><th>what</th></tr>
   <tr><td><code>keel init [--wizard]</code></td><td>scaffold <code>.keel/project.yaml</code> (detects the stack)</td></tr>
-  <tr><td><code>keel validate &lt;cfg&gt;</code></td><td>validate a config against the schema</td></tr>
+  <tr><td><code>keel validate &lt;cfg&gt;</code></td><td>validate a config (and its extensions) against the schema</td></tr>
   <tr><td><code>keel plan &lt;cfg&gt;</code></td><td>render the backbone with this project's gates</td></tr>
   <tr><td><code>keel run-gates &lt;cfg&gt;</code></td><td>run the project's build/lint/command gates</td></tr>
   <tr><td><code>keel window &lt;cfg&gt;</code></td><td>is the merge window open now?</td></tr>
   <tr><td><code>keel ship &lt;cfg&gt;</code></td><td>full dry assessment: tier, window, gates, decision</td></tr>
+  <tr><td><code>keel install-adapter &lt;claude|skills|all&gt;</code></td><td>install the <code>/keel:&lt;command&gt;</code> workflows (below)</td></tr>
+</table>
+
+<h2>Workflow commands (<code>/keel:&lt;command&gt;</code>)</h2>
+<p class="muted">16 agentic workflows ship with the package. <code>keel install-adapter claude</code> installs native Claude commands; <code>keel install-adapter skills</code> installs <em>one shared</em> skill set under <code>.agents/skills/keel-&lt;command&gt;/</code> that every non-Claude agent (Codex, Antigravity, Gemini) reads. Each is project-neutral — behaviour comes from that repo's <code>.keel/project.yaml</code>. Full reference: <a href="https://github.com/berkayturanci/keel/blob/main/docs/keel/commands.md">docs/keel/commands.md</a>.</p>
+<table>
+  <tr><th>command</th><th>what</th></tr>
+  <tr><td><code>/keel:ship</code></td><td>drive an issue end-to-end (select → branch → implement → CI → review → test → merge → close) — per-round review, inline comments, delegation, jury gate, merge window + lock, attribution</td></tr>
+  <tr><td><code>/keel:ship-v2</code></td><td>compound-engineering flavour — folded into <code>/keel:ship</code> as extensions</td></tr>
+  <tr><td><code>/keel:implement</code></td><td>delegate one issue to the right implementer; the s4 implement step standalone</td></tr>
+  <tr><td><code>/keel:review-cycle</code></td><td>multi-reviewer review→fix cycle over open PRs (parallel reviewers, capped fix rounds); does not merge</td></tr>
+  <tr><td><code>/keel:pr-loop</code></td><td>iterate an open PR's review comments + CI to green, then hand off to the windowed merge</td></tr>
+  <tr><td><code>/keel:review-all-day</code></td><td>time-window diff-review sweep; open one issue per serious finding (read-only otherwise)</td></tr>
+  <tr><td><code>/keel:regression</code></td><td>codebase-wide regression scan via parallel per-area subagents; open fix issues, route to ship</td></tr>
+  <tr><td><code>/keel:triage</code></td><td>auto-classify unlabelled issues (role/priority/status) via a classifier subagent</td></tr>
+  <tr><td><code>/keel:morning</code></td><td>morning briefing — deferrals, shipped-since, health signals, ranked focus list</td></tr>
+  <tr><td><code>/keel:overnight</code></td><td>unattended overnight block — run ship over the queue until the merge window closes</td></tr>
+  <tr><td><code>/keel:wrap</code></td><td>finish a session — run gates, commit, push, open a PR, record a recap</td></tr>
+  <tr><td><code>/keel:ci-check</code></td><td>check the latest CI run; on failure diagnose root cause + propose one fix (no auto-apply)</td></tr>
+  <tr><td><code>/keel:coverage</code></td><td>per-PR coverage delta (base→head); flag low-coverage × high-risk hot spots</td></tr>
+  <tr><td><code>/keel:deps-audit</code></td><td>dependency security + licence audit; classify and route fixes to ship</td></tr>
+  <tr><td><code>/keel:flake-audit</code></td><td>detect intermittently-failing tests from CI history; open one issue per new flake</td></tr>
+  <tr><td><code>/keel:stale-prs</code></td><td>find quiet/drifted PRs; triage, comment, optionally rebase (respecting the window)</td></tr>
 </table>
 
 <h2>Runs on the free runner</h2>

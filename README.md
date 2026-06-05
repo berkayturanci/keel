@@ -123,6 +123,7 @@ If a step's gate fails, keel blocks its own merge — the same backbone every co
 - [`docs/keel/configuration.md`](docs/keel/configuration.md) — `project.yaml` reference
 - [`docs/keel/extensions.md`](docs/keel/extensions.md) — authoring Lego extensions
 - [`docs/keel/cli.md`](docs/keel/cli.md) — CLI reference
+- [`docs/keel/commands.md`](docs/keel/commands.md) — the 16 `/keel:<command>` workflows, each with its description
 - [`docs/keel/cutover.md`](docs/keel/cutover.md) — staged guide to retire a project's copied command bodies (install → verify → retire), losing nothing
 - [`docs/keel/comparison.md`](docs/keel/comparison.md) — competitive landscape (Mergify, GitHub merge queue, Qodo/PR-Agent, CodeRabbit, Sweep, OpenHands, Danger, …) + ranked borrow-ideas
 - [`docs/keel/github-actions.md`](docs/keel/github-actions.md) — run keel live on GitHub's free runner (the `keel-ship` workflow)
@@ -150,7 +151,8 @@ runs in CI.
 src/keel/            the core package (config, model, extensions, findings, gates, orchestrator, cli)
 src/keel/schema/     project.schema.json (bundled)
 projects/*.yaml      example configs (example-android, example-flutter, keel)
-adapters/            thin per-agent adapters (claude, codex, gemini, agy)
+src/keel/adapters/   the packaged /keel:<command> bodies (install-adapter: claude commands + shared skills)
+adapters/            reference adapter (claude/keel-ship.md) + the adapter model (README)
 website/             static site + coverage report (make site)
 tests/               unit suite
 docs/                docs + proposals

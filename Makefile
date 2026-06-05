@@ -5,7 +5,8 @@
 #   make coverage  coverage gate (fail_under in pyproject [tool.coverage.report])
 #   make validate  validate every projects/*.yaml against the schema
 #   make site      build the coverage report into website/ and serve it at :8000
-#   make adapters  (re)generate keel's own /keel:* Claude adapters into .claude/commands/
+#   make adapters  (re)install keel's own /keel:* adapters — both surfaces
+#                  (.claude/commands/keel/ + the shared .agents/skills/keel-* skill set)
 
 PY ?= python3
 
@@ -31,7 +32,7 @@ site:
 	cd website && $(PY) -m http.server 8000
 
 adapters:
-	PYTHONPATH=src $(PY) -m keel install-adapter claude --force
+	PYTHONPATH=src $(PY) -m keel install-adapter all --force
 
 clean:
 	rm -rf .coverage htmlcov **/__pycache__ src/**/__pycache__

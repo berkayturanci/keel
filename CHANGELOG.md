@@ -6,6 +6,18 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Command reference** (`docs/keel/commands.md`) + a **Workflow commands** section on the
+  website — all 16 `/keel:<command>` workflows, each with its description and which surface
+  installs it.
+
+### Changed
+- `make adapters` now installs **both** surfaces (`install-adapter all`), and keel dogfoods its
+  own `.claude/commands/keel/` + shared `.agents/skills/keel-*` skill set.
+- Retired the stale per-agent adapter stubs (`adapters/{codex,gemini,agy}/keel-ship.md`); the
+  packaged bodies under `src/keel/adapters/commands/` are the single source, and
+  `adapters/README.md` documents the two-surface model.
+
 ## [0.5.0] — 2026-06-05
 
 ### Changed
