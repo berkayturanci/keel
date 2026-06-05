@@ -38,6 +38,20 @@ def run_command(
     return CommandResult(proc.returncode == 0, proc.returncode, output)
 
 
+def run_argv(
+    argv: list[str], *, cwd: str | None = None, timeout: int = 120, _run=subprocess.run
+) -> CommandResult:
+    """Run an argv list (no shell). Fail-soft on timeout/OS error. Used by git/gh wrappers."""
+    try:
+        proc = _run(argv, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return CommandResult(False, 124, f"timed out after {timeout}s")
+    except OSError as exc:
+        return CommandResult(False, 127, str(exc))
+    output = (proc.stdout or "") + (proc.stderr or "")
+    return CommandResult(proc.returncode == 0, proc.returncode, output)
+
+
 def _tail(text: str, n: int = 20) -> str:
     return "\n".join(text.strip().splitlines()[-n:])
 

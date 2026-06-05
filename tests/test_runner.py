@@ -56,6 +56,23 @@ class TestRunCommand(unittest.TestCase):
         self.assertIn("no such binary", r.output)
 
 
+class TestRunArgv(unittest.TestCase):
+    def test_ok(self):
+        r = runner.run_argv(["git", "status"], _run=_ok)
+        self.assertTrue(r.ok)
+        self.assertIn("all good", r.output)
+
+    def test_timeout_failsoft(self):
+        r = runner.run_argv(["git", "status"], _run=_timeout)
+        self.assertFalse(r.ok)
+        self.assertEqual(r.code, 124)
+
+    def test_oserror_failsoft(self):
+        r = runner.run_argv(["nope"], _run=_oserror)
+        self.assertFalse(r.ok)
+        self.assertEqual(r.code, 127)
+
+
 class TestCommandGateRunner(unittest.TestCase):
     def _spec(self, on_fail="block"):
         return GateSpec("build", "command", "test", on_fail, run="make test")
