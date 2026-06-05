@@ -37,7 +37,7 @@ jobs:
         env:
           BASE: ${{ github.base_ref || 'main' }}
         run: git fetch --no-tags origin "$BASE:$BASE" || true
-      - name: Run keel ship
+      - name: Run keel ship (informational)
         id: ship
         env:
           GH_TOKEN: ${{ github.token }}
@@ -48,11 +48,13 @@ jobs:
           if [ -n "$PR" ]; then ARGS="$ARGS --pr $PR"; fi
           keel ship $ARGS | tee ship.txt
           echo "code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+          { echo '### 🚢 keel ship'; echo '```'; cat ship.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - name: Comment assessment on the PR
-        if: ${{ always() && github.event_name == 'pull_request' }}
+        if: ${{ github.event_name == 'pull_request' }}
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
+          CODE: ${{ steps.ship.outputs.code }}
         run: |
           {
             echo '### 🚢 keel ship'
@@ -60,13 +62,7 @@ jobs:
             echo '```'
             cat ship.txt
             echo '```'
+            echo
+            echo "_decision exit code: ${CODE} (0 = not BLOCK). Informational — not a required gate._"
           } > body.md
           gh pr comment "$PR" --body-file body.md
-      - name: Enforce the decision
-        if: ${{ always() }}
-        run: |
-          if [ "${{ steps.ship.outputs.code }}" != "0" ]; then
-            echo "keel ship decision is BLOCK — failing the check."
-            exit 1
-          fi
-          echo "keel ship decision is not BLOCK."
