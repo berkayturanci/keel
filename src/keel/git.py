@@ -44,6 +44,16 @@ def diff(base: str, head: str, *, cwd: str | None = None, _run=None) -> str:
     return result.output if result.ok else ""
 
 
+def delete_branch(
+    branch: str, *, remote: bool = False, cwd: str | None = None, _run=None
+) -> CommandResult:
+    """Delete a branch after merge. Local uses ``-d`` (refuses unmerged → safe); ``remote``
+    deletes ``origin/<branch>``. Fail-soft (returns a failed result, never raises)."""
+    if remote:
+        return run_argv(["git", "push", "origin", "--delete", branch], cwd=cwd, **_kw(_run))
+    return run_argv(["git", "branch", "-d", branch], cwd=cwd, **_kw(_run))
+
+
 def _kw(_run):
     """Pass ``_run`` through only when provided (so the default subprocess is used otherwise)."""
     return {"_run": _run} if _run is not None else {}

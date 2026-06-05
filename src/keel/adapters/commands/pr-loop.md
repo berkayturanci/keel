@@ -16,6 +16,9 @@ Drive an already-implemented branch from PR to merged (`s6`–`s12`). Reads `.ke
 5. **s10 merge** inside the merge window only (unless `--hotfix`), holding the merge lock:
    re-confirm CI green + zero blocking findings → squash-merge. `pause` halts / `freeze`
    defers outside the window.
-6. Capture the run for `/keel:wrap`; close the linked issue; drop the lock.
+6. Capture the run for `/keel:wrap`; close the linked issue; drop the lock; then **clean up**:
+   `git worktree remove <path> --force` and delete the merged branch — `git branch -d <branch>`
+   (safe; `-d` refuses unmerged) + `git push origin --delete <branch>` (skip if the repo
+   auto-deletes head branches).
 
 `--dry-run`: stop after the assessment; never push/merge.

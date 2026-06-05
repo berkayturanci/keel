@@ -52,7 +52,13 @@ plan. Hold the **merge lock** for the merge step only.
   lock: re-confirm CI green + zero blocking findings, then squash-merge. `pause` mode halts
   here outside the window; `freeze` defers to the morning queue.
 - **s11 capture** — record the run (effective agents, tier, rounds, decision) for `/keel:wrap`.
-- **s12 close** — close the issue, link the PR, drop the lock.
+- **s12 close + cleanup** — close the issue, link the PR, drop the lock, then **clean up the
+  workspace** for this issue:
+  - remove the worktree: `git worktree remove <repo-root>/worktrees/<slug> --force`;
+  - **delete the now-merged branch** locally and on the remote:
+    `git branch -d <branch>` (the safe `-d` refuses an unmerged branch) and
+    `git push origin --delete <branch>`. Skip the remote delete if the repo already
+    auto-deletes head branches on merge. Only run this **after** the merge is confirmed.
 
 ## `--dry-run`
 
