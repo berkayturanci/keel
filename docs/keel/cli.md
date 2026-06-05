@@ -62,6 +62,11 @@ parity) are not run here — this is the deterministic, runnable slice of the te
 Each gate runs its configured shell command; a non-zero exit becomes a blocking finding
 (`gate:<name>`), a zero exit a pass. The command's output tail is captured for context.
 
+If `gates:` includes **`jury`** and the [ai-jury](https://github.com/berkayturanci/ai-jury)
+`jury` CLI is installed, the jury gate runs it on the diff (`git diff base...HEAD`) and maps
+its findings (file/line/severity) into keel findings (critical/major block). If `jury` is
+not installed the gate is a **fail-soft no-op** — the flow runs with or without jury.
+
 ```bash
 keel run-gates .keel/project.yaml --root .
 ```

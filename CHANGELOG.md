@@ -7,6 +7,11 @@ All notable changes to keel are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **`jury` gate runner** (#34) — the built-in `jury` gate now invokes the ai-jury CLI on the
+  change's diff when it is installed, mapping its findings (file/line/severity) into keel
+  Findings (critical/major block); when `jury` is absent the gate is a fail-soft no-op, so
+  the flow runs with or without jury. keel takes **no** runtime dependency on ai-jury.
+  Wired into `keel run-gates` / `keel ship` via `git diff base...HEAD`.
 - **AI entry points** — a canonical, cross-AI `AGENTS.md` (the durable source of truth:
   backbone + invariants, pure-core/thin-I/O split, the 100% coverage bar, the
   single-runtime-dependency rule, conventions, and keel's config-driven agent dispatch)

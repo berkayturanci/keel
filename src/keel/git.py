@@ -38,6 +38,12 @@ def changed_files(base: str, head: str, *, cwd: str | None = None, _run=None) ->
     return [line for line in result.output.splitlines() if line.strip()]
 
 
+def diff(base: str, head: str, *, cwd: str | None = None, _run=None) -> str:
+    """The unified diff between ``base`` and ``head`` (``base...head``); ``""`` on error."""
+    result = run_argv(["git", "diff", f"{base}...{head}"], cwd=cwd, **_kw(_run))
+    return result.output if result.ok else ""
+
+
 def _kw(_run):
     """Pass ``_run`` through only when provided (so the default subprocess is used otherwise)."""
     return {"_run": _run} if _run is not None else {}

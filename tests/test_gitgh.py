@@ -59,6 +59,14 @@ class TestGit(unittest.TestCase):
     def test_changed_files_failsoft(self):
         self.assertEqual(git.changed_files("a", "b", _run=_Recorder(code=2)), [])
 
+    def test_diff_returns_patch(self):
+        rec = _Recorder(out="@@ -1 +1 @@\n-a\n+b")
+        self.assertEqual(git.diff("main", "HEAD", _run=rec), "@@ -1 +1 @@\n-a\n+b")
+        self.assertEqual(rec.calls[0], ["git", "diff", "main...HEAD"])
+
+    def test_diff_failsoft(self):
+        self.assertEqual(git.diff("a", "b", _run=_Recorder(code=1)), "")
+
 
 class TestGitHub(unittest.TestCase):
     def test_open_pr_argv(self):

@@ -301,6 +301,30 @@ class TestShipHotfix(unittest.TestCase):
         self.assertIn("DECISION", out.upper())
 
 
+class TestGateRunner(unittest.TestCase):
+    def test_command_branch_runs(self):
+        from keel.gates import GateSpec
+        run_gate = cli._gate_runner(".", "")
+        ok, _ = run_gate(GateSpec("build", "command", "test", "block", run="true"))
+        self.assertTrue(ok)
+
+    def test_jury_branch_noop_without_diff(self):
+        from keel.gates import GateSpec
+        run_gate = cli._gate_runner(".", "")  # empty diff -> jury is a fail-soft no-op
+        ok, findings = run_gate(GateSpec("jury", "builtin", "test", "block"))
+        self.assertTrue(ok)
+        self.assertEqual(findings, [])
+
+    def test_run_gates_with_jury_gate(self):
+        import tempfile
+        p = _write_raw("extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: x\n"
+                       "gates: [build, jury]\nknobs:\n  build_gate_cmd: 'true'\n")
+        with tempfile.TemporaryDirectory() as d:  # non-git root -> empty diff -> jury no-op
+            rc, out, _ = run(["run-gates", p, "--root", d])
+        self.assertEqual(rc, 0)
+        self.assertIn("jury", out)
+
+
 class TestParser(unittest.TestCase):
     def test_subcommands_present(self):
         parser = cli.build_parser()

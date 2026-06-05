@@ -13,12 +13,25 @@ import argparse
 import sys
 from pathlib import Path
 
-from . import __version__, gates, git, github, scaffold, ship, window
+from . import __version__, gates, git, github, jury, scaffold, ship, window
 from . import config as cfg
 from . import findings as fnd
 from . import orchestrator as orch
 from .extensions import ExtensionError, load_extensions
+from .gates import GateSpec
 from .runner import command_gate_runner
+
+
+def _gate_runner(root: str, diff_text: str):
+    """A gate runner that handles command gates plus the ``jury`` built-in (on the diff)."""
+    commands = command_gate_runner(root)
+
+    def run(spec: GateSpec):
+        if spec.kind == "builtin" and spec.id == "jury":
+            return jury.run_gate(diff_text, cwd=root)
+        return commands(spec)
+
+    return run
 
 
 def _cmd_version(args: argparse.Namespace) -> int:
@@ -95,7 +108,8 @@ def _cmd_run_gates(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
 
-    outcomes = gates.run_gates(specs, command_gate_runner(args.root))
+    diff_text = git.diff(config.base_branch, "HEAD", cwd=args.root)
+    outcomes = gates.run_gates(specs, _gate_runner(args.root, diff_text))
     for o in outcomes:
         status = "ok" if o.ok else "FAIL"
         print(f"  {status:>4}  {o.gate}")
@@ -148,7 +162,8 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     except gates.GateError as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    outcomes = gates.run_gates(specs, command_gate_runner(args.root))
+    diff_text = git.diff(config.base_branch, "HEAD", cwd=args.root)
+    outcomes = gates.run_gates(specs, _gate_runner(args.root, diff_text))
     verdict = fnd.summarize(gates.collect_findings(outcomes))
     ci_conclusion = github.ci_conclusion(args.pr, cwd=args.root) if args.pr else None
 
