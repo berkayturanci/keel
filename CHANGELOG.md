@@ -6,6 +6,8 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-06-05
+
 ### Changed
 - **All `/keel:<command>` adapters brought to full project-neutral parity** (#34) — ported from
   the reference workflow bodies, capturing their real operational detail while reading every

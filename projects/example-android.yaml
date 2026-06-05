@@ -2,7 +2,7 @@
 # Seeded from the frozen example-android@0297bb9 behaviour. Consumer holds this
 # file + project-only Lego; the keel core is installed (pinned), never copied.
 extends: keel
-core_version: "^0.2"
+core_version: "^0.3"
 owner: berkayturanci
 repo: example-android
 base_branch: develop

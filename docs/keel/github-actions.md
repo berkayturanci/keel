@@ -34,7 +34,7 @@ Copy the workflow and change two things:
 
 - **Install a pinned keel** instead of the local checkout:
   ```yaml
-  - run: pip install "git+https://github.com/berkayturanci/keel@v0.2.1"
+  - run: pip install "git+https://github.com/berkayturanci/keel@v0.3.0"
   ```
 - **Point at your config**: `keel ship .keel/project.yaml --root . --pr <N>`.
 
