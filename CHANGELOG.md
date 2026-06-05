@@ -6,9 +6,11 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-06-05
+
 ### Added
 - **Agentic `/keel:<command>` adapters + `keel install-adapter`** (#34) — keel now ships a set
-  of project-neutral agentic workflow commands (`ship` at full parity — per-round review,
+  of project-neutral agentic workflow commands (`ship` — the full flow: per-round review,
   inline comments, `--delegate`/`--review-delegate`/`--review-comments`/`--dry-run`, the jury
   gate — plus `regression`, `implement`, `review-cycle`, `pr-loop`, `morning`, `overnight`,
   `wrap`, `triage`, `stale-prs`, `ci-check`, `deps-audit`, `flake-audit`, `coverage`). They are

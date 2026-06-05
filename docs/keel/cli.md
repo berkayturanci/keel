@@ -40,7 +40,7 @@ Example output:
 
 ```
 keel plan — example-flutter
-  base_branch: main   core_version: ^0.1
+  base_branch: main   core_version: ^0.2
   backbone:
      s0  config
      ...
