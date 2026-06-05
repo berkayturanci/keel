@@ -183,6 +183,54 @@ class TestWindow(unittest.TestCase):
         self.assertIn("invalid keel config", err)
 
 
+class TestShip(unittest.TestCase):
+    def test_clean_merges(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:  # non-git root -> no changed files
+            rc, out, _ = run(["ship", _write_config("'true'"), "--root", d])
+        self.assertEqual(rc, 0)
+        self.assertIn("keel ship", out)
+        self.assertIn("TIER-2", out)        # empty changeset -> default tier
+        self.assertIn("DECISION", out.upper())
+        self.assertIn("MERGE", out)
+
+    def test_failing_gate_blocks(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["ship", _write_config("'false'"), "--root", d])
+        self.assertEqual(rc, 1)
+        self.assertIn("BLOCK", out)
+
+    def test_missing_config(self):
+        rc, _, err = run(["ship", "/no/such.yaml"])
+        self.assertEqual(rc, 1)
+        self.assertIn("no such config", err)
+
+    def test_invalid_config(self):
+        rc, _, err = run(["ship", _write_raw("extends: keel\n")])
+        self.assertEqual(rc, 1)
+        self.assertIn("invalid keel config", err)
+
+    def test_bogus_gate_errors(self):
+        p = _write_raw("extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
+                       "repo: x\ngates: [bogus]\nknobs:\n  build_gate_cmd: 'true'\n")
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, _, err = run(["ship", p, "--root", d])
+        self.assertEqual(rc, 1)
+        self.assertTrue(err)
+
+    def test_unloadable_extension_warned(self):
+        import tempfile
+        p = _write_raw("extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: x\n"
+                       "gates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+                       "extensions:\n  tester: [missing.md]\nextensions_dir: .keel/extensions\n")
+        with tempfile.TemporaryDirectory() as d:
+            rc, _, err = run(["ship", p, "--root", d])
+        self.assertEqual(rc, 0)
+        self.assertIn("extension not loaded", err)
+
+
 class TestParser(unittest.TestCase):
     def test_subcommands_present(self):
         parser = cli.build_parser()
@@ -190,7 +238,7 @@ class TestParser(unittest.TestCase):
         actions = [a for a in parser._actions if a.dest == "command"]
         self.assertTrue(actions)
         self.assertEqual(set(actions[0].choices),
-                         {"version", "validate", "plan", "run-gates", "window"})
+                         {"version", "validate", "plan", "run-gates", "window", "ship"})
 
 
 if __name__ == "__main__":

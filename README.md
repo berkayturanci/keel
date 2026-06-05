@@ -98,8 +98,9 @@ gates) and CI runs keel on keel-core on every push —
 ```bash
 keel plan      projects/keel.yaml          # render keel's own backbone
 keel run-gates projects/keel.yaml --root . # keel runs its own test + lint gates
-#     ok  build
-#     ok  lint
+keel ship      projects/keel.yaml --root . # full dry assessment: tier, window, gates, decision
+#   risk tier     : TIER-3  → 3 reviewer(s)
+#   decision      : MERGE — clear to merge
 ```
 
 If a step's gate fails, keel blocks its own merge — the same backbone every consumer gets.

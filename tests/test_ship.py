@@ -57,5 +57,65 @@ class TestFixLoop(unittest.TestCase):
         self.assertFalse(ship.should_run_fixloop(CLEAN, current_round=0))
 
 
+class TestCiPassing(unittest.TestCase):
+    def test_unknown(self):
+        self.assertIsNone(ship.ci_passing(None))
+        self.assertIsNone(ship.ci_passing(""))
+        self.assertIsNone(ship.ci_passing("  ,  "))
+
+    def test_passing(self):
+        self.assertTrue(ship.ci_passing("SUCCESS"))
+        self.assertTrue(ship.ci_passing("SUCCESS,NEUTRAL,SKIPPED"))
+        self.assertTrue(ship.ci_passing("success"))
+
+    def test_failing(self):
+        self.assertFalse(ship.ci_passing("FAILURE"))
+        self.assertFalse(ship.ci_passing("SUCCESS,FAILURE"))
+        self.assertFalse(ship.ci_passing("TIMED_OUT"))
+
+
+TIER3 = (".github/workflows/**",)
+DOCS = ("docs/**", "*.md")
+
+
+class TestAssess(unittest.TestCase):
+    def test_tier3_three_reviewers_and_merge(self):
+        a = ship.assess(changed_files=[".github/workflows/ci.yml"], gate_verdict=CLEAN,
+                        tier3_globs=TIER3, docs_globs=DOCS)
+        self.assertEqual(a.tier, 3)
+        self.assertEqual(a.reviewers, 3)
+        self.assertTrue(a.window_open)  # no window configured -> always open
+        self.assertEqual(a.merge.action, "merge")
+
+    def test_docs_only_tier1(self):
+        a = ship.assess(changed_files=["docs/x.md"], gate_verdict=CLEAN,
+                        tier3_globs=TIER3, docs_globs=DOCS)
+        self.assertEqual(a.tier, 1)
+        self.assertEqual(a.reviewers, 1)
+
+    def test_blocking_findings_block(self):
+        a = ship.assess(changed_files=["x.py"], gate_verdict=BLOCKED)
+        self.assertEqual(a.merge.action, "block")
+
+    def test_ci_failing_blocks(self):
+        a = ship.assess(changed_files=["x.py"], gate_verdict=CLEAN, ci_conclusion="FAILURE")
+        self.assertEqual(a.ci_ok, False)
+        self.assertEqual(a.merge.action, "block")
+        self.assertEqual(a.merge.reason, "CI failing")
+
+    def test_ci_passing_merges(self):
+        a = ship.assess(changed_files=["x.py"], gate_verdict=CLEAN, ci_conclusion="SUCCESS")
+        self.assertTrue(a.ci_ok)
+        self.assertEqual(a.merge.action, "merge")
+
+    def test_outside_window_defers(self):
+        from datetime import datetime
+        night = datetime(2026, 6, 5, 3, 0)  # inside 01:30-07:00 no-merge
+        a = ship.assess(changed_files=["x.py"], gate_verdict=CLEAN,
+                        timezone="Europe/Istanbul", merge_window="07:00-01:30", now=night)
+        self.assertFalse(a.window_open)
+        self.assertEqual(a.merge.action, "defer")
+
+
 if __name__ == "__main__":
     unittest.main()

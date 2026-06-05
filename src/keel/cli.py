@@ -12,7 +12,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from . import __version__, gates, window
+from . import __version__, gates, git, github, ship, window
 from . import config as cfg
 from . import findings as fnd
 from . import orchestrator as orch
@@ -127,6 +127,54 @@ def _cmd_window(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_ship(args: argparse.Namespace) -> int:
+    try:
+        config = cfg.load_config(args.path)
+    except FileNotFoundError:
+        print(f"no such config: {args.path}", file=sys.stderr)
+        return 1
+    except cfg.ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    loaded, problems = load_extensions(config, args.root, strict=False)
+    for prob in problems:
+        print(f"  ! extension not loaded: {prob}", file=sys.stderr)
+
+    changed = git.changed_files(config.base_branch, "HEAD", cwd=args.root)
+    try:
+        specs = gates.plan_gates(config, loaded)
+    except gates.GateError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    outcomes = gates.run_gates(specs, command_gate_runner(args.root))
+    verdict = fnd.summarize(gates.collect_findings(outcomes))
+    ci_conclusion = github.ci_conclusion(args.pr, cwd=args.root) if args.pr else None
+
+    a = ship.assess(
+        changed_files=changed,
+        gate_verdict=verdict,
+        tier3_globs=config.knobs.tier3_globs,
+        docs_globs=config.knobs.docs_gate_paths,
+        timezone=config.timezone,
+        merge_window=config.merge_window,
+        ci_conclusion=ci_conclusion,
+    )
+
+    name = config.repo or config.extends
+    print(f"keel ship — {name}  (base {config.base_branch})")
+    print(f"  changed files : {len(changed)}")
+    print(f"  risk tier     : TIER-{a.tier}  → {a.reviewers} reviewer(s)")
+    print(f"  merge window  : {'OPEN' if a.window_open else 'CLOSED (night no-merge)'}")
+    ci_str = "unknown" if a.ci_ok is None else ("passing" if a.ci_ok else "FAILING")
+    print(f"  ci            : {ci_str}")
+    for o in outcomes:
+        print(f"  gate {o.gate:<14} {'ok' if o.ok else 'FAIL'}")
+    print(f"  decision      : {a.merge.action.upper()} — {a.merge.reason}")
+    print("  note: dry assessment; live merge (s10) needs a configured runner (git + gh auth).")
+    return 0 if a.merge.action != "block" else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="keel", description="keel — workflow core")
     parser.add_argument("--version", action="version", version=f"keel {__version__}")
@@ -154,6 +202,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_window = sub.add_parser("window", help="is the merge window open now?")
     p_window.add_argument("path", help="path to project.yaml")
     p_window.set_defaults(func=_cmd_window)
+
+    p_ship = sub.add_parser("ship", help="dry ship assessment (tier, window, gates, decision)")
+    p_ship.add_argument("path", help="path to project.yaml")
+    p_ship.add_argument("--root", default=".", help="repo root for git, gates + extensions")
+    p_ship.add_argument("--pr", type=int, default=None, help="PR number for CI status (gh)")
+    p_ship.set_defaults(func=_cmd_ship)
 
     return parser
 

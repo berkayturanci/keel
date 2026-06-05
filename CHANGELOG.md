@@ -29,9 +29,11 @@ All notable changes to keel are documented here. The format follows
     executes `command` gates (build/lint/command Lego).
   - `window` — merge-window logic (the night no-merge invariant, timezone-aware).
   - `lock` — the `mkdir`-based merge lock (context manager).
+  - `classify` — pure risk-tier classification from changed files vs. globs.
   - `ship` — deterministic ship decisions (reviewer count, merge/defer/block,
-    fix-loop budget).
-  - `cli` — `keel version | validate | plan | run-gates | window`.
+    fix-loop budget) + `assess` (whole decision: tier → reviewers, window, CI, merge).
+  - `cli` — `keel version | validate | plan | run-gates | window | ship`
+    (`keel ship` = dry assessment of the agent-free backbone slice).
 - Adapter: `adapters/claude/keel-ship.md` (thin, project-neutral `keel:ship`) +
   `adapters/README.md` (the adapter model).
 - Bundled schema `src/keel/schema/project.schema.json`.

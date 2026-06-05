@@ -81,6 +81,33 @@ keel window .keel/project.yaml
 # merge window OPEN  [Europe/Istanbul 07:00-01:30]
 ```
 
+## `keel ship <project.yaml> [--root DIR] [--pr N]`
+
+Run the **deterministic slice of a ship** against the current checkout and print the
+assessment: how many files changed vs. the base branch, the **risk tier** (→ reviewer
+count), whether the **merge window** is open, optional **CI** status (`--pr N` reads the
+check-rollup via `gh`), each gate's result, and the final **merge decision**
+(`MERGE` / `DEFER` / `BLOCK`).
+
+This is the runnable, agent-free part of the backbone (s5 classify + s6 CI + s8 gates +
+s10 merge decision). It does **not** call coding agents and does **not** perform the merge —
+the live merge (s10) needs a configured runner with `git` + an authenticated `gh`.
+
+```bash
+keel ship projects/keel.yaml --root .
+# keel ship — keel  (base main)
+#   changed files : 53
+#   risk tier     : TIER-3  → 3 reviewer(s)
+#   merge window  : OPEN
+#   ci            : unknown
+#   gate build          ok
+#   gate lint           ok
+#   decision      : MERGE — clear to merge
+```
+
+Exits non-zero when the decision is `BLOCK` (failing gates, blocking findings, or failing
+CI), so it can gate a runner before it attempts a real merge.
+
 ## Exit codes
 
 | code | meaning |
