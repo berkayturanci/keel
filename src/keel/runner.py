@@ -1,0 +1,67 @@
+"""Thin I/O: execute shell-command gates (build / lint / command extensions).
+
+This is the only place keel shells out for gates. It is deliberately thin and
+**fail-soft**: a timeout or a missing binary becomes a failed :class:`CommandResult`
+rather than an exception. The subprocess call is injectable (``_run``) so the gate
+runner is fully unit-testable offline; agentic gates are dispatched elsewhere.
+"""
+
+from __future__ import annotations
+
+import subprocess
+from dataclasses import dataclass
+
+from .findings import Finding
+from .gates import GateRunner, GateSpec
+
+_ON_FAIL_SEVERITY = {"block": "major", "suggest": "minor", "warn": "nit"}
+
+
+@dataclass(frozen=True)
+class CommandResult:
+    ok: bool
+    code: int
+    output: str
+
+
+def run_command(
+    cmd: str, *, cwd: str | None = None, timeout: int = 600, _run=subprocess.run
+) -> CommandResult:
+    """Run ``cmd`` in a shell, capturing output. Fail-soft on timeout/OS error."""
+    try:
+        proc = _run(cmd, shell=True, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return CommandResult(False, 124, f"timed out after {timeout}s")
+    except OSError as exc:
+        return CommandResult(False, 127, str(exc))
+    output = (proc.stdout or "") + (proc.stderr or "")
+    return CommandResult(proc.returncode == 0, proc.returncode, output)
+
+
+def _tail(text: str, n: int = 20) -> str:
+    return "\n".join(text.strip().splitlines()[-n:])
+
+
+def command_gate_runner(
+    repo_root: str | None = None, *, timeout: int = 600, _run=subprocess.run
+) -> GateRunner:
+    """A :data:`keel.gates.GateRunner` that executes ``command`` gates via the shell.
+
+    Non-command gates (agentic / builtin like ``jury``) are not executed here — in
+    command-only mode they pass as no-ops; the agent-dispatch layer runs those.
+    """
+
+    def runner(spec: GateSpec) -> tuple[bool, list[Finding]]:
+        if spec.kind != "command" or not spec.run:
+            return True, []
+        result = run_command(spec.run, cwd=repo_root, timeout=timeout, _run=_run)
+        if result.ok:
+            return True, []
+        severity = _ON_FAIL_SEVERITY[spec.on_fail]
+        message = f"{spec.id} failed (exit {result.code})"
+        tail = _tail(result.output)
+        if tail:
+            message += f": {tail}"
+        return False, [Finding(severity, message, spec.id)]
+
+    return runner

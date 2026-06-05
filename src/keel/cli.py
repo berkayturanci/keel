@@ -12,10 +12,12 @@ from __future__ import annotations
 import argparse
 import sys
 
-from . import __version__
+from . import __version__, gates
 from . import config as cfg
+from . import findings as fnd
 from . import orchestrator as orch
 from .extensions import ExtensionError, load_extensions
+from .runner import command_gate_runner
 
 
 def _cmd_version(args: argparse.Namespace) -> int:
@@ -61,9 +63,48 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         return 1
 
     loaded, problems = load_extensions(config, args.root, strict=False)
-    print(orch.render_plan(config, orch.build_plan(config, loaded)))
+    try:
+        plan = orch.build_plan(config, loaded)
+    except gates.GateError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    print(orch.render_plan(config, plan))
     for prob in problems:
         print(f"  ! extension not loaded: {prob}", file=sys.stderr)
+    return 0
+
+
+def _cmd_run_gates(args: argparse.Namespace) -> int:
+    try:
+        config = cfg.load_config(args.path)
+    except FileNotFoundError:
+        print(f"no such config: {args.path}", file=sys.stderr)
+        return 1
+    except cfg.ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    loaded, problems = load_extensions(config, args.root, strict=False)
+    for prob in problems:
+        print(f"  ! extension not loaded: {prob}", file=sys.stderr)
+
+    try:
+        specs = gates.plan_gates(config, loaded)
+    except gates.GateError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    outcomes = gates.run_gates(specs, command_gate_runner(args.root))
+    for o in outcomes:
+        status = "ok" if o.ok else "FAIL"
+        print(f"  {status:>4}  {o.gate}")
+
+    verdict = fnd.summarize(gates.collect_findings(outcomes))
+    for f in verdict.findings:
+        print(f"    [{f.severity}] {f.source}: {f.message.splitlines()[0]}")
+    if verdict.blocked:
+        print("BLOCKED — merge is gated by the findings above")
+        return 1
     return 0
 
 
@@ -85,6 +126,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_plan.add_argument("path", help="path to project.yaml")
     p_plan.add_argument("--root", default=".", help="repo root for resolving extensions")
     p_plan.set_defaults(func=_cmd_plan)
+
+    p_run = sub.add_parser("run-gates", help="run a project's command gates")
+    p_run.add_argument("path", help="path to project.yaml")
+    p_run.add_argument("--root", default=".", help="repo root for commands + extensions")
+    p_run.set_defaults(func=_cmd_run_gates)
 
     return parser
 
