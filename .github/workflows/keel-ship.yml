@@ -31,7 +31,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install keel (+ dev tools the gates use: ruff, coverage)
+      - name: Install keel plus dev tools (ruff, coverage)
         run: python -m pip install --upgrade pip && pip install -e ".[dev]"
       - name: Make base branch available locally
         env:
