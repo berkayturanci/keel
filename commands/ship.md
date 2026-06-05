@@ -1,7 +1,7 @@
 ---
 description: End-to-end issue ship — branch, PR, self-review, CI, N parallel reviewers, optional advisory cross-vendor AI Jury stage, time-windowed merge, issue close. UTC+3 07:00–01:30 merge window (night no-merge window 01:30–07:00).
-allowed-tools: Bash(gh:*), Bash(git:*), Bash(date:*), Bash(./gradlew:*), Bash(./scripts/compound-learning.sh:*), Bash(mkdir:*), Bash(rmdir:*), Bash(rm:*), Bash(cat:*), Bash(test:*), Bash(sleep:*), Bash(seq:*), Bash(timeout:*), Bash(gtimeout:*), Bash(kill:*), Bash(printf:*), Bash(echo:*), Bash(grep:*), Bash(sed:*), Read, Edit, Write, Agent, mcp__github__issue_read, mcp__github__issue_write, mcp__github__list_issues, mcp__github__search_issues, mcp__github__add_issue_comment, mcp__github__pull_request_read, mcp__github__list_pull_requests, mcp__github__search_pull_requests, mcp__github__get_file_contents, mcp__github__list_commits, mcp__github__get_commit, mcp__github__list_branches, mcp__github__get_label, mcp__github__create_pull_request, mcp__github__update_pull_request, mcp__github__push_files, mcp__github__add_reply_to_pull_request_comment, mcp__github__pull_request_review_write, mcp__github__enable_pr_auto_merge, mcp__github__merge_pull_request, mcp__github__update_pull_request_branch, mcp__github__subscribe_pr_activity
-argument-hint: [issue numbers...] [--reviewers N] [--blocker] [--dry-run] [--preview] [--jury] [--no-jury] [--jury-advisory] [--delegate <claude|codex|agy|ollama:MODEL>] [--review-delegate <claude|codex|agy|ollama:MODEL>] [--wizard]
+allowed-tools: Bash(gh:*), Bash(git:*), Bash(date:*), Bash(./gradlew:*), Bash(./scripts/compound-learning.sh:*), Bash(mkdir:*), Bash(rmdir:*), Bash(rm:*), Bash(cat:*), Bash(test:*), Bash(sleep:*), Bash(seq:*), Bash(timeout:*), Bash(gtimeout:*), Bash(kill:*), Bash(printf:*), Bash(echo:*), Bash(grep:*), Bash(sed:*), Read, Edit, Write, Agent, mcp__github__issue_read, mcp__github__issue_write, mcp__github__list_issues, mcp__github__search_issues, mcp__github__add_issue_comment, mcp__github__pull_request_read, mcp__github__list_pull_requests, mcp__github__search_pull_requests, mcp__github__get_file_contents, mcp__github__list_commits, mcp__github__get_commit, mcp__github__list_branches, mcp__github__get_label, mcp__github__create_pull_request, mcp__github__update_pull_request, mcp__github__push_files, mcp__github__add_reply_to_pull_request_comment, mcp__github__pull_request_review_write, mcp__github__add_comment_to_pending_review, mcp__github__enable_pr_auto_merge, mcp__github__merge_pull_request, mcp__github__update_pull_request_branch, mcp__github__subscribe_pr_activity
+argument-hint: [issue numbers...] [--reviewers N] [--blocker] [--dry-run] [--preview] [--jury] [--no-jury] [--jury-advisory] [--delegate <claude|codex|agy|ollama:MODEL>] [--review-delegate <claude|codex|agy|ollama:MODEL>] [--review-comments <inline|summary>] [--wizard]
 ---
 
 You are the SmartInventory end-to-end shipping orchestrator. Drive each GitHub issue from `status:backlog` to `status:done` (merged + closed) through the full lifecycle in `AGENTS.md` § "Standard Issue Lifecycle".
@@ -70,13 +70,14 @@ Argument grammar:
 - Bare positive integers ⇒ explicit issue numbers (one or more).
 - `--reviewers <N>` ⇒ consumes exactly one integer immediately after the flag. Valid: `1`, `2`, `3`. Default: `auto` (reviewer count is determined automatically at Step 5a.2 after the diff is known). Reject any other value with an error.
 - `--blocker` ⇒ boolean flag; treat every queued issue as blocker (human override).
-- `--dry-run` ⇒ boolean flag; perform every read but redirect every state-changing GitHub call (`gh pr comment`, `gh pr merge`, `gh pr ready`, `gh issue close`, `gh issue comment`, label edits) to stdout as `DRY-RUN: <command>` lines. Implementer subagent is also instructed to honour dry-run (no push, no PR open).
+- `--dry-run` ⇒ boolean flag; perform every read but redirect every state-changing GitHub call (`gh pr comment`, `gh pr merge`, `gh pr ready`, `gh issue close`, `gh issue comment`, label edits, AND the MCP review-API writes `mcp__github__pull_request_review_write` / `mcp__github__add_comment_to_pending_review` used by Step 5d inline mode — equivalently any MCP GitHub write call) to stdout as `DRY-RUN: <command>` lines. Implementer subagent is also instructed to honour dry-run (no push, no PR open).
 - `--preview` ⇒ boolean flag; after the PR is opened, add the `deploy:preview` label so the Firebase Hosting preview channel is deployed. Without this flag no preview channel is deployed (opt-in, per CI change #1315). Also skipped under `--dry-run` (logged to stdout).
 - `--jury` ⇒ boolean flag; force-enable the cross-vendor AI Jury stage (Step 5d.jury) for every queued issue, regardless of risk tier. By default the jury now runs in **gating mode** (issue #2033 Phase B): verified `critical`/`major`/`minor` consensus findings gate the merge (see Step 5d.jury / 5e). Use `--jury-advisory` for the old advisory-only behaviour.
 - `--no-jury` ⇒ boolean flag; force-disable the jury stage even on TIER-3 PRs (where it would otherwise auto-enable). `--no-jury` always wins over `--jury`, `--jury-advisory`, and the TIER-3 auto-enable. Default when neither flag is passed: jury off, unless Step 5a.2 classifies the PR as TIER-3 (then auto-on, gating).
 - `--jury-advisory` ⇒ boolean flag; when the jury is enabled, run it in **advisory-only mode** (Phase A) — it posts a report and logs a verdict but never gates the merge and never consumes a review-fix round. Only meaningful on runs where the jury is enabled (`--jury` or TIER-3 auto); a no-op when the jury is off. `--no-jury` still wins over it.
 - `--delegate <impl>` ⇒ consumes one value immediately after the flag, the **implementer** (who writes the code). Valid: `claude`, `codex`, `agy`, or `ollama:<model>` (a local Ollama model — the orchestrator-driven harness of § 5a.ollama). The flag is a **per-run override** of the issue's `delegate:*` label (Step 5a): when present it wins over any label for every queued issue. **Default (no flag, no label): the host agent** — whichever CLI is driving this `/ship` run (`HOST_AGENT`; see § Host-agent default). So a Codex-driven run defaults to `codex` writing the code, an Antigravity-driven run to `agy`, a Claude-Code-driven run to `claude`. Reject any other value. `ollama:<model>` requires a non-empty model name and is **refused on TIER-3** issues (falls back to the host agent — see § 5a.ollama).
 - `--review-delegate <vendor>` ⇒ consumes one value immediately after the flag, the **Step 5c reviewer vendor**. Valid: `claude`, `codex`, `agy`, or `ollama:<model>`. A non-host value routes the 5c review through that vendor's CLI in **read-only** mode (the jury-style external invocation), returning findings only — the orchestrator-only-writes contract still holds (only the orchestrator posts comments). **Default (no flag): the host agent** (`HOST_AGENT`) — review runs in whatever CLI you launched `/ship` from. Reject any other value.
+- `--review-comments <mode>` ⇒ consumes one value immediately after the flag, how Step 5d posts reviewer findings (issue #2038). Valid: `inline` (default) — anchorable findings as **inline diff comments** + a summary, posted as one submitted review per reviewer (hybrid; non-anchorable findings stay in the summary); or `summary` — the original **one summary comment per reviewer**, no inline. Reject any other value. Affects only the 5c reviewer posting (Step 5d); the jury (5d.jury) is always a summary comment.
 
 **Host-agent default (`HOST_AGENT`).** `/ship` runs inside one agentic CLI — Claude Code, Codex, or Antigravity. That executing CLI is the `HOST_AGENT`, and it is the default for both `--delegate` and `--review-delegate`: by default you implement and review with the same agent whose terminal you launched the run from. `HOST_AGENT` is NOT an operator-set environment variable — the orchestrator resolves it from its own runtime context (it IS the host): `claude` when running on Claude Code, `codex` on Codex, `agy` on Antigravity. The historical hardcoded `claude` default is replaced by `HOST_AGENT` — on Claude Code the two coincide, so existing behaviour is unchanged. A `delegate:*` label or an explicit `--delegate`/`--review-delegate` flag still overrides this default (precedence in Step 5a / Step 5c).
 - `--wizard` ⇒ boolean flag; **interactive opt-in only**. Run the guided configuration wizard (Step 0.wizard) which collects the run's options through interactive prompts and converts them into the normal flag/issue set BEFORE Step 1. Modelled on `jury init --wizard`. It is purely a front layer — it changes nothing about the pipeline below, it only assembles the same arguments the grammar above accepts. The wizard MUST NOT run in any non-interactive context (watch mode, `/overnight`, background jobs); see Step 0.wizard for the hard guard. In any such context `--wizard` degrades to a logged no-op (never a rejection, never a hang) and the run proceeds with the literal flags as parsed. `--dry-run` is fully compatible with `--wizard`: it is just one of the values the wizard can set (or pass through), so `--wizard --dry-run` runs the wizard interactively and then executes the pipeline in dry-run.
@@ -95,6 +96,7 @@ Flags and their value MUST appear together; positional integers are everything n
 /ship --delegate codex 42  → ISSUES=[42]                IMPLEMENTER=codex (overrides any delegate:* label)
 /ship --delegate ollama:qwen 42  → ISSUES=[42]          IMPLEMENTER=ollama:qwen (local model writes; § 5a.ollama; refused on TIER-3)
 /ship --review-delegate ollama:qwen 42  → ISSUES=[42]   5c reviewer = local qwen (read-only, findings-only)
+/ship --review-comments summary 42  → ISSUES=[42]       5d posts one summary comment per reviewer (no inline)
 /ship --wizard             → interactive prompts → resolves to a normal flag/issue set, then Step 1
 /ship --wizard 42          → interactive prompts pre-seeded with ISSUES=[42] → normal flag set, then Step 1
 /ship                      → ISSUES=[] (watch mode)     REVIEWERS=auto (resolved per-issue at Step 5a.2)
@@ -107,6 +109,7 @@ Reject:
 - `--reviewers` without an integer immediately following.
 - `--delegate` value outside `{claude, codex, agy, ollama:<model>}` (the `ollama:` model name must be non-empty — `ollama:` alone is rejected), or no value following.
 - `--review-delegate` value outside `{claude, codex, agy, ollama:<model>}` (the `ollama:` model name must be non-empty — `ollama:` alone is rejected), or no value following.
+- `--review-comments` value outside `{inline, summary}`, or no value following.
 - Negative or zero positional integers.
 
 **CLI delegation (label OR `--delegate` flag):** the **implementer** can be chosen two ways — add a `delegate:codex` / `delegate:agy` label to the issue (detected at Step 5a), or pass `--delegate <claude|codex|agy>` on the command line. The flag is a per-run override and **wins over the label** when both are present. `--delegate claude` forces the default Claude subagent even if the issue carries a `delegate:*` label.
@@ -153,10 +156,10 @@ The `HOST_AGENT` (the CLI driving this run; see § Host-agent default) is always
 
 **Quick-start vs Customize (asked first).** The wizard's FIRST question is always a fast-path chooser so the operator never has to answer every question to proceed:
 
-- `Use recommended defaults (default)` — resolve EVERY option below to its default (`IMPLEMENTER=HOST_AGENT`, `REVIEW_DELEGATE=HOST_AGENT`, `REVIEWERS=auto`, `JURY=auto`, run mode `Normal`, no preview), skip the detailed questions, and proceed. The only thing still collected is **Issues** (and only when none were given positionally). This is equivalent to a bare `/ship <issues>`.
+- `Use recommended defaults (default)` — resolve EVERY option below to its default (`IMPLEMENTER=HOST_AGENT`, `REVIEW_DELEGATE=HOST_AGENT`, `REVIEWERS=auto`, `REVIEW_COMMENTS=inline`, `JURY=auto`, run mode `Normal`, no preview), skip the detailed questions, and proceed. The only thing still collected is **Issues** (and only when none were given positionally). This is equivalent to a bare `/ship <issues>`.
 - `Customize` — present the full batched question set below so the operator can change any individual option.
 
-If the operator picks `Use recommended defaults`, the wizard does NOT show questions 2–6 at all — it goes straight to the resolved-config echo and Step 1. This makes "just run it with the safe defaults" a one-tap path, while still surfacing every knob for those who want it.
+If the operator picks `Use recommended defaults`, the wizard does NOT show questions 2–7 at all — it goes straight to the resolved-config echo and Step 1. This makes "just run it with the safe defaults" a one-tap path, while still surfacing every knob for those who want it.
 
 **What it collects when `Customize` is chosen (one `AskUserQuestion` call, batched questions).** Each answer maps directly onto an existing Step 0 variable/flag; the wizard performs no validation the grammar does not already perform.
 
@@ -166,8 +169,9 @@ If the operator picks `Use recommended defaults`, the wizard does NOT show quest
 2. **Implementer** (who writes the code) — options are built from `AVAIL_CLIS`. The **`HOST_AGENT` is the default** (labelled `<host> (default)`, description: "the CLI you launched `/ship` from writes the code"), listed first, followed by the other installed CLIs. Detected `OLLAMA_MODELS` are listed as `ollama:<model>` choices — a **free local-model implementer** for easy/low-risk issues (the orchestrator-driven harness of § 5a.ollama), description e.g. "local <model> writes the code (best for low-risk issues; refused on TIER-3)". Any choice maps to `--delegate <claude|codex|agy|ollama:<model>>`. An `ollama:<model>` choice on a TIER-3 issue falls back to `HOST_AGENT` at § 5a.ollama (logged). Omit the whole question if `HOST_AGENT` is the only available implementer.
 3. **Reviewer vendor** (Step 5c review) — the **`HOST_AGENT` is the default** (labelled `<host> (default)`, description: "5c review runs in the CLI you launched `/ship` from"), listed first, plus any other installed `codex`/`agy`/`claude` and any detected `ollama:<model>` as **read-only cross-vendor reviewer** choices. Maps to `--review-delegate`. A non-host vendor runs the 5c review through that vendor's CLI read-only (jury-style invocation), returns findings only, and the orchestrator still posts the comment (orchestrator-only-writes holds). Omit if `HOST_AGENT` is the only available CLI.
 4. **Reviewers** — `auto (default)` (description: "reviewer count auto-resolved by risk tier at Step 5a.2 — TIER-3=3, TIER-2=2, TIER-1 docs=1") / `1` / `2` / `3`. Maps to `REVIEWERS`.
-5. **AI Jury** — `auto (default)` (description: "off unless the PR is TIER-3, then auto-on") / `force on (--jury)` / `force off (--no-jury)`. Maps to `JURY` / the `--jury`/`--no-jury` precedence at Step 5a.2.
-6. **Run mode** — single-select primary mode (default first), plus `preview` as an independent add-on:
+5. **Review comments** — `Inline + hybrid (default)` (description: "findings on changed lines post as inline diff comments; everything else stays in a per-reviewer summary") / `Summary only` (description: "one summary comment per reviewer, no inline — the original behaviour"). Maps to `--review-comments inline|summary`.
+6. **AI Jury** — `auto (default)` (description: "off unless the PR is TIER-3, then auto-on") / `force on (--jury)` / `force off (--no-jury)`. Maps to `JURY` / the `--jury`/`--no-jury` precedence at Step 5a.2.
+7. **Run mode** — single-select primary mode (default first), plus `preview` as an independent add-on:
    - `Normal (default)` — description: "runs to merge; respects the night no-merge window (01:30–07:00 UTC+3) — non-blocker merges defer to the morning queue inside it". No flag (the bare-`/ship` behaviour).
    - `Force-merge (--blocker)` — description: "runs to merge and ignores the window — merges even inside the night no-merge window".
    - `Dry-run (--dry-run)` — description: "no GitHub writes, no merge — logs the would-be actions only".
@@ -176,7 +180,7 @@ If the operator picks `Use recommended defaults`, the wizard does NOT show quest
 **After collecting:** echo the resolved configuration back to the user as a single confirmation line in the same shape as the Step 0 worked examples, e.g.:
 
 ```
-Wizard resolved: ISSUES=[2027] IMPLEMENTER=claude REVIEW_DELEGATE=claude REVIEWERS=auto JURY=auto DRY_RUN=false PREVIEW=false BLOCKER=false
+Wizard resolved: ISSUES=[2027] IMPLEMENTER=claude REVIEW_DELEGATE=claude REVIEWERS=auto REVIEW_COMMENTS=inline JURY=auto DRY_RUN=false PREVIEW=false BLOCKER=false
 ```
 
 Then proceed to Step 1 exactly as if those flags had been typed. The wizard adds no state that Steps 1–6 do not already understand; it is impossible for the wizard to produce a configuration the normal grammar could not. Do NOT re-prompt mid-pipeline — the wizard is a one-shot pre-Step-1 collector.
@@ -656,9 +660,11 @@ Maintain three **parallel arrays in lock-step** — append all three atomically 
 REVIEWER_CODENAMES+=("$CODENAME"); REVIEWER_VENDORS+=("$REVIEWER_VENDOR"); REVIEWER_MODELS+=("${REVIEWER_MODEL:-unknown}")
 ```
 
-### 5d. Post per-reviewer comments (orchestrator does this)
+### 5d. Post per-reviewer reviews (orchestrator does this)
 
-After all reviewers return, post **one PR comment per reviewer** so the timeline shows N independent reviews:
+Posting mode is `REVIEW_COMMENTS` (`inline` default, or `summary`; set by `--review-comments` / the wizard at Step 0). Either way the timeline shows **N independent reviews** (one per reviewer) and every finding the reviewer returned is surfaced; only the *placement* differs. Reviewers never write to the PR; only the orchestrator does (the `/ship` orchestrator-only-writes override).
+
+**`summary` mode** — one PR comment per reviewer (the original behaviour):
 
 ```bash
 gh pr comment <PR> --body "## Review Round <X> — Reviewer <CODENAME> (vendor: <REVIEWER_VENDOR>[, model: <REVIEWER_MODEL>], focus: <A|B|C>)
@@ -668,11 +674,40 @@ gh pr comment <PR> --body "## Review Round <X> — Reviewer <CODENAME> (vendor: 
 <findings table>"
 ```
 
-The findings table renders the BLOCKER/SUGGESTION/NIT rows the reviewer returned.
+**`inline` mode (default) — inline diff comments + a summary, posted as ONE submitted review per reviewer.** Inline comments can only attach to lines that are part of the PR diff, so this is a **hybrid**:
 
-Reviewers never write to the PR; only the orchestrator does. (`AGENTS.md` step 9 reviewer template carries a `/ship` exception note immediately after the template; this override is the canonical default within `/ship`.)
+1. Fetch the PR diff once (`gh pr diff <PR>` / MCP `pull_request_read` method `get_diff` + `get_files`) to know which `file:line`s are anchorable. A finding is **anchorable** when its file is in the diff AND its line is an added/changed/context line; resolve `side` from the diff (`RIGHT` for added/context, `LEFT` for deleted; default `RIGHT`). Findings that are not anchorable (file not in the diff, line absent, or whole-PR findings like scope-creep / CI-prediction / docs-gate) go to the summary body instead.
+2. Open a **pending review**, add one inline comment per anchorable finding, then submit with the summary body:
 
-If `--dry-run`: skip the `gh pr comment` calls; log the would-be bodies to stdout.
+   ```bash
+   # GH_MODE=mcp:
+   #   pull_request_review_write(method=create, pullNumber=<PR>)                  # pending review
+   #   for each anchorable finding:
+   #     add_comment_to_pending_review(path=<file>, line=<line>, side=<RIGHT|LEFT>,
+   #        [startLine=<l>, startSide=<s>], subjectType=LINE, body="<severity>: <finding>")
+   #   pull_request_review_write(method=submit_pending, event=COMMENT, body="<summary>")
+   # GH_MODE=cli equivalent — create the review WITH its inline comments in ONE call
+   #   (do NOT use POST .../pulls/<PR>/comments, which makes standalone comments not
+   #   attached to any review). Use the reviews endpoint with a comments[] array:
+   #     gh api repos/<owner>/<repo>/pulls/<PR>/reviews \
+   #       -f event=COMMENT -f body="<summary>" \
+   #       -F 'comments[][path]=<file>'  -F 'comments[][line]=<line>' \
+   #       -F 'comments[][side]=<RIGHT|LEFT>' -F 'comments[][body]=<severity>: <finding>' \
+   #       (repeat the comments[][...] quartet per inline finding)
+   #   This creates AND submits one review carrying all inline comments + the summary.
+   ```
+
+   **Line/side resolution:** `line` is the **new-file** line number when `side=RIGHT` (added/context lines) and the **old-file** line number when `side=LEFT` (deleted lines). Reviewer findings normally cite new-file line numbers ⇒ `RIGHT`. A finding that points at a line which no longer exists after a deletion is **non-anchorable** (don't guess a position) — route it to the summary.
+
+   The **summary body** keeps the same header + verdict + vendor/model attribution (#2036) + a table of the **non-anchorable** findings (each noting why, e.g. "(not on a changed line)"). Anchorable findings live inline, so they are not duplicated in the table.
+
+3. **Fail-soft fallback (per reviewer, immediate):** if a reviewer's review-API path errors (a line anchor rejected, head-SHA drift, etc.), **immediately** fall back to the `summary`-mode single `gh pr comment` for THAT reviewer (all its findings in the table), log `5d: inline review failed — fell back to summary comment`, and continue with the next reviewer's inline path. The fallback is scoped to the one failing reviewer — it does not affect the others and does not batch to a whole-round fallback. Review posting must never block the pipeline.
+
+The Step 5e loop-exit parsing reads the reviewer's **returned findings**, not the comment shape, so it is unchanged across both modes. Narrowed re-reviews (Step 5e) post the same way.
+
+If `--dry-run`: skip every `gh pr comment` / review-API call; log the would-be inline comments + summary bodies to stdout.
+
+**Jury (Step 5d.jury) honours `REVIEW_COMMENTS` via pass-through** — when `REVIEW_COMMENTS=inline`, `/ship` passes ai-jury's native `--post-inline` to the jury invocation (Step 5d.jury) so the jury also posts its consensus findings inline on the diff; the orchestrator still posts the jury summary/verdict comment. When `summary`, the jury stays summary-only. This is the jury's own sanctioned inline write (same exception as ship-v2's compound `ce-code-review`).
 
 ### 5d.jury — Advisory cross-vendor jury (opt-in / TIER-3 auto)
 
@@ -729,6 +764,19 @@ elif [ "$JURY_REASON" = "TIER-3 auto" ]; then
 else
   # ADVISORY (--jury-advisory), non-TIER-3: fast, cheap. Never gates.
   JURY_RUN_ARGS=(--rounds 1 --no-verify --format markdown -o "$JURY_REPORT")
+fi
+# Inline pass-through (issue #2038): when /ship is in inline mode, ask the jury
+# to post its findings inline on the diff via ai-jury's native --post-inline
+# (the invoke already passes `--pr <PR>`, which --post-inline requires). This is
+# the jury's own sanctioned inline write (same spirit as ship-v2's compound
+# ce-code-review native posting); the orchestrator still posts the summary/verdict
+# comment below. In `summary` mode the jury stays summary-only. `--post-inline` is
+# an ai-jury >= 1.1.0 flag (the version jury.toml targets); if an older CLI rejects
+# it, the run's normal fail-soft path skips the jury (it can never gate).
+if [ "$REVIEW_COMMENTS" = inline ] && [ "$DRY_RUN" != true ]; then
+  JURY_RUN_ARGS+=(--post-inline)   # NEVER under --dry-run: --post-inline makes the jury
+                                   # write inline comments to the PR directly, which would
+                                   # violate the dry-run no-GitHub-writes guarantee.
 fi
 # Native execution budgets + transient-failure retry (ai-jury >= 1.1.0) so a
 # slow/hung vendor cannot stall the merge from inside the CLI. The external
@@ -811,7 +859,7 @@ Then **log** which agents actually participated and the chair verdict, e.g. `Jur
 
 **Feed Step 5e (gating mode only).** When `JURY_GATE_FINDINGS=true`, hand the verified `consensus[]` findings to Step 5e: `critical`/`major` ⇒ BLOCKER, `minor` ⇒ SUGGESTION (gated like a 5c SUGGESTION), `nit` ⇒ advisory (logged, not gating). Step 5e treats them exactly like 5c findings — a jury-driven fix consumes one review-fix round (cap 3). In **advisory** mode the stage does NOT consume budget and does NOT gate; Step 5e ignores it.
 
-**`--dry-run`:** skip the `gh pr comment --body-file` call; log the would-be comment body and the `jury ...` command. The jury MAY still run read-only to produce findings (it writes nothing to GitHub); under `--dry-run` the gate is **logged but not enforced** (no merge happens under dry-run anyway).
+**`--dry-run`:** skip the `gh pr comment --body-file` call; log the would-be comment body and the `jury ...` command. The jury MAY still run read-only to produce findings — but `--post-inline` is NOT appended under `--dry-run` (the guard above), so the jury writes nothing to GitHub. Under `--dry-run` the gate is **logged but not enforced** (no merge happens under dry-run anyway).
 
 **Re-run efficiency (gating loop).** When the gating jury re-runs after a 5e fix, ai-jury ≥ 1.1.0 keeps it cheap: `--incremental` reviews only the changes since the last jury run, `--cache` reuses prior per-agent results (`jury cache clear` resets). Keep the deterministic `decision = "chair"` + `verify` path (jury.toml) so the gate is reproducible against the committed `seed`.
 
