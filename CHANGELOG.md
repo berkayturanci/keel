@@ -6,6 +6,18 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **All `/keel:<command>` adapters brought to full project-neutral parity** (#34) — ported from
+  the reference workflow bodies, capturing their real operational detail while reading every
+  project value from `.keel/project.yaml`: `ship` (GitHub transport abstraction, blocker
+  auto-detect, attribution + model-base stripping, mkdir-mutex merge, narrowed fix-loop),
+  `regression` (parallel read-only area fan-out + multi-pass dedupe), `triage` (per-issue
+  classifier subagent, closed label vocabulary), `flake-audit` (across-runs-disagreement rule),
+  `coverage` (base→head delta, hot-spot tiering), `deps-audit`, `ci-check`, `stale-prs`,
+  `pr-loop`, `review-cycle`, `review-all-day`, `morning`, `overnight`, `wrap`, `implement`;
+  `ship-v2` is a pointer to `keel:ship` (no distinct portable backbone). **Zero downstream/
+  app-specific references** — verified.
+
 ## [0.2.1] — 2026-06-05
 
 ### Changed
