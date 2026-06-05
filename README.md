@@ -91,7 +91,7 @@ behaviour:
 
 ```bash
 keel install-adapter claude   # → /keel:ship, /keel:regression, /keel:morning, /keel:wrap, …
-#  (also: codex | gemini | agy)
+#  (also: codex | gemini | agy — or `all` to set up every agent dir at once)
 ```
 
 Shipped commands: `ship` (flagship), `regression`, `implement`, `review-cycle`, `pr-loop`,

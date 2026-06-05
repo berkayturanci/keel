@@ -45,5 +45,25 @@ class TestInstall(unittest.TestCase):
                 install.install("nope", d)
 
 
+class TestInstallAll(unittest.TestCase):
+    def test_installs_into_every_agent_dir(self):
+        with tempfile.TemporaryDirectory() as d:
+            results = install.install_all(d)
+            self.assertEqual(set(results), set(install.AGENT_DIRS))
+            for agent, rel in install.AGENT_DIRS.items():
+                installed, skipped = results[agent]
+                self.assertIn("ship.md", installed)
+                self.assertEqual(skipped, [])
+                self.assertTrue((Path(d) / rel / "ship.md").exists())
+
+    def test_second_run_skips_everywhere(self):
+        with tempfile.TemporaryDirectory() as d:
+            install.install_all(d)
+            results = install.install_all(d)
+            for installed, skipped in results.values():
+                self.assertEqual(installed, [])
+                self.assertIn("ship.md", skipped)
+
+
 if __name__ == "__main__":
     unittest.main()

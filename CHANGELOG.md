@@ -7,6 +7,9 @@ All notable changes to keel are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **`keel install-adapter all`** — install the `/keel:<command>` adapters into **every** known
+  agent dir (Claude + Codex + Gemini + agents) in a single run, instead of one agent at a time.
+  Per-agent install is unchanged; `all` just fans out over `AGENT_DIRS` (`install.install_all`).
 - **Cutover guide** (`docs/keel/cutover.md`) — the staged, verified process for a consumer to
   retire its copied command bodies: install + `keel install-adapter` → A/B verify `/keel:ship`
   on a low-risk test issue → retire the portable bodies (keep project-only) → move project

@@ -222,17 +222,29 @@ def _cmd_init(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_install_adapter(args: argparse.Namespace) -> int:
-    if args.agent not in install.AGENT_DIRS:
-        print(f"unknown agent {args.agent!r}; valid: {', '.join(install.AGENT_DIRS)}",
-              file=sys.stderr)
-        return 1
-    installed, skipped = install.install(args.agent, args.root, force=args.force)
-    target = install.AGENT_DIRS[args.agent]
+def _report_install(agent: str, installed: list[str], skipped: list[str]) -> None:
+    target = install.AGENT_DIRS[agent]
     for name in installed:
         print(f"  installed  {target}/{name}")
     for name in skipped:
         print(f"  skipped    {target}/{name}  (exists; --force to overwrite)")
+
+
+def _cmd_install_adapter(args: argparse.Namespace) -> int:
+    if args.agent == "all":
+        results = install.install_all(args.root, force=args.force)
+        total = sum(len(installed) for installed, _ in results.values())
+        for agent, (installed, skipped) in results.items():
+            _report_install(agent, installed, skipped)
+        print(f"{total} adapter(s) across {len(results)} agent dir(s) — invoke as /keel:<command>")
+        return 0
+    if args.agent not in install.AGENT_DIRS:
+        print(f"unknown agent {args.agent!r}; valid: all, {', '.join(install.AGENT_DIRS)}",
+              file=sys.stderr)
+        return 1
+    installed, skipped = install.install(args.agent, args.root, force=args.force)
+    target = install.AGENT_DIRS[args.agent]
+    _report_install(args.agent, installed, skipped)
     print(f"{len(installed)} adapter(s) in {target} — invoke as /keel:<command>")
     return 0
 
@@ -279,7 +291,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_init.set_defaults(func=_cmd_init)
 
     p_ia = sub.add_parser("install-adapter", help="install the /keel:<command> adapters")
-    p_ia.add_argument("agent", help=f"one of: {', '.join(install.AGENT_DIRS)}")
+    p_ia.add_argument("agent", help=f"'all' or one of: {', '.join(install.AGENT_DIRS)}")
     p_ia.add_argument("--root", default=".", help="project root to install into")
     p_ia.add_argument("--force", action="store_true", help="overwrite existing adapters")
     p_ia.set_defaults(func=_cmd_install_adapter)

@@ -355,6 +355,18 @@ class TestInstallAdapter(unittest.TestCase):
             self.assertEqual(rc, 0)
             self.assertIn("skipped", out)
 
+    def test_install_all_agents(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["install-adapter", "all", "--root", d])
+            self.assertEqual(rc, 0)
+            self.assertIn("across", out)
+            self.assertIn("/keel:", out)
+            self.assertTrue((Path(d) / ".claude/commands/keel/ship.md").exists())
+            self.assertTrue((Path(d) / ".codex/prompts/keel/ship.md").exists())
+            self.assertTrue((Path(d) / ".gemini/commands/keel/ship.md").exists())
+            self.assertTrue((Path(d) / ".agents/keel/ship.md").exists())
+
 
 class TestParser(unittest.TestCase):
     def test_subcommands_present(self):

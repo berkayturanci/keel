@@ -46,3 +46,14 @@ def install(
         dest.write_text(f.read_text(encoding="utf-8"), encoding="utf-8")
         installed.append(f.name)
     return installed, skipped
+
+
+def install_all(
+    root: str | Path, *, force: bool = False, _src: Path | None = None
+) -> dict[str, tuple[list[str], list[str]]]:
+    """Install the adapters into **every** known agent dir.
+
+    Returns ``agent -> (installed, skipped)`` for each entry in :data:`AGENT_DIRS`, so one
+    invocation sets up Claude, Codex, Gemini and the agents dir together.
+    """
+    return {agent: install(agent, root, force=force, _src=_src) for agent in AGENT_DIRS}

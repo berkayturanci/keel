@@ -144,9 +144,11 @@ project's agent command directory, so they appear as slash/prompt commands:
 | `codex` | `.codex/prompts/keel/` |
 | `gemini` | `.gemini/commands/keel/` |
 | `agy` | `.agents/keel/` |
+| `all` | every dir above, in one run |
 
 ```bash
 keel install-adapter claude          # → /keel:ship, /keel:regression, /keel:morning, …
+keel install-adapter all             # set up Claude + Codex + Gemini + agents together
 keel install-adapter claude --force  # overwrite existing adapters
 ```
 

@@ -21,7 +21,8 @@ the installed keel — never copied, so the drift/overwrite class of bug is gone
 ```bash
 pipx install "git+https://github.com/berkayturanci/keel@v0.3.0"   # or @main
 keel --version
-keel install-adapter claude          # → .claude/commands/keel/  (also: codex | gemini | agy)
+keel install-adapter all             # → Claude + Codex + Gemini + agents in one run
+#   (or a single agent: keel install-adapter claude  → .claude/commands/keel/)
 ```
 
 Now both the old `/<command>` and the new `/keel:<command>` exist side by side — so you can
