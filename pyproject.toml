@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,12 +8,33 @@ version = "0.5.0"
 description = "Project-neutral, multi-agent workflow core: a fixed backbone of steps that drives an issue from backlog to done, customised per project via config + add-only Lego extensions."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
-authors = [{ name = "berkayturanci" }]
-keywords = ["workflow", "automation", "ci", "agents", "code-review"]
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Berkay Turancı", email = "berkayturanci@gmail.com" }]
+keywords = ["workflow", "automation", "ci", "agents", "code-review", "github", "merge-queue"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Build Tools",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Software Development :: Version Control :: Git",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
+    "Typing :: Typed",
+]
 dependencies = [
     "PyYAML>=6",
 ]
+
+[project.urls]
+Homepage = "https://berkayturanci.github.io/keel/"
+Repository = "https://github.com/berkayturanci/keel"
+Issues = "https://github.com/berkayturanci/keel/issues"
+Changelog = "https://github.com/berkayturanci/keel/blob/main/CHANGELOG.md"
+Documentation = "https://github.com/berkayturanci/keel/tree/main/docs/keel"
 
 [project.optional-dependencies]
 dev = [

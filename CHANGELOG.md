@@ -7,6 +7,17 @@ All notable changes to keel are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Public-repo readiness** — `LICENSE` (Apache-2.0), `SECURITY.md`, `CONTRIBUTING.md`,
+  `CODE_OF_CONDUCT.md`, issue/PR templates, `CODEOWNERS`, Dependabot, and a `.pre-commit-config`.
+- **PyPI packaging** — `pyproject` carries full metadata (Apache-2.0 SPDX license, classifiers,
+  project URLs) and a `publish.yml` workflow: a `v*` tag builds the sdist+wheel and publishes to
+  PyPI via **trusted publishing (OIDC)**, with a CycloneDX SBOM, `SHA256SUMS`, build-provenance
+  attestation, and a generated GitHub Release. `pip install keel`.
+- **Security workflows** — `codeql.yml` (per-push/PR + weekly) and `scorecard.yml` (OpenSSF
+  Scorecard from `main`), Actions pinned to commit SHAs.
+- **Brand + site polish** — an SVG **hero** (dark/light, the backbone visualization) and a
+  `favicon.svg`; README badges (CI, coverage, CodeQL, PyPI, Python, license); the website embeds
+  the hero + favicon, and `pages.yml` now also publishes a self-hosted `coverage-badge.json`.
 - **Command reference** (`docs/keel/commands.md`) + a **Workflow commands** section on the
   website — all 16 `/keel:<command>` workflows, each with its description and which surface
   installs it.

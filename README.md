@@ -1,4 +1,17 @@
-# keel
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/assets/hero-light.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hero.svg">
+  <img src="docs/assets/hero.svg" alt="keel — a fixed backbone that drives a GitHub issue from backlog to merged">
+</picture>
+
+# keel ⚓
+
+[![CI](https://github.com/berkayturanci/keel/actions/workflows/ci.yml/badge.svg)](https://github.com/berkayturanci/keel/actions/workflows/ci.yml)
+[![coverage](https://img.shields.io/endpoint?url=https://berkayturanci.github.io/keel/coverage-badge.json)](https://berkayturanci.github.io/keel/coverage/)
+[![CodeQL](https://github.com/berkayturanci/keel/actions/workflows/codeql.yml/badge.svg)](https://github.com/berkayturanci/keel/actions/workflows/codeql.yml)
+[![PyPI](https://img.shields.io/pypi/v/keel)](https://pypi.org/project/keel/)
+[![Python](https://img.shields.io/pypi/pyversions/keel)](https://pypi.org/project/keel/)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
 > **keel** is a project-neutral, multi-agent **workflow core**. A *fixed backbone*
 > of steps drives a unit of work — a GitHub issue — from backlog to done
@@ -25,6 +38,17 @@ Layer 1  BACKBONE     keel-core — fixed ordered step machine + invariants (thi
 
 Changing the backbone is a keel-core change. Projects only ever touch layers 2–3.
 
+### What you get
+
+- **One backbone, every agent** — install once; `/keel:<command>` runs as native Claude commands
+  *and* as a single shared skill set every other agent (Codex, Antigravity, Gemini) reads.
+- **Project Lego** — snap your own gates/steps into named slots (`tester`, `pre-merge`, …) without
+  forking the backbone; hard `block` gates live in `pre-merge`.
+- **Opt-in `jury` gate** — runs the [ai-jury](https://github.com/berkayturanci/ai-jury) multi-agent
+  reviewer on the diff when installed; a fail-soft no-op otherwise.
+- **Safe merges by construction** — timezone-aware night no-merge window, `mkdir` merge lock,
+  risk-tier → reviewer count, hotfix bypass with an audit line, vendor+model attribution.
+
 ### The backbone
 
 | step | name | slot | |
@@ -48,10 +72,11 @@ orchestrator-only-writes, vendor+model attribution.
 
 ## Install
 
-keel is a Python (≥3.11) package with one runtime dependency (PyYAML). Private install:
+keel is a Python (≥3.11) package with one runtime dependency (PyYAML):
 
 ```bash
-pip install "git+https://github.com/berkayturanci/keel@v0.5.0"
+pip install keel                                              # from PyPI
+pip install "git+https://github.com/berkayturanci/keel@v0.5.0"  # or pin a git tag
 ```
 
 In a cloud agent session, install it from a `SessionStart` hook (or add keel to the
@@ -95,10 +120,11 @@ keel install-adapter skills   # one shared keel-<cmd> skill set under .agents/sk
 keel install-adapter all      # both surfaces
 ```
 
-Shipped commands: `ship` (flagship), `regression`, `implement`, `review-cycle`, `pr-loop`,
-`morning`, `overnight`, `wrap`, `triage`, `stale-prs`, `ci-check`, `deps-audit`,
-`flake-audit`, `coverage`. The `keel` CLI does the deterministic work; the adapters are the
-agentic flows (per-round review, inline comments, delegation).
+**16 shipped commands** — `ship` (flagship), `ship-v2`, `implement`, `review-cycle`,
+`review-all-day`, `pr-loop`, `regression`, `triage`, `morning`, `overnight`, `wrap`,
+`ci-check`, `coverage`, `deps-audit`, `flake-audit`, `stale-prs`. Each is described in
+[`docs/keel/commands.md`](docs/keel/commands.md). The `keel` CLI does the deterministic work;
+the adapters are the agentic flows (per-round review, inline comments, delegation).
 
 ## Dogfooding
 

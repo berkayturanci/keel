@@ -1,0 +1,88 @@
+name: Publish to PyPI and GitHub Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+# Least-privilege default for the whole workflow; the job below elevates only the
+# scopes it needs (OpenSSF Scorecard TokenPermissions).
+permissions:
+  contents: read
+
+jobs:
+  build-n-publish:
+    name: Build, Publish to PyPI, and Create GitHub Release
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write       # PyPI trusted publishing (OIDC) + provenance attestation
+      contents: write       # create the GitHub Release and upload assets
+      attestations: write   # build-provenance attestations
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.13"
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build
+
+      - name: Build package distributions
+        run: python -m build --sdist --wheel --outdir dist/
+
+      # CycloneDX software bill of materials for the built package. Written into
+      # release/ (NOT dist/) so the PyPI upload sees only the wheel + sdist —
+      # twine rejects non-distribution files in the upload dir. The SBOM still
+      # ships with the GitHub Release.
+      - name: Generate CycloneDX SBOM
+        run: |
+          python -m pip install cyclonedx-bom
+          python -m pip install dist/*.whl
+          mkdir -p release
+          cyclonedx-py environment --output-format JSON --output-file release/sbom.cdx.json
+
+      # A single SHA256SUMS over every release artifact so downloaders can verify
+      # integrity with `sha256sum -c SHA256SUMS`. Staged in release/ next to the
+      # dists (kept out of dist/ for the same reason as above).
+      - name: Generate checksums
+        run: |
+          cp dist/*.whl dist/*.tar.gz release/
+          cd release
+          sha256sum *.whl *.tar.gz sbom.cdx.json > SHA256SUMS
+          cat SHA256SUMS
+
+      # Cryptographic attestation binding the artifacts to this workflow run,
+      # verifiable with `gh attestation verify`.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32  # v4.1.0
+        with:
+          subject-path: "dist/*.whl, dist/*.tar.gz"
+
+      # PyPI trusted publishing: OIDC, no long-lived API token. dist/ holds only
+      # the wheel + sdist (SBOM/checksums live in release/). NOT continue-on-error:
+      # a failed publish must fail the release loudly. `skip-existing` keeps re-runs
+      # idempotent. Requires a one-time trusted-publisher config on PyPI for this
+      # repo + workflow.
+      - name: Publish package to PyPI
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # v1.14.0
+        with:
+          skip-existing: true
+
+      - name: Create GitHub Release and Upload Packages
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda  # v3.0.0
+        with:
+          files: |
+            release/*.whl
+            release/*.tar.gz
+            release/sbom.cdx.json
+            release/SHA256SUMS
+          name: Release ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

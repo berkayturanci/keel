@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 380" width="1200" height="380" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" role="img" aria-label="keel — a fixed backbone that drives a GitHub issue from backlog to merged">
+  <rect width="1200" height="380" rx="16" fill="#0d1117"/>
+  <rect x="0.5" y="0.5" width="1199" height="379" rx="16" fill="none" stroke="#30363d"/>
+
+  <!-- wordmark -->
+  <text x="56" y="92" font-size="64" font-weight="700" fill="#e6edf3" letter-spacing="-1">keel</text>
+  <text x="214" y="92" font-size="52" fill="#58a6ff">⚓</text>
+  <text x="58" y="132" font-size="21" fill="#9aa7b4">A project-neutral, multi-agent <tspan fill="#e6edf3" font-weight="600">workflow core</tspan>.</text>
+  <text x="58" y="160" font-size="21" fill="#9aa7b4">One fixed backbone drives a GitHub issue from backlog to merged.</text>
+
+  <!-- backbone spine -->
+  <g>
+    <text x="56" y="244" font-size="13" fill="#9aa7b4" letter-spacing="1.5">BACKBONE</text>
+    <line x1="92" y1="300" x2="1108" y2="300" stroke="#30363d" stroke-width="3"/>
+    <!-- caps -->
+    <text x="56" y="346" font-size="13" fill="#9aa7b4">issue</text>
+    <text x="1144" y="346" font-size="13" fill="#9aa7b4" text-anchor="end">merged + closed</text>
+
+    <!-- fixed steps (small accent dots) -->
+    <g fill="#58a6ff">
+      <circle cx="92"  cy="300" r="5"/>
+      <circle cx="176" cy="300" r="5"/>
+      <circle cx="261" cy="300" r="5"/>
+      <circle cx="346" cy="300" r="5"/>
+      <circle cx="515" cy="300" r="5"/>
+      <circle cx="600" cy="300" r="5"/>
+      <circle cx="769" cy="300" r="5"/>
+      <circle cx="1108" cy="300" r="5"/>
+    </g>
+
+    <!-- slot steps (green, labelled extension points) -->
+    <g>
+      <!-- s4 implement / after-implement -->
+      <circle cx="431" cy="300" r="9" fill="#3fb950"/>
+      <text x="431" y="272" font-size="12.5" fill="#3fb950" text-anchor="middle">after-implement</text>
+      <!-- s7 review / reviewers -->
+      <circle cx="685" cy="300" r="9" fill="#3fb950"/>
+      <text x="685" y="272" font-size="12.5" fill="#3fb950" text-anchor="middle">reviewers</text>
+      <!-- s8 test / tester -->
+      <circle cx="854" cy="300" r="9" fill="#3fb950"/>
+      <text x="854" y="338" font-size="12.5" fill="#3fb950" text-anchor="middle">tester</text>
+      <!-- s10 merge / pre-merge -->
+      <circle cx="939" cy="300" r="9" fill="#3fb950"/>
+      <text x="939" y="272" font-size="12.5" fill="#3fb950" text-anchor="middle">pre-merge</text>
+      <!-- s11 capture / post-merge -->
+      <circle cx="1023" cy="300" r="9" fill="#3fb950"/>
+      <text x="1023" y="338" font-size="12.5" fill="#3fb950" text-anchor="middle">post-merge</text>
+    </g>
+  </g>
+
+  <!-- right-side mini legend -->
+  <g transform="translate(840,70)">
+    <circle cx="8" cy="0" r="5" fill="#58a6ff"/>
+    <text x="24" y="4" font-size="14" fill="#9aa7b4">fixed step</text>
+    <circle cx="8" cy="26" r="7" fill="#3fb950"/>
+    <text x="24" y="30" font-size="14" fill="#9aa7b4">extension slot (your Lego)</text>
+  </g>
+</svg>

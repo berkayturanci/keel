@@ -1,0 +1,44 @@
+name: OpenSSF Scorecard
+
+on:
+  # Scorecard publishes results from the default branch; it cannot publish from
+  # pull requests or forks, so it intentionally does not run on `pull_request`.
+  # The repository is public, so hosted minutes are free: run on pushes to main
+  # (to keep the score current), plus the weekly schedule and on-demand trigger.
+  push:
+    branches: [main]
+  branch_protection_rule:
+  workflow_dispatch:
+  schedule:
+    - cron: "18 4 * * 2"
+
+permissions:
+  contents: read
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    permissions:
+      # Needed to publish results to the OpenSSF REST API (OIDC).
+      id-token: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Run Scorecard analysis
+        uses: ossf/scorecard-action@4eaacf0543bb3f2c246792bd56e8cdeffafb205a  # v2.4.3
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          # A read-only fine-grained PAT (admin:read) lets Scorecard evaluate the
+          # Branch-Protection check, which the default GITHUB_TOKEN cannot read.
+          # Optional: falls back to the workflow token when the secret is unset.
+          repo_token: ${{ secrets.SCORECARD_TOKEN || github.token }}
+          publish_results: true
+      - name: Upload results artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: scorecard-results
+          path: results.sarif
+          retention-days: 5
