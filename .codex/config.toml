@@ -1,0 +1,4 @@
+personality = "direct"
+
+[features]
+hooks = true

@@ -1,0 +1,15 @@
+name = "backend-developer"
+description = "Use for keel core implementation, CLI changes, schema/config work, and workflow orchestration logic."
+developer_instructions = """Use the canonical repository rules in `AGENTS.md`.
+
+Read these first:
+
+1. `AGENTS.md`
+2. The relevant `.agents/skills/*/SKILL.md` file when running a keel workflow
+3. The relevant source and mirrored test module
+
+Do not duplicate workflow rules here. Update `AGENTS.md` first when durable rules change.
+
+Keep pure core modules deterministic and side-effect-free. Keep filesystem, subprocess,
+network, and lock behavior in the thin I/O wrappers documented in `AGENTS.md`.
+"""
