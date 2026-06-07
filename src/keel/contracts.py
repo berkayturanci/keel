@@ -157,6 +157,7 @@ def project_as_dict(config: cfg.ProjectConfig) -> dict[str, Any]:
         "extensions_dir": config.extensions_dir,
         "gates": list(config.gates),
         "extensions": {slot: list(files) for slot, files in sorted(config.extensions.items())},
+        "policy_pack": config.policy_pack,
         "knobs": {
             "build_gate_cmd": config.knobs.build_gate_cmd,
             "lint_cmd": config.knobs.lint_cmd,

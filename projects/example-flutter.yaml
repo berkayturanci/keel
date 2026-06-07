@@ -34,3 +34,50 @@ extensions:
   tester: [design-parity.md]            # example-flutter's "design-equality" test Lego
   pre-merge: [design-parity-gate.md]    # no merge unless design-parity passes
 extensions_dir: .keel/extensions
+
+policy_pack:
+  name: example-flutter-supabase
+  labels:
+    status: ["status:backlog", "status:in-progress", "status:needs-review", "status:done"]
+    priority: ["priority:high", "priority:medium", "priority:low"]
+    role: ["mobile", "backend"]
+  status_transitions:
+    start: "status:in-progress"
+    review: "status:needs-review"
+    done: "status:done"
+  risk_rules:
+    - id: database-migration
+      paths: ["supabase/migrations/**"]
+      required_gates: ["build", "lint"]
+      review_additions: ["Check migration rollback and seed-data compatibility."]
+      docs_required: true
+  test_groups:
+    mobile:
+      command: "cd apps/mobile && flutter test"
+      paths: ["apps/mobile/**"]
+      required_capabilities: ["shell"]
+    backend:
+      command: "cd supabase && supabase test"
+      paths: ["supabase/**"]
+      required_capabilities: ["shell"]
+  docs:
+    required_paths: ["docs/**"]
+    allow_none_reasons: ["Internal-only refactor with no operator-facing behavior change."]
+    impact_required: true
+  health_providers:
+    release:
+      kind: project-command
+      command: ".keel/health/release-summary"
+      optional_capabilities: ["shell"]
+  command_routing:
+    ui-smoke:
+      agent_role: mobile
+      paths: ["apps/mobile/**"]
+      required_capabilities: ["shell"]
+      side_effects: ["report_write"]
+      dry_run_safe: true
+  reports:
+    morning: "reports/morning/"
+  review:
+    additions: ["Check design-parity extension evidence for user-visible changes."]
+    required_sections: ["Testing", "Docs Impact"]

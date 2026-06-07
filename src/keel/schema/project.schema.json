@@ -93,6 +93,117 @@
     "extensions_dir": {
       "type": "string",
       "description": "Project-local dir holding extension files (default .keel/extensions)."
+    },
+    "policy_pack": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "description": "Durable project-owned policy data. Core reads the data but does not hardcode stack/product rules.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Stable policy pack id for this consumer/project family."
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": { "type": "array", "items": { "type": "string" } },
+          "description": "Named label vocabularies, e.g. status, priority, role, type, or command-specific groups."
+        },
+        "status_transitions": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Lifecycle transition name -> label or state target."
+        },
+        "risk_rules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "paths"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "paths": { "type": "array", "items": { "type": "string" } },
+              "required_gates": { "type": "array", "items": { "type": "string" } },
+              "review_additions": { "type": "array", "items": { "type": "string" } },
+              "docs_required": { "type": "boolean" }
+            }
+          },
+          "description": "Project-owned high-risk path rules and extra review/doc expectations."
+        },
+        "test_groups": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["command"],
+            "properties": {
+              "command": { "type": "string", "minLength": 1 },
+              "paths": { "type": "array", "items": { "type": "string" } },
+              "reports": { "type": "array", "items": { "type": "string" } },
+              "required_capabilities": { "type": "array", "items": { "type": "string" } },
+              "optional_capabilities": { "type": "array", "items": { "type": "string" } }
+            }
+          },
+          "description": "Named project test/audit groups selected by affected paths or commands."
+        },
+        "docs": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "required_paths": { "type": "array", "items": { "type": "string" } },
+            "allow_none_reasons": { "type": "array", "items": { "type": "string" } },
+            "impact_required": { "type": "boolean" }
+          },
+          "description": "Documentation gate policy and allowed no-docs reasons."
+        },
+        "health_providers": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind"],
+            "properties": {
+              "kind": { "type": "string", "minLength": 1 },
+              "command": { "type": "string" },
+              "reports": { "type": "array", "items": { "type": "string" } },
+              "required_capabilities": { "type": "array", "items": { "type": "string" } },
+              "optional_capabilities": { "type": "array", "items": { "type": "string" } }
+            }
+          },
+          "description": "Project-owned production or operational signal providers."
+        },
+        "command_routing": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "agent_role": { "type": "string" },
+              "paths": { "type": "array", "items": { "type": "string" } },
+              "required_capabilities": { "type": "array", "items": { "type": "string" } },
+              "optional_capabilities": { "type": "array", "items": { "type": "string" } },
+              "side_effects": { "type": "array", "items": { "type": "string" } },
+              "dry_run_safe": { "type": "boolean" }
+            }
+          },
+          "description": "Project command routing and side-effect declarations."
+        },
+        "reports": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Named report destinations, paths, or issue prefixes."
+        },
+        "review": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "additions": { "type": "array", "items": { "type": "string" } },
+            "required_sections": { "type": "array", "items": { "type": "string" } }
+          },
+          "description": "Project-owned rubric additions and PR/review body requirements."
+        }
+      }
     }
   }
 }

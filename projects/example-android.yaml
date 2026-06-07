@@ -33,3 +33,57 @@ extensions:
   tester: []
   pre-merge: []
 extensions_dir: .keel/extensions
+
+policy_pack:
+  name: example-android-web
+  labels:
+    status: ["status:backlog", "status:in-progress", "status:needs-review", "status:done"]
+    priority: ["priority:high", "priority:medium", "priority:low"]
+    role: ["android", "web"]
+  status_transitions:
+    start: "status:in-progress"
+    review: "status:needs-review"
+    done: "status:done"
+  risk_rules:
+    - id: local-data-migration
+      paths: ["android/example-android/src/main/**/object/db/**"]
+      required_gates: ["build", "lint", "migration-smoke"]
+      review_additions: ["Check upgrade safety for existing local data."]
+      docs_required: true
+    - id: payment-flow
+      paths: ["**/billing/**"]
+      required_gates: ["build", "lint", "payment-regression"]
+      review_additions: ["Check purchase, restore, and entitlement edge cases."]
+      docs_required: true
+  test_groups:
+    android-unit:
+      command: "cd android && ./gradlew test --no-daemon"
+      paths: ["android/**"]
+      reports: ["android/build/reports/tests/"]
+      required_capabilities: ["shell"]
+    web-validate:
+      command: "cd web && npm test"
+      paths: ["web/**"]
+      reports: ["web/coverage/"]
+      required_capabilities: ["shell"]
+  docs:
+    required_paths: ["docs/**", "AGENTS.md"]
+    allow_none_reasons: ["Test-only change with no operator-facing behavior change."]
+    impact_required: true
+  health_providers:
+    app-health:
+      kind: project-command
+      command: ".keel/health/app-summary"
+      optional_capabilities: ["shell"]
+  command_routing:
+    device-smoke:
+      agent_role: android
+      paths: ["android/**"]
+      required_capabilities: ["shell"]
+      side_effects: ["report_write"]
+      dry_run_safe: true
+  reports:
+    regression: "reports/regression/"
+  review:
+    additions: ["Apply extra scrutiny to local data and payment-flow changes."]
+    required_sections: ["Testing", "Docs Impact"]

@@ -66,6 +66,10 @@ class TestBuildCommandContract(unittest.TestCase):
         self.assertEqual(contract["command"], "ship")
         self.assertEqual(contract["project"]["repo"], "example-android")
         self.assertIn("config_hash", contract["project"])
+        self.assertEqual(contract["project"]["policy_pack"]["name"], "example-android-web")
+        self.assertIn("payment-flow", [
+            rule["id"] for rule in contract["project"]["policy_pack"]["risk_rules"]
+        ])
         self.assertIn("build", [gate["id"] for gate in contract["gates"]])
         self.assertEqual(contract["extension_hooks"]["tester"][0]["id"], "smoke")
         self.assertIn("shell", contract["required_capabilities"])

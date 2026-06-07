@@ -27,3 +27,49 @@ gates: [build, lint]
 
 extensions: {}
 extensions_dir: .keel/extensions
+
+policy_pack:
+  name: keel-python
+  labels:
+    status: ["status:backlog", "status:in-progress", "status:needs-review", "status:done"]
+    priority: ["priority:high", "priority:medium", "priority:low"]
+    role: ["core"]
+  status_transitions:
+    start: "status:in-progress"
+    review: "status:needs-review"
+    done: "status:done"
+  risk_rules:
+    - id: core-contract
+      paths: ["src/keel/config.py", "src/keel/schema/project.schema.json", "src/keel/model.py"]
+      required_gates: ["build", "lint"]
+      review_additions: ["Check schema compatibility and config-hash determinism."]
+      docs_required: true
+  test_groups:
+    unit:
+      command: "make test"
+      paths: ["src/**", "tests/**"]
+      required_capabilities: ["shell"]
+    package-validate:
+      command: "make validate"
+      paths: ["projects/**", "src/keel/schema/**"]
+      required_capabilities: ["shell"]
+  docs:
+    required_paths: ["docs/keel/**", "README.md"]
+    allow_none_reasons: ["No user-facing behavior or config contract changed."]
+    impact_required: true
+  health_providers:
+    ci:
+      kind: github-checks
+      optional_capabilities: ["gh", "github-mcp"]
+  command_routing:
+    implement:
+      agent_role: core
+      paths: ["src/**", "tests/**", "docs/**"]
+      required_capabilities: ["shell", "git"]
+      side_effects: ["file_edit", "git_commit"]
+      dry_run_safe: false
+  reports:
+    session: "docs/session-reports/"
+  review:
+    additions: ["Reject consumer-specific policy in packaged command bodies."]
+    required_sections: ["Testing", "Docs Impact"]

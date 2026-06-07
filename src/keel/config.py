@@ -80,6 +80,7 @@ class ProjectConfig:
     gates: tuple[str, ...] = ()
     extensions: dict[str, tuple[str, ...]] = field(default_factory=dict)
     extensions_dir: str = DEFAULT_EXTENSIONS_DIR
+    policy_pack: dict[str, Any] = field(default_factory=dict)
 
     def slot(self, name: str) -> tuple[str, ...]:
         """Extension files registered for a named slot (``()`` if none)."""
@@ -117,6 +118,7 @@ def _build(data: dict) -> ProjectConfig:
         gates=tuple(data.get("gates", [])),
         extensions=extensions,
         extensions_dir=data.get("extensions_dir", DEFAULT_EXTENSIONS_DIR),
+        policy_pack=json.loads(json.dumps(data.get("policy_pack", {}), sort_keys=True)),
     )
 
 
@@ -135,6 +137,9 @@ def parse_config(data: Any, *, source: str = "<dict>", schema: dict | None = Non
             tuple(knobs.get("optional_capabilities", [])),
             source=f"{source}: knobs.optional_capabilities",
         ))
+    if isinstance(data, dict) and isinstance(data.get("policy_pack"), dict):
+        for path, names in _policy_capability_fields(data["policy_pack"]):
+            errors.extend(runtime.validate_names(tuple(names), source=f"{source}: {path}"))
     if errors:
         raise ConfigError(source, errors)
     return _build(data)
@@ -153,6 +158,24 @@ def config_hash(config: ProjectConfig) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _policy_capability_fields(value: Any, path: str = "policy_pack") -> list[tuple[str, list]]:
+    fields: list[tuple[str, list]] = []
+    if isinstance(value, dict):
+        for key, child in value.items():
+            child_path = f"{path}.{key}"
+            if (
+                key in {"required_capabilities", "optional_capabilities"}
+                and isinstance(child, list)
+            ):
+                fields.append((child_path, child))
+            else:
+                fields.extend(_policy_capability_fields(child, child_path))
+    elif isinstance(value, list):
+        for i, child in enumerate(value):
+            fields.extend(_policy_capability_fields(child, f"{path}[{i}]"))
+    return fields
+
+
 def _canonical(config: ProjectConfig) -> dict:
     return {
         "extends": config.extends,
@@ -167,6 +190,7 @@ def _canonical(config: ProjectConfig) -> dict:
         "gates": list(config.gates),
         "extensions_dir": config.extensions_dir,
         "extensions": {k: list(v) for k, v in sorted(config.extensions.items())},
+        "policy_pack": config.policy_pack,
         "knobs": {
             "build_gate_cmd": config.knobs.build_gate_cmd,
             "lint_cmd": config.knobs.lint_cmd,

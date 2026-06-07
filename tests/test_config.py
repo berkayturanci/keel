@@ -57,6 +57,19 @@ class TestSeedConfigs(unittest.TestCase):
         self.assertIn("design-parity.md", config.slot("tester"))
         self.assertIn("design-parity-gate.md", config.slot("pre-merge"))
 
+    def test_seed_policy_packs_represent_project_policy(self):
+        for name in ("keel.yaml", "example-flutter.yaml", "example-android.yaml"):
+            with self.subTest(config=name):
+                config = cfg.load_config(PROJECTS_DIR / name)
+                pack = config.policy_pack
+                self.assertTrue(pack["name"])
+                self.assertIn("labels", pack)
+                self.assertIn("risk_rules", pack)
+                self.assertIn("test_groups", pack)
+                self.assertIn("docs", pack)
+                self.assertIn("health_providers", pack)
+                self.assertIn("command_routing", pack)
+
 
 class TestParse(unittest.TestCase):
     def test_minimal_valid(self):
@@ -66,6 +79,90 @@ class TestParse(unittest.TestCase):
         self.assertEqual(config.gates, ())
         self.assertEqual(config.knobs.required_capabilities, ())
         self.assertEqual(config.knobs.optional_capabilities, ())
+        self.assertEqual(config.policy_pack, {})
+
+    def test_policy_pack_parses_project_policy_contract(self):
+        data = copy.deepcopy(VALID)
+        data["policy_pack"] = {
+            "name": "example-service",
+            "labels": {
+                "status": ["status:backlog", "status:done"],
+                "role": ["app", "service"],
+            },
+            "status_transitions": {"done": "status:done"},
+            "risk_rules": [{
+                "id": "data-migration",
+                "paths": ["migrations/**"],
+                "required_gates": ["migration-check"],
+                "review_additions": ["Check rollback safety."],
+                "docs_required": True,
+            }],
+            "test_groups": {
+                "app": {
+                    "command": "./tools/test-app",
+                    "paths": ["src/app/**"],
+                    "reports": ["reports/app-tests/"],
+                    "required_capabilities": ["shell"],
+                },
+            },
+            "docs": {
+                "required_paths": ["docs/**"],
+                "allow_none_reasons": ["No operator-facing behavior changed."],
+                "impact_required": True,
+            },
+            "health_providers": {
+                "service": {"kind": "project-command", "command": ".keel/health/service"},
+            },
+            "command_routing": {
+                "smoke": {
+                    "agent_role": "app",
+                    "paths": ["src/app/**"],
+                    "required_capabilities": ["shell"],
+                    "side_effects": ["report_write"],
+                    "dry_run_safe": True,
+                },
+            },
+            "reports": {"morning": "reports/morning/"},
+            "review": {
+                "additions": ["Check rollout notes."],
+                "required_sections": ["Testing", "Docs Impact"],
+            },
+        }
+        config = cfg.parse_config(data)
+        self.assertEqual(config.policy_pack["name"], "example-service")
+        self.assertEqual(config.policy_pack["labels"]["role"], ["app", "service"])
+        self.assertEqual(config.policy_pack["risk_rules"][0]["id"], "data-migration")
+        self.assertEqual(config.policy_pack["test_groups"]["app"]["command"],
+                         "./tools/test-app")
+
+    def test_policy_pack_required_fields_fail_validation(self):
+        bad = copy.deepcopy(VALID)
+        bad["policy_pack"] = {"labels": {"status": ["status:done"]}}
+        with self.assertRaises(cfg.ConfigError) as ctx:
+            cfg.parse_config(bad)
+        self.assertIn("policy_pack", str(ctx.exception))
+        self.assertIn("name", str(ctx.exception))
+
+    def test_policy_pack_rejects_unknown_nested_fields(self):
+        bad = copy.deepcopy(VALID)
+        bad["policy_pack"] = {
+            "name": "example",
+            "risk_rules": [{"id": "risk", "paths": ["src/**"], "bogus": True}],
+        }
+        with self.assertRaises(cfg.ConfigError) as ctx:
+            cfg.parse_config(bad)
+        self.assertIn("bogus", str(ctx.exception))
+
+    def test_policy_pack_capabilities_use_runtime_vocabulary(self):
+        bad = copy.deepcopy(VALID)
+        bad["policy_pack"] = {
+            "name": "example",
+            "test_groups": {"app": {"command": "./test", "required_capabilities": ["bogus"]}},
+        }
+        with self.assertRaises(cfg.ConfigError) as ctx:
+            cfg.parse_config(bad)
+        self.assertIn("policy_pack.test_groups.app.required_capabilities", str(ctx.exception))
+        self.assertIn("unknown capability", str(ctx.exception))
 
     def test_capability_knobs_parse(self):
         data = copy.deepcopy(VALID)
@@ -150,6 +247,13 @@ class TestConfigHash(unittest.TestCase):
         a = cfg.parse_config(copy.deepcopy(VALID))
         other = copy.deepcopy(VALID)
         other["base_branch"] = "develop"
+        b = cfg.parse_config(other)
+        self.assertNotEqual(cfg.config_hash(a), cfg.config_hash(b))
+
+    def test_changes_with_policy_pack_content(self):
+        a = cfg.parse_config(copy.deepcopy(VALID))
+        other = copy.deepcopy(VALID)
+        other["policy_pack"] = {"name": "example"}
         b = cfg.parse_config(other)
         self.assertNotEqual(cfg.config_hash(a), cfg.config_hash(b))
 

@@ -29,7 +29,7 @@ A consumer repository owns all product, stack, and organization policy:
 - reviewer rubric additions and domain-specific gates
 - credential sources and any approval required to use them
 
-Those values belong in `.keel/project.yaml`, project policy packs, `.keel/extensions/`, or
+Those values belong in `.keel/project.yaml` under `policy_pack`, `.keel/extensions/`, or
 project-provided commands. They do not belong in packaged keel command bodies.
 
 ## Runtime owns
@@ -59,3 +59,13 @@ When reviewing a keel core change, reject it if the implementation would make an
 consumer inherit policy that should have lived in project config or an extension. If a rule is
 useful only for one repository, add an extension hook or policy-pack field instead of adding it
 to core.
+
+## Policy pack vs extension
+
+Use `policy_pack` for durable data that commands need to plan, validate, route, or explain:
+label vocabularies, status transitions, risk paths, named test groups, docs policy, health
+providers, report destinations, review additions, and project command side effects.
+
+Use `.keel/extensions/` for executable or prompt-level additions that run at a backbone slot:
+extra reviewer prompts, test gates, pre-merge checks, capture steps, or any project-owned
+logic that should not become a core command body.
