@@ -77,7 +77,7 @@ keel is a Python (≥3.11) package with one runtime dependency (PyYAML):
 
 ```bash
 pip install keel                                              # from PyPI
-pip install "git+https://github.com/berkayturanci/keel@v0.5.0"  # or pin a git tag
+pip install "git+https://github.com/berkayturanci/keel@v0.6.0"  # or pin a git tag
 ```
 
 In a cloud agent session, install it from a `SessionStart` hook (or add keel to the
@@ -96,7 +96,7 @@ exactly what a dry-run executes:
 
 ```
 keel plan — example-flutter
-  base_branch: main   core_version: ^0.5
+  base_branch: main   core_version: ^0.6
   backbone:
      s4  implement  [agent]
      ...

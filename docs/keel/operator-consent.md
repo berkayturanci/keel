@@ -20,6 +20,14 @@ Keel maps declared live side effects into these approval scopes:
 Read-only diagnostics do not require consent unless they also request secrets or
 production-adjacent access.
 
+## Enforcement boundary
+
+Keel core only **emits** the operator-consent contract; it never performs the live
+mutation itself. The deterministic core stays read-only, so actual **enforcement depends
+on the adapter** (or orchestrator) honoring the emitted contract before it acts. Core can
+fail closed on its own preflight (refusing to proceed when required scopes are unapproved),
+but it cannot police a downstream agent that ignores the contract.
+
 ## Contract behavior
 
 Every structured command contract includes `operator_consent`.

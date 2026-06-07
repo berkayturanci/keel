@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "keel"
-version = "0.5.0"
+version = "0.6.0"
 description = "Project-neutral, multi-agent workflow core: a fixed backbone of steps that drives an issue from backlog to done, customised per project via config + add-only Lego extensions."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -57,8 +57,8 @@ source = ["keel"]
 omit = ["src/keel/__main__.py"]
 
 [tool.coverage.report]
-# keel keeps a high bar — the pure core must stay near-fully covered.
-fail_under = 95
+# keel keeps a high bar — the pure core stays fully covered (line + branch).
+fail_under = 100
 show_missing = true
 skip_covered = false
 exclude_lines = [

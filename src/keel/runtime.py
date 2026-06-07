@@ -32,15 +32,6 @@ KNOWN_CAPABILITIES: tuple[str, ...] = (
     "private-setup",
 )
 
-MUTATING_CAPABILITIES: tuple[str, ...] = (
-    "filesystem-write",
-    "worktree",
-    "release-publish",
-    "secret-access",
-    "production-adjacent",
-)
-
-
 @dataclass(frozen=True)
 class Capability:
     """One detected runtime capability."""

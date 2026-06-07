@@ -266,9 +266,10 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         return 1
 
     changed = git.changed_files(config.base_branch, "HEAD", cwd=args.root)
+    # unreachable: orch.build_plan() above already calls plan_gates and surfaces GateError.
     try:
         specs = gates.plan_gates(config, loaded)
-    except gates.GateError as exc:
+    except gates.GateError as exc:  # pragma: no cover - defensive duplicate of the build_plan guard
         print(str(exc), file=sys.stderr)
         return 1
     diff_text = git.diff(config.base_branch, "HEAD", cwd=args.root)

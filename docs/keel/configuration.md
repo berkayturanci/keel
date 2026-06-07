@@ -9,7 +9,7 @@ by `keel validate`. Unknown keys are rejected, so typos fail loudly.
 | field | type | required | description |
 |---|---|---|---|
 | `extends` | `"keel"` (const) | ✅ | marks the file as a keel consumer config |
-| `core_version` | string | ✅ | pinned keel core range, e.g. `^0.5` |
+| `core_version` | string | ✅ | pinned keel core range, e.g. `^0.6` |
 | `base_branch` | string | ✅ | branch PRs target (`develop`, `main`, …) |
 | `knobs` | object | ✅ | per-project values (see below) |
 | `owner` | string | | GitHub owner |
@@ -81,7 +81,7 @@ The boundary is documented in [consumer-neutrality.md](consumer-neutrality.md).
 
 ```yaml
 extends: keel
-core_version: "^0.5"
+core_version: "^0.6"
 owner: example-owner
 repo: example-repo
 base_branch: main

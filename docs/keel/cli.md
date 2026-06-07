@@ -55,7 +55,7 @@ Example output:
 
 ```
 keel plan — example-flutter
-  base_branch: main   core_version: ^0.5
+  base_branch: main   core_version: ^0.6
   backbone:
      s0  config
      ...

@@ -24,13 +24,17 @@ The rules you will hit most often. Details follow below.
   `model`, `extensions`, `findings`, `gates`, `orchestrator`, `classify`, `ship`,
   `window`, `cli`) must stay deterministic and side-effect-free.
 - **Coverage bar is non-negotiable.** The pure core is held at **100 % line + branch**;
-  the CI gate is `fail_under = 95` (`pyproject.toml`). New core code ships with tests
+  the CI gate is `fail_under = 100` (`pyproject.toml`). New core code ships with tests
   that keep it at 100 %.
 - **Stdlib-first.** Exactly one runtime dependency: **PyYAML**. Do not add another
   runtime dep without an explicit, discussed reason — `jsonschema_min` is a hand-rolled
   validator precisely to avoid pulling `jsonschema`.
 - **Determinism.** No wall-clock or randomness in the pure core. Plans, `config_hash`,
   and ship decisions must be reproducible for identical inputs.
+- **Operator consent is emit-only in core.** keel core only **emits** the operator-consent
+  contract and fails closed on its own preflight; actual **enforcement depends on the
+  adapter** honoring it, because the deterministic core never performs the live mutation
+  itself (see `docs/keel/operator-consent.md`).
 - **Before every push:** `make test` and `make lint` must pass; `make validate` must
   pass if any `projects/*.yaml` or the schema changed.
 - **Language:** all repo artifacts (code, comments, commits, PR/issue bodies, Markdown)

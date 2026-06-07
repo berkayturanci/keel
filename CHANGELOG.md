@@ -6,7 +6,36 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-06-07
+
 ### Added
+- **Consumer-neutral core** (#77) — the core carries no downstream project names or
+  workflows, with a `tests/test_consumer_neutrality.py` guard enforcing it.
+- **Runtime capability detection** (#68) — `keel capabilities` reports the runtime's
+  detected capabilities and GitHub transport; configs declare `required_capabilities` /
+  `optional_capabilities` (per-project knobs and per-gate extension fields). Missing
+  required capabilities block; missing optional ones degrade.
+- **GitHub transport resolver** (#62) — a normalized resolver picks `gh` (authenticated
+  CLI) over host-provided MCP/API access and surfaces degraded operations explicitly.
+- **Structured command contracts** (#66) — `keel plan --json` and `keel ship --json`
+  emit deterministic, schema-stable contract + result records for adapters to consume.
+- **Operator consent gate** (#82) — `keel ship` / `keel plan` accept
+  `--live`, `--approve-scope`, `--operator`, and `--target`; live preflight emits an
+  operator-consent contract and fails closed when required scopes are unapproved.
+- **Safe Codex adapter** (#58) — the packaged Codex adapter runs read-only/sandboxed
+  by default.
+- **Generated-surface verification** (#79) — `keel adapter-status` reports generated
+  adapter freshness against the packaged source bodies.
+- **Adapter update/compat flow** (#80) — `keel update-adapter` safely refreshes
+  generated adapters (with `--dry-run`) while respecting local markers.
+- **Project policy packs** (#65) — projects can declare risk rules, test groups, docs
+  requirements, and health providers via a validated policy pack.
+- **Extension hooks on every backbone step** (#56) — extension slots span the full
+  backbone so add-only Lego hooks can attach at each step.
+
+### Changed
+- **Parity matrix** (#63) — a command/capability parity matrix is captured and locked by
+  `tests/test_parity_matrix.py`.
 - **Public-repo readiness** — `LICENSE` (Apache-2.0), `SECURITY.md`, `CONTRIBUTING.md`,
   `CODE_OF_CONDUCT.md`, issue/PR templates, `CODEOWNERS`, Dependabot, and a `.pre-commit-config`.
 - **PyPI packaging** — `pyproject` carries full metadata (Apache-2.0 SPDX license, classifiers,
@@ -21,13 +50,13 @@ All notable changes to keel are documented here. The format follows
 - **Command reference** (`docs/keel/commands.md`) + a **Workflow commands** section on the
   website — all 16 `/keel:<command>` workflows, each with its description and which surface
   installs it.
-
-### Changed
 - `make adapters` now installs **both** surfaces (`install-adapter all`), and keel dogfoods its
   own `.claude/commands/keel/` + shared `.agents/skills/keel-*` skill set.
 - Retired the stale per-agent adapter stubs (`adapters/{codex,gemini,agy}/keel-ship.md`); the
   packaged bodies under `src/keel/adapters/commands/` are the single source, and
   `adapters/README.md` documents the two-surface model.
+- **Consolidation gate** (#94) — restored 100% line+branch coverage on the pure core and
+  raised the coverage gate to `fail_under = 100`; removed dead code (`MUTATING_CAPABILITIES`).
 
 ## [0.5.0] — 2026-06-05
 
