@@ -196,6 +196,44 @@
           },
           "description": "Project-owned production or operational signal providers."
         },
+        "scan": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "areas": {
+              "type": "object",
+              "additionalProperties": { "type": "array", "items": { "type": "string" } },
+              "description": "Area/module path groups used by scan-and-file commands."
+            },
+            "active_branch_patterns": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Project-owned branch globs considered active work branches by time-window scans."
+            },
+            "issue_labels": {
+              "type": "object",
+              "additionalProperties": { "type": "array", "items": { "type": "string" } },
+              "description": "Command-specific labels to apply to scan-created issues."
+            },
+            "near_text_similarity": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Similarity threshold for deterministic issue dedupe."
+            },
+            "batch_threshold": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Review-all-day commit count threshold before fan-out."
+            },
+            "large_diff_max_bytes": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Review-all-day per-diff truncation limit before file-boundary truncation."
+            }
+          },
+          "description": "Project-owned scan scope, branch, dedupe, and issue-write policy."
+        },
         "command_routing": {
           "type": "object",
           "additionalProperties": {

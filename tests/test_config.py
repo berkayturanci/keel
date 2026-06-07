@@ -68,6 +68,7 @@ class TestSeedConfigs(unittest.TestCase):
                 self.assertIn("test_groups", pack)
                 self.assertIn("docs", pack)
                 self.assertIn("health_providers", pack)
+                self.assertIn("scan", pack)
                 self.assertIn("command_routing", pack)
 
     def test_example_android_declares_project_commands(self):
@@ -118,6 +119,17 @@ class TestParse(unittest.TestCase):
             "health_providers": {
                 "service": {"kind": "project-command", "command": ".keel/health/service"},
             },
+            "scan": {
+                "areas": {"app": ["src/app/**"], "migrations": ["migrations/**"]},
+                "active_branch_patterns": ["feature/**", "fix/**"],
+                "issue_labels": {
+                    "regression": ["type:bug"],
+                    "review-all-day": ["review-finding"],
+                },
+                "near_text_similarity": 0.6,
+                "batch_threshold": 5,
+                "large_diff_max_bytes": 200000,
+            },
             "command_routing": {
                 "smoke": {
                     "agent_role": "app",
@@ -151,6 +163,7 @@ class TestParse(unittest.TestCase):
         self.assertEqual(config.policy_pack["risk_rules"][0]["id"], "data-migration")
         self.assertEqual(config.policy_pack["test_groups"]["app"]["command"],
                          "./tools/test-app")
+        self.assertEqual(config.policy_pack["scan"]["areas"]["app"], ["src/app/**"])
         self.assertEqual(config.policy_pack["project_commands"]["device-smoke"]["command"],
                          ".keel/commands/device-smoke")
 
