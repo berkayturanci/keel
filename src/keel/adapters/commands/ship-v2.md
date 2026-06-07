@@ -1,51 +1,71 @@
 ---
-description: Compound-engineering flavour of the ship workflow — folded into /keel:ship. This file points to keel:ship and notes the deltas, which are expressed as keel extensions, not a separate command.
-argument-hint: "[issue numbers...]  (see /keel:ship for the full flag surface)"
+description: Compound-engineering ship workflow variant — first-class, directly invokable, and backed by the shared ship backbone.
+argument-hint: "[issue numbers...] [--delegate <claude|codex|agy|ollama:MODEL>] [--review-delegate <claude|codex|agy|ollama:MODEL>] [--review-comments <inline|summary>] [--reviewers <1|2|3>] [--jury|--no-jury|--jury-advisory] [--hotfix] [--dry-run] [--wizard]"
 allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Bash(jury:*), Read, Edit, Write, Agent
 ---
 
 # /keel:ship-v2
 
-There is no distinct project-neutral `ship-v2` command. The "v2" workflow was a strict
-superset of `ship` with five well-scoped substitutions, and **every portable part of it is
-already a knob or a `.keel/extensions/` Lego in `/keel:ship`** — not a parallel backbone.
-Run **`/keel:ship`**; reach v2 behaviour by configuring the project, not by switching
-commands.
+Project-neutral compound-engineering variant of `/keel:ship`. It is a **first-class
+workflow profile**, not a project extension and not a copied second backbone.
 
-## Why it folds in
+Run the deterministic preflight before mutating work:
 
-The v2 deltas were inserted at fixed `ship` step boundaries and never bypassed the merge
-lock, scope-validation gate, or window gate. In keel terms each maps cleanly:
+```bash
+keel plan    .keel/project.yaml --root . --command ship-v2 --live --json
+keel ship-v2 .keel/project.yaml --root . --live --json
+```
 
-- **Commit + PR quality** (conventional-commit subject, value-first PR body) — part of the
-  s4 implement brief; a project may strengthen it via an `implementer_agents` role brief.
-  Skipped automatically when the resolved implementer is a self-driving CLI vendor that
-  already opens its own PR (key off the **effective** implementer, not just a label), so v2
-  never double-commits; a local-model implementer is orchestrator-driven, so it is **not**
-  skipped (the orchestrator opens its PR).
-- **Self-review / simplify pass** before review fan-out — a `pre-merge` or pre-review Lego
-  the project supplies; its changes push as a follow-up commit and re-trigger the s4
-  branch-scope gate on the new HEAD.
-- **Persona / diff-aware reviewer fan-out** — the s7 `reviewers` Lego. The tier (s5) is the
-  canonical risk signal that decides depth; size thresholds for a docs-only lightweight path
-  stay project-specific config. Log the path decision (tier, files, lines, reason) so a
-  downgrade is never silent.
-- **Structured PR-feedback resolution** — the s9 fix-loop; a project may route the fix
-  through a richer resolver Lego. The blocker-vs-suggestion loop-exit and the ≤3-round
-  budget are unchanged.
-- **Post-merge durable-learning capture** — the s11 `capture` Lego, with the same canonical
-  marker discipline and session-end verifier already described in `/keel:ship`.
+The JSON contract includes `workflow_profile`:
 
-## Notable differences to keep in mind (project-specific; stay in the project)
+- `profile: "compound"`
+- `inherits: "ship"`
+- `first_class_variant: true`
+- `step_overrides` for `s4 implement`, `s7 review`, `s9 fixloop`, and `s11 capture`
 
-- A reviewer Lego may post findings **directly** to the PR (its own native contract),
-  diverging from `ship`'s orchestrator-only-writes default. That divergence is a property of
-  that extension and must be declared by it — the default elsewhere remains orchestrator-only.
-- If a project's compound/persona extensions are unavailable at runtime, **fall back to the
-  base `ship` behaviour for that step and log it**; treat "most substitutions degraded" as
-  operator error and just run plain `/keel:ship`.
-- `--reviewers` may be ignored by a size-gated reviewer Lego — warn and continue.
+All project values still come from `.keel/project.yaml` via the keel CLI: `base_branch`,
+`build_gate_cmd`, `lint_cmd`, `implementer_agents`, `tier3_globs`, `ci_workflows`,
+`docs_gate_paths`, `merge_window`, `merge_window_mode`, and `timezone`.
 
-For the full flag surface, backbone (s0–s12), JSON contract, jury gate, merge lock,
-night no-merge window, fail-soft rules, and effective-vendor attribution, see
-**`/keel:ship`** (`adapters/commands/ship.md`).
+## Shared ship primitives
+
+`ship-v2` reuses the same safety primitives as `/keel:ship`:
+
+- issue selection and queue snapshot
+- isolated worktree and branch-from-`base_branch`
+- guard and scope validation
+- risk classification and reviewer-count policy
+- CI evaluation and project gates
+- review/jury/merge-gate contract from `review_merge_contract`
+- merge window and merge lock
+- issue/PR closeout and capture marker discipline
+
+Never fork these mechanics in the adapter. If the shared behavior needs to change, update
+the shared ship contract and keep `ship` and `ship-v2` in lockstep for that primitive.
+
+## Compound step overrides
+
+`ship-v2` differs only where `workflow_profile.step_overrides` says it differs:
+
+| step | profile mode | compound behavior |
+|---|---|---|
+| `s4 implement` | `compound` | Use a compound implement pass that emphasizes PR quality, scope simplification, and value-first change shaping before handoff. |
+| `s7 review` | `compound` | Use compound/persona reviewer fan-out when available, while preserving the reviewer count, posting mode, and gating semantics from `review_merge_contract`. |
+| `s9 fixloop` | `compound` | Resolve PR feedback through a structured compound loop, but keep the shared blocker/suggestion policy and review-fix budget. |
+| `s11 capture` | `compound` | Run durable-learning capture through the capture slot, with the shared canonical marker requirement. |
+
+Compound helpers may be supplied by the host runtime or by project extensions. If a compound
+helper is unavailable, fall back to the standard behavior for that step, log the degraded
+step, and continue unless the configured extension marks the degradation as blocking.
+
+## When to use it
+
+Use `/keel:ship` for the standard delivery path. Use `/keel:ship-v2` when the operator wants
+the compound-engineering flavor: richer implementation shaping, compound review/fix
+handling, and durable-learning capture, while retaining the same merge and safety gates.
+
+## Dry run
+
+`--dry-run` must show the same non-mutating contract as `ship`, plus the compound
+`workflow_profile`. It must not create branches, edit files, push commits, post comments,
+request reviews, merge, close issues, or write capture artifacts.

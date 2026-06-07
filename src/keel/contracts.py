@@ -20,6 +20,13 @@ from .project_commands import get_project_command, list_project_commands
 
 SCHEMA_VERSION = "keel.command-contract.v1"
 
+_SHIP_V2_OVERRIDES: dict[str, str] = {
+    "s4": "compound",
+    "s7": "compound",
+    "s9": "compound",
+    "s11": "compound",
+}
+
 _STEP_RE = re.compile(
     r"^#{2,3}\s+(?P<id>(?:Step\s+[0-9A-Za-z.]+|s\d+))\s*(?:[\u2014-]\s*)?"
     r"(?P<name>.*)$"
@@ -72,6 +79,8 @@ def command_graph(command: str) -> list[dict[str, Any]]:
                 "agentic": step.agentic,
                 "slot": step.slot,
                 "source": "backbone",
+                "profile_step": _SHIP_V2_OVERRIDES.get(step.id, "standard")
+                if command == "ship-v2" else "standard",
             }
             for step in model.BACKBONE
         ]
@@ -118,6 +127,7 @@ def build_command_contract(
         "dry_run": dry_run,
         "no_mutations": dry_run,
         "project": project_as_dict(config),
+        "workflow_profile": workflow_profile(command),
         "graph": graph,
         "backbone_plan": orchestrator.plan_as_dict(plan),
         "gates": [gate_as_dict(spec) for spec in gates.plan_gates(config, loaded)],
@@ -153,6 +163,79 @@ def build_command_contract(
             jury_advisory=jury_advisory,
         )
     return contract
+
+
+def workflow_profile(command: str) -> dict[str, Any]:
+    """First-class workflow profile metadata for command variants."""
+    if command == "ship-v2":
+        return {
+            "name": "ship-v2",
+            "profile": "compound",
+            "inherits": "ship",
+            "first_class_variant": True,
+            "shared_primitives": [
+                "select",
+                "branch",
+                "guard",
+                "classify",
+                "ci",
+                "test",
+                "merge",
+                "close",
+            ],
+            "step_overrides": {
+                "s4": {
+                    "step": "implement",
+                    "mode": "compound",
+                    "reason": "compound implement and PR-quality pass",
+                },
+                "s7": {
+                    "step": "review",
+                    "mode": "compound",
+                    "reason": "persona and diff-aware reviewer fan-out",
+                },
+                "s9": {
+                    "step": "fixloop",
+                    "mode": "compound",
+                    "reason": "structured PR-feedback resolution",
+                },
+                "s11": {
+                    "step": "capture",
+                    "mode": "compound",
+                    "reason": "durable-learning capture",
+                },
+            },
+        }
+    if command == "ship":
+        return {
+            "name": "ship",
+            "profile": "standard",
+            "inherits": None,
+            "first_class_variant": True,
+            "shared_primitives": [
+                "select",
+                "branch",
+                "guard",
+                "implement",
+                "classify",
+                "ci",
+                "review",
+                "test",
+                "fixloop",
+                "merge",
+                "capture",
+                "close",
+            ],
+            "step_overrides": {},
+        }
+    return {
+        "name": command,
+        "profile": "adapter",
+        "inherits": None,
+        "first_class_variant": False,
+        "shared_primitives": [],
+        "step_overrides": {},
+    }
 
 
 def command_side_effects(

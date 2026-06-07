@@ -10,6 +10,8 @@ describe what a command would do before an adapter starts mutating work.
 - `keel plan <project.yaml> --command <adapter> --live --json`
 - `keel ship <project.yaml> --dry-run --json`
 - `keel ship <project.yaml> --live --json`
+- `keel ship-v2 <project.yaml> --dry-run --json`
+- `keel ship-v2 <project.yaml> --live --json`
 
 Human-readable output remains the default. JSON output is the adapter-facing contract.
 
@@ -23,6 +25,7 @@ Every contract includes:
 | `command` | Adapter command being planned. |
 | `mode` / `dry_run` / `no_mutations` | Whether this record represents a non-mutating rehearsal. |
 | `project` | Resolved project config summary plus stable `config_hash`. |
+| `workflow_profile` | Command profile metadata. `ship` is `standard`; `ship-v2` is a first-class `compound` variant that inherits shared ship primitives and declares step overrides. |
 | `graph` | Command step graph. `ship` and `ship-v2` use the fixed backbone steps; other adapters expose their command-local steps; project commands expose a single `project_command` graph entry. |
 | `backbone_plan` | Fixed keel backbone with gates slotted onto steps. |
 | `gates` | Planned gate specs, including kind, phase, failure behavior, source, and capability declarations. |
@@ -62,7 +65,8 @@ files, git state, GitHub state, releases, secrets, or production-adjacent system
 
 ## Dry-run result records
 
-`keel ship --dry-run --json` adds a `result` object with deterministic data:
+`keel ship --dry-run --json` and `keel ship-v2 --dry-run --json` add a `result` object
+with deterministic data:
 
 - changed files and changed-file count
 - gate outcomes and normalized findings
@@ -71,6 +75,28 @@ files, git state, GitHub state, releases, secrets, or production-adjacent system
 
 This result contract is intentionally deterministic so parity tests can compare adapter
 behavior without creating branches, posting comments, or merging PRs.
+
+## Workflow profiles
+
+Workflow profiles let command variants stay directly invokable without copying an entire
+adapter body.
+
+`ship` uses:
+
+- `workflow_profile.profile: "standard"`
+- no step overrides
+
+`ship-v2` uses:
+
+- `workflow_profile.profile: "compound"`
+- `workflow_profile.inherits: "ship"`
+- `workflow_profile.first_class_variant: true`
+- shared primitives for selection, branching, guard, classification, CI, tests, merge, and
+  closeout
+- compound overrides for `s4 implement`, `s7 review`, `s9 fixloop`, and `s11 capture`
+
+The graph marks each backbone step with `profile_step`, so adapters can tell which steps are
+standard and which are compound without reparsing Markdown.
 
 ## Adapter rules
 

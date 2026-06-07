@@ -214,6 +214,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     if args.dry_run and args.live:
         print("--dry-run and --live cannot be used together", file=sys.stderr)
         return 1
+    command = getattr(args, "ship_command", "ship")
 
     try:
         config = cfg.load_config(args.path)
@@ -228,7 +229,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     for prob in problems:
         print(f"  ! extension not loaded: {prob}", file=sys.stderr)
 
-    requirement = _capability_requirement("ship", config, loaded, pr=args.pr)
+    requirement = _capability_requirement(command, config, loaded, pr=args.pr)
     report = runtime.detect(args.root)
     evaluation = runtime.evaluate(requirement, report)
     if not evaluation.ok:
@@ -250,7 +251,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
     contract = contracts.build_command_contract(
-        command="ship",
+        command=command,
         config=config,
         loaded=loaded,
         plan=plan,
@@ -325,8 +326,9 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         return 0 if a.merge.action != "block" else 1
 
     name = config.repo or config.extends
-    print(f"keel ship — {name}  (base {config.base_branch})")
+    print(f"keel {command} — {name}  (base {config.base_branch})")
     print(f"  changed files : {len(changed)}")
+    print(f"  profile       : {contract['workflow_profile']['profile']}")
     print(f"  risk tier     : TIER-{a.tier}  → {a.reviewers} reviewer(s)")
     jury_state = a.review_contract["jury"]["mode"]
     print(f"  review posts  : {a.review_contract['posting']['mode']}")
@@ -596,34 +598,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_window.add_argument("path", help="path to project.yaml")
     p_window.set_defaults(func=_cmd_window)
 
-    p_ship = sub.add_parser("ship", help="dry ship assessment (tier, window, gates, decision)")
-    p_ship.add_argument("path", help="path to project.yaml")
-    p_ship.add_argument("--root", default=".", help="repo root for git, gates + extensions")
-    p_ship.add_argument("--pr", type=int, default=None, help="PR number for CI status (gh)")
-    p_ship.add_argument("--hotfix", action="store_true", help="emergency: bypass the merge window")
-    p_ship.add_argument("--dry-run", action="store_true",
-                        help="explicitly mark the assessment as non-mutating")
-    p_ship.add_argument("--live", action="store_true",
-                        help=("run the live preflight gate and fail before gates "
-                              "if consent is missing"))
-    p_ship.add_argument("--approve-scope", action="append", default=[],
-                        help="approve a consent scope for this run; repeat or comma-separate")
-    p_ship.add_argument("--operator", default=None,
-                        help="operator identifier to include in an approved consent record")
-    p_ship.add_argument("--target", default=None,
-                        help="task target to include in the consent prompt and record")
-    p_ship.add_argument("--review-comments", choices=("inline", "summary"), default="inline",
-                        help="review posting mode for the resolved ship contract")
-    p_ship.add_argument("--reviewers", type=int, choices=(1, 2, 3), default=None,
-                        help="override the risk-derived reviewer count")
-    p_ship.add_argument("--jury", action="store_true",
-                        help="enable the cross-vendor jury gate")
-    p_ship.add_argument("--no-jury", action="store_true",
-                        help="disable the cross-vendor jury gate")
-    p_ship.add_argument("--jury-advisory", action="store_true",
-                        help="make an enabled jury advisory instead of merge-gating")
-    p_ship.add_argument("--json", action="store_true", help="emit structured JSON")
-    p_ship.set_defaults(func=_cmd_ship)
+    _add_ship_parser(
+        sub.add_parser("ship", help="dry ship assessment (tier, window, gates, decision)"),
+        command="ship",
+    )
+    _add_ship_parser(
+        sub.add_parser(
+            "ship-v2",
+            help="dry ship-v2 assessment using the compound workflow profile",
+        ),
+        command="ship-v2",
+    )
 
     p_caps = sub.add_parser("capabilities", help="print runtime capability report")
     p_caps.add_argument("--root", default=".", help="repo root for capability checks")
@@ -668,6 +653,36 @@ def build_parser() -> argparse.ArgumentParser:
     p_ua.set_defaults(func=_cmd_update_adapter)
 
     return parser
+
+
+def _add_ship_parser(parser: argparse.ArgumentParser, *, command: str) -> None:
+    parser.add_argument("path", help="path to project.yaml")
+    parser.add_argument("--root", default=".", help="repo root for git, gates + extensions")
+    parser.add_argument("--pr", type=int, default=None, help="PR number for CI status (gh)")
+    parser.add_argument("--hotfix", action="store_true", help="emergency: bypass the merge window")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="explicitly mark the assessment as non-mutating")
+    parser.add_argument("--live", action="store_true",
+                        help=("run the live preflight gate and fail before gates "
+                              "if consent is missing"))
+    parser.add_argument("--approve-scope", action="append", default=[],
+                        help="approve a consent scope for this run; repeat or comma-separate")
+    parser.add_argument("--operator", default=None,
+                        help="operator identifier to include in an approved consent record")
+    parser.add_argument("--target", default=None,
+                        help="task target to include in the consent prompt and record")
+    parser.add_argument("--review-comments", choices=("inline", "summary"), default="inline",
+                        help="review posting mode for the resolved ship contract")
+    parser.add_argument("--reviewers", type=int, choices=(1, 2, 3), default=None,
+                        help="override the risk-derived reviewer count")
+    parser.add_argument("--jury", action="store_true",
+                        help="enable the cross-vendor jury gate")
+    parser.add_argument("--no-jury", action="store_true",
+                        help="disable the cross-vendor jury gate")
+    parser.add_argument("--jury-advisory", action="store_true",
+                        help="make an enabled jury advisory instead of merge-gating")
+    parser.add_argument("--json", action="store_true", help="emit structured JSON")
+    parser.set_defaults(func=_cmd_ship, ship_command=command)
 
 
 def main(argv: list[str] | None = None) -> int:

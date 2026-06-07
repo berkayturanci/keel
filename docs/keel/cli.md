@@ -189,6 +189,23 @@ line is printed). It never bypasses failing gates, blocking findings, or failing
 dry assessment. `--dry-run` is accepted for adapter clarity; this CLI command is already
 non-mutating.
 
+## `keel ship-v2 <project.yaml> [same flags as keel ship]`
+
+Run the same deterministic ship assessment through the first-class `ship-v2` workflow
+variant. `ship-v2` shares the ship backbone and safety gates, but its JSON contract carries
+`workflow_profile.profile: "compound"` and step overrides for compound `implement`,
+`review`, `fixloop`, and `capture`.
+
+```bash
+keel ship-v2 projects/keel.yaml --root . --dry-run --json
+# contract.workflow_profile.profile == "compound"
+# contract.workflow_profile.inherits == "ship"
+```
+
+Use `ship` for the standard delivery path and `ship-v2` when the operator wants the
+compound-engineering flavor while retaining the same CI, review, merge-window, merge-lock,
+closeout, and capture safety gates.
+
 ## `keel init [--root DIR] [--force]`
 
 Scaffold a default `.keel/project.yaml` for the repo. keel detects the stack from marker

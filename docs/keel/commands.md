@@ -21,7 +21,7 @@ project's `.keel/project.yaml`.
 | command | what it does |
 |---|---|
 | **`/keel:ship`** | Drive a GitHub issue end-to-end through the keel backbone (select → branch → implement → CI → review → test → merge → close → capture). The full flow: per-round review, inline `file:line` comments, `--delegate` / `--review-delegate`, `--review-comments inline\|summary`, `--reviewers N`, the `jury` gate, the timezone-aware merge window + `mkdir` merge lock, and vendor+model attribution. |
-| `/keel:ship-v2` | Compound-engineering flavour of the ship workflow — **folded into `/keel:ship`**; its deltas are expressed as keel extensions, not a separate backbone. This command points at `/keel:ship`. |
+| `/keel:ship-v2` | First-class compound-engineering variant of the ship workflow. It reuses the shared ship backbone for selection, worktree safety, CI, review gates, merge window, merge lock, closeout, and capture markers, while its `workflow_profile` marks `implement`, `review`, `fixloop`, and `capture` as compound step overrides. |
 
 ## Per-step (standalone slices of the backbone)
 

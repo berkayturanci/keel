@@ -16,6 +16,16 @@ class TestCommandGraph(unittest.TestCase):
         self.assertEqual(graph[0]["step_id"], "s0")
         self.assertEqual(graph[-1]["step_id"], "s12")
         self.assertTrue(any(step["slot"] == "reviewers" for step in graph))
+        self.assertTrue(all(step["profile_step"] == "standard" for step in graph))
+
+    def test_ship_v2_uses_backbone_with_compound_overrides(self):
+        graph = contracts.command_graph("ship-v2")
+        by_id = {step["step_id"]: step for step in graph}
+        self.assertEqual(by_id["s4"]["profile_step"], "compound")
+        self.assertEqual(by_id["s7"]["profile_step"], "compound")
+        self.assertEqual(by_id["s9"]["profile_step"], "compound")
+        self.assertEqual(by_id["s11"]["profile_step"], "compound")
+        self.assertEqual(by_id["s10"]["profile_step"], "standard")
 
     def test_adapter_steps_are_exposed(self):
         graph = contracts.command_graph("morning")
@@ -122,6 +132,32 @@ class TestBuildCommandContract(unittest.TestCase):
         self.assertEqual(review["jury"]["mode"], "advisory")
         self.assertTrue(review["jury"]["configured_gate"])
         self.assertTrue(review["merge_gate"]["final_mergeability_recheck_inside_lock"])
+
+    def test_ship_v2_contract_exposes_first_class_compound_profile(self):
+        config = cfg.load_config(PROJECTS / "example-android.yaml")
+        loaded = {}
+        plan = orchestrator.build_plan(config, loaded)
+        report = runtime.CapabilityReport(())
+        requirement = runtime.CapabilityRequirement()
+        contract = contracts.build_command_contract(
+            command="ship-v2",
+            config=config,
+            loaded=loaded,
+            plan=plan,
+            requirement=requirement,
+            evaluation=runtime.evaluate(requirement, report),
+            transport=github_transport.resolve(report),
+        )
+
+        profile = contract["workflow_profile"]
+        self.assertEqual(profile["profile"], "compound")
+        self.assertEqual(profile["inherits"], "ship")
+        self.assertTrue(profile["first_class_variant"])
+        self.assertEqual(profile["step_overrides"]["s4"]["step"], "implement")
+        self.assertEqual(profile["step_overrides"]["s7"]["step"], "review")
+        self.assertEqual(profile["step_overrides"]["s9"]["step"], "fixloop")
+        self.assertEqual(profile["step_overrides"]["s11"]["step"], "capture")
+        self.assertIn("review_merge_contract", contract)
 
     def test_project_command_contract_has_graph_capabilities_and_side_effects(self):
         config = cfg.load_config(PROJECTS / "example-android.yaml")

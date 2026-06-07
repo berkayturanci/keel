@@ -88,6 +88,14 @@ class TestParityMatrix(unittest.TestCase):
         self.assertIn("#69", ship["Known gaps / owner issues"])
         self.assertIn("review_merge_contract", ship["Known gaps / owner issues"])
 
+    def test_ship_v2_row_records_first_class_profile_evidence(self):
+        rows = {row["Legacy command"].strip("`"): row for row in _matrix_rows()}
+        ship_v2 = rows["ship-v2"]
+        self.assertEqual(ship_v2["Status"], "`parity-proven`")
+        self.assertIn("#61", ship_v2["Known gaps / owner issues"])
+        self.assertIn("workflow_profile", ship_v2["Known gaps / owner issues"])
+        self.assertIn("compound", ship_v2["Known gaps / owner issues"])
+
 
 class TestShipBaseline(unittest.TestCase):
     def test_baseline_records_source_comparison_and_parity_evidence(self):

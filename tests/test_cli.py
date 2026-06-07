@@ -289,6 +289,23 @@ class TestShip(unittest.TestCase):
         self.assertEqual(review["posting"]["mode"], "summary")
         self.assertEqual(review["jury"]["mode"], "off")
 
+    def test_ship_v2_json_dry_run_contract(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["ship-v2", _write_config("'true'"), "--root", d,
+                              "--dry-run", "--json"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["contract"]["command"], "ship-v2")
+        self.assertEqual(data["contract"]["workflow_profile"]["profile"], "compound")
+        self.assertEqual(data["contract"]["workflow_profile"]["inherits"], "ship")
+        self.assertEqual(
+            data["contract"]["workflow_profile"]["step_overrides"]["s7"]["step"],
+            "review",
+        )
+        self.assertIn("review_merge_contract", data["contract"])
+        self.assertIn("result", data)
+
     def test_json_contract_matches_assessment_for_tier3_auto_jury(self):
         import tempfile
         with tempfile.TemporaryDirectory() as d:
@@ -630,7 +647,7 @@ class TestParser(unittest.TestCase):
         self.assertTrue(actions)
         self.assertGreaterEqual(set(actions[0].choices),
                                 {"version", "validate", "plan", "run-gates", "window", "ship",
-                                 "capabilities", "init", "install-adapter",
+                                 "ship-v2", "capabilities", "init", "install-adapter",
                                  "adapter-status", "update-adapter", "project-commands"})
 
 
