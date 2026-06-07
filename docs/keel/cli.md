@@ -52,6 +52,25 @@ does not approve them with `--approve-scope`, `plan --live` exits non-zero after
 resolved contract. Dry-runs never require live-write consent, but still show the live scopes
 that would require approval.
 
+## `keel morning <project.yaml> [--root DIR] [--since WHEN] [--live] [--approve-scope SCOPE] [--operator ID] [--json]`
+
+Render the standalone daily-brief contract for a project. The core owns the generic
+brief shape: date/window context, deferral queue, shipped-since-last-brief and GitHub
+status sections, project health provider metadata, priority sources, and report
+destinations. Project-specific health commands and focus signals stay in
+`policy_pack.health_providers`, `policy_pack.reports`, and extensions.
+
+```bash
+keel morning .keel/project.yaml
+keel morning .keel/project.yaml --since yesterday --json
+keel morning .keel/project.yaml --live --approve-scope filesystem --operator "$USER" --json
+```
+
+Dry-run mode never runs project health commands and never writes reports. Missing optional
+health-provider capabilities are shown as unavailable/degraded, not as a successful empty
+health section. Live mode is only a preflight contract; adapters perform approved report
+writes or provider execution after checking consent.
+
 Example output:
 
 ```

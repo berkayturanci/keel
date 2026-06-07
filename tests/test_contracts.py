@@ -213,6 +213,20 @@ class TestBuildCommandContract(unittest.TestCase):
         self.assertIn("read_only", ci_check["workflow_profile"]["shared_primitives"])
         self.assertFalse(ci_check["operator_consent"]["would_require_operator_consent"])
 
+        morning = contracts.build_command_contract(
+            command="morning",
+            config=config,
+            loaded=loaded,
+            plan=plan,
+            requirement=requirement,
+            evaluation=runtime.evaluate(requirement, report),
+            transport=github_transport.resolve(report),
+        )
+        self.assertEqual(morning["workflow_profile"]["profile"], "daily-brief")
+        self.assertTrue(morning["workflow_profile"]["first_class_variant"])
+        self.assertIn("health_providers", morning["workflow_profile"]["shared_primitives"])
+        self.assertIn("morning_contract", morning)
+
     def test_standalone_result_records_are_deterministic(self):
         config = cfg.load_config(PROJECTS / "example-android.yaml")
         transport = github_transport.resolve(runtime.CapabilityReport(()))
@@ -241,6 +255,24 @@ class TestBuildCommandContract(unittest.TestCase):
         self.assertEqual(ci_check["diagnostics"]["proposed_fix_count"], 1)
         self.assertTrue(ci_check["routing"]["never_direct_merge"])
 
+        missing_shell = runtime.evaluate(
+            runtime.CapabilityRequirement(optional=("shell",)),
+            runtime.CapabilityReport((runtime.Capability("shell", False, "missing", "test"),)),
+        )
+        morning = contracts.standalone_result_as_dict(
+            command="morning",
+            config=config,
+            transport=transport,
+            evaluation=missing_shell,
+        )
+        self.assertEqual(morning["brief"]["health_providers"][0]["status"], "unavailable")
+        self.assertEqual(
+            morning["brief"]["health_providers"][0]["missing_optional_capabilities"],
+            ["shell"],
+        )
+        self.assertEqual(morning["brief"]["deferral_queue"]["status"], "unconfigured")
+        self.assertFalse(morning["execution"]["runs_project_health_commands"])
+
         default_target = contracts.standalone_result_as_dict(
             command="implement",
             config=config,
@@ -260,6 +292,91 @@ class TestBuildCommandContract(unittest.TestCase):
             target="custom",
         )
         self.assertEqual(unknown, {"command": "unknown", "target": "custom"})
+
+    def test_morning_contract_is_project_extensible(self):
+        android = cfg.load_config(PROJECTS / "example-android.yaml")
+        flutter = cfg.load_config(PROJECTS / "example-flutter.yaml")
+        report = runtime.CapabilityReport((
+            runtime.Capability("shell", True, "ok", "test"),
+            runtime.Capability("github-mcp", True, "ok", "test"),
+        ))
+        evaluation = runtime.evaluate(
+            runtime.CapabilityRequirement(optional=("shell", "gh", "gh-auth")),
+            report,
+        )
+
+        android_brief = contracts.morning_contract_as_dict(
+            config=android,
+            evaluation=evaluation,
+            transport=github_transport.resolve(report),
+        )
+        flutter_brief = contracts.morning_contract_as_dict(
+            config=flutter,
+            evaluation=evaluation,
+            transport=github_transport.resolve(report),
+        )
+
+        self.assertEqual(android_brief["health_providers"][0]["name"], "app-health")
+        self.assertEqual(flutter_brief["health_providers"][0]["name"], "release")
+        self.assertEqual(flutter_brief["reports"]["morning"]["path"], "reports/morning/")
+        self.assertNotEqual(
+            android_brief["health_providers"][0]["command"],
+            flutter_brief["health_providers"][0]["command"],
+        )
+
+    def test_morning_contract_provider_edge_cases(self):
+        config = cfg.ProjectConfig(
+            extends="keel",
+            core_version="^0.1",
+            base_branch="main",
+            repo="edge",
+            knobs=cfg.Knobs(build_gate_cmd="true"),
+            policy_pack={
+                "name": "edge",
+                "health_providers": {
+                    "required-down": {
+                        "kind": "external",
+                        "required_capabilities": ["firebase"],
+                    },
+                    "missing-command": {
+                        "kind": "project-command",
+                    },
+                    "unknown-yet": {
+                        "kind": "external",
+                        "optional_capabilities": ["shell"],
+                    },
+                },
+                "reports": {
+                    "priorities": "reports/priorities.md",
+                    "deferrals": "reports/deferrals.md",
+                },
+            },
+        )
+        capability_check = runtime.evaluate(
+            runtime.CapabilityRequirement(required=("firebase",), optional=("shell",)),
+            runtime.CapabilityReport((
+                runtime.Capability("firebase", False, "missing", "test"),
+                runtime.Capability("shell", True, "ok", "test"),
+            )),
+        )
+
+        brief = contracts.morning_contract_as_dict(config=config, evaluation=capability_check)
+        providers = {provider["name"]: provider for provider in brief["health_providers"]}
+        self.assertEqual(providers["required-down"]["status"], "blocked")
+        self.assertEqual(providers["missing-command"]["status"], "unavailable")
+        self.assertEqual(providers["unknown-yet"]["status"], "available")
+        self.assertEqual(brief["deferral_queue"]["status"], "configured")
+        self.assertIn(
+            {"id": "priorities_report", "path": "reports/priorities.md"},
+            brief["priority_sources"],
+        )
+
+        no_capability_check = contracts.morning_contract_as_dict(config=config, evaluation=None)
+        providers = {
+            provider["name"]: provider
+            for provider in no_capability_check["health_providers"]
+        }
+        self.assertEqual(providers["required-down"]["missing_required_capabilities"], [])
 
     def test_project_command_contract_has_graph_capabilities_and_side_effects(self):
         config = cfg.load_config(PROJECTS / "example-android.yaml")

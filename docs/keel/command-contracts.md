@@ -15,6 +15,8 @@ describe what a command would do before an adapter starts mutating work.
 - `keel implement <project.yaml> <issue> --dry-run --json`
 - `keel implement <project.yaml> <issue> --live --json`
 - `keel ci-check <project.yaml> --pr <number> --json`
+- `keel morning <project.yaml> --json`
+- `keel morning <project.yaml> --live --json`
 
 Human-readable output remains the default. JSON output is the adapter-facing contract.
 
@@ -40,6 +42,7 @@ Every contract includes:
 | `github_transport` | Selected GitHub transport and degraded GitHub operation capabilities. |
 | `side_effects` | Declared possible live-run side effects and whether dry-run mutates. |
 | `operator_consent` | Operator consent requirement, approved mutation scopes, delegated-agent scope, and consent record metadata. |
+| `morning_contract` | Present for `morning`; project-neutral daily-brief sections, health providers, report destinations, priority sources, and deferral queue metadata. |
 
 Project command entries include name, local command path, description, agent role, path
 selectors, required/optional capabilities, side effects, dry-run safety, and source
@@ -87,6 +90,11 @@ Standalone commands also emit deterministic result records:
 - `ci-check` shows the selected PR target, configured workflow map, latest-run context
   shape, diagnostic classifications, the selected GitHub transport, and the next-command
   routing recommendations. It is read-only and proposes at most one fix.
+- `morning` shows the brief target/window, generic report sections, selected GitHub
+  transport, project-declared health providers, priority sources, report destinations,
+  and the shared deferral queue. It does not run project health commands or write reports
+  in dry-run output. Missing optional provider capabilities are reported as
+  `unavailable`, not as a successful empty health section.
 
 ## Workflow profiles
 
@@ -118,6 +126,9 @@ Standalone direct-use commands use first-class profiles too:
 - `ci-check` uses `workflow_profile.profile: "standalone-diagnostic"`. Its shared
   primitives include GitHub transport, check runs, latest-run context, log diagnostics,
   read-only behavior, and routing recommendations.
+- `morning` uses `workflow_profile.profile: "daily-brief"`. Its shared primitives include
+  date/window handling, the deferral queue, shipped-since-last-brief and GitHub summaries,
+  project health providers, priority sources, ranked focus, and report output.
 
 ## Adapter rules
 

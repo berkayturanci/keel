@@ -151,6 +151,12 @@ def build_command_contract(
             target=target,
         ),
     }
+    if command == "morning":
+        contract["morning_contract"] = morning_contract_as_dict(
+            config=config,
+            evaluation=evaluation,
+            transport=transport,
+        )
     if command in {"ship", "ship-v2", "pr-loop", "review-cycle", "overnight"}:
         contract["review_merge_contract"] = ship_decisions.resolve_review_contract(
             tier=review_tier,
@@ -196,6 +202,24 @@ def workflow_profile(command: str) -> dict[str, Any]:
                 "log_diagnostics",
                 "read_only",
                 "routing_recommendation",
+            ],
+            "step_overrides": {},
+        }
+    if command == "morning":
+        return {
+            "name": "morning",
+            "profile": "daily-brief",
+            "inherits": None,
+            "first_class_variant": True,
+            "shared_primitives": [
+                "date_window",
+                "deferral_queue",
+                "shipped_since",
+                "github_summary",
+                "health_providers",
+                "priority_sources",
+                "ranked_focus",
+                "report_output",
             ],
             "step_overrides": {},
         }
@@ -405,6 +429,7 @@ def standalone_result_as_dict(
     target: str | None = None,
     delegate: str | None = None,
     transport: github_transport.GitHubTransport | None = None,
+    evaluation: runtime.CapabilityEvaluation | None = None,
 ) -> dict[str, Any]:
     """Deterministic dry-run result records for standalone non-ship commands."""
     if command == "implement":
@@ -450,7 +475,142 @@ def standalone_result_as_dict(
                 "recommendations": ["review-cycle", "pr-loop", "ship", "flake-audit"],
             },
         }
+    if command == "morning":
+        return {
+            "command": command,
+            "target": target,
+            "base_branch": config.base_branch,
+            "brief": morning_contract_as_dict(
+                config=config,
+                evaluation=evaluation,
+                transport=transport,
+            ),
+            "execution": {
+                "runs_project_health_commands": False,
+                "writes_reports": False,
+                "live_work_owner": "adapter-or-extension-after-consent",
+            },
+        }
     return {"command": command, "target": target}
+
+
+def morning_contract_as_dict(
+    *,
+    config: cfg.ProjectConfig,
+    evaluation: runtime.CapabilityEvaluation | None = None,
+    transport: github_transport.GitHubTransport | None = None,
+) -> dict[str, Any]:
+    """Project-neutral morning briefing contract for adapters and dry-run output."""
+    pack = config.policy_pack or {}
+    reports = pack.get("reports") if isinstance(pack.get("reports"), dict) else {}
+    health = pack.get("health_providers") if isinstance(pack.get("health_providers"), dict) else {}
+    github = transport.as_dict() if transport is not None else {}
+    github_status = "available" if github.get("transport") not in {None, "none"} else "degraded"
+    return {
+        "timezone": config.timezone,
+        "merge_window": config.merge_window,
+        "base_branch": config.base_branch,
+        "sections": [
+            {
+                "id": "deferrals",
+                "source": "shared_queue",
+                "status": "configured" if reports.get("deferrals") else "unconfigured",
+                "path": reports.get("deferrals"),
+            },
+            {
+                "id": "shipped_since_last_brief",
+                "source": "github",
+                "transport": github.get("transport"),
+                "status": github_status,
+            },
+            {
+                "id": "github_status",
+                "source": "github",
+                "transport": github.get("transport"),
+                "status": github_status,
+            },
+            {
+                "id": "project_health",
+                "source": "policy_pack.health_providers",
+                "status": "configured" if health else "unconfigured",
+            },
+            {
+                "id": "ranked_focus",
+                "source": "policy_pack + github",
+                "status": "configured" if _priority_sources(config, reports) else "unconfigured",
+            },
+        ],
+        "health_providers": [
+            _health_provider_as_dict(name, provider, evaluation)
+            for name, provider in sorted(health.items())
+            if isinstance(provider, dict)
+        ],
+        "priority_sources": _priority_sources(config, reports),
+        "reports": {
+            key: {
+                "path": value,
+                "write_status": "skipped-in-dry-run",
+            }
+            for key, value in sorted(reports.items())
+        },
+        "deferral_queue": {
+            "source": "policy_pack.reports.deferrals",
+            "path": reports.get("deferrals"),
+            "status": "configured" if reports.get("deferrals") else "unconfigured",
+            "shared_with": ["ship", "overnight", "wrap"],
+        },
+        "missing_optional_policy": "unavailable-not-success",
+    }
+
+
+def _health_provider_as_dict(
+    name: str,
+    provider: dict[str, Any],
+    evaluation: runtime.CapabilityEvaluation | None,
+) -> dict[str, Any]:
+    required = tuple(provider.get("required_capabilities") or ())
+    optional = tuple(provider.get("optional_capabilities") or ())
+    missing_required = _missing_capabilities(required, evaluation)
+    missing_optional = _missing_capabilities(optional, evaluation)
+    status = "available"
+    if missing_required:
+        status = "blocked"
+    elif missing_optional:
+        status = "unavailable"
+    elif provider.get("command") is None and provider.get("kind") == "project-command":
+        status = "unavailable"
+    return {
+        "name": name,
+        "kind": provider.get("kind"),
+        "command": provider.get("command"),
+        "reports": list(provider.get("reports") or ()),
+        "required_capabilities": list(required),
+        "optional_capabilities": list(optional),
+        "missing_required_capabilities": list(missing_required),
+        "missing_optional_capabilities": list(missing_optional),
+        "status": status,
+    }
+
+
+def _missing_capabilities(
+    names: tuple[str, ...],
+    evaluation: runtime.CapabilityEvaluation | None,
+) -> tuple[str, ...]:
+    if evaluation is None:
+        return ()
+    missing = set(evaluation.missing_required) | set(evaluation.missing_optional)
+    return tuple(name for name in names if name in missing)
+
+
+def _priority_sources(config: cfg.ProjectConfig, reports: dict[str, Any]) -> list[dict[str, Any]]:
+    sources: list[dict[str, Any]] = []
+    if config.knobs.sot_doc:
+        sources.append({"id": "source_of_truth", "path": config.knobs.sot_doc})
+    if reports.get("priorities"):
+        sources.append({"id": "priorities_report", "path": reports["priorities"]})
+    if config.knobs.ci_workflows:
+        sources.append({"id": "ci_workflows", "names": sorted(config.knobs.ci_workflows)})
+    return sources
 
 
 def _target_identifier(target: str | None) -> str:

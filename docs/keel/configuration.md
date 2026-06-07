@@ -66,6 +66,14 @@ back to packaged command prose.
 `command`. `health_providers.*` entries require `kind`. These required fields are
 validated by the bundled schema.
 
+`health_providers` are used by reporting commands such as `keel morning`. Core reads their
+metadata and declared capabilities, but provider execution remains project-owned. If a
+provider only has optional capabilities and those capabilities are unavailable, morning
+marks that provider `unavailable` instead of treating the missing signal as success.
+`reports` can declare destinations such as `morning`, `priorities`, or `deferrals`; the
+`deferrals` entry is the shared queue contract surfaced by ship, overnight, wrap, and
+morning adapters.
+
 `project_commands` is the preferred place to preserve local commands that keel should not
 own. Keel can list them, include them in structured command contracts, and evaluate their
 declared capabilities; the command body itself remains in the project:

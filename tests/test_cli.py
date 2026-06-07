@@ -505,6 +505,64 @@ class TestStandaloneCommands(unittest.TestCase):
         self.assertNotIn("release-publish", data["contract"]["required_capabilities"])
         self.assertFalse(data["contract"]["operator_consent"]["would_require_operator_consent"])
 
+    def test_morning_json_contract_surfaces_health_reports_and_deferrals(self):
+        import tempfile
+        fake_report = runtime.CapabilityReport((
+            runtime.Capability("shell", False, "missing", "test"),
+            runtime.Capability("gh", False, "missing", "test"),
+            runtime.Capability("gh-auth", False, "missing", "test"),
+        ))
+        with tempfile.TemporaryDirectory() as d, patch("keel.cli.runtime.detect",
+                                                       return_value=fake_report):
+            rc, out, _ = run(["morning", str(PROJECTS / "example-flutter.yaml"),
+                              "--root", d, "--since", "yesterday", "--json"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["contract"]["command"], "morning")
+        self.assertEqual(data["contract"]["workflow_profile"]["profile"], "daily-brief")
+        self.assertEqual(data["result"]["target"], "since yesterday")
+        self.assertEqual(data["result"]["brief"]["reports"]["morning"]["path"],
+                         "reports/morning/")
+        self.assertEqual(data["result"]["brief"]["health_providers"][0]["status"],
+                         "unavailable")
+        self.assertEqual(data["result"]["brief"]["missing_optional_policy"],
+                         "unavailable-not-success")
+
+    def test_morning_does_not_inherit_project_mutation_requirements(self):
+        p = _write_raw("extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: x\n"
+                       "gates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+                       "  required_capabilities: [release-publish]\n"
+                       "policy_pack:\n  name: x\n  health_providers:\n"
+                       "    status:\n      kind: project-command\n"
+                       "      command: .keel/health/status\n"
+                       "      optional_capabilities: [shell]\n")
+        rc, out, _ = run(["morning", p, "--json"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertNotIn("release-publish", data["contract"]["required_capabilities"])
+        self.assertIn("shell", data["contract"]["optional_capabilities"])
+        self.assertFalse(data["result"]["execution"]["runs_project_health_commands"])
+
+    def test_morning_requirement_ignores_non_map_health_provider(self):
+        config = cli.cfg.ProjectConfig(
+            extends="keel",
+            core_version="^0.1",
+            base_branch="main",
+            knobs=cli.cfg.Knobs(build_gate_cmd="true"),
+            policy_pack={
+                "name": "edge",
+                "health_providers": {
+                    "invalid": "not-a-provider-map",
+                    "valid": {
+                        "kind": "external",
+                        "required_capabilities": ["firebase"],
+                    },
+                },
+            },
+        )
+        requirement = cli._morning_capability_requirement(config)
+        self.assertEqual(requirement.required, ("firebase",))
+
     def test_standalone_commands_reject_non_positive_targets(self):
         with self.assertRaises(SystemExit) as raised:
             run(["implement", _write_config("'true'"), "0"])
@@ -601,6 +659,39 @@ class TestStandaloneCommands(unittest.TestCase):
         self.assertIn("current branch", out)
         self.assertIn("degraded opt.", out)
         self.assertIn("read-only", out)
+
+    def test_morning_human_output_with_optional_degradation(self):
+        import tempfile
+        fake_report = runtime.CapabilityReport((
+            runtime.Capability("shell", False, "missing", "test"),
+            runtime.Capability("gh", False, "missing", "test"),
+            runtime.Capability("gh-auth", False, "missing", "test"),
+        ))
+        with tempfile.TemporaryDirectory() as d, patch("keel.cli.runtime.detect",
+                                                       return_value=fake_report):
+            rc, out, _ = run(["morning", str(PROJECTS / "example-flutter.yaml"),
+                              "--root", d])
+        self.assertEqual(rc, 0)
+        self.assertIn("keel morning", out)
+        self.assertIn("reports", out)
+        self.assertIn("health", out)
+        self.assertIn("unavailable", out)
+        self.assertIn("degraded opt.", out)
+
+    def test_morning_human_output_without_unavailable_provider(self):
+        import tempfile
+        fake_report = runtime.CapabilityReport((
+            runtime.Capability("shell", True, "ok", "test"),
+            runtime.Capability("gh", False, "missing", "test"),
+            runtime.Capability("gh-auth", False, "missing", "test"),
+        ))
+        with tempfile.TemporaryDirectory() as d, patch("keel.cli.runtime.detect",
+                                                       return_value=fake_report):
+            rc, out, _ = run(["morning", str(PROJECTS / "example-flutter.yaml"),
+                              "--root", d])
+        self.assertEqual(rc, 0)
+        self.assertIn("health", out)
+        self.assertNotIn("unavailable   :", out)
 
     def test_standalone_human_output_for_unknown_adapter_profile_falls_through(self):
         import tempfile
@@ -840,7 +931,8 @@ class TestParser(unittest.TestCase):
         self.assertTrue(actions)
         self.assertGreaterEqual(set(actions[0].choices),
                                 {"version", "validate", "plan", "run-gates", "window", "ship",
-                                 "ship-v2", "implement", "ci-check", "capabilities", "init",
+                                 "ship-v2", "implement", "ci-check", "morning", "capabilities",
+                                 "init",
                                  "install-adapter",
                                  "adapter-status", "update-adapter", "project-commands"})
 
