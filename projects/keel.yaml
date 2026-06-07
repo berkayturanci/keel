@@ -68,6 +68,53 @@ policy_pack:
       required_capabilities: ["shell", "git"]
       side_effects: ["file_edit", "git_commit"]
       dry_run_safe: false
+  workflow_policies:
+    pr-loop:
+      posting_mode: summary
+      posting_owner: orchestrator
+      reviewer_isolation:
+        shared_with_ship: true
+        codename_prefix: PR-LOOP
+        no_cross_reading: true
+      inputs:
+        auto_detect_current_branch: true
+        explicit_pr_targets: true
+        reads_review_comments: true
+        reads_issue_conversation_comments: true
+      ci:
+        recheck_after_push: true
+        green_required_to_exit: true
+        degrade_when_logs_unavailable: true
+      fix_loop:
+        budget: 3
+        self_review_before_push: true
+        reviewer_fanout_after_each_push: true
+      completion:
+        marker: null
+        merge: handoff
+        summary_comment: true
+    review-cycle:
+      posting_mode: inline
+      posting_owner: orchestrator
+      reviewer_isolation:
+        shared_with_ship: true
+        codename_prefix: REVIEW-CYCLE
+        no_cross_reading: true
+      inputs:
+        multi_pr: true
+        sequential_pr_processing: true
+      review:
+        parallel_reviewers_within_pr: true
+        partial_reviewer_failures_degrade: true
+        severity_histogram_source_of_truth: true
+      fix_loop:
+        budget: 3
+        enabled: true
+      completion:
+        marker: review-cycle-complete
+        marker_after_summary: true
+        merge: never
+        formal_approval: never
   reports:
     session: "docs/session-reports/"
   review:

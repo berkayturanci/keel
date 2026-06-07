@@ -111,6 +111,23 @@ class TestParityMatrix(unittest.TestCase):
         self.assertIn("standalone-diagnostic", ci_check["Known gaps / owner issues"])
         self.assertIn("read-only", ci_check["Known gaps / owner issues"])
 
+    def test_feedback_workflow_rows_remain_distinct_from_ship(self):
+        rows = {row["Legacy command"].strip("`"): row for row in _matrix_rows()}
+        pr_loop = rows["pr-loop"]
+        review_cycle = rows["review-cycle"]
+
+        self.assertEqual(pr_loop["Status"], "`parity-proven`")
+        self.assertIn("#73", pr_loop["Known gaps / owner issues"])
+        self.assertIn("feedback_workflow", pr_loop["Known gaps / owner issues"])
+        self.assertIn("merge handoff", pr_loop["Keel target behavior"])
+        self.assertIn("CI-green exit", pr_loop["Keel target behavior"])
+
+        self.assertEqual(review_cycle["Status"], "`parity-proven`")
+        self.assertIn("#73", review_cycle["Known gaps / owner issues"])
+        self.assertIn("feedback_workflow", review_cycle["Known gaps / owner issues"])
+        self.assertIn("review-cycle-complete", review_cycle["Known gaps / owner issues"])
+        self.assertIn("no-merge", review_cycle["Keel target behavior"])
+
 
 class TestShipBaseline(unittest.TestCase):
     def test_baseline_records_source_comparison_and_parity_evidence(self):

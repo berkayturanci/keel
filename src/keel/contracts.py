@@ -58,6 +58,67 @@ _BASE_SIDE_EFFECTS: dict[str, tuple[str, ...]] = {
     "flake-audit": ("issue_write", "comments"),
 }
 
+_DEFAULT_FEEDBACK_WORKFLOWS: dict[str, dict[str, Any]] = {
+    "pr-loop": {
+        "posting_mode": "summary",
+        "posting_owner": "orchestrator",
+        "reviewer_isolation": {
+            "shared_with_ship": True,
+            "codename_prefix": "PR-LOOP",
+            "no_cross_reading": True,
+        },
+        "inputs": {
+            "auto_detect_current_branch": True,
+            "explicit_pr_targets": True,
+            "reads_review_comments": True,
+            "reads_issue_conversation_comments": True,
+        },
+        "ci": {
+            "recheck_after_push": True,
+            "green_required_to_exit": True,
+            "degrade_when_logs_unavailable": True,
+        },
+        "fix_loop": {
+            "budget": 3,
+            "self_review_before_push": True,
+            "reviewer_fanout_after_each_push": True,
+        },
+        "completion": {
+            "marker": None,
+            "merge": "handoff",
+            "summary_comment": True,
+        },
+    },
+    "review-cycle": {
+        "posting_mode": "inline",
+        "posting_owner": "orchestrator",
+        "reviewer_isolation": {
+            "shared_with_ship": True,
+            "codename_prefix": "REVIEW-CYCLE",
+            "no_cross_reading": True,
+        },
+        "inputs": {
+            "multi_pr": True,
+            "sequential_pr_processing": True,
+        },
+        "review": {
+            "parallel_reviewers_within_pr": True,
+            "partial_reviewer_failures_degrade": True,
+            "severity_histogram_source_of_truth": True,
+        },
+        "fix_loop": {
+            "budget": 3,
+            "enabled": True,
+        },
+        "completion": {
+            "marker": "review-cycle-complete",
+            "marker_after_summary": True,
+            "merge": "never",
+            "formal_approval": "never",
+        },
+    },
+}
+
 
 def available_commands() -> tuple[str, ...]:
     """Every packaged adapter command that can expose a structured contract."""
@@ -174,11 +235,57 @@ def build_command_contract(
             no_jury=no_jury,
             jury_advisory=jury_advisory,
         )
+    if command in {"pr-loop", "review-cycle"}:
+        contract["feedback_workflow"] = feedback_workflow_as_dict(config, command)
     return contract
 
 
 def workflow_profile(command: str) -> dict[str, Any]:
     """First-class workflow profile metadata for command variants."""
+    if command == "pr-loop":
+        return {
+            "name": "pr-loop",
+            "profile": "feedback-loop",
+            "inherits": "ship.s6-s9",
+            "first_class_variant": True,
+            "shared_primitives": [
+                "linked_worktree_preflight",
+                "github_transport",
+                "reviewer_isolation",
+                "ci_recheck",
+                "fixloop",
+                "summary_comment",
+                "operator_consent",
+            ],
+            "step_overrides": {
+                "merge": {
+                    "mode": "handoff",
+                    "reason": "pr-loop exits after feedback and CI are satisfied.",
+                },
+            },
+        }
+    if command == "review-cycle":
+        return {
+            "name": "review-cycle",
+            "profile": "review-feedback",
+            "inherits": "ship.s7-s9",
+            "first_class_variant": True,
+            "shared_primitives": [
+                "multi_pr_targets",
+                "reviewer_isolation",
+                "posting_mode",
+                "severity_histogram",
+                "fixloop",
+                "completion_marker",
+                "operator_consent",
+            ],
+            "step_overrides": {
+                "merge": {
+                    "mode": "never",
+                    "reason": "review-cycle never merges or posts formal approval.",
+                },
+            },
+        }
     if command == "implement":
         return {
             "name": "implement",
@@ -553,7 +660,29 @@ def standalone_result_as_dict(
                 "live_work_owner": "adapter-after-consent",
             },
         }
+    if command in {"pr-loop", "review-cycle"}:
+        workflow = feedback_workflow_as_dict(config, command)
+        return {
+            "command": command,
+            "target": target,
+            "base_branch": config.base_branch,
+            "feedback_workflow": workflow,
+            "execution": {
+                "commits": False,
+                "pushes": False,
+                "posts_comments": False,
+                "merges": False,
+                "live_work_owner": "adapter-after-consent",
+            },
+        }
     return {"command": command, "target": target}
+
+
+def feedback_workflow_as_dict(config: cfg.ProjectConfig, command: str) -> dict[str, Any]:
+    """Return command-specific feedback-loop policy with project overrides applied."""
+    defaults = _DEFAULT_FEEDBACK_WORKFLOWS.get(command, {})
+    policy = _feedback_workflow_policy(config).get(command, {})
+    return _deep_merge(defaults, policy)
 
 
 def session_contract_as_dict(
@@ -780,6 +909,37 @@ def _deferral_queue_as_dict(reports: dict[str, Any]) -> dict[str, Any]:
         "status": "configured" if reports.get("deferrals") else "unconfigured",
         "shared_with": ["ship", "overnight", "wrap", "morning"],
     }
+
+
+def _feedback_workflow_policy(config: cfg.ProjectConfig) -> dict[str, dict[str, Any]]:
+    pack = config.policy_pack or {}
+    policy = pack.get("workflow_policies")
+    if not isinstance(policy, dict):
+        return {}
+    return {
+        name: value
+        for name, value in policy.items()
+        if isinstance(name, str) and isinstance(value, dict)
+    }
+
+
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    merged: dict[str, Any] = {}
+    for key, value in base.items():
+        if isinstance(value, dict):
+            merged[key] = _deep_merge(value, {})
+        elif isinstance(value, list):
+            merged[key] = list(value)
+        else:
+            merged[key] = value
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
+        elif isinstance(value, list):
+            merged[key] = list(value)
+        else:
+            merged[key] = value
+    return merged
 
 
 def _target_identifier(target: str | None) -> str:

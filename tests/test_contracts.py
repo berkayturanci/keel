@@ -265,6 +265,80 @@ class TestBuildCommandContract(unittest.TestCase):
         self.assertEqual(overnight["workflow_profile"]["inherits"], "ship")
         self.assertIn("review_merge_contract", overnight)
 
+        pr_loop = contracts.build_command_contract(
+            command="pr-loop",
+            config=config,
+            loaded=loaded,
+            plan=plan,
+            requirement=requirement,
+            evaluation=runtime.evaluate(requirement, report),
+            transport=github_transport.resolve(report),
+        )
+        self.assertEqual(pr_loop["workflow_profile"]["profile"], "feedback-loop")
+        self.assertEqual(pr_loop["workflow_profile"]["inherits"], "ship.s6-s9")
+        self.assertIn("reviewer_isolation", pr_loop["workflow_profile"]["shared_primitives"])
+        self.assertIn("feedback_workflow", pr_loop)
+
+        review_cycle = contracts.build_command_contract(
+            command="review-cycle",
+            config=config,
+            loaded=loaded,
+            plan=plan,
+            requirement=requirement,
+            evaluation=runtime.evaluate(requirement, report),
+            transport=github_transport.resolve(report),
+        )
+        self.assertEqual(review_cycle["workflow_profile"]["profile"], "review-feedback")
+        self.assertEqual(review_cycle["workflow_profile"]["inherits"], "ship.s7-s9")
+        self.assertIn("completion_marker", review_cycle["workflow_profile"]
+                      ["shared_primitives"])
+        self.assertIn("feedback_workflow", review_cycle)
+
+    def test_feedback_workflow_policy_preserves_command_specific_review_loops(self):
+        config = cfg.ProjectConfig(
+            extends="keel",
+            core_version="^0.6",
+            base_branch="main",
+            knobs=cfg.Knobs(build_gate_cmd="make test"),
+            policy_pack={
+                "name": "feedback",
+                "workflow_policies": {
+                    "pr-loop": {
+                        "posting_mode": "summary",
+                        "reviewer_isolation": {"codename_prefix": "PROJECT-PR"},
+                    },
+                    "review-cycle": {
+                        "posting_owner": "reviewer",
+                        "completion": {"marker": "project-review-complete"},
+                    },
+                },
+            },
+        )
+
+        pr_loop = contracts.feedback_workflow_as_dict(config, "pr-loop")
+        self.assertEqual(pr_loop["posting_mode"], "summary")
+        self.assertEqual(pr_loop["reviewer_isolation"]["codename_prefix"], "PROJECT-PR")
+        self.assertTrue(pr_loop["reviewer_isolation"]["shared_with_ship"])
+        self.assertTrue(pr_loop["ci"]["green_required_to_exit"])
+        self.assertEqual(pr_loop["completion"]["merge"], "handoff")
+
+        review_cycle = contracts.feedback_workflow_as_dict(config, "review-cycle")
+        self.assertEqual(review_cycle["posting_owner"], "reviewer")
+        self.assertEqual(review_cycle["completion"]["marker"], "project-review-complete")
+        self.assertTrue(review_cycle["completion"]["marker_after_summary"])
+        self.assertTrue(review_cycle["review"]["severity_histogram_source_of_truth"])
+
+    def test_feedback_workflow_merge_copies_list_values(self):
+        base = {"focuses": ["review"], "nested": {"sources": ["review-comments"]}}
+        override = {"focuses": ["ci"], "nested": {"sources": ["issue-comments"]}}
+
+        merged = contracts._deep_merge(base, override)
+
+        self.assertEqual(merged["focuses"], ["ci"])
+        self.assertEqual(merged["nested"]["sources"], ["issue-comments"])
+        self.assertIsNot(merged["focuses"], override["focuses"])
+        self.assertIsNot(merged["nested"]["sources"], override["nested"]["sources"])
+
     def test_standalone_result_records_are_deterministic(self):
         config = cfg.load_config(PROJECTS / "example-android.yaml")
         transport = github_transport.resolve(runtime.CapabilityReport(()))
@@ -335,6 +409,30 @@ class TestBuildCommandContract(unittest.TestCase):
             overnight["session"]["overnight"]["ship_handoff"]["passes_operator_consent_scope"]
         )
         self.assertFalse(overnight["execution"]["merges"])
+
+        pr_loop = contracts.standalone_result_as_dict(
+            command="pr-loop",
+            config=config,
+            target="PR #73",
+            transport=transport,
+        )
+        self.assertEqual(pr_loop["target"], "PR #73")
+        self.assertEqual(pr_loop["feedback_workflow"]["posting_mode"], "summary")
+        self.assertTrue(pr_loop["feedback_workflow"]["ci"]["green_required_to_exit"])
+        self.assertFalse(pr_loop["execution"]["posts_comments"])
+
+        review_cycle = contracts.standalone_result_as_dict(
+            command="review-cycle",
+            config=config,
+            target="PR #73",
+            transport=transport,
+        )
+        self.assertEqual(
+            review_cycle["feedback_workflow"]["completion"]["marker"],
+            "review-cycle-complete",
+        )
+        self.assertEqual(review_cycle["feedback_workflow"]["completion"]["merge"], "never")
+        self.assertFalse(review_cycle["execution"]["merges"])
 
         default_target = contracts.standalone_result_as_dict(
             command="implement",

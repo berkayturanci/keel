@@ -105,6 +105,13 @@ Standalone commands also emit deterministic result records:
   ship handoff, priority queue shape, session or morning report destinations, stop
   conditions, and the shared deferral queue. It does not spawn ship runs, create PRs,
   merge, or write reports in dry-run output.
+- `pr-loop` shows the feedback workflow policy for PR targeting, comment sources, CI
+  re-checks, fix-loop budget, reviewer fan-out, summary comments, and merge handoff. It
+  does not commit, push, post comments, or merge in dry-run output.
+- `review-cycle` shows the feedback workflow policy for multi-PR sequencing, reviewer
+  isolation, posting mode, severity histogram handling, fix-loop budget, completion marker,
+  and no-merge/no-formal-approval invariants. It does not commit, push, post comments, or
+  merge in dry-run output.
 
 ## Workflow profiles
 
@@ -146,6 +153,30 @@ Standalone direct-use commands use first-class profiles too:
   Its shared primitives include merge-window handling, ship handoff, priority queue,
   per-issue worktrees, no-night-merge policy, blocker policy, session reports, the
   deferral queue, stop conditions, and operator consent.
+- `pr-loop` uses `workflow_profile.profile: "feedback-loop"` and inherits `ship.s6-s9`.
+  Its shared primitives include linked-worktree preflight, GitHub transport, reviewer
+  isolation, CI re-checks, fix-loop behavior, summary comments, and operator consent. Its
+  merge behavior is a handoff, not an in-command merge.
+- `review-cycle` uses `workflow_profile.profile: "review-feedback"` and inherits
+  `ship.s7-s9`. Its shared primitives include multi-PR targets, reviewer isolation,
+  posting mode, the severity histogram, fix-loop behavior, completion markers, and
+  operator consent. It never merges or posts formal approval.
+
+## Feedback workflows
+
+`pr-loop` and `review-cycle` share ship's reviewer-isolation and fix-loop primitives, but
+their behavior is represented separately in the `feedback_workflow` contract:
+
+- `posting_mode` and `posting_owner` make comment ownership explicit.
+- `reviewer_isolation` carries the shared no-cross-reading rule plus a command-specific
+  codename prefix.
+- `ci`, `review`, and `fix_loop` record command-specific re-check, reviewer fan-out,
+  histogram, degradation, and budget semantics.
+- `completion` records whether the command hands off, never merges, posts a summary, or
+  applies a completion marker such as `review-cycle-complete`.
+
+Projects can override these values through `policy_pack.workflow_policies` without
+changing the packaged command bodies.
 
 ## Adapter rules
 

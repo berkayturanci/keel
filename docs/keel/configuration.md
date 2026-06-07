@@ -59,6 +59,7 @@ back to packaged command prose.
 | `health_providers` | map name→object | | project-owned operational signal providers for reporting commands |
 | `project_commands` | map command→object | | project-provided commands, path selectors, capability needs, and side effects |
 | `command_routing` | map command→object | | compatibility routing map for older project command declarations |
+| `workflow_policies` | map command→object | | command-specific workflow policy such as posting mode, reviewer isolation, CI/fix-loop behavior, and completion markers |
 | `reports` | map name→string | | report destinations, paths, or issue prefixes |
 | `review` | object | | project-owned rubric additions and required PR/review sections |
 
@@ -95,6 +96,47 @@ policy_pack:
       optional_capabilities: [browser]
       side_effects: [report_write]
       dry_run_safe: false
+```
+
+`workflow_policies` preserves command-specific workflow semantics that should be explicit
+project policy rather than hidden in adapter prose. It is especially useful for feedback
+commands that share ship primitives but do not share ship's full lifecycle:
+
+```yaml
+policy_pack:
+  name: example
+  workflow_policies:
+    pr-loop:
+      posting_mode: summary
+      posting_owner: orchestrator
+      reviewer_isolation:
+        shared_with_ship: true
+        codename_prefix: PR-LOOP
+        no_cross_reading: true
+      ci:
+        recheck_after_push: true
+        green_required_to_exit: true
+        degrade_when_logs_unavailable: true
+      fix_loop:
+        budget: 3
+      completion:
+        merge: handoff
+        summary_comment: true
+    review-cycle:
+      posting_mode: inline
+      posting_owner: reviewer
+      reviewer_isolation:
+        shared_with_ship: true
+        codename_prefix: REVIEW-CYCLE
+        no_cross_reading: true
+      review:
+        parallel_reviewers_within_pr: true
+        severity_histogram_source_of_truth: true
+      completion:
+        marker: review-cycle-complete
+        marker_after_summary: true
+        merge: never
+        formal_approval: never
 ```
 
 ## `gates` vs `extensions`

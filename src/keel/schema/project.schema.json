@@ -232,6 +232,47 @@
           },
           "description": "Project-provided commands that keel can list, plan, and capability-check without owning their bodies."
         },
+        "workflow_policies": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "posting_mode": { "type": "string", "enum": ["inline", "summary"] },
+              "posting_owner": { "type": "string", "enum": ["orchestrator", "reviewer"] },
+              "reviewer_isolation": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "shared_with_ship": { "type": "boolean" },
+                  "codename_prefix": { "type": "string", "minLength": 1 },
+                  "no_cross_reading": { "type": "boolean" }
+                }
+              },
+              "inputs": {
+                "type": "object",
+                "additionalProperties": { "type": "boolean" }
+              },
+              "ci": {
+                "type": "object",
+                "additionalProperties": { "type": "boolean" }
+              },
+              "review": {
+                "type": "object",
+                "additionalProperties": { "type": "boolean" }
+              },
+              "fix_loop": {
+                "type": "object",
+                "additionalProperties": { "type": ["boolean", "integer", "string"] }
+              },
+              "completion": {
+                "type": "object",
+                "additionalProperties": { "type": ["boolean", "string", "null"] }
+              }
+            }
+          },
+          "description": "Command-specific feedback-loop policy such as posting mode, reviewer isolation, CI/fix-loop behavior, and completion markers."
+        },
         "reports": {
           "type": "object",
           "additionalProperties": { "type": "string" },
