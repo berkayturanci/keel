@@ -372,7 +372,11 @@ def _cmd_standalone(args: argparse.Namespace) -> int:
     for prob in problems:
         print(f"  ! extension not loaded: {prob}", file=sys.stderr)
 
-    requirement = _capability_requirement(command, config, loaded, pr=getattr(args, "pr", None))
+    requirement = (
+        _ci_check_capability_requirement(config)
+        if command == "ci-check"
+        else _capability_requirement(command, config, loaded, pr=getattr(args, "pr", None))
+    )
     report = runtime.detect(args.root)
     evaluation = runtime.evaluate(requirement, report)
     if not evaluation.ok:
@@ -441,13 +445,16 @@ def _cmd_standalone(args: argparse.Namespace) -> int:
         workflows = ", ".join(result["ci_workflows"]) or "not configured"
         print(f"  workflows     : {workflows}")
         print("  mode          : read-only; propose one fix, never apply")
-    print("  note          : dry-run contract; adapters perform any approved live work.")
+    mode = "live preflight contract" if getattr(args, "live", False) else "dry-run contract"
+    print(f"  note          : {mode}; adapters perform any approved live work.")
     return 0
 
 
 def _standalone_target(args: argparse.Namespace) -> str | None:
     if getattr(args, "issue", None) is not None:
-        return f"issue #{args.issue}"
+        issue = f"issue #{args.issue}"
+        extra = getattr(args, "target", None)
+        return f"{issue} ({extra})" if extra else issue
     if getattr(args, "pr", None) is not None:
         return f"PR #{args.pr}"
     return getattr(args, "target", None)
@@ -455,6 +462,13 @@ def _standalone_target(args: argparse.Namespace) -> str | None:
 
 def _approved_scopes(args: argparse.Namespace) -> tuple[str, ...]:
     return consent.normalize_scopes(getattr(args, "approve_scope", ()))
+
+
+def _ci_check_capability_requirement(config: cfg.ProjectConfig) -> runtime.CapabilityRequirement:
+    optional = ["gh", "gh-auth"]
+    if config.knobs.ci_workflows:
+        optional.append("raw-actions-logs")
+    return runtime.CapabilityRequirement(optional=tuple(optional))
 
 
 def _cmd_capabilities(args: argparse.Namespace) -> int:

@@ -494,6 +494,17 @@ class TestStandaloneCommands(unittest.TestCase):
         self.assertTrue(data["result"]["diagnostics"]["read_only"])
         self.assertTrue(data["result"]["routing"]["never_direct_merge"])
 
+    def test_ci_check_does_not_inherit_project_mutation_requirements(self):
+        p = _write_raw("extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: x\n"
+                       "gates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+                       "  required_capabilities: [release-publish]\n"
+                       "  ci_workflows:\n    ci: CI\n")
+        rc, out, _ = run(["ci-check", p, "--json"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertNotIn("release-publish", data["contract"]["required_capabilities"])
+        self.assertFalse(data["contract"]["operator_consent"]["would_require_operator_consent"])
+
     def test_standalone_commands_reject_non_positive_targets(self):
         with self.assertRaises(SystemExit) as raised:
             run(["implement", _write_config("'true'"), "0"])
@@ -559,6 +570,15 @@ class TestStandaloneCommands(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("keel implement", out)
         self.assertNotIn("delegate      :", out)
+
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["implement", _write_config("'true'"), "76",
+                              "--root", d, "--live",
+                              "--approve-scope", "filesystem,git,github",
+                              "--target", "extra context"])
+        self.assertEqual(rc, 0)
+        self.assertIn("issue #76 (extra context)", out)
+        self.assertIn("live preflight contract", out)
 
         with tempfile.TemporaryDirectory() as d:
             rc, _, err = run(["implement", _write_config("'true'"), "76",

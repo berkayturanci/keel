@@ -223,17 +223,18 @@ non-merge path and points the next step at `ship` or `pr-loop`.
 
 ## `keel ci-check <project.yaml> [--root DIR] [--pr N] [--json]`
 
-Render the standalone CI diagnostic contract. `ci-check` uses the shared runtime capability
-and GitHub transport resolution, selects the latest available run context, and stays
-read-only: it diagnoses, classifies, and proposes one fix but never edits, pushes, re-runs,
-or merges.
+Render the standalone CI diagnostic preflight contract. `ci-check` uses the shared runtime
+capability and GitHub transport resolution, declares the latest-run context and diagnostic
+result shape an adapter must produce, and stays read-only: the adapter diagnosis may propose
+one fix, but this CLI surface never edits, pushes, re-runs, posts comments, or merges.
 
 ```bash
 keel ci-check projects/keel.yaml --root . --pr 104 --json
 ```
 
 The JSON result records the configured workflow map, latest-run context shape, available
-transport, diagnostic classifications, and next-command recommendations.
+transport, supported diagnostic classifications, one-fix policy, and next-command
+recommendations.
 
 ## `keel init [--root DIR] [--force]`
 
