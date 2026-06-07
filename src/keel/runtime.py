@@ -153,6 +153,8 @@ def detect(
     sh = which("sh")
     git = which("git")
     gh = which("gh")
+    adb = _tool_capability("adb", env_name="KEEL_ADB", env=env, which=which)
+    firebase = _tool_capability("firebase", env_name="KEEL_FIREBASE", env=env, which=which)
     filesystem_write = _can_write(root_path)
     gh_auth = False
     gh_auth_detail = "gh not available"
@@ -174,6 +176,8 @@ def detect(
                    "KEEL_PARALLEL_SUBAGENTS", "environment"),
         Capability("browser", _truthy(env.get("KEEL_BROWSER")),
                    "KEEL_BROWSER", "environment"),
+        adb,
+        firebase,
         Capability("filesystem-write", filesystem_write,
                    "root writable" if filesystem_write else "root not writable", "filesystem"),
         Capability("worktree", git is not None and filesystem_write,
@@ -213,6 +217,19 @@ def validate_names(names: tuple[str, ...] | list[str], *, source: str) -> list[s
 
 def _truthy(value: str | None) -> bool:
     return (value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _tool_capability(
+    name: str,
+    *,
+    env_name: str,
+    env: Mapping[str, str],
+    which: Callable[[str], str | None],
+) -> Capability:
+    if _truthy(env.get(env_name)):
+        return Capability(name, True, env_name, "environment")
+    path = which(name)
+    return Capability(name, path is not None, path or f"{name} not found", "PATH")
 
 
 def _can_write(root: Path) -> bool:

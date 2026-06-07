@@ -108,8 +108,8 @@ policy_pack:
       optional_capabilities: ["browser"]
       side_effects: ["report_write"]
       dry_run_safe: false
-    post-migration-regression:
-      command: ".keel/commands/post-migration-regression"
+    post-issue-1-regression:
+      command: ".keel/commands/post-issue-1-regression"
       description: "Run a project-owned historical regression playbook."
       agent_role: android
       paths: ["android/**", "shared/**"]

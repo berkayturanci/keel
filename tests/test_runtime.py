@@ -10,7 +10,7 @@ from keel.runner import CommandResult
 
 
 def fake_which(name: str) -> str | None:
-    return {tool: f"/bin/{tool}" for tool in ("sh", "git", "gh")}.get(name)
+    return {tool: f"/bin/{tool}" for tool in ("sh", "git", "gh", "adb", "firebase")}.get(name)
 
 
 def fake_run(argv, **kwargs):  # noqa: ARG001 - signature matches injected runner
@@ -38,6 +38,8 @@ class TestDetect(unittest.TestCase):
         self.assertTrue(report.available("github-mcp"))
         self.assertTrue(report.available("subagents"))
         self.assertTrue(report.available("parallel-subagents"))
+        self.assertTrue(report.available("adb"))
+        self.assertTrue(report.available("firebase"))
         self.assertTrue(report.available("worktree"))
         self.assertFalse(report.available("release-publish"))
 
@@ -51,6 +53,20 @@ class TestDetect(unittest.TestCase):
         self.assertTrue(report.available("shell"))
         self.assertFalse(report.available("gh"))
         self.assertFalse(report.available("gh-auth"))
+        self.assertFalse(report.available("adb"))
+        self.assertFalse(report.available("firebase"))
+
+    def test_env_overrides_project_command_tool_capabilities(self):
+        with tempfile.TemporaryDirectory() as d:
+            report = runtime.detect(
+                d,
+                env={"KEEL_ADB": "1", "KEEL_FIREBASE": "true"},
+                which=lambda name: "/bin/sh" if name == "sh" else None,
+            )
+        self.assertTrue(report.available("adb"))
+        self.assertEqual(report.get("adb").source, "environment")
+        self.assertTrue(report.available("firebase"))
+        self.assertEqual(report.get("firebase").source, "environment")
 
     def test_default_runner_path(self):
         with tempfile.TemporaryDirectory() as d:

@@ -22,7 +22,7 @@ class TestProjectCommands(unittest.TestCase):
         self.assertIn("android-build", by_name)
         self.assertIn("web-check", by_name)
         self.assertIn("ui-test", by_name)
-        self.assertIn("post-migration-regression", by_name)
+        self.assertIn("post-issue-1-regression", by_name)
         self.assertIn("device-smoke", by_name)
         self.assertEqual(by_name["ui-test"].required_capabilities, ("shell", "adb"))
         self.assertEqual(by_name["ui-test"].optional_capabilities, ("browser",))
