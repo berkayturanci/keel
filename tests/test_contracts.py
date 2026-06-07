@@ -265,6 +265,43 @@ class TestBuildCommandContract(unittest.TestCase):
         self.assertEqual(overnight["workflow_profile"]["inherits"], "ship")
         self.assertIn("review_merge_contract", overnight)
 
+        regression = contracts.build_command_contract(
+            command="regression",
+            config=config,
+            loaded=loaded,
+            plan=plan,
+            requirement=runtime.CapabilityRequirement(required=("git", "worktree")),
+            evaluation=runtime.evaluate(
+                runtime.CapabilityRequirement(required=("git", "worktree")),
+                runtime.CapabilityReport((
+                    runtime.Capability("git", True, "ok", "test"),
+                    runtime.Capability("worktree", True, "ok", "test"),
+                )),
+            ),
+            transport=github_transport.resolve(report),
+        )
+        self.assertEqual(regression["workflow_profile"]["profile"], "scan-and-file")
+        self.assertTrue(regression["workflow_profile"]["first_class_variant"])
+        self.assertIn("scan_contract", regression)
+        self.assertIn("dedupe", regression["workflow_profile"]["shared_primitives"])
+
+        review_all_day = contracts.build_command_contract(
+            command="review-all-day",
+            config=config,
+            loaded=loaded,
+            plan=plan,
+            requirement=runtime.CapabilityRequirement(required=("git",)),
+            evaluation=runtime.evaluate(
+                runtime.CapabilityRequirement(required=("git",)),
+                runtime.CapabilityReport((runtime.Capability("git", True, "ok", "test"),)),
+            ),
+            transport=github_transport.resolve(report),
+        )
+        self.assertEqual(review_all_day["workflow_profile"]["profile"], "time-window-scan")
+        self.assertTrue(review_all_day["workflow_profile"]["first_class_variant"])
+        self.assertIn("scan_contract", review_all_day)
+        self.assertIn("issue_prefix", review_all_day["workflow_profile"]["shared_primitives"])
+
     def test_standalone_result_records_are_deterministic(self):
         config = cfg.load_config(PROJECTS / "example-android.yaml")
         transport = github_transport.resolve(runtime.CapabilityReport(()))
@@ -335,6 +372,35 @@ class TestBuildCommandContract(unittest.TestCase):
             overnight["session"]["overnight"]["ship_handoff"]["passes_operator_consent_scope"]
         )
         self.assertFalse(overnight["execution"]["merges"])
+
+        regression = contracts.standalone_result_as_dict(
+            command="regression",
+            config=config,
+            target="scope full",
+            transport=transport,
+        )
+        self.assertEqual(regression["scan"]["dedupe"]["near_text_similarity"], 0.6)
+        self.assertTrue(regression["scan"]["regression"]["scan_target"]
+                        ["clean_tree_preflight"])
+        self.assertEqual(regression["scan"]["regression"]["issue_creation"]["route_to"],
+                         "ship")
+        self.assertFalse(regression["execution"]["writes_issues"])
+
+        review_all_day = contracts.standalone_result_as_dict(
+            command="review-all-day",
+            config=config,
+            target="1 day scan",
+            transport=transport,
+        )
+        self.assertEqual(
+            review_all_day["scan"]["review_all_day"]["issue_creation"]["title_prefix"],
+            "[review-all-day] ",
+        )
+        self.assertEqual(
+            review_all_day["scan"]["review_all_day"]["strategy"]["batch_threshold"],
+            5,
+        )
+        self.assertTrue(review_all_day["scan"]["write_safety"]["orchestrator_only_writes"])
 
         default_target = contracts.standalone_result_as_dict(
             command="implement",

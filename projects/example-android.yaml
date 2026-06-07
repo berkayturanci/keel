@@ -75,6 +75,19 @@ policy_pack:
       kind: project-command
       command: ".keel/health/app-summary"
       optional_capabilities: ["shell"]
+  scan:
+    areas:
+      android: ["android/**"]
+      web: ["web/**"]
+      shared: ["shared/**"]
+      workflows: [".github/workflows/**"]
+    active_branch_patterns: ["feature/**", "fix/**", "chore/**"]
+    issue_labels:
+      regression: ["type:bug", "source:regression-scan"]
+      review-all-day: ["type:bug", "source:review-all-day"]
+    near_text_similarity: 0.6
+    batch_threshold: 5
+    large_diff_max_bytes: 200000
   command_routing:
     device-smoke:
       agent_role: android

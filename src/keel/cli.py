@@ -98,7 +98,11 @@ def _cmd_plan(args: argparse.Namespace) -> int:
     except gates.GateError as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    requirement = _capability_requirement(args.command_contract, config, loaded)
+    requirement = (
+        _scan_capability_requirement(args.command_contract, config)
+        if args.command_contract in {"regression", "review-all-day"}
+        else _capability_requirement(args.command_contract, config, loaded)
+    )
     report = runtime.detect(args.root)
     evaluation = runtime.evaluate(requirement, report)
     transport = github_transport.resolve(report)
@@ -377,6 +381,8 @@ def _cmd_standalone(args: argparse.Namespace) -> int:
         if command == "ci-check"
         else _morning_capability_requirement(config)
         if command == "morning"
+        else _scan_capability_requirement(command, config)
+        if command in {"regression", "review-all-day"}
         else _capability_requirement(command, config, loaded, pr=getattr(args, "pr", None))
     )
     report = runtime.detect(args.root)
@@ -475,6 +481,15 @@ def _cmd_standalone(args: argparse.Namespace) -> int:
             print(f"  window        : {session['merge_window'] or 'not configured'}")
             print(f"  mode source   : {session['overnight']['mode_source']['command']}")
             print("  merge policy  : ship window + no-night-merge")
+    elif command in {"regression", "review-all-day"}:
+        scan = result["scan"]
+        print(f"  areas         : {len(scan['areas'])} configured")
+        print(f"  dedupe        : similarity>={scan['dedupe']['near_text_similarity']}")
+        print("  writes        : issues only after consent; no code/PR mutation")
+        if command == "review-all-day":
+            print(f"  title prefix  : {scan['review_all_day']['issue_creation']['title_prefix']}")
+        else:
+            print(f"  handoff       : {scan['regression']['issue_creation']['route_to']}")
     mode = "live preflight contract" if getattr(args, "live", False) else "dry-run contract"
     print(f"  note          : {mode}; adapters perform any approved live work.")
     return 0
@@ -491,6 +506,14 @@ def _standalone_target(args: argparse.Namespace) -> str | None:
         extra = getattr(args, "target", None)
         target = f"since {args.since}"
         return f"{target} ({extra})" if extra else target
+    if getattr(args, "scope", None) is not None:
+        scope = f"scope {args.scope}"
+        extra = getattr(args, "target", None)
+        if getattr(args, "days", None) is not None:
+            scope = f"{args.days} day scan ({scope})"
+        return f"{scope} ({extra})" if extra else scope
+    if getattr(args, "days", None) is not None:
+        return f"{args.days} day scan"
     if getattr(args, "title", None) is not None:
         return args.title
     if getattr(args, "hours", None) is not None:
@@ -524,6 +547,22 @@ def _morning_capability_requirement(config: cfg.ProjectConfig) -> runtime.Capabi
     return runtime.CapabilityRequirement(
         required=tuple(dict.fromkeys(required)),
         optional=tuple(dict.fromkeys(optional)),
+    )
+
+
+def _scan_capability_requirement(
+    command: str,
+    config: cfg.ProjectConfig,
+) -> runtime.CapabilityRequirement:
+    del config
+    if command == "regression":
+        return runtime.CapabilityRequirement(
+            required=("git", "worktree"),
+            optional=("gh", "gh-auth", "github-mcp", "parallel-subagents"),
+        )
+    return runtime.CapabilityRequirement(
+        required=("git",),
+        optional=("gh", "gh-auth", "github-mcp", "parallel-subagents"),
     )
 
 
@@ -884,6 +923,52 @@ def build_parser() -> argparse.ArgumentParser:
                              help="operator identifier to include in an approved consent record")
     p_overnight.add_argument("--json", action="store_true", help="emit structured JSON")
     p_overnight.set_defaults(func=_cmd_standalone, standalone_command="overnight")
+
+    p_regression = sub.add_parser(
+        "regression",
+        help="standalone scan-and-file regression preflight contract",
+    )
+    p_regression.add_argument("path", help="path to project.yaml")
+    p_regression.add_argument("--root", default=".", help="repo root for git/capability checks")
+    p_regression.add_argument("--scope", choices=("full", "changed", "since"), default="full",
+                              help="scan scope to include in the preflight target")
+    p_regression.add_argument("--since", default=None,
+                              help="optional ref or timestamp when --scope since is used")
+    p_regression.add_argument("--target", default=None,
+                              help="target text to include in the regression contract")
+    p_regression.add_argument("--dry-run", action="store_true",
+                              help="explicitly mark the assessment as non-mutating")
+    p_regression.add_argument("--live", action="store_true",
+                              help="render a live preflight and fail if consent is missing")
+    p_regression.add_argument("--approve-scope", action="append", default=[],
+                              help="approve a consent scope for this run; repeat or comma-separate")
+    p_regression.add_argument("--operator", default=None,
+                              help="operator identifier to include in an approved consent record")
+    p_regression.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_regression.set_defaults(func=_cmd_standalone, standalone_command="regression")
+
+    p_review_all_day = sub.add_parser(
+        "review-all-day",
+        help="standalone time-window scan-and-file preflight contract",
+    )
+    p_review_all_day.add_argument("path", help="path to project.yaml")
+    p_review_all_day.add_argument("days", nargs="?", type=_positive_int, default=1,
+                                  help="number of merge-window days to scan")
+    p_review_all_day.add_argument("--root", default=".", help="repo root for git/capability checks")
+    p_review_all_day.add_argument("--target", default=None,
+                                  help="target text to include in the review-all-day contract")
+    p_review_all_day.add_argument("--dry-run", action="store_true",
+                                  help="explicitly mark the assessment as non-mutating")
+    p_review_all_day.add_argument("--live", action="store_true",
+                                  help="render a live preflight and fail if consent is missing")
+    p_review_all_day.add_argument("--approve-scope", action="append", default=[],
+                                  help=("approve a consent scope for this run; repeat or "
+                                        "comma-separate"))
+    p_review_all_day.add_argument("--operator", default=None,
+                                  help=("operator identifier to include in an approved "
+                                        "consent record"))
+    p_review_all_day.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_review_all_day.set_defaults(func=_cmd_standalone, standalone_command="review-all-day")
 
     p_caps = sub.add_parser("capabilities", help="print runtime capability report")
     p_caps.add_argument("--root", default=".", help="repo root for capability checks")
