@@ -32,10 +32,11 @@ env:
 
 Copy the workflow and change two things:
 
-- **Install a pinned keel** instead of the local checkout:
+- **Install keel from a controlled ref** instead of the local checkout:
   ```yaml
-  - run: pip install "git+https://github.com/berkayturanci/keel@v0.6.0"
+  - run: pip install "git+https://github.com/berkayturanci/keel@main"
   ```
+  Pin an existing release tag once the release is published.
 - **Point at your config**: `keel ship .keel/project.yaml --root . --pr <N>`.
 
 Everything else (the runner, `git`, `gh`, the free minutes) comes from GitHub.

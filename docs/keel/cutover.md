@@ -19,7 +19,7 @@ the installed keel — never copied, so the drift/overwrite class of bug is gone
 ## Step 1 — install + pin keel
 
 ```bash
-pipx install "git+https://github.com/berkayturanci/keel@v0.6.0"   # or @main
+pipx install "git+https://github.com/berkayturanci/keel@main"   # or pin an existing release tag
 keel --version
 keel install-adapter all             # → both surfaces: Claude commands + the shared skill set
 #   claude → .claude/commands/keel/<cmd>.md      (native /keel:<cmd>)

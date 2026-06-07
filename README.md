@@ -77,11 +77,12 @@ keel is a Python (≥3.11) package with one runtime dependency (PyYAML):
 
 ```bash
 pip install keel                                              # from PyPI
-pip install "git+https://github.com/berkayturanci/keel@v0.6.0"  # or pin a git tag
+pip install "git+https://github.com/berkayturanci/keel@main"  # or pin an existing git tag
 ```
 
 In a cloud agent session, install it from a `SessionStart` hook (or add keel to the
-session's repo scope) so the pinned core is available before a run.
+session's repo scope) so the selected core ref is available before a run. Prefer an
+existing release tag when one has been published.
 
 ## Quickstart
 
