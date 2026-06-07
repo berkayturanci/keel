@@ -96,6 +96,21 @@ class TestParityMatrix(unittest.TestCase):
         self.assertIn("workflow_profile", ship_v2["Known gaps / owner issues"])
         self.assertIn("compound", ship_v2["Known gaps / owner issues"])
 
+    def test_standalone_implement_and_ci_check_rows_record_parity_evidence(self):
+        rows = {row["Legacy command"].strip("`"): row for row in _matrix_rows()}
+        implement = rows["implement"]
+        ci_check = rows["ci-check"]
+
+        self.assertEqual(implement["Status"], "`parity-proven`")
+        self.assertIn("#76", implement["Known gaps / owner issues"])
+        self.assertIn("standalone-step", implement["Known gaps / owner issues"])
+        self.assertIn("without merging", implement["Known gaps / owner issues"])
+
+        self.assertEqual(ci_check["Status"], "`parity-proven`")
+        self.assertIn("#76", ci_check["Known gaps / owner issues"])
+        self.assertIn("standalone-diagnostic", ci_check["Known gaps / owner issues"])
+        self.assertIn("read-only", ci_check["Known gaps / owner issues"])
+
 
 class TestShipBaseline(unittest.TestCase):
     def test_baseline_records_source_comparison_and_parity_evidence(self):

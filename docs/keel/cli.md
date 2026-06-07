@@ -206,6 +206,35 @@ Use `ship` for the standard delivery path and `ship-v2` when the operator wants 
 compound-engineering flavor while retaining the same CI, review, merge-window, merge-lock,
 closeout, and capture safety gates.
 
+## `keel implement <project.yaml> <issue> [--root DIR] [--delegate AGENT] [--dry-run] [--live] [--approve-scope SCOPE] [--operator ID] [--json]`
+
+Render the standalone implement-step contract for one issue. This is the direct-use form of
+the s4 implement step: it resolves project config, implementer routing, branch/worktree
+planning, consent scopes, and the handoff target without running the full ship lifecycle.
+
+```bash
+keel implement projects/keel.yaml 76 --root . --dry-run --json
+keel implement projects/keel.yaml 76 --root . --live --approve-scope filesystem,git,github --operator "$USER" --json
+```
+
+`implement` may create branches, worktrees, commits, pushes, PRs, and comments only in an
+approved live adapter run. Its contract explicitly marks standalone implement as a
+non-merge path and points the next step at `ship` or `pr-loop`.
+
+## `keel ci-check <project.yaml> [--root DIR] [--pr N] [--json]`
+
+Render the standalone CI diagnostic contract. `ci-check` uses the shared runtime capability
+and GitHub transport resolution, selects the latest available run context, and stays
+read-only: it diagnoses, classifies, and proposes one fix but never edits, pushes, re-runs,
+or merges.
+
+```bash
+keel ci-check projects/keel.yaml --root . --pr 104 --json
+```
+
+The JSON result records the configured workflow map, latest-run context shape, available
+transport, diagnostic classifications, and next-command recommendations.
+
 ## `keel init [--root DIR] [--force]`
 
 Scaffold a default `.keel/project.yaml` for the repo. keel detects the stack from marker

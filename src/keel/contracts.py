@@ -167,6 +167,38 @@ def build_command_contract(
 
 def workflow_profile(command: str) -> dict[str, Any]:
     """First-class workflow profile metadata for command variants."""
+    if command == "implement":
+        return {
+            "name": "implement",
+            "profile": "standalone-step",
+            "inherits": "ship.s4",
+            "first_class_variant": True,
+            "shared_primitives": [
+                "issue_target",
+                "branch",
+                "worktree",
+                "implementer_routing",
+                "operator_consent",
+                "handoff",
+            ],
+            "step_overrides": {},
+        }
+    if command == "ci-check":
+        return {
+            "name": "ci-check",
+            "profile": "standalone-diagnostic",
+            "inherits": None,
+            "first_class_variant": True,
+            "shared_primitives": [
+                "github_transport",
+                "check_runs",
+                "latest_run_context",
+                "log_diagnostics",
+                "read_only",
+                "routing_recommendation",
+            ],
+            "step_overrides": {},
+        }
     if command == "ship-v2":
         return {
             "name": "ship-v2",
@@ -364,6 +396,70 @@ def ship_result_as_dict(
             "review_merge_contract": assessment.review_contract,
         },
     }
+
+
+def standalone_result_as_dict(
+    *,
+    command: str,
+    config: cfg.ProjectConfig,
+    target: str | None = None,
+    delegate: str | None = None,
+    transport: github_transport.GitHubTransport | None = None,
+) -> dict[str, Any]:
+    """Deterministic dry-run result records for standalone non-ship commands."""
+    if command == "implement":
+        issue_id = _target_identifier(target)
+        return {
+            "command": command,
+            "target": target,
+            "base_branch": config.base_branch,
+            "branch_pattern": f"feature/issue-{issue_id}-<slug>",
+            "worktree_path_pattern": f"worktrees/issue-{issue_id}",
+            "implementer": {
+                "source": "delegate" if delegate else "project-routing-or-host",
+                "selected": delegate,
+                "routing_keys": sorted(config.knobs.implementer_agents),
+            },
+            "handoff": {
+                "opens_pr": True,
+                "merges": False,
+                "next_commands": ["ship", "pr-loop"],
+            },
+        }
+    if command == "ci-check":
+        resolved = transport.as_dict() if transport is not None else {}
+        return {
+            "command": command,
+            "target": target,
+            "base_branch": config.base_branch,
+            "ci_workflows": dict(sorted(config.knobs.ci_workflows.items())),
+            "latest_run_context": {
+                "limit": 3,
+                "selected": "newest available run",
+                "history": "previous runs used for flake or infra classification",
+            },
+            "diagnostics": {
+                "read_only": True,
+                "log_tail": "available when the selected GitHub transport exposes logs",
+                "classifications": ["real-failure", "flake", "infra-or-quota"],
+                "proposed_fix_count": 1,
+            },
+            "github_transport": resolved,
+            "routing": {
+                "never_direct_merge": True,
+                "recommendations": ["review-cycle", "pr-loop", "ship", "flake-audit"],
+            },
+        }
+    return {"command": command, "target": target}
+
+
+def _target_identifier(target: str | None) -> str:
+    if not target:
+        return "selected-issue"
+    match = re.search(r"#?(\d+)", target)
+    if match:
+        return match.group(1)
+    return re.sub(r"[^a-z0-9]+", "-", target.lower()).strip("-") or "selected-issue"
 
 
 def _adapter_steps(command: str) -> list[dict[str, Any]]:

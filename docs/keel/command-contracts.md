@@ -12,6 +12,9 @@ describe what a command would do before an adapter starts mutating work.
 - `keel ship <project.yaml> --live --json`
 - `keel ship-v2 <project.yaml> --dry-run --json`
 - `keel ship-v2 <project.yaml> --live --json`
+- `keel implement <project.yaml> <issue> --dry-run --json`
+- `keel implement <project.yaml> <issue> --live --json`
+- `keel ci-check <project.yaml> --pr <number> --json`
 
 Human-readable output remains the default. JSON output is the adapter-facing contract.
 
@@ -76,6 +79,15 @@ with deterministic data:
 This result contract is intentionally deterministic so parity tests can compare adapter
 behavior without creating branches, posting comments, or merging PRs.
 
+Standalone commands also emit deterministic result records:
+
+- `implement` shows the issue target, base branch, branch/worktree path patterns, resolved
+  delegate override or project-routing source, and the handoff commands. It never marks
+  standalone implement as a merge path.
+- `ci-check` shows the selected PR target, configured workflow map, latest-run context
+  shape, diagnostic classifications, the selected GitHub transport, and the next-command
+  routing recommendations. It is read-only and proposes at most one fix.
+
 ## Workflow profiles
 
 Workflow profiles let command variants stay directly invokable without copying an entire
@@ -91,12 +103,21 @@ adapter body.
 - `workflow_profile.profile: "compound"`
 - `workflow_profile.inherits: "ship"`
 - `workflow_profile.first_class_variant: true`
-- shared primitives for selection, branching, guard, classification, CI, tests, merge, and
-  closeout
+- shared primitives for selection, branching, worktree safety, guard, classification, CI,
+  tests, merge-window/merge-lock safety, capture markers, merge, and closeout
 - compound overrides for `s4 implement`, `s7 review`, `s9 fixloop`, and `s11 capture`
 
 The graph marks each backbone step with `profile_step`, so adapters can tell which steps are
 standard and which are compound without reparsing Markdown.
+
+Standalone direct-use commands use first-class profiles too:
+
+- `implement` uses `workflow_profile.profile: "standalone-step"` and inherits `ship.s4`.
+  Its shared primitives include issue targeting, branch/worktree planning, implementer
+  routing, operator consent, and handoff to `ship` or `pr-loop`.
+- `ci-check` uses `workflow_profile.profile: "standalone-diagnostic"`. Its shared
+  primitives include GitHub transport, check runs, latest-run context, log diagnostics,
+  read-only behavior, and routing recommendations.
 
 ## Adapter rules
 

@@ -5,6 +5,7 @@ import io
 import json
 import subprocess
 import unittest
+from argparse import Namespace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -433,6 +434,178 @@ class TestShip(unittest.TestCase):
         self.assertIn("extension not loaded", err)
 
 
+class TestStandaloneCommands(unittest.TestCase):
+    def test_implement_json_dry_run_contract(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["implement", _write_config("'true'"), "76",
+                              "--root", d, "--dry-run", "--json",
+                              "--delegate", "codex"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["contract"]["command"], "implement")
+        self.assertEqual(data["contract"]["workflow_profile"]["profile"], "standalone-step")
+        self.assertEqual(data["contract"]["operator_consent"]["status"],
+                         "not-required-dry-run")
+        self.assertIn("git", data["contract"]["required_capabilities"])
+        self.assertEqual(data["result"]["target"], "issue #76")
+        self.assertFalse(data["result"]["handoff"]["merges"])
+        self.assertEqual(data["result"]["implementer"]["selected"], "codex")
+
+    def test_implement_live_blocks_without_consent(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["implement", _write_config("'true'"), "76",
+                              "--root", d, "--live", "--json"])
+        self.assertEqual(rc, 1)
+        data = json.loads(out)
+        self.assertEqual(data["contract"]["operator_consent"]["status"], "missing")
+        self.assertIn("filesystem", data["contract"]["operator_consent"]["missing_scope"])
+        self.assertIn("result", data)
+
+    def test_implement_live_accepts_consent(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["implement", _write_config("'true'"), "76",
+                              "--root", d, "--live", "--json",
+                              "--approve-scope", "filesystem,git,github",
+                              "--operator", "tester"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["contract"]["mode"], "live")
+        self.assertEqual(data["contract"]["operator_consent"]["status"], "approved")
+
+    def test_ci_check_json_contract_is_read_only(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["ci-check", _write_config("'true'"), "--root", d,
+                              "--pr", "104", "--json"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["contract"]["command"], "ci-check")
+        self.assertEqual(
+            data["contract"]["workflow_profile"]["profile"],
+            "standalone-diagnostic",
+        )
+        self.assertEqual(data["contract"]["operator_consent"]["status"],
+                         "not-required-read-only")
+        self.assertFalse(data["contract"]["operator_consent"]["would_require_operator_consent"])
+        self.assertEqual(data["result"]["target"], "PR #104")
+        self.assertTrue(data["result"]["diagnostics"]["read_only"])
+        self.assertTrue(data["result"]["routing"]["never_direct_merge"])
+
+    def test_standalone_commands_reject_non_positive_targets(self):
+        with self.assertRaises(SystemExit) as raised:
+            run(["implement", _write_config("'true'"), "0"])
+        self.assertEqual(raised.exception.code, 2)
+
+    def test_implement_rejects_conflicting_live_and_dry_run_flags(self):
+        rc, _, err = run(["implement", _write_config("'true'"), "76",
+                          "--dry-run", "--live"])
+        self.assertEqual(rc, 1)
+        self.assertIn("cannot be used together", err)
+
+    def test_implement_missing_and_invalid_config_errors(self):
+        rc, _, err = run(["implement", "/no/such.yaml", "76"])
+        self.assertEqual(rc, 1)
+        self.assertIn("no such config", err)
+
+        rc, _, err = run(["implement", _write_raw("extends: keel\n"), "76"])
+        self.assertEqual(rc, 1)
+        self.assertIn("invalid keel config", err)
+
+    def test_implement_reports_extension_and_gate_errors(self):
+        import tempfile
+        p = _write_raw("extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: x\n"
+                       "gates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+                       "extensions:\n  tester: [missing.md]\nextensions_dir: .keel/extensions\n")
+        with tempfile.TemporaryDirectory() as d:
+            rc, _, err = run(["implement", p, "76", "--root", d, "--dry-run", "--json"])
+        self.assertEqual(rc, 0)
+        self.assertIn("extension not loaded", err)
+
+        p = _write_raw("extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
+                       "repo: x\ngates: [bogus]\nknobs:\n  build_gate_cmd: 'true'\n")
+        rc, _, err = run(["implement", p, "76"])
+        self.assertEqual(rc, 1)
+        self.assertIn("unknown built-in gate", err)
+
+    def test_implement_blocks_on_missing_required_capability_and_bad_scope(self):
+        p = _write_raw("extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: x\n"
+                       "gates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+                       "  required_capabilities: [release-publish]\n")
+        rc, _, err = run(["implement", p, "76"])
+        self.assertEqual(rc, 1)
+        self.assertIn("missing required", err)
+
+        rc, _, err = run(["implement", _write_config("'true'"), "76",
+                          "--live", "--approve-scope", "bogus"])
+        self.assertEqual(rc, 1)
+        self.assertIn("unknown consent scope", err)
+
+    def test_implement_human_output_and_missing_consent_message(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["implement", _write_config("'true'"), "76",
+                              "--root", d, "--delegate", "codex"])
+        self.assertEqual(rc, 0)
+        self.assertIn("keel implement", out)
+        self.assertIn("worktree", out)
+        self.assertIn("delegate", out)
+        self.assertIn("never in standalone implement", out)
+
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["implement", _write_config("'true'"), "76", "--root", d])
+        self.assertEqual(rc, 0)
+        self.assertIn("keel implement", out)
+        self.assertNotIn("delegate      :", out)
+
+        with tempfile.TemporaryDirectory() as d:
+            rc, _, err = run(["implement", _write_config("'true'"), "76",
+                              "--root", d, "--live"])
+        self.assertEqual(rc, 1)
+        self.assertIn("Missing approved scope", err)
+
+    def test_ci_check_human_output_with_optional_degradation_and_target(self):
+        import tempfile
+        fake_report = runtime.CapabilityReport((
+            runtime.Capability("gh", False, "missing", "test"),
+            runtime.Capability("gh-auth", False, "missing", "test"),
+        ))
+        with tempfile.TemporaryDirectory() as d, patch("keel.cli.runtime.detect",
+                                                       return_value=fake_report):
+            rc, out, _ = run(["ci-check", _write_config("'true'"), "--root", d,
+                              "--target", "current branch"])
+        self.assertEqual(rc, 0)
+        self.assertIn("keel ci-check", out)
+        self.assertIn("current branch", out)
+        self.assertIn("degraded opt.", out)
+        self.assertIn("read-only", out)
+
+    def test_standalone_human_output_for_unknown_adapter_profile_falls_through(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            args = Namespace(
+                dry_run=True,
+                live=False,
+                standalone_command="custom-adapter",
+                path=_write_config("'true'"),
+                root=d,
+                pr=None,
+                approve_scope=[],
+                operator=None,
+                target="custom target",
+                json=False,
+                delegate=None,
+            )
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                rc = cli._cmd_standalone(args)
+        self.assertEqual(rc, 0)
+        self.assertIn("keel custom-adapter", out.getvalue())
+        self.assertIn("custom target", out.getvalue())
+
+
 class TestCapabilities(unittest.TestCase):
     def test_prints_runtime_report(self):
         rc, out, _ = run(["capabilities", "--root", "."])
@@ -647,7 +820,8 @@ class TestParser(unittest.TestCase):
         self.assertTrue(actions)
         self.assertGreaterEqual(set(actions[0].choices),
                                 {"version", "validate", "plan", "run-gates", "window", "ship",
-                                 "ship-v2", "capabilities", "init", "install-adapter",
+                                 "ship-v2", "implement", "ci-check", "capabilities", "init",
+                                 "install-adapter",
                                  "adapter-status", "update-adapter", "project-commands"})
 
 

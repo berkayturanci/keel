@@ -354,6 +354,105 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     return 0 if a.merge.action != "block" else 1
 
 
+def _cmd_standalone(args: argparse.Namespace) -> int:
+    if getattr(args, "dry_run", False) and getattr(args, "live", False):
+        print("--dry-run and --live cannot be used together", file=sys.stderr)
+        return 1
+    command = args.standalone_command
+    try:
+        config = cfg.load_config(args.path)
+    except FileNotFoundError:
+        print(f"no such config: {args.path}", file=sys.stderr)
+        return 1
+    except cfg.ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    loaded, problems = load_extensions(config, args.root, strict=False)
+    for prob in problems:
+        print(f"  ! extension not loaded: {prob}", file=sys.stderr)
+
+    requirement = _capability_requirement(command, config, loaded, pr=getattr(args, "pr", None))
+    report = runtime.detect(args.root)
+    evaluation = runtime.evaluate(requirement, report)
+    if not evaluation.ok:
+        print(evaluation.render(), file=sys.stderr)
+        return 1
+    transport = github_transport.resolve(report)
+    target = _standalone_target(args)
+    try:
+        approved_scopes = _approved_scopes(args)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    try:
+        plan = orch.build_plan(config, loaded)
+    except gates.GateError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    contract = contracts.build_command_contract(
+        command=command,
+        config=config,
+        loaded=loaded,
+        plan=plan,
+        requirement=requirement,
+        evaluation=evaluation,
+        transport=transport,
+        extension_problems=tuple(problems),
+        dry_run=not getattr(args, "live", False),
+        approved_consent_scopes=approved_scopes,
+        operator=getattr(args, "operator", None),
+        target=target,
+    )
+    consent_ok, consent_message = consent.assert_operator_consent(contract["operator_consent"])
+    result = contracts.standalone_result_as_dict(
+        command=command,
+        config=config,
+        target=target,
+        delegate=getattr(args, "delegate", None),
+        transport=transport,
+    )
+    if not consent_ok:
+        if args.json:
+            print(json.dumps({"contract": contract, "result": result}, indent=2,
+                             sort_keys=True))
+        else:
+            print(consent_message, file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps({"contract": contract, "result": result}, indent=2, sort_keys=True))
+        return 0
+
+    name = config.repo or config.extends
+    print(f"keel {command} — {name}  (base {config.base_branch})")
+    print(f"  target        : {target or 'not specified'}")
+    print(f"  profile       : {contract['workflow_profile']['profile']}")
+    print(f"  github        : {transport.name}")
+    print(f"  consent       : {contract['operator_consent']['status']}")
+    if evaluation.missing_optional:
+        print(f"  degraded opt. : {', '.join(evaluation.missing_optional)}")
+    if command == "implement":
+        print(f"  worktree      : {result['worktree_path_pattern']}")
+        print(f"  branch        : {result['branch_pattern']}")
+        print("  merge         : never in standalone implement")
+        if args.delegate:
+            print(f"  delegate      : {args.delegate}")
+    elif command == "ci-check":
+        workflows = ", ".join(result["ci_workflows"]) or "not configured"
+        print(f"  workflows     : {workflows}")
+        print("  mode          : read-only; propose one fix, never apply")
+    print("  note          : dry-run contract; adapters perform any approved live work.")
+    return 0
+
+
+def _standalone_target(args: argparse.Namespace) -> str | None:
+    if getattr(args, "issue", None) is not None:
+        return f"issue #{args.issue}"
+    if getattr(args, "pr", None) is not None:
+        return f"PR #{args.pr}"
+    return getattr(args, "target", None)
+
+
 def _approved_scopes(args: argparse.Namespace) -> tuple[str, ...]:
     return consent.normalize_scopes(getattr(args, "approve_scope", ()))
 
@@ -610,6 +709,41 @@ def build_parser() -> argparse.ArgumentParser:
         command="ship-v2",
     )
 
+    p_implement = sub.add_parser(
+        "implement",
+        help="standalone implement-step preflight contract",
+    )
+    p_implement.add_argument("path", help="path to project.yaml")
+    p_implement.add_argument("issue", type=_positive_int, help="issue number to implement")
+    p_implement.add_argument("--root", default=".", help="repo root for git and extensions")
+    p_implement.add_argument("--delegate", default=None,
+                             help="explicit implementer delegate override")
+    p_implement.add_argument("--dry-run", action="store_true",
+                             help="explicitly mark the assessment as non-mutating")
+    p_implement.add_argument("--live", action="store_true",
+                             help="render a live preflight and fail if consent is missing")
+    p_implement.add_argument("--approve-scope", action="append", default=[],
+                             help="approve a consent scope for this run; repeat or comma-separate")
+    p_implement.add_argument("--operator", default=None,
+                             help="operator identifier to include in an approved consent record")
+    p_implement.add_argument("--target", default=None,
+                             help="additional target text for the consent prompt")
+    p_implement.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_implement.set_defaults(func=_cmd_standalone, standalone_command="implement")
+
+    p_ci = sub.add_parser(
+        "ci-check",
+        help="standalone read-only CI diagnostic preflight contract",
+    )
+    p_ci.add_argument("path", help="path to project.yaml")
+    p_ci.add_argument("--root", default=".", help="repo root for capability checks")
+    p_ci.add_argument("--pr", type=_positive_int, default=None,
+                      help="PR number whose latest checks should be diagnosed")
+    p_ci.add_argument("--target", default=None,
+                      help="target text to include in the diagnostic contract")
+    p_ci.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_ci.set_defaults(func=_cmd_standalone, standalone_command="ci-check")
+
     p_caps = sub.add_parser("capabilities", help="print runtime capability report")
     p_caps.add_argument("--root", default=".", help="repo root for capability checks")
     p_caps.add_argument("--project", dest="path", default=None,
@@ -683,6 +817,13 @@ def _add_ship_parser(parser: argparse.ArgumentParser, *, command: str) -> None:
                         help="make an enabled jury advisory instead of merge-gating")
     parser.add_argument("--json", action="store_true", help="emit structured JSON")
     parser.set_defaults(func=_cmd_ship, ship_command=command)
+
+
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
 
 
 def main(argv: list[str] | None = None) -> int:

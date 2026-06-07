@@ -176,6 +176,91 @@ class TestBuildCommandContract(unittest.TestCase):
         self.assertEqual(profile["step_overrides"]["s11"]["step"], "capture")
         self.assertIn("review_merge_contract", contract)
 
+    def test_standalone_command_profiles_are_first_class(self):
+        config = cfg.load_config(PROJECTS / "example-android.yaml")
+        loaded = {}
+        plan = orchestrator.build_plan(config, loaded)
+        report = runtime.CapabilityReport(())
+        requirement = runtime.CapabilityRequirement()
+
+        implement = contracts.build_command_contract(
+            command="implement",
+            config=config,
+            loaded=loaded,
+            plan=plan,
+            requirement=requirement,
+            evaluation=runtime.evaluate(requirement, report),
+            transport=github_transport.resolve(report),
+        )
+        self.assertEqual(implement["workflow_profile"]["profile"], "standalone-step")
+        self.assertEqual(implement["workflow_profile"]["inherits"], "ship.s4")
+        self.assertTrue(implement["workflow_profile"]["first_class_variant"])
+        self.assertIn("worktree", implement["workflow_profile"]["shared_primitives"])
+        self.assertNotIn("merge", implement["side_effects"]["declared"])
+
+        ci_check = contracts.build_command_contract(
+            command="ci-check",
+            config=config,
+            loaded=loaded,
+            plan=plan,
+            requirement=requirement,
+            evaluation=runtime.evaluate(requirement, report),
+            transport=github_transport.resolve(report),
+            dry_run=False,
+        )
+        self.assertEqual(ci_check["workflow_profile"]["profile"], "standalone-diagnostic")
+        self.assertTrue(ci_check["workflow_profile"]["first_class_variant"])
+        self.assertIn("read_only", ci_check["workflow_profile"]["shared_primitives"])
+        self.assertFalse(ci_check["operator_consent"]["would_require_operator_consent"])
+
+    def test_standalone_result_records_are_deterministic(self):
+        config = cfg.load_config(PROJECTS / "example-android.yaml")
+        transport = github_transport.resolve(runtime.CapabilityReport(()))
+
+        implement = contracts.standalone_result_as_dict(
+            command="implement",
+            config=config,
+            target="issue #76",
+            delegate="codex",
+            transport=transport,
+        )
+        self.assertEqual(implement["target"], "issue #76")
+        self.assertEqual(implement["base_branch"], config.base_branch)
+        self.assertEqual(implement["branch_pattern"], "feature/issue-76-<slug>")
+        self.assertEqual(implement["worktree_path_pattern"], "worktrees/issue-76")
+        self.assertFalse(implement["handoff"]["merges"])
+        self.assertEqual(implement["implementer"]["selected"], "codex")
+
+        ci_check = contracts.standalone_result_as_dict(
+            command="ci-check",
+            config=config,
+            target="PR #104",
+            transport=transport,
+        )
+        self.assertTrue(ci_check["diagnostics"]["read_only"])
+        self.assertEqual(ci_check["diagnostics"]["proposed_fix_count"], 1)
+        self.assertTrue(ci_check["routing"]["never_direct_merge"])
+
+        default_target = contracts.standalone_result_as_dict(
+            command="implement",
+            config=config,
+        )
+        self.assertEqual(default_target["branch_pattern"], "feature/issue-selected-issue-<slug>")
+
+        named_target = contracts.standalone_result_as_dict(
+            command="implement",
+            config=config,
+            target="Backlog item",
+        )
+        self.assertEqual(named_target["worktree_path_pattern"], "worktrees/issue-backlog-item")
+
+        unknown = contracts.standalone_result_as_dict(
+            command="unknown",
+            config=config,
+            target="custom",
+        )
+        self.assertEqual(unknown, {"command": "unknown", "target": "custom"})
+
     def test_project_command_contract_has_graph_capabilities_and_side_effects(self):
         config = cfg.load_config(PROJECTS / "example-android.yaml")
         loaded = {}
