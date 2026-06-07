@@ -102,6 +102,9 @@ class TestValidateNames(unittest.TestCase):
         self.assertEqual(len(errors), 1)
         self.assertIn("bogus", errors[0])
 
+    def test_project_command_capabilities_are_known(self):
+        self.assertEqual(runtime.validate_names(("adb", "firebase"), source="x"), [])
+
 
 if __name__ == "__main__":
     unittest.main()

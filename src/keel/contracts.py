@@ -15,6 +15,7 @@ from typing import Any
 from . import config as cfg
 from . import consent, gates, github_transport, install, model, orchestrator, runtime
 from .extensions import Extension
+from .project_commands import get_project_command, list_project_commands
 
 SCHEMA_VERSION = "keel.command-contract.v1"
 
@@ -93,7 +94,16 @@ def build_command_contract(
     target: str | None = None,
 ) -> dict[str, Any]:
     """Build the stable adapter contract shared by ``plan --json`` and dry-run commands."""
-    declared_side_effects = command_side_effects(command, requirement, loaded)
+    declared_side_effects = command_side_effects(command, config, requirement, loaded)
+    graph = command_graph(command)
+    if not graph and (project_command := get_project_command(config, command)):
+        graph = [{
+            "step_id": f"project-command:{project_command.name}",
+            "step_name": project_command.name,
+            "agentic": bool(project_command.agent_role),
+            "slot": None,
+            "source": "project_command",
+        }]
     return {
         "schema_version": SCHEMA_VERSION,
         "command": command,
@@ -101,9 +111,10 @@ def build_command_contract(
         "dry_run": dry_run,
         "no_mutations": dry_run,
         "project": project_as_dict(config),
-        "graph": command_graph(command),
+        "graph": graph,
         "backbone_plan": orchestrator.plan_as_dict(plan),
         "gates": [gate_as_dict(spec) for spec in gates.plan_gates(config, loaded)],
+        "project_commands": [command.as_dict() for command in list_project_commands(config)],
         "extension_hooks": extension_hooks_as_dict(config, loaded),
         "extension_problems": list(extension_problems),
         "required_capabilities": list(requirement.required),
@@ -127,11 +138,14 @@ def build_command_contract(
 
 def command_side_effects(
     command: str,
+    config: cfg.ProjectConfig,
     requirement: runtime.CapabilityRequirement,
     loaded: dict[str, list[Extension]],
 ) -> tuple[str, ...]:
     """Return command side effects plus project capability-derived consent effects."""
     effects: list[str] = list(_BASE_SIDE_EFFECTS.get(command, ()))
+    if project_command := get_project_command(config, command):
+        effects.extend(project_command.side_effects)
     effects.extend(consent.capability_side_effects(requirement.required))
     effects.extend(consent.capability_side_effects(requirement.optional))
     for extensions in loaded.values():

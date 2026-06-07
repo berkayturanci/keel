@@ -23,9 +23,10 @@ Every contract includes:
 | `command` | Adapter command being planned. |
 | `mode` / `dry_run` / `no_mutations` | Whether this record represents a non-mutating rehearsal. |
 | `project` | Resolved project config summary plus stable `config_hash`. |
-| `graph` | Command step graph. `ship` and `ship-v2` use the fixed backbone steps; other adapters expose their command-local steps. |
+| `graph` | Command step graph. `ship` and `ship-v2` use the fixed backbone steps; other adapters expose their command-local steps; project commands expose a single `project_command` graph entry. |
 | `backbone_plan` | Fixed keel backbone with gates slotted onto steps. |
 | `gates` | Planned gate specs, including kind, phase, failure behavior, source, and capability declarations. |
+| `project_commands` | Project-provided commands declared by policy, separate from packaged keel adapters. |
 | `extension_hooks` | Loaded extension hooks grouped by slot. |
 | `extension_problems` | Fail-soft extension load problems. |
 | `required_capabilities` / `optional_capabilities` | Capability names the adapter should evaluate before mutating work. |
@@ -33,6 +34,11 @@ Every contract includes:
 | `github_transport` | Selected GitHub transport and degraded GitHub operation capabilities. |
 | `side_effects` | Declared possible live-run side effects and whether dry-run mutates. |
 | `operator_consent` | Operator consent requirement, approved mutation scopes, delegated-agent scope, and consent record metadata. |
+
+Project command entries include name, local command path, description, agent role, path
+selectors, required/optional capabilities, side effects, dry-run safety, and source
+(`policy_pack.project_commands` or `policy_pack.command_routing`). The contract never embeds
+the project command body.
 
 ## Operator consent block
 

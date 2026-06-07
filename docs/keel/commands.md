@@ -63,8 +63,10 @@ A command never hardcodes a branch, build/lint command, agent, glob, timezone, w
 workflow name. It references the knob by name and asks the `keel` CLI for the value, so the
 same `/keel:ship` command can produce different behaviour in different repos purely from each
 repo's `.keel/project.yaml`. Project-specific *gates* live in `.keel/extensions/` (Lego);
-project-only commands (platform builds, device tests, app-specific regressions) stay in the
-project. See [`configuration.md`](configuration.md) and [`extensions.md`](extensions.md).
+project-only commands (local build checks, smoke tests, project-specific regressions) stay in
+the project and are exposed as data through `keel project-commands`. See
+[`configuration.md`](configuration.md), [`cli.md`](cli.md#keel-project-commands-projectyaml---json),
+and [`extensions.md`](extensions.md).
 
 For the full boundary between keel core, project policy, project commands, runtime
 capabilities, and adapters, see

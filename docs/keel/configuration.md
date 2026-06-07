@@ -57,13 +57,33 @@ back to packaged command prose.
 | `test_groups` | map name→object | | named test/audit commands, path selectors, reports, and capability needs |
 | `docs` | object | | docs gate policy and allowed no-docs reasons |
 | `health_providers` | map name→object | | project-owned operational signal providers for reporting commands |
-| `command_routing` | map command→object | | project command routing, path selectors, capability needs, and side effects |
+| `project_commands` | map command→object | | project-provided commands, path selectors, capability needs, and side effects |
+| `command_routing` | map command→object | | compatibility routing map for older project command declarations |
 | `reports` | map name→string | | report destinations, paths, or issue prefixes |
 | `review` | object | | project-owned rubric additions and required PR/review sections |
 
 `risk_rules[]` entries require `id` and `paths`. `test_groups.*` entries require
 `command`. `health_providers.*` entries require `kind`. These required fields are
 validated by the bundled schema.
+
+`project_commands` is the preferred place to preserve local commands that keel should not
+own. Keel can list them, include them in structured command contracts, and evaluate their
+declared capabilities; the command body itself remains in the project:
+
+```yaml
+policy_pack:
+  name: example
+  project_commands:
+    device-smoke:
+      command: ".keel/commands/device-smoke"
+      description: "Run the project's smoke-test checklist."
+      agent_role: app
+      paths: ["app/**"]
+      required_capabilities: [shell]
+      optional_capabilities: [browser]
+      side_effects: [report_write]
+      dry_run_safe: false
+```
 
 ## `gates` vs `extensions`
 

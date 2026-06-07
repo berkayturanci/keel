@@ -82,6 +82,41 @@ policy_pack:
       required_capabilities: ["shell"]
       side_effects: ["report_write"]
       dry_run_safe: true
+  project_commands:
+    android-build:
+      command: ".keel/commands/android-build"
+      description: "Run the project's Android build, test, and lint playbook."
+      agent_role: android
+      paths: ["android/**"]
+      required_capabilities: ["shell"]
+      side_effects: ["report_write"]
+      dry_run_safe: true
+    web-check:
+      command: ".keel/commands/web-check"
+      description: "Run the project's web validation playbook."
+      agent_role: web
+      paths: ["web/**"]
+      required_capabilities: ["shell"]
+      side_effects: ["report_write"]
+      dry_run_safe: true
+    ui-test:
+      command: ".keel/commands/ui-test"
+      description: "Run the project's device or browser smoke-test checklist."
+      agent_role: android
+      paths: ["android/**"]
+      required_capabilities: ["shell", "adb"]
+      optional_capabilities: ["browser"]
+      side_effects: ["report_write"]
+      dry_run_safe: false
+    post-migration-regression:
+      command: ".keel/commands/post-migration-regression"
+      description: "Run a project-owned historical regression playbook."
+      agent_role: android
+      paths: ["android/**", "shared/**"]
+      required_capabilities: ["shell"]
+      optional_capabilities: ["firebase", "gh"]
+      side_effects: ["report_write", "comments"]
+      dry_run_safe: false
   reports:
     regression: "reports/regression/"
   review:

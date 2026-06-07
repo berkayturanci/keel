@@ -98,6 +98,7 @@ against that report.
 keel capabilities --root .
 keel capabilities --project .keel/project.yaml --for ship --root .
 keel capabilities --project .keel/project.yaml --for morning --root .
+keel capabilities --project .keel/project.yaml --for device-smoke --json
 keel capabilities --project .keel/project.yaml --for ship --json
 ```
 
@@ -106,6 +107,22 @@ capabilities are reported as degraded in human output and as `missing_optional` 
 The output also includes the selected GitHub transport and any degraded GitHub operation
 capabilities. See [`runtime-capabilities.md`](runtime-capabilities.md) and
 [`github-transport.md`](github-transport.md).
+
+## `keel project-commands <project.yaml> [--json]`
+
+List project-provided commands declared by `policy_pack.project_commands` or the older
+`policy_pack.command_routing` compatibility map. These commands are not packaged keel
+adapters; keel only exposes their metadata so wrappers and adapters can preserve local
+behavior without copying project-specific command bodies into core.
+
+```bash
+keel project-commands .keel/project.yaml
+keel project-commands .keel/project.yaml --json
+keel plan .keel/project.yaml --command device-smoke --json
+```
+
+When `keel plan --json --command <project-command>` targets a project command, the contract
+contains a `project_command` graph entry and the command's required/optional capabilities.
 
 ## `keel window <project.yaml>`
 

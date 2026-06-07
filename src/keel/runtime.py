@@ -24,6 +24,8 @@ KNOWN_CAPABILITIES: tuple[str, ...] = (
     "subagents",
     "parallel-subagents",
     "browser",
+    "adb",
+    "firebase",
     "filesystem-write",
     "worktree",
     "release-publish",

@@ -72,6 +72,9 @@ class TestBuildCommandContract(unittest.TestCase):
         ])
         self.assertIn("build", [gate["id"] for gate in contract["gates"]])
         self.assertEqual(contract["extension_hooks"]["tester"][0]["id"], "smoke")
+        self.assertTrue(any(
+            command["name"] == "android-build" for command in contract["project_commands"]
+        ))
         self.assertIn("shell", contract["required_capabilities"])
         self.assertEqual(contract["github_transport"]["transport"], "mcp")
         self.assertFalse(contract["side_effects"]["mutates_in_dry_run"])
@@ -82,6 +85,34 @@ class TestBuildCommandContract(unittest.TestCase):
         )
         self.assertTrue(contract["operator_consent"]["would_require_operator_consent"])
         self.assertFalse(contract["operator_consent"]["requires_operator_consent"])
+
+    def test_project_command_contract_has_graph_capabilities_and_side_effects(self):
+        config = cfg.load_config(PROJECTS / "example-android.yaml")
+        loaded = {}
+        plan = orchestrator.build_plan(config, loaded)
+        report = runtime.CapabilityReport((
+            runtime.Capability("shell", True, "ok", "test"),
+            runtime.Capability("adb", False, "missing", "test"),
+            runtime.Capability("browser", False, "missing", "test"),
+        ))
+        requirement = runtime.CapabilityRequirement(
+            required=("shell", "adb"),
+            optional=("browser",),
+        )
+        contract = contracts.build_command_contract(
+            command="ui-test",
+            config=config,
+            loaded=loaded,
+            plan=plan,
+            requirement=requirement,
+            evaluation=runtime.evaluate(requirement, report),
+            transport=github_transport.resolve(report),
+        )
+        self.assertEqual(contract["graph"][0]["source"], "project_command")
+        self.assertEqual(contract["graph"][0]["step_id"], "project-command:ui-test")
+        self.assertIn("adb", contract["required_capabilities"])
+        self.assertIn("browser", contract["optional_capabilities"])
+        self.assertIn("report_write", contract["side_effects"]["declared"])
 
     def test_live_contract_records_approved_consent_scope(self):
         config = cfg.load_config(PROJECTS / "example-android.yaml")

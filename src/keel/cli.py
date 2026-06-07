@@ -24,6 +24,7 @@ from . import (
     github_transport,
     install,
     jury,
+    project_commands,
     runtime,
     scaffold,
     ship,
@@ -368,6 +369,37 @@ def _cmd_capabilities(args: argparse.Namespace) -> int:
     return 0 if evaluation.ok else 1
 
 
+def _cmd_project_commands(args: argparse.Namespace) -> int:
+    try:
+        config = cfg.load_config(args.path)
+    except FileNotFoundError:
+        print(f"no such config: {args.path}", file=sys.stderr)
+        return 1
+    except cfg.ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    commands = project_commands.list_project_commands(config)
+    if args.json:
+        print(json.dumps({"project_commands": [command.as_dict() for command in commands]},
+                         indent=2, sort_keys=True))
+    else:
+        if not commands:
+            print("project commands: none")
+            return 0
+        print("project commands:")
+        for command in commands:
+            caps = []
+            if command.required_capabilities:
+                caps.append("required=" + ",".join(command.required_capabilities))
+            if command.optional_capabilities:
+                caps.append("optional=" + ",".join(command.optional_capabilities))
+            cap_text = f" ({'; '.join(caps)})" if caps else ""
+            runner = f" -> {command.command}" if command.command else ""
+            print(f"  {command.name}{runner}{cap_text}")
+    return 0
+
+
 def _ask(prompt: str, default: str) -> str:  # pragma: no cover - interactive I/O
     raw = input(f"{prompt} [{default}]: " if default else f"{prompt}: ").strip()
     return raw or default
@@ -463,6 +495,11 @@ def _capability_requirement(
         specs = gates.plan_gates(config, loaded)
     except gates.GateError:
         return req
+    if project_command := project_commands.get_project_command(config, command):
+        req = req.merged(runtime.CapabilityRequirement(
+            required=project_command.required_capabilities,
+            optional=project_command.optional_capabilities,
+        ))
 
     command_gate_commands = {
         "run-gates", "ship", "ship-v2", "pr-loop", "wrap", "overnight", "implement",
@@ -507,7 +544,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_plan.add_argument("path", help="path to project.yaml")
     p_plan.add_argument("--root", default=".", help="repo root for resolving extensions")
     p_plan.add_argument("--command", dest="command_contract", default="ship",
-                        choices=contracts.available_commands(),
                         help="adapter command contract to include in JSON output")
     p_plan.add_argument("--live", action="store_true",
                         help="render a live preflight contract and fail if consent is missing")
@@ -553,12 +589,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_caps.add_argument("--project", dest="path", default=None,
                         help="optional project.yaml to evaluate requirements")
     p_caps.add_argument("--for", dest="for_command", default="ship",
-                        choices=("plan", "run-gates", *contracts.available_commands()),
                         help="command requirement to evaluate when --project is set")
     p_caps.add_argument("--pr", type=int, default=None,
                         help="PR number for ship capability requirements")
     p_caps.add_argument("--json", action="store_true", help="emit structured JSON")
     p_caps.set_defaults(func=_cmd_capabilities)
+
+    p_proj = sub.add_parser("project-commands",
+                            help="list project-provided commands declared by policy")
+    p_proj.add_argument("path", help="path to project.yaml")
+    p_proj.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_proj.set_defaults(func=_cmd_project_commands)
 
     p_init = sub.add_parser("init", help="scaffold a default .keel/project.yaml for this repo")
     p_init.add_argument("--root", default=".", help="repo root to scaffold into")

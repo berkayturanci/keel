@@ -202,6 +202,8 @@
             "type": "object",
             "additionalProperties": false,
             "properties": {
+              "command": { "type": "string" },
+              "description": { "type": "string" },
               "agent_role": { "type": "string" },
               "paths": { "type": "array", "items": { "type": "string" } },
               "required_capabilities": { "type": "array", "items": { "type": "string" } },
@@ -211,6 +213,24 @@
             }
           },
           "description": "Project command routing and side-effect declarations."
+        },
+        "project_commands": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "command": { "type": "string" },
+              "description": { "type": "string" },
+              "agent_role": { "type": "string" },
+              "paths": { "type": "array", "items": { "type": "string" } },
+              "required_capabilities": { "type": "array", "items": { "type": "string" } },
+              "optional_capabilities": { "type": "array", "items": { "type": "string" } },
+              "side_effects": { "type": "array", "items": { "type": "string" } },
+              "dry_run_safe": { "type": "boolean" }
+            }
+          },
+          "description": "Project-provided commands that keel can list, plan, and capability-check without owning their bodies."
         },
         "reports": {
           "type": "object",

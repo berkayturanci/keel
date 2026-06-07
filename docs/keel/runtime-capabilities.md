@@ -60,6 +60,19 @@ optional_capabilities: [browser]
 ---
 ```
 
+Project-provided commands declare the same fields in `policy_pack.project_commands`:
+
+```yaml
+policy_pack:
+  name: example
+  project_commands:
+    device-smoke:
+      command: ".keel/commands/device-smoke"
+      required_capabilities: [shell, adb]
+      optional_capabilities: [browser, firebase]
+      side_effects: [report_write]
+```
+
 Unknown capability names fail validation so typos do not silently degrade a run.
 
 ## Required vs optional

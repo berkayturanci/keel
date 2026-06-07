@@ -573,7 +573,7 @@ class TestParser(unittest.TestCase):
         self.assertGreaterEqual(set(actions[0].choices),
                                 {"version", "validate", "plan", "run-gates", "window", "ship",
                                  "capabilities", "init", "install-adapter",
-                                 "adapter-status", "update-adapter"})
+                                 "adapter-status", "update-adapter", "project-commands"})
 
 
 if __name__ == "__main__":

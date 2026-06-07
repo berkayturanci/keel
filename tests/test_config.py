@@ -70,6 +70,11 @@ class TestSeedConfigs(unittest.TestCase):
                 self.assertIn("health_providers", pack)
                 self.assertIn("command_routing", pack)
 
+    def test_example_android_declares_project_commands(self):
+        config = cfg.load_config(PROJECTS_DIR / "example-android.yaml")
+        self.assertIn("project_commands", config.policy_pack)
+        self.assertIn("android-build", config.policy_pack["project_commands"])
+
 
 class TestParse(unittest.TestCase):
     def test_minimal_valid(self):
@@ -122,6 +127,18 @@ class TestParse(unittest.TestCase):
                     "dry_run_safe": True,
                 },
             },
+            "project_commands": {
+                "device-smoke": {
+                    "command": ".keel/commands/device-smoke",
+                    "description": "Run device smoke checks.",
+                    "agent_role": "app",
+                    "paths": ["src/app/**"],
+                    "required_capabilities": ["shell", "adb"],
+                    "optional_capabilities": ["browser", "firebase"],
+                    "side_effects": ["report_write"],
+                    "dry_run_safe": False,
+                },
+            },
             "reports": {"morning": "reports/morning/"},
             "review": {
                 "additions": ["Check rollout notes."],
@@ -134,6 +151,8 @@ class TestParse(unittest.TestCase):
         self.assertEqual(config.policy_pack["risk_rules"][0]["id"], "data-migration")
         self.assertEqual(config.policy_pack["test_groups"]["app"]["command"],
                          "./tools/test-app")
+        self.assertEqual(config.policy_pack["project_commands"]["device-smoke"]["command"],
+                         ".keel/commands/device-smoke")
 
     def test_policy_pack_required_fields_fail_validation(self):
         bad = copy.deepcopy(VALID)
