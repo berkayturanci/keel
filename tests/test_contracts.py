@@ -544,6 +544,15 @@ class TestBuildCommandContract(unittest.TestCase):
         self.assertNotIn("wrap", base_only)
         self.assertNotIn("overnight", base_only)
 
+    def test_scan_contract_unknown_command_returns_base_contract_only(self):
+        config = cfg.load_config(PROJECTS / "example-flutter.yaml")
+
+        scan = contracts.scan_contract_as_dict(command="other", config=config)
+
+        self.assertIn("dedupe", scan)
+        self.assertNotIn("regression", scan)
+        self.assertNotIn("review_all_day", scan)
+
     def test_project_command_contract_has_graph_capabilities_and_side_effects(self):
         config = cfg.load_config(PROJECTS / "example-android.yaml")
         loaded = {}

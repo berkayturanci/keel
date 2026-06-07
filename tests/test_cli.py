@@ -859,6 +859,27 @@ class TestStandaloneCommands(unittest.TestCase):
         self.assertIn("areas", out)
         self.assertIn("issues only after consent", out)
 
+        with tempfile.TemporaryDirectory() as d, patch("keel.cli.runtime.detect",
+                                                       return_value=fake_report):
+            rc, review_out, _ = run(["review-all-day", str(PROJECTS / "example-flutter.yaml"),
+                                     "--root", d])
+        self.assertEqual(rc, 0)
+        self.assertIn("keel review-all-day", review_out)
+        self.assertIn("[review-all-day] ", review_out)
+
+    def test_standalone_target_combines_days_and_scope_when_present(self):
+        target = cli._standalone_target(Namespace(
+            issue=None,
+            pr=None,
+            since=None,
+            scope="changed",
+            days=7,
+            target=None,
+            title=None,
+            hours=None,
+        ))
+        self.assertEqual(target, "7 day scan (scope changed)")
+
     def test_standalone_human_output_for_unknown_adapter_profile_falls_through(self):
         import tempfile
         with tempfile.TemporaryDirectory() as d:
