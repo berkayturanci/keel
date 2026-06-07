@@ -16,6 +16,7 @@ from pathlib import Path
 
 from . import (
     __version__,
+    consent,
     contracts,
     gates,
     git,
@@ -100,6 +101,11 @@ def _cmd_plan(args: argparse.Namespace) -> int:
     report = runtime.detect(args.root)
     evaluation = runtime.evaluate(requirement, report)
     transport = github_transport.resolve(report)
+    try:
+        approved_scopes = _approved_scopes(args)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     contract = contracts.build_command_contract(
         command=args.command_contract,
         config=config,
@@ -109,8 +115,12 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         evaluation=evaluation,
         transport=transport,
         extension_problems=tuple(problems),
-        dry_run=True,
+        dry_run=not args.live,
+        approved_consent_scopes=approved_scopes,
+        operator=args.operator,
+        target=args.target,
     )
+    consent_ok, consent_message = consent.assert_operator_consent(contract["operator_consent"])
     if args.json:
         print(json.dumps({
             "contract": contract,
@@ -121,8 +131,13 @@ def _cmd_plan(args: argparse.Namespace) -> int:
     else:
         print(orch.render_plan(config, plan))
         print(evaluation.render())
+        print(f"operator consent: {contract['operator_consent']['status']}")
+        print(f"  {contract['operator_consent']['consent_prompt']}")
     for prob in problems:
         print(f"  ! extension not loaded: {prob}", file=sys.stderr)
+    if not consent_ok:
+        print(consent_message, file=sys.stderr)
+        return 1
     return 0
 
 
@@ -190,6 +205,10 @@ def _cmd_window(args: argparse.Namespace) -> int:
 
 
 def _cmd_ship(args: argparse.Namespace) -> int:
+    if args.dry_run and args.live:
+        print("--dry-run and --live cannot be used together", file=sys.stderr)
+        return 1
+
     try:
         config = cfg.load_config(args.path)
     except FileNotFoundError:
@@ -213,6 +232,37 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     if args.pr is not None and not transport.supports("check_runs"):
         print(transport.render(), file=sys.stderr)
         print("missing required GitHub transport capability: check_runs", file=sys.stderr)
+        return 1
+    try:
+        approved_scopes = _approved_scopes(args)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    try:
+        plan = orch.build_plan(config, loaded)
+    except gates.GateError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    contract = contracts.build_command_contract(
+        command="ship",
+        config=config,
+        loaded=loaded,
+        plan=plan,
+        requirement=requirement,
+        evaluation=evaluation,
+        transport=transport,
+        extension_problems=tuple(problems),
+        dry_run=not args.live,
+        approved_consent_scopes=approved_scopes,
+        operator=args.operator,
+        target=args.target or (f"PR #{args.pr}" if args.pr is not None else None),
+    )
+    consent_ok, consent_message = consent.assert_operator_consent(contract["operator_consent"])
+    if not consent_ok:
+        if args.json:
+            print(json.dumps({"contract": contract}, indent=2, sort_keys=True))
+        else:
+            print(consent_message, file=sys.stderr)
         return 1
 
     changed = git.changed_files(config.base_branch, "HEAD", cwd=args.root)
@@ -243,17 +293,6 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     )
 
     if args.json:
-        contract = contracts.build_command_contract(
-            command="ship",
-            config=config,
-            loaded=loaded,
-            plan=orch.build_plan(config, loaded),
-            requirement=requirement,
-            evaluation=evaluation,
-            transport=transport,
-            extension_problems=tuple(problems),
-            dry_run=True,
-        )
         print(json.dumps({
             "contract": contract,
             "result": contracts.ship_result_as_dict(
@@ -274,6 +313,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     ci_str = "unknown" if a.ci_ok is None else ("passing" if a.ci_ok else "FAILING")
     print(f"  ci            : {ci_str}")
     print(f"  github        : {transport.name}")
+    print(f"  consent       : {contract['operator_consent']['status']}")
     if transport.degraded:
         print(f"  github degraded: {', '.join(transport.degraded)}")
     for o in outcomes:
@@ -287,6 +327,10 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     print(f"  decision      : {a.merge.action.upper()} — {a.merge.reason}")
     print("  note: dry assessment; live merge (s10) needs a configured runner (git + gh auth).")
     return 0 if a.merge.action != "block" else 1
+
+
+def _approved_scopes(args: argparse.Namespace) -> tuple[str, ...]:
+    return consent.normalize_scopes(getattr(args, "approve_scope", ()))
 
 
 def _cmd_capabilities(args: argparse.Namespace) -> int:
@@ -433,6 +477,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_plan.add_argument("--command", dest="command_contract", default="ship",
                         choices=contracts.available_commands(),
                         help="adapter command contract to include in JSON output")
+    p_plan.add_argument("--live", action="store_true",
+                        help="render a live preflight contract and fail if consent is missing")
+    p_plan.add_argument("--approve-scope", action="append", default=[],
+                        help="approve a consent scope for this run; repeat or comma-separate")
+    p_plan.add_argument("--operator", default=None,
+                        help="operator identifier to include in an approved consent record")
+    p_plan.add_argument("--target", default=None,
+                        help="task target to include in the consent prompt and record")
     p_plan.add_argument("--json", action="store_true", help="emit structured JSON")
     p_plan.set_defaults(func=_cmd_plan)
 
@@ -452,6 +504,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_ship.add_argument("--hotfix", action="store_true", help="emergency: bypass the merge window")
     p_ship.add_argument("--dry-run", action="store_true",
                         help="explicitly mark the assessment as non-mutating")
+    p_ship.add_argument("--live", action="store_true",
+                        help=("run the live preflight gate and fail before gates "
+                              "if consent is missing"))
+    p_ship.add_argument("--approve-scope", action="append", default=[],
+                        help="approve a consent scope for this run; repeat or comma-separate")
+    p_ship.add_argument("--operator", default=None,
+                        help="operator identifier to include in an approved consent record")
+    p_ship.add_argument("--target", default=None,
+                        help="task target to include in the consent prompt and record")
     p_ship.add_argument("--json", action="store_true", help="emit structured JSON")
     p_ship.set_defaults(func=_cmd_ship)
 

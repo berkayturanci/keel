@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from . import config as cfg
-from . import gates, github_transport, install, model, orchestrator, runtime
+from . import consent, gates, github_transport, install, model, orchestrator, runtime
 from .extensions import Extension
 
 SCHEMA_VERSION = "keel.command-contract.v1"
@@ -84,8 +84,12 @@ def build_command_contract(
     transport: github_transport.GitHubTransport,
     extension_problems: tuple[str, ...] = (),
     dry_run: bool = True,
+    approved_consent_scopes: tuple[str, ...] = (),
+    operator: str | None = None,
+    target: str | None = None,
 ) -> dict[str, Any]:
     """Build the stable adapter contract shared by ``plan --json`` and dry-run commands."""
+    declared_side_effects = _SIDE_EFFECTS.get(command, ())
     return {
         "schema_version": SCHEMA_VERSION,
         "command": command,
@@ -103,9 +107,17 @@ def build_command_contract(
         "capabilities": evaluation.as_dict(),
         "github_transport": transport.as_dict(),
         "side_effects": {
-            "declared": list(_SIDE_EFFECTS.get(command, ())),
+            "declared": list(declared_side_effects),
             "mutates_in_dry_run": False,
         },
+        "operator_consent": consent.build_consent_contract(
+            command=command,
+            side_effects=declared_side_effects,
+            dry_run=dry_run,
+            approved_scopes=approved_consent_scopes,
+            operator=operator,
+            target=target,
+        ),
     }
 
 

@@ -23,7 +23,7 @@ keel validate projects/*.yaml                 # schema only
 keel validate .claude/project.yaml --root .   # schema + extensions (use in CI)
 ```
 
-## `keel plan <project.yaml> [--root DIR] [--command COMMAND] [--json]`
+## `keel plan <project.yaml> [--root DIR] [--command COMMAND] [--live] [--approve-scope SCOPE] [--operator ID] [--target TARGET] [--json]`
 
 Render the backbone plan for a project: the fixed steps with the project's built-in gates
 and extensions slotted in. This is the dry-run view — what an actual run would execute.
@@ -36,12 +36,20 @@ built-in gates.
 keel plan .claude/project.yaml
 keel plan .claude/project.yaml --json
 keel plan .claude/project.yaml --command morning --json
+keel plan .claude/project.yaml --command ship --live --json
+keel plan .claude/project.yaml --command ship --live --approve-scope filesystem,git,github --operator "$USER" --target "issue #123" --json
 ```
 
 With `--json`, the output includes a structured command contract under `contract`: resolved
 project config, command step graph, backbone plan, gates, extension hooks, capability
-requirements/evaluation, selected GitHub transport, and declared side effects. See
-[`command-contracts.md`](command-contracts.md).
+requirements/evaluation, selected GitHub transport, declared side effects, and operator
+consent requirements. See [`command-contracts.md`](command-contracts.md).
+
+By default, `plan` renders a dry-run contract. `--live` renders the live preflight contract
+for an adapter or orchestrator. If the command has live mutation scopes and the current run
+does not approve them with `--approve-scope`, `plan --live` exits non-zero after printing the
+resolved contract. Dry-runs never require live-write consent, but still show the live scopes
+that would require approval.
 
 Example output:
 
@@ -112,7 +120,7 @@ keel window .keel/project.yaml
 # merge window OPEN  [Europe/Istanbul 07:00-01:30]
 ```
 
-## `keel ship <project.yaml> [--root DIR] [--pr N] [--dry-run] [--json]`
+## `keel ship <project.yaml> [--root DIR] [--pr N] [--dry-run] [--live] [--approve-scope SCOPE] [--operator ID] [--target TARGET] [--json]`
 
 Run the **deterministic slice of a ship** against the current checkout and print the
 assessment: how many files changed vs. the base branch, the **risk tier** (→ reviewer
@@ -125,8 +133,15 @@ This is the runnable, agent-free part of the backbone (s5 classify + s6 CI + s8 
 s10 merge decision). It does **not** call coding agents and does **not** perform the merge —
 the live merge (s10) needs a configured runner with `git` + an authenticated `gh`.
 
+`--live` turns the command into a live preflight gate for adapters. The command builds the
+same structured contract and stops before running project gates if operator consent is
+missing. `--approve-scope` can be repeated or comma-separated. Approved live runs include a
+local `consent_record` in JSON output; secret values are never recorded.
+
 ```bash
 keel ship projects/keel.yaml --root .
+keel ship projects/keel.yaml --root . --live --json
+keel ship projects/keel.yaml --root . --live --approve-scope filesystem,git,github --operator "$USER" --target "issue #123" --json
 # keel ship — keel  (base main)
 #   changed files : 53
 #   risk tier     : TIER-3  → 3 reviewer(s)

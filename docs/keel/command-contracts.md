@@ -7,7 +7,9 @@ describe what a command would do before an adapter starts mutating work.
 
 - `keel plan <project.yaml> --json`
 - `keel plan <project.yaml> --command <adapter> --json`
+- `keel plan <project.yaml> --command <adapter> --live --json`
 - `keel ship <project.yaml> --dry-run --json`
+- `keel ship <project.yaml> --live --json`
 
 Human-readable output remains the default. JSON output is the adapter-facing contract.
 
@@ -30,6 +32,27 @@ Every contract includes:
 | `capabilities` | Runtime evaluation for the current environment. |
 | `github_transport` | Selected GitHub transport and degraded GitHub operation capabilities. |
 | `side_effects` | Declared possible live-run side effects and whether dry-run mutates. |
+| `operator_consent` | Operator consent requirement, approved mutation scopes, delegated-agent scope, and consent record metadata. |
+
+## Operator consent block
+
+Every command contract includes `operator_consent`:
+
+| field | meaning |
+|---|---|
+| `schema_version` | Consent contract schema identifier. Current value: `keel.operator-consent.v1`. |
+| `requires_operator_consent` | `true` only when this run is live and approved scope is missing. |
+| `would_require_operator_consent` | Whether the command has live-run mutation classes, including under dry-run. |
+| `status` | `not-required-dry-run`, `not-required-read-only`, `missing`, or `approved`. |
+| `consent_scope` | Mutation classes required for a live run: `filesystem`, `git`, `github`, `secrets`, `release`, `production-adjacent`. |
+| `approved_scope` / `missing_scope` | Scope approved for the current run and any live-run gap. |
+| `consent_prompt` | Consumer-neutral prompt generated from the resolved command, target, mode, and scopes. |
+| `delegated_agent_scope` | Scope adapters must pass to delegated agents; scope expansion must block or escalate. |
+| `consent_record` | Local metadata for approved live runs: timestamp, operator, workflow, target, scopes, mode, and `secret_values_recorded: false`. |
+
+Dry-run contracts do not require approval, but still expose the live scopes that would need
+approval. Live contracts with missing consent are preflight blockers and must stop before
+files, git state, GitHub state, releases, secrets, or production-adjacent systems are touched.
 
 ## Dry-run result records
 
@@ -51,6 +74,10 @@ Adapters should:
 - stop when required capabilities are missing
 - report optional capability degradation explicitly
 - use `github_transport` instead of duplicating `gh` vs MCP mapping tables
+- stop before live mutation when `operator_consent.requires_operator_consent` is true
+- pass `operator_consent.delegated_agent_scope` to delegated agents before work starts
+- block or escalate if a delegated agent attempts work outside `approved_mutation_scopes`
+- never infer secret or credential approval from project knowledge; require the `secrets` scope
 - preserve `no_mutations: true` under dry-run
 - use `extension_hooks` and `gates` from the contract rather than reparsing project config
 
