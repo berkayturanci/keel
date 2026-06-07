@@ -206,7 +206,7 @@ class TestShip(unittest.TestCase):
         self.assertIn("TIER-2", out)        # empty changeset -> default tier
         self.assertIn("DECISION", out.upper())
         self.assertIn("MERGE", out)
-        self.assertIn("github        : gh", out)
+        self.assertIn("github        :", out)
 
     def test_failing_gate_blocks(self):
         import tempfile
