@@ -711,6 +711,63 @@ def _cmd_update_adapter(args: argparse.Namespace) -> int:
     return 0
 
 
+def _parse_legacy_mapping(raw: str) -> tuple[str, str]:
+    if "=" not in raw:
+        raise argparse.ArgumentTypeError("use LEGACY=KEEL, for example ship=ship")
+    legacy, command = (part.strip() for part in raw.split("=", 1))
+    if not legacy or not command:
+        raise argparse.ArgumentTypeError("legacy and keel command names must be non-empty")
+    return legacy, command
+
+
+def _cmd_install_legacy_wrappers(args: argparse.Namespace) -> int:
+    matrix = Path(args.parity_matrix)
+    if not matrix.exists():
+        print(
+            f"parity matrix not found: {matrix}; pass --parity-matrix after verifying rows",
+            file=sys.stderr,
+        )
+        return 1
+    ready_commands = install.parity_ready_commands(matrix.read_text(encoding="utf-8"))
+    mappings = dict(args.command) if args.command else {
+        command: command for command in sorted(ready_commands)
+    }
+    try:
+        if args.agent == "all":
+            results = install.install_all_legacy_wrappers(
+                args.root,
+                mappings=mappings,
+                ready_commands=ready_commands,
+                force=args.force,
+            )
+        elif args.agent in install.LEGACY_TARGETS:
+            results = {
+                args.agent: install.install_legacy_wrappers(
+                    args.agent,
+                    args.root,
+                    mappings=mappings,
+                    ready_commands=ready_commands,
+                    force=args.force,
+                )
+            }
+        else:
+            print(
+                f"unknown target {args.agent!r}; valid: all, "
+                f"{', '.join(install.LEGACY_TARGETS)}",
+                file=sys.stderr,
+            )
+            return 1
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    total = 0
+    for surface, (installed, skipped) in results.items():
+        _report_install(f"legacy-{surface}", installed, skipped)
+        total += len(installed)
+    print(f"{total} legacy wrapper(s) installed — legacy commands now delegate to /keel:<command>")
+    return 0
+
+
 def _capability_requirement(
     command: str,
     config: cfg.ProjectConfig,
@@ -1011,6 +1068,28 @@ def build_parser() -> argparse.ArgumentParser:
     p_ua.add_argument("--root", default=".", help="project root to update")
     p_ua.add_argument("--dry-run", action="store_true", help="show planned updates only")
     p_ua.set_defaults(func=_cmd_update_adapter)
+
+    p_lw = sub.add_parser(
+        "install-legacy-wrappers",
+        help="install thin legacy command wrappers that delegate to /keel:<command>",
+    )
+    p_lw.add_argument("agent", help=f"'all' or one of: {', '.join(install.LEGACY_TARGETS)}")
+    p_lw.add_argument("--root", default=".", help="project root to install into")
+    p_lw.add_argument("--force", action="store_true", help="overwrite existing wrappers")
+    p_lw.add_argument(
+        "--parity-matrix",
+        default="docs/keel/parity-matrix.md",
+        help="markdown parity matrix whose ready rows allow wrapper generation",
+    )
+    p_lw.add_argument(
+        "--command",
+        action="append",
+        type=_parse_legacy_mapping,
+        default=[],
+        metavar="LEGACY=KEEL",
+        help="install one wrapper mapping; repeat for multiple commands",
+    )
+    p_lw.set_defaults(func=_cmd_install_legacy_wrappers)
 
     return parser
 

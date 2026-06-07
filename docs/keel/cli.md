@@ -412,6 +412,36 @@ wrappers unless those files are explicitly marked as generated keel adapter surf
 Extension schema migrations are separate from adapter command updates and must be documented
 as their own versioned migration.
 
+## `keel install-legacy-wrappers <target> [--root DIR] [--command LEGACY=KEEL]`
+
+Install thin compatibility shims for old command names after the parity matrix proves that
+the corresponding `/keel:<command>` adapter is ready. This is the staged cutover tool for
+projects that still expose legacy commands such as `/ship` or `source-command-ship`.
+
+| target | installs into | generated wrapper |
+|---|---|---|
+| `claude` | `.claude/commands/<legacy>.md` | native legacy slash command that delegates to `/keel:<command>` |
+| `skills` | `.agents/skills/source-command-<legacy>/SKILL.md` | shared non-Claude skill wrapper that delegates to `keel-<command>` |
+| `all` | both of the above | |
+
+```bash
+keel install-legacy-wrappers all --command ship=ship
+keel install-legacy-wrappers skills --command ship=ship --command morning=morning
+keel install-legacy-wrappers all --force
+```
+
+By default, the command reads `docs/keel/parity-matrix.md`. Only rows whose status is
+`parity-proven` or `deferred` may generate wrappers; missing or in-progress rows are blockers.
+Use `--parity-matrix <path>` when running from another checkout or a downstream migration
+tracking document. Existing files are skipped unless `--force`, so a project can keep its old
+body until the replacement wrapper is reviewed.
+
+The wrapper template intentionally contains no workflow copy. It preserves the user's original
+issue/PR target and flags, including dry-run, jury/no-jury, review-comment mode, merge
+behavior, and issue/PR targeting, then delegates to the installed keel adapter. The generated
+files carry a `keel-generated` marker on the `legacy-*` surfaces so adapter updates and local
+compatibility shims remain distinguishable.
+
 ## Exit codes
 
 | code | meaning |

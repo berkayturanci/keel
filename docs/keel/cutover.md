@@ -53,7 +53,33 @@ Repeat for any command you rely on (`/keel:regression`, `/keel:review-cycle`, `/
 …). If something is missing, **don't retire yet** — open an issue against keel to close the gap
 (the adapter, or a knob/Lego), fix it, re-verify.
 
-## Step 3 — retire the old bodies (only what keel owns)
+## Step 3 — replace proven old bodies with thin wrappers
+
+After the row in `docs/keel/parity-matrix.md` is `parity-proven` or intentionally `deferred`,
+generate a compatibility wrapper for each legacy command name you still want agents to
+recognize:
+
+```bash
+keel install-legacy-wrappers all --command ship=ship
+keel install-legacy-wrappers all --command ship=ship --command morning=morning
+```
+
+This writes:
+
+- `.claude/commands/<legacy>.md` for native legacy slash commands.
+- `.agents/skills/source-command-<legacy>/SKILL.md` for non-Claude agents that discover
+  shared skills.
+
+The wrapper preserves the user's original target and flags, including `--dry-run`,
+jury/no-jury, review-comment mode, merge behavior, issue targeting, and PR targeting, then
+delegates to `/keel:<command>` / `keel-<command>`. It also runs the structured live plan before
+mutating state so missing consent or capabilities stop the run early.
+
+Existing files are skipped unless `--force`. That makes the migration staged: review the
+generated wrapper in a PR, compare it against the old body, and only force-overwrite or delete
+the old copy once the parity row and PR review both agree that nothing is being lost.
+
+## Step 4 — retire the old bodies (only what keel owns)
 
 Once verified, delete the **portable** command bodies that keel now provides, and **keep the
 genuinely project-only** ones:
@@ -66,7 +92,7 @@ Retire the old bodies in **both** surfaces keel now owns: `.claude/commands/` (C
 shared `.agents/skills/<command>/` skills (every non-Claude agent). The retirement is a normal
 PR — review the diff, merge when green.
 
-## Step 4 — move project-specific behavior into config / Lego
+## Step 5 — move project-specific behavior into config / Lego
 
 Anything project-specific that lived inside a retired body goes to:
 
