@@ -9,8 +9,8 @@
 [![CI](https://github.com/berkayturanci/keel/actions/workflows/ci.yml/badge.svg)](https://github.com/berkayturanci/keel/actions/workflows/ci.yml)
 [![coverage](https://img.shields.io/endpoint?url=https://berkayturanci.github.io/keel/coverage-badge.json)](https://berkayturanci.github.io/keel/coverage/)
 [![CodeQL](https://github.com/berkayturanci/keel/actions/workflows/codeql.yml/badge.svg)](https://github.com/berkayturanci/keel/actions/workflows/codeql.yml)
-[![PyPI](https://img.shields.io/pypi/v/keel)](https://pypi.org/project/keel/)
-[![Python](https://img.shields.io/pypi/pyversions/keel)](https://pypi.org/project/keel/)
+[![PyPI](https://img.shields.io/pypi/v/keel-workflow)](https://pypi.org/project/keel-workflow/)
+[![Python](https://img.shields.io/pypi/pyversions/keel-workflow)](https://pypi.org/project/keel-workflow/)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
 > **keel** is a project-neutral, multi-agent **workflow core**. A *fixed backbone*
@@ -76,7 +76,7 @@ orchestrator-only-writes, vendor+model attribution.
 keel is a Python (≥3.11) package with one runtime dependency (PyYAML):
 
 ```bash
-pip install keel                                              # from PyPI
+pip install keel-workflow                                     # from PyPI (provides the `keel` command)
 pip install "git+https://github.com/berkayturanci/keel@v0.6.0"  # or pin an existing git tag
 ```
 

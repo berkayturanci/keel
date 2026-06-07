@@ -41,7 +41,7 @@ All notable changes to keel are documented here. The format follows
 - **PyPI packaging** — `pyproject` carries full metadata (Apache-2.0 SPDX license, classifiers,
   project URLs) and a `publish.yml` workflow: a `v*` tag builds the sdist+wheel and publishes to
   PyPI via **trusted publishing (OIDC)**, with a CycloneDX SBOM, `SHA256SUMS`, build-provenance
-  attestation, and a generated GitHub Release. `pip install keel`.
+  attestation, and a generated GitHub Release. `pip install keel-workflow`.
 - **Security workflows** — `codeql.yml` (per-push/PR + weekly) and `scorecard.yml` (OpenSSF
   Scorecard from `main`), Actions pinned to commit SHAs.
 - **Brand + site polish** — an SVG **hero** (dark/light, the backbone visualization) and a
