@@ -111,6 +111,50 @@ class TestParityMatrix(unittest.TestCase):
         self.assertIn("standalone-diagnostic", ci_check["Known gaps / owner issues"])
         self.assertIn("read-only", ci_check["Known gaps / owner issues"])
 
+    def test_triage_and_stale_prs_rows_record_parity_evidence(self):
+        rows = {row["Legacy command"].strip("`"): row for row in _matrix_rows()}
+        triage = rows["triage"]
+        stale_prs = rows["stale-prs"]
+
+        self.assertEqual(triage["Status"], "`parity-proven`")
+        self.assertIn("#70", triage["Known gaps / owner issues"])
+        self.assertIn("MCP label writes use explicit union", triage["Keel target behavior"])
+        self.assertIn("--assign", triage["Keel target behavior"])
+        self.assertIn("DRY-RUN:", triage["Dry-run behavior"])
+
+        self.assertEqual(stale_prs["Status"], "`parity-proven`")
+        self.assertIn("#70", stale_prs["Known gaps / owner issues"])
+        self.assertIn("STALE-PRS-<DATE>-", stale_prs["Keel target behavior"])
+        self.assertIn("--merge-develop", stale_prs["GitHub side effects"])
+        self.assertIn("no git checkout/merge/push", stale_prs["Dry-run behavior"])
+
+    def test_triage_details_document_exact_flag_mapping_and_platform_migration(self):
+        text = MATRIX.read_text(encoding="utf-8")
+        for required in (
+            "## Triage parity details",
+            "`/keel:triage --dry-run`",
+            "`/keel:triage --label <name>`",
+            "`/keel:triage --assign`",
+            "explicit union of existing + added labels",
+            "migrating from legacy `platform:*` labels",
+            "translate legacy platform\nvalues to configured routing roles",
+        ):
+            self.assertIn(required, text)
+
+    def test_stale_prs_details_document_exact_flag_mapping_and_idempotency(self):
+        text = MATRIX.read_text(encoding="utf-8")
+        for required in (
+            "## Stale PR parity details",
+            "`/keel:stale-prs --days <N>`",
+            "`/keel:stale-prs --dry-run`",
+            "`/keel:stale-prs --rebase`",
+            "`/keel:stale-prs --merge-develop`",
+            "drift > review-stalled > likely-abandoned",
+            "first line starts `STALE-PRS-<DATE>-`",
+            "git merge --abort",
+        ):
+            self.assertIn(required, text)
+
 
 class TestShipBaseline(unittest.TestCase):
     def test_baseline_records_source_comparison_and_parity_evidence(self):
