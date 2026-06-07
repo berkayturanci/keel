@@ -60,3 +60,16 @@ def render_plan(config: ProjectConfig, plan: tuple[PlanItem, ...]) -> str:
         for gate in item.gates:
             lines.append(f"           - gate: {gate}")
     return "\n".join(lines)
+
+
+def plan_as_dict(plan: tuple[PlanItem, ...]) -> list[dict]:
+    """Render a plan as plain data for JSON output."""
+    return [
+        {
+            "step_id": item.step_id,
+            "step_name": item.step_name,
+            "agentic": item.agentic,
+            "gates": list(item.gates),
+        }
+        for item in plan
+    ]

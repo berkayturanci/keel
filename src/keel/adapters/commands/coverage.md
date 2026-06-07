@@ -22,7 +22,14 @@ MUST be English.
 ```bash
 keel validate .keel/project.yaml --root .
 keel plan     .keel/project.yaml --root .     # read base_branch, tier3_globs, repo
+keel plan     .keel/project.yaml --root . --command coverage --live --json
 ```
+
+The live plan is the operator-consent preflight. Before creating worktrees, writing local
+coverage cache files, posting comments/labels/issues, using secrets, publishing, or calling
+production-adjacent systems, parse `contract.operator_consent`; if
+`requires_operator_consent` is true, STOP and ask the operator to rerun with the required
+`--approve-scope` values.
 
 Arguments:
 - Positional, optional: a single positive integer **PR number**. Default: derive the PR from

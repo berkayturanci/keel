@@ -10,10 +10,10 @@ to it.
 
 Then, for the task at hand:
 
-- **Driving an issue end-to-end** (`keel:ship`): use the shared
-  [`keel-ship` skill](.agents/skills/keel-ship/SKILL.md). Gemini, Antigravity, Codex, and
-  other non-Claude agents all read the shared `.agents/skills/keel-<cmd>/SKILL.md` files
-  instead of separate per-agent adapter copies.
+- **Driving an issue end-to-end** (`keel:ship`): the adapters are
+  installed into the shared [`keel-ship` skill](.agents/skills/keel-ship/SKILL.md).
+  Gemini, Antigravity, Codex, and other non-Claude agents read the shared
+  `.agents/skills/keel-<cmd>/SKILL.md` files instead of separate per-agent adapter copies.
 - **Architecture / design questions**:
   [`docs/proposals/keel-architecture.md`](docs/proposals/keel-architecture.md).
 - **Config / extensions / CLI reference**: [`docs/keel/`](docs/keel/).

@@ -58,6 +58,35 @@ class TestParse(unittest.TestCase):
         e = ext.parse_extension(COMMAND, source="golden.md")
         self.assertEqual(e.kind, "command")
         self.assertEqual(e.run, "flutter test --tags golden")
+        self.assertEqual(e.required_capabilities, ())
+        self.assertEqual(e.optional_capabilities, ())
+
+    def test_capabilities_parse(self):
+        text = """---
+id: external-report
+slot: tester
+kind: command
+run: ./tools/report
+required_capabilities: [shell]
+optional_capabilities: [browser]
+---
+"""
+        e = ext.parse_extension(text, source="report.md")
+        self.assertEqual(e.required_capabilities, ("shell",))
+        self.assertEqual(e.optional_capabilities, ("browser",))
+
+    def test_unknown_capability_rejected(self):
+        text = """---
+id: bad
+slot: tester
+kind: command
+run: ./tools/report
+required_capabilities: [bogus]
+---
+"""
+        with self.assertRaises(ext.ExtensionError) as c:
+            ext.parse_extension(text, source="bad.md")
+        self.assertIn("unknown capability", str(c.exception))
 
     def test_hard_gate_ok_in_pre_merge(self):
         e = ext.parse_extension(HARD_GATE, source="g.md")

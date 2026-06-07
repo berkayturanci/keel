@@ -35,6 +35,11 @@ load the matching skill under `.agents/skills/` and follow it exactly:
 The matching Claude command files under `.claude/commands/keel/` are compatibility
 entry points. The skill files are the Codex entry points.
 
+The skills resolve structured run data through the keel CLI (`keel plan --command <cmd>
+--json`, and `--live --json` for live runs). For mutating live workflows, obey the
+`operator_consent` block and stop before any write when the contract reports missing
+consent.
+
 ## Safety
 
 `hooks.json` wires a `PreToolUse` hook to `.codex/hooks/deny-dangerous-shell.sh`.

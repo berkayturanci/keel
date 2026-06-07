@@ -22,10 +22,18 @@ stay in any language (`knobs.sot_doc` § language policy).
 ```bash
 keel validate .keel/project.yaml --root .
 keel plan     .keel/project.yaml --root .   # base_branch, build_gate_cmd, lint_cmd
+keel plan     .keel/project.yaml --root . --command wrap --live --json
 ```
 
-GitHub writes go through `gh` (CLI when available) or the GitHub MCP tools
-(sandbox/web runtime). The PR is opened **ready** (not draft) in both modes.
+The live plan is the operator-consent preflight. Before committing, pushing, opening a PR,
+writing a recap, using secrets, publishing, or calling production-adjacent systems, parse
+`contract.operator_consent`; if `requires_operator_consent` is true, STOP and ask the
+operator to rerun with the required `--approve-scope` values.
+
+Resolve GitHub access through the shared runtime contract (`keel capabilities --json` →
+`github_transport`). GitHub writes use the selected transport. The PR is opened **ready**
+(not draft) only when `pr_write` is supported; otherwise stop with the degraded operation
+listed instead of falling through to an implicit best effort.
 
 ## Step 1 — Sanity check
 
@@ -51,10 +59,10 @@ config-driven (`build_gate_cmd` + `lint_cmd` plus any `tester` Lego):
 keel run-gates .keel/project.yaml --root .
 ```
 
-Any file-change-conditional suites (migration-, billing-, or config-validation
-checks gated on which paths changed) are **(project-specific; stay in the
-project)** — express them as a `.keel/extensions/` Lego that `run-gates` picks
-up, never inline a project command here.
+Any file-change-conditional suites (schema migration, entitlement, or
+config-validation checks gated on which paths changed) are **project-specific;
+stay in the project** — express them as a `.keel/extensions/` Lego that
+`run-gates` picks up, never inline a project command here.
 
 If any gate FAILS — STOP. Report the failure. Do not commit broken code.
 

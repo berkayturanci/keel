@@ -47,5 +47,6 @@ keel install-adapter skills     # just the shared skill set
 ## Changing a command
 
 Edit the packaged body under `src/keel/adapters/commands/<cmd>.md` (the single source), then
-`keel install-adapter all --force` to re-install both surfaces. Never inline a project specific
-— if you would type `develop`/`gradle`/`flutter`/an agent name, read it from config instead.
+`keel install-adapter all --force` to re-install both surfaces. Never inline a project
+specific: if you would type a branch name, build tool, framework, service, path glob, or agent
+name, read it from config instead.

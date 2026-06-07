@@ -16,7 +16,7 @@ from typing import Any
 
 import yaml
 
-from . import jsonschema_min
+from . import jsonschema_min, runtime
 from .model import SLOTS  # single source of truth for the named slots (re-exported)
 
 SCHEMA_PATH = Path(__file__).parent / "schema" / "project.schema.json"
@@ -59,6 +59,8 @@ class Knobs:
     docs_gate_paths: tuple[str, ...] = ()
     docs_only_allowlist: tuple[str, ...] = ()
     sot_doc: str | None = None
+    required_capabilities: tuple[str, ...] = ()
+    optional_capabilities: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -97,6 +99,8 @@ def _build(data: dict) -> ProjectConfig:
         docs_gate_paths=tuple(k.get("docs_gate_paths", [])),
         docs_only_allowlist=tuple(k.get("docs_only_allowlist", [])),
         sot_doc=k.get("sot_doc"),
+        required_capabilities=tuple(k.get("required_capabilities", [])),
+        optional_capabilities=tuple(k.get("optional_capabilities", [])),
     )
     extensions = {slot: tuple(files) for slot, files in data.get("extensions", {}).items()}
     return ProjectConfig(
@@ -121,6 +125,16 @@ def parse_config(data: Any, *, source: str = "<dict>", schema: dict | None = Non
     if not isinstance(data, dict):
         raise ConfigError(source, [f"$: expected an object (got {type(data).__name__})"])
     errors = validate_data(data, schema)
+    if isinstance(data, dict) and isinstance(data.get("knobs"), dict):
+        knobs = data["knobs"]
+        errors.extend(runtime.validate_names(
+            tuple(knobs.get("required_capabilities", [])),
+            source=f"{source}: knobs.required_capabilities",
+        ))
+        errors.extend(runtime.validate_names(
+            tuple(knobs.get("optional_capabilities", [])),
+            source=f"{source}: knobs.optional_capabilities",
+        ))
     if errors:
         raise ConfigError(source, errors)
     return _build(data)
@@ -162,5 +176,7 @@ def _canonical(config: ProjectConfig) -> dict:
             "docs_gate_paths": list(config.knobs.docs_gate_paths),
             "docs_only_allowlist": list(config.knobs.docs_only_allowlist),
             "sot_doc": config.knobs.sot_doc,
+            "required_capabilities": list(config.knobs.required_capabilities),
+            "optional_capabilities": list(config.knobs.optional_capabilities),
         },
     }

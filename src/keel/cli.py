@@ -10,10 +10,25 @@ Subcommands
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
-from . import __version__, gates, git, github, install, jury, scaffold, ship, window
+from . import (
+    __version__,
+    consent,
+    contracts,
+    gates,
+    git,
+    github,
+    github_transport,
+    install,
+    jury,
+    runtime,
+    scaffold,
+    ship,
+    window,
+)
 from . import config as cfg
 from . import findings as fnd
 from . import orchestrator as orch
@@ -82,9 +97,47 @@ def _cmd_plan(args: argparse.Namespace) -> int:
     except gates.GateError as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    print(orch.render_plan(config, plan))
+    requirement = _capability_requirement(args.command_contract, config, loaded)
+    report = runtime.detect(args.root)
+    evaluation = runtime.evaluate(requirement, report)
+    transport = github_transport.resolve(report)
+    try:
+        approved_scopes = _approved_scopes(args)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    contract = contracts.build_command_contract(
+        command=args.command_contract,
+        config=config,
+        loaded=loaded,
+        plan=plan,
+        requirement=requirement,
+        evaluation=evaluation,
+        transport=transport,
+        extension_problems=tuple(problems),
+        dry_run=not args.live,
+        approved_consent_scopes=approved_scopes,
+        operator=args.operator,
+        target=args.target,
+    )
+    consent_ok, consent_message = consent.assert_operator_consent(contract["operator_consent"])
+    if args.json:
+        print(json.dumps({
+            "contract": contract,
+            "plan": orch.plan_as_dict(plan),
+            "capabilities": evaluation.as_dict(),
+            "github_transport": transport.as_dict(),
+        }, indent=2, sort_keys=True))
+    else:
+        print(orch.render_plan(config, plan))
+        print(evaluation.render())
+        print(f"operator consent: {contract['operator_consent']['status']}")
+        print(f"  {contract['operator_consent']['consent_prompt']}")
     for prob in problems:
         print(f"  ! extension not loaded: {prob}", file=sys.stderr)
+    if not consent_ok:
+        print(consent_message, file=sys.stderr)
+        return 1
     return 0
 
 
@@ -107,6 +160,15 @@ def _cmd_run_gates(args: argparse.Namespace) -> int:
     except gates.GateError as exc:
         print(str(exc), file=sys.stderr)
         return 1
+
+    requirement = _capability_requirement("run-gates", config, loaded)
+    report = runtime.detect(args.root)
+    evaluation = runtime.evaluate(requirement, report)
+    if not evaluation.ok:
+        print(evaluation.render(), file=sys.stderr)
+        return 1
+    if evaluation.missing_optional:
+        print(evaluation.render(), file=sys.stderr)
 
     diff_text = git.diff(config.base_branch, "HEAD", cwd=args.root)
     outcomes = gates.run_gates(specs, _gate_runner(args.root, diff_text))
@@ -143,6 +205,10 @@ def _cmd_window(args: argparse.Namespace) -> int:
 
 
 def _cmd_ship(args: argparse.Namespace) -> int:
+    if args.dry_run and args.live:
+        print("--dry-run and --live cannot be used together", file=sys.stderr)
+        return 1
+
     try:
         config = cfg.load_config(args.path)
     except FileNotFoundError:
@@ -156,6 +222,49 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     for prob in problems:
         print(f"  ! extension not loaded: {prob}", file=sys.stderr)
 
+    requirement = _capability_requirement("ship", config, loaded, pr=args.pr)
+    report = runtime.detect(args.root)
+    evaluation = runtime.evaluate(requirement, report)
+    if not evaluation.ok:
+        print(evaluation.render(), file=sys.stderr)
+        return 1
+    transport = github_transport.resolve(report)
+    if args.pr is not None and not transport.supports("check_runs"):
+        print(transport.render(), file=sys.stderr)
+        print("missing required GitHub transport capability: check_runs", file=sys.stderr)
+        return 1
+    try:
+        approved_scopes = _approved_scopes(args)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    try:
+        plan = orch.build_plan(config, loaded)
+    except gates.GateError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    contract = contracts.build_command_contract(
+        command="ship",
+        config=config,
+        loaded=loaded,
+        plan=plan,
+        requirement=requirement,
+        evaluation=evaluation,
+        transport=transport,
+        extension_problems=tuple(problems),
+        dry_run=not args.live,
+        approved_consent_scopes=approved_scopes,
+        operator=args.operator,
+        target=args.target or (f"PR #{args.pr}" if args.pr is not None else None),
+    )
+    consent_ok, consent_message = consent.assert_operator_consent(contract["operator_consent"])
+    if not consent_ok:
+        if args.json:
+            print(json.dumps({"contract": contract}, indent=2, sort_keys=True))
+        else:
+            print(consent_message, file=sys.stderr)
+        return 1
+
     changed = git.changed_files(config.base_branch, "HEAD", cwd=args.root)
     try:
         specs = gates.plan_gates(config, loaded)
@@ -165,7 +274,11 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     diff_text = git.diff(config.base_branch, "HEAD", cwd=args.root)
     outcomes = gates.run_gates(specs, _gate_runner(args.root, diff_text))
     verdict = fnd.summarize(gates.collect_findings(outcomes))
-    ci_conclusion = github.ci_conclusion(args.pr, cwd=args.root) if args.pr else None
+    ci_conclusion = (
+        github.ci_conclusion(args.pr, cwd=args.root)
+        if args.pr and transport.name == "gh"
+        else None
+    )
 
     a = ship.assess(
         changed_files=changed,
@@ -179,6 +292,18 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         is_blocker=args.hotfix,
     )
 
+    if args.json:
+        print(json.dumps({
+            "contract": contract,
+            "result": contracts.ship_result_as_dict(
+                changed_files=changed,
+                outcomes=outcomes,
+                verdict=verdict,
+                assessment=a,
+            ),
+        }, indent=2, sort_keys=True))
+        return 0 if a.merge.action != "block" else 1
+
     name = config.repo or config.extends
     print(f"keel ship — {name}  (base {config.base_branch})")
     print(f"  changed files : {len(changed)}")
@@ -187,8 +312,14 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     print(f"  merge window  : {window}")
     ci_str = "unknown" if a.ci_ok is None else ("passing" if a.ci_ok else "FAILING")
     print(f"  ci            : {ci_str}")
+    print(f"  github        : {transport.name}")
+    print(f"  consent       : {contract['operator_consent']['status']}")
+    if transport.degraded:
+        print(f"  github degraded: {', '.join(transport.degraded)}")
     for o in outcomes:
         print(f"  gate {o.gate:<14} {'ok' if o.ok else 'FAIL'}")
+    if evaluation.missing_optional:
+        print(f"  degraded opt. : {', '.join(evaluation.missing_optional)}")
     if a.halted:  # pragma: no cover - display only; logic covered in ship.assess tests
         print("  pipeline      : HALTED (merge window paused)")
     if a.bypassed_window:  # pragma: no cover - display only; logic covered in ship.assess
@@ -196,6 +327,44 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     print(f"  decision      : {a.merge.action.upper()} — {a.merge.reason}")
     print("  note: dry assessment; live merge (s10) needs a configured runner (git + gh auth).")
     return 0 if a.merge.action != "block" else 1
+
+
+def _approved_scopes(args: argparse.Namespace) -> tuple[str, ...]:
+    return consent.normalize_scopes(getattr(args, "approve_scope", ()))
+
+
+def _cmd_capabilities(args: argparse.Namespace) -> int:
+    report = runtime.detect(args.root)
+    transport = github_transport.resolve(report)
+    requirement = runtime.CapabilityRequirement()
+    problems: list[str] = []
+    if args.path:
+        try:
+            config = cfg.load_config(args.path)
+        except FileNotFoundError:
+            print(f"no such config: {args.path}", file=sys.stderr)
+            return 1
+        except cfg.ConfigError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        loaded, problems = load_extensions(config, args.root, strict=False)
+        requirement = _capability_requirement(args.for_command, config, loaded, pr=args.pr)
+    evaluation = runtime.evaluate(requirement, report)
+    if args.json:
+        print(json.dumps({
+            "report": report.as_dict(),
+            "github_transport": transport.as_dict(),
+            "evaluation": evaluation.as_dict(),
+            "extension_problems": problems,
+        }, indent=2, sort_keys=True))
+    else:
+        print(report.render())
+        print(transport.render())
+        if args.path:
+            print(evaluation.render())
+        for prob in problems:
+            print(f"  ! extension not loaded: {prob}", file=sys.stderr)
+    return 0 if evaluation.ok else 1
 
 
 def _ask(prompt: str, default: str) -> str:  # pragma: no cover - interactive I/O
@@ -247,6 +416,47 @@ def _cmd_install_adapter(args: argparse.Namespace) -> int:
     return 0
 
 
+def _capability_requirement(
+    command: str,
+    config: cfg.ProjectConfig,
+    loaded: dict[str, list],
+    *,
+    pr: int | None = None,
+) -> runtime.CapabilityRequirement:
+    req = runtime.CapabilityRequirement(
+        required=config.knobs.required_capabilities,
+        optional=config.knobs.optional_capabilities,
+    )
+    try:
+        specs = gates.plan_gates(config, loaded)
+    except gates.GateError:
+        return req
+
+    command_gate_commands = {
+        "run-gates", "ship", "ship-v2", "pr-loop", "wrap", "overnight", "implement",
+        "coverage", "deps-audit", "flake-audit",
+    }
+    if command in command_gate_commands and any(s.kind == "command" for s in specs):
+        req = req.merged(runtime.CapabilityRequirement(required=("shell",)))
+    worktree_commands = {"ship", "ship-v2", "pr-loop", "wrap", "overnight", "implement"}
+    github_read_commands = {
+        "morning", "review-cycle", "triage", "stale-prs", "regression", "review-all-day",
+        "coverage", "deps-audit", "flake-audit", "ci-check",
+    }
+    if command in worktree_commands:
+        req = req.merged(runtime.CapabilityRequirement(required=("git", "worktree"),
+                                                       optional=("gh", "gh-auth")))
+    elif command in github_read_commands:
+        req = req.merged(runtime.CapabilityRequirement(optional=("gh", "gh-auth")))
+    for spec in specs:
+        if spec.required_capabilities or spec.optional_capabilities:
+            req = req.merged(runtime.CapabilityRequirement(
+                required=spec.required_capabilities,
+                optional=spec.optional_capabilities,
+            ))
+    return req
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="keel", description="keel — workflow core")
     parser.add_argument("--version", action="version", version=f"keel {__version__}")
@@ -264,6 +474,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_plan = sub.add_parser("plan", help="render the backbone plan for a project")
     p_plan.add_argument("path", help="path to project.yaml")
     p_plan.add_argument("--root", default=".", help="repo root for resolving extensions")
+    p_plan.add_argument("--command", dest="command_contract", default="ship",
+                        choices=contracts.available_commands(),
+                        help="adapter command contract to include in JSON output")
+    p_plan.add_argument("--live", action="store_true",
+                        help="render a live preflight contract and fail if consent is missing")
+    p_plan.add_argument("--approve-scope", action="append", default=[],
+                        help="approve a consent scope for this run; repeat or comma-separate")
+    p_plan.add_argument("--operator", default=None,
+                        help="operator identifier to include in an approved consent record")
+    p_plan.add_argument("--target", default=None,
+                        help="task target to include in the consent prompt and record")
+    p_plan.add_argument("--json", action="store_true", help="emit structured JSON")
     p_plan.set_defaults(func=_cmd_plan)
 
     p_run = sub.add_parser("run-gates", help="run a project's command gates")
@@ -280,7 +502,31 @@ def build_parser() -> argparse.ArgumentParser:
     p_ship.add_argument("--root", default=".", help="repo root for git, gates + extensions")
     p_ship.add_argument("--pr", type=int, default=None, help="PR number for CI status (gh)")
     p_ship.add_argument("--hotfix", action="store_true", help="emergency: bypass the merge window")
+    p_ship.add_argument("--dry-run", action="store_true",
+                        help="explicitly mark the assessment as non-mutating")
+    p_ship.add_argument("--live", action="store_true",
+                        help=("run the live preflight gate and fail before gates "
+                              "if consent is missing"))
+    p_ship.add_argument("--approve-scope", action="append", default=[],
+                        help="approve a consent scope for this run; repeat or comma-separate")
+    p_ship.add_argument("--operator", default=None,
+                        help="operator identifier to include in an approved consent record")
+    p_ship.add_argument("--target", default=None,
+                        help="task target to include in the consent prompt and record")
+    p_ship.add_argument("--json", action="store_true", help="emit structured JSON")
     p_ship.set_defaults(func=_cmd_ship)
+
+    p_caps = sub.add_parser("capabilities", help="print runtime capability report")
+    p_caps.add_argument("--root", default=".", help="repo root for capability checks")
+    p_caps.add_argument("--project", dest="path", default=None,
+                        help="optional project.yaml to evaluate requirements")
+    p_caps.add_argument("--for", dest="for_command", default="ship",
+                        choices=("plan", "run-gates", *contracts.available_commands()),
+                        help="command requirement to evaluate when --project is set")
+    p_caps.add_argument("--pr", type=int, default=None,
+                        help="PR number for ship capability requirements")
+    p_caps.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_caps.set_defaults(func=_cmd_capabilities)
 
     p_init = sub.add_parser("init", help="scaffold a default .keel/project.yaml for this repo")
     p_init.add_argument("--root", default=".", help="repo root to scaffold into")

@@ -24,8 +24,16 @@ strictly findings-only and never call a GitHub write API — the orchestrator ow
 ```bash
 keel validate .keel/project.yaml --root .                 # abort if config/extensions invalid
 keel plan     .keel/project.yaml --root .                 # base_branch, ci_workflows, tier3_globs, gates
+keel plan     .keel/project.yaml --root . --command review-all-day --live --json
 keel window   .keel/project.yaml --root .                 # window state in the project timezone
 ```
+
+The live plan is the operator-consent preflight. Before fetching/checking refs, spawning
+reviewers, opening issues, using secrets, publishing, or calling production-adjacent
+systems, parse `contract.operator_consent`; if `requires_operator_consent` is true, STOP
+and ask the operator to rerun with the required `--approve-scope` values. Pass
+`operator_consent.delegated_agent_scope` into every reviewer brief. Delegates may use only
+`approved_mutation_scopes`; scope expansion blocks or escalates.
 
 Read the knobs you will need: `base_branch`, `tier3_globs` (the risk map used to tier every
 finding), `ci_workflows`, `build_gate_cmd`, `lint_cmd`, `implementer_agents`. The span
@@ -116,7 +124,7 @@ concatenated `git show` outputs (delimited `----- COMMIT k -----`), and this cla
 contract. For each commit, classify the diff for:
 
 - **Bug-insert** — logic error, null/nil deref, incorrect branching.
-- **Regression risk** — breaks an existing flow (data-layer, billing/entitlement,
+- **Regression risk** — breaks an existing flow (data-layer, entitlement,
   lifecycle/concurrency, auth) — generalize to the project's own high-risk areas implied by
   `tier3_globs`.
 - **Security** — secrets, injection, OWASP-class, race condition.

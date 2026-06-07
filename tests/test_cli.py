@@ -2,10 +2,12 @@
 
 import contextlib
 import io
+import json
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from keel import cli
+from keel import cli, runtime
 
 PROJECTS = Path(__file__).resolve().parent.parent / "projects"
 REPO_ROOT = PROJECTS.parent
@@ -69,6 +71,57 @@ class TestPlan(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("s10  merge", out)
         self.assertIn("gate: build", out)
+        self.assertIn("runtime capabilities", out)
+
+    def test_plan_json_includes_capabilities(self):
+        rc, out, _ = run(
+            ["plan", str(PROJECTS / "example-android.yaml"), "--root", str(REPO_ROOT), "--json"]
+        )
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertIn("contract", data)
+        self.assertIn("capabilities", data)
+        self.assertIn("github_transport", data)
+        self.assertIn("plan", data)
+        self.assertEqual(data["contract"]["schema_version"], "keel.command-contract.v1")
+        self.assertEqual(data["contract"]["command"], "ship")
+
+    def test_plan_json_can_expose_other_command_graph(self):
+        rc, out, _ = run(
+            ["plan", str(PROJECTS / "example-android.yaml"), "--root", str(REPO_ROOT),
+             "--command", "morning", "--json"]
+        )
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["contract"]["command"], "morning")
+        self.assertTrue(data["contract"]["graph"])
+        self.assertIn("gh", data["contract"]["optional_capabilities"])
+
+    def test_plan_live_json_blocks_when_consent_missing(self):
+        rc, out, err = run(
+            ["plan", str(PROJECTS / "example-android.yaml"), "--root", str(REPO_ROOT),
+             "--live", "--json", "--target", "issue #82"]
+        )
+        self.assertEqual(rc, 1)
+        data = json.loads(out)
+        consent = data["contract"]["operator_consent"]
+        self.assertEqual(consent["status"], "missing")
+        self.assertTrue(consent["requires_operator_consent"])
+        self.assertIn("filesystem", consent["missing_scope"])
+        self.assertIn("operator consent", err)
+
+    def test_plan_live_json_accepts_approved_scope(self):
+        rc, out, _ = run(
+            ["plan", str(PROJECTS / "example-android.yaml"), "--root", str(REPO_ROOT),
+             "--live", "--json", "--target", "issue #82",
+             "--approve-scope", "filesystem,git,github", "--operator", "tester"]
+        )
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        consent = data["contract"]["operator_consent"]
+        self.assertEqual(consent["status"], "approved")
+        self.assertEqual(consent["consent_record"]["operator"], "tester")
+        self.assertFalse(consent["consent_record"]["secret_values_recorded"])
 
     def test_plan_missing_config(self):
         rc, _, err = run(["plan", str(PROJECTS / "nope.yaml")])
@@ -195,6 +248,52 @@ class TestShip(unittest.TestCase):
         self.assertIn("TIER-2", out)        # empty changeset -> default tier
         self.assertIn("DECISION", out.upper())
         self.assertIn("MERGE", out)
+        self.assertIn("github        :", out)
+
+    def test_json_dry_run_contract(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["ship", _write_config("'true'"), "--root", d,
+                              "--dry-run", "--json"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["contract"]["command"], "ship")
+        self.assertTrue(data["contract"]["dry_run"])
+        self.assertFalse(data["contract"]["side_effects"]["mutates_in_dry_run"])
+        self.assertEqual(data["contract"]["operator_consent"]["status"],
+                         "not-required-dry-run")
+        self.assertEqual(data["result"]["changed_file_count"], 0)
+        self.assertEqual(data["result"]["assessment"]["merge"]["action"], "merge")
+
+    def test_ship_rejects_conflicting_live_and_dry_run_flags(self):
+        rc, _, err = run(["ship", _write_config("'true'"), "--dry-run", "--live"])
+        self.assertEqual(rc, 1)
+        self.assertIn("cannot be used together", err)
+
+    def test_ship_live_json_blocks_before_running_gates_without_consent(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["ship", _write_config("'false'"), "--root", d,
+                              "--live", "--json", "--target", "issue #82"])
+        self.assertEqual(rc, 1)
+        data = json.loads(out)
+        self.assertIn("contract", data)
+        self.assertNotIn("result", data)
+        self.assertEqual(data["contract"]["operator_consent"]["status"], "missing")
+        self.assertIn("github", data["contract"]["operator_consent"]["missing_scope"])
+
+    def test_ship_live_json_runs_after_consent(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["ship", _write_config("'true'"), "--root", d,
+                              "--live", "--json", "--target", "issue #82",
+                              "--approve-scope", "filesystem,git,github",
+                              "--operator", "tester"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["contract"]["mode"], "live")
+        self.assertEqual(data["contract"]["operator_consent"]["status"], "approved")
+        self.assertIn("result", data)
 
     def test_failing_gate_blocks(self):
         import tempfile
@@ -222,6 +321,32 @@ class TestShip(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertTrue(err)
 
+    def test_missing_required_capability_blocks_before_ship(self):
+        p = _write_raw("extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: x\n"
+                       "gates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+                       "  required_capabilities: [release-publish]\n")
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, _, err = run(["ship", p, "--root", d])
+        self.assertEqual(rc, 1)
+        self.assertIn("missing required", err)
+
+    def test_pr_ci_requires_transport_check_runs(self):
+        import tempfile
+        fake_report = runtime.CapabilityReport((
+            runtime.Capability("shell", True, "ok", "test"),
+            runtime.Capability("git", True, "ok", "test"),
+            runtime.Capability("worktree", True, "ok", "test"),
+            runtime.Capability("gh", False, "missing", "test"),
+            runtime.Capability("gh-auth", False, "missing", "test"),
+            runtime.Capability("github-mcp", False, "missing", "test"),
+        ))
+        with tempfile.TemporaryDirectory() as d, patch("keel.cli.runtime.detect",
+                                                       return_value=fake_report):
+            rc, _, err = run(["ship", _write_config("'true'"), "--root", d, "--pr", "7"])
+        self.assertEqual(rc, 1)
+        self.assertIn("missing required GitHub transport capability: check_runs", err)
+
     def test_unloadable_extension_warned(self):
         import tempfile
         p = _write_raw("extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: x\n"
@@ -231,6 +356,39 @@ class TestShip(unittest.TestCase):
             rc, _, err = run(["ship", p, "--root", d])
         self.assertEqual(rc, 0)
         self.assertIn("extension not loaded", err)
+
+
+class TestCapabilities(unittest.TestCase):
+    def test_prints_runtime_report(self):
+        rc, out, _ = run(["capabilities", "--root", "."])
+        self.assertEqual(rc, 0)
+        self.assertIn("keel capabilities", out)
+        self.assertIn("shell", out)
+
+    def test_json_report(self):
+        rc, out, _ = run(["capabilities", "--root", ".", "--json"])
+        self.assertEqual(rc, 0)
+        self.assertIn('"report"', out)
+        self.assertIn('"github_transport"', out)
+        self.assertIn('"capabilities"', out)
+
+    def test_reports_mcp_transport_when_available(self):
+        fake_report = runtime.CapabilityReport((
+            runtime.Capability("github-mcp", True, "ok", "test"),
+        ))
+        with patch("keel.cli.runtime.detect", return_value=fake_report):
+            rc, out, _ = run(["capabilities"])
+        self.assertEqual(rc, 0)
+        self.assertIn("selected: mcp", out)
+        self.assertIn("raw_actions_logs", out)
+
+    def test_project_requirement_failure_returns_nonzero(self):
+        p = _write_raw("extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: x\n"
+                       "knobs:\n  build_gate_cmd: 'true'\n"
+                       "  required_capabilities: [release-publish]\n")
+        rc, out, _ = run(["capabilities", "--project", p])
+        self.assertEqual(rc, 1)
+        self.assertIn("missing required", out)
 
 
 class TestInit(unittest.TestCase):
@@ -379,9 +537,9 @@ class TestParser(unittest.TestCase):
         # argparse stores subparser choices on the subparsers action.
         actions = [a for a in parser._actions if a.dest == "command"]
         self.assertTrue(actions)
-        self.assertEqual(set(actions[0].choices),
-                         {"version", "validate", "plan", "run-gates", "window", "ship",
-                          "init", "install-adapter"})
+        self.assertGreaterEqual(set(actions[0].choices),
+                                {"version", "validate", "plan", "run-gates", "window", "ship",
+                                 "capabilities", "init", "install-adapter"})
 
 
 if __name__ == "__main__":

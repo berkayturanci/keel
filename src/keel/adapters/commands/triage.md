@@ -30,7 +30,15 @@ published artifact and MUST be English.
 ```bash
 keel validate .keel/project.yaml --root .
 keel plan     .keel/project.yaml --root .   # tier3_globs, implementer_agents, repo
+keel plan     .keel/project.yaml --root . --command triage --live --json
 ```
+
+The live plan is the operator-consent preflight. Before spawning classifiers, applying
+labels, posting audit comments, using secrets, publishing, or calling production-adjacent
+systems, parse `contract.operator_consent`; if `requires_operator_consent` is true, STOP
+and ask the operator to rerun with the required `--approve-scope` values. Pass
+`operator_consent.delegated_agent_scope` into every classifier brief. Classifiers may use
+only `approved_mutation_scopes`; scope expansion blocks or escalates.
 
 The **role/platform** vocabulary is project-defined — derive it from the keys of
 `implementer_agents` (each key is a routing role). Do not hardcode role names.
