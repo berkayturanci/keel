@@ -14,7 +14,19 @@ import json
 import sys
 from pathlib import Path
 
-from . import __version__, gates, git, github, install, jury, runtime, scaffold, ship, window
+from . import (
+    __version__,
+    gates,
+    git,
+    github,
+    github_transport,
+    install,
+    jury,
+    runtime,
+    scaffold,
+    ship,
+    window,
+)
 from . import config as cfg
 from . import findings as fnd
 from . import orchestrator as orch
@@ -86,10 +98,12 @@ def _cmd_plan(args: argparse.Namespace) -> int:
     requirement = _capability_requirement("plan", config, loaded)
     report = runtime.detect(args.root)
     evaluation = runtime.evaluate(requirement, report)
+    transport = github_transport.resolve(report)
     if args.json:
         print(json.dumps({
             "plan": orch.plan_as_dict(plan),
             "capabilities": evaluation.as_dict(),
+            "github_transport": transport.as_dict(),
         }, indent=2, sort_keys=True))
     else:
         print(orch.render_plan(config, plan))
@@ -120,7 +134,8 @@ def _cmd_run_gates(args: argparse.Namespace) -> int:
         return 1
 
     requirement = _capability_requirement("run-gates", config, loaded)
-    evaluation = runtime.evaluate(requirement, runtime.detect(args.root))
+    report = runtime.detect(args.root)
+    evaluation = runtime.evaluate(requirement, report)
     if not evaluation.ok:
         print(evaluation.render(), file=sys.stderr)
         return 1
@@ -176,9 +191,15 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         print(f"  ! extension not loaded: {prob}", file=sys.stderr)
 
     requirement = _capability_requirement("ship", config, loaded, pr=args.pr)
-    evaluation = runtime.evaluate(requirement, runtime.detect(args.root))
+    report = runtime.detect(args.root)
+    evaluation = runtime.evaluate(requirement, report)
     if not evaluation.ok:
         print(evaluation.render(), file=sys.stderr)
+        return 1
+    transport = github_transport.resolve(report)
+    if args.pr is not None and not transport.supports("check_runs"):
+        print(transport.render(), file=sys.stderr)
+        print("missing required GitHub transport capability: check_runs", file=sys.stderr)
         return 1
 
     changed = git.changed_files(config.base_branch, "HEAD", cwd=args.root)
@@ -190,7 +211,11 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     diff_text = git.diff(config.base_branch, "HEAD", cwd=args.root)
     outcomes = gates.run_gates(specs, _gate_runner(args.root, diff_text))
     verdict = fnd.summarize(gates.collect_findings(outcomes))
-    ci_conclusion = github.ci_conclusion(args.pr, cwd=args.root) if args.pr else None
+    ci_conclusion = (
+        github.ci_conclusion(args.pr, cwd=args.root)
+        if args.pr and transport.name == "gh"
+        else None
+    )
 
     a = ship.assess(
         changed_files=changed,
@@ -212,6 +237,9 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     print(f"  merge window  : {window}")
     ci_str = "unknown" if a.ci_ok is None else ("passing" if a.ci_ok else "FAILING")
     print(f"  ci            : {ci_str}")
+    print(f"  github        : {transport.name}")
+    if transport.degraded:
+        print(f"  github degraded: {', '.join(transport.degraded)}")
     for o in outcomes:
         print(f"  gate {o.gate:<14} {'ok' if o.ok else 'FAIL'}")
     if evaluation.missing_optional:
@@ -227,6 +255,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
 
 def _cmd_capabilities(args: argparse.Namespace) -> int:
     report = runtime.detect(args.root)
+    transport = github_transport.resolve(report)
     requirement = runtime.CapabilityRequirement()
     problems: list[str] = []
     if args.path:
@@ -244,11 +273,13 @@ def _cmd_capabilities(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps({
             "report": report.as_dict(),
+            "github_transport": transport.as_dict(),
             "evaluation": evaluation.as_dict(),
             "extension_problems": problems,
         }, indent=2, sort_keys=True))
     else:
         print(report.render())
+        print(transport.render())
         if args.path:
             print(evaluation.render())
         for prob in problems:
@@ -326,8 +357,6 @@ def _capability_requirement(
     if command == "ship":
         req = req.merged(runtime.CapabilityRequirement(required=("git", "worktree"),
                                                        optional=("gh", "gh-auth")))
-        if pr is not None:
-            req = req.merged(runtime.CapabilityRequirement(required=("gh", "gh-auth")))
     for spec in specs:
         if spec.required_capabilities or spec.optional_capabilities:
             req = req.merged(runtime.CapabilityRequirement(

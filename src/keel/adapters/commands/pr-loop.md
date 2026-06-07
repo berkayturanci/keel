@@ -26,11 +26,16 @@ Read the knobs you will need: `base_branch`, `ci_workflows` (name → path glob)
 `build_gate_cmd`, `lint_cmd`, `tier3_globs`, `implementer_agents`, `merge_window`,
 `merge_window_mode`.
 
+Resolve GitHub access through the shared runtime contract (`keel capabilities --json` →
+`github_transport`). Use the selected transport for all issue/PR/check/comment/review
+operations and treat any `github_transport.degraded` operation as an explicit limitation.
+Do not duplicate a local `gh` vs MCP capability table in this adapter.
+
 ## Step 1 — Find the PR
 
 - If a PR number is given as `$1`, use it. Otherwise auto-detect the open PR for the
-  current branch (`gh pr view --json number,headRefName,state`; the first open PR whose
-  head is the current branch).
+  current branch through the selected GitHub transport (the first open PR whose head is
+  the current branch).
 - If no PR exists for the current branch, halt and report — do not proceed.
 - **Workspace isolation:** this command runs `git commit` / `git push` against the working
   tree, so it MUST run from a **linked worktree**, never the user's primary checkout.
@@ -54,8 +59,9 @@ Gather the full PR state before deciding anything:
 - Reviews + the overall review decision.
 - The last few CI runs for the branch and their status/conclusion per workflow in
   `ci_workflows`.
-- If CI is failing, fetch the failed-run log (tail it) so fixes are evidence-based, not
-  guesses.
+- If CI is failing and `raw_actions_logs` is supported, fetch the failed-run log (tail it)
+  so fixes are evidence-based. If raw logs are degraded, quote the check name/details URL
+  and reproduce locally; do not imply raw-log access was available.
 
 ## Step 4 — Categorize feedback
 

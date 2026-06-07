@@ -65,9 +65,10 @@ Required capabilities fail before mutating work begins. Optional capabilities de
 explicitly: human output reports `degraded optional`, and JSON output includes
 `missing_optional`.
 
-For example, `keel ship --pr N` requires `gh` and `gh-auth` because the current CI status
-reader uses the GitHub CLI. Plain `keel ship` treats those as optional until the GitHub
-transport abstraction is generalized.
+For example, `keel ship --pr N` requires the selected GitHub transport to support
+`check_runs`. Authenticated `gh` supports that operation today; MCP/API hosts can support it
+by reporting the normalized transport capability described in
+[`github-transport.md`](github-transport.md).
 
 ## Boundary
 

@@ -88,7 +88,9 @@ keel capabilities --project .keel/project.yaml --for ship --json
 
 Required capabilities fail with a non-zero exit before mutating work starts. Optional
 capabilities are reported as degraded in human output and as `missing_optional` in JSON.
-See [`runtime-capabilities.md`](runtime-capabilities.md).
+The output also includes the selected GitHub transport and any degraded GitHub operation
+capabilities. See [`runtime-capabilities.md`](runtime-capabilities.md) and
+[`github-transport.md`](github-transport.md).
 
 ## `keel window <project.yaml>`
 
@@ -108,7 +110,8 @@ keel window .keel/project.yaml
 Run the **deterministic slice of a ship** against the current checkout and print the
 assessment: how many files changed vs. the base branch, the **risk tier** (→ reviewer
 count), whether the **merge window** is open, optional **CI** status (`--pr N` reads the
-check-rollup via `gh`), each gate's result, and the final **merge decision**
+check-rollup through the selected GitHub transport), each gate's result, and the final
+**merge decision**
 (`MERGE` / `DEFER` / `BLOCK`).
 
 This is the runnable, agent-free part of the backbone (s5 classify + s6 CI + s8 gates +
@@ -122,6 +125,7 @@ keel ship projects/keel.yaml --root .
 #   risk tier     : TIER-3  → 3 reviewer(s)
 #   merge window  : OPEN
 #   ci            : unknown
+#   github        : gh
 #   gate build          ok
 #   gate lint           ok
 #   decision      : MERGE — clear to merge

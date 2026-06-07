@@ -24,8 +24,10 @@ keel validate .keel/project.yaml --root .
 keel plan     .keel/project.yaml --root .   # base_branch, build_gate_cmd, lint_cmd
 ```
 
-GitHub writes go through `gh` (CLI when available) or the GitHub MCP tools
-(sandbox/web runtime). The PR is opened **ready** (not draft) in both modes.
+Resolve GitHub access through the shared runtime contract (`keel capabilities --json` →
+`github_transport`). GitHub writes use the selected transport. The PR is opened **ready**
+(not draft) only when `pr_write` is supported; otherwise stop with the degraded operation
+listed instead of falling through to an implicit best effort.
 
 ## Step 1 — Sanity check
 

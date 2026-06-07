@@ -4,8 +4,9 @@ import contextlib
 import io
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from keel import cli
+from keel import cli, runtime
 
 PROJECTS = Path(__file__).resolve().parent.parent / "projects"
 REPO_ROOT = PROJECTS.parent
@@ -77,6 +78,7 @@ class TestPlan(unittest.TestCase):
         )
         self.assertEqual(rc, 0)
         self.assertIn('"capabilities"', out)
+        self.assertIn('"github_transport"', out)
         self.assertIn('"plan"', out)
 
     def test_plan_missing_config(self):
@@ -204,6 +206,7 @@ class TestShip(unittest.TestCase):
         self.assertIn("TIER-2", out)        # empty changeset -> default tier
         self.assertIn("DECISION", out.upper())
         self.assertIn("MERGE", out)
+        self.assertIn("github        : gh", out)
 
     def test_failing_gate_blocks(self):
         import tempfile
@@ -241,6 +244,22 @@ class TestShip(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("missing required", err)
 
+    def test_pr_ci_requires_transport_check_runs(self):
+        import tempfile
+        fake_report = runtime.CapabilityReport((
+            runtime.Capability("shell", True, "ok", "test"),
+            runtime.Capability("git", True, "ok", "test"),
+            runtime.Capability("worktree", True, "ok", "test"),
+            runtime.Capability("gh", False, "missing", "test"),
+            runtime.Capability("gh-auth", False, "missing", "test"),
+            runtime.Capability("github-mcp", False, "missing", "test"),
+        ))
+        with tempfile.TemporaryDirectory() as d, patch("keel.cli.runtime.detect",
+                                                       return_value=fake_report):
+            rc, _, err = run(["ship", _write_config("'true'"), "--root", d, "--pr", "7"])
+        self.assertEqual(rc, 1)
+        self.assertIn("missing required GitHub transport capability: check_runs", err)
+
     def test_unloadable_extension_warned(self):
         import tempfile
         p = _write_raw("extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: x\n"
@@ -263,7 +282,18 @@ class TestCapabilities(unittest.TestCase):
         rc, out, _ = run(["capabilities", "--root", ".", "--json"])
         self.assertEqual(rc, 0)
         self.assertIn('"report"', out)
+        self.assertIn('"github_transport"', out)
         self.assertIn('"capabilities"', out)
+
+    def test_reports_mcp_transport_when_available(self):
+        fake_report = runtime.CapabilityReport((
+            runtime.Capability("github-mcp", True, "ok", "test"),
+        ))
+        with patch("keel.cli.runtime.detect", return_value=fake_report):
+            rc, out, _ = run(["capabilities"])
+        self.assertEqual(rc, 0)
+        self.assertIn("selected: mcp", out)
+        self.assertIn("raw_actions_logs", out)
 
     def test_project_requirement_failure_returns_nonzero(self):
         p = _write_raw("extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: x\n"

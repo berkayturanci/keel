@@ -30,13 +30,19 @@ non-integer / negative / zero argument and comma-separated lists. With **no PR a
 default to the open PR for the current branch. State the parsed PR list in your first
 user-facing line.
 
+Resolve GitHub access through the shared runtime contract (`keel capabilities --json` →
+`github_transport`). Use the selected transport for PR reads, comments, reviews, file
+lists, and check data. If an operation is listed in `github_transport.degraded`, surface
+that limitation and avoid hidden best-effort behavior.
+
 ## Step 1 — Validate PRs
 
-For each PR number, confirm it exists and is open (`gh pr view --json
-number,state,isDraft,headRefName,baseRefName,title,url`). Drop already-merged/closed PRs —
-warn and list them under "Skipped" in the final report. Continue with the remaining open or
-draft PRs. If `gh` returns a non-zero exit (network / auth / rate limit), stop and surface
-the error; the final report still covers what completed.
+For each PR number, confirm it exists and is open through the selected GitHub transport,
+reading `number`, `state`, `isDraft`, `headRefName`, `baseRefName`, `title`, and `url`.
+Drop already-merged/closed PRs — warn and list them under "Skipped" in the final report.
+Continue with the remaining open or draft PRs. If the selected transport returns a network,
+auth, or rate-limit error, stop and surface the error; the final report still covers what
+completed.
 
 ## Step 2 — Per-PR loop (sequential across PRs)
 
