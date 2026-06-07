@@ -71,6 +71,51 @@ class TestAdapterConsent(unittest.TestCase):
         self.assertIn("legacy alias for `--rebase`", body)
         self.assertIn("configured `base_branch`, not a hardcoded `develop`", body)
 
+    def test_coverage_preserves_comment_and_label_idempotency(self):
+        body = (ADAPTERS / "coverage.md").read_text(encoding="utf-8")
+        for required in (
+            "COVERAGE-<PR>-<UTC_TIMESTAMP>",
+            "COVERAGE-<PR>-` prefix",
+            "update it in place",
+            "do **not** post a second comment",
+            "coverage-regression",
+            "idempotently ensure and add",
+            "remove\nit if a prior run added it",
+            "tooling not wired up",
+            "Fail loudly on a coverage build/test failure",
+        ):
+            self.assertIn(required, body)
+
+    def test_deps_audit_preserves_tracking_and_skip_semantics(self):
+        body = (ADAPTERS / "deps-audit.md").read_text(encoding="utf-8")
+        for required in (
+            "deps-audit: <DATE>",
+            "DEPS-AUDIT-<DATE>-<UTC_TIMESTAMP>",
+            "append a fresh comment",
+            "Skipped",
+            "Per-audit failure continues with the others",
+            "--severity <level>",
+            "--security-only",
+            "Never auto-apply upgrades",
+            "route nothing",
+        ):
+            self.assertIn(required, body)
+
+    def test_flake_audit_preserves_classification_and_dedupe_semantics(self):
+        body = (ADAPTERS / "flake-audit.md").read_text(encoding="utf-8")
+        for required in (
+            "across-runs disagreement",
+            "consistently fails",
+            "fail_count >= 3",
+            "flaky test: <fully.qualified.name>",
+            "degraded run-level mode",
+            "Limitations",
+            "No silent dry-run mutations",
+            "do NOT auto-disable",
+            "Never close/edit/comment on existing flake issues",
+        ):
+            self.assertIn(required, body)
+
 
 if __name__ == "__main__":
     unittest.main()

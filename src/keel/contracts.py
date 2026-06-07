@@ -119,6 +119,8 @@ _DEFAULT_FEEDBACK_WORKFLOWS: dict[str, dict[str, Any]] = {
     },
 }
 
+_REPORTING_COMMANDS = {"coverage", "deps-audit", "flake-audit"}
+
 
 def available_commands() -> tuple[str, ...]:
     """Every packaged adapter command that can expose a structured contract."""
@@ -216,6 +218,12 @@ def build_command_contract(
         contract["morning_contract"] = morning_contract_as_dict(
             config=config,
             evaluation=evaluation,
+            transport=transport,
+        )
+    if command in _REPORTING_COMMANDS:
+        contract["reporting_contract"] = reporting_contract_as_dict(
+            command=command,
+            config=config,
             transport=transport,
         )
     if command in {"wrap", "overnight"}:
@@ -380,6 +388,23 @@ def workflow_profile(command: str) -> dict[str, Any]:
             ],
             "step_overrides": {},
         }
+    if command in _REPORTING_COMMANDS:
+        return {
+            "name": command,
+            "profile": "reporting",
+            "inherits": None,
+            "first_class_variant": True,
+            "shared_primitives": [
+                "project_policy",
+                "github_transport",
+                "codename_anchor",
+                "dedupe",
+                "dry_run_no_mutations",
+                "ship_handoff",
+                "operator_consent",
+            ],
+            "step_overrides": {},
+        }
     if command == "ship-v2":
         return {
             "name": "ship-v2",
@@ -515,6 +540,94 @@ def command_side_effects(
             effects.extend(consent.capability_side_effects(ext.required_capabilities))
             effects.extend(consent.capability_side_effects(ext.optional_capabilities))
     return tuple(dict.fromkeys(effects))
+
+
+def reporting_contract_as_dict(
+    *,
+    command: str,
+    config: cfg.ProjectConfig,
+    transport: github_transport.GitHubTransport | None = None,
+) -> dict[str, Any]:
+    """Project-neutral reporting parity contract for audit/report adapters."""
+    github = transport.as_dict() if transport is not None else {}
+    base = {
+        "command": command,
+        "base_branch": config.base_branch,
+        "timezone": config.timezone,
+        "github_transport": github,
+        "policy_source": "policy_pack + adapter arguments",
+        "dry_run": {
+            "mutates": False,
+            "prints_planned_writes": True,
+        },
+        "handoff": {
+            "fixes_route_to": "ship",
+            "auto_applies_fixes": False,
+        },
+    }
+    if command == "coverage":
+        return {
+            **base,
+            "target": "pull_request",
+            "codename_prefix": "COVERAGE-<PR>-",
+            "idempotency": {
+                "scope": "one-comment-per-pr",
+                "find_by_first_line_prefix": "COVERAGE-<PR>-",
+                "existing_comment": "update-in-place",
+                "update_unavailable": "do-not-post-duplicate",
+            },
+            "labels": {
+                "regression": "coverage-regression",
+                "operation": "idempotent-add-or-remove",
+            },
+            "degradation": {
+                "unwired_tool": "skip-area",
+                "coverage_command_failure": "fatal",
+            },
+            "arguments": ["pr", "--base", "--threshold", "--changed", "--open-issues",
+                          "--dry-run"],
+        }
+    if command == "deps-audit":
+        return {
+            **base,
+            "target": "daily_tracking_issue",
+            "tracking_issue_title": "deps-audit: <DATE>",
+            "codename_prefix": "DEPS-AUDIT-<DATE>-",
+            "idempotency": {
+                "scope": "append-per-run",
+                "find_tracking_issue_by_exact_title": "deps-audit: <DATE>",
+                "find_latest_run_by_first_line_prefix": "DEPS-AUDIT-<DATE>-",
+                "existing_comment": "append-fresh-run-comment",
+            },
+            "degradation": {
+                "per_ecosystem_failure": "skipped-section",
+                "argument_failure": "fatal",
+            },
+            "arguments": ["ecosystem", "--severity", "--security-only", "--open-issues",
+                          "--dry-run"],
+        }
+    if command == "flake-audit":
+        return {
+            **base,
+            "target": "ci_history_or_local_runs",
+            "codename_prefix": "FLAKE-AUDIT-<DATE>-",
+            "idempotency": {
+                "scope": "one-issue-per-flake",
+                "dedupe_issue_title": "flaky test: <fully.qualified.name>",
+                "find_run_by_first_line_prefix": "FLAKE-AUDIT-<DATE>-",
+            },
+            "classification": {
+                "rule": "across-run-disagreement-only",
+                "minimum_failures": 3,
+                "consistent_failures": "real-bug-not-flake",
+            },
+            "degradation": {
+                "artifact_unavailable": "run-level-limitations-section",
+                "no_ci_or_local_gate": "clean-exit",
+            },
+            "arguments": ["--days", "--runs", "--threshold", "--open-issues", "--dry-run"],
+        }
+    return base
 
 
 def project_as_dict(config: cfg.ProjectConfig) -> dict[str, Any]:

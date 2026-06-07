@@ -733,6 +733,144 @@ class TestBuildCommandContract(unittest.TestCase):
             ["filesystem", "git"],
         )
 
+    def test_reporting_commands_expose_parity_contracts(self):
+        config = cfg.load_config(PROJECTS / "example-android.yaml")
+        loaded = {}
+        plan = orchestrator.build_plan(config, loaded)
+        report = runtime.CapabilityReport(())
+        requirement = runtime.CapabilityRequirement(optional=("gh", "gh-auth"))
+
+        expectations = {
+            "coverage": {
+                "profile": "reporting",
+                "prefix": "COVERAGE-<PR>-",
+                "idempotency": {
+                    "scope": "one-comment-per-pr",
+                    "existing_comment": "update-in-place",
+                    "update_unavailable": "do-not-post-duplicate",
+                },
+                "effect": "labels",
+                "primitive": "codename_anchor",
+            },
+            "deps-audit": {
+                "profile": "reporting",
+                "prefix": "DEPS-AUDIT-<DATE>-",
+                "idempotency": {
+                    "scope": "append-per-run",
+                    "find_tracking_issue_by_exact_title": "deps-audit: <DATE>",
+                },
+                "effect": "issue_write",
+                "primitive": "dedupe",
+            },
+            "flake-audit": {
+                "profile": "reporting",
+                "prefix": "FLAKE-AUDIT-<DATE>-",
+                "idempotency": {
+                    "scope": "one-issue-per-flake",
+                    "dedupe_issue_title": "flaky test: <fully.qualified.name>",
+                },
+                "effect": "comments",
+                "primitive": "ship_handoff",
+            },
+        }
+
+        for command, expected in expectations.items():
+            with self.subTest(command=command):
+                contract = contracts.build_command_contract(
+                    command=command,
+                    config=config,
+                    loaded=loaded,
+                    plan=plan,
+                    requirement=requirement,
+                    evaluation=runtime.evaluate(requirement, report),
+                    transport=github_transport.resolve(report),
+                )
+                profile = contract["workflow_profile"]
+                reporting = contract["reporting_contract"]
+
+                self.assertEqual(profile["profile"], expected["profile"])
+                self.assertTrue(profile["first_class_variant"])
+                self.assertIn(expected["primitive"], profile["shared_primitives"])
+                self.assertEqual(reporting["codename_prefix"], expected["prefix"])
+                self.assertFalse(reporting["dry_run"]["mutates"])
+                self.assertTrue(reporting["dry_run"]["prints_planned_writes"])
+                self.assertEqual(reporting["handoff"]["fixes_route_to"], "ship")
+                self.assertFalse(reporting["handoff"]["auto_applies_fixes"])
+                self.assertIn(expected["effect"], contract["side_effects"]["declared"])
+                for key, value in expected["idempotency"].items():
+                    self.assertEqual(reporting["idempotency"][key], value)
+
+    def test_reporting_contract_preserves_command_specific_safety_rules(self):
+        config = cfg.load_config(PROJECTS / "example-android.yaml")
+        loaded = {}
+        plan = orchestrator.build_plan(config, loaded)
+        report = runtime.CapabilityReport(())
+        requirement = runtime.CapabilityRequirement()
+
+        by_command = {
+            command: contracts.build_command_contract(
+                command=command,
+                config=config,
+                loaded=loaded,
+                plan=plan,
+                requirement=requirement,
+                evaluation=runtime.evaluate(requirement, report),
+                transport=github_transport.resolve(report),
+            )["reporting_contract"]
+            for command in ("coverage", "deps-audit", "flake-audit")
+        }
+
+        self.assertEqual(
+            by_command["coverage"]["labels"],
+            {
+                "regression": "coverage-regression",
+                "operation": "idempotent-add-or-remove",
+            },
+        )
+        self.assertEqual(by_command["coverage"]["degradation"]["unwired_tool"], "skip-area")
+        self.assertEqual(
+            by_command["coverage"]["degradation"]["coverage_command_failure"],
+            "fatal",
+        )
+
+        self.assertEqual(
+            by_command["deps-audit"]["tracking_issue_title"],
+            "deps-audit: <DATE>",
+        )
+        self.assertEqual(
+            by_command["deps-audit"]["degradation"]["per_ecosystem_failure"],
+            "skipped-section",
+        )
+
+        self.assertEqual(
+            by_command["flake-audit"]["classification"]["rule"],
+            "across-run-disagreement-only",
+        )
+        self.assertEqual(by_command["flake-audit"]["classification"]["minimum_failures"], 3)
+        self.assertEqual(
+            by_command["flake-audit"]["classification"]["consistent_failures"],
+            "real-bug-not-flake",
+        )
+        self.assertEqual(
+            by_command["flake-audit"]["degradation"]["artifact_unavailable"],
+            "run-level-limitations-section",
+        )
+
+    def test_reporting_contract_unknown_command_returns_base_metadata(self):
+        config = cfg.load_config(PROJECTS / "example-android.yaml")
+
+        reporting = contracts.reporting_contract_as_dict(
+            command="unknown-report",
+            config=config,
+        )
+
+        self.assertEqual(reporting["command"], "unknown-report")
+        self.assertEqual(reporting["base_branch"], config.base_branch)
+        self.assertEqual(reporting["timezone"], config.timezone)
+        self.assertEqual(reporting["policy_source"], "policy_pack + adapter arguments")
+        self.assertFalse(reporting["dry_run"]["mutates"])
+        self.assertFalse(reporting["handoff"]["auto_applies_fixes"])
+
     def test_capability_requirements_extend_consent_scope(self):
         config = cfg.load_config(PROJECTS / "example-android.yaml")
         loaded = {

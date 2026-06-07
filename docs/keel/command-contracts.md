@@ -51,6 +51,7 @@ Every contract includes:
 | `morning_contract` | Present for `morning`; project-neutral daily-brief sections, health providers, report destinations, priority sources, and deferral queue metadata. |
 | `session_contract` | Present for `wrap` and `overnight`; project-neutral linked-worktree, gate, PR, merge-window, report, deferral, and ship-handoff metadata. |
 | `scan_contract` | Present for `regression` and `review-all-day`; project-neutral scan target, scope, dedupe, issue-write, reviewer-isolation, and final-report metadata. |
+| `reporting_contract` | Present for `coverage`, `deps-audit`, and `flake-audit`; project-neutral codename anchors, idempotency/dedupe rules, dry-run write behavior, degradation modes, and ship handoff metadata. |
 
 Project command entries include name, local command path, description, agent role, path
 selectors, required/optional capabilities, side effects, dry-run safety, and source
@@ -127,6 +128,21 @@ Standalone commands also emit deterministic result records:
   and issue-write safety. It does not edit code, push, comment on PRs, merge, or open
   issues in dry-run output.
 
+Reporting commands expose `reporting_contract` records through `keel plan --command ...`
+so adapters can preserve legacy report behavior without copying project-specific policy into
+keel core:
+
+- `coverage` declares the `COVERAGE-<PR>-` first-line anchor, one-comment-per-PR
+  idempotency, update-in-place behavior, the no-duplicate rule when update is unavailable,
+  `coverage-regression` label handling, skipped unwired tools, and fatal real coverage
+  command failures.
+- `deps-audit` declares the exact `deps-audit: <DATE>` tracking issue title, the
+  `DEPS-AUDIT-<DATE>-` run anchor, append-per-run comments, skipped per-ecosystem
+  degradation, severity/security-only arguments, and no auto-applied fixes.
+- `flake-audit` declares the `FLAKE-AUDIT-<DATE>-` run anchor, one-issue-per-flake
+  dedupe title, across-run-disagreement-only classification, `fail_count >= 3`, consistent
+  failure exclusion, degraded run-level limitations, and no auto-disable behavior.
+
 ## Workflow profiles
 
 Workflow profiles let command variants stay directly invokable without copying an entire
@@ -175,6 +191,9 @@ Standalone direct-use commands use first-class profiles too:
   `ship.s7-s9`. Its shared primitives include multi-PR targets, reviewer isolation,
   posting mode, the severity histogram, fix-loop behavior, completion markers, and
   operator consent. It never merges or posts formal approval.
+- `coverage`, `deps-audit`, and `flake-audit` use `workflow_profile.profile: "reporting"`.
+  Their shared primitives include project policy, GitHub transport, codename anchors,
+  dedupe, dry-run no-mutation guarantees, ship handoff, and operator consent.
 
 ## Feedback workflows
 
