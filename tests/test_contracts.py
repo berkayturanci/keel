@@ -153,6 +153,23 @@ class TestBuildCommandContract(unittest.TestCase):
         self.assertEqual(profile["profile"], "compound")
         self.assertEqual(profile["inherits"], "ship")
         self.assertTrue(profile["first_class_variant"])
+        self.assertGreaterEqual(
+            set(profile["shared_primitives"]),
+            {
+                "select",
+                "branch",
+                "worktree",
+                "guard",
+                "classify",
+                "ci",
+                "test",
+                "merge_window",
+                "merge_lock",
+                "merge",
+                "capture_marker",
+                "close",
+            },
+        )
         self.assertEqual(profile["step_overrides"]["s4"]["step"], "implement")
         self.assertEqual(profile["step_overrides"]["s7"]["step"], "review")
         self.assertEqual(profile["step_overrides"]["s9"]["step"], "fixloop")

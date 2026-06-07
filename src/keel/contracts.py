@@ -176,11 +176,15 @@ def workflow_profile(command: str) -> dict[str, Any]:
             "shared_primitives": [
                 "select",
                 "branch",
+                "worktree",
                 "guard",
                 "classify",
                 "ci",
                 "test",
+                "merge_window",
+                "merge_lock",
                 "merge",
+                "capture_marker",
                 "close",
             ],
             "step_overrides": {
