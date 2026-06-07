@@ -44,6 +44,21 @@ keel install-adapter skills     # just the shared skill set
 - Every other agent: the `keel-ship` / `keel-wrap` … skill (one shared set under
   `.agents/skills/`).
 
+## Generated-surface contract
+
+`keel install-adapter all --root <tmp-project>` is the release-smoke path for adapter
+generation. It must produce one Claude command and one shared skill for every packaged
+command body under `src/keel/adapters/commands/*.md`.
+
+The generated Claude command is a byte-for-byte copy of the packaged command body. The
+generated skill preserves the same project-neutral body but uses skill frontmatter instead of
+Claude slash-command metadata: `name: keel-<cmd>` and `description` are preserved;
+`argument-hint` and `allowed-tools` are intentionally dropped from `SKILL.md`.
+
+Generated files are idempotent: a second install without `--force` skips existing files, and
+`--force` overwrites only the generated adapter surfaces. Tests validate the command counts,
+frontmatter shape, idempotency, and absence of consumer-specific strings.
+
 ## Changing a command
 
 Edit the packaged body under `src/keel/adapters/commands/<cmd>.md` (the single source), then

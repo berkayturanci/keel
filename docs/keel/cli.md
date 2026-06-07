@@ -204,12 +204,24 @@ keel install-adapter claude --force  # overwrite existing adapters
 The `skills` surface is a **single** universal skill set (`keel-<cmd>`), not a dir per agent:
 non-Claude agents all read `.agents/skills/`, so one copy serves Codex, Antigravity and Gemini
 together. The skill body is the same project-neutral adapter, wrapped with skill frontmatter.
+Generated skill frontmatter intentionally contains only `name: keel-<cmd>` and `description`.
+Claude-only command metadata such as `argument-hint` and `allowed-tools` remains on the
+packaged command body / Claude command surface and is intentionally not copied into
+`SKILL.md`, because current shared skills use the skill manifest shape rather than Claude
+slash-command metadata.
 
 The CLI (`keel ship`, `keel run-gates`, …) does the deterministic work; these adapters are
 the **agentic** flows (per-round review, inline comments, delegation) the agent runs. The
 shipped set: `ship`, `regression`, `implement`, `review-cycle`, `pr-loop`, `morning`,
-`overnight`, `wrap`, `triage`, `stale-prs`, `ci-check`, `deps-audit`, `flake-audit`,
-`coverage`. Existing files are skipped unless `--force` (so your edits are never clobbered).
+`review-all-day`, `overnight`, `wrap`, `triage`, `stale-prs`, `ci-check`, `deps-audit`,
+`flake-audit`, `coverage`, `ship-v2`. Existing files are skipped unless `--force` (so your
+edits are never clobbered).
+
+The generated surface is covered as a release contract: tests install into a clean temporary
+project, verify that every packaged command has a matching Claude command and shared skill,
+validate skill frontmatter, check idempotent skip / `--force` overwrite behavior, and scan the
+generated files for consumer-specific strings. PyPI release smoke tests can reuse the same
+`keel install-adapter all --root <tmp-project>` flow.
 
 ## Exit codes
 

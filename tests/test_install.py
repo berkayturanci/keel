@@ -8,6 +8,20 @@ import yaml
 
 from keel import install
 
+CONSUMER_SPECIFIC_TERMS = (
+    "smartinventory",
+    "eventoid",
+    "firebase",
+    "realm",
+    "billing",
+    "crashlytics",
+    "play console",
+    "adb",
+    "espresso",
+    "kover",
+    "gradle",
+)
+
 
 class TestAdapterNames(unittest.TestCase):
     def test_ships_the_portable_commands(self):
@@ -107,6 +121,85 @@ class TestInstallAll(unittest.TestCase):
             self.assertIn("keel-ship", results["skills"][0])
             self.assertTrue((Path(d) / ".claude/commands/keel/ship.md").exists())
             self.assertTrue((Path(d) / ".agents/skills/keel-ship/SKILL.md").exists())
+
+    def test_generated_surface_contract_for_every_packaged_adapter(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            results = install.install_all(root)
+            adapters = install.adapter_names()
+            commands = [Path(name).stem for name in adapters]
+
+            self.assertEqual(results["claude"], (adapters, []))
+            self.assertEqual(results["skills"], ([f"keel-{cmd}" for cmd in commands], []))
+
+            claude_files = sorted((root / install.CLAUDE_DIR).glob("*.md"))
+            skill_files = sorted((root / install.SKILLS_DIR).glob("keel-*/SKILL.md"))
+            self.assertEqual([p.name for p in claude_files], adapters)
+            self.assertEqual({p.parent.name for p in skill_files}, {f"keel-{c}" for c in commands})
+
+            for adapter in adapters:
+                with self.subTest(adapter=adapter):
+                    command = Path(adapter).stem
+                    source = install.ADAPTERS / adapter
+                    source_text = source.read_text(encoding="utf-8")
+                    source_meta, source_body = install._split_frontmatter(source_text)
+
+                    claude = root / install.CLAUDE_DIR / adapter
+                    skill = root / install.SKILLS_DIR / f"keel-{command}" / "SKILL.md"
+
+                    self.assertEqual(claude.read_text(encoding="utf-8"), source_text)
+                    skill_meta, skill_body = install._split_frontmatter(
+                        skill.read_text(encoding="utf-8")
+                    )
+                    self.assertEqual(skill_meta["name"], f"keel-{command}")
+                    self.assertEqual(skill_meta["description"], source_meta["description"])
+                    self.assertEqual(set(skill_meta), {"name", "description"})
+                    self.assertNotIn("argument-hint", skill_meta)
+                    self.assertNotIn("allowed-tools", skill_meta)
+                    self.assertIn(source_body.strip().splitlines()[0], skill_body)
+                    self.assertIn("`.keel/project.yaml`", skill_body)
+                    self.assertGreater(len(skill_body.strip()), len(source_body.strip()))
+
+    def test_generated_surfaces_are_idempotent_and_force_overwrites(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            first = install.install_all(root)
+            commands = [Path(name).stem for name in install.adapter_names()]
+            self.assertTrue(first["claude"][0])
+            self.assertTrue(first["skills"][0])
+
+            claude_ship = root / install.CLAUDE_DIR / "ship.md"
+            skill_ship = root / install.SKILLS_DIR / "keel-ship" / "SKILL.md"
+            claude_ship.write_text("local claude edit\n", encoding="utf-8")
+            skill_ship.write_text("local skill edit\n", encoding="utf-8")
+
+            second = install.install_all(root)
+            self.assertEqual(second["claude"], ([], install.adapter_names()))
+            self.assertEqual(second["skills"], ([], [f"keel-{cmd}" for cmd in commands]))
+            self.assertEqual(claude_ship.read_text(encoding="utf-8"), "local claude edit\n")
+            self.assertEqual(skill_ship.read_text(encoding="utf-8"), "local skill edit\n")
+
+            forced = install.install_all(root, force=True)
+            self.assertEqual(forced["claude"], (install.adapter_names(), []))
+            self.assertEqual(forced["skills"], ([f"keel-{cmd}" for cmd in commands], []))
+            self.assertNotEqual(claude_ship.read_text(encoding="utf-8"), "local claude edit\n")
+            self.assertNotEqual(skill_ship.read_text(encoding="utf-8"), "local skill edit\n")
+
+    def test_generated_surfaces_remain_consumer_neutral(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            install.install_all(root)
+            offenders: list[str] = []
+            for path in sorted(
+                list((root / ".claude").rglob("*.md"))
+                + list((root / ".agents").rglob("SKILL.md"))
+            ):
+                text = path.read_text(encoding="utf-8").lower()
+                for term in CONSUMER_SPECIFIC_TERMS:
+                    if term in text:
+                        offenders.append(f"{path.relative_to(root)}: {term}")
+
+            self.assertEqual(offenders, [])
 
 
 if __name__ == "__main__":
