@@ -60,8 +60,12 @@ project's `.keel/project.yaml`.
 ## How a command stays project-neutral
 
 A command never hardcodes a branch, build/lint command, agent, glob, timezone, window, or
-workflow name. It references the knob by name and asks the `keel` CLI for the value, so the same
-`/keel:ship` produces Flutter behaviour in one repo and Android behaviour in another purely from
-each repo's `.keel/project.yaml`. Project-specific *gates* live in `.keel/extensions/` (Lego);
+workflow name. It references the knob by name and asks the `keel` CLI for the value, so the
+same `/keel:ship` command can produce different behaviour in different repos purely from each
+repo's `.keel/project.yaml`. Project-specific *gates* live in `.keel/extensions/` (Lego);
 project-only commands (platform builds, device tests, app-specific regressions) stay in the
 project. See [`configuration.md`](configuration.md) and [`extensions.md`](extensions.md).
+
+For the full boundary between keel core, project policy, project commands, runtime
+capabilities, and adapters, see
+[`consumer-neutrality.md`](consumer-neutrality.md).

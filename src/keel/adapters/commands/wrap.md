@@ -51,10 +51,10 @@ config-driven (`build_gate_cmd` + `lint_cmd` plus any `tester` Lego):
 keel run-gates .keel/project.yaml --root .
 ```
 
-Any file-change-conditional suites (migration-, billing-, or config-validation
-checks gated on which paths changed) are **(project-specific; stay in the
-project)** — express them as a `.keel/extensions/` Lego that `run-gates` picks
-up, never inline a project command here.
+Any file-change-conditional suites (schema migration, entitlement, or
+config-validation checks gated on which paths changed) are **project-specific;
+stay in the project** — express them as a `.keel/extensions/` Lego that
+`run-gates` picks up, never inline a project command here.
 
 If any gate FAILS — STOP. Report the failure. Do not commit broken code.
 

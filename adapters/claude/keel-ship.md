@@ -11,9 +11,9 @@ keel-core** — you *orchestrate* it, you never redefine it. This file is **proj
 it contains no branch name, build command, agent, timezone, or path glob.
 
 > **Hard rule.** Read every project-specific value from `.keel/project.yaml` via the `keel`
-> CLI. If you are about to type a literal like `develop`, `main`, `gradle`, `flutter`,
-> `Etc/GMT-3`, or an agent name — **stop** and read it from config instead. Hardcoding a
-> project specific in this adapter is the exact bug keel exists to kill.
+> CLI. If you are about to type a literal branch, build tool, framework, timezone, service,
+> path glob, or agent name — **stop** and read it from config instead. Hardcoding a project
+> specific in this adapter is the exact bug keel exists to kill.
 
 ## Step 0 — Resolve config + plan
 

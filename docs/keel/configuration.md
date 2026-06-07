@@ -43,6 +43,10 @@ by `keel validate`. Unknown keys are rejected, so typos fail loudly.
   backbone slots. They are add-only and run at their slot's step. See
   [extensions.md](extensions.md).
 
+Keel core stays consumer-neutral: project-specific labels, path globs, commands, health
+signals, and manual playbooks belong in config, extensions, or project-provided commands.
+The boundary is documented in [consumer-neutrality.md](consumer-neutrality.md).
+
 ## Example (example-flutter — Flutter/Supabase)
 
 ```yaml

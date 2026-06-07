@@ -94,9 +94,9 @@ implementer must follow:
    keel run-gates .keel/project.yaml --root .
    ```
    This executes the built-in `build_gate_cmd` / `lint_cmd` plus any `tester`
-   Lego. Gate selection that depends on which files changed (migration-, billing-,
-   or config-specific suites) is project-specific: express it as a Lego or mark
-   it "(project-specific; stays in the project)".
+   Lego. Gate selection that depends on which files changed (schema migration,
+   entitlement, or config-specific suites) is project-specific: express it as a
+   Lego or mark it "(project-specific; stays in the project)".
 5. Include the codename in commits / PR body / final summary when practical.
 6. Return the contract: codename, branch/commit, files changed, gate results,
    docs impact, and anything needing manual/device/infra verification.

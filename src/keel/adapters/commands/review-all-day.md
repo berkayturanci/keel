@@ -116,7 +116,7 @@ concatenated `git show` outputs (delimited `----- COMMIT k -----`), and this cla
 contract. For each commit, classify the diff for:
 
 - **Bug-insert** — logic error, null/nil deref, incorrect branching.
-- **Regression risk** — breaks an existing flow (data-layer, billing/entitlement,
+- **Regression risk** — breaks an existing flow (data-layer, entitlement,
   lifecycle/concurrency, auth) — generalize to the project's own high-risk areas implied by
   `tier3_globs`.
 - **Security** — secrets, injection, OWASP-class, race condition.

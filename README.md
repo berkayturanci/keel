@@ -148,6 +148,7 @@ If a step's gate fails, keel blocks its own merge — the same backbone every co
   Pages is available via the manual `pages.yml` workflow once Pages is enabled.)
 - [`docs/keel/configuration.md`](docs/keel/configuration.md) — `project.yaml` reference
 - [`docs/keel/extensions.md`](docs/keel/extensions.md) — authoring Lego extensions
+- [`docs/keel/consumer-neutrality.md`](docs/keel/consumer-neutrality.md) — core vs project policy boundary
 - [`docs/keel/cli.md`](docs/keel/cli.md) — CLI reference
 - [`docs/keel/commands.md`](docs/keel/commands.md) — the 16 `/keel:<command>` workflows, each with its description
 - [`docs/keel/cutover.md`](docs/keel/cutover.md) — staged guide to retire a project's copied command bodies (install → verify → retire), losing nothing
