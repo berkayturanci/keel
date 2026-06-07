@@ -530,6 +530,39 @@ class TestInstallAdapter(unittest.TestCase):
             self.assertTrue((Path(d) / ".claude/commands/keel/ship.md").exists())
             self.assertTrue((Path(d) / ".agents/skills/keel-ship/SKILL.md").exists())
 
+    def test_adapter_status_and_update_adapter(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            run(["install-adapter", "all", "--root", d])
+            ship = Path(d) / ".claude/commands/keel/ship.md"
+            ship.unlink()
+
+            rc, out, _ = run(["adapter-status", "all", "--root", d])
+            self.assertEqual(rc, 0)
+            self.assertIn("missing", out)
+            self.assertIn("ship.md", out)
+
+            rc, out, _ = run(["update-adapter", "all", "--root", d, "--dry-run"])
+            self.assertEqual(rc, 0)
+            self.assertIn("would-update", out)
+            self.assertIn("dry-run: no adapter files were written", out)
+            self.assertFalse(ship.exists())
+
+            rc, out, _ = run(["update-adapter", "all", "--root", d])
+            self.assertEqual(rc, 0)
+            self.assertIn("updated", out)
+            self.assertTrue(ship.exists())
+
+    def test_adapter_status_unknown_target(self):
+        rc, _, err = run(["adapter-status", "codex"])
+        self.assertEqual(rc, 1)
+        self.assertIn("unknown target", err)
+
+    def test_update_adapter_unknown_target(self):
+        rc, _, err = run(["update-adapter", "codex"])
+        self.assertEqual(rc, 1)
+        self.assertIn("unknown target", err)
+
 
 class TestParser(unittest.TestCase):
     def test_subcommands_present(self):
@@ -539,7 +572,8 @@ class TestParser(unittest.TestCase):
         self.assertTrue(actions)
         self.assertGreaterEqual(set(actions[0].choices),
                                 {"version", "validate", "plan", "run-gates", "window", "ship",
-                                 "capabilities", "init", "install-adapter"})
+                                 "capabilities", "init", "install-adapter",
+                                 "adapter-status", "update-adapter"})
 
 
 if __name__ == "__main__":

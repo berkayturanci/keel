@@ -37,7 +37,11 @@ class TestInstallClaude(unittest.TestCase):
             installed, skipped = install.install("claude", d)
             self.assertIn("ship.md", installed)
             self.assertEqual(skipped, [])
-            self.assertTrue((Path(d) / ".claude/commands/keel/ship.md").exists())
+            text = (Path(d) / ".claude/commands/keel/ship.md").read_text(encoding="utf-8")
+            body, marker = install._split_marker(text)
+            self.assertIn("# /keel:ship", body)
+            self.assertEqual(marker["surface"], "claude")
+            self.assertEqual(marker["command"], "ship")
 
     def test_skips_existing_then_force(self):
         with tempfile.TemporaryDirectory() as d:
@@ -99,8 +103,11 @@ class TestInstallSkills(unittest.TestCase):
             self.assertEqual(skipped, [])
             sk = Path(d) / ".agents/skills/keel-ship/SKILL.md"
             self.assertTrue(sk.exists())
-            meta = yaml.safe_load(sk.read_text().split("---")[1])
+            body, marker = install._split_marker(sk.read_text(encoding="utf-8"))
+            meta = yaml.safe_load(body.split("---")[1])
             self.assertEqual(meta["name"], "keel-ship")
+            self.assertEqual(marker["surface"], "skills")
+            self.assertEqual(marker["command"], "ship")
 
     def test_skips_existing_then_force(self):
         with tempfile.TemporaryDirectory() as d:
@@ -147,9 +154,13 @@ class TestInstallAll(unittest.TestCase):
                     claude = root / install.CLAUDE_DIR / adapter
                     skill = root / install.SKILLS_DIR / f"keel-{command}" / "SKILL.md"
 
-                    self.assertEqual(claude.read_text(encoding="utf-8"), source_text)
+                    claude_body, claude_marker = install._split_marker(
+                        claude.read_text(encoding="utf-8")
+                    )
+                    self.assertEqual(claude_body, source_text.rstrip() + "\n")
+                    self.assertEqual(claude_marker["source_sha256"], install._sha256(source_text))
                     skill_meta, skill_body = install._split_frontmatter(
-                        skill.read_text(encoding="utf-8")
+                        install._split_marker(skill.read_text(encoding="utf-8"))[0]
                     )
                     self.assertEqual(skill_meta["name"], f"keel-{command}")
                     self.assertEqual(skill_meta["description"], source_meta["description"])
@@ -194,12 +205,104 @@ class TestInstallAll(unittest.TestCase):
                 list((root / ".claude").rglob("*.md"))
                 + list((root / ".agents").rglob("SKILL.md"))
             ):
-                text = path.read_text(encoding="utf-8").lower()
+                body, _metadata = install._split_marker(path.read_text(encoding="utf-8"))
+                text = body.lower()
                 for term in CONSUMER_SPECIFIC_TERMS:
                     if term in text:
                         offenders.append(f"{path.relative_to(root)}: {term}")
 
             self.assertEqual(offenders, [])
+
+    def test_adapter_status_reports_current_missing_unknown_and_modified(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            install.install_all(root)
+            current = install.adapter_status("all", root)
+            self.assertTrue(all(row.status == "current"
+                                for rows in current.values() for row in rows))
+
+            (root / install.CLAUDE_DIR / "ship.md").unlink()
+            (root / install.SKILLS_DIR / "keel-wrap" / "SKILL.md").write_text(
+                "hand-written local wrapper\n", encoding="utf-8"
+            )
+            triage = root / install.CLAUDE_DIR / "triage.md"
+            triage.write_text(triage.read_text(encoding="utf-8").replace(
+                "# /keel:triage", "# locally edited /keel:triage"
+            ), encoding="utf-8")
+
+            rows = install.adapter_status("all", root)
+            by_key = {(row.surface, row.name): row for rs in rows.values() for row in rs}
+            self.assertEqual(by_key[("claude", "ship.md")].status, "missing")
+            self.assertEqual(by_key[("skills", "keel-wrap")].status, "unknown")
+            self.assertEqual(by_key[("claude", "triage.md")].status, "locally-modified")
+
+    def test_update_adapter_dry_run_and_write_preserve_local_files(self):
+        with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as src_dir:
+            root = Path(d)
+            src = Path(src_dir)
+            for source in install.ADAPTERS.glob("*.md"):
+                src.joinpath(source.name).write_text(source.read_text(encoding="utf-8"),
+                                                    encoding="utf-8")
+            install.install_all(root, _src=src)
+
+            ship_source = src / "ship.md"
+            ship_source.write_text(
+                ship_source.read_text(encoding="utf-8") + "\nExtra packaged line.\n",
+                encoding="utf-8",
+            )
+            project_yaml = root / ".keel/project.yaml"
+            extension = root / ".keel/extensions/local.md"
+            wrapper = root / ".agents/skills/project-command/SKILL.md"
+            for path, text in (
+                (project_yaml, "project config\n"),
+                (extension, "project extension\n"),
+                (wrapper, "local wrapper\n"),
+            ):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text, encoding="utf-8")
+
+            dry = install.update_adapters("all", root, dry_run=True, _src=src)
+            by_key = {(row.surface, row.name): row for rows in dry.values() for row in rows}
+            self.assertEqual(by_key[("claude", "ship.md")].status, "would-update")
+            self.assertNotIn("Extra packaged line.",
+                             (root / install.CLAUDE_DIR / "ship.md").read_text(encoding="utf-8"))
+
+            updated = install.update_adapters("all", root, _src=src)
+            by_key = {(row.surface, row.name): row for rows in updated.values() for row in rows}
+            self.assertEqual(by_key[("claude", "ship.md")].status, "updated")
+            self.assertEqual(by_key[("skills", "keel-ship")].status, "updated")
+            self.assertIn("Extra packaged line.",
+                          (root / install.CLAUDE_DIR / "ship.md").read_text(encoding="utf-8"))
+            self.assertEqual(project_yaml.read_text(encoding="utf-8"), "project config\n")
+            self.assertEqual(extension.read_text(encoding="utf-8"), "project extension\n")
+            self.assertEqual(wrapper.read_text(encoding="utf-8"), "local wrapper\n")
+
+    def test_update_adapter_refuses_unknown_and_locally_modified_files(self):
+        with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as src_dir:
+            root = Path(d)
+            src = Path(src_dir)
+            for source in install.ADAPTERS.glob("*.md"):
+                src.joinpath(source.name).write_text(source.read_text(encoding="utf-8"),
+                                                    encoding="utf-8")
+            install.install_all(root, _src=src)
+            (root / install.CLAUDE_DIR / "ship.md").write_text(
+                "local command without marker\n", encoding="utf-8"
+            )
+            skill = root / install.SKILLS_DIR / "keel-ship" / "SKILL.md"
+            skill.write_text(skill.read_text(encoding="utf-8").replace(
+                "# keel-ship", "# locally edited keel-ship"
+            ), encoding="utf-8")
+
+            ship_source = src / "ship.md"
+            ship_source.write_text(ship_source.read_text(encoding="utf-8") + "\nUpdated.\n",
+                                   encoding="utf-8")
+            rows = install.update_adapters("all", root, _src=src)
+            by_key = {(row.surface, row.name): row for rs in rows.values() for row in rs}
+            self.assertEqual(by_key[("claude", "ship.md")].status, "unknown")
+            self.assertEqual(by_key[("skills", "keel-ship")].status, "locally-modified")
+            self.assertEqual((root / install.CLAUDE_DIR / "ship.md").read_text(encoding="utf-8"),
+                             "local command without marker\n")
+            self.assertIn("# locally edited keel-ship", skill.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

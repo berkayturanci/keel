@@ -398,6 +398,13 @@ def _report_install(surface: str, installed: list[str], skipped: list[str]) -> N
         print(f"  skipped    [{surface}] {name}  (exists; --force to overwrite)")
 
 
+def _report_adapter_rows(rows: dict[str, list[install.AdapterFileStatus]]) -> None:
+    for surface, statuses in rows.items():
+        for row in statuses:
+            detail = f" — {row.detail}" if row.detail else ""
+            print(f"  {row.status:<16} [{surface}] {row.name}  {row.path}{detail}")
+
+
 def _cmd_install_adapter(args: argparse.Namespace) -> int:
     if args.agent == "all":
         results = install.install_all(args.root, force=args.force)
@@ -413,6 +420,30 @@ def _cmd_install_adapter(args: argparse.Namespace) -> int:
         total += len(installed)
     print(f"{total} adapter(s) installed — Claude: /keel:<command>; "
           f"other agents: keel-<command> skill (.agents/skills/)")
+    return 0
+
+
+def _cmd_adapter_status(args: argparse.Namespace) -> int:
+    try:
+        rows = install.adapter_status(args.agent, args.root)
+    except KeyError:
+        print(f"unknown target {args.agent!r}; valid: all, {', '.join(install.TARGETS)}",
+              file=sys.stderr)
+        return 1
+    _report_adapter_rows(rows)
+    return 0
+
+
+def _cmd_update_adapter(args: argparse.Namespace) -> int:
+    try:
+        rows = install.update_adapters(args.agent, args.root, dry_run=args.dry_run)
+    except KeyError:
+        print(f"unknown target {args.agent!r}; valid: all, {', '.join(install.TARGETS)}",
+              file=sys.stderr)
+        return 1
+    _report_adapter_rows(rows)
+    if args.dry_run:
+        print("dry-run: no adapter files were written")
     return 0
 
 
@@ -539,6 +570,19 @@ def build_parser() -> argparse.ArgumentParser:
     p_ia.add_argument("--root", default=".", help="project root to install into")
     p_ia.add_argument("--force", action="store_true", help="overwrite existing adapters")
     p_ia.set_defaults(func=_cmd_install_adapter)
+
+    p_as = sub.add_parser("adapter-status", help="report generated adapter freshness")
+    p_as.add_argument("agent", nargs="?", default="all",
+                      help=f"'all' or one of: {', '.join(install.TARGETS)}")
+    p_as.add_argument("--root", default=".", help="project root to inspect")
+    p_as.set_defaults(func=_cmd_adapter_status)
+
+    p_ua = sub.add_parser("update-adapter", help="safely update generated adapters")
+    p_ua.add_argument("agent", nargs="?", default="all",
+                      help=f"'all' or one of: {', '.join(install.TARGETS)}")
+    p_ua.add_argument("--root", default=".", help="project root to update")
+    p_ua.add_argument("--dry-run", action="store_true", help="show planned updates only")
+    p_ua.set_defaults(func=_cmd_update_adapter)
 
     return parser
 

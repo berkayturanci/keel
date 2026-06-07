@@ -223,6 +223,34 @@ validate skill frontmatter, check idempotent skip / `--force` overwrite behavior
 generated files for consumer-specific strings. PyPI release smoke tests can reuse the same
 `keel install-adapter all --root <tmp-project>` flow.
 
+Generated adapter files carry a trailing `keel-generated` marker with the surface, command,
+keel version, source hash, and generated-body hash. That marker powers the safe update flow:
+
+```bash
+keel adapter-status all --root <repo>
+keel update-adapter all --root <repo> --dry-run
+keel update-adapter all --root <repo>
+```
+
+`adapter-status` reports:
+
+| status | meaning |
+|---|---|
+| `current` | installed generated file matches the packaged source |
+| `outdated` | installed generated file is unchanged locally, but packaged source changed |
+| `missing` | expected generated file is absent |
+| `locally-modified` | generated file has a marker, but its body changed after install |
+| `unknown` | file exists without a keel generated marker |
+
+`update-adapter` updates only `missing` and `outdated` generated adapter files. It refuses to
+overwrite `locally-modified` or `unknown` files; those need a human merge. `--dry-run` prints
+the same planned changes as `would-update` rows without writing. Adapter updates never touch
+project-owned config, `.keel/extensions/*`, project-provided commands, or local compatibility
+wrappers unless those files are explicitly marked as generated keel adapter surfaces.
+
+Extension schema migrations are separate from adapter command updates and must be documented
+as their own versioned migration.
+
 ## Exit codes
 
 | code | meaning |
