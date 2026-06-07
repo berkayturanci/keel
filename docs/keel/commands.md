@@ -69,3 +69,6 @@ project. See [`configuration.md`](configuration.md) and [`extensions.md`](extens
 For the full boundary between keel core, project policy, project commands, runtime
 capabilities, and adapters, see
 [`consumer-neutrality.md`](consumer-neutrality.md).
+
+For migration status from legacy project commands to `/keel:<command>` workflows, see
+[`parity-matrix.md`](parity-matrix.md).

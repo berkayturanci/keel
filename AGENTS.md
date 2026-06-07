@@ -163,6 +163,7 @@ website/             static site + live coverage report (make site)
 - [`docs/keel/configuration.md`](docs/keel/configuration.md) — `project.yaml` reference
 - [`docs/keel/extensions.md`](docs/keel/extensions.md) — authoring Lego extensions
 - [`docs/keel/consumer-neutrality.md`](docs/keel/consumer-neutrality.md) — core vs project policy boundary
+- [`docs/keel/parity-matrix.md`](docs/keel/parity-matrix.md) — legacy-to-keel command parity status
 - [`docs/keel/cli.md`](docs/keel/cli.md) — CLI reference
 - [`docs/keel/github-actions.md`](docs/keel/github-actions.md) — run keel on GitHub's runner
 - [`docs/proposals/keel-architecture.md`](docs/proposals/keel-architecture.md) — full design
