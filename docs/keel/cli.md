@@ -23,7 +23,7 @@ keel validate projects/*.yaml                 # schema only
 keel validate .claude/project.yaml --root .   # schema + extensions (use in CI)
 ```
 
-## `keel plan <project.yaml> [--root DIR]`
+## `keel plan <project.yaml> [--root DIR] [--command COMMAND] [--json]`
 
 Render the backbone plan for a project: the fixed steps with the project's built-in gates
 and extensions slotted in. This is the dry-run view — what an actual run would execute.
@@ -35,7 +35,13 @@ built-in gates.
 ```bash
 keel plan .claude/project.yaml
 keel plan .claude/project.yaml --json
+keel plan .claude/project.yaml --command morning --json
 ```
+
+With `--json`, the output includes a structured command contract under `contract`: resolved
+project config, command step graph, backbone plan, gates, extension hooks, capability
+requirements/evaluation, selected GitHub transport, and declared side effects. See
+[`command-contracts.md`](command-contracts.md).
 
 Example output:
 
@@ -74,7 +80,7 @@ keel run-gates .keel/project.yaml --root .
 
 Exits non-zero if any gate blocks (so it can be wired straight into CI).
 
-## `keel capabilities [--root DIR] [--project project.yaml] [--for plan|run-gates|ship] [--json]`
+## `keel capabilities [--root DIR] [--project project.yaml] [--for COMMAND] [--json]`
 
 Print the runtime capability report for the current execution environment. With
 `--project`, keel also evaluates the selected command's required and optional capabilities
@@ -83,6 +89,7 @@ against that report.
 ```bash
 keel capabilities --root .
 keel capabilities --project .keel/project.yaml --for ship --root .
+keel capabilities --project .keel/project.yaml --for morning --root .
 keel capabilities --project .keel/project.yaml --for ship --json
 ```
 
@@ -105,7 +112,7 @@ keel window .keel/project.yaml
 # merge window OPEN  [Europe/Istanbul 07:00-01:30]
 ```
 
-## `keel ship <project.yaml> [--root DIR] [--pr N]`
+## `keel ship <project.yaml> [--root DIR] [--pr N] [--dry-run] [--json]`
 
 Run the **deterministic slice of a ship** against the current checkout and print the
 assessment: how many files changed vs. the base branch, the **risk tier** (→ reviewer
@@ -136,6 +143,10 @@ CI), so it can gate a runner before it attempts a real merge.
 
 `--hotfix` marks an emergency change so it may merge **outside** the merge window (an audit
 line is printed). It never bypasses failing gates, blocking findings, or failing CI.
+
+`--json` emits the structured command contract plus a deterministic `result` record for the
+dry assessment. `--dry-run` is accepted for adapter clarity; this CLI command is already
+non-mutating.
 
 ## `keel init [--root DIR] [--force]`
 

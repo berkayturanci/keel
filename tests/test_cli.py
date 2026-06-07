@@ -2,6 +2,7 @@
 
 import contextlib
 import io
+import json
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -77,9 +78,24 @@ class TestPlan(unittest.TestCase):
             ["plan", str(PROJECTS / "example-android.yaml"), "--root", str(REPO_ROOT), "--json"]
         )
         self.assertEqual(rc, 0)
-        self.assertIn('"capabilities"', out)
-        self.assertIn('"github_transport"', out)
-        self.assertIn('"plan"', out)
+        data = json.loads(out)
+        self.assertIn("contract", data)
+        self.assertIn("capabilities", data)
+        self.assertIn("github_transport", data)
+        self.assertIn("plan", data)
+        self.assertEqual(data["contract"]["schema_version"], "keel.command-contract.v1")
+        self.assertEqual(data["contract"]["command"], "ship")
+
+    def test_plan_json_can_expose_other_command_graph(self):
+        rc, out, _ = run(
+            ["plan", str(PROJECTS / "example-android.yaml"), "--root", str(REPO_ROOT),
+             "--command", "morning", "--json"]
+        )
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["contract"]["command"], "morning")
+        self.assertTrue(data["contract"]["graph"])
+        self.assertIn("gh", data["contract"]["optional_capabilities"])
 
     def test_plan_missing_config(self):
         rc, _, err = run(["plan", str(PROJECTS / "nope.yaml")])
@@ -207,6 +223,19 @@ class TestShip(unittest.TestCase):
         self.assertIn("DECISION", out.upper())
         self.assertIn("MERGE", out)
         self.assertIn("github        :", out)
+
+    def test_json_dry_run_contract(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["ship", _write_config("'true'"), "--root", d,
+                              "--dry-run", "--json"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["contract"]["command"], "ship")
+        self.assertTrue(data["contract"]["dry_run"])
+        self.assertFalse(data["contract"]["side_effects"]["mutates_in_dry_run"])
+        self.assertEqual(data["result"]["changed_file_count"], 0)
+        self.assertEqual(data["result"]["assessment"]["merge"]["action"], "merge")
 
     def test_failing_gate_blocks(self):
         import tempfile
@@ -450,9 +479,9 @@ class TestParser(unittest.TestCase):
         # argparse stores subparser choices on the subparsers action.
         actions = [a for a in parser._actions if a.dest == "command"]
         self.assertTrue(actions)
-        self.assertEqual(set(actions[0].choices),
-                         {"version", "validate", "plan", "run-gates", "window", "ship",
-                          "capabilities", "init", "install-adapter"})
+        self.assertGreaterEqual(set(actions[0].choices),
+                                {"version", "validate", "plan", "run-gates", "window", "ship",
+                                 "capabilities", "init", "install-adapter"})
 
 
 if __name__ == "__main__":

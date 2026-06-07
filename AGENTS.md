@@ -166,6 +166,7 @@ website/             static site + live coverage report (make site)
 - [`docs/keel/parity-matrix.md`](docs/keel/parity-matrix.md) — legacy-to-keel command parity status
 - [`docs/keel/runtime-capabilities.md`](docs/keel/runtime-capabilities.md) — runtime capability detection and requirements
 - [`docs/keel/github-transport.md`](docs/keel/github-transport.md) — GitHub transport selection contract
+- [`docs/keel/command-contracts.md`](docs/keel/command-contracts.md) — structured command plan/result contracts
 - [`docs/keel/cli.md`](docs/keel/cli.md) — CLI reference
 - [`docs/keel/github-actions.md`](docs/keel/github-actions.md) — run keel on GitHub's runner
 - [`docs/proposals/keel-architecture.md`](docs/proposals/keel-architecture.md) — full design

@@ -14,8 +14,8 @@ keel capabilities --root . --json
 keel capabilities --project .keel/project.yaml --for ship --root .
 ```
 
-The report is available in human-readable form and as JSON. JSON output is intended for
-adapters and future structured plan contracts.
+The report is available in human-readable form and as JSON. JSON output is also embedded in
+the structured command contracts described in [`command-contracts.md`](command-contracts.md).
 
 ## Built-in capability names
 

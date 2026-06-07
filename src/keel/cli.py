@@ -16,6 +16,7 @@ from pathlib import Path
 
 from . import (
     __version__,
+    contracts,
     gates,
     git,
     github,
@@ -95,12 +96,24 @@ def _cmd_plan(args: argparse.Namespace) -> int:
     except gates.GateError as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    requirement = _capability_requirement("plan", config, loaded)
+    requirement = _capability_requirement(args.command_contract, config, loaded)
     report = runtime.detect(args.root)
     evaluation = runtime.evaluate(requirement, report)
     transport = github_transport.resolve(report)
+    contract = contracts.build_command_contract(
+        command=args.command_contract,
+        config=config,
+        loaded=loaded,
+        plan=plan,
+        requirement=requirement,
+        evaluation=evaluation,
+        transport=transport,
+        extension_problems=tuple(problems),
+        dry_run=True,
+    )
     if args.json:
         print(json.dumps({
+            "contract": contract,
             "plan": orch.plan_as_dict(plan),
             "capabilities": evaluation.as_dict(),
             "github_transport": transport.as_dict(),
@@ -229,6 +242,29 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         is_blocker=args.hotfix,
     )
 
+    if args.json:
+        contract = contracts.build_command_contract(
+            command="ship",
+            config=config,
+            loaded=loaded,
+            plan=orch.build_plan(config, loaded),
+            requirement=requirement,
+            evaluation=evaluation,
+            transport=transport,
+            extension_problems=tuple(problems),
+            dry_run=True,
+        )
+        print(json.dumps({
+            "contract": contract,
+            "result": contracts.ship_result_as_dict(
+                changed_files=changed,
+                outcomes=outcomes,
+                verdict=verdict,
+                assessment=a,
+            ),
+        }, indent=2, sort_keys=True))
+        return 0 if a.merge.action != "block" else 1
+
     name = config.repo or config.extends
     print(f"keel ship — {name}  (base {config.base_branch})")
     print(f"  changed files : {len(changed)}")
@@ -352,11 +388,22 @@ def _capability_requirement(
     except gates.GateError:
         return req
 
-    if command in {"run-gates", "ship"} and any(s.kind == "command" for s in specs):
+    command_gate_commands = {
+        "run-gates", "ship", "ship-v2", "pr-loop", "wrap", "overnight", "implement",
+        "coverage", "deps-audit", "flake-audit",
+    }
+    if command in command_gate_commands and any(s.kind == "command" for s in specs):
         req = req.merged(runtime.CapabilityRequirement(required=("shell",)))
-    if command == "ship":
+    worktree_commands = {"ship", "ship-v2", "pr-loop", "wrap", "overnight", "implement"}
+    github_read_commands = {
+        "morning", "review-cycle", "triage", "stale-prs", "regression", "review-all-day",
+        "coverage", "deps-audit", "flake-audit", "ci-check",
+    }
+    if command in worktree_commands:
         req = req.merged(runtime.CapabilityRequirement(required=("git", "worktree"),
                                                        optional=("gh", "gh-auth")))
+    elif command in github_read_commands:
+        req = req.merged(runtime.CapabilityRequirement(optional=("gh", "gh-auth")))
     for spec in specs:
         if spec.required_capabilities or spec.optional_capabilities:
             req = req.merged(runtime.CapabilityRequirement(
@@ -383,6 +430,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_plan = sub.add_parser("plan", help="render the backbone plan for a project")
     p_plan.add_argument("path", help="path to project.yaml")
     p_plan.add_argument("--root", default=".", help="repo root for resolving extensions")
+    p_plan.add_argument("--command", dest="command_contract", default="ship",
+                        choices=contracts.available_commands(),
+                        help="adapter command contract to include in JSON output")
     p_plan.add_argument("--json", action="store_true", help="emit structured JSON")
     p_plan.set_defaults(func=_cmd_plan)
 
@@ -400,6 +450,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_ship.add_argument("--root", default=".", help="repo root for git, gates + extensions")
     p_ship.add_argument("--pr", type=int, default=None, help="PR number for CI status (gh)")
     p_ship.add_argument("--hotfix", action="store_true", help="emergency: bypass the merge window")
+    p_ship.add_argument("--dry-run", action="store_true",
+                        help="explicitly mark the assessment as non-mutating")
+    p_ship.add_argument("--json", action="store_true", help="emit structured JSON")
     p_ship.set_defaults(func=_cmd_ship)
 
     p_caps = sub.add_parser("capabilities", help="print runtime capability report")
@@ -407,7 +460,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_caps.add_argument("--project", dest="path", default=None,
                         help="optional project.yaml to evaluate requirements")
     p_caps.add_argument("--for", dest="for_command", default="ship",
-                        choices=("plan", "run-gates", "ship"),
+                        choices=("plan", "run-gates", *contracts.available_commands()),
                         help="command requirement to evaluate when --project is set")
     p_caps.add_argument("--pr", type=int, default=None,
                         help="PR number for ship capability requirements")
