@@ -17,6 +17,8 @@ describe what a command would do before an adapter starts mutating work.
 - `keel ci-check <project.yaml> --pr <number> --json`
 - `keel morning <project.yaml> --json`
 - `keel morning <project.yaml> --live --json`
+- `keel wrap <project.yaml> --json`
+- `keel overnight <project.yaml> --json`
 
 Human-readable output remains the default. JSON output is the adapter-facing contract.
 
@@ -43,6 +45,7 @@ Every contract includes:
 | `side_effects` | Declared possible live-run side effects and whether dry-run mutates. |
 | `operator_consent` | Operator consent requirement, approved mutation scopes, delegated-agent scope, and consent record metadata. |
 | `morning_contract` | Present for `morning`; project-neutral daily-brief sections, health providers, report destinations, priority sources, and deferral queue metadata. |
+| `session_contract` | Present for `wrap` and `overnight`; project-neutral linked-worktree, gate, PR, merge-window, report, deferral, and ship-handoff metadata. |
 
 Project command entries include name, local command path, description, agent role, path
 selectors, required/optional capabilities, side effects, dry-run safety, and source
@@ -95,6 +98,13 @@ Standalone commands also emit deterministic result records:
   and the shared deferral queue. It does not run project health commands or write reports
   in dry-run output. Missing optional provider capabilities are reported as
   `unavailable`, not as a successful empty health section.
+- `wrap` shows linked-worktree and base-branch guards, configured gate source, commit and
+  ready-PR conventions, session recap destination, and the shared deferral queue. It does
+  not run gates, commit, push, open a PR, or write reports in dry-run output.
+- `overnight` shows merge-window mode sourced from `keel window`, no-night-merge policy,
+  ship handoff, priority queue shape, session or morning report destinations, stop
+  conditions, and the shared deferral queue. It does not spawn ship runs, create PRs,
+  merge, or write reports in dry-run output.
 
 ## Workflow profiles
 
@@ -129,6 +139,13 @@ Standalone direct-use commands use first-class profiles too:
 - `morning` uses `workflow_profile.profile: "daily-brief"`. Its shared primitives include
   date/window handling, the deferral queue, shipped-since-last-brief and GitHub summaries,
   project health providers, priority sources, ranked focus, and report output.
+- `wrap` uses `workflow_profile.profile: "session-wrap"`. Its shared primitives include
+  linked-worktree and base-branch preflights, configured gates, conventional commits, ready
+  PR creation, session recap, the deferral queue, and operator consent.
+- `overnight` uses `workflow_profile.profile: "session-overnight"` and inherits `ship`.
+  Its shared primitives include merge-window handling, ship handoff, priority queue,
+  per-issue worktrees, no-night-merge policy, blocker policy, session reports, the
+  deferral queue, stop conditions, and operator consent.
 
 ## Adapter rules
 

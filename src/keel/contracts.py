@@ -157,6 +157,12 @@ def build_command_contract(
             evaluation=evaluation,
             transport=transport,
         )
+    if command in {"wrap", "overnight"}:
+        contract["session_contract"] = session_contract_as_dict(
+            command=command,
+            config=config,
+            transport=transport,
+        )
     if command in {"ship", "ship-v2", "pr-loop", "review-cycle", "overnight"}:
         contract["review_merge_contract"] = ship_decisions.resolve_review_contract(
             tier=review_tier,
@@ -220,6 +226,44 @@ def workflow_profile(command: str) -> dict[str, Any]:
                 "priority_sources",
                 "ranked_focus",
                 "report_output",
+            ],
+            "step_overrides": {},
+        }
+    if command == "wrap":
+        return {
+            "name": "wrap",
+            "profile": "session-wrap",
+            "inherits": None,
+            "first_class_variant": True,
+            "shared_primitives": [
+                "linked_worktree_preflight",
+                "base_branch_guard",
+                "configured_gates",
+                "conventional_commit",
+                "ready_pr_create",
+                "session_recap",
+                "deferral_queue",
+                "operator_consent",
+            ],
+            "step_overrides": {},
+        }
+    if command == "overnight":
+        return {
+            "name": "overnight",
+            "profile": "session-overnight",
+            "inherits": "ship",
+            "first_class_variant": True,
+            "shared_primitives": [
+                "merge_window",
+                "ship_handoff",
+                "priority_queue",
+                "per_issue_worktree",
+                "no_night_merge",
+                "blocker_policy",
+                "session_report",
+                "deferral_queue",
+                "stop_conditions",
+                "operator_consent",
             ],
             "step_overrides": {},
         }
@@ -491,7 +535,124 @@ def standalone_result_as_dict(
                 "live_work_owner": "adapter-or-extension-after-consent",
             },
         }
+    if command in {"wrap", "overnight"}:
+        return {
+            "command": command,
+            "target": target,
+            "base_branch": config.base_branch,
+            "session": session_contract_as_dict(
+                command=command,
+                config=config,
+                transport=transport,
+            ),
+            "execution": {
+                "runs_gates": False,
+                "creates_prs": False,
+                "merges": False,
+                "writes_reports": False,
+                "live_work_owner": "adapter-after-consent",
+            },
+        }
     return {"command": command, "target": target}
+
+
+def session_contract_as_dict(
+    *,
+    command: str,
+    config: cfg.ProjectConfig,
+    transport: github_transport.GitHubTransport | None = None,
+) -> dict[str, Any]:
+    """Project-neutral session workflow contract for ``wrap`` and ``overnight``."""
+    pack = config.policy_pack or {}
+    reports = pack.get("reports") if isinstance(pack.get("reports"), dict) else {}
+    github = transport.as_dict() if transport is not None else {}
+    base = {
+        "timezone": config.timezone,
+        "merge_window": config.merge_window,
+        "merge_window_mode": config.merge_window_mode,
+        "base_branch": config.base_branch,
+        "github_transport": github,
+        "reports": _report_destinations(reports),
+        "deferral_queue": _deferral_queue_as_dict(reports),
+        "project_policy_sources": {
+            "gates": list(config.gates),
+            "extensions": {slot: list(files) for slot, files in sorted(config.extensions.items())},
+            "risk_rules": [rule.get("id") for rule in pack.get("risk_rules", [])
+                           if isinstance(rule, dict)],
+            "source_of_truth_doc": config.knobs.sot_doc,
+        },
+    }
+    if command == "wrap":
+        base["wrap"] = {
+            "workspace_preflight": {
+                "must_run_from_linked_worktree": True,
+                "abort_on_base_branch": True,
+                "git_dir_rule": "main worktree returns .git; linked worktree uses .git/worktrees",
+            },
+            "quality_gates": {
+                "runner": "keel run-gates",
+                "changed_file_policy_source": "policy_pack + extension hooks",
+            },
+            "commit": {
+                "format": "conventional-commits",
+                "supports_closes_issue": True,
+            },
+            "pull_request": {
+                "ready_not_draft": True,
+                "base_branch": config.base_branch,
+                "requires_pr_write": True,
+                "body_sections": ["Summary", "Docs Impact", "Test Plan"],
+            },
+            "recap": {
+                "report_key": "session",
+                "path": reports.get("session") or reports.get("wrap"),
+                "status": "configured" if reports.get("session") or reports.get("wrap")
+                else "unconfigured",
+            },
+        }
+    elif command == "overnight":
+        base["overnight"] = {
+            "mode_source": {
+                "command": "keel window",
+                "shared_with_ship": True,
+                "timezone": config.timezone,
+                "merge_window": config.merge_window,
+            },
+            "merge_policy": {
+                "day": "ship may merge reviewed CI-green PRs inside the configured window",
+                "night": "no merge outside the configured window except true blockers",
+                "blocker_source": "ship blocker heuristics + project policy extensions",
+                "cannot_weaken_core_window": True,
+            },
+            "queue": {
+                "source": "project policy or adapter query",
+                "tiers": ["T0-blocker", "T1-open-prs", "T2-coverage", "T3-ci-quality",
+                          "T4-modernization", "T5-docs-backlog"],
+            },
+            "ship_handoff": {
+                "command": "ship",
+                "passes_operator_consent_scope": True,
+                "per_issue_worktree": True,
+            },
+            "report": {
+                "night_key": "overnight",
+                "day_key": "session",
+                "night_path": reports.get("overnight") or reports.get("morning"),
+                "day_path": reports.get("session"),
+                "status": "configured" if any(
+                    reports.get(key) for key in ("overnight", "morning", "session")
+                ) else "unconfigured",
+            },
+            "stop_conditions": [
+                "merge-window-close",
+                "time-budget-exhausted",
+                "max-items-reached",
+                "hard-blocker",
+                "three-consecutive-unresolved-ci-failures",
+                "user-cancelled",
+            ],
+        }
+    return base
 
 
 def morning_contract_as_dict(
@@ -546,19 +707,8 @@ def morning_contract_as_dict(
             if isinstance(provider, dict)
         ],
         "priority_sources": _priority_sources(config, reports),
-        "reports": {
-            key: {
-                "path": value,
-                "write_status": "skipped-in-dry-run",
-            }
-            for key, value in sorted(reports.items())
-        },
-        "deferral_queue": {
-            "source": "policy_pack.reports.deferrals",
-            "path": reports.get("deferrals"),
-            "status": "configured" if reports.get("deferrals") else "unconfigured",
-            "shared_with": ["ship", "overnight", "wrap"],
-        },
+        "reports": _report_destinations(reports),
+        "deferral_queue": _deferral_queue_as_dict(reports),
         "missing_optional_policy": "unavailable-not-success",
     }
 
@@ -611,6 +761,25 @@ def _priority_sources(config: cfg.ProjectConfig, reports: dict[str, Any]) -> lis
     if config.knobs.ci_workflows:
         sources.append({"id": "ci_workflows", "names": sorted(config.knobs.ci_workflows)})
     return sources
+
+
+def _report_destinations(reports: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {
+        key: {
+            "path": value,
+            "write_status": "skipped-in-dry-run",
+        }
+        for key, value in sorted(reports.items())
+    }
+
+
+def _deferral_queue_as_dict(reports: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "source": "policy_pack.reports.deferrals",
+        "path": reports.get("deferrals"),
+        "status": "configured" if reports.get("deferrals") else "unconfigured",
+        "shared_with": ["ship", "overnight", "wrap", "morning"],
+    }
 
 
 def _target_identifier(target: str | None) -> str:

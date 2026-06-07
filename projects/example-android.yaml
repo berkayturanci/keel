@@ -119,6 +119,9 @@ policy_pack:
       dry_run_safe: false
   reports:
     regression: "reports/regression/"
+    session: "reports/session/"
+    overnight: "reports/overnight/"
+    deferrals: "reports/deferrals.md"
   review:
     additions: ["Apply extra scrutiny to local data and payment-flow changes."]
     required_sections: ["Testing", "Docs Impact"]

@@ -409,6 +409,8 @@ def _cmd_standalone(args: argparse.Namespace) -> int:
         approved_consent_scopes=approved_scopes,
         operator=getattr(args, "operator", None),
         target=target,
+        reviewer_override=getattr(args, "reviewers", None),
+        review_comments=getattr(args, "review_comments", "inline"),
     )
     consent_ok, consent_message = consent.assert_operator_consent(contract["operator_consent"])
     result = contracts.standalone_result_as_dict(
@@ -458,6 +460,21 @@ def _cmd_standalone(args: argparse.Namespace) -> int:
         if unavailable:
             print(f"  unavailable   : {', '.join(unavailable)}")
         print(f"  deferrals     : {brief['deferral_queue']['status']}")
+    elif command in {"wrap", "overnight"}:
+        session = result["session"]
+        report_names = ", ".join(session["reports"]) or "not configured"
+        print(f"  reports       : {report_names}")
+        print(f"  deferrals     : {session['deferral_queue']['status']}")
+        if command == "wrap":
+            linked_required = (
+                session["wrap"]["workspace_preflight"]["must_run_from_linked_worktree"]
+            )
+            print(f"  worktree      : linked required={linked_required}")
+            print("  pr            : ready PR after configured gates")
+        else:
+            print(f"  window        : {session['merge_window'] or 'not configured'}")
+            print(f"  mode source   : {session['overnight']['mode_source']['command']}")
+            print("  merge policy  : ship window + no-night-merge")
     mode = "live preflight contract" if getattr(args, "live", False) else "dry-run contract"
     print(f"  note          : {mode}; adapters perform any approved live work.")
     return 0
@@ -474,6 +491,12 @@ def _standalone_target(args: argparse.Namespace) -> str | None:
         extra = getattr(args, "target", None)
         target = f"since {args.since}"
         return f"{target} ({extra})" if extra else target
+    if getattr(args, "title", None) is not None:
+        return args.title
+    if getattr(args, "hours", None) is not None:
+        target = f"{args.hours:g}h session"
+        max_items = getattr(args, "max_items", None)
+        return f"{target} (max {max_items})" if max_items is not None else target
     return getattr(args, "target", None)
 
 
@@ -811,6 +834,56 @@ def build_parser() -> argparse.ArgumentParser:
                            help="operator identifier to include in an approved consent record")
     p_morning.add_argument("--json", action="store_true", help="emit structured JSON")
     p_morning.set_defaults(func=_cmd_standalone, standalone_command="morning")
+
+    p_wrap = sub.add_parser(
+        "wrap",
+        help="standalone session-wrap preflight contract",
+    )
+    p_wrap.add_argument("path", help="path to project.yaml")
+    p_wrap.add_argument("title", nargs="?", default=None,
+                        help="optional PR title override to include in the contract")
+    p_wrap.add_argument("--root", default=".", help="repo root for git and capability checks")
+    p_wrap.add_argument("--since", default=None,
+                        help="optional session start label or timestamp")
+    p_wrap.add_argument("--target", default=None,
+                        help="target text to include in the wrap contract")
+    p_wrap.add_argument("--dry-run", action="store_true",
+                        help="explicitly mark the assessment as non-mutating")
+    p_wrap.add_argument("--live", action="store_true",
+                        help="render a live preflight and fail if consent is missing")
+    p_wrap.add_argument("--approve-scope", action="append", default=[],
+                        help="approve a consent scope for this run; repeat or comma-separate")
+    p_wrap.add_argument("--operator", default=None,
+                        help="operator identifier to include in an approved consent record")
+    p_wrap.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_wrap.set_defaults(func=_cmd_standalone, standalone_command="wrap")
+
+    p_overnight = sub.add_parser(
+        "overnight",
+        help="standalone overnight-session preflight contract",
+    )
+    p_overnight.add_argument("path", help="path to project.yaml")
+    p_overnight.add_argument("hours", nargs="?", type=float, default=None,
+                             help="optional time budget in hours")
+    p_overnight.add_argument("--root", default=".", help="repo root for git and capability checks")
+    p_overnight.add_argument("--max", dest="max_items", type=_positive_int, default=None,
+                             help="maximum issues to attempt in this session")
+    p_overnight.add_argument("--review-comments", choices=("inline", "summary"), default="inline",
+                             help="review posting mode to pass through ship handoffs")
+    p_overnight.add_argument("--reviewers", type=int, choices=(1, 2, 3), default=None,
+                             help="reviewer override for ship handoff contracts")
+    p_overnight.add_argument("--target", default=None,
+                             help="target text to include in the overnight contract")
+    p_overnight.add_argument("--dry-run", action="store_true",
+                             help="explicitly mark the assessment as non-mutating")
+    p_overnight.add_argument("--live", action="store_true",
+                             help="render a live preflight and fail if consent is missing")
+    p_overnight.add_argument("--approve-scope", action="append", default=[],
+                             help="approve a consent scope for this run; repeat or comma-separate")
+    p_overnight.add_argument("--operator", default=None,
+                             help="operator identifier to include in an approved consent record")
+    p_overnight.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_overnight.set_defaults(func=_cmd_standalone, standalone_command="overnight")
 
     p_caps = sub.add_parser("capabilities", help="print runtime capability report")
     p_caps.add_argument("--root", default=".", help="repo root for capability checks")

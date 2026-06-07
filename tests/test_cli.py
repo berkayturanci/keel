@@ -563,6 +563,58 @@ class TestStandaloneCommands(unittest.TestCase):
         requirement = cli._morning_capability_requirement(config)
         self.assertEqual(requirement.required, ("firebase",))
 
+    def test_wrap_json_contract_surfaces_session_reports_and_worktree_guard(self):
+        import tempfile
+        fake_report = runtime.CapabilityReport((
+            runtime.Capability("shell", True, "ok", "test"),
+            runtime.Capability("git", True, "ok", "test"),
+            runtime.Capability("worktree", True, "ok", "test"),
+            runtime.Capability("gh", False, "missing", "test"),
+            runtime.Capability("gh-auth", False, "missing", "test"),
+        ))
+        with tempfile.TemporaryDirectory() as d, patch("keel.cli.runtime.detect",
+                                                       return_value=fake_report):
+            rc, out, _ = run(["wrap", str(PROJECTS / "example-flutter.yaml"),
+                              "feat: finish session", "--root", d, "--json"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["contract"]["command"], "wrap")
+        self.assertEqual(data["contract"]["workflow_profile"]["profile"], "session-wrap")
+        self.assertEqual(data["result"]["target"], "feat: finish session")
+        self.assertTrue(
+            data["result"]["session"]["wrap"]["workspace_preflight"]
+            ["must_run_from_linked_worktree"]
+        )
+        self.assertFalse(data["result"]["execution"]["creates_prs"])
+
+    def test_overnight_json_contract_uses_ship_window_and_handoff(self):
+        import tempfile
+        fake_report = runtime.CapabilityReport((
+            runtime.Capability("shell", True, "ok", "test"),
+            runtime.Capability("git", True, "ok", "test"),
+            runtime.Capability("worktree", True, "ok", "test"),
+            runtime.Capability("gh", False, "missing", "test"),
+            runtime.Capability("gh-auth", False, "missing", "test"),
+        ))
+        with tempfile.TemporaryDirectory() as d, patch("keel.cli.runtime.detect",
+                                                       return_value=fake_report):
+            rc, out, _ = run(["overnight", str(PROJECTS / "example-flutter.yaml"),
+                              "6", "--max", "3", "--root", d, "--review-comments",
+                              "summary", "--json"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["contract"]["command"], "overnight")
+        self.assertEqual(data["contract"]["workflow_profile"]["profile"], "session-overnight")
+        self.assertEqual(data["result"]["target"], "6h session (max 3)")
+        self.assertTrue(
+            data["result"]["session"]["overnight"]["mode_source"]["shared_with_ship"]
+        )
+        self.assertTrue(
+            data["result"]["session"]["overnight"]["ship_handoff"]
+            ["passes_operator_consent_scope"]
+        )
+        self.assertFalse(data["result"]["execution"]["merges"])
+
     def test_standalone_commands_reject_non_positive_targets(self):
         with self.assertRaises(SystemExit) as raised:
             run(["implement", _write_config("'true'"), "0"])
@@ -692,6 +744,30 @@ class TestStandaloneCommands(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("health", out)
         self.assertNotIn("unavailable   :", out)
+
+    def test_wrap_and_overnight_human_output(self):
+        import tempfile
+        fake_report = runtime.CapabilityReport((
+            runtime.Capability("shell", True, "ok", "test"),
+            runtime.Capability("git", True, "ok", "test"),
+            runtime.Capability("worktree", True, "ok", "test"),
+            runtime.Capability("gh", False, "missing", "test"),
+            runtime.Capability("gh-auth", False, "missing", "test"),
+        ))
+        with tempfile.TemporaryDirectory() as d, patch("keel.cli.runtime.detect",
+                                                       return_value=fake_report):
+            rc, wrap_out, _ = run(["wrap", str(PROJECTS / "example-flutter.yaml"),
+                                   "--root", d])
+            rc2, overnight_out, _ = run(["overnight", str(PROJECTS / "example-flutter.yaml"),
+                                         "2", "--root", d])
+        self.assertEqual(rc, 0)
+        self.assertEqual(rc2, 0)
+        self.assertIn("keel wrap", wrap_out)
+        self.assertIn("linked required=True", wrap_out)
+        self.assertIn("ready PR", wrap_out)
+        self.assertIn("keel overnight", overnight_out)
+        self.assertIn("mode source", overnight_out)
+        self.assertIn("no-night-merge", overnight_out)
 
     def test_standalone_human_output_for_unknown_adapter_profile_falls_through(self):
         import tempfile
@@ -932,7 +1008,7 @@ class TestParser(unittest.TestCase):
         self.assertGreaterEqual(set(actions[0].choices),
                                 {"version", "validate", "plan", "run-gates", "window", "ship",
                                  "ship-v2", "implement", "ci-check", "morning", "capabilities",
-                                 "init",
+                                 "wrap", "overnight", "init",
                                  "install-adapter",
                                  "adapter-status", "update-adapter", "project-commands"})
 

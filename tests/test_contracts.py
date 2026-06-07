@@ -227,6 +227,44 @@ class TestBuildCommandContract(unittest.TestCase):
         self.assertIn("health_providers", morning["workflow_profile"]["shared_primitives"])
         self.assertIn("morning_contract", morning)
 
+        wrap = contracts.build_command_contract(
+            command="wrap",
+            config=config,
+            loaded=loaded,
+            plan=plan,
+            requirement=runtime.CapabilityRequirement(required=("git", "worktree")),
+            evaluation=runtime.evaluate(
+                runtime.CapabilityRequirement(required=("git", "worktree")),
+                runtime.CapabilityReport((
+                    runtime.Capability("git", True, "ok", "test"),
+                    runtime.Capability("worktree", True, "ok", "test"),
+                )),
+            ),
+            transport=github_transport.resolve(report),
+        )
+        self.assertEqual(wrap["workflow_profile"]["profile"], "session-wrap")
+        self.assertTrue(wrap["workflow_profile"]["first_class_variant"])
+        self.assertIn("session_contract", wrap)
+
+        overnight = contracts.build_command_contract(
+            command="overnight",
+            config=config,
+            loaded=loaded,
+            plan=plan,
+            requirement=runtime.CapabilityRequirement(required=("git", "worktree")),
+            evaluation=runtime.evaluate(
+                runtime.CapabilityRequirement(required=("git", "worktree")),
+                runtime.CapabilityReport((
+                    runtime.Capability("git", True, "ok", "test"),
+                    runtime.Capability("worktree", True, "ok", "test"),
+                )),
+            ),
+            transport=github_transport.resolve(report),
+        )
+        self.assertEqual(overnight["workflow_profile"]["profile"], "session-overnight")
+        self.assertEqual(overnight["workflow_profile"]["inherits"], "ship")
+        self.assertIn("review_merge_contract", overnight)
+
     def test_standalone_result_records_are_deterministic(self):
         config = cfg.load_config(PROJECTS / "example-android.yaml")
         transport = github_transport.resolve(runtime.CapabilityReport(()))
@@ -270,8 +308,33 @@ class TestBuildCommandContract(unittest.TestCase):
             morning["brief"]["health_providers"][0]["missing_optional_capabilities"],
             ["shell"],
         )
-        self.assertEqual(morning["brief"]["deferral_queue"]["status"], "unconfigured")
+        self.assertEqual(morning["brief"]["deferral_queue"]["status"], "configured")
         self.assertFalse(morning["execution"]["runs_project_health_commands"])
+
+        wrap = contracts.standalone_result_as_dict(
+            command="wrap",
+            config=config,
+            target="PR title",
+            transport=transport,
+        )
+        self.assertEqual(wrap["session"]["wrap"]["pull_request"]["base_branch"],
+                         config.base_branch)
+        self.assertTrue(
+            wrap["session"]["wrap"]["workspace_preflight"]["must_run_from_linked_worktree"]
+        )
+        self.assertFalse(wrap["execution"]["creates_prs"])
+
+        overnight = contracts.standalone_result_as_dict(
+            command="overnight",
+            config=config,
+            target="8h session",
+            transport=transport,
+        )
+        self.assertTrue(overnight["session"]["overnight"]["mode_source"]["shared_with_ship"])
+        self.assertTrue(
+            overnight["session"]["overnight"]["ship_handoff"]["passes_operator_consent_scope"]
+        )
+        self.assertFalse(overnight["execution"]["merges"])
 
         default_target = contracts.standalone_result_as_dict(
             command="implement",
@@ -377,6 +440,43 @@ class TestBuildCommandContract(unittest.TestCase):
             for provider in no_capability_check["health_providers"]
         }
         self.assertEqual(providers["required-down"]["missing_required_capabilities"], [])
+
+    def test_session_contract_uses_project_reports_and_deferrals(self):
+        config = cfg.ProjectConfig(
+            extends="keel",
+            core_version="^0.1",
+            base_branch="main",
+            repo="edge",
+            timezone="Europe/Istanbul",
+            merge_window="07:00-01:30",
+            knobs=cfg.Knobs(build_gate_cmd="true", sot_doc="AGENTS.md"),
+            policy_pack={
+                "name": "edge",
+                "risk_rules": [{"id": "release-risk", "paths": ["release/**"]}],
+                "reports": {
+                    "session": "reports/session/",
+                    "overnight": "reports/overnight/",
+                    "deferrals": "reports/deferrals.md",
+                },
+            },
+        )
+
+        wrap = contracts.session_contract_as_dict(command="wrap", config=config)
+        overnight = contracts.session_contract_as_dict(command="overnight", config=config)
+
+        self.assertEqual(wrap["reports"]["session"]["path"], "reports/session/")
+        self.assertEqual(wrap["deferral_queue"]["status"], "configured")
+        self.assertEqual(wrap["wrap"]["recap"]["path"], "reports/session/")
+        self.assertEqual(overnight["overnight"]["report"]["night_path"],
+                         "reports/overnight/")
+        self.assertIn("release-risk", overnight["project_policy_sources"]["risk_rules"])
+        self.assertIn("three-consecutive-unresolved-ci-failures",
+                      overnight["overnight"]["stop_conditions"])
+
+        base_only = contracts.session_contract_as_dict(command="other", config=config)
+        self.assertIn("reports", base_only)
+        self.assertNotIn("wrap", base_only)
+        self.assertNotIn("overnight", base_only)
 
     def test_project_command_contract_has_graph_capabilities_and_side_effects(self):
         config = cfg.load_config(PROJECTS / "example-android.yaml")

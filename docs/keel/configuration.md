@@ -73,6 +73,10 @@ marks that provider `unavailable` instead of treating the missing signal as succ
 `reports` can declare destinations such as `morning`, `priorities`, or `deferrals`; the
 `deferrals` entry is the shared queue contract surfaced by ship, overnight, wrap, and
 morning adapters.
+`wrap` reads `session` or `wrap` report destinations for recap output. `overnight` reads
+`overnight`, `morning`, and `session` destinations to choose the night report or day
+session report path. Missing report destinations degrade as unconfigured in preflight
+output; core does not invent project-specific paths.
 
 `project_commands` is the preferred place to preserve local commands that keel should not
 own. Keel can list them, include them in structured command contracts, and evaluate their

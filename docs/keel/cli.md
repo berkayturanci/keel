@@ -71,6 +71,39 @@ health-provider capabilities are shown as unavailable/degraded, not as a success
 health section. Live mode is only a preflight contract; adapters perform approved report
 writes or provider execution after checking consent.
 
+## `keel wrap <project.yaml> [TITLE] [--root DIR] [--since WHEN] [--live] [--approve-scope SCOPE] [--operator ID] [--json]`
+
+Render the standalone session-wrap contract. The core owns the generic session closeout
+shape: linked-worktree and base-branch guards, configured gate source, Conventional Commit
+and `Closes #N` conventions, ready PR creation requirements, session recap destination,
+and the shared deferral queue. Project-specific changed-file gates and recap destinations
+stay in policy packs and extensions.
+
+```bash
+keel wrap .keel/project.yaml --json
+keel wrap .keel/project.yaml "feat: finish queue contract" --live --approve-scope filesystem,git,github --operator "$USER" --json
+```
+
+Dry-run mode never runs gates, commits, pushes, opens PRs, or writes reports. Live mode is
+only a preflight contract; adapters perform approved session closeout work after checking
+consent and GitHub transport support.
+
+## `keel overnight <project.yaml> [hours] [--max N] [--review-comments inline|summary] [--live] [--approve-scope SCOPE] [--operator ID] [--json]`
+
+Render the standalone overnight-session contract. The core owns the generic unattended
+session shape: merge-window mode from `keel window`, ship handoff, per-issue worktree
+isolation, no-night-merge policy, blocker policy boundary, priority queue shape, session
+or morning report destinations, stop conditions, and the shared deferral queue.
+
+```bash
+keel overnight .keel/project.yaml 8 --max 3 --json
+keel overnight .keel/project.yaml --live --approve-scope filesystem,git,github --operator "$USER" --json
+```
+
+Dry-run mode never spawns ship runs, creates PRs, merges, or writes reports. Live mode is
+only a preflight contract; adapters hand approved consent scope to ship/implementer
+delegates and keep merge-window enforcement shared with `keel ship`.
+
 Example output:
 
 ```

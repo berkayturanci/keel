@@ -78,6 +78,9 @@ policy_pack:
       dry_run_safe: true
   reports:
     morning: "reports/morning/"
+    session: "reports/session/"
+    overnight: "reports/overnight/"
+    deferrals: "reports/deferrals.md"
   review:
     additions: ["Check design-parity extension evidence for user-visible changes."]
     required_sections: ["Testing", "Docs Impact"]
