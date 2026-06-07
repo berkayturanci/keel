@@ -104,6 +104,42 @@ Dry-run mode never spawns ship runs, creates PRs, merges, or writes reports. Liv
 only a preflight contract; adapters hand approved consent scope to ship/implementer
 delegates and keep merge-window enforcement shared with `keel ship`.
 
+## `keel regression <project.yaml> [--scope full|changed|since] [--since REF] [--live] [--approve-scope SCOPE] [--operator ID] [--json]`
+
+Render the standalone scan-and-file regression contract. The core owns the generic scan
+shape: canonical base scan target, clean-tree preflight, read-only worktree requirement,
+area fan-out source, confidence filtering, issue dedupe, issue-create lock, ship handoff,
+and final report sections. Project-specific areas, labels, branch patterns, and thresholds
+stay in `policy_pack.scan`.
+
+```bash
+keel regression .keel/project.yaml --scope full --json
+keel regression .keel/project.yaml --scope since --since origin/main --json
+keel regression .keel/project.yaml --live --approve-scope filesystem,git,github --operator "$USER" --json
+```
+
+Dry-run mode never opens issues, edits code, pushes, or merges. Live mode is only a
+preflight contract; adapters perform approved issue creation after checking consent and
+GitHub transport support.
+
+## `keel review-all-day <project.yaml> [days] [--live] [--approve-scope SCOPE] [--operator ID] [--json]`
+
+Render the standalone time-window scan-and-file contract. The core owns the generic
+time-window scan shape: merge-window timezone inputs, trunk plus active work branch scope,
+remote-ref default, batch/fan-out threshold, file-boundary diff truncation, serious-finding
+filter, exact issue title prefix, issue creation, and final report sections. Project-specific
+active branch patterns, labels, and thresholds stay in `policy_pack.scan`.
+
+```bash
+keel review-all-day .keel/project.yaml --json
+keel review-all-day .keel/project.yaml 7 --json
+keel review-all-day .keel/project.yaml 1 --live --approve-scope github --operator "$USER" --json
+```
+
+Dry-run mode never opens issues, pushes, edits code, comments on PRs, or merges. Live mode
+is only a preflight contract; adapters perform approved issue creation after checking
+consent and GitHub transport support.
+
 Example output:
 
 ```

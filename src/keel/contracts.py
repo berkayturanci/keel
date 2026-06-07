@@ -51,8 +51,8 @@ _BASE_SIDE_EFFECTS: dict[str, tuple[str, ...]] = {
     "ci-check": ("check_runs",),
     "triage": ("labels", "comments"),
     "stale-prs": ("comments", "git_checkout", "git_push"),
-    "regression": ("git_worktree", "issue_write", "comments"),
-    "review-all-day": ("git_checkout", "issue_write", "comments"),
+    "regression": ("git_worktree", "issue_write", "labels"),
+    "review-all-day": ("issue_write", "labels"),
     "coverage": ("git_worktree", "git_checkout", "comments", "labels", "issue_write"),
     "deps-audit": ("comments", "issue_write"),
     "flake-audit": ("issue_write", "comments"),
@@ -220,6 +220,12 @@ def build_command_contract(
         )
     if command in {"wrap", "overnight"}:
         contract["session_contract"] = session_contract_as_dict(
+            command=command,
+            config=config,
+            transport=transport,
+        )
+    if command in {"regression", "review-all-day"}:
+        contract["scan_contract"] = scan_contract_as_dict(
             command=command,
             config=config,
             transport=transport,
@@ -416,6 +422,49 @@ def workflow_profile(command: str) -> dict[str, Any]:
                     "reason": "durable-learning capture",
                 },
             },
+        }
+    if command == "regression":
+        return {
+            "name": "regression",
+            "profile": "scan-and-file",
+            "inherits": None,
+            "first_class_variant": True,
+            "shared_primitives": [
+                "canonical_base_scan",
+                "clean_tree_preflight",
+                "read_only_worktree",
+                "area_fanout",
+                "reviewer_isolation",
+                "confidence_filter",
+                "dedupe",
+                "issue_lock",
+                "issue_create",
+                "ship_handoff",
+                "final_report",
+                "operator_consent",
+            ],
+            "step_overrides": {},
+        }
+    if command == "review-all-day":
+        return {
+            "name": "review-all-day",
+            "profile": "time-window-scan",
+            "inherits": None,
+            "first_class_variant": True,
+            "shared_primitives": [
+                "merge_window_span",
+                "remote_ref_scope",
+                "batch_or_fanout",
+                "reviewer_isolation",
+                "diff_truncation",
+                "finding_filter",
+                "dedupe",
+                "issue_prefix",
+                "issue_create",
+                "final_report",
+                "operator_consent",
+            ],
+            "step_overrides": {},
         }
     if command == "ship":
         return {
@@ -675,6 +724,24 @@ def standalone_result_as_dict(
                 "live_work_owner": "adapter-after-consent",
             },
         }
+    if command in {"regression", "review-all-day"}:
+        return {
+            "command": command,
+            "target": target,
+            "base_branch": config.base_branch,
+            "scan": scan_contract_as_dict(
+                command=command,
+                config=config,
+                transport=transport,
+            ),
+            "execution": {
+                "edits_code": False,
+                "pushes": False,
+                "merges": False,
+                "writes_issues": False,
+                "live_work_owner": "adapter-after-consent",
+            },
+        }
     return {"command": command, "target": target}
 
 
@@ -683,6 +750,142 @@ def feedback_workflow_as_dict(config: cfg.ProjectConfig, command: str) -> dict[s
     defaults = _DEFAULT_FEEDBACK_WORKFLOWS.get(command, {})
     policy = _feedback_workflow_policy(config).get(command, {})
     return _deep_merge(defaults, policy)
+
+
+def scan_contract_as_dict(
+    *,
+    command: str,
+    config: cfg.ProjectConfig,
+    transport: github_transport.GitHubTransport | None = None,
+) -> dict[str, Any]:
+    """Project-neutral scan-and-file contract for regression and review-all-day."""
+    pack = config.policy_pack or {}
+    reports = pack.get("reports") if isinstance(pack.get("reports"), dict) else {}
+    scan = pack.get("scan") if isinstance(pack.get("scan"), dict) else {}
+    areas = scan.get("areas") if isinstance(scan.get("areas"), dict) else {}
+    issue_labels = scan.get("issue_labels") if isinstance(scan.get("issue_labels"), dict) else {}
+    github = transport.as_dict() if transport is not None else {}
+    base = {
+        "timezone": config.timezone,
+        "merge_window": config.merge_window,
+        "base_branch": config.base_branch,
+        "github_transport": github,
+        "reports": _report_destinations(reports),
+        "project_policy_sources": {
+            "scan": "policy_pack.scan",
+            "areas": "policy_pack.scan.areas",
+            "active_branch_patterns": "policy_pack.scan.active_branch_patterns",
+            "risk_globs": "knobs.tier3_globs",
+            "labels": "policy_pack.labels + policy_pack.scan.issue_labels",
+            "ci_workflows": "knobs.ci_workflows",
+        },
+        "write_safety": {
+            "dry_run_no_writes": True,
+            "orchestrator_only_writes": True,
+            "code_mutation": False,
+            "pr_mutation": False,
+            "issue_write_requires_consent": True,
+        },
+        "dedupe": {
+            "source": "policy_pack.scan.dedupe + canonical defaults",
+            "path_token_boundary": True,
+            "type_must_match": True,
+            "near_text_similarity": _scan_float(scan, "near_text_similarity", 0.6),
+            "open_duplicate": "skip",
+            "closed_duplicate": "promote-regression-of",
+            "lock": "mkdir",
+        },
+        "reviewer_isolation": {
+            "parallel": True,
+            "no_cross_reading": True,
+            "orchestrator_collects_findings": True,
+        },
+        "areas": [
+            {"name": name, "paths": list(paths)}
+            for name, paths in sorted(areas.items())
+            if isinstance(paths, list)
+        ],
+        "risk_globs": list(config.knobs.tier3_globs),
+        "issue_labels": {
+            key: list(value)
+            for key, value in sorted(issue_labels.items())
+            if isinstance(value, list)
+        },
+    }
+    if command == "regression":
+        base["regression"] = {
+            "scan_target": {
+                "source": "canonical base head",
+                "base_branch": config.base_branch,
+                "read_only_worktree": True,
+                "clean_tree_preflight": True,
+            },
+            "scope": {
+                "default": "full",
+                "supported": ["full", "changed", "since"],
+            },
+            "confidence_filter": {
+                "drop": ["low"],
+                "downgrade_blocker_when": "medium-confidence",
+                "file_only_when": ["high-confidence", "medium-security"],
+            },
+            "issue_creation": {
+                "one_issue_per_finding": True,
+                "route_to": "ship",
+                "regression_of_line": "regression-of: #N",
+                "labels": issue_labels.get("regression", []),
+            },
+            "final_report": [
+                "raw_findings",
+                "after_confidence_filter",
+                "duplicates_skipped",
+                "promoted_regressions",
+                "issues_opened",
+                "ship_handoffs",
+            ],
+        }
+    elif command == "review-all-day":
+        base["review_all_day"] = {
+            "span": {
+                "timezone": config.timezone,
+                "merge_window": config.merge_window,
+                "days_are_inclusive_calendar_days": True,
+                "n_days_argument_covers_calendar_days": "N+1",
+            },
+            "ref_scope": {
+                "branches": ["trunk", "active-work-branches"],
+                "active_branch_patterns": list(scan.get("active_branch_patterns") or ()),
+                "remote_refs_default": True,
+                "warn_on_stale_fetch": True,
+            },
+            "strategy": {
+                "batch_threshold": _scan_int(scan, "batch_threshold", 5),
+                "fanout_when_commit_count_gt": _scan_int(scan, "batch_threshold", 5),
+            },
+            "diff_truncation": {
+                "max_bytes": _scan_int(scan, "large_diff_max_bytes", 200000),
+                "boundary": "file",
+            },
+            "finding_filter": {
+                "skip_minor": True,
+                "keep_minor_categories": ["security"],
+                "file_categories": ["bug-insert", "regression", "security", "config",
+                                    "test-coverage"],
+            },
+            "issue_creation": {
+                "title_prefix": "[review-all-day] ",
+                "one_issue_per_serious_finding": True,
+                "labels": issue_labels.get("review-all-day", []),
+            },
+            "final_report": [
+                "commit_range",
+                "reviewers",
+                "findings",
+                "duplicates_skipped",
+                "issues_opened",
+            ],
+        }
+    return base
 
 
 def session_contract_as_dict(
@@ -940,6 +1143,16 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
         else:
             merged[key] = value
     return merged
+
+
+def _scan_int(scan: dict[str, Any], key: str, default: int) -> int:
+    value = scan.get(key)
+    return value if isinstance(value, int) else default
+
+
+def _scan_float(scan: dict[str, Any], key: str, default: float) -> float:
+    value = scan.get(key)
+    return value if isinstance(value, int | float) else default
 
 
 def _target_identifier(target: str | None) -> str:

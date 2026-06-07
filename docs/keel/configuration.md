@@ -57,6 +57,7 @@ back to packaged command prose.
 | `test_groups` | map name→object | | named test/audit commands, path selectors, reports, and capability needs |
 | `docs` | object | | docs gate policy and allowed no-docs reasons |
 | `health_providers` | map name→object | | project-owned operational signal providers for reporting commands |
+| `scan` | object | | project-owned area/module, branch, dedupe threshold, and label policy for scan-and-file commands |
 | `project_commands` | map command→object | | project-provided commands, path selectors, capability needs, and side effects |
 | `command_routing` | map command→object | | compatibility routing map for older project command declarations |
 | `workflow_policies` | map command→object | | command-specific workflow policy such as posting mode, reviewer isolation, CI/fix-loop behavior, and completion markers |
@@ -78,6 +79,32 @@ morning adapters.
 `overnight`, `morning`, and `session` destinations to choose the night report or day
 session report path. Missing report destinations degrade as unconfigured in preflight
 output; core does not invent project-specific paths.
+
+`scan` is used by `keel regression` and `keel review-all-day`. Core owns the generic
+scan-and-file contract, while projects own the module list, active work branch patterns,
+issue labels, and thresholds:
+
+```yaml
+policy_pack:
+  name: example
+  scan:
+    areas:
+      app: ["app/**"]
+      service: ["service/**"]
+      workflows: [".github/workflows/**"]
+    active_branch_patterns: ["feature/**", "fix/**", "chore/**"]
+    issue_labels:
+      regression: ["type:bug", "source:regression-scan"]
+      review-all-day: ["type:bug", "source:review-all-day"]
+    near_text_similarity: 0.6
+    batch_threshold: 5
+    large_diff_max_bytes: 200000
+```
+
+`areas` drives regression fan-out and remains project-specific. `active_branch_patterns`
+drives review-all-day's active branch scope. `near_text_similarity` is the deterministic
+dedupe threshold. Review-all-day's issue title prefix is intentionally core-owned and fixed
+as `[review-all-day] ` so issue searches and created titles stay parity-safe.
 
 `project_commands` is the preferred place to preserve local commands that keel should not
 own. Keel can list them, include them in structured command contracts, and evaluate their

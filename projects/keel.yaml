@@ -61,6 +61,19 @@ policy_pack:
     ci:
       kind: github-checks
       optional_capabilities: ["gh", "github-mcp"]
+  scan:
+    areas:
+      core: ["src/keel/**"]
+      tests: ["tests/**"]
+      docs: ["docs/**", "README.md"]
+      workflows: [".github/workflows/**"]
+    active_branch_patterns: ["feat/**", "fix/**", "chore/**", "docs/**"]
+    issue_labels:
+      regression: ["type:bug", "source:regression-scan"]
+      review-all-day: ["type:bug", "source:review-all-day"]
+    near_text_similarity: 0.6
+    batch_threshold: 5
+    large_diff_max_bytes: 200000
   command_routing:
     implement:
       agent_role: core

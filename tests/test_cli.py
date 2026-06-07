@@ -615,6 +615,79 @@ class TestStandaloneCommands(unittest.TestCase):
         )
         self.assertFalse(data["result"]["execution"]["merges"])
 
+    def test_regression_json_contract_surfaces_scan_policy_and_issue_consent(self):
+        import tempfile
+        fake_report = runtime.CapabilityReport((
+            runtime.Capability("git", True, "ok", "test"),
+            runtime.Capability("worktree", True, "ok", "test"),
+            runtime.Capability("gh", False, "missing", "test"),
+            runtime.Capability("gh-auth", False, "missing", "test"),
+            runtime.Capability("github-mcp", True, "ok", "test"),
+        ))
+        with tempfile.TemporaryDirectory() as d, patch("keel.cli.runtime.detect",
+                                                       return_value=fake_report):
+            rc, out, _ = run(["regression", str(PROJECTS / "example-flutter.yaml"),
+                              "--root", d, "--scope", "changed", "--json"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["contract"]["command"], "regression")
+        self.assertEqual(data["contract"]["workflow_profile"]["profile"], "scan-and-file")
+        self.assertIn("scan_contract", data["contract"])
+        self.assertIn("worktree", data["contract"]["required_capabilities"])
+        self.assertEqual(data["contract"]["operator_consent"]["status"],
+                         "not-required-dry-run")
+        self.assertEqual(data["result"]["target"], "scope changed")
+        self.assertEqual(data["result"]["scan"]["areas"][0]["name"], "backend")
+        self.assertTrue(
+            data["result"]["scan"]["regression"]["scan_target"]["read_only_worktree"]
+        )
+        self.assertFalse(data["result"]["execution"]["writes_issues"])
+
+    def test_review_all_day_json_contract_preserves_title_prefix_and_scope(self):
+        import tempfile
+        fake_report = runtime.CapabilityReport((
+            runtime.Capability("git", True, "ok", "test"),
+            runtime.Capability("gh", False, "missing", "test"),
+            runtime.Capability("gh-auth", False, "missing", "test"),
+            runtime.Capability("github-mcp", True, "ok", "test"),
+        ))
+        with tempfile.TemporaryDirectory() as d, patch("keel.cli.runtime.detect",
+                                                       return_value=fake_report):
+            rc, out, _ = run(["review-all-day", str(PROJECTS / "example-flutter.yaml"),
+                              "7", "--root", d, "--json"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["contract"]["command"], "review-all-day")
+        self.assertEqual(data["contract"]["workflow_profile"]["profile"], "time-window-scan")
+        self.assertEqual(data["result"]["target"], "7 day scan")
+        self.assertEqual(
+            data["result"]["scan"]["review_all_day"]["issue_creation"]["title_prefix"],
+            "[review-all-day] ",
+        )
+        self.assertEqual(
+            data["result"]["scan"]["review_all_day"]["span"]
+            ["n_days_argument_covers_calendar_days"],
+            "N+1",
+        )
+        self.assertFalse(data["result"]["execution"]["pushes"])
+
+    def test_scan_commands_do_not_inherit_project_mutation_requirements(self):
+        p = _write_raw("extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: x\n"
+                       "gates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+                       "  required_capabilities: [release-publish]\n"
+                       "policy_pack:\n  name: x\n  scan:\n"
+                       "    areas:\n      core: ['src/**']\n")
+        fake_report = runtime.CapabilityReport((
+            runtime.Capability("git", True, "ok", "test"),
+            runtime.Capability("worktree", True, "ok", "test"),
+        ))
+        with patch("keel.cli.runtime.detect", return_value=fake_report):
+            rc, out, _ = run(["regression", p, "--json"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertNotIn("release-publish", data["contract"]["required_capabilities"])
+        self.assertIn("git", data["contract"]["required_capabilities"])
+
     def test_standalone_commands_reject_non_positive_targets(self):
         with self.assertRaises(SystemExit) as raised:
             run(["implement", _write_config("'true'"), "0"])
@@ -768,6 +841,44 @@ class TestStandaloneCommands(unittest.TestCase):
         self.assertIn("keel overnight", overnight_out)
         self.assertIn("mode source", overnight_out)
         self.assertIn("no-night-merge", overnight_out)
+
+    def test_scan_human_output(self):
+        import tempfile
+        fake_report = runtime.CapabilityReport((
+            runtime.Capability("git", True, "ok", "test"),
+            runtime.Capability("worktree", True, "ok", "test"),
+            runtime.Capability("gh", False, "missing", "test"),
+            runtime.Capability("gh-auth", False, "missing", "test"),
+        ))
+        with tempfile.TemporaryDirectory() as d, patch("keel.cli.runtime.detect",
+                                                       return_value=fake_report):
+            rc, out, _ = run(["regression", str(PROJECTS / "example-flutter.yaml"),
+                              "--root", d])
+        self.assertEqual(rc, 0)
+        self.assertIn("keel regression", out)
+        self.assertIn("areas", out)
+        self.assertIn("issues only after consent", out)
+
+        with tempfile.TemporaryDirectory() as d, patch("keel.cli.runtime.detect",
+                                                       return_value=fake_report):
+            rc, review_out, _ = run(["review-all-day", str(PROJECTS / "example-flutter.yaml"),
+                                     "--root", d])
+        self.assertEqual(rc, 0)
+        self.assertIn("keel review-all-day", review_out)
+        self.assertIn("[review-all-day] ", review_out)
+
+    def test_standalone_target_combines_days_and_scope_when_present(self):
+        target = cli._standalone_target(Namespace(
+            issue=None,
+            pr=None,
+            since=None,
+            scope="changed",
+            days=7,
+            target=None,
+            title=None,
+            hours=None,
+        ))
+        self.assertEqual(target, "7 day scan (scope changed)")
 
     def test_standalone_human_output_for_unknown_adapter_profile_falls_through(self):
         import tempfile

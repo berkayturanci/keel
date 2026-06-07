@@ -172,6 +172,21 @@ class TestParityMatrix(unittest.TestCase):
         ):
             self.assertIn(required, text)
 
+    def test_scan_and_file_rows_record_parity_evidence(self):
+        rows = {row["Legacy command"].strip("`"): row for row in _matrix_rows()}
+        regression = rows["regression"]
+        review_all_day = rows["review-all-day"]
+
+        self.assertEqual(regression["Status"], "`parity-proven`")
+        self.assertIn("#71", regression["Known gaps / owner issues"])
+        self.assertIn("scan_contract", regression["Known gaps / owner issues"])
+        self.assertIn("dedupe", regression["Known gaps / owner issues"])
+
+        self.assertEqual(review_all_day["Status"], "`parity-proven`")
+        self.assertIn("#71", review_all_day["Known gaps / owner issues"])
+        self.assertIn("time-window-scan", review_all_day["Known gaps / owner issues"])
+        self.assertIn("[review-all-day]", review_all_day["Known gaps / owner issues"])
+
 
 class TestShipBaseline(unittest.TestCase):
     def test_baseline_records_source_comparison_and_parity_evidence(self):

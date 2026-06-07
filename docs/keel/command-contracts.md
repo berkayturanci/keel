@@ -19,6 +19,10 @@ describe what a command would do before an adapter starts mutating work.
 - `keel morning <project.yaml> --live --json`
 - `keel wrap <project.yaml> --json`
 - `keel overnight <project.yaml> --json`
+- `keel regression <project.yaml> --json`
+- `keel regression <project.yaml> --live --json`
+- `keel review-all-day <project.yaml> [days] --json`
+- `keel review-all-day <project.yaml> [days] --live --json`
 
 Human-readable output remains the default. JSON output is the adapter-facing contract.
 
@@ -46,6 +50,7 @@ Every contract includes:
 | `operator_consent` | Operator consent requirement, approved mutation scopes, delegated-agent scope, and consent record metadata. |
 | `morning_contract` | Present for `morning`; project-neutral daily-brief sections, health providers, report destinations, priority sources, and deferral queue metadata. |
 | `session_contract` | Present for `wrap` and `overnight`; project-neutral linked-worktree, gate, PR, merge-window, report, deferral, and ship-handoff metadata. |
+| `scan_contract` | Present for `regression` and `review-all-day`; project-neutral scan target, scope, dedupe, issue-write, reviewer-isolation, and final-report metadata. |
 
 Project command entries include name, local command path, description, agent role, path
 selectors, required/optional capabilities, side effects, dry-run safety, and source
@@ -112,6 +117,15 @@ Standalone commands also emit deterministic result records:
   isolation, posting mode, severity histogram handling, fix-loop budget, completion marker,
   and no-merge/no-formal-approval invariants. It does not commit, push, post comments, or
   merge in dry-run output.
+- `regression` shows the canonical base scan target, clean-tree preflight, read-only
+  worktree requirement, area policy source, confidence filtering, dedupe behavior, issue
+  lock, ship handoff, final report sections, and issue-write safety. It does not edit code,
+  push, merge, or open issues in dry-run output.
+- `review-all-day` shows the merge-window-aligned span inputs, trunk plus active branch
+  scope, remote-ref default, batch/fan-out threshold, file-boundary diff truncation,
+  serious-finding filter, exact issue title prefix, dedupe behavior, final report sections,
+  and issue-write safety. It does not edit code, push, comment on PRs, merge, or open
+  issues in dry-run output.
 
 ## Workflow profiles
 
@@ -177,6 +191,14 @@ their behavior is represented separately in the `feedback_workflow` contract:
 
 Projects can override these values through `policy_pack.workflow_policies` without
 changing the packaged command bodies.
+- `regression` uses `workflow_profile.profile: "scan-and-file"`. Its shared primitives
+  include canonical base scanning, clean-tree preflight, read-only worktrees, area fan-out,
+  reviewer isolation, confidence filtering, dedupe, issue locking, issue creation, ship
+  handoff, final reports, and operator consent.
+- `review-all-day` uses `workflow_profile.profile: "time-window-scan"`. Its shared
+  primitives include merge-window spans, remote ref scope, batch/fan-out selection, reviewer
+  isolation, diff truncation, finding filtering, dedupe, title-prefix issue creation, final
+  reports, and operator consent.
 
 ## Adapter rules
 

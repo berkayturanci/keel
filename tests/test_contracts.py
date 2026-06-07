@@ -294,6 +294,43 @@ class TestBuildCommandContract(unittest.TestCase):
                       ["shared_primitives"])
         self.assertIn("feedback_workflow", review_cycle)
 
+        regression = contracts.build_command_contract(
+            command="regression",
+            config=config,
+            loaded=loaded,
+            plan=plan,
+            requirement=runtime.CapabilityRequirement(required=("git", "worktree")),
+            evaluation=runtime.evaluate(
+                runtime.CapabilityRequirement(required=("git", "worktree")),
+                runtime.CapabilityReport((
+                    runtime.Capability("git", True, "ok", "test"),
+                    runtime.Capability("worktree", True, "ok", "test"),
+                )),
+            ),
+            transport=github_transport.resolve(report),
+        )
+        self.assertEqual(regression["workflow_profile"]["profile"], "scan-and-file")
+        self.assertTrue(regression["workflow_profile"]["first_class_variant"])
+        self.assertIn("scan_contract", regression)
+        self.assertIn("dedupe", regression["workflow_profile"]["shared_primitives"])
+
+        review_all_day = contracts.build_command_contract(
+            command="review-all-day",
+            config=config,
+            loaded=loaded,
+            plan=plan,
+            requirement=runtime.CapabilityRequirement(required=("git",)),
+            evaluation=runtime.evaluate(
+                runtime.CapabilityRequirement(required=("git",)),
+                runtime.CapabilityReport((runtime.Capability("git", True, "ok", "test"),)),
+            ),
+            transport=github_transport.resolve(report),
+        )
+        self.assertEqual(review_all_day["workflow_profile"]["profile"], "time-window-scan")
+        self.assertTrue(review_all_day["workflow_profile"]["first_class_variant"])
+        self.assertIn("scan_contract", review_all_day)
+        self.assertIn("issue_prefix", review_all_day["workflow_profile"]["shared_primitives"])
+
     def test_feedback_workflow_policy_preserves_command_specific_review_loops(self):
         config = cfg.ProjectConfig(
             extends="keel",
@@ -433,6 +470,35 @@ class TestBuildCommandContract(unittest.TestCase):
         )
         self.assertEqual(review_cycle["feedback_workflow"]["completion"]["merge"], "never")
         self.assertFalse(review_cycle["execution"]["merges"])
+
+        regression = contracts.standalone_result_as_dict(
+            command="regression",
+            config=config,
+            target="scope full",
+            transport=transport,
+        )
+        self.assertEqual(regression["scan"]["dedupe"]["near_text_similarity"], 0.6)
+        self.assertTrue(regression["scan"]["regression"]["scan_target"]
+                        ["clean_tree_preflight"])
+        self.assertEqual(regression["scan"]["regression"]["issue_creation"]["route_to"],
+                         "ship")
+        self.assertFalse(regression["execution"]["writes_issues"])
+
+        review_all_day = contracts.standalone_result_as_dict(
+            command="review-all-day",
+            config=config,
+            target="1 day scan",
+            transport=transport,
+        )
+        self.assertEqual(
+            review_all_day["scan"]["review_all_day"]["issue_creation"]["title_prefix"],
+            "[review-all-day] ",
+        )
+        self.assertEqual(
+            review_all_day["scan"]["review_all_day"]["strategy"]["batch_threshold"],
+            5,
+        )
+        self.assertTrue(review_all_day["scan"]["write_safety"]["orchestrator_only_writes"])
 
         default_target = contracts.standalone_result_as_dict(
             command="implement",
@@ -575,6 +641,15 @@ class TestBuildCommandContract(unittest.TestCase):
         self.assertIn("reports", base_only)
         self.assertNotIn("wrap", base_only)
         self.assertNotIn("overnight", base_only)
+
+    def test_scan_contract_unknown_command_returns_base_contract_only(self):
+        config = cfg.load_config(PROJECTS / "example-flutter.yaml")
+
+        scan = contracts.scan_contract_as_dict(command="other", config=config)
+
+        self.assertIn("dedupe", scan)
+        self.assertNotIn("regression", scan)
+        self.assertNotIn("review_all_day", scan)
 
     def test_project_command_contract_has_graph_capabilities_and_side_effects(self):
         config = cfg.load_config(PROJECTS / "example-android.yaml")
