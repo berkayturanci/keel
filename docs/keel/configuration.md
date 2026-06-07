@@ -14,7 +14,7 @@ by `keel validate`. Unknown keys are rejected, so typos fail loudly.
 | `knobs` | object | ✅ | per-project values (see below) |
 | `owner` | string | | GitHub owner |
 | `repo` | string | | GitHub repo |
-| `platform` | string | | free-form tag (`android-web`, `flutter-supabase`, `python`) |
+| `platform` | string | | free-form tag for the consumer's runtime family |
 | `timezone` | string | | IANA tz for the merge window (`Europe/Istanbul`, `Etc/GMT-3`) |
 | `merge_window` | string `HH:MM-HH:MM` | | open merge window; the complement is the night no-merge window |
 | `merge_window_mode` | `freeze` \| `pause` | `freeze` | outside the window: `freeze` blocks the merge but keeps gates/CI running; `pause` halts the pipeline |
@@ -28,7 +28,7 @@ by `keel validate`. Unknown keys are rejected, so typos fail loudly.
 |---|---|---|---|
 | `build_gate_cmd` | string | ✅ | command the `build` gate runs |
 | `lint_cmd` | string | | command the `lint` gate runs (gate skipped if absent) |
-| `implementer_agents` | map role→agent | | e.g. `{mobile: flutter-developer}` |
+| `implementer_agents` | map role→agent | | role to local agent mapping |
 | `tier3_globs` | string[] | | high-risk paths that force full scrutiny |
 | `ci_workflows` | map name→glob | | CI workflow display name → gating path glob |
 | `docs_gate_paths` | string[] | | paths that trigger the docs gate |
@@ -47,28 +47,28 @@ Keel core stays consumer-neutral: project-specific labels, path globs, commands,
 signals, and manual playbooks belong in config, extensions, or project-provided commands.
 The boundary is documented in [consumer-neutrality.md](consumer-neutrality.md).
 
-## Example (example-flutter — Flutter/Supabase)
+## Example
 
 ```yaml
 extends: keel
 core_version: "^0.5"
-owner: berkayturanci
-repo: example-flutter
+owner: example-owner
+repo: example-repo
 base_branch: main
-platform: flutter-supabase
+platform: example-runtime
 timezone: Europe/Istanbul
 merge_window: "07:00-01:30"
 
 knobs:
   implementer_agents:
-    mobile: flutter-developer
-    backend: supabase-developer
-  build_gate_cmd: "cd apps/mobile && flutter test 2>&1 | tail -50"
-  lint_cmd: "cd apps/mobile && flutter analyze 2>&1 | tail -30"
-  tier3_globs: ["supabase/migrations/**", "apps/mobile/lib/**/*.dart"]
+    app: app-developer
+    service: service-developer
+  build_gate_cmd: "./tools/build-check"
+  lint_cmd: "./tools/lint-check"
+  tier3_globs: ["migrations/**", "src/**/critical/**"]
   ci_workflows:
-    "Flutter CI": "apps/mobile/**"
-    "Supabase CI": "supabase/**"
+    "App CI": "src/app/**"
+    "Service CI": "src/service/**"
   sot_doc: AGENTS.md
 
 gates: [build, lint]

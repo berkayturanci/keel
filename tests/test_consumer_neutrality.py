@@ -12,6 +12,7 @@ CORE_WORKFLOW_SURFACES = (
     REPO_ROOT / "src/keel/adapters/commands",
     REPO_ROOT / "adapters",
     REPO_ROOT / "docs/keel/commands.md",
+    REPO_ROOT / "docs/keel/configuration.md",
     REPO_ROOT / "docs/keel/consumer-neutrality.md",
 )
 
