@@ -20,9 +20,10 @@ import yaml
 
 from . import runtime
 from .config import ProjectConfig
-from .model import SLOTS
+from .model import SLOTS, slot_meta
 
 KINDS: tuple[str, ...] = ("agentic", "command")
+EXECUTION_MODES: tuple[str, ...] = ("deterministic", "agentic", "hybrid")
 ON_FAIL: tuple[str, ...] = ("warn", "suggest", "block")
 
 
@@ -37,6 +38,7 @@ class Extension:
     id: str
     slot: str
     kind: str
+    mode: str
     agent: str
     on_fail: str
     anchorable: bool
@@ -71,6 +73,7 @@ def parse_extension(text: str, *, source: str, expected_slot: str | None = None)
     ext_id = meta.get("id")
     slot = meta.get("slot")
     kind = meta.get("kind", "agentic")
+    mode = meta.get("mode")
     on_fail = meta.get("on_fail", "warn")
     agent = meta.get("agent", "inherit")
     run = meta.get("run")
@@ -91,10 +94,15 @@ def parse_extension(text: str, *, source: str, expected_slot: str | None = None)
 
     if kind not in KINDS:
         errors.append(f"invalid kind {kind!r}; valid: {', '.join(KINDS)}")
+    if mode is None:
+        mode = "deterministic" if kind == "command" else "agentic"
+    elif mode not in EXECUTION_MODES:
+        errors.append(f"invalid mode {mode!r}; valid: {', '.join(EXECUTION_MODES)}")
     if on_fail not in ON_FAIL:
         errors.append(f"invalid on_fail {on_fail!r}; valid: {', '.join(ON_FAIL)}")
-    elif on_fail == "block" and slot != "pre-merge":
-        errors.append("on_fail: block (hard gate) is only allowed in the 'pre-merge' slot")
+    elif on_fail == "block" and slot in SLOTS and not slot_meta(slot).may_block:
+        blocking = ", ".join(s for s in SLOTS if slot_meta(s).may_block)
+        errors.append(f"on_fail: block is only allowed in blocking slots: {blocking}")
 
     if kind == "command" and not run:
         errors.append("a 'command' extension requires a 'run' value")
@@ -112,6 +120,7 @@ def parse_extension(text: str, *, source: str, expected_slot: str | None = None)
         id=ext_id,
         slot=slot,
         kind=kind,
+        mode=mode,
         agent=agent,
         on_fail=on_fail,
         anchorable=bool(meta.get("anchorable", False)),

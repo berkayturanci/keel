@@ -44,6 +44,47 @@ class TestBuildPlan(unittest.TestCase):
         self.assertEqual(test_step.gates, ("build", "lint", "design-parity"))
         self.assertEqual(merge_step.gates, ("design-parity-gate",))
 
+    def test_hooks_render_in_backbone_step_order(self):
+        config = cfg.parse_config({
+            "extends": "keel",
+            "core_version": "^0.5",
+            "base_branch": "main",
+            "knobs": {"build_gate_cmd": "make test"},
+            "extensions": {
+                "guard": ["guard.md"],
+                "after:ci": ["ci-report.md"],
+                "after:close": ["notify.md"],
+            },
+        })
+        loaded = {
+            "guard": [parse_extension(
+                "---\nid: guard-check\nslot: guard\nkind: command\non_fail: block\n"
+                "run: ./tools/guard\nrequired_capabilities: [shell]\n---\n",
+                source="guard.md",
+            )],
+            "after:ci": [parse_extension(
+                "---\nid: ci-report\nslot: after:ci\nkind: command\nrun: ./tools/report\n"
+                "optional_capabilities: [gh]\n---\n",
+                source="ci-report.md",
+            )],
+            "after:close": [parse_extension(
+                "---\nid: close-note\nslot: after:close\nkind: command\nrun: ./tools/close\n---\n",
+                source="notify.md",
+            )],
+        }
+        plan = orch.build_plan(config, loaded)
+        guard_step = next(p for p in plan if p.step_name == "guard")
+        ci_step = next(p for p in plan if p.step_name == "ci")
+        close_step = next(p for p in plan if p.step_name == "close")
+        self.assertEqual(guard_step.gates, ("guard-check",))
+        self.assertEqual(guard_step.hooks[0].slot, "guard")
+        self.assertEqual(ci_step.hooks[0].optional_capabilities, ("gh",))
+        self.assertEqual(close_step.hooks[0].id, "close-note")
+        rendered = orch.render_plan(config, plan)
+        self.assertIn("hook: guard-check [guard; command; on_fail=block", rendered)
+        self.assertIn("mode=deterministic", rendered)
+        self.assertIn("required=shell", rendered)
+
     def test_agentic_steps_flagged(self):
         config = cfg.load_config(PROJECTS / "keel.yaml")
         plan = orch.build_plan(config, {})

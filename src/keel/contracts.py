@@ -188,6 +188,7 @@ def extension_hooks_as_dict(
                 "id": ext.id,
                 "slot": ext.slot,
                 "kind": ext.kind,
+                "mode": ext.mode,
                 "agent": ext.agent,
                 "on_fail": ext.on_fail,
                 "anchorable": ext.anchorable,

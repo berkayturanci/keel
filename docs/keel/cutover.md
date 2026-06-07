@@ -71,9 +71,9 @@ PR — review the diff, merge when green.
 Anything project-specific that lived inside a retired body goes to:
 
 - a **knob** in `.keel/project.yaml` (a value: command, path glob, agent, timezone, window), or
-- a **Lego extension** in `.keel/extensions/` snapped into a named slot (`tester`,
-  `pre-merge`, `reviewers`, `after-implement`, `post-merge`) — for a project-specific gate/step,
-  or
+- a **Lego extension** in `.keel/extensions/` snapped into a named hook such as `guard`,
+  `tester`, `pre-merge`, `reviewers`, or `after-implement` — for a project-specific
+  gate/step, or
 - a project-only command that simply stays in the project.
 
 ## Rollback

@@ -2,7 +2,7 @@
 
 A *gate* is anything that can pass/fail and produce findings: the built-in
 ``build`` / ``lint`` / ``jury`` gates (from ``project.yaml``'s ``gates:`` list),
-plus the project's ``tester`` and ``pre-merge`` extensions. :func:`plan_gates`
+plus the project's blocking-capable extension hooks. :func:`plan_gates`
 turns a config + loaded extensions into an ordered list of :class:`GateSpec`;
 :func:`run_gates` executes them through an injected ``runner`` with fail-soft
 semantics, normalising everything into :class:`keel.findings.Finding`.
@@ -34,7 +34,7 @@ class GateSpec:
 
     id: str
     kind: str  # command | agentic | builtin
-    phase: str  # "test" (step s8) | "pre-merge" (step s10)
+    phase: str  # backbone step name, e.g. "guard", "test", or "pre-merge"
     on_fail: str  # block | suggest | warn
     run: str | None = None
     prompt: str | None = None
@@ -60,8 +60,14 @@ GateRunner = Callable[[GateSpec], tuple[bool, list[Finding]]]
 
 
 def plan_gates(config: ProjectConfig, loaded: dict[str, list[Extension]]) -> tuple[GateSpec, ...]:
-    """Order the gates for a run: built-ins, then tester, then pre-merge extensions."""
+    """Order gates by backbone phase: guard, built-in test gates, test hooks, pre-merge."""
     specs: list[GateSpec] = []
+
+    for e in loaded.get("guard", []):
+        specs.append(GateSpec(e.id, e.kind, "guard", e.on_fail,
+                              run=e.run, prompt=e.prompt, agent=e.agent, source=e.source,
+                              required_capabilities=e.required_capabilities,
+                              optional_capabilities=e.optional_capabilities))
 
     for name in config.gates:
         if name == "build":
@@ -79,7 +85,7 @@ def plan_gates(config: ProjectConfig, loaded: dict[str, list[Extension]]) -> tup
                 "(project gates belong in extension slots, not in gates:)"
             )
 
-    for slot, phase in (("tester", "test"), ("pre-merge", "pre-merge")):
+    for slot, phase in (("tester", "test"), ("test", "test"), ("pre-merge", "pre-merge")):
         for e in loaded.get(slot, []):
             specs.append(GateSpec(e.id, e.kind, phase, e.on_fail,
                                   run=e.run, prompt=e.prompt, agent=e.agent, source=e.source,

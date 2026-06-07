@@ -57,9 +57,28 @@ class TestParse(unittest.TestCase):
     def test_command_ok(self):
         e = ext.parse_extension(COMMAND, source="golden.md")
         self.assertEqual(e.kind, "command")
+        self.assertEqual(e.mode, "deterministic")
         self.assertEqual(e.run, "flutter test --tags golden")
         self.assertEqual(e.required_capabilities, ())
         self.assertEqual(e.optional_capabilities, ())
+
+    def test_mode_parse(self):
+        text = """---
+id: hybrid-check
+slot: after:ci
+kind: command
+mode: hybrid
+run: ./tools/report
+---
+"""
+        e = ext.parse_extension(text, source="hybrid.md")
+        self.assertEqual(e.mode, "hybrid")
+
+    def test_invalid_mode_rejected(self):
+        text = "---\nid: x\nslot: after:ci\nkind: command\nmode: maybe\nrun: y\n---\n"
+        with self.assertRaises(ext.ExtensionError) as c:
+            ext.parse_extension(text, source="x.md")
+        self.assertIn("invalid mode", str(c.exception))
 
     def test_capabilities_parse(self):
         text = """---
@@ -92,6 +111,19 @@ required_capabilities: [bogus]
         e = ext.parse_extension(HARD_GATE, source="g.md")
         self.assertEqual(e.on_fail, "block")
 
+    def test_guard_can_block(self):
+        text = """---
+id: guard-check
+slot: guard
+kind: command
+on_fail: block
+run: ./tools/guard
+---
+"""
+        e = ext.parse_extension(text, source="guard.md")
+        self.assertEqual(e.slot, "guard")
+        self.assertEqual(e.on_fail, "block")
+
     def test_missing_frontmatter(self):
         with self.assertRaises(ext.ExtensionError) as c:
             ext.parse_extension("no spec here", source="x.md")
@@ -108,11 +140,11 @@ required_capabilities: [bogus]
             ext.parse_extension(COMMAND, source="x.md", expected_slot="pre-merge")
         self.assertIn("does not match", str(c.exception))
 
-    def test_block_only_in_pre_merge(self):
-        text = "---\nid: x\nslot: tester\nkind: command\non_fail: block\nrun: y\n---\n"
+    def test_block_only_in_blocking_slots(self):
+        text = "---\nid: x\nslot: after:test\nkind: command\non_fail: block\nrun: y\n---\n"
         with self.assertRaises(ext.ExtensionError) as c:
             ext.parse_extension(text, source="x.md")
-        self.assertIn("only allowed in the 'pre-merge'", str(c.exception))
+        self.assertIn("only allowed in blocking slots", str(c.exception))
 
     def test_command_requires_run(self):
         text = "---\nid: x\nslot: tester\nkind: command\n---\n"

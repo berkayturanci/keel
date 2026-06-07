@@ -49,23 +49,24 @@ Per the locked decision, the backbone ships as a **vendor-neutral, testable pack
 (ai-jury-style): deterministic plumbing as a CLI/lib, agentic steps dispatched to a
 configured agent. "Orchestrator owns the round structure; adapters are thin."
 
-**Ordered steps (stable IDs = the contract).** Each step may expose **extension slots**:
+**Ordered steps (stable IDs = the contract).** Every step exposes extension hooks; the
+canonical hook table is maintained in [`docs/keel/extensions.md`](../keel/extensions.md).
 
-| # | Step | Slot exposed | Notes |
+| # | Step | Primary hooks | Notes |
 |---|---|---|---|
-| s0 | `config` | — | load `project.yaml`, resolve flags/wizard |
-| s1 | `select` | — | pick issue from queue |
-| s2 | `branch` | — | worktree off `base_branch` (knob) |
-| s3 | `guard` | — | blocker / precondition checks |
-| s4 | `implement` | **`after-implement`** | host-agent or delegate writes code (#2036 attribution) |
-| s5 | `classify` | — | risk TIER + reviewer count |
-| s6 | `ci` | — | poll `ci_workflows` (knob) |
-| s7 | `review` | **`reviewers`** | parallel reviewer dimensions → findings |
-| s8 | `test` | **`tester`** | run the project's test/gate set (jury is a built-in gate) |
-| s9 | `fixloop` | — | apply fixes, cap N rounds |
-| s10 | `merge` | **`pre-merge`** | lock + window + merge |
-| s11 | `capture` | **`post-merge`** | compound learning |
-| s12 | `close` | **`post-merge`** | close issue, finalise labels |
+| s0 | `config` | `after:config` | load `project.yaml`, resolve flags/wizard |
+| s1 | `select` | `before:select`, `select`, `after:select` | pick issue from queue |
+| s2 | `branch` | `before:branch`, `after:branch` | worktree off `base_branch` (knob) |
+| s3 | `guard` | `guard` | blocker / precondition checks |
+| s4 | `implement` | `before:implement`, `after-implement` | host-agent or delegate writes code |
+| s5 | `classify` | `classify`, `after:classify` | risk tier + reviewer count |
+| s6 | `ci` | `before:ci`, `after:ci` | poll `ci_workflows` (knob) |
+| s7 | `review` | `reviewers`, `after:review` | parallel reviewer dimensions → findings |
+| s8 | `test` | `tester`, `test`, `after:test` | run the project's test/gate set |
+| s9 | `fixloop` | `before:fixloop`, `fixloop`, `after:fixloop` | apply fixes, cap rounds |
+| s10 | `merge` | `pre-merge`, `after:merge` | lock + window + merge |
+| s11 | `capture` | `capture`, `post-merge` | post-merge capture |
+| s12 | `close` | `before:close`, `on-close`, `after:close` | close issue lifecycle |
 
 **Invariants the backbone always preserves** (non-overridable by any extension): merge
 lock (`MERGE_GATE_ONLY`), the night no-merge window gate, fail-soft (a soft failure never
@@ -116,6 +117,7 @@ knobs:
 ```yaml
 extensions_dir: .keel/extensions
 extensions:
+  guard: [preflight.md]
   after-implement: []
   reviewers:  [a11y-review.md]            # add a reviewer dimension
   tester:     [design-parity.md]          # example-flutter: design-equality test suite
@@ -130,7 +132,7 @@ extensions:
    **knob**, not an extension.) This is what keeps the backbone fixed across all consumers.
 2. **Fail-soft inherited.** A broken/erroring extension can never break the backbone — it
    degrades to a logged no-op — **unless** it explicitly declares itself a hard gate
-   (`on_fail: block`, only valid in `pre-merge`).
+   (`on_fail: block`, only valid in `guard`, `tester`, `test`, or `pre-merge`).
 3. **Agent-neutral.** Each extension declares which agent runs it; default = inherit the
    step's agent (host-agent/delegate). So `tester:design-parity` can run on `qwen` while
    review runs on `claude`, all on the same backbone.
@@ -142,17 +144,18 @@ extensions:
 id: design-parity
 slot: tester
 kind: agentic            # or: command
+mode: agentic            # deterministic | agentic | hybrid
 agent: inherit           # or claude | codex | agy | ollama:<model>
-on_fail: suggest         # warn | suggest | block(pre-merge only)
+on_fail: suggest         # warn | suggest | block(blocking hooks only)
 anchorable: true         # may post inline on the diff (ties into ship #2039 inline mode)
 # --- body: the prompt or command the piece runs ---
 run: "flutter test --tags golden"
 ```
 
-`keel run-gates` runs every `tester`/`pre-merge` piece through this uniform contract and
-**normalises results into the same findings shape** ship already uses (severity → gate
-decision). The cross-vendor **jury (ship Step 5d.jury) becomes just another built-in
-`pre-merge` gate** under the same contract — the model unifies what already exists.
+`keel run-gates` runs blocking-capable command hooks (`guard`, `tester`, `test`,
+`pre-merge`) through this uniform contract and **normalises results into the same findings
+shape** ship already uses (severity → gate decision). The cross-vendor **jury** remains a
+built-in gate under the same contract.
 
 > **example-flutter worked example.** "Design-equality test" = one `tester` piece
 > (`design-parity.md`, runs golden/screenshot diff) + one `pre-merge` gate

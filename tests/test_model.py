@@ -14,16 +14,25 @@ class TestBackbone(unittest.TestCase):
         self.assertEqual(ids[0], "s0")
         self.assertEqual(ids[-1], "s12")
 
-    def test_slots_are_the_five_named(self):
-        self.assertEqual(
-            model.SLOTS,
-            ("after-implement", "reviewers", "tester", "pre-merge", "post-merge"),
-        )
+    def test_slots_cover_every_backbone_step(self):
+        slots_by_step = {step.id: model.slots_for_step(step.id) for step in model.BACKBONE}
+        self.assertIn("after:config", [slot.name for slot in slots_by_step["s0"]])
+        for step in model.BACKBONE[1:]:
+            self.assertTrue(slots_by_step[step.id], f"{step.id} has no extension hooks")
+        self.assertIn("after-implement", model.SLOTS)
+        self.assertIn("reviewers", model.SLOTS)
+        self.assertIn("tester", model.SLOTS)
+        self.assertIn("pre-merge", model.SLOTS)
+        self.assertIn("post-merge", model.SLOTS)
 
     def test_each_slot_maps_to_one_step(self):
         for slot in model.SLOTS:
             step = model.step_for_slot(slot)
-            self.assertEqual(step.slot, slot)
+            self.assertEqual(step.id, model.slot_meta(slot).step_id)
+
+    def test_blocking_slots_are_limited(self):
+        blocking = {slot.name for slot in model.SLOT_DEFINITIONS if slot.may_block}
+        self.assertEqual(blocking, {"guard", "tester", "test", "pre-merge"})
 
     def test_get_step_and_unknown(self):
         self.assertEqual(model.get_step("s4").name, "implement")

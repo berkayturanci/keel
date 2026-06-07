@@ -42,8 +42,9 @@ Changing the backbone is a keel-core change. Projects only ever touch layers 2�
 
 - **One backbone, every agent** — install once; `/keel:<command>` runs as native Claude commands
   *and* as a single shared skill set every other agent (Codex, Antigravity, Gemini) reads.
-- **Project Lego** — snap your own gates/steps into named slots (`tester`, `pre-merge`, …) without
-  forking the backbone; hard `block` gates live in `pre-merge`.
+- **Project Lego** — snap your own gates/steps into named hooks (`guard`, `tester`,
+  `pre-merge`, …) without forking the backbone; hard `block` gates are limited to the
+  documented blocking hooks.
 - **Opt-in `jury` gate** — runs the [ai-jury](https://github.com/berkayturanci/ai-jury) multi-agent
   reviewer on the diff when installed; a fail-soft no-op otherwise.
 - **Safe merges by construction** — timezone-aware night no-merge window, `mkdir` merge lock,
@@ -51,21 +52,21 @@ Changing the backbone is a keel-core change. Projects only ever touch layers 2�
 
 ### The backbone
 
-| step | name | slot | |
+| step | name | primary hooks | |
 |---|---|---|---|
-| s0 | config | | |
-| s1 | select | | |
-| s2 | branch | | |
-| s3 | guard | | |
-| s4 | implement | `after-implement` | agent |
-| s5 | classify | | agent |
-| s6 | ci | | |
-| s7 | review | `reviewers` | agent |
-| s8 | test | `tester` | |
-| s9 | fixloop | | |
-| s10 | merge | `pre-merge` | |
-| s11 | capture | `post-merge` | |
-| s12 | close | | |
+| s0 | config | `after:config` | |
+| s1 | select | `before:select`, `select`, `after:select` | |
+| s2 | branch | `before:branch`, `after:branch` | |
+| s3 | guard | `guard` | |
+| s4 | implement | `before:implement`, `after-implement` | agent |
+| s5 | classify | `classify`, `after:classify` | agent |
+| s6 | ci | `before:ci`, `after:ci` | |
+| s7 | review | `reviewers`, `after:review` | agent |
+| s8 | test | `tester`, `test`, `after:test` | |
+| s9 | fixloop | `before:fixloop`, `fixloop`, `after:fixloop` | |
+| s10 | merge | `pre-merge`, `after:merge` | |
+| s11 | capture | `capture`, `post-merge` | |
+| s12 | close | `before:close`, `on-close`, `after:close` | |
 
 Invariants the backbone always preserves: merge lock, night no-merge window, fail-soft,
 orchestrator-only-writes, vendor+model attribution.

@@ -72,16 +72,11 @@ Changing the backbone is a keel-core change; projects only ever touch layers 2�
 ### The backbone (`src/keel/model.py`)
 
 Steps `s0`–`s12`: config, select, branch, guard, **implement**, classify, ci,
-**review**, **test**, fixloop, **merge**, capture, close. The named extension slots
-(add-only) are:
-
-| slot | step | kind |
-|---|---|---|
-| `after-implement` | s4 implement | agentic |
-| `reviewers` | s7 review | agentic |
-| `tester` | s8 test | gate |
-| `pre-merge` | s10 merge | gate (only place `on_fail: block` is allowed) |
-| `post-merge` | s11 capture | gate |
+**review**, **test**, fixloop, **merge**, capture, close. Every step exposes one or more
+add-only extension hooks; `s0 config` is loader-only except for read-only `after:config`.
+The compatibility slots `after-implement`, `reviewers`, `tester`, `pre-merge`, and
+`post-merge` remain valid. The full hook table lives in
+[`docs/keel/extensions.md`](docs/keel/extensions.md).
 
 `SLOTS` and the step IDs are asserted against the bundled schema
 (`src/keel/schema/project.schema.json`) — if you add/rename a slot, **update both** or
@@ -134,9 +129,9 @@ the schema if the contract changes), not this prose.
 
 ## Conventions
 
-- **Add-only extensions.** Lego pieces snap into named slots; they never remove or
-  reorder backbone steps. `on_fail: block` is permitted **only** in the `pre-merge` slot.
-  The loader is fail-soft.
+- **Add-only extensions.** Lego pieces snap into named hooks; they never remove or
+  reorder backbone steps. `on_fail: block` is permitted only in documented blocking hooks:
+  `guard`, `tester`, `test`, and `pre-merge`. The loader is fail-soft.
 - **Tests mirror modules.** Each `src/keel/<m>.py` has `tests/test_<m>.py`. New behaviour
   comes with tests that hold the core at 100 % line + branch.
 - **Dogfooding.** keel drives itself via `projects/keel.yaml`; CI runs `keel` on keel-core
