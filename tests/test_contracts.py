@@ -278,6 +278,19 @@ class TestBuildCommandContract(unittest.TestCase):
         self.assertEqual(pr_loop["workflow_profile"]["inherits"], "ship.s6-s9")
         self.assertIn("reviewer_isolation", pr_loop["workflow_profile"]["shared_primitives"])
         self.assertIn("feedback_workflow", pr_loop)
+        self.assertEqual(pr_loop["feedback_workflow"]["completion"]["merge"], "handoff")
+        self.assertNotIn("merge", pr_loop["side_effects"]["declared"])
+
+        ship = contracts.build_command_contract(
+            command="ship",
+            config=config,
+            loaded=loaded,
+            plan=plan,
+            requirement=requirement,
+            evaluation=runtime.evaluate(requirement, report),
+            transport=github_transport.resolve(report),
+        )
+        self.assertIn("merge", ship["side_effects"]["declared"])
 
         review_cycle = contracts.build_command_contract(
             command="review-cycle",
