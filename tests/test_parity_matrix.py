@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import unittest
 from pathlib import Path
 
@@ -114,11 +115,21 @@ class TestShipBaseline(unittest.TestCase):
             self.assertIn(classification, text)
 
     def test_baseline_remains_consumer_neutral(self):
-        text = SHIP_BASELINE.read_text(encoding="utf-8").lower()
+        text = SHIP_BASELINE.read_text(encoding="utf-8")
+        lower = text.lower()
         forbidden = ("smartinventory", "eventoid")
         for term in forbidden:
             with self.subTest(term=term):
-                self.assertNotIn(term, text)
+                self.assertNotIn(term, lower)
+        private_path_patterns = (
+            r"/Users/[^\s`]+",
+            r"/home/[^\s`]+",
+            r"~/[^\s`]+",
+            r"[A-Za-z]:\\Users\\[^\s`]+",
+        )
+        for pattern in private_path_patterns:
+            with self.subTest(pattern=pattern):
+                self.assertIsNone(re.search(pattern, text))
 
 
 if __name__ == "__main__":

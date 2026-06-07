@@ -9,7 +9,7 @@ workflow behavior, not consumer project policy or private repository paths.
 | Field | Value |
 |---|---|
 | Captured on | 2026-06-07 |
-| Source | Latest local legacy `ship` command skill available to the operator |
+| Source | Latest local legacy `ship` command skill available to the operator, from the consumer-owned command-skill surface |
 | Source SHA-256 | `96cbea677eb3032f4646e74440a9be51c07c035155c651f9f8a185148433f2f7` |
 | Source length | 876 lines |
 | Compared against | `src/keel/adapters/commands/ship.md` and `keel plan --command ship --json` |
@@ -17,6 +17,11 @@ workflow behavior, not consumer project policy or private repository paths.
 
 The source command body contains project-local policy and must not be copied into keel.
 Only portable behavior is classified below.
+
+To refresh this baseline without adding private paths to public docs, run the equivalent of
+`shasum -a 256 <legacy-ship-skill>` and `wc -l <legacy-ship-skill>` against the current
+consumer-owned legacy `ship` skill, then update only the hash, line count, date, and portable
+delta classification.
 
 ## Structured Contract Check
 
@@ -76,4 +81,3 @@ The minimum #69 checks are:
 - verify generated wrappers do not reintroduce copied legacy prose
 
 Until #69 ships, the parity matrix status for `ship` remains `in-progress`.
-
