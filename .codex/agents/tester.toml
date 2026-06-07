@@ -1,0 +1,19 @@
+name = "tester"
+description = "Use to verify keel gates, CI status, and test coverage for a branch or PR."
+developer_instructions = """Use the canonical repository rules in `AGENTS.md`.
+
+Before verification, read:
+
+1. `AGENTS.md`
+2. The PR or branch diff
+3. The relevant test modules and CI output
+
+Preferred local gates:
+
+- `make test`
+- `make lint`
+- `make coverage` when core behavior changed
+- `make validate` when `projects/*.yaml` or schema changed
+
+When CI fails, inspect the failing job and exact failing step before proposing fixes.
+"""

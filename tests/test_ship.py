@@ -20,6 +20,71 @@ class TestReviewerCount(unittest.TestCase):
         self.assertEqual(ship.reviewer_count(0), 2)
         self.assertEqual(ship.reviewer_count(99), 2)
 
+    def test_focuses_merge_when_reviewer_count_drops(self):
+        one = ship.reviewer_focuses(1)
+        self.assertEqual(one[0]["merged_from"], ["A", "B", "C"])
+        self.assertIn("security", one[0]["focus"])
+
+        two = ship.reviewer_focuses(2)
+        self.assertEqual(two[0]["merged_from"], ["A", "B"])
+        self.assertEqual(two[1]["merged_from"], ["C"])
+
+    def test_reviewer_override_is_recorded(self):
+        contract = ship.resolve_review_contract(tier=3, reviewer_override=2)
+        self.assertEqual(contract["reviewers"]["count"], 2)
+        self.assertEqual(contract["reviewers"]["source"], "override")
+        self.assertEqual(contract["reviewers"]["tier"], 3)
+
+    def test_unresolved_tier_is_explicit(self):
+        contract = ship.resolve_review_contract(tier=None)
+        self.assertEqual(contract["reviewers"]["source"], "unresolved")
+        self.assertIsNone(contract["reviewers"]["tier"])
+
+
+class TestJuryContract(unittest.TestCase):
+    def test_tier3_auto_enables_gating_jury(self):
+        contract = ship.resolve_review_contract(tier=3, gates=("build", "jury"))
+        self.assertTrue(contract["jury"]["enabled"])
+        self.assertEqual(contract["jury"]["mode"], "gating")
+        self.assertEqual(contract["jury"]["reason"], "tier-3 auto")
+        self.assertTrue(contract["jury"]["configured_gate"])
+
+    def test_no_jury_wins_over_jury(self):
+        contract = ship.resolve_review_contract(tier=3, jury=True, no_jury=True)
+        self.assertFalse(contract["jury"]["enabled"])
+        self.assertEqual(contract["jury"]["mode"], "off")
+        self.assertTrue(contract["test_gates"]["no_jury_preserves_review_and_test_gates"])
+
+    def test_jury_advisory_downgrades_enabled_jury(self):
+        contract = ship.resolve_review_contract(tier=2, jury=True, jury_advisory=True)
+        self.assertTrue(contract["jury"]["enabled"])
+        self.assertEqual(contract["jury"]["mode"], "advisory")
+        self.assertFalse(contract["jury"]["verified_consensus_gates"])
+
+    def test_review_posting_and_project_additions(self):
+        contract = ship.resolve_review_contract(
+            tier=2,
+            review_comments="summary",
+            policy_pack={
+                "review": {
+                    "additions": ["Check project rollout notes."],
+                    "required_sections": ["Testing"],
+                },
+            },
+        )
+        self.assertEqual(contract["posting"]["mode"], "summary")
+        self.assertEqual(contract["reviewers"]["project_additions"],
+                         ["Check project rollout notes."])
+        self.assertEqual(contract["reviewers"]["required_sections"], ["Testing"])
+
+    def test_invalid_reviewer_override_rejected(self):
+        with self.assertRaises(ValueError):
+            ship.resolve_review_contract(tier=2, reviewer_override=4)
+
+    def test_invalid_posting_mode_rejected(self):
+        with self.assertRaises(ValueError):
+            ship.resolve_review_contract(tier=2, review_comments="threaded")
+
 
 class TestDecideMerge(unittest.TestCase):
     def test_block_on_findings(self):
@@ -84,8 +149,25 @@ class TestAssess(unittest.TestCase):
                         tier3_globs=TIER3, docs_globs=DOCS)
         self.assertEqual(a.tier, 3)
         self.assertEqual(a.reviewers, 3)
+        self.assertEqual(a.review_contract["jury"]["mode"], "gating")
         self.assertTrue(a.window_open)  # no window configured -> always open
         self.assertEqual(a.merge.action, "merge")
+
+    def test_override_reviewers_without_dropping_contract(self):
+        a = ship.assess(
+            changed_files=[".github/workflows/ci.yml"],
+            gate_verdict=CLEAN,
+            tier3_globs=TIER3,
+            docs_globs=DOCS,
+            reviewer_override=1,
+            review_comments="summary",
+            no_jury=True,
+        )
+        self.assertEqual(a.tier, 3)
+        self.assertEqual(a.reviewers, 1)
+        self.assertEqual(a.review_contract["reviewers"]["count"], 1)
+        self.assertEqual(a.review_contract["posting"]["mode"], "summary")
+        self.assertEqual(a.review_contract["jury"]["mode"], "off")
 
     def test_docs_only_tier1(self):
         a = ship.assess(changed_files=["docs/x.md"], gate_verdict=CLEAN,

@@ -23,7 +23,7 @@ keel validate projects/*.yaml                 # schema only
 keel validate .claude/project.yaml --root .   # schema + extensions (use in CI)
 ```
 
-## `keel plan <project.yaml> [--root DIR]`
+## `keel plan <project.yaml> [--root DIR] [--command COMMAND] [--live] [--approve-scope SCOPE] [--operator ID] [--target TARGET] [--json]`
 
 Render the backbone plan for a project: the fixed steps with the project's built-in gates
 and extensions slotted in. This is the dry-run view — what an actual run would execute.
@@ -34,13 +34,117 @@ built-in gates.
 
 ```bash
 keel plan .claude/project.yaml
+keel plan .claude/project.yaml --json
+keel plan .claude/project.yaml --command morning --json
+keel plan .claude/project.yaml --command ship --live --json
+keel plan .claude/project.yaml --command ship --live --approve-scope filesystem,git,github --operator "$USER" --target "issue #123" --json
+keel plan .claude/project.yaml --command ship --review-comments summary --reviewers 2 --jury-advisory --json
 ```
+
+With `--json`, the output includes a structured command contract under `contract`: resolved
+project config, command step graph, backbone plan, gates, extension hooks, capability
+requirements/evaluation, selected GitHub transport, declared side effects, and operator
+consent requirements. See [`command-contracts.md`](command-contracts.md).
+
+By default, `plan` renders a dry-run contract. `--live` renders the live preflight contract
+for an adapter or orchestrator. If the command has live mutation scopes and the current run
+does not approve them with `--approve-scope`, `plan --live` exits non-zero after printing the
+resolved contract. Dry-runs never require live-write consent, but still show the live scopes
+that would require approval.
+
+## `keel morning <project.yaml> [--root DIR] [--since WHEN] [--live] [--approve-scope SCOPE] [--operator ID] [--json]`
+
+Render the standalone daily-brief contract for a project. The core owns the generic
+brief shape: date/window context, deferral queue, shipped-since-last-brief and GitHub
+status sections, project health provider metadata, priority sources, and report
+destinations. Project-specific health commands and focus signals stay in
+`policy_pack.health_providers`, `policy_pack.reports`, and extensions.
+
+```bash
+keel morning .keel/project.yaml
+keel morning .keel/project.yaml --since yesterday --json
+keel morning .keel/project.yaml --live --approve-scope filesystem --operator "$USER" --json
+```
+
+Dry-run mode never runs project health commands and never writes reports. Missing optional
+health-provider capabilities are shown as unavailable/degraded, not as a successful empty
+health section. Live mode is only a preflight contract; adapters perform approved report
+writes or provider execution after checking consent.
+
+## `keel wrap <project.yaml> [TITLE] [--root DIR] [--since WHEN] [--live] [--approve-scope SCOPE] [--operator ID] [--json]`
+
+Render the standalone session-wrap contract. The core owns the generic session closeout
+shape: linked-worktree and base-branch guards, configured gate source, Conventional Commit
+and `Closes #N` conventions, ready PR creation requirements, session recap destination,
+and the shared deferral queue. Project-specific changed-file gates and recap destinations
+stay in policy packs and extensions.
+
+```bash
+keel wrap .keel/project.yaml --json
+keel wrap .keel/project.yaml "feat: finish queue contract" --live --approve-scope filesystem,git,github --operator "$USER" --json
+```
+
+Dry-run mode never runs gates, commits, pushes, opens PRs, or writes reports. Live mode is
+only a preflight contract; adapters perform approved session closeout work after checking
+consent and GitHub transport support.
+
+## `keel overnight <project.yaml> [hours] [--max N] [--review-comments inline|summary] [--live] [--approve-scope SCOPE] [--operator ID] [--json]`
+
+Render the standalone overnight-session contract. The core owns the generic unattended
+session shape: merge-window mode from `keel window`, ship handoff, per-issue worktree
+isolation, no-night-merge policy, blocker policy boundary, priority queue shape, session
+or morning report destinations, stop conditions, and the shared deferral queue.
+
+```bash
+keel overnight .keel/project.yaml 8 --max 3 --json
+keel overnight .keel/project.yaml --live --approve-scope filesystem,git,github --operator "$USER" --json
+```
+
+Dry-run mode never spawns ship runs, creates PRs, merges, or writes reports. Live mode is
+only a preflight contract; adapters hand approved consent scope to ship/implementer
+delegates and keep merge-window enforcement shared with `keel ship`.
+
+## `keel regression <project.yaml> [--scope full|changed|since] [--since REF] [--live] [--approve-scope SCOPE] [--operator ID] [--json]`
+
+Render the standalone scan-and-file regression contract. The core owns the generic scan
+shape: canonical base scan target, clean-tree preflight, read-only worktree requirement,
+area fan-out source, confidence filtering, issue dedupe, issue-create lock, ship handoff,
+and final report sections. Project-specific areas, labels, branch patterns, and thresholds
+stay in `policy_pack.scan`.
+
+```bash
+keel regression .keel/project.yaml --scope full --json
+keel regression .keel/project.yaml --scope since --since origin/main --json
+keel regression .keel/project.yaml --live --approve-scope filesystem,git,github --operator "$USER" --json
+```
+
+Dry-run mode never opens issues, edits code, pushes, or merges. Live mode is only a
+preflight contract; adapters perform approved issue creation after checking consent and
+GitHub transport support.
+
+## `keel review-all-day <project.yaml> [days] [--live] [--approve-scope SCOPE] [--operator ID] [--json]`
+
+Render the standalone time-window scan-and-file contract. The core owns the generic
+time-window scan shape: merge-window timezone inputs, trunk plus active work branch scope,
+remote-ref default, batch/fan-out threshold, file-boundary diff truncation, serious-finding
+filter, exact issue title prefix, issue creation, and final report sections. Project-specific
+active branch patterns, labels, and thresholds stay in `policy_pack.scan`.
+
+```bash
+keel review-all-day .keel/project.yaml --json
+keel review-all-day .keel/project.yaml 7 --json
+keel review-all-day .keel/project.yaml 1 --live --approve-scope github --operator "$USER" --json
+```
+
+Dry-run mode never opens issues, pushes, edits code, comments on PRs, or merges. Live mode
+is only a preflight contract; adapters perform approved issue creation after checking
+consent and GitHub transport support.
 
 Example output:
 
 ```
 keel plan — example-flutter
-  base_branch: main   core_version: ^0.5
+  base_branch: main   core_version: ^0.6
   backbone:
      s0  config
      ...
@@ -73,6 +177,42 @@ keel run-gates .keel/project.yaml --root .
 
 Exits non-zero if any gate blocks (so it can be wired straight into CI).
 
+## `keel capabilities [--root DIR] [--project project.yaml] [--for COMMAND] [--json]`
+
+Print the runtime capability report for the current execution environment. With
+`--project`, keel also evaluates the selected command's required and optional capabilities
+against that report.
+
+```bash
+keel capabilities --root .
+keel capabilities --project .keel/project.yaml --for ship --root .
+keel capabilities --project .keel/project.yaml --for morning --root .
+keel capabilities --project .keel/project.yaml --for device-smoke --json
+keel capabilities --project .keel/project.yaml --for ship --json
+```
+
+Required capabilities fail with a non-zero exit before mutating work starts. Optional
+capabilities are reported as degraded in human output and as `missing_optional` in JSON.
+The output also includes the selected GitHub transport and any degraded GitHub operation
+capabilities. See [`runtime-capabilities.md`](runtime-capabilities.md) and
+[`github-transport.md`](github-transport.md).
+
+## `keel project-commands <project.yaml> [--json]`
+
+List project-provided commands declared by `policy_pack.project_commands` or the older
+`policy_pack.command_routing` compatibility map. These commands are not packaged keel
+adapters; keel only exposes their metadata so wrappers and adapters can preserve local
+behavior without copying project-specific command bodies into core.
+
+```bash
+keel project-commands .keel/project.yaml
+keel project-commands .keel/project.yaml --json
+keel plan .keel/project.yaml --command device-smoke --json
+```
+
+When `keel plan --json --command <project-command>` targets a project command, the contract
+contains a `project_command` graph entry and the command's required/optional capabilities.
+
 ## `keel window <project.yaml>`
 
 Report whether the project's **merge window** is open right now, in the project's
@@ -86,25 +226,42 @@ keel window .keel/project.yaml
 # merge window OPEN  [Europe/Istanbul 07:00-01:30]
 ```
 
-## `keel ship <project.yaml> [--root DIR] [--pr N]`
+## `keel ship <project.yaml> [--root DIR] [--pr N] [--dry-run] [--live] [--approve-scope SCOPE] [--operator ID] [--target TARGET] [--review-comments inline|summary] [--reviewers 1|2|3] [--jury|--no-jury] [--jury-advisory] [--json]`
 
 Run the **deterministic slice of a ship** against the current checkout and print the
 assessment: how many files changed vs. the base branch, the **risk tier** (→ reviewer
 count), whether the **merge window** is open, optional **CI** status (`--pr N` reads the
-check-rollup via `gh`), each gate's result, and the final **merge decision**
+check-rollup through the selected GitHub transport), each gate's result, and the final
+**merge decision**
 (`MERGE` / `DEFER` / `BLOCK`).
 
 This is the runnable, agent-free part of the backbone (s5 classify + s6 CI + s8 gates +
 s10 merge decision). It does **not** call coding agents and does **not** perform the merge —
 the live merge (s10) needs a configured runner with `git` + an authenticated `gh`.
 
+`--live` turns the command into a live preflight gate for adapters. The command builds the
+same structured contract and stops before running project gates if operator consent is
+missing. `--approve-scope` can be repeated or comma-separated. Approved live runs include a
+local `consent_record` in JSON output; secret values are never recorded.
+
+Review and merge-gate parity is exposed through `review_merge_contract` in JSON output.
+`--review-comments` selects inline or summary posting, `--reviewers` overrides the
+risk-derived reviewer count, and jury precedence is `--no-jury` over `--jury` over tier-3
+auto-jury over off. `--jury-advisory` keeps an enabled jury report-only. No-jury mode still
+preserves the reviewer, CI, tester, merge-window, merge-lock, closeout, and capture gates.
+
 ```bash
 keel ship projects/keel.yaml --root .
+keel ship projects/keel.yaml --root . --live --json
+keel ship projects/keel.yaml --root . --live --approve-scope filesystem,git,github --operator "$USER" --target "issue #123" --json
 # keel ship — keel  (base main)
 #   changed files : 53
 #   risk tier     : TIER-3  → 3 reviewer(s)
+#   review posts  : inline
+#   jury          : gating (tier-3 auto)
 #   merge window  : OPEN
 #   ci            : unknown
+#   github        : gh
 #   gate build          ok
 #   gate lint           ok
 #   decision      : MERGE — clear to merge
@@ -115,6 +272,57 @@ CI), so it can gate a runner before it attempts a real merge.
 
 `--hotfix` marks an emergency change so it may merge **outside** the merge window (an audit
 line is printed). It never bypasses failing gates, blocking findings, or failing CI.
+
+`--json` emits the structured command contract plus a deterministic `result` record for the
+dry assessment. `--dry-run` is accepted for adapter clarity; this CLI command is already
+non-mutating.
+
+## `keel ship-v2 <project.yaml> [same flags as keel ship]`
+
+Run the same deterministic ship assessment through the first-class `ship-v2` workflow
+variant. `ship-v2` shares the ship backbone and safety gates, but its JSON contract carries
+`workflow_profile.profile: "compound"` and step overrides for compound `implement`,
+`review`, `fixloop`, and `capture`.
+
+```bash
+keel ship-v2 projects/keel.yaml --root . --dry-run --json
+# contract.workflow_profile.profile == "compound"
+# contract.workflow_profile.inherits == "ship"
+```
+
+Use `ship` for the standard delivery path and `ship-v2` when the operator wants the
+compound-engineering flavor while retaining the same CI, review, merge-window, merge-lock,
+closeout, and capture safety gates.
+
+## `keel implement <project.yaml> <issue> [--root DIR] [--delegate AGENT] [--dry-run] [--live] [--approve-scope SCOPE] [--operator ID] [--json]`
+
+Render the standalone implement-step contract for one issue. This is the direct-use form of
+the s4 implement step: it resolves project config, implementer routing, branch/worktree
+planning, consent scopes, and the handoff target without running the full ship lifecycle.
+
+```bash
+keel implement projects/keel.yaml 76 --root . --dry-run --json
+keel implement projects/keel.yaml 76 --root . --live --approve-scope filesystem,git,github --operator "$USER" --json
+```
+
+`implement` may create branches, worktrees, commits, pushes, PRs, and comments only in an
+approved live adapter run. Its contract explicitly marks standalone implement as a
+non-merge path and points the next step at `ship` or `pr-loop`.
+
+## `keel ci-check <project.yaml> [--root DIR] [--pr N] [--json]`
+
+Render the standalone CI diagnostic preflight contract. `ci-check` uses the shared runtime
+capability and GitHub transport resolution, declares the latest-run context and diagnostic
+result shape an adapter must produce, and stays read-only: the adapter diagnosis may propose
+one fix, but this CLI surface never edits, pushes, re-runs, posts comments, or merges.
+
+```bash
+keel ci-check projects/keel.yaml --root . --pr 104 --json
+```
+
+The JSON result records the configured workflow map, latest-run context shape, available
+transport, supported diagnostic classifications, one-fix policy, and next-command
+recommendations.
 
 ## `keel init [--root DIR] [--force]`
 
@@ -157,12 +365,52 @@ keel install-adapter claude --force  # overwrite existing adapters
 The `skills` surface is a **single** universal skill set (`keel-<cmd>`), not a dir per agent:
 non-Claude agents all read `.agents/skills/`, so one copy serves Codex, Antigravity and Gemini
 together. The skill body is the same project-neutral adapter, wrapped with skill frontmatter.
+Generated skill frontmatter intentionally contains only `name: keel-<cmd>` and `description`.
+Claude-only command metadata such as `argument-hint` and `allowed-tools` remains on the
+packaged command body / Claude command surface and is intentionally not copied into
+`SKILL.md`, because current shared skills use the skill manifest shape rather than Claude
+slash-command metadata.
 
 The CLI (`keel ship`, `keel run-gates`, …) does the deterministic work; these adapters are
 the **agentic** flows (per-round review, inline comments, delegation) the agent runs. The
 shipped set: `ship`, `regression`, `implement`, `review-cycle`, `pr-loop`, `morning`,
-`overnight`, `wrap`, `triage`, `stale-prs`, `ci-check`, `deps-audit`, `flake-audit`,
-`coverage`. Existing files are skipped unless `--force` (so your edits are never clobbered).
+`review-all-day`, `overnight`, `wrap`, `triage`, `stale-prs`, `ci-check`, `deps-audit`,
+`flake-audit`, `coverage`, `ship-v2`. Existing files are skipped unless `--force` (so your
+edits are never clobbered).
+
+The generated surface is covered as a release contract: tests install into a clean temporary
+project, verify that every packaged command has a matching Claude command and shared skill,
+validate skill frontmatter, check idempotent skip / `--force` overwrite behavior, and scan the
+generated files for consumer-specific strings. PyPI release smoke tests can reuse the same
+`keel install-adapter all --root <tmp-project>` flow.
+
+Generated adapter files carry a trailing `keel-generated` marker with the surface, command,
+keel version, source hash, and generated-body hash. That marker powers the safe update flow:
+
+```bash
+keel adapter-status all --root <repo>
+keel update-adapter all --root <repo> --dry-run
+keel update-adapter all --root <repo>
+```
+
+`adapter-status` reports:
+
+| status | meaning |
+|---|---|
+| `current` | installed generated file matches the packaged source |
+| `outdated` | installed generated file is unchanged locally, but packaged source changed |
+| `missing` | expected generated file is absent |
+| `locally-modified` | generated file has a marker, but its body changed after install |
+| `unknown` | file exists without a keel generated marker |
+
+`update-adapter` updates only `missing` and `outdated` generated adapter files. It refuses to
+overwrite `locally-modified` or `unknown` files; those need a human merge. `--dry-run` prints
+the same planned changes as `would-update` rows without writing. Adapter updates never touch
+project-owned config, `.keel/extensions/*`, project-provided commands, or local compatibility
+wrappers unless those files are explicitly marked as generated keel adapter surfaces.
+
+Extension schema migrations are separate from adapter command updates and must be documented
+as their own versioned migration.
 
 ## Exit codes
 

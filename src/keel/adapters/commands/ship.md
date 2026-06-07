@@ -22,8 +22,16 @@ may stay in any language.
 ```bash
 keel validate .keel/project.yaml --root .     # config + extensions must be valid
 keel plan     .keel/project.yaml --root .     # the backbone + this project's gates/Lego
+keel plan     .keel/project.yaml --root . --command ship --live --json
 keel window   .keel/project.yaml              # is the merge window open right now?
 ```
+
+The live plan is the operator-consent preflight. Before s1 and before any branch,
+worktree, GitHub write, delegation, secret, release, or production-adjacent access, parse
+`contract.operator_consent`; if `requires_operator_consent` is true, STOP and ask the
+operator to rerun with the required `--approve-scope` values. Do not infer secret or
+credential approval from project knowledge. Store `operator_consent.delegated_agent_scope`
+for every later delegated-agent brief.
 
 `keel validate`/`plan` resolve `base_branch`, the knob commands (`build_gate_cmd`,
 `lint_cmd`), `implementer_agents`, `tier3_globs`, `ci_workflows`, `docs_gate_paths`,
@@ -118,6 +126,9 @@ Resolve the implementer: `implementer_agents` by the issue's role label, **overr
   exists, ambiguous ⇒ treat as tier-2 and let s7 gate) — fall back to `HOST_AGENT` there.
 
 Every implementer (delegated or not) receives the same brief plus:
+- The approved `operator_consent.delegated_agent_scope`. If the implementer attempts work
+  outside `approved_mutation_scopes`, the orchestrator blocks or escalates instead of
+  silently continuing. Secret access requires the explicit `secrets` scope for this run.
 - Worktree isolation + branch-off-`base_branch` + `Closes #<N>` in the PR body + open as
   **draft**.
 - A pre-push scope self-check: `git diff base_branch...HEAD --name-only`, revert anything

@@ -10,10 +10,26 @@ Subcommands
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
-from . import __version__, gates, git, github, install, jury, scaffold, ship, window
+from . import (
+    __version__,
+    consent,
+    contracts,
+    gates,
+    git,
+    github,
+    github_transport,
+    install,
+    jury,
+    project_commands,
+    runtime,
+    scaffold,
+    ship,
+    window,
+)
 from . import config as cfg
 from . import findings as fnd
 from . import orchestrator as orch
@@ -82,9 +98,56 @@ def _cmd_plan(args: argparse.Namespace) -> int:
     except gates.GateError as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    print(orch.render_plan(config, plan))
+    requirement = (
+        _scan_capability_requirement(args.command_contract, config)
+        if args.command_contract in {"regression", "review-all-day"}
+        else _capability_requirement(args.command_contract, config, loaded)
+    )
+    report = runtime.detect(args.root)
+    evaluation = runtime.evaluate(requirement, report)
+    transport = github_transport.resolve(report)
+    try:
+        approved_scopes = _approved_scopes(args)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    contract = contracts.build_command_contract(
+        command=args.command_contract,
+        config=config,
+        loaded=loaded,
+        plan=plan,
+        requirement=requirement,
+        evaluation=evaluation,
+        transport=transport,
+        extension_problems=tuple(problems),
+        dry_run=not args.live,
+        approved_consent_scopes=approved_scopes,
+        operator=args.operator,
+        target=args.target,
+        reviewer_override=args.reviewers,
+        review_comments=args.review_comments,
+        jury=args.jury,
+        no_jury=args.no_jury,
+        jury_advisory=args.jury_advisory,
+    )
+    consent_ok, consent_message = consent.assert_operator_consent(contract["operator_consent"])
+    if args.json:
+        print(json.dumps({
+            "contract": contract,
+            "plan": orch.plan_as_dict(plan),
+            "capabilities": evaluation.as_dict(),
+            "github_transport": transport.as_dict(),
+        }, indent=2, sort_keys=True))
+    else:
+        print(orch.render_plan(config, plan))
+        print(evaluation.render())
+        print(f"operator consent: {contract['operator_consent']['status']}")
+        print(f"  {contract['operator_consent']['consent_prompt']}")
     for prob in problems:
         print(f"  ! extension not loaded: {prob}", file=sys.stderr)
+    if not consent_ok:
+        print(consent_message, file=sys.stderr)
+        return 1
     return 0
 
 
@@ -107,6 +170,15 @@ def _cmd_run_gates(args: argparse.Namespace) -> int:
     except gates.GateError as exc:
         print(str(exc), file=sys.stderr)
         return 1
+
+    requirement = _capability_requirement("run-gates", config, loaded)
+    report = runtime.detect(args.root)
+    evaluation = runtime.evaluate(requirement, report)
+    if not evaluation.ok:
+        print(evaluation.render(), file=sys.stderr)
+        return 1
+    if evaluation.missing_optional:
+        print(evaluation.render(), file=sys.stderr)
 
     diff_text = git.diff(config.base_branch, "HEAD", cwd=args.root)
     outcomes = gates.run_gates(specs, _gate_runner(args.root, diff_text))
@@ -143,6 +215,11 @@ def _cmd_window(args: argparse.Namespace) -> int:
 
 
 def _cmd_ship(args: argparse.Namespace) -> int:
+    if args.dry_run and args.live:
+        print("--dry-run and --live cannot be used together", file=sys.stderr)
+        return 1
+    command = getattr(args, "ship_command", "ship")
+
     try:
         config = cfg.load_config(args.path)
     except FileNotFoundError:
@@ -156,16 +233,69 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     for prob in problems:
         print(f"  ! extension not loaded: {prob}", file=sys.stderr)
 
+    requirement = _capability_requirement(command, config, loaded, pr=args.pr)
+    report = runtime.detect(args.root)
+    evaluation = runtime.evaluate(requirement, report)
+    if not evaluation.ok:
+        print(evaluation.render(), file=sys.stderr)
+        return 1
+    transport = github_transport.resolve(report)
+    if args.pr is not None and not transport.supports("check_runs"):
+        print(transport.render(), file=sys.stderr)
+        print("missing required GitHub transport capability: check_runs", file=sys.stderr)
+        return 1
+    try:
+        approved_scopes = _approved_scopes(args)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    try:
+        plan = orch.build_plan(config, loaded)
+    except gates.GateError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    contract = contracts.build_command_contract(
+        command=command,
+        config=config,
+        loaded=loaded,
+        plan=plan,
+        requirement=requirement,
+        evaluation=evaluation,
+        transport=transport,
+        extension_problems=tuple(problems),
+        dry_run=not args.live,
+        approved_consent_scopes=approved_scopes,
+        operator=args.operator,
+        target=args.target or (f"PR #{args.pr}" if args.pr is not None else None),
+        reviewer_override=args.reviewers,
+        review_comments=args.review_comments,
+        jury=args.jury,
+        no_jury=args.no_jury,
+        jury_advisory=args.jury_advisory,
+    )
+    consent_ok, consent_message = consent.assert_operator_consent(contract["operator_consent"])
+    if not consent_ok:
+        if args.json:
+            print(json.dumps({"contract": contract}, indent=2, sort_keys=True))
+        else:
+            print(consent_message, file=sys.stderr)
+        return 1
+
     changed = git.changed_files(config.base_branch, "HEAD", cwd=args.root)
+    # unreachable: orch.build_plan() above already calls plan_gates and surfaces GateError.
     try:
         specs = gates.plan_gates(config, loaded)
-    except gates.GateError as exc:
+    except gates.GateError as exc:  # pragma: no cover - defensive duplicate of the build_plan guard
         print(str(exc), file=sys.stderr)
         return 1
     diff_text = git.diff(config.base_branch, "HEAD", cwd=args.root)
     outcomes = gates.run_gates(specs, _gate_runner(args.root, diff_text))
     verdict = fnd.summarize(gates.collect_findings(outcomes))
-    ci_conclusion = github.ci_conclusion(args.pr, cwd=args.root) if args.pr else None
+    ci_conclusion = (
+        github.ci_conclusion(args.pr, cwd=args.root)
+        if args.pr and transport.name == "gh"
+        else None
+    )
 
     a = ship.assess(
         changed_files=changed,
@@ -177,18 +307,48 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         merge_window_mode=config.merge_window_mode,
         ci_conclusion=ci_conclusion,
         is_blocker=args.hotfix,
+        reviewer_override=args.reviewers,
+        review_comments=args.review_comments,
+        gates=config.gates,
+        policy_pack=config.policy_pack,
+        jury=args.jury,
+        no_jury=args.no_jury,
+        jury_advisory=args.jury_advisory,
     )
+    contract["review_merge_contract"] = a.review_contract
+
+    if args.json:
+        print(json.dumps({
+            "contract": contract,
+            "result": contracts.ship_result_as_dict(
+                changed_files=changed,
+                outcomes=outcomes,
+                verdict=verdict,
+                assessment=a,
+            ),
+        }, indent=2, sort_keys=True))
+        return 0 if a.merge.action != "block" else 1
 
     name = config.repo or config.extends
-    print(f"keel ship — {name}  (base {config.base_branch})")
+    print(f"keel {command} — {name}  (base {config.base_branch})")
     print(f"  changed files : {len(changed)}")
+    print(f"  profile       : {contract['workflow_profile']['profile']}")
     print(f"  risk tier     : TIER-{a.tier}  → {a.reviewers} reviewer(s)")
+    jury_state = a.review_contract["jury"]["mode"]
+    print(f"  review posts  : {a.review_contract['posting']['mode']}")
+    print(f"  jury          : {jury_state} ({a.review_contract['jury']['reason']})")
     window = "OPEN" if a.window_open else f"CLOSED ({config.merge_window_mode}, night no-merge)"
     print(f"  merge window  : {window}")
     ci_str = "unknown" if a.ci_ok is None else ("passing" if a.ci_ok else "FAILING")
     print(f"  ci            : {ci_str}")
+    print(f"  github        : {transport.name}")
+    print(f"  consent       : {contract['operator_consent']['status']}")
+    if transport.degraded:
+        print(f"  github degraded: {', '.join(transport.degraded)}")
     for o in outcomes:
         print(f"  gate {o.gate:<14} {'ok' if o.ok else 'FAIL'}")
+    if evaluation.missing_optional:
+        print(f"  degraded opt. : {', '.join(evaluation.missing_optional)}")
     if a.halted:  # pragma: no cover - display only; logic covered in ship.assess tests
         print("  pipeline      : HALTED (merge window paused)")
     if a.bypassed_window:  # pragma: no cover - display only; logic covered in ship.assess
@@ -196,6 +356,279 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     print(f"  decision      : {a.merge.action.upper()} — {a.merge.reason}")
     print("  note: dry assessment; live merge (s10) needs a configured runner (git + gh auth).")
     return 0 if a.merge.action != "block" else 1
+
+
+def _cmd_standalone(args: argparse.Namespace) -> int:
+    if getattr(args, "dry_run", False) and getattr(args, "live", False):
+        print("--dry-run and --live cannot be used together", file=sys.stderr)
+        return 1
+    command = args.standalone_command
+    try:
+        config = cfg.load_config(args.path)
+    except FileNotFoundError:
+        print(f"no such config: {args.path}", file=sys.stderr)
+        return 1
+    except cfg.ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    loaded, problems = load_extensions(config, args.root, strict=False)
+    for prob in problems:
+        print(f"  ! extension not loaded: {prob}", file=sys.stderr)
+
+    requirement = (
+        _ci_check_capability_requirement(config)
+        if command == "ci-check"
+        else _morning_capability_requirement(config)
+        if command == "morning"
+        else _scan_capability_requirement(command, config)
+        if command in {"regression", "review-all-day"}
+        else _capability_requirement(command, config, loaded, pr=getattr(args, "pr", None))
+    )
+    report = runtime.detect(args.root)
+    evaluation = runtime.evaluate(requirement, report)
+    if not evaluation.ok:
+        print(evaluation.render(), file=sys.stderr)
+        return 1
+    transport = github_transport.resolve(report)
+    target = _standalone_target(args)
+    try:
+        approved_scopes = _approved_scopes(args)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    try:
+        plan = orch.build_plan(config, loaded)
+    except gates.GateError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    contract = contracts.build_command_contract(
+        command=command,
+        config=config,
+        loaded=loaded,
+        plan=plan,
+        requirement=requirement,
+        evaluation=evaluation,
+        transport=transport,
+        extension_problems=tuple(problems),
+        dry_run=not getattr(args, "live", False),
+        approved_consent_scopes=approved_scopes,
+        operator=getattr(args, "operator", None),
+        target=target,
+        reviewer_override=getattr(args, "reviewers", None),
+        review_comments=getattr(args, "review_comments", "inline"),
+    )
+    consent_ok, consent_message = consent.assert_operator_consent(contract["operator_consent"])
+    result = contracts.standalone_result_as_dict(
+        command=command,
+        config=config,
+        target=target,
+        delegate=getattr(args, "delegate", None),
+        transport=transport,
+        evaluation=evaluation,
+    )
+    if not consent_ok:
+        if args.json:
+            print(json.dumps({"contract": contract, "result": result}, indent=2,
+                             sort_keys=True))
+        else:
+            print(consent_message, file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps({"contract": contract, "result": result}, indent=2, sort_keys=True))
+        return 0
+
+    name = config.repo or config.extends
+    print(f"keel {command} — {name}  (base {config.base_branch})")
+    print(f"  target        : {target or 'not specified'}")
+    print(f"  profile       : {contract['workflow_profile']['profile']}")
+    print(f"  github        : {transport.name}")
+    print(f"  consent       : {contract['operator_consent']['status']}")
+    if evaluation.missing_optional:
+        print(f"  degraded opt. : {', '.join(evaluation.missing_optional)}")
+    if command == "implement":
+        print(f"  worktree      : {result['worktree_path_pattern']}")
+        print(f"  branch        : {result['branch_pattern']}")
+        print("  merge         : never in standalone implement")
+        if args.delegate:
+            print(f"  delegate      : {args.delegate}")
+    elif command == "ci-check":
+        workflows = ", ".join(result["ci_workflows"]) or "not configured"
+        print(f"  workflows     : {workflows}")
+        print("  mode          : read-only; propose one fix, never apply")
+    elif command == "morning":
+        brief = result["brief"]
+        health = brief["health_providers"]
+        unavailable = [p["name"] for p in health if p["status"] in {"blocked", "unavailable"}]
+        report_names = ", ".join(brief["reports"]) or "not configured"
+        print(f"  reports       : {report_names}")
+        print(f"  health        : {len(health)} provider(s)")
+        if unavailable:
+            print(f"  unavailable   : {', '.join(unavailable)}")
+        print(f"  deferrals     : {brief['deferral_queue']['status']}")
+    elif command in {"wrap", "overnight"}:
+        session = result["session"]
+        report_names = ", ".join(session["reports"]) or "not configured"
+        print(f"  reports       : {report_names}")
+        print(f"  deferrals     : {session['deferral_queue']['status']}")
+        if command == "wrap":
+            linked_required = (
+                session["wrap"]["workspace_preflight"]["must_run_from_linked_worktree"]
+            )
+            print(f"  worktree      : linked required={linked_required}")
+            print("  pr            : ready PR after configured gates")
+        else:
+            print(f"  window        : {session['merge_window'] or 'not configured'}")
+            print(f"  mode source   : {session['overnight']['mode_source']['command']}")
+            print("  merge policy  : ship window + no-night-merge")
+    elif command in {"regression", "review-all-day"}:
+        scan = result["scan"]
+        print(f"  areas         : {len(scan['areas'])} configured")
+        print(f"  dedupe        : similarity>={scan['dedupe']['near_text_similarity']}")
+        print("  writes        : issues only after consent; no code/PR mutation")
+        if command == "review-all-day":
+            print(f"  title prefix  : {scan['review_all_day']['issue_creation']['title_prefix']}")
+        else:
+            print(f"  handoff       : {scan['regression']['issue_creation']['route_to']}")
+    mode = "live preflight contract" if getattr(args, "live", False) else "dry-run contract"
+    print(f"  note          : {mode}; adapters perform any approved live work.")
+    return 0
+
+
+def _standalone_target(args: argparse.Namespace) -> str | None:
+    if getattr(args, "issue", None) is not None:
+        issue = f"issue #{args.issue}"
+        extra = getattr(args, "target", None)
+        return f"{issue} ({extra})" if extra else issue
+    if getattr(args, "pr", None) is not None:
+        return f"PR #{args.pr}"
+    if getattr(args, "since", None) is not None:
+        extra = getattr(args, "target", None)
+        target = f"since {args.since}"
+        return f"{target} ({extra})" if extra else target
+    if getattr(args, "scope", None) is not None:
+        scope = f"scope {args.scope}"
+        extra = getattr(args, "target", None)
+        if getattr(args, "days", None) is not None:
+            scope = f"{args.days} day scan ({scope})"
+        return f"{scope} ({extra})" if extra else scope
+    if getattr(args, "days", None) is not None:
+        return f"{args.days} day scan"
+    if getattr(args, "title", None) is not None:
+        return args.title
+    if getattr(args, "hours", None) is not None:
+        target = f"{args.hours:g}h session"
+        max_items = getattr(args, "max_items", None)
+        return f"{target} (max {max_items})" if max_items is not None else target
+    return getattr(args, "target", None)
+
+
+def _approved_scopes(args: argparse.Namespace) -> tuple[str, ...]:
+    return consent.normalize_scopes(getattr(args, "approve_scope", ()))
+
+
+def _ci_check_capability_requirement(config: cfg.ProjectConfig) -> runtime.CapabilityRequirement:
+    optional = ["gh", "gh-auth"]
+    if config.knobs.ci_workflows:
+        optional.append("raw-actions-logs")
+    return runtime.CapabilityRequirement(optional=tuple(optional))
+
+
+def _morning_capability_requirement(config: cfg.ProjectConfig) -> runtime.CapabilityRequirement:
+    required: list[str] = []
+    optional: list[str] = ["gh", "gh-auth"]
+    pack = config.policy_pack or {}
+    health = pack.get("health_providers") if isinstance(pack.get("health_providers"), dict) else {}
+    for provider in health.values():
+        if not isinstance(provider, dict):
+            continue
+        required.extend(provider.get("required_capabilities") or ())
+        optional.extend(provider.get("optional_capabilities") or ())
+    return runtime.CapabilityRequirement(
+        required=tuple(dict.fromkeys(required)),
+        optional=tuple(dict.fromkeys(optional)),
+    )
+
+
+def _scan_capability_requirement(
+    command: str,
+    config: cfg.ProjectConfig,
+) -> runtime.CapabilityRequirement:
+    del config
+    if command == "regression":
+        return runtime.CapabilityRequirement(
+            required=("git", "worktree"),
+            optional=("gh", "gh-auth", "github-mcp", "parallel-subagents"),
+        )
+    return runtime.CapabilityRequirement(
+        required=("git",),
+        optional=("gh", "gh-auth", "github-mcp", "parallel-subagents"),
+    )
+
+
+def _cmd_capabilities(args: argparse.Namespace) -> int:
+    report = runtime.detect(args.root)
+    transport = github_transport.resolve(report)
+    requirement = runtime.CapabilityRequirement()
+    problems: list[str] = []
+    if args.path:
+        try:
+            config = cfg.load_config(args.path)
+        except FileNotFoundError:
+            print(f"no such config: {args.path}", file=sys.stderr)
+            return 1
+        except cfg.ConfigError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        loaded, problems = load_extensions(config, args.root, strict=False)
+        requirement = _capability_requirement(args.for_command, config, loaded, pr=args.pr)
+    evaluation = runtime.evaluate(requirement, report)
+    if args.json:
+        print(json.dumps({
+            "report": report.as_dict(),
+            "github_transport": transport.as_dict(),
+            "evaluation": evaluation.as_dict(),
+            "extension_problems": problems,
+        }, indent=2, sort_keys=True))
+    else:
+        print(report.render())
+        print(transport.render())
+        if args.path:
+            print(evaluation.render())
+        for prob in problems:
+            print(f"  ! extension not loaded: {prob}", file=sys.stderr)
+    return 0 if evaluation.ok else 1
+
+
+def _cmd_project_commands(args: argparse.Namespace) -> int:
+    try:
+        config = cfg.load_config(args.path)
+    except FileNotFoundError:
+        print(f"no such config: {args.path}", file=sys.stderr)
+        return 1
+    except cfg.ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    commands = project_commands.list_project_commands(config)
+    if args.json:
+        print(json.dumps({"project_commands": [command.as_dict() for command in commands]},
+                         indent=2, sort_keys=True))
+    else:
+        if not commands:
+            print("project commands: none")
+            return 0
+        print("project commands:")
+        for command in commands:
+            caps = []
+            if command.required_capabilities:
+                caps.append("required=" + ",".join(command.required_capabilities))
+            if command.optional_capabilities:
+                caps.append("optional=" + ",".join(command.optional_capabilities))
+            cap_text = f" ({'; '.join(caps)})" if caps else ""
+            runner = f" -> {command.command}" if command.command else ""
+            print(f"  {command.name}{runner}{cap_text}")
+    return 0
 
 
 def _ask(prompt: str, default: str) -> str:  # pragma: no cover - interactive I/O
@@ -229,6 +662,13 @@ def _report_install(surface: str, installed: list[str], skipped: list[str]) -> N
         print(f"  skipped    [{surface}] {name}  (exists; --force to overwrite)")
 
 
+def _report_adapter_rows(rows: dict[str, list[install.AdapterFileStatus]]) -> None:
+    for surface, statuses in rows.items():
+        for row in statuses:
+            detail = f" — {row.detail}" if row.detail else ""
+            print(f"  {row.status:<16} [{surface}] {row.name}  {row.path}{detail}")
+
+
 def _cmd_install_adapter(args: argparse.Namespace) -> int:
     if args.agent == "all":
         results = install.install_all(args.root, force=args.force)
@@ -245,6 +685,76 @@ def _cmd_install_adapter(args: argparse.Namespace) -> int:
     print(f"{total} adapter(s) installed — Claude: /keel:<command>; "
           f"other agents: keel-<command> skill (.agents/skills/)")
     return 0
+
+
+def _cmd_adapter_status(args: argparse.Namespace) -> int:
+    try:
+        rows = install.adapter_status(args.agent, args.root)
+    except KeyError:
+        print(f"unknown target {args.agent!r}; valid: all, {', '.join(install.TARGETS)}",
+              file=sys.stderr)
+        return 1
+    _report_adapter_rows(rows)
+    return 0
+
+
+def _cmd_update_adapter(args: argparse.Namespace) -> int:
+    try:
+        rows = install.update_adapters(args.agent, args.root, dry_run=args.dry_run)
+    except KeyError:
+        print(f"unknown target {args.agent!r}; valid: all, {', '.join(install.TARGETS)}",
+              file=sys.stderr)
+        return 1
+    _report_adapter_rows(rows)
+    if args.dry_run:
+        print("dry-run: no adapter files were written")
+    return 0
+
+
+def _capability_requirement(
+    command: str,
+    config: cfg.ProjectConfig,
+    loaded: dict[str, list],
+    *,
+    pr: int | None = None,
+) -> runtime.CapabilityRequirement:
+    req = runtime.CapabilityRequirement(
+        required=config.knobs.required_capabilities,
+        optional=config.knobs.optional_capabilities,
+    )
+    try:
+        specs = gates.plan_gates(config, loaded)
+    except gates.GateError:
+        return req
+    if project_command := project_commands.get_project_command(config, command):
+        req = req.merged(runtime.CapabilityRequirement(
+            required=project_command.required_capabilities,
+            optional=project_command.optional_capabilities,
+        ))
+
+    command_gate_commands = {
+        "run-gates", "ship", "ship-v2", "pr-loop", "wrap", "overnight", "implement",
+        "coverage", "deps-audit", "flake-audit",
+    }
+    if command in command_gate_commands and any(s.kind == "command" for s in specs):
+        req = req.merged(runtime.CapabilityRequirement(required=("shell",)))
+    worktree_commands = {"ship", "ship-v2", "pr-loop", "wrap", "overnight", "implement"}
+    github_read_commands = {
+        "morning", "review-cycle", "triage", "stale-prs", "regression", "review-all-day",
+        "coverage", "deps-audit", "flake-audit", "ci-check",
+    }
+    if command in worktree_commands:
+        req = req.merged(runtime.CapabilityRequirement(required=("git", "worktree"),
+                                                       optional=("gh", "gh-auth")))
+    elif command in github_read_commands:
+        req = req.merged(runtime.CapabilityRequirement(optional=("gh", "gh-auth")))
+    for spec in specs:
+        if spec.required_capabilities or spec.optional_capabilities:
+            req = req.merged(runtime.CapabilityRequirement(
+                required=spec.required_capabilities,
+                optional=spec.optional_capabilities,
+            ))
+    return req
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -264,6 +774,27 @@ def build_parser() -> argparse.ArgumentParser:
     p_plan = sub.add_parser("plan", help="render the backbone plan for a project")
     p_plan.add_argument("path", help="path to project.yaml")
     p_plan.add_argument("--root", default=".", help="repo root for resolving extensions")
+    p_plan.add_argument("--command", dest="command_contract", default="ship",
+                        help="adapter command contract to include in JSON output")
+    p_plan.add_argument("--live", action="store_true",
+                        help="render a live preflight contract and fail if consent is missing")
+    p_plan.add_argument("--approve-scope", action="append", default=[],
+                        help="approve a consent scope for this run; repeat or comma-separate")
+    p_plan.add_argument("--operator", default=None,
+                        help="operator identifier to include in an approved consent record")
+    p_plan.add_argument("--target", default=None,
+                        help="task target to include in the consent prompt and record")
+    p_plan.add_argument("--review-comments", choices=("inline", "summary"), default="inline",
+                        help="review posting mode for ship-like command contracts")
+    p_plan.add_argument("--reviewers", type=int, choices=(1, 2, 3), default=None,
+                        help="override the resolved reviewer count")
+    p_plan.add_argument("--jury", action="store_true",
+                        help="enable the cross-vendor jury contract")
+    p_plan.add_argument("--no-jury", action="store_true",
+                        help="disable the cross-vendor jury contract")
+    p_plan.add_argument("--jury-advisory", action="store_true",
+                        help="run jury in advisory mode when enabled")
+    p_plan.add_argument("--json", action="store_true", help="emit structured JSON")
     p_plan.set_defaults(func=_cmd_plan)
 
     p_run = sub.add_parser("run-gates", help="run a project's command gates")
@@ -275,12 +806,186 @@ def build_parser() -> argparse.ArgumentParser:
     p_window.add_argument("path", help="path to project.yaml")
     p_window.set_defaults(func=_cmd_window)
 
-    p_ship = sub.add_parser("ship", help="dry ship assessment (tier, window, gates, decision)")
-    p_ship.add_argument("path", help="path to project.yaml")
-    p_ship.add_argument("--root", default=".", help="repo root for git, gates + extensions")
-    p_ship.add_argument("--pr", type=int, default=None, help="PR number for CI status (gh)")
-    p_ship.add_argument("--hotfix", action="store_true", help="emergency: bypass the merge window")
-    p_ship.set_defaults(func=_cmd_ship)
+    _add_ship_parser(
+        sub.add_parser("ship", help="dry ship assessment (tier, window, gates, decision)"),
+        command="ship",
+    )
+    _add_ship_parser(
+        sub.add_parser(
+            "ship-v2",
+            help="dry ship-v2 assessment using the compound workflow profile",
+        ),
+        command="ship-v2",
+    )
+
+    p_implement = sub.add_parser(
+        "implement",
+        help="standalone implement-step preflight contract",
+    )
+    p_implement.add_argument("path", help="path to project.yaml")
+    p_implement.add_argument("issue", type=_positive_int, help="issue number to implement")
+    p_implement.add_argument("--root", default=".", help="repo root for git and extensions")
+    p_implement.add_argument("--delegate", default=None,
+                             help="explicit implementer delegate override")
+    p_implement.add_argument("--dry-run", action="store_true",
+                             help="explicitly mark the assessment as non-mutating")
+    p_implement.add_argument("--live", action="store_true",
+                             help="render a live preflight and fail if consent is missing")
+    p_implement.add_argument("--approve-scope", action="append", default=[],
+                             help="approve a consent scope for this run; repeat or comma-separate")
+    p_implement.add_argument("--operator", default=None,
+                             help="operator identifier to include in an approved consent record")
+    p_implement.add_argument("--target", default=None,
+                             help="additional target text for the consent prompt")
+    p_implement.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_implement.set_defaults(func=_cmd_standalone, standalone_command="implement")
+
+    p_ci = sub.add_parser(
+        "ci-check",
+        help="standalone read-only CI diagnostic preflight contract",
+    )
+    p_ci.add_argument("path", help="path to project.yaml")
+    p_ci.add_argument("--root", default=".", help="repo root for capability checks")
+    p_ci.add_argument("--pr", type=_positive_int, default=None,
+                      help="PR number whose latest checks should be diagnosed")
+    p_ci.add_argument("--target", default=None,
+                      help="target text to include in the diagnostic contract")
+    p_ci.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_ci.set_defaults(func=_cmd_standalone, standalone_command="ci-check")
+
+    p_morning = sub.add_parser(
+        "morning",
+        help="standalone daily-brief preflight contract",
+    )
+    p_morning.add_argument("path", help="path to project.yaml")
+    p_morning.add_argument("--root", default=".", help="repo root for capability checks")
+    p_morning.add_argument("--since", default=None,
+                           help="optional brief window start label or timestamp")
+    p_morning.add_argument("--target", default=None,
+                           help="target text to include in the morning contract")
+    p_morning.add_argument("--dry-run", action="store_true",
+                           help="explicitly mark the assessment as non-mutating")
+    p_morning.add_argument("--live", action="store_true",
+                           help="render a live preflight and fail if consent is missing")
+    p_morning.add_argument("--approve-scope", action="append", default=[],
+                           help="approve a consent scope for this run; repeat or comma-separate")
+    p_morning.add_argument("--operator", default=None,
+                           help="operator identifier to include in an approved consent record")
+    p_morning.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_morning.set_defaults(func=_cmd_standalone, standalone_command="morning")
+
+    p_wrap = sub.add_parser(
+        "wrap",
+        help="standalone session-wrap preflight contract",
+    )
+    p_wrap.add_argument("path", help="path to project.yaml")
+    p_wrap.add_argument("title", nargs="?", default=None,
+                        help="optional PR title override to include in the contract")
+    p_wrap.add_argument("--root", default=".", help="repo root for git and capability checks")
+    p_wrap.add_argument("--since", default=None,
+                        help="optional session start label or timestamp")
+    p_wrap.add_argument("--target", default=None,
+                        help="target text to include in the wrap contract")
+    p_wrap.add_argument("--dry-run", action="store_true",
+                        help="explicitly mark the assessment as non-mutating")
+    p_wrap.add_argument("--live", action="store_true",
+                        help="render a live preflight and fail if consent is missing")
+    p_wrap.add_argument("--approve-scope", action="append", default=[],
+                        help="approve a consent scope for this run; repeat or comma-separate")
+    p_wrap.add_argument("--operator", default=None,
+                        help="operator identifier to include in an approved consent record")
+    p_wrap.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_wrap.set_defaults(func=_cmd_standalone, standalone_command="wrap")
+
+    p_overnight = sub.add_parser(
+        "overnight",
+        help="standalone overnight-session preflight contract",
+    )
+    p_overnight.add_argument("path", help="path to project.yaml")
+    p_overnight.add_argument("hours", nargs="?", type=float, default=None,
+                             help="optional time budget in hours")
+    p_overnight.add_argument("--root", default=".", help="repo root for git and capability checks")
+    p_overnight.add_argument("--max", dest="max_items", type=_positive_int, default=None,
+                             help="maximum issues to attempt in this session")
+    p_overnight.add_argument("--review-comments", choices=("inline", "summary"), default="inline",
+                             help="review posting mode to pass through ship handoffs")
+    p_overnight.add_argument("--reviewers", type=int, choices=(1, 2, 3), default=None,
+                             help="reviewer override for ship handoff contracts")
+    p_overnight.add_argument("--target", default=None,
+                             help="target text to include in the overnight contract")
+    p_overnight.add_argument("--dry-run", action="store_true",
+                             help="explicitly mark the assessment as non-mutating")
+    p_overnight.add_argument("--live", action="store_true",
+                             help="render a live preflight and fail if consent is missing")
+    p_overnight.add_argument("--approve-scope", action="append", default=[],
+                             help="approve a consent scope for this run; repeat or comma-separate")
+    p_overnight.add_argument("--operator", default=None,
+                             help="operator identifier to include in an approved consent record")
+    p_overnight.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_overnight.set_defaults(func=_cmd_standalone, standalone_command="overnight")
+
+    p_regression = sub.add_parser(
+        "regression",
+        help="standalone scan-and-file regression preflight contract",
+    )
+    p_regression.add_argument("path", help="path to project.yaml")
+    p_regression.add_argument("--root", default=".", help="repo root for git/capability checks")
+    p_regression.add_argument("--scope", choices=("full", "changed", "since"), default="full",
+                              help="scan scope to include in the preflight target")
+    p_regression.add_argument("--since", default=None,
+                              help="optional ref or timestamp when --scope since is used")
+    p_regression.add_argument("--target", default=None,
+                              help="target text to include in the regression contract")
+    p_regression.add_argument("--dry-run", action="store_true",
+                              help="explicitly mark the assessment as non-mutating")
+    p_regression.add_argument("--live", action="store_true",
+                              help="render a live preflight and fail if consent is missing")
+    p_regression.add_argument("--approve-scope", action="append", default=[],
+                              help="approve a consent scope for this run; repeat or comma-separate")
+    p_regression.add_argument("--operator", default=None,
+                              help="operator identifier to include in an approved consent record")
+    p_regression.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_regression.set_defaults(func=_cmd_standalone, standalone_command="regression")
+
+    p_review_all_day = sub.add_parser(
+        "review-all-day",
+        help="standalone time-window scan-and-file preflight contract",
+    )
+    p_review_all_day.add_argument("path", help="path to project.yaml")
+    p_review_all_day.add_argument("days", nargs="?", type=_positive_int, default=1,
+                                  help="number of merge-window days to scan")
+    p_review_all_day.add_argument("--root", default=".", help="repo root for git/capability checks")
+    p_review_all_day.add_argument("--target", default=None,
+                                  help="target text to include in the review-all-day contract")
+    p_review_all_day.add_argument("--dry-run", action="store_true",
+                                  help="explicitly mark the assessment as non-mutating")
+    p_review_all_day.add_argument("--live", action="store_true",
+                                  help="render a live preflight and fail if consent is missing")
+    p_review_all_day.add_argument("--approve-scope", action="append", default=[],
+                                  help=("approve a consent scope for this run; repeat or "
+                                        "comma-separate"))
+    p_review_all_day.add_argument("--operator", default=None,
+                                  help=("operator identifier to include in an approved "
+                                        "consent record"))
+    p_review_all_day.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_review_all_day.set_defaults(func=_cmd_standalone, standalone_command="review-all-day")
+
+    p_caps = sub.add_parser("capabilities", help="print runtime capability report")
+    p_caps.add_argument("--root", default=".", help="repo root for capability checks")
+    p_caps.add_argument("--project", dest="path", default=None,
+                        help="optional project.yaml to evaluate requirements")
+    p_caps.add_argument("--for", dest="for_command", default="ship",
+                        help="command requirement to evaluate when --project is set")
+    p_caps.add_argument("--pr", type=int, default=None,
+                        help="PR number for ship capability requirements")
+    p_caps.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_caps.set_defaults(func=_cmd_capabilities)
+
+    p_proj = sub.add_parser("project-commands",
+                            help="list project-provided commands declared by policy")
+    p_proj.add_argument("path", help="path to project.yaml")
+    p_proj.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_proj.set_defaults(func=_cmd_project_commands)
 
     p_init = sub.add_parser("init", help="scaffold a default .keel/project.yaml for this repo")
     p_init.add_argument("--root", default=".", help="repo root to scaffold into")
@@ -294,7 +999,57 @@ def build_parser() -> argparse.ArgumentParser:
     p_ia.add_argument("--force", action="store_true", help="overwrite existing adapters")
     p_ia.set_defaults(func=_cmd_install_adapter)
 
+    p_as = sub.add_parser("adapter-status", help="report generated adapter freshness")
+    p_as.add_argument("agent", nargs="?", default="all",
+                      help=f"'all' or one of: {', '.join(install.TARGETS)}")
+    p_as.add_argument("--root", default=".", help="project root to inspect")
+    p_as.set_defaults(func=_cmd_adapter_status)
+
+    p_ua = sub.add_parser("update-adapter", help="safely update generated adapters")
+    p_ua.add_argument("agent", nargs="?", default="all",
+                      help=f"'all' or one of: {', '.join(install.TARGETS)}")
+    p_ua.add_argument("--root", default=".", help="project root to update")
+    p_ua.add_argument("--dry-run", action="store_true", help="show planned updates only")
+    p_ua.set_defaults(func=_cmd_update_adapter)
+
     return parser
+
+
+def _add_ship_parser(parser: argparse.ArgumentParser, *, command: str) -> None:
+    parser.add_argument("path", help="path to project.yaml")
+    parser.add_argument("--root", default=".", help="repo root for git, gates + extensions")
+    parser.add_argument("--pr", type=int, default=None, help="PR number for CI status (gh)")
+    parser.add_argument("--hotfix", action="store_true", help="emergency: bypass the merge window")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="explicitly mark the assessment as non-mutating")
+    parser.add_argument("--live", action="store_true",
+                        help=("run the live preflight gate and fail before gates "
+                              "if consent is missing"))
+    parser.add_argument("--approve-scope", action="append", default=[],
+                        help="approve a consent scope for this run; repeat or comma-separate")
+    parser.add_argument("--operator", default=None,
+                        help="operator identifier to include in an approved consent record")
+    parser.add_argument("--target", default=None,
+                        help="task target to include in the consent prompt and record")
+    parser.add_argument("--review-comments", choices=("inline", "summary"), default="inline",
+                        help="review posting mode for the resolved ship contract")
+    parser.add_argument("--reviewers", type=int, choices=(1, 2, 3), default=None,
+                        help="override the risk-derived reviewer count")
+    parser.add_argument("--jury", action="store_true",
+                        help="enable the cross-vendor jury gate")
+    parser.add_argument("--no-jury", action="store_true",
+                        help="disable the cross-vendor jury gate")
+    parser.add_argument("--jury-advisory", action="store_true",
+                        help="make an enabled jury advisory instead of merge-gating")
+    parser.add_argument("--json", action="store_true", help="emit structured JSON")
+    parser.set_defaults(func=_cmd_ship, ship_command=command)
+
+
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
 
 
 def main(argv: list[str] | None = None) -> int:

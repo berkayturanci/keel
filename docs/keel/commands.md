@@ -21,7 +21,7 @@ project's `.keel/project.yaml`.
 | command | what it does |
 |---|---|
 | **`/keel:ship`** | Drive a GitHub issue end-to-end through the keel backbone (select → branch → implement → CI → review → test → merge → close → capture). The full flow: per-round review, inline `file:line` comments, `--delegate` / `--review-delegate`, `--review-comments inline\|summary`, `--reviewers N`, the `jury` gate, the timezone-aware merge window + `mkdir` merge lock, and vendor+model attribution. |
-| `/keel:ship-v2` | Compound-engineering flavour of the ship workflow — **folded into `/keel:ship`**; its deltas are expressed as keel extensions, not a separate backbone. This command points at `/keel:ship`. |
+| `/keel:ship-v2` | First-class compound-engineering variant of the ship workflow. It reuses the shared ship backbone for selection, worktree safety, CI, review gates, merge window, merge lock, closeout, and capture markers, while its `workflow_profile` marks `implement`, `review`, `fixloop`, and `capture` as compound step overrides. |
 
 ## Per-step (standalone slices of the backbone)
 
@@ -60,8 +60,17 @@ project's `.keel/project.yaml`.
 ## How a command stays project-neutral
 
 A command never hardcodes a branch, build/lint command, agent, glob, timezone, window, or
-workflow name. It references the knob by name and asks the `keel` CLI for the value, so the same
-`/keel:ship` produces Flutter behaviour in one repo and Android behaviour in another purely from
-each repo's `.keel/project.yaml`. Project-specific *gates* live in `.keel/extensions/` (Lego);
-project-only commands (platform builds, device tests, app-specific regressions) stay in the
-project. See [`configuration.md`](configuration.md) and [`extensions.md`](extensions.md).
+workflow name. It references the knob by name and asks the `keel` CLI for the value, so the
+same `/keel:ship` command can produce different behaviour in different repos purely from each
+repo's `.keel/project.yaml`. Project-specific *gates* live in `.keel/extensions/` (Lego);
+project-only commands (local build checks, smoke tests, project-specific regressions) stay in
+the project and are exposed as data through `keel project-commands`. See
+[`configuration.md`](configuration.md), [`cli.md`](cli.md#keel-project-commands-projectyaml---json),
+and [`extensions.md`](extensions.md).
+
+For the full boundary between keel core, project policy, project commands, runtime
+capabilities, and adapters, see
+[`consumer-neutrality.md`](consumer-neutrality.md).
+
+For migration status from legacy project commands to `/keel:<command>` workflows, see
+[`parity-matrix.md`](parity-matrix.md).

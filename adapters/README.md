@@ -44,8 +44,39 @@ keel install-adapter skills     # just the shared skill set
 - Every other agent: the `keel-ship` / `keel-wrap` … skill (one shared set under
   `.agents/skills/`).
 
+## Generated-surface contract
+
+`keel install-adapter all --root <tmp-project>` is the release-smoke path for adapter
+generation. It must produce one Claude command and one shared skill for every packaged
+command body under `src/keel/adapters/commands/*.md`.
+
+The generated Claude command preserves the packaged command body byte-for-byte, followed
+by a `keel-generated` marker used for adapter status and update compatibility. The
+generated skill preserves the same project-neutral body but uses skill frontmatter instead of
+Claude slash-command metadata: `name: keel-<cmd>` and `description` are preserved;
+`argument-hint` and `allowed-tools` are intentionally dropped from `SKILL.md`. It also
+receives the same generated marker.
+
+Generated files are idempotent: a second install without `--force` skips existing files, and
+`--force` overwrites only the generated adapter surfaces. Tests validate the command counts,
+frontmatter shape, idempotency, and absence of consumer-specific strings.
+
+## Update compatibility
+
+Generated adapter files include a trailing `keel-generated` marker with the command name,
+surface, keel version, source hash, and generated-body hash. `keel adapter-status` uses this
+marker to classify files as `current`, `outdated`, `missing`, `locally-modified`, or
+`unknown`; `keel update-adapter --dry-run` shows the planned changes; `keel update-adapter`
+regenerates only `missing` and `outdated` adapter files.
+
+If a generated adapter was edited by hand, keel reports `locally-modified` and leaves it
+untouched. Files without a generated marker are `unknown` and are also left untouched. Project
+config, `.keel/extensions/`, project-provided commands, and local compatibility wrappers are
+outside this update path unless they are explicitly marked as generated keel adapter files.
+
 ## Changing a command
 
 Edit the packaged body under `src/keel/adapters/commands/<cmd>.md` (the single source), then
-`keel install-adapter all --force` to re-install both surfaces. Never inline a project specific
-— if you would type `develop`/`gradle`/`flutter`/an agent name, read it from config instead.
+`keel install-adapter all --force` to re-install both surfaces. Never inline a project
+specific: if you would type a branch name, build tool, framework, service, path glob, or agent
+name, read it from config instead.

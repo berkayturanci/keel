@@ -1,0 +1,24 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'LANGUAGE RULE (AGENTS.md): All repo artifacts — code, comments, commits, PR/issue bodies, and Markdown — MUST be written in English. Free-form chat may use any language.'"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./.codex/hooks/deny-dangerous-shell.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

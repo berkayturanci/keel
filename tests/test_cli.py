@@ -2,10 +2,14 @@
 
 import contextlib
 import io
+import json
+import subprocess
 import unittest
+from argparse import Namespace
 from pathlib import Path
+from unittest.mock import patch
 
-from keel import cli
+from keel import cli, runtime
 
 PROJECTS = Path(__file__).resolve().parent.parent / "projects"
 REPO_ROOT = PROJECTS.parent
@@ -69,6 +73,71 @@ class TestPlan(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("s10  merge", out)
         self.assertIn("gate: build", out)
+        self.assertIn("runtime capabilities", out)
+
+    def test_plan_json_includes_capabilities(self):
+        rc, out, _ = run(
+            ["plan", str(PROJECTS / "example-android.yaml"), "--root", str(REPO_ROOT), "--json"]
+        )
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertIn("contract", data)
+        self.assertIn("capabilities", data)
+        self.assertIn("github_transport", data)
+        self.assertIn("plan", data)
+        self.assertEqual(data["contract"]["schema_version"], "keel.command-contract.v1")
+        self.assertEqual(data["contract"]["command"], "ship")
+        self.assertIn("review_merge_contract", data["contract"])
+
+    def test_plan_json_resolves_review_jury_flags(self):
+        rc, out, _ = run(
+            ["plan", str(PROJECTS / "example-android.yaml"), "--root", str(REPO_ROOT),
+             "--command", "ship", "--reviewers", "2", "--review-comments", "summary",
+             "--jury", "--jury-advisory", "--json"]
+        )
+        self.assertEqual(rc, 0)
+        review = json.loads(out)["contract"]["review_merge_contract"]
+        self.assertEqual(review["reviewers"]["count"], 2)
+        self.assertEqual(review["reviewers"]["source"], "override")
+        self.assertEqual(review["posting"]["mode"], "summary")
+        self.assertEqual(review["jury"]["mode"], "advisory")
+
+    def test_plan_json_can_expose_other_command_graph(self):
+        rc, out, _ = run(
+            ["plan", str(PROJECTS / "example-android.yaml"), "--root", str(REPO_ROOT),
+             "--command", "morning", "--json"]
+        )
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["contract"]["command"], "morning")
+        self.assertTrue(data["contract"]["graph"])
+        self.assertIn("gh", data["contract"]["optional_capabilities"])
+
+    def test_plan_live_json_blocks_when_consent_missing(self):
+        rc, out, err = run(
+            ["plan", str(PROJECTS / "example-android.yaml"), "--root", str(REPO_ROOT),
+             "--live", "--json", "--target", "issue #82"]
+        )
+        self.assertEqual(rc, 1)
+        data = json.loads(out)
+        consent = data["contract"]["operator_consent"]
+        self.assertEqual(consent["status"], "missing")
+        self.assertTrue(consent["requires_operator_consent"])
+        self.assertIn("filesystem", consent["missing_scope"])
+        self.assertIn("operator consent", err)
+
+    def test_plan_live_json_accepts_approved_scope(self):
+        rc, out, _ = run(
+            ["plan", str(PROJECTS / "example-android.yaml"), "--root", str(REPO_ROOT),
+             "--live", "--json", "--target", "issue #82",
+             "--approve-scope", "filesystem,git,github", "--operator", "tester"]
+        )
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        consent = data["contract"]["operator_consent"]
+        self.assertEqual(consent["status"], "approved")
+        self.assertEqual(consent["consent_record"]["operator"], "tester")
+        self.assertFalse(consent["consent_record"]["secret_values_recorded"])
 
     def test_plan_missing_config(self):
         rc, _, err = run(["plan", str(PROJECTS / "nope.yaml")])
@@ -105,6 +174,10 @@ def _write_config(build_cmd):
         "extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
         f"repo: tmp\ngates: [build]\nknobs:\n  build_gate_cmd: {build_cmd}\n"
     )
+
+
+def _run_git(root: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=root, check=True, capture_output=True, text=True)
 
 
 class TestRunGates(unittest.TestCase):
@@ -195,6 +268,108 @@ class TestShip(unittest.TestCase):
         self.assertIn("TIER-2", out)        # empty changeset -> default tier
         self.assertIn("DECISION", out.upper())
         self.assertIn("MERGE", out)
+        self.assertIn("github        :", out)
+
+    def test_json_dry_run_contract(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["ship", _write_config("'true'"), "--root", d,
+                              "--dry-run", "--json", "--review-comments", "summary",
+                              "--no-jury", "--reviewers", "1"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["contract"]["command"], "ship")
+        self.assertTrue(data["contract"]["dry_run"])
+        self.assertFalse(data["contract"]["side_effects"]["mutates_in_dry_run"])
+        self.assertEqual(data["contract"]["operator_consent"]["status"],
+                         "not-required-dry-run")
+        self.assertEqual(data["result"]["changed_file_count"], 0)
+        self.assertEqual(data["result"]["assessment"]["merge"]["action"], "merge")
+        review = data["result"]["assessment"]["review_merge_contract"]
+        self.assertEqual(review["reviewers"]["count"], 1)
+        self.assertEqual(review["posting"]["mode"], "summary")
+        self.assertEqual(review["jury"]["mode"], "off")
+
+    def test_ship_v2_json_dry_run_contract(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["ship-v2", _write_config("'true'"), "--root", d,
+                              "--dry-run", "--json"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["contract"]["command"], "ship-v2")
+        self.assertEqual(data["contract"]["workflow_profile"]["profile"], "compound")
+        self.assertEqual(data["contract"]["workflow_profile"]["inherits"], "ship")
+        self.assertEqual(
+            data["contract"]["workflow_profile"]["step_overrides"]["s7"]["step"],
+            "review",
+        )
+        self.assertIn("review_merge_contract", data["contract"])
+        self.assertIn("result", data)
+
+    def test_json_contract_matches_assessment_for_tier3_auto_jury(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _run_git(root, "init", "-b", "main")
+            _run_git(root, "config", "user.email", "test@example.com")
+            _run_git(root, "config", "user.name", "Test User")
+            (root / "README.md").write_text("base\n", encoding="utf-8")
+            _run_git(root, "add", "README.md")
+            _run_git(root, "commit", "-m", "base")
+            _run_git(root, "checkout", "-b", "feature")
+            workflow = root / ".github" / "workflows" / "ci.yml"
+            workflow.parent.mkdir(parents=True)
+            workflow.write_text("name: ci\n", encoding="utf-8")
+            _run_git(root, "add", ".github/workflows/ci.yml")
+            _run_git(root, "commit", "-m", "change workflow")
+
+            config = _write_raw(
+                "extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: tmp\n"
+                "gates: [build, jury]\nknobs:\n  build_gate_cmd: 'true'\n"
+                "  tier3_globs: ['.github/workflows/**']\n"
+            )
+            rc, out, _ = run(["ship", config, "--root", d, "--dry-run", "--json"])
+
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        contract_review = data["contract"]["review_merge_contract"]
+        assessment_review = data["result"]["assessment"]["review_merge_contract"]
+        self.assertEqual(contract_review["reviewers"]["tier"], 3)
+        self.assertEqual(contract_review["reviewers"]["count"], 3)
+        self.assertEqual(contract_review["reviewers"]["source"], "risk-tier")
+        self.assertEqual(contract_review["jury"]["mode"], "gating")
+        self.assertEqual(contract_review, assessment_review)
+
+    def test_ship_rejects_conflicting_live_and_dry_run_flags(self):
+        rc, _, err = run(["ship", _write_config("'true'"), "--dry-run", "--live"])
+        self.assertEqual(rc, 1)
+        self.assertIn("cannot be used together", err)
+
+    def test_ship_live_json_blocks_before_running_gates_without_consent(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["ship", _write_config("'false'"), "--root", d,
+                              "--live", "--json", "--target", "issue #82"])
+        self.assertEqual(rc, 1)
+        data = json.loads(out)
+        self.assertIn("contract", data)
+        self.assertNotIn("result", data)
+        self.assertEqual(data["contract"]["operator_consent"]["status"], "missing")
+        self.assertIn("github", data["contract"]["operator_consent"]["missing_scope"])
+
+    def test_ship_live_json_runs_after_consent(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["ship", _write_config("'true'"), "--root", d,
+                              "--live", "--json", "--target", "issue #82",
+                              "--approve-scope", "filesystem,git,github",
+                              "--operator", "tester"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["contract"]["mode"], "live")
+        self.assertEqual(data["contract"]["operator_consent"]["status"], "approved")
+        self.assertIn("result", data)
 
     def test_failing_gate_blocks(self):
         import tempfile
@@ -222,6 +397,32 @@ class TestShip(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertTrue(err)
 
+    def test_missing_required_capability_blocks_before_ship(self):
+        p = _write_raw("extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: x\n"
+                       "gates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+                       "  required_capabilities: [release-publish]\n")
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, _, err = run(["ship", p, "--root", d])
+        self.assertEqual(rc, 1)
+        self.assertIn("missing required", err)
+
+    def test_pr_ci_requires_transport_check_runs(self):
+        import tempfile
+        fake_report = runtime.CapabilityReport((
+            runtime.Capability("shell", True, "ok", "test"),
+            runtime.Capability("git", True, "ok", "test"),
+            runtime.Capability("worktree", True, "ok", "test"),
+            runtime.Capability("gh", False, "missing", "test"),
+            runtime.Capability("gh-auth", False, "missing", "test"),
+            runtime.Capability("github-mcp", False, "missing", "test"),
+        ))
+        with tempfile.TemporaryDirectory() as d, patch("keel.cli.runtime.detect",
+                                                       return_value=fake_report):
+            rc, _, err = run(["ship", _write_config("'true'"), "--root", d, "--pr", "7"])
+        self.assertEqual(rc, 1)
+        self.assertIn("missing required GitHub transport capability: check_runs", err)
+
     def test_unloadable_extension_warned(self):
         import tempfile
         p = _write_raw("extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: x\n"
@@ -231,6 +432,509 @@ class TestShip(unittest.TestCase):
             rc, _, err = run(["ship", p, "--root", d])
         self.assertEqual(rc, 0)
         self.assertIn("extension not loaded", err)
+
+
+class TestStandaloneCommands(unittest.TestCase):
+    def test_implement_json_dry_run_contract(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["implement", _write_config("'true'"), "76",
+                              "--root", d, "--dry-run", "--json",
+                              "--delegate", "codex"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["contract"]["command"], "implement")
+        self.assertEqual(data["contract"]["workflow_profile"]["profile"], "standalone-step")
+        self.assertEqual(data["contract"]["operator_consent"]["status"],
+                         "not-required-dry-run")
+        self.assertIn("git", data["contract"]["required_capabilities"])
+        self.assertEqual(data["result"]["target"], "issue #76")
+        self.assertFalse(data["result"]["handoff"]["merges"])
+        self.assertEqual(data["result"]["implementer"]["selected"], "codex")
+
+    def test_implement_live_blocks_without_consent(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["implement", _write_config("'true'"), "76",
+                              "--root", d, "--live", "--json"])
+        self.assertEqual(rc, 1)
+        data = json.loads(out)
+        self.assertEqual(data["contract"]["operator_consent"]["status"], "missing")
+        self.assertIn("filesystem", data["contract"]["operator_consent"]["missing_scope"])
+        self.assertIn("result", data)
+
+    def test_implement_live_accepts_consent(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["implement", _write_config("'true'"), "76",
+                              "--root", d, "--live", "--json",
+                              "--approve-scope", "filesystem,git,github",
+                              "--operator", "tester"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["contract"]["mode"], "live")
+        self.assertEqual(data["contract"]["operator_consent"]["status"], "approved")
+
+    def test_ci_check_json_contract_is_read_only(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["ci-check", _write_config("'true'"), "--root", d,
+                              "--pr", "104", "--json"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["contract"]["command"], "ci-check")
+        self.assertEqual(
+            data["contract"]["workflow_profile"]["profile"],
+            "standalone-diagnostic",
+        )
+        self.assertEqual(data["contract"]["operator_consent"]["status"],
+                         "not-required-read-only")
+        self.assertFalse(data["contract"]["operator_consent"]["would_require_operator_consent"])
+        self.assertEqual(data["result"]["target"], "PR #104")
+        self.assertTrue(data["result"]["diagnostics"]["read_only"])
+        self.assertTrue(data["result"]["routing"]["never_direct_merge"])
+
+    def test_ci_check_does_not_inherit_project_mutation_requirements(self):
+        p = _write_raw("extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: x\n"
+                       "gates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+                       "  required_capabilities: [release-publish]\n"
+                       "  ci_workflows:\n    ci: CI\n")
+        rc, out, _ = run(["ci-check", p, "--json"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertNotIn("release-publish", data["contract"]["required_capabilities"])
+        self.assertFalse(data["contract"]["operator_consent"]["would_require_operator_consent"])
+
+    def test_morning_json_contract_surfaces_health_reports_and_deferrals(self):
+        import tempfile
+        fake_report = runtime.CapabilityReport((
+            runtime.Capability("shell", False, "missing", "test"),
+            runtime.Capability("gh", False, "missing", "test"),
+            runtime.Capability("gh-auth", False, "missing", "test"),
+        ))
+        with tempfile.TemporaryDirectory() as d, patch("keel.cli.runtime.detect",
+                                                       return_value=fake_report):
+            rc, out, _ = run(["morning", str(PROJECTS / "example-flutter.yaml"),
+                              "--root", d, "--since", "yesterday", "--json"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["contract"]["command"], "morning")
+        self.assertEqual(data["contract"]["workflow_profile"]["profile"], "daily-brief")
+        self.assertEqual(data["result"]["target"], "since yesterday")
+        self.assertEqual(data["result"]["brief"]["reports"]["morning"]["path"],
+                         "reports/morning/")
+        self.assertEqual(data["result"]["brief"]["health_providers"][0]["status"],
+                         "unavailable")
+        self.assertEqual(data["result"]["brief"]["missing_optional_policy"],
+                         "unavailable-not-success")
+
+    def test_morning_does_not_inherit_project_mutation_requirements(self):
+        p = _write_raw("extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: x\n"
+                       "gates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+                       "  required_capabilities: [release-publish]\n"
+                       "policy_pack:\n  name: x\n  health_providers:\n"
+                       "    status:\n      kind: project-command\n"
+                       "      command: .keel/health/status\n"
+                       "      optional_capabilities: [shell]\n")
+        rc, out, _ = run(["morning", p, "--json"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertNotIn("release-publish", data["contract"]["required_capabilities"])
+        self.assertIn("shell", data["contract"]["optional_capabilities"])
+        self.assertFalse(data["result"]["execution"]["runs_project_health_commands"])
+
+    def test_morning_requirement_ignores_non_map_health_provider(self):
+        config = cli.cfg.ProjectConfig(
+            extends="keel",
+            core_version="^0.1",
+            base_branch="main",
+            knobs=cli.cfg.Knobs(build_gate_cmd="true"),
+            policy_pack={
+                "name": "edge",
+                "health_providers": {
+                    "invalid": "not-a-provider-map",
+                    "valid": {
+                        "kind": "external",
+                        "required_capabilities": ["firebase"],
+                    },
+                },
+            },
+        )
+        requirement = cli._morning_capability_requirement(config)
+        self.assertEqual(requirement.required, ("firebase",))
+
+    def test_wrap_json_contract_surfaces_session_reports_and_worktree_guard(self):
+        import tempfile
+        fake_report = runtime.CapabilityReport((
+            runtime.Capability("shell", True, "ok", "test"),
+            runtime.Capability("git", True, "ok", "test"),
+            runtime.Capability("worktree", True, "ok", "test"),
+            runtime.Capability("gh", False, "missing", "test"),
+            runtime.Capability("gh-auth", False, "missing", "test"),
+        ))
+        with tempfile.TemporaryDirectory() as d, patch("keel.cli.runtime.detect",
+                                                       return_value=fake_report):
+            rc, out, _ = run(["wrap", str(PROJECTS / "example-flutter.yaml"),
+                              "feat: finish session", "--root", d, "--json"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["contract"]["command"], "wrap")
+        self.assertEqual(data["contract"]["workflow_profile"]["profile"], "session-wrap")
+        self.assertEqual(data["result"]["target"], "feat: finish session")
+        self.assertTrue(
+            data["result"]["session"]["wrap"]["workspace_preflight"]
+            ["must_run_from_linked_worktree"]
+        )
+        self.assertFalse(data["result"]["execution"]["creates_prs"])
+
+    def test_overnight_json_contract_uses_ship_window_and_handoff(self):
+        import tempfile
+        fake_report = runtime.CapabilityReport((
+            runtime.Capability("shell", True, "ok", "test"),
+            runtime.Capability("git", True, "ok", "test"),
+            runtime.Capability("worktree", True, "ok", "test"),
+            runtime.Capability("gh", False, "missing", "test"),
+            runtime.Capability("gh-auth", False, "missing", "test"),
+        ))
+        with tempfile.TemporaryDirectory() as d, patch("keel.cli.runtime.detect",
+                                                       return_value=fake_report):
+            rc, out, _ = run(["overnight", str(PROJECTS / "example-flutter.yaml"),
+                              "6", "--max", "3", "--root", d, "--review-comments",
+                              "summary", "--json"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["contract"]["command"], "overnight")
+        self.assertEqual(data["contract"]["workflow_profile"]["profile"], "session-overnight")
+        self.assertEqual(data["result"]["target"], "6h session (max 3)")
+        self.assertTrue(
+            data["result"]["session"]["overnight"]["mode_source"]["shared_with_ship"]
+        )
+        self.assertTrue(
+            data["result"]["session"]["overnight"]["ship_handoff"]
+            ["passes_operator_consent_scope"]
+        )
+        self.assertFalse(data["result"]["execution"]["merges"])
+
+    def test_regression_json_contract_surfaces_scan_policy_and_issue_consent(self):
+        import tempfile
+        fake_report = runtime.CapabilityReport((
+            runtime.Capability("git", True, "ok", "test"),
+            runtime.Capability("worktree", True, "ok", "test"),
+            runtime.Capability("gh", False, "missing", "test"),
+            runtime.Capability("gh-auth", False, "missing", "test"),
+            runtime.Capability("github-mcp", True, "ok", "test"),
+        ))
+        with tempfile.TemporaryDirectory() as d, patch("keel.cli.runtime.detect",
+                                                       return_value=fake_report):
+            rc, out, _ = run(["regression", str(PROJECTS / "example-flutter.yaml"),
+                              "--root", d, "--scope", "changed", "--json"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["contract"]["command"], "regression")
+        self.assertEqual(data["contract"]["workflow_profile"]["profile"], "scan-and-file")
+        self.assertIn("scan_contract", data["contract"])
+        self.assertIn("worktree", data["contract"]["required_capabilities"])
+        self.assertEqual(data["contract"]["operator_consent"]["status"],
+                         "not-required-dry-run")
+        self.assertEqual(data["result"]["target"], "scope changed")
+        self.assertEqual(data["result"]["scan"]["areas"][0]["name"], "backend")
+        self.assertTrue(
+            data["result"]["scan"]["regression"]["scan_target"]["read_only_worktree"]
+        )
+        self.assertFalse(data["result"]["execution"]["writes_issues"])
+
+    def test_review_all_day_json_contract_preserves_title_prefix_and_scope(self):
+        import tempfile
+        fake_report = runtime.CapabilityReport((
+            runtime.Capability("git", True, "ok", "test"),
+            runtime.Capability("gh", False, "missing", "test"),
+            runtime.Capability("gh-auth", False, "missing", "test"),
+            runtime.Capability("github-mcp", True, "ok", "test"),
+        ))
+        with tempfile.TemporaryDirectory() as d, patch("keel.cli.runtime.detect",
+                                                       return_value=fake_report):
+            rc, out, _ = run(["review-all-day", str(PROJECTS / "example-flutter.yaml"),
+                              "7", "--root", d, "--json"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["contract"]["command"], "review-all-day")
+        self.assertEqual(data["contract"]["workflow_profile"]["profile"], "time-window-scan")
+        self.assertEqual(data["result"]["target"], "7 day scan")
+        self.assertEqual(
+            data["result"]["scan"]["review_all_day"]["issue_creation"]["title_prefix"],
+            "[review-all-day] ",
+        )
+        self.assertEqual(
+            data["result"]["scan"]["review_all_day"]["span"]
+            ["n_days_argument_covers_calendar_days"],
+            "N+1",
+        )
+        self.assertFalse(data["result"]["execution"]["pushes"])
+
+    def test_scan_commands_do_not_inherit_project_mutation_requirements(self):
+        p = _write_raw("extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: x\n"
+                       "gates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+                       "  required_capabilities: [release-publish]\n"
+                       "policy_pack:\n  name: x\n  scan:\n"
+                       "    areas:\n      core: ['src/**']\n")
+        fake_report = runtime.CapabilityReport((
+            runtime.Capability("git", True, "ok", "test"),
+            runtime.Capability("worktree", True, "ok", "test"),
+        ))
+        with patch("keel.cli.runtime.detect", return_value=fake_report):
+            rc, out, _ = run(["regression", p, "--json"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertNotIn("release-publish", data["contract"]["required_capabilities"])
+        self.assertIn("git", data["contract"]["required_capabilities"])
+
+    def test_standalone_commands_reject_non_positive_targets(self):
+        with self.assertRaises(SystemExit) as raised:
+            run(["implement", _write_config("'true'"), "0"])
+        self.assertEqual(raised.exception.code, 2)
+
+    def test_implement_rejects_conflicting_live_and_dry_run_flags(self):
+        rc, _, err = run(["implement", _write_config("'true'"), "76",
+                          "--dry-run", "--live"])
+        self.assertEqual(rc, 1)
+        self.assertIn("cannot be used together", err)
+
+    def test_implement_missing_and_invalid_config_errors(self):
+        rc, _, err = run(["implement", "/no/such.yaml", "76"])
+        self.assertEqual(rc, 1)
+        self.assertIn("no such config", err)
+
+        rc, _, err = run(["implement", _write_raw("extends: keel\n"), "76"])
+        self.assertEqual(rc, 1)
+        self.assertIn("invalid keel config", err)
+
+    def test_implement_reports_extension_and_gate_errors(self):
+        import tempfile
+        p = _write_raw("extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: x\n"
+                       "gates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+                       "extensions:\n  tester: [missing.md]\nextensions_dir: .keel/extensions\n")
+        with tempfile.TemporaryDirectory() as d:
+            rc, _, err = run(["implement", p, "76", "--root", d, "--dry-run", "--json"])
+        self.assertEqual(rc, 0)
+        self.assertIn("extension not loaded", err)
+
+        p = _write_raw("extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
+                       "repo: x\ngates: [bogus]\nknobs:\n  build_gate_cmd: 'true'\n")
+        rc, _, err = run(["implement", p, "76"])
+        self.assertEqual(rc, 1)
+        self.assertIn("unknown built-in gate", err)
+
+    def test_implement_blocks_on_missing_required_capability_and_bad_scope(self):
+        p = _write_raw("extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: x\n"
+                       "gates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+                       "  required_capabilities: [release-publish]\n")
+        rc, _, err = run(["implement", p, "76"])
+        self.assertEqual(rc, 1)
+        self.assertIn("missing required", err)
+
+        rc, _, err = run(["implement", _write_config("'true'"), "76",
+                          "--live", "--approve-scope", "bogus"])
+        self.assertEqual(rc, 1)
+        self.assertIn("unknown consent scope", err)
+
+    def test_implement_human_output_and_missing_consent_message(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["implement", _write_config("'true'"), "76",
+                              "--root", d, "--delegate", "codex"])
+        self.assertEqual(rc, 0)
+        self.assertIn("keel implement", out)
+        self.assertIn("worktree", out)
+        self.assertIn("delegate", out)
+        self.assertIn("never in standalone implement", out)
+
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["implement", _write_config("'true'"), "76", "--root", d])
+        self.assertEqual(rc, 0)
+        self.assertIn("keel implement", out)
+        self.assertNotIn("delegate      :", out)
+
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["implement", _write_config("'true'"), "76",
+                              "--root", d, "--live",
+                              "--approve-scope", "filesystem,git,github",
+                              "--target", "extra context"])
+        self.assertEqual(rc, 0)
+        self.assertIn("issue #76 (extra context)", out)
+        self.assertIn("live preflight contract", out)
+
+        with tempfile.TemporaryDirectory() as d:
+            rc, _, err = run(["implement", _write_config("'true'"), "76",
+                              "--root", d, "--live"])
+        self.assertEqual(rc, 1)
+        self.assertIn("Missing approved scope", err)
+
+    def test_ci_check_human_output_with_optional_degradation_and_target(self):
+        import tempfile
+        fake_report = runtime.CapabilityReport((
+            runtime.Capability("gh", False, "missing", "test"),
+            runtime.Capability("gh-auth", False, "missing", "test"),
+        ))
+        with tempfile.TemporaryDirectory() as d, patch("keel.cli.runtime.detect",
+                                                       return_value=fake_report):
+            rc, out, _ = run(["ci-check", _write_config("'true'"), "--root", d,
+                              "--target", "current branch"])
+        self.assertEqual(rc, 0)
+        self.assertIn("keel ci-check", out)
+        self.assertIn("current branch", out)
+        self.assertIn("degraded opt.", out)
+        self.assertIn("read-only", out)
+
+    def test_morning_human_output_with_optional_degradation(self):
+        import tempfile
+        fake_report = runtime.CapabilityReport((
+            runtime.Capability("shell", False, "missing", "test"),
+            runtime.Capability("gh", False, "missing", "test"),
+            runtime.Capability("gh-auth", False, "missing", "test"),
+        ))
+        with tempfile.TemporaryDirectory() as d, patch("keel.cli.runtime.detect",
+                                                       return_value=fake_report):
+            rc, out, _ = run(["morning", str(PROJECTS / "example-flutter.yaml"),
+                              "--root", d])
+        self.assertEqual(rc, 0)
+        self.assertIn("keel morning", out)
+        self.assertIn("reports", out)
+        self.assertIn("health", out)
+        self.assertIn("unavailable", out)
+        self.assertIn("degraded opt.", out)
+
+    def test_morning_human_output_without_unavailable_provider(self):
+        import tempfile
+        fake_report = runtime.CapabilityReport((
+            runtime.Capability("shell", True, "ok", "test"),
+            runtime.Capability("gh", False, "missing", "test"),
+            runtime.Capability("gh-auth", False, "missing", "test"),
+        ))
+        with tempfile.TemporaryDirectory() as d, patch("keel.cli.runtime.detect",
+                                                       return_value=fake_report):
+            rc, out, _ = run(["morning", str(PROJECTS / "example-flutter.yaml"),
+                              "--root", d])
+        self.assertEqual(rc, 0)
+        self.assertIn("health", out)
+        self.assertNotIn("unavailable   :", out)
+
+    def test_wrap_and_overnight_human_output(self):
+        import tempfile
+        fake_report = runtime.CapabilityReport((
+            runtime.Capability("shell", True, "ok", "test"),
+            runtime.Capability("git", True, "ok", "test"),
+            runtime.Capability("worktree", True, "ok", "test"),
+            runtime.Capability("gh", False, "missing", "test"),
+            runtime.Capability("gh-auth", False, "missing", "test"),
+        ))
+        with tempfile.TemporaryDirectory() as d, patch("keel.cli.runtime.detect",
+                                                       return_value=fake_report):
+            rc, wrap_out, _ = run(["wrap", str(PROJECTS / "example-flutter.yaml"),
+                                   "--root", d])
+            rc2, overnight_out, _ = run(["overnight", str(PROJECTS / "example-flutter.yaml"),
+                                         "2", "--root", d])
+        self.assertEqual(rc, 0)
+        self.assertEqual(rc2, 0)
+        self.assertIn("keel wrap", wrap_out)
+        self.assertIn("linked required=True", wrap_out)
+        self.assertIn("ready PR", wrap_out)
+        self.assertIn("keel overnight", overnight_out)
+        self.assertIn("mode source", overnight_out)
+        self.assertIn("no-night-merge", overnight_out)
+
+    def test_scan_human_output(self):
+        import tempfile
+        fake_report = runtime.CapabilityReport((
+            runtime.Capability("git", True, "ok", "test"),
+            runtime.Capability("worktree", True, "ok", "test"),
+            runtime.Capability("gh", False, "missing", "test"),
+            runtime.Capability("gh-auth", False, "missing", "test"),
+        ))
+        with tempfile.TemporaryDirectory() as d, patch("keel.cli.runtime.detect",
+                                                       return_value=fake_report):
+            rc, out, _ = run(["regression", str(PROJECTS / "example-flutter.yaml"),
+                              "--root", d])
+        self.assertEqual(rc, 0)
+        self.assertIn("keel regression", out)
+        self.assertIn("areas", out)
+        self.assertIn("issues only after consent", out)
+
+        with tempfile.TemporaryDirectory() as d, patch("keel.cli.runtime.detect",
+                                                       return_value=fake_report):
+            rc, review_out, _ = run(["review-all-day", str(PROJECTS / "example-flutter.yaml"),
+                                     "--root", d])
+        self.assertEqual(rc, 0)
+        self.assertIn("keel review-all-day", review_out)
+        self.assertIn("[review-all-day] ", review_out)
+
+    def test_standalone_target_combines_days_and_scope_when_present(self):
+        target = cli._standalone_target(Namespace(
+            issue=None,
+            pr=None,
+            since=None,
+            scope="changed",
+            days=7,
+            target=None,
+            title=None,
+            hours=None,
+        ))
+        self.assertEqual(target, "7 day scan (scope changed)")
+
+    def test_standalone_human_output_for_unknown_adapter_profile_falls_through(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            args = Namespace(
+                dry_run=True,
+                live=False,
+                standalone_command="custom-adapter",
+                path=_write_config("'true'"),
+                root=d,
+                pr=None,
+                approve_scope=[],
+                operator=None,
+                target="custom target",
+                json=False,
+                delegate=None,
+            )
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                rc = cli._cmd_standalone(args)
+        self.assertEqual(rc, 0)
+        self.assertIn("keel custom-adapter", out.getvalue())
+        self.assertIn("custom target", out.getvalue())
+
+
+class TestCapabilities(unittest.TestCase):
+    def test_prints_runtime_report(self):
+        rc, out, _ = run(["capabilities", "--root", "."])
+        self.assertEqual(rc, 0)
+        self.assertIn("keel capabilities", out)
+        self.assertIn("shell", out)
+
+    def test_json_report(self):
+        rc, out, _ = run(["capabilities", "--root", ".", "--json"])
+        self.assertEqual(rc, 0)
+        self.assertIn('"report"', out)
+        self.assertIn('"github_transport"', out)
+        self.assertIn('"capabilities"', out)
+
+    def test_reports_mcp_transport_when_available(self):
+        fake_report = runtime.CapabilityReport((
+            runtime.Capability("github-mcp", True, "ok", "test"),
+        ))
+        with patch("keel.cli.runtime.detect", return_value=fake_report):
+            rc, out, _ = run(["capabilities"])
+        self.assertEqual(rc, 0)
+        self.assertIn("selected: mcp", out)
+        self.assertIn("raw_actions_logs", out)
+
+    def test_project_requirement_failure_returns_nonzero(self):
+        p = _write_raw("extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: x\n"
+                       "knobs:\n  build_gate_cmd: 'true'\n"
+                       "  required_capabilities: [release-publish]\n")
+        rc, out, _ = run(["capabilities", "--project", p])
+        self.assertEqual(rc, 1)
+        self.assertIn("missing required", out)
 
 
 class TestInit(unittest.TestCase):
@@ -372,6 +1076,39 @@ class TestInstallAdapter(unittest.TestCase):
             self.assertTrue((Path(d) / ".claude/commands/keel/ship.md").exists())
             self.assertTrue((Path(d) / ".agents/skills/keel-ship/SKILL.md").exists())
 
+    def test_adapter_status_and_update_adapter(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            run(["install-adapter", "all", "--root", d])
+            ship = Path(d) / ".claude/commands/keel/ship.md"
+            ship.unlink()
+
+            rc, out, _ = run(["adapter-status", "all", "--root", d])
+            self.assertEqual(rc, 0)
+            self.assertIn("missing", out)
+            self.assertIn("ship.md", out)
+
+            rc, out, _ = run(["update-adapter", "all", "--root", d, "--dry-run"])
+            self.assertEqual(rc, 0)
+            self.assertIn("would-update", out)
+            self.assertIn("dry-run: no adapter files were written", out)
+            self.assertFalse(ship.exists())
+
+            rc, out, _ = run(["update-adapter", "all", "--root", d])
+            self.assertEqual(rc, 0)
+            self.assertIn("updated", out)
+            self.assertTrue(ship.exists())
+
+    def test_adapter_status_unknown_target(self):
+        rc, _, err = run(["adapter-status", "codex"])
+        self.assertEqual(rc, 1)
+        self.assertIn("unknown target", err)
+
+    def test_update_adapter_unknown_target(self):
+        rc, _, err = run(["update-adapter", "codex"])
+        self.assertEqual(rc, 1)
+        self.assertIn("unknown target", err)
+
 
 class TestParser(unittest.TestCase):
     def test_subcommands_present(self):
@@ -379,9 +1116,12 @@ class TestParser(unittest.TestCase):
         # argparse stores subparser choices on the subparsers action.
         actions = [a for a in parser._actions if a.dest == "command"]
         self.assertTrue(actions)
-        self.assertEqual(set(actions[0].choices),
-                         {"version", "validate", "plan", "run-gates", "window", "ship",
-                          "init", "install-adapter"})
+        self.assertGreaterEqual(set(actions[0].choices),
+                                {"version", "validate", "plan", "run-gates", "window", "ship",
+                                 "ship-v2", "implement", "ci-check", "morning", "capabilities",
+                                 "wrap", "overnight", "init",
+                                 "install-adapter",
+                                 "adapter-status", "update-adapter", "project-commands"})
 
 
 if __name__ == "__main__":

@@ -16,7 +16,7 @@ from typing import Any
 
 import yaml
 
-from . import jsonschema_min
+from . import jsonschema_min, runtime
 from .model import SLOTS  # single source of truth for the named slots (re-exported)
 
 SCHEMA_PATH = Path(__file__).parent / "schema" / "project.schema.json"
@@ -59,6 +59,8 @@ class Knobs:
     docs_gate_paths: tuple[str, ...] = ()
     docs_only_allowlist: tuple[str, ...] = ()
     sot_doc: str | None = None
+    required_capabilities: tuple[str, ...] = ()
+    optional_capabilities: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -78,6 +80,7 @@ class ProjectConfig:
     gates: tuple[str, ...] = ()
     extensions: dict[str, tuple[str, ...]] = field(default_factory=dict)
     extensions_dir: str = DEFAULT_EXTENSIONS_DIR
+    policy_pack: dict[str, Any] = field(default_factory=dict)
 
     def slot(self, name: str) -> tuple[str, ...]:
         """Extension files registered for a named slot (``()`` if none)."""
@@ -97,6 +100,8 @@ def _build(data: dict) -> ProjectConfig:
         docs_gate_paths=tuple(k.get("docs_gate_paths", [])),
         docs_only_allowlist=tuple(k.get("docs_only_allowlist", [])),
         sot_doc=k.get("sot_doc"),
+        required_capabilities=tuple(k.get("required_capabilities", [])),
+        optional_capabilities=tuple(k.get("optional_capabilities", [])),
     )
     extensions = {slot: tuple(files) for slot, files in data.get("extensions", {}).items()}
     return ProjectConfig(
@@ -113,6 +118,7 @@ def _build(data: dict) -> ProjectConfig:
         gates=tuple(data.get("gates", [])),
         extensions=extensions,
         extensions_dir=data.get("extensions_dir", DEFAULT_EXTENSIONS_DIR),
+        policy_pack=json.loads(json.dumps(data.get("policy_pack", {}), sort_keys=True)),
     )
 
 
@@ -121,6 +127,19 @@ def parse_config(data: Any, *, source: str = "<dict>", schema: dict | None = Non
     if not isinstance(data, dict):
         raise ConfigError(source, [f"$: expected an object (got {type(data).__name__})"])
     errors = validate_data(data, schema)
+    if isinstance(data, dict) and isinstance(data.get("knobs"), dict):
+        knobs = data["knobs"]
+        errors.extend(runtime.validate_names(
+            tuple(knobs.get("required_capabilities", [])),
+            source=f"{source}: knobs.required_capabilities",
+        ))
+        errors.extend(runtime.validate_names(
+            tuple(knobs.get("optional_capabilities", [])),
+            source=f"{source}: knobs.optional_capabilities",
+        ))
+    if isinstance(data, dict) and isinstance(data.get("policy_pack"), dict):
+        for path, names in _policy_capability_fields(data["policy_pack"]):
+            errors.extend(runtime.validate_names(tuple(names), source=f"{source}: {path}"))
     if errors:
         raise ConfigError(source, errors)
     return _build(data)
@@ -139,6 +158,24 @@ def config_hash(config: ProjectConfig) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _policy_capability_fields(value: Any, path: str = "policy_pack") -> list[tuple[str, list]]:
+    fields: list[tuple[str, list]] = []
+    if isinstance(value, dict):
+        for key, child in value.items():
+            child_path = f"{path}.{key}"
+            if (
+                key in {"required_capabilities", "optional_capabilities"}
+                and isinstance(child, list)
+            ):
+                fields.append((child_path, child))
+            else:
+                fields.extend(_policy_capability_fields(child, child_path))
+    elif isinstance(value, list):
+        for i, child in enumerate(value):
+            fields.extend(_policy_capability_fields(child, f"{path}[{i}]"))
+    return fields
+
+
 def _canonical(config: ProjectConfig) -> dict:
     return {
         "extends": config.extends,
@@ -153,6 +190,7 @@ def _canonical(config: ProjectConfig) -> dict:
         "gates": list(config.gates),
         "extensions_dir": config.extensions_dir,
         "extensions": {k: list(v) for k, v in sorted(config.extensions.items())},
+        "policy_pack": config.policy_pack,
         "knobs": {
             "build_gate_cmd": config.knobs.build_gate_cmd,
             "lint_cmd": config.knobs.lint_cmd,
@@ -162,5 +200,7 @@ def _canonical(config: ProjectConfig) -> dict:
             "docs_gate_paths": list(config.knobs.docs_gate_paths),
             "docs_only_allowlist": list(config.knobs.docs_only_allowlist),
             "sot_doc": config.knobs.sot_doc,
+            "required_capabilities": list(config.knobs.required_capabilities),
+            "optional_capabilities": list(config.knobs.optional_capabilities),
         },
     }

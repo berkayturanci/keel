@@ -1,5 +1,5 @@
 {
-  "_comment": "Antigravity CLI (agy) permission deny list — merge into ~/.gemini/antigravity-cli/settings.json. Also add the shell alias below to ~/.zshrc: alias agy='/Users/<you>/.local/bin/agy --dangerously-skip-permissions'",
+  "_comment": "Antigravity CLI (agy) permission deny list — merge into ~/.gemini/antigravity-cli/settings.json. Also add the shell alias below to ~/.zshrc: alias agy='/Users/<you>/.local/bin/agy --dangerously-skip-permissions'. Project-specific deploy/delete commands belong in the downstream project's local deny list; keep this template limited to generally destructive operations.",
   "permissions": {
     "deny": [
       "command(git push --force)",
@@ -23,11 +23,6 @@
       "command(gh auth logout)",
       "command(npm publish)",
       "command(npm unpublish)",
-      "command(firebase deploy)",
-      "command(firebase projects:delete)",
-      "command(firebase database:remove)",
-      "command(firebase functions:delete)",
-      "command(firebase hosting:disable)",
       "command(eval )",
       "command(dd if=)",
       "command(mkfs)",

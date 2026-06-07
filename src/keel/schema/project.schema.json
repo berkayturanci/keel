@@ -60,7 +60,17 @@
         },
         "docs_gate_paths": { "type": "array", "items": { "type": "string" } },
         "docs_only_allowlist": { "type": "array", "items": { "type": "string" } },
-        "sot_doc": { "type": "string", "description": "Source-of-truth doc, e.g. AGENTS.md." }
+        "sot_doc": { "type": "string", "description": "Source-of-truth doc, e.g. AGENTS.md." },
+        "required_capabilities": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Runtime capabilities that must be available before mutating work starts."
+        },
+        "optional_capabilities": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Runtime capabilities that may degrade when unavailable."
+        }
       }
     },
     "gates": {
@@ -73,16 +83,249 @@
       "additionalProperties": false,
       "description": "Add-only Lego pieces, keyed by named backbone slot.",
       "properties": {
+        "after:config": { "type": "array", "items": { "type": "string" } },
+        "before:select": { "type": "array", "items": { "type": "string" } },
+        "select": { "type": "array", "items": { "type": "string" } },
+        "after:select": { "type": "array", "items": { "type": "string" } },
+        "before:branch": { "type": "array", "items": { "type": "string" } },
+        "after:branch": { "type": "array", "items": { "type": "string" } },
+        "guard": { "type": "array", "items": { "type": "string" } },
+        "before:implement": { "type": "array", "items": { "type": "string" } },
         "after-implement": { "type": "array", "items": { "type": "string" } },
+        "classify": { "type": "array", "items": { "type": "string" } },
+        "after:classify": { "type": "array", "items": { "type": "string" } },
+        "before:ci": { "type": "array", "items": { "type": "string" } },
+        "after:ci": { "type": "array", "items": { "type": "string" } },
         "reviewers": { "type": "array", "items": { "type": "string" } },
+        "after:review": { "type": "array", "items": { "type": "string" } },
         "tester": { "type": "array", "items": { "type": "string" } },
+        "test": { "type": "array", "items": { "type": "string" } },
+        "after:test": { "type": "array", "items": { "type": "string" } },
+        "before:fixloop": { "type": "array", "items": { "type": "string" } },
+        "fixloop": { "type": "array", "items": { "type": "string" } },
+        "after:fixloop": { "type": "array", "items": { "type": "string" } },
         "pre-merge": { "type": "array", "items": { "type": "string" } },
-        "post-merge": { "type": "array", "items": { "type": "string" } }
+        "after:merge": { "type": "array", "items": { "type": "string" } },
+        "capture": { "type": "array", "items": { "type": "string" } },
+        "post-merge": { "type": "array", "items": { "type": "string" } },
+        "before:close": { "type": "array", "items": { "type": "string" } },
+        "on-close": { "type": "array", "items": { "type": "string" } },
+        "after:close": { "type": "array", "items": { "type": "string" } }
       }
     },
     "extensions_dir": {
       "type": "string",
       "description": "Project-local dir holding extension files (default .keel/extensions)."
+    },
+    "policy_pack": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "description": "Durable project-owned policy data. Core reads the data but does not hardcode stack/product rules.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Stable policy pack id for this consumer/project family."
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": { "type": "array", "items": { "type": "string" } },
+          "description": "Named label vocabularies, e.g. status, priority, role, type, or command-specific groups."
+        },
+        "status_transitions": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Lifecycle transition name -> label or state target."
+        },
+        "risk_rules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "paths"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "paths": { "type": "array", "items": { "type": "string" } },
+              "required_gates": { "type": "array", "items": { "type": "string" } },
+              "review_additions": { "type": "array", "items": { "type": "string" } },
+              "docs_required": { "type": "boolean" }
+            }
+          },
+          "description": "Project-owned high-risk path rules and extra review/doc expectations."
+        },
+        "test_groups": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["command"],
+            "properties": {
+              "command": { "type": "string", "minLength": 1 },
+              "paths": { "type": "array", "items": { "type": "string" } },
+              "reports": { "type": "array", "items": { "type": "string" } },
+              "required_capabilities": { "type": "array", "items": { "type": "string" } },
+              "optional_capabilities": { "type": "array", "items": { "type": "string" } }
+            }
+          },
+          "description": "Named project test/audit groups selected by affected paths or commands."
+        },
+        "docs": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "required_paths": { "type": "array", "items": { "type": "string" } },
+            "allow_none_reasons": { "type": "array", "items": { "type": "string" } },
+            "impact_required": { "type": "boolean" }
+          },
+          "description": "Documentation gate policy and allowed no-docs reasons."
+        },
+        "health_providers": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind"],
+            "properties": {
+              "kind": { "type": "string", "minLength": 1 },
+              "command": { "type": "string" },
+              "reports": { "type": "array", "items": { "type": "string" } },
+              "required_capabilities": { "type": "array", "items": { "type": "string" } },
+              "optional_capabilities": { "type": "array", "items": { "type": "string" } }
+            }
+          },
+          "description": "Project-owned production or operational signal providers."
+        },
+        "scan": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "areas": {
+              "type": "object",
+              "additionalProperties": { "type": "array", "items": { "type": "string" } },
+              "description": "Area/module path groups used by scan-and-file commands."
+            },
+            "active_branch_patterns": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Project-owned branch globs considered active work branches by time-window scans."
+            },
+            "issue_labels": {
+              "type": "object",
+              "additionalProperties": { "type": "array", "items": { "type": "string" } },
+              "description": "Command-specific labels to apply to scan-created issues."
+            },
+            "near_text_similarity": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Similarity threshold for deterministic issue dedupe."
+            },
+            "batch_threshold": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Review-all-day commit count threshold before fan-out."
+            },
+            "large_diff_max_bytes": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Review-all-day per-diff truncation limit before file-boundary truncation."
+            }
+          },
+          "description": "Project-owned scan scope, branch, dedupe, and issue-write policy."
+        },
+        "command_routing": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "command": { "type": "string" },
+              "description": { "type": "string" },
+              "agent_role": { "type": "string" },
+              "paths": { "type": "array", "items": { "type": "string" } },
+              "required_capabilities": { "type": "array", "items": { "type": "string" } },
+              "optional_capabilities": { "type": "array", "items": { "type": "string" } },
+              "side_effects": { "type": "array", "items": { "type": "string" } },
+              "dry_run_safe": { "type": "boolean" }
+            }
+          },
+          "description": "Project command routing and side-effect declarations."
+        },
+        "project_commands": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "command": { "type": "string" },
+              "description": { "type": "string" },
+              "agent_role": { "type": "string" },
+              "paths": { "type": "array", "items": { "type": "string" } },
+              "required_capabilities": { "type": "array", "items": { "type": "string" } },
+              "optional_capabilities": { "type": "array", "items": { "type": "string" } },
+              "side_effects": { "type": "array", "items": { "type": "string" } },
+              "dry_run_safe": { "type": "boolean" }
+            }
+          },
+          "description": "Project-provided commands that keel can list, plan, and capability-check without owning their bodies."
+        },
+        "workflow_policies": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "posting_mode": { "type": "string", "enum": ["inline", "summary"] },
+              "posting_owner": { "type": "string", "enum": ["orchestrator", "reviewer"] },
+              "reviewer_isolation": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "shared_with_ship": { "type": "boolean" },
+                  "codename_prefix": { "type": "string", "minLength": 1 },
+                  "no_cross_reading": { "type": "boolean" }
+                }
+              },
+              "inputs": {
+                "type": "object",
+                "additionalProperties": { "type": "boolean" }
+              },
+              "ci": {
+                "type": "object",
+                "additionalProperties": { "type": "boolean" }
+              },
+              "review": {
+                "type": "object",
+                "additionalProperties": { "type": "boolean" }
+              },
+              "fix_loop": {
+                "type": "object",
+                "additionalProperties": { "type": ["boolean", "integer", "string"] }
+              },
+              "completion": {
+                "type": "object",
+                "additionalProperties": { "type": ["boolean", "string", "null"] }
+              }
+            }
+          },
+          "description": "Command-specific feedback-loop policy such as posting mode, reviewer isolation, CI/fix-loop behavior, and completion markers."
+        },
+        "reports": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Named report destinations, paths, or issue prefixes."
+        },
+        "review": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "additions": { "type": "array", "items": { "type": "string" } },
+            "required_sections": { "type": "array", "items": { "type": "string" } }
+          },
+          "description": "Project-owned rubric additions and PR/review body requirements."
+        }
+      }
     }
   }
 }

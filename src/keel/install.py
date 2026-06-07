@@ -15,9 +15,14 @@ never one copy per agent (that would re-introduce the very file-copy drift keel 
 
 from __future__ import annotations
 
+import hashlib
+import re
+from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
+
+from . import __version__
 
 ADAPTERS = Path(__file__).parent / "adapters" / "commands"
 
@@ -30,6 +35,72 @@ SKILL_PREFIX = "keel-"
 
 #: the logical install surfaces (``all`` fans over these).
 TARGETS: tuple[str, ...] = ("claude", "skills")
+
+MARKER_RE = re.compile(r"\n?<!-- keel-generated: (?P<meta>[^>]*) -->\n?$")
+
+
+@dataclass(frozen=True)
+class AdapterFileStatus:
+    surface: str
+    name: str
+    path: str
+    status: str
+    detail: str = ""
+    source_sha256: str = ""
+    installed_sha256: str = ""
+    expected_sha256: str = ""
+
+
+def _sha256(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _marker(surface: str, command: str, source_text: str, generated_text: str) -> str:
+    return (
+        "<!-- keel-generated: "
+        f"surface={surface} command={command} keel_version={__version__} "
+        f"source_sha256={_sha256(source_text)} generated_sha256={_sha256(generated_text)} "
+        "-->"
+    )
+
+
+def _with_marker(surface: str, command: str, source_text: str, generated_text: str) -> str:
+    marker = _marker(surface, command, source_text, generated_text)
+    return f"{generated_text.rstrip()}\n\n{marker}\n"
+
+
+def _split_marker(text: str) -> tuple[str, dict[str, str]]:
+    match = MARKER_RE.search(text)
+    if not match:
+        return text, {}
+    body = text[:match.start()].rstrip() + "\n"
+    meta: dict[str, str] = {}
+    for part in match.group("meta").split():
+        if "=" in part:
+            key, value = part.split("=", 1)
+            meta[key] = value
+    return body, meta
+
+
+def _expected_files(_src: Path | None = None) -> dict[str, dict[str, tuple[Path, str, str, str]]]:
+    src = _src or ADAPTERS
+    expected: dict[str, dict[str, tuple[Path, str, str, str]]] = {"claude": {}, "skills": {}}
+    for f in sorted(src.glob("*.md")):
+        source_text = f.read_text(encoding="utf-8")
+        command = f.stem
+        expected["claude"][f.name] = (
+            Path(CLAUDE_DIR) / f.name,
+            command,
+            source_text,
+            source_text,
+        )
+        expected["skills"][f"{SKILL_PREFIX}{command}"] = (
+            Path(SKILLS_DIR) / f"{SKILL_PREFIX}{command}" / "SKILL.md",
+            command,
+            source_text,
+            render_skill(source_text, command),
+        )
+    return expected
 
 
 def adapter_names(*, _src: Path | None = None) -> list[str]:
@@ -79,7 +150,9 @@ def _install_commands(
         if dest.exists() and not force:
             skipped.append(f.name)
             continue
-        dest.write_text(f.read_text(encoding="utf-8"), encoding="utf-8")
+        source_text = f.read_text(encoding="utf-8")
+        dest.write_text(_with_marker("claude", f.stem, source_text, source_text),
+                        encoding="utf-8")
         installed.append(f.name)
     return installed, skipped
 
@@ -98,7 +171,10 @@ def _install_skills(
             skipped.append(name)
             continue
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(render_skill(f.read_text(encoding="utf-8"), f.stem), encoding="utf-8")
+        source_text = f.read_text(encoding="utf-8")
+        rendered = render_skill(source_text, f.stem)
+        dest.write_text(_with_marker("skills", f.stem, source_text, rendered),
+                        encoding="utf-8")
         installed.append(name)
     return installed, skipped
 
@@ -126,3 +202,92 @@ def install_all(
     Returns ``surface -> (installed, skipped)`` for each entry in :data:`TARGETS`.
     """
     return {t: install(t, root, force=force, _src=_src) for t in TARGETS}
+
+
+def adapter_status(
+    agent: str, root: str | Path, *, _src: Path | None = None
+) -> dict[str, list[AdapterFileStatus]]:
+    """Report installed adapter freshness for one surface or ``all`` surfaces."""
+    targets = TARGETS if agent == "all" else (agent,)
+    if any(t not in TARGETS for t in targets):
+        raise KeyError(agent)
+    root_path = Path(root)
+    expected = _expected_files(_src)
+    out: dict[str, list[AdapterFileStatus]] = {}
+    for surface in targets:
+        rows: list[AdapterFileStatus] = []
+        for name, (rel, _command, source_text, generated_text) in expected[surface].items():
+            path = root_path / rel
+            expected_hash = _sha256(generated_text)
+            source_hash = _sha256(source_text)
+            if not path.exists():
+                rows.append(AdapterFileStatus(surface, name, str(rel), "missing",
+                                              expected_sha256=expected_hash,
+                                              source_sha256=source_hash))
+                continue
+            body, marker = _split_marker(path.read_text(encoding="utf-8"))
+            installed_hash = _sha256(body)
+            if not marker:
+                rows.append(AdapterFileStatus(surface, name, str(rel), "unknown",
+                                              "missing keel-generated marker",
+                                              installed_sha256=installed_hash,
+                                              expected_sha256=expected_hash,
+                                              source_sha256=source_hash))
+            elif installed_hash != marker.get("generated_sha256"):
+                rows.append(AdapterFileStatus(surface, name, str(rel), "locally-modified",
+                                              "generated file changed after install",
+                                              installed_sha256=installed_hash,
+                                              expected_sha256=expected_hash,
+                                              source_sha256=source_hash))
+            elif marker.get("source_sha256") != source_hash or installed_hash != expected_hash:
+                rows.append(AdapterFileStatus(surface, name, str(rel), "outdated",
+                                              "packaged adapter source changed",
+                                              installed_sha256=installed_hash,
+                                              expected_sha256=expected_hash,
+                                              source_sha256=source_hash))
+            else:
+                rows.append(AdapterFileStatus(surface, name, str(rel), "current",
+                                              installed_sha256=installed_hash,
+                                              expected_sha256=expected_hash,
+                                              source_sha256=source_hash))
+        out[surface] = rows
+    return out
+
+
+def update_adapters(
+    agent: str,
+    root: str | Path,
+    *,
+    dry_run: bool = False,
+    _src: Path | None = None,
+) -> dict[str, list[AdapterFileStatus]]:
+    """Update generated adapter files that are missing or outdated.
+
+    Locally-modified or unknown files are reported and left untouched.
+    """
+    targets = TARGETS if agent == "all" else (agent,)
+    if any(t not in TARGETS for t in targets):
+        raise KeyError(agent)
+    root_path = Path(root)
+    expected = _expected_files(_src)
+    before = adapter_status(agent, root, _src=_src)
+    updated: dict[str, list[AdapterFileStatus]] = {t: [] for t in targets}
+    for surface in targets:
+        rows_by_name = {row.name: row for row in before[surface]}
+        for name, (rel, command, source_text, generated_text) in expected[surface].items():
+            row = rows_by_name[name]
+            if row.status not in {"missing", "outdated"}:
+                updated[surface].append(row)
+                continue
+            if not dry_run:
+                path = root_path / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(_with_marker(surface, command, source_text, generated_text),
+                                encoding="utf-8")
+            updated[surface].append(AdapterFileStatus(surface, name, str(rel), "would-update"
+                                                      if dry_run else "updated",
+                                                      row.detail,
+                                                      source_sha256=row.source_sha256,
+                                                      installed_sha256=row.installed_sha256,
+                                                      expected_sha256=row.expected_sha256))
+    return updated

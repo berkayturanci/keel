@@ -8,6 +8,7 @@ fixing) are pure and live here, so they are reproducible and fully unit-tested.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from . import classify
 from .findings import Verdict
@@ -19,10 +20,185 @@ MAX_FIX_ROUNDS = 3
 #: GitHub check-rollup conclusions that count as "not failing".
 CI_OK_STATES = frozenset({"SUCCESS", "NEUTRAL", "SKIPPED"})
 
+POSTING_MODES = frozenset({"inline", "summary"})
+
+REVIEW_FOCUS_A = (
+    "logic correctness",
+    "null safety",
+    "language interop",
+)
+REVIEW_FOCUS_B = (
+    "platform compatibility",
+    "lifecycle safety",
+    "API compatibility",
+    "threading",
+)
+REVIEW_FOCUS_C = (
+    "test coverage",
+    "docs gate",
+    "scope creep",
+    "CI prediction",
+    "security",
+)
+
 
 def reviewer_count(tier: int) -> int:
     """Reviewers for a risk tier: TIER-3→3, TIER-2→2, TIER-1→1 (default 2)."""
     return {3: 3, 2: 2, 1: 1}.get(tier, 2)
+
+
+def reviewer_focuses(count: int) -> tuple[dict[str, Any], ...]:
+    """Focus coverage for each reviewer slot. Lower counts merge focus; none are dropped."""
+    if count <= 1:
+        return ({
+            "slot": "A",
+            "focus": list(REVIEW_FOCUS_A + REVIEW_FOCUS_B + REVIEW_FOCUS_C),
+            "merged_from": ["A", "B", "C"],
+        },)
+    if count == 2:
+        return (
+            {
+                "slot": "A",
+                "focus": list(REVIEW_FOCUS_A + REVIEW_FOCUS_B),
+                "merged_from": ["A", "B"],
+            },
+            {
+                "slot": "C",
+                "focus": list(REVIEW_FOCUS_C),
+                "merged_from": ["C"],
+            },
+        )
+    return (
+        {"slot": "A", "focus": list(REVIEW_FOCUS_A), "merged_from": ["A"]},
+        {"slot": "B", "focus": list(REVIEW_FOCUS_B), "merged_from": ["B"]},
+        {"slot": "C", "focus": list(REVIEW_FOCUS_C), "merged_from": ["C"]},
+    )
+
+
+def resolve_jury(
+    *,
+    tier: int | None,
+    gates: tuple[str, ...] = (),
+    jury: bool = False,
+    no_jury: bool = False,
+    jury_advisory: bool = False,
+) -> dict[str, Any]:
+    """Resolve the cross-vendor jury mode using ship flag precedence."""
+    if no_jury:
+        enabled = False
+        reason = "--no-jury"
+    elif jury:
+        enabled = True
+        reason = "--jury"
+    elif tier == 3:
+        enabled = True
+        reason = "tier-3 auto"
+    else:
+        enabled = False
+        reason = "default"
+    mode = "off" if not enabled else ("advisory" if jury_advisory else "gating")
+    return {
+        "enabled": enabled,
+        "mode": mode,
+        "reason": reason,
+        "configured_gate": "jury" in gates,
+        "fail_soft": True,
+        "minimum_vendors": 2,
+        "verified_consensus_gates": enabled and mode == "gating",
+        "severity_policy": {
+            "critical": "block",
+            "major": "block",
+            "minor": "gated-suggestion",
+            "nit": "advisory",
+        },
+    }
+
+
+def resolve_review_contract(
+    *,
+    tier: int | None,
+    reviewer_override: int | None = None,
+    review_comments: str = "inline",
+    gates: tuple[str, ...] = (),
+    policy_pack: dict[str, Any] | None = None,
+    jury: bool = False,
+    no_jury: bool = False,
+    jury_advisory: bool = False,
+) -> dict[str, Any]:
+    """Machine-readable review, jury, test, and merge-gate plan for ship-like flows."""
+    if reviewer_override is not None and reviewer_override not in {1, 2, 3}:
+        raise ValueError("reviewer_override must be one of 1, 2, or 3")
+    if review_comments not in POSTING_MODES:
+        raise ValueError("review_comments must be 'inline' or 'summary'")
+    count = reviewer_override if reviewer_override is not None else reviewer_count(tier or 2)
+    source = (
+        "override" if reviewer_override is not None
+        else ("risk-tier" if tier is not None else "unresolved")
+    )
+    pack = policy_pack or {}
+    review_policy = pack.get("review", {}) if isinstance(pack.get("review", {}), dict) else {}
+    return {
+        "reviewers": {
+            "count": count,
+            "source": source,
+            "tier": tier,
+            "independent": True,
+            "self_review_counts_toward_lgtm": False,
+            "minimum_lgtm": count,
+            "orchestrator_owns_writes": True,
+            "focuses": list(reviewer_focuses(count)),
+            "project_additions": list(review_policy.get("additions", [])),
+            "required_sections": list(review_policy.get("required_sections", [])),
+        },
+        "posting": {
+            "mode": review_comments,
+            "inline_default": True,
+            "per_reviewer_inline_fallback": "summary",
+            "summary_mode": review_comments == "summary",
+        },
+        "jury": resolve_jury(
+            tier=tier,
+            gates=gates,
+            jury=jury,
+            no_jury=no_jury,
+            jury_advisory=jury_advisory,
+        ),
+        "finding_policy": {
+            "critical": "block",
+            "major": "block",
+            "minor": "gated-suggestion",
+            "nit": "advisory",
+            "suggestions_require_fix_or_explicit_deferral": True,
+            "parser_source": "reviewer-returned-findings",
+        },
+        "fixloop": {
+            "max_rounds": MAX_FIX_ROUNDS,
+            "blocker_rerun": "full-review",
+            "suggestion_only_rerun": "narrowed-originating-focus",
+        },
+        "ci": {
+            "failure_before_pending": True,
+            "empty_check_set_allowed_for_docs_only": True,
+            "retry_budget": 3,
+        },
+        "test_gates": {
+            "configured_gates": list(gates),
+            "no_jury_preserves_review_and_test_gates": True,
+        },
+        "merge_gate": {
+            "merge_window_applies_to": "literal-merge-only",
+            "merge_lock_scope": "literal-merge-only",
+            "final_mergeability_recheck_inside_lock": True,
+            "hotfix_bypasses_window_only": True,
+            "hotfix_never_bypasses_findings_or_ci": True,
+            "pr_merged_state_authoritative": True,
+        },
+        "closeout": {
+            "comment_targets": ["issue", "pull_request"],
+            "capture_marker_required": True,
+            "status_done_after_merge_only": True,
+        },
+    }
 
 
 @dataclass(frozen=True)
@@ -75,6 +251,7 @@ class ShipAssessment:
     merge: MergeDecision
     halted: bool = False           # pause mode + outside window ⇒ pipeline halted
     bypassed_window: bool = False  # hotfix merged outside the window (audited)
+    review_contract: dict[str, Any] | None = None
 
 
 def assess(
@@ -89,6 +266,13 @@ def assess(
     ci_conclusion: str | None = None,
     now=None,
     is_blocker: bool = False,
+    reviewer_override: int | None = None,
+    review_comments: str = "inline",
+    gates: tuple[str, ...] = (),
+    policy_pack: dict[str, Any] | None = None,
+    jury: bool = False,
+    no_jury: bool = False,
+    jury_advisory: bool = False,
 ) -> ShipAssessment:
     """The whole deterministic ship decision in one place: tier → reviewers, window,
     CI, and the final merge action. Pure — identical inputs give identical output.
@@ -97,7 +281,7 @@ def assess(
     (default) only blocks the merge. ``is_blocker`` (a hotfix) bypasses the window —
     but never the findings or a failing CI."""
     tier = classify.tier_for_files(changed_files, tier3_globs=tier3_globs, docs_globs=docs_globs)
-    reviewers = reviewer_count(tier)
+    reviewers = reviewer_override if reviewer_override is not None else reviewer_count(tier)
     window_open = (
         is_merge_open(timezone, merge_window, now=now) if (timezone and merge_window) else True
     )
@@ -108,4 +292,16 @@ def assess(
     else:
         merge = decide_merge(gate_verdict, window_open=window_open, is_blocker=is_blocker)
     bypassed = is_blocker and not window_open and merge.action == "merge"
-    return ShipAssessment(tier, reviewers, window_open, ci_ok, merge, halted, bypassed)
+    review_contract = resolve_review_contract(
+        tier=tier,
+        reviewer_override=reviewer_override,
+        review_comments=review_comments,
+        gates=gates,
+        policy_pack=policy_pack,
+        jury=jury,
+        no_jury=no_jury,
+        jury_advisory=jury_advisory,
+    )
+    return ShipAssessment(
+        tier, reviewers, window_open, ci_ok, merge, halted, bypassed, review_contract
+    )

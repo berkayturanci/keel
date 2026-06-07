@@ -24,7 +24,17 @@ one structured report. Be terse, English only (`knobs.sot_doc` § language polic
 ```bash
 keel validate .keel/project.yaml --root .
 keel plan     .keel/project.yaml --root .   # repo, base_branch, timezone, merge_window
+keel plan     .keel/project.yaml --root . --command morning --live --json
 ```
+
+The live plan is the operator-consent preflight. Before writing reports, sending
+notifications, using secrets, publishing, or calling production-adjacent systems, parse
+`contract.operator_consent`; if `requires_operator_consent` is true, STOP and ask the
+operator to rerun with the required `--approve-scope` values.
+
+Resolve GitHub access through the shared runtime contract (`keel capabilities --json` →
+`github_transport`). Use the selected transport for issue/PR reads and state any degraded
+operations at the top of the brief when they affect the report.
 
 ## Step 1 — Cross-session deferral queue (surface at top)
 
@@ -35,11 +45,9 @@ unresolved blocker. Surface any entries at the **top** of the brief under a
 
 ## Step 2 — Shipped since last brief
 
-Query (via `gh` CLI, or the GitHub MCP read tools in a sandbox/web runtime —
-note `Data source: GitHub MCP` at the top when you fall back) for issues closed
-and PRs merged since `--since` (default: the last brief's timestamp, else the
-prior 24h). Section: "Shipped". Include the effective agent + tier captured by
-`/keel:ship` (s11) where available.
+Query through the selected GitHub transport for issues closed and PRs merged since
+`--since` (default: the last brief's timestamp, else the prior 24h). Section: "Shipped".
+Include the effective agent + tier captured by `/keel:ship` (s11) where available.
 
 ## Step 3 — Project health/telemetry signals (project-specific)
 

@@ -7,8 +7,11 @@
 # block_commands — UNVERIFIED key (tested 2026-05-25): Codex silently ignored it;
 #   the sandbox blocked dangerous ops at the filesystem level instead.
 #   The real deny enforcement comes from the project's .codex/hooks.json PreToolUse
-#   hook, which reads Claude Code's .claude/settings.json deny list.
+#   hook and its repo-local deny script.
 #   Keep this block as a best-effort declaration; do not rely on it as the sole guard.
+#
+# Project-specific deploy/delete commands belong in the downstream project's local deny
+# list. Keep this template limited to generally destructive operations.
 
 approval = "never"
 sandbox  = "workspace-write"
@@ -39,11 +42,6 @@ block_commands = [
   "gh auth logout",
   "npm publish",
   "npm unpublish",
-  "firebase deploy",
-  "firebase projects:delete",
-  "firebase database:remove",
-  "firebase functions:delete",
-  "firebase hosting:disable",
   "curl | sh",
   "curl | bash",
   "wget | sh",

@@ -9,8 +9,8 @@
 [![CI](https://github.com/berkayturanci/keel/actions/workflows/ci.yml/badge.svg)](https://github.com/berkayturanci/keel/actions/workflows/ci.yml)
 [![coverage](https://img.shields.io/endpoint?url=https://berkayturanci.github.io/keel/coverage-badge.json)](https://berkayturanci.github.io/keel/coverage/)
 [![CodeQL](https://github.com/berkayturanci/keel/actions/workflows/codeql.yml/badge.svg)](https://github.com/berkayturanci/keel/actions/workflows/codeql.yml)
-[![PyPI](https://img.shields.io/pypi/v/keel)](https://pypi.org/project/keel/)
-[![Python](https://img.shields.io/pypi/pyversions/keel)](https://pypi.org/project/keel/)
+[![PyPI](https://img.shields.io/pypi/v/keel-workflow)](https://pypi.org/project/keel-workflow/)
+[![Python](https://img.shields.io/pypi/pyversions/keel-workflow)](https://pypi.org/project/keel-workflow/)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
 > **keel** is a project-neutral, multi-agent **workflow core**. A *fixed backbone*
@@ -42,8 +42,9 @@ Changing the backbone is a keel-core change. Projects only ever touch layers 2�
 
 - **One backbone, every agent** — install once; `/keel:<command>` runs as native Claude commands
   *and* as a single shared skill set every other agent (Codex, Antigravity, Gemini) reads.
-- **Project Lego** — snap your own gates/steps into named slots (`tester`, `pre-merge`, …) without
-  forking the backbone; hard `block` gates live in `pre-merge`.
+- **Project Lego** — snap your own gates/steps into named hooks (`guard`, `tester`,
+  `pre-merge`, …) without forking the backbone; hard `block` gates are limited to the
+  documented blocking hooks.
 - **Opt-in `jury` gate** — runs the [ai-jury](https://github.com/berkayturanci/ai-jury) multi-agent
   reviewer on the diff when installed; a fail-soft no-op otherwise.
 - **Safe merges by construction** — timezone-aware night no-merge window, `mkdir` merge lock,
@@ -51,21 +52,21 @@ Changing the backbone is a keel-core change. Projects only ever touch layers 2�
 
 ### The backbone
 
-| step | name | slot | |
+| step | name | primary hooks | |
 |---|---|---|---|
-| s0 | config | | |
-| s1 | select | | |
-| s2 | branch | | |
-| s3 | guard | | |
-| s4 | implement | `after-implement` | agent |
-| s5 | classify | | agent |
-| s6 | ci | | |
-| s7 | review | `reviewers` | agent |
-| s8 | test | `tester` | |
-| s9 | fixloop | | |
-| s10 | merge | `pre-merge` | |
-| s11 | capture | `post-merge` | |
-| s12 | close | | |
+| s0 | config | `after:config` | |
+| s1 | select | `before:select`, `select`, `after:select` | |
+| s2 | branch | `before:branch`, `after:branch` | |
+| s3 | guard | `guard` | |
+| s4 | implement | `before:implement`, `after-implement` | agent |
+| s5 | classify | `classify`, `after:classify` | agent |
+| s6 | ci | `before:ci`, `after:ci` | |
+| s7 | review | `reviewers`, `after:review` | agent |
+| s8 | test | `tester`, `test`, `after:test` | |
+| s9 | fixloop | `before:fixloop`, `fixloop`, `after:fixloop` | |
+| s10 | merge | `pre-merge`, `after:merge` | |
+| s11 | capture | `capture`, `post-merge` | |
+| s12 | close | `before:close`, `on-close`, `after:close` | |
 
 Invariants the backbone always preserves: merge lock, night no-merge window, fail-soft,
 orchestrator-only-writes, vendor+model attribution.
@@ -75,12 +76,12 @@ orchestrator-only-writes, vendor+model attribution.
 keel is a Python (≥3.11) package with one runtime dependency (PyYAML):
 
 ```bash
-pip install keel                                              # from PyPI
-pip install "git+https://github.com/berkayturanci/keel@v0.5.0"  # or pin a git tag
+pip install keel-workflow                                     # from PyPI (provides the `keel` command)
+pip install "git+https://github.com/berkayturanci/keel@v0.6.0"  # or pin an existing git tag
 ```
 
 In a cloud agent session, install it from a `SessionStart` hook (or add keel to the
-session's repo scope) so the pinned core is available before a run.
+session's repo scope) so the selected core ref is available before a run.
 
 ## Quickstart
 
@@ -95,7 +96,7 @@ exactly what a dry-run executes:
 
 ```
 keel plan — example-flutter
-  base_branch: main   core_version: ^0.5
+  base_branch: main   core_version: ^0.6
   backbone:
      s4  implement  [agent]
      ...
@@ -148,6 +149,12 @@ If a step's gate fails, keel blocks its own merge — the same backbone every co
   Pages is available via the manual `pages.yml` workflow once Pages is enabled.)
 - [`docs/keel/configuration.md`](docs/keel/configuration.md) — `project.yaml` reference
 - [`docs/keel/extensions.md`](docs/keel/extensions.md) — authoring Lego extensions
+- [`docs/keel/consumer-neutrality.md`](docs/keel/consumer-neutrality.md) — core vs project policy boundary
+- [`docs/keel/parity-matrix.md`](docs/keel/parity-matrix.md) — legacy-to-keel command parity status and owning issues
+- [`docs/keel/runtime-capabilities.md`](docs/keel/runtime-capabilities.md) — runtime capability detection and requirement declarations
+- [`docs/keel/github-transport.md`](docs/keel/github-transport.md) — GitHub transport selection and normalized operation capabilities
+- [`docs/keel/command-contracts.md`](docs/keel/command-contracts.md) — structured JSON plan/result contracts for adapters
+- [`docs/keel/operator-consent.md`](docs/keel/operator-consent.md) — live-run operator consent scopes and delegated-agent scope rules
 - [`docs/keel/cli.md`](docs/keel/cli.md) — CLI reference
 - [`docs/keel/commands.md`](docs/keel/commands.md) — the 16 `/keel:<command>` workflows, each with its description
 - [`docs/keel/cutover.md`](docs/keel/cutover.md) — staged guide to retire a project's copied command bodies (install → verify → retire), losing nothing

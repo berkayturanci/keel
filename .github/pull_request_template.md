@@ -17,6 +17,9 @@ Describe the change and the problem it solves. Reference the issue (`Closes #N`)
 - [ ] `make lint`
 - [ ] `make validate`
 - [ ] `make coverage` (pure core stays at 100% line + branch)
+- [ ] coverage 100% (pure core)
+- [ ] `CHANGELOG` updated
+- [ ] #63 parity matrix row updated (if a command changed)
 - [ ] Docs / `CHANGELOG.md` updated if behaviour changed
 
 ## Project-Agnostic Check

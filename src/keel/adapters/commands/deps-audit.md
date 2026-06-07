@@ -27,7 +27,14 @@ language.
 ```bash
 keel validate .keel/project.yaml --root .
 keel plan     .keel/project.yaml --root .     # read ecosystems, tier3_globs, timezone, repo
+keel plan     .keel/project.yaml --root . --command deps-audit --live --json
 ```
+
+The live plan is the operator-consent preflight. Before posting tracking comments, opening
+issues, routing fixes to `/keel:ship`, using secrets, publishing, or calling
+production-adjacent systems, parse `contract.operator_consent`; if
+`requires_operator_consent` is true, STOP and ask the operator to rerun with the required
+`--approve-scope` values.
 
 Arguments:
 - Positional, optional: one **ecosystem** the project declares, or `all`. Default `all`.

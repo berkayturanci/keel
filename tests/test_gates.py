@@ -22,7 +22,8 @@ def _config(gates_list=("build", "lint"), lint=True):
 
 
 def _ext(eid, slot, on_fail="warn", kind="command", run="x"):
-    return Extension(id=eid, slot=slot, kind=kind, agent="inherit", on_fail=on_fail,
+    mode = "deterministic" if kind == "command" else "agentic"
+    return Extension(id=eid, slot=slot, kind=kind, mode=mode, agent="inherit", on_fail=on_fail,
                      anchorable=False, run=run, prompt=None, body="", source=f"{eid}.md")
 
 
@@ -43,12 +44,16 @@ class TestPlan(unittest.TestCase):
 
     def test_extensions_appended_by_phase(self):
         loaded = {
+            "guard": [_ext("guard-check", "guard", on_fail="block")],
             "tester": [_ext("design-parity", "tester")],
+            "test": [_ext("test-extra", "test")],
             "pre-merge": [_ext("dp-gate", "pre-merge", on_fail="block")],
         }
         specs = gates.plan_gates(_config(("build",)), loaded)
-        self.assertEqual([s.id for s in specs], ["build", "design-parity", "dp-gate"])
-        self.assertEqual([s.phase for s in specs], ["test", "test", "pre-merge"])
+        self.assertEqual([s.id for s in specs],
+                         ["guard-check", "build", "design-parity", "test-extra", "dp-gate"])
+        self.assertEqual([s.phase for s in specs],
+                         ["guard", "test", "test", "test", "pre-merge"])
 
 
 class TestRun(unittest.TestCase):

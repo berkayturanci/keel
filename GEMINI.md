@@ -11,10 +11,9 @@ to it.
 Then, for the task at hand:
 
 - **Driving an issue end-to-end** (`keel:ship`): the adapters are
-  [`adapters/gemini/keel-ship.md`](adapters/gemini/keel-ship.md) (Gemini) and
-  [`adapters/agy/keel-ship.md`](adapters/agy/keel-ship.md) (Antigravity). Both are
-  project-neutral and read every keel-specific value from `projects/keel.yaml` via the
-  `keel` CLI.
+  installed into the shared [`keel-ship` skill](.agents/skills/keel-ship/SKILL.md).
+  Gemini, Antigravity, Codex, and other non-Claude agents read the shared
+  `.agents/skills/keel-<cmd>/SKILL.md` files instead of separate per-agent adapter copies.
 - **Architecture / design questions**:
   [`docs/proposals/keel-architecture.md`](docs/proposals/keel-architecture.md).
 - **Config / extensions / CLI reference**: [`docs/keel/`](docs/keel/).

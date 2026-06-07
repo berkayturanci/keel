@@ -1,0 +1,4 @@
+personality = "friendly"
+
+[features]
+hooks = true
