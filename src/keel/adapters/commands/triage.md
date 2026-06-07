@@ -12,11 +12,11 @@ specific from `.keel/project.yaml` via the `keel` CLI (`tier3_globs`,
 `implementer_agents`, repo).
 
 The command scans open issues missing any `status:*` label, spawns one classifier
-subagent per issue that proposes a `role/platform:* + priority:* + status:*`
-label triple drawn **only from the existing repo label set**, applies those
-labels, and posts a one-line audit comment. It is **advisory and label-only**: it
-never edits titles or bodies, never closes or assigns issues (except the role
-label under `--assign`), and never invents new labels.
+subagent per issue that proposes a routing role + `priority:* + status:*` label
+triple drawn **only from the existing repo label set**, applies those labels, and
+posts a one-line audit comment. It is **advisory and label-only**: it never edits
+titles or bodies, never closes or assigns issues (except the role label under
+`--assign`), and never invents new labels.
 
 ## Language
 
@@ -42,6 +42,11 @@ only `approved_mutation_scopes`; scope expansion blocks or escalates.
 
 The **role/platform** vocabulary is project-defined — derive it from the keys of
 `implementer_agents` (each key is a routing role). Do not hardcode role names.
+Legacy wrappers that used `platform:*` labels must migrate by either defining
+matching routing-role keys in project config for the transition or translating the
+legacy platform value to one configured role before invoking this adapter. keel
+core never invents `platform:*` labels and never broadens the vocabulary at
+runtime.
 
 ## Step 0 — Parse arguments
 
@@ -75,7 +80,7 @@ line. Mappings, applied whenever the prose names a `gh` call:
 | list open issues with labels/body | list-issues (state=open, page size 100); apply the same client-side filter (drop issues whose labels include any `status:*`) |
 | view issue / view issue comments (subagent) | issue-read (get / get-comments); subagents stay read-only |
 | comment on issue | add-issue-comment |
-| add labels to issue | issue-write (update). MCP **overwrites** the label set — compute the union of existing + new labels explicitly before calling. |
+| add labels to issue | issue-write (update). MCP **overwrites** the label set — compute the union of existing + new labels explicitly before calling and log the exact added vs. preserved label difference. |
 
 `--dry-run` semantics are identical in both modes: every would-be mutation is
 redirected to a `DRY-RUN:` stdout line and skipped.
