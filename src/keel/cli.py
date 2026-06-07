@@ -120,6 +120,11 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         approved_consent_scopes=approved_scopes,
         operator=args.operator,
         target=args.target,
+        reviewer_override=args.reviewers,
+        review_comments=args.review_comments,
+        jury=args.jury,
+        no_jury=args.no_jury,
+        jury_advisory=args.jury_advisory,
     )
     consent_ok, consent_message = consent.assert_operator_consent(contract["operator_consent"])
     if args.json:
@@ -257,6 +262,11 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         approved_consent_scopes=approved_scopes,
         operator=args.operator,
         target=args.target or (f"PR #{args.pr}" if args.pr is not None else None),
+        reviewer_override=args.reviewers,
+        review_comments=args.review_comments,
+        jury=args.jury,
+        no_jury=args.no_jury,
+        jury_advisory=args.jury_advisory,
     )
     consent_ok, consent_message = consent.assert_operator_consent(contract["operator_consent"])
     if not consent_ok:
@@ -292,6 +302,13 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         merge_window_mode=config.merge_window_mode,
         ci_conclusion=ci_conclusion,
         is_blocker=args.hotfix,
+        reviewer_override=args.reviewers,
+        review_comments=args.review_comments,
+        gates=config.gates,
+        policy_pack=config.policy_pack,
+        jury=args.jury,
+        no_jury=args.no_jury,
+        jury_advisory=args.jury_advisory,
     )
 
     if args.json:
@@ -310,6 +327,9 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     print(f"keel ship — {name}  (base {config.base_branch})")
     print(f"  changed files : {len(changed)}")
     print(f"  risk tier     : TIER-{a.tier}  → {a.reviewers} reviewer(s)")
+    jury_state = a.review_contract["jury"]["mode"]
+    print(f"  review posts  : {a.review_contract['posting']['mode']}")
+    print(f"  jury          : {jury_state} ({a.review_contract['jury']['reason']})")
     window = "OPEN" if a.window_open else f"CLOSED ({config.merge_window_mode}, night no-merge)"
     print(f"  merge window  : {window}")
     ci_str = "unknown" if a.ci_ok is None else ("passing" if a.ci_ok else "FAILING")
@@ -553,6 +573,16 @@ def build_parser() -> argparse.ArgumentParser:
                         help="operator identifier to include in an approved consent record")
     p_plan.add_argument("--target", default=None,
                         help="task target to include in the consent prompt and record")
+    p_plan.add_argument("--review-comments", choices=("inline", "summary"), default="inline",
+                        help="review posting mode for ship-like command contracts")
+    p_plan.add_argument("--reviewers", type=int, choices=(1, 2, 3), default=None,
+                        help="override the resolved reviewer count")
+    p_plan.add_argument("--jury", action="store_true",
+                        help="enable the cross-vendor jury contract")
+    p_plan.add_argument("--no-jury", action="store_true",
+                        help="disable the cross-vendor jury contract")
+    p_plan.add_argument("--jury-advisory", action="store_true",
+                        help="run jury in advisory mode when enabled")
     p_plan.add_argument("--json", action="store_true", help="emit structured JSON")
     p_plan.set_defaults(func=_cmd_plan)
 
@@ -581,6 +611,16 @@ def build_parser() -> argparse.ArgumentParser:
                         help="operator identifier to include in an approved consent record")
     p_ship.add_argument("--target", default=None,
                         help="task target to include in the consent prompt and record")
+    p_ship.add_argument("--review-comments", choices=("inline", "summary"), default="inline",
+                        help="review posting mode for the resolved ship contract")
+    p_ship.add_argument("--reviewers", type=int, choices=(1, 2, 3), default=None,
+                        help="override the risk-derived reviewer count")
+    p_ship.add_argument("--jury", action="store_true",
+                        help="enable the cross-vendor jury gate")
+    p_ship.add_argument("--no-jury", action="store_true",
+                        help="disable the cross-vendor jury gate")
+    p_ship.add_argument("--jury-advisory", action="store_true",
+                        help="make an enabled jury advisory instead of merge-gating")
     p_ship.add_argument("--json", action="store_true", help="emit structured JSON")
     p_ship.set_defaults(func=_cmd_ship)
 

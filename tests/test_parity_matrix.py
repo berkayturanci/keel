@@ -79,18 +79,18 @@ class TestParityMatrix(unittest.TestCase):
                 for column in EXPECTED_COLUMNS:
                     self.assertTrue(row[column], column)
 
-    def test_ship_row_records_baseline_without_claiming_parity(self):
+    def test_ship_row_records_parity_evidence(self):
         rows = {row["Legacy command"].strip("`"): row for row in _matrix_rows()}
         ship = rows["ship"]
-        self.assertEqual(ship["Status"], "`in-progress`")
+        self.assertEqual(ship["Status"], "`parity-proven`")
         self.assertIn("#81", ship["Known gaps / owner issues"])
         self.assertIn("ship-baseline.md", ship["Known gaps / owner issues"])
         self.assertIn("#69", ship["Known gaps / owner issues"])
-        self.assertNotEqual(ship["Status"], "`parity-proven`")
+        self.assertIn("review_merge_contract", ship["Known gaps / owner issues"])
 
 
 class TestShipBaseline(unittest.TestCase):
-    def test_baseline_records_source_comparison_and_remaining_gap(self):
+    def test_baseline_records_source_comparison_and_parity_evidence(self):
         text = SHIP_BASELINE.read_text(encoding="utf-8")
         for required in (
             "Captured on",
@@ -98,9 +98,10 @@ class TestShipBaseline(unittest.TestCase):
             "Compared against",
             "Structured Contract Check",
             "Delta Classification",
-            "Remaining Ship Gaps",
+            "Ship Parity Evidence",
+            "review_merge_contract",
             "#69",
-            "Until #69 ships, the parity matrix status for `ship` remains `in-progress`.",
+            "The parity matrix can therefore mark `ship` as `parity-proven`",
         ):
             self.assertIn(required, text)
 

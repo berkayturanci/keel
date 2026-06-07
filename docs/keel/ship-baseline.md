@@ -35,6 +35,8 @@ needed by the baseline:
 - GitHub transport selection
 - dry-run and live consent metadata
 - declared side effects and operator-consent scopes
+- review, jury, posting, CI, fix-loop, merge-gate, and closeout metadata through
+  `review_merge_contract`
 
 This means baseline deltas should be implemented either in the core contract, the ship
 adapter, project policy, project extensions, or generated wrappers. They should not be
@@ -65,19 +67,27 @@ reintroduced as project-specific prose in the packaged command body.
 | Session-level learning verifier rejects silent capture skips. | Project extension / deferred from core | Keel core preserves capture slots and marker vocabulary; project-specific verifier implementation belongs in a capture extension or follow-up parity work if still required. |
 | Project-specific high-risk file lists, test commands, labels, report paths, and manual playbooks are embedded in the legacy command. | Project policy / extension / project command | Represented by `policy_pack`, extension hooks, and `policy_pack.project_commands`; intentionally not copied into keel core. |
 
-## Remaining Ship Gaps
+## Ship Parity Evidence
 
-This baseline does not mark `/keel:ship` parity-proven. The remaining ship row owner is
-#69, which must prove the review, jury, merge-gate, closeout, and wrapper-facing behavior
-against this baseline.
+#69 closes the remaining `ship` row gap by making the review, jury, merge-gate,
+closeout, and wrapper-facing behavior visible in structured output instead of only in
+adapter prose.
 
-The minimum #69 checks are:
+The `review_merge_contract` included by `keel plan --command ship --json` and by
+`keel ship --json` records:
 
-- run `/keel:ship` on a real low-risk issue or a faithful dry-run fixture
-- verify the structured contract matches the command body used by the adapter
-- verify reviewer and jury posting contracts, including orchestrator-only writes
-- verify CI and failure-diagnosis behavior through the resolved GitHub transport
-- verify merge-window, merge-lock, closeout, and capture markers
-- verify generated wrappers do not reintroduce copied legacy prose
+- reviewer count, source, independent reviewer slots, LGTM expectations, and focus
+  merging when the reviewer count is reduced
+- project-owned review additions and required PR/review sections from `policy_pack.review`
+- `inline` versus `summary` posting mode and per-reviewer inline fallback behavior
+- `--jury`, `--no-jury`, tier-3 auto-jury, and `--jury-advisory` precedence
+- jury fail-soft behavior, minimum-vendor threshold, and verified-consensus gating
+- critical/major/minor/nit finding actions and the bounded review fix loop
+- CI failure-before-pending semantics and docs-only empty-check handling
+- merge-window, hotfix, merge-lock, final mergeability, and PR-state authority rules
+- issue plus pull-request closeout comments and the required capture marker
 
-Until #69 ships, the parity matrix status for `ship` remains `in-progress`.
+Unit coverage asserts these contract fields directly and CLI coverage asserts the JSON
+surface for default, no-jury, explicit-jury, advisory, reviewer-override, and posting-mode
+cases. The parity matrix can therefore mark `ship` as `parity-proven`; behavior unique to
+`ship-v2` or review-only feedback commands remains tracked by their own rows and issues.

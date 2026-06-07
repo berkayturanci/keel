@@ -85,6 +85,20 @@ class TestPlan(unittest.TestCase):
         self.assertIn("plan", data)
         self.assertEqual(data["contract"]["schema_version"], "keel.command-contract.v1")
         self.assertEqual(data["contract"]["command"], "ship")
+        self.assertIn("review_merge_contract", data["contract"])
+
+    def test_plan_json_resolves_review_jury_flags(self):
+        rc, out, _ = run(
+            ["plan", str(PROJECTS / "example-android.yaml"), "--root", str(REPO_ROOT),
+             "--command", "ship", "--reviewers", "2", "--review-comments", "summary",
+             "--jury", "--jury-advisory", "--json"]
+        )
+        self.assertEqual(rc, 0)
+        review = json.loads(out)["contract"]["review_merge_contract"]
+        self.assertEqual(review["reviewers"]["count"], 2)
+        self.assertEqual(review["reviewers"]["source"], "override")
+        self.assertEqual(review["posting"]["mode"], "summary")
+        self.assertEqual(review["jury"]["mode"], "advisory")
 
     def test_plan_json_can_expose_other_command_graph(self):
         rc, out, _ = run(
@@ -254,7 +268,8 @@ class TestShip(unittest.TestCase):
         import tempfile
         with tempfile.TemporaryDirectory() as d:
             rc, out, _ = run(["ship", _write_config("'true'"), "--root", d,
-                              "--dry-run", "--json"])
+                              "--dry-run", "--json", "--review-comments", "summary",
+                              "--no-jury", "--reviewers", "1"])
         self.assertEqual(rc, 0)
         data = json.loads(out)
         self.assertEqual(data["contract"]["command"], "ship")
@@ -264,6 +279,10 @@ class TestShip(unittest.TestCase):
                          "not-required-dry-run")
         self.assertEqual(data["result"]["changed_file_count"], 0)
         self.assertEqual(data["result"]["assessment"]["merge"]["action"], "merge")
+        review = data["result"]["assessment"]["review_merge_contract"]
+        self.assertEqual(review["reviewers"]["count"], 1)
+        self.assertEqual(review["posting"]["mode"], "summary")
+        self.assertEqual(review["jury"]["mode"], "off")
 
     def test_ship_rejects_conflicting_live_and_dry_run_flags(self):
         rc, _, err = run(["ship", _write_config("'true'"), "--dry-run", "--live"])

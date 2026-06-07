@@ -83,8 +83,45 @@ class TestBuildCommandContract(unittest.TestCase):
             contract["operator_consent"]["consent_scope"],
             ["filesystem", "git", "github"],
         )
+        self.assertEqual(contract["review_merge_contract"]["posting"]["mode"], "inline")
+        self.assertEqual(
+            contract["review_merge_contract"]["reviewers"]["project_additions"],
+            ["Apply extra scrutiny to local data and payment-flow changes."],
+        )
+        self.assertIn("Testing", contract["review_merge_contract"]["reviewers"]
+                      ["required_sections"])
+        self.assertEqual(contract["review_merge_contract"]["jury"]["mode"], "off")
         self.assertTrue(contract["operator_consent"]["would_require_operator_consent"])
         self.assertFalse(contract["operator_consent"]["requires_operator_consent"])
+
+    def test_contract_resolves_review_flags_for_ship_like_commands(self):
+        config = cfg.load_config(PROJECTS / "example-android.yaml")
+        loaded = {}
+        plan = orchestrator.build_plan(config, loaded)
+        report = runtime.CapabilityReport(())
+        requirement = runtime.CapabilityRequirement()
+
+        contract = contracts.build_command_contract(
+            command="ship",
+            config=config,
+            loaded=loaded,
+            plan=plan,
+            requirement=requirement,
+            evaluation=runtime.evaluate(requirement, report),
+            transport=github_transport.resolve(report),
+            reviewer_override=2,
+            review_comments="summary",
+            jury=True,
+            jury_advisory=True,
+        )
+
+        review = contract["review_merge_contract"]
+        self.assertEqual(review["reviewers"]["count"], 2)
+        self.assertEqual(review["reviewers"]["source"], "override")
+        self.assertEqual(review["posting"]["mode"], "summary")
+        self.assertEqual(review["jury"]["mode"], "advisory")
+        self.assertTrue(review["jury"]["configured_gate"])
+        self.assertTrue(review["merge_gate"]["final_mergeability_recheck_inside_lock"])
 
     def test_project_command_contract_has_graph_capabilities_and_side_effects(self):
         config = cfg.load_config(PROJECTS / "example-android.yaml")

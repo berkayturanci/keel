@@ -38,6 +38,7 @@ keel plan .claude/project.yaml --json
 keel plan .claude/project.yaml --command morning --json
 keel plan .claude/project.yaml --command ship --live --json
 keel plan .claude/project.yaml --command ship --live --approve-scope filesystem,git,github --operator "$USER" --target "issue #123" --json
+keel plan .claude/project.yaml --command ship --review-comments summary --reviewers 2 --jury-advisory --json
 ```
 
 With `--json`, the output includes a structured command contract under `contract`: resolved
@@ -137,7 +138,7 @@ keel window .keel/project.yaml
 # merge window OPEN  [Europe/Istanbul 07:00-01:30]
 ```
 
-## `keel ship <project.yaml> [--root DIR] [--pr N] [--dry-run] [--live] [--approve-scope SCOPE] [--operator ID] [--target TARGET] [--json]`
+## `keel ship <project.yaml> [--root DIR] [--pr N] [--dry-run] [--live] [--approve-scope SCOPE] [--operator ID] [--target TARGET] [--review-comments inline|summary] [--reviewers 1|2|3] [--jury|--no-jury] [--jury-advisory] [--json]`
 
 Run the **deterministic slice of a ship** against the current checkout and print the
 assessment: how many files changed vs. the base branch, the **risk tier** (→ reviewer
@@ -155,6 +156,12 @@ same structured contract and stops before running project gates if operator cons
 missing. `--approve-scope` can be repeated or comma-separated. Approved live runs include a
 local `consent_record` in JSON output; secret values are never recorded.
 
+Review and merge-gate parity is exposed through `review_merge_contract` in JSON output.
+`--review-comments` selects inline or summary posting, `--reviewers` overrides the
+risk-derived reviewer count, and jury precedence is `--no-jury` over `--jury` over tier-3
+auto-jury over off. `--jury-advisory` keeps an enabled jury report-only. No-jury mode still
+preserves the reviewer, CI, tester, merge-window, merge-lock, closeout, and capture gates.
+
 ```bash
 keel ship projects/keel.yaml --root .
 keel ship projects/keel.yaml --root . --live --json
@@ -162,6 +169,8 @@ keel ship projects/keel.yaml --root . --live --approve-scope filesystem,git,gith
 # keel ship — keel  (base main)
 #   changed files : 53
 #   risk tier     : TIER-3  → 3 reviewer(s)
+#   review posts  : inline
+#   jury          : gating (tier-3 auto)
 #   merge window  : OPEN
 #   ci            : unknown
 #   github        : gh

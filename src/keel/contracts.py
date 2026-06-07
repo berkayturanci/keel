@@ -14,6 +14,7 @@ from typing import Any
 
 from . import config as cfg
 from . import consent, gates, github_transport, install, model, orchestrator, runtime
+from . import ship as ship_decisions
 from .extensions import Extension
 from .project_commands import get_project_command, list_project_commands
 
@@ -92,6 +93,11 @@ def build_command_contract(
     approved_consent_scopes: tuple[str, ...] = (),
     operator: str | None = None,
     target: str | None = None,
+    reviewer_override: int | None = None,
+    review_comments: str = "inline",
+    jury: bool = False,
+    no_jury: bool = False,
+    jury_advisory: bool = False,
 ) -> dict[str, Any]:
     """Build the stable adapter contract shared by ``plan --json`` and dry-run commands."""
     declared_side_effects = command_side_effects(command, config, requirement, loaded)
@@ -104,7 +110,7 @@ def build_command_contract(
             "slot": None,
             "source": "project_command",
         }]
-    return {
+    contract = {
         "schema_version": SCHEMA_VERSION,
         "command": command,
         "mode": "dry-run" if dry_run else "live",
@@ -133,7 +139,19 @@ def build_command_contract(
             operator=operator,
             target=target,
         ),
-}
+    }
+    if command in {"ship", "ship-v2", "pr-loop", "review-cycle", "overnight"}:
+        contract["review_merge_contract"] = ship_decisions.resolve_review_contract(
+            tier=None,
+            reviewer_override=reviewer_override,
+            review_comments=review_comments,
+            gates=config.gates,
+            policy_pack=config.policy_pack,
+            jury=jury,
+            no_jury=no_jury,
+            jury_advisory=jury_advisory,
+        )
+    return contract
 
 
 def command_side_effects(
@@ -255,6 +273,7 @@ def ship_result_as_dict(
             },
             "halted": assessment.halted,
             "bypassed_window": assessment.bypassed_window,
+            "review_merge_contract": assessment.review_contract,
         },
     }
 
