@@ -24,8 +24,17 @@ policy).
 ```bash
 keel validate .keel/project.yaml --root .
 keel plan     .keel/project.yaml --root .
+keel plan     .keel/project.yaml --root . --command overnight --live --json
 keel window   .keel/project.yaml --root .   # OPEN (merge-as-you-go) or CLOSED (no-merge)
 ```
+
+The live plan is the operator-consent preflight. Before selecting work, spawning
+implementers, creating PRs, merging, writing reports, using secrets, publishing, or calling
+production-adjacent systems, parse `contract.operator_consent`; if
+`requires_operator_consent` is true, STOP and ask the operator to rerun with the required
+`--approve-scope` values. Pass `operator_consent.delegated_agent_scope` into every
+`/keel:ship` or implementer handoff. Delegates may use only `approved_mutation_scopes`;
+scope expansion blocks or escalates.
 
 Mode is keyed on `keel window`, which derives the cutover from the configured
 `timezone` + `merge_window` (down to the exact minute, not just the hour):

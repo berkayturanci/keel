@@ -22,7 +22,13 @@ stay in any language (`knobs.sot_doc` § language policy).
 ```bash
 keel validate .keel/project.yaml --root .
 keel plan     .keel/project.yaml --root .   # base_branch, build_gate_cmd, lint_cmd
+keel plan     .keel/project.yaml --root . --command wrap --live --json
 ```
+
+The live plan is the operator-consent preflight. Before committing, pushing, opening a PR,
+writing a recap, using secrets, publishing, or calling production-adjacent systems, parse
+`contract.operator_consent`; if `requires_operator_consent` is true, STOP and ask the
+operator to rerun with the required `--approve-scope` values.
 
 Resolve GitHub access through the shared runtime contract (`keel capabilities --json` →
 `github_transport`). GitHub writes use the selected transport. The PR is opened **ready**

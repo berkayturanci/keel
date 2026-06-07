@@ -29,7 +29,15 @@ project's source-of-truth doc — `knobs.sot_doc`.)
 ```bash
 keel validate .keel/project.yaml --root .   # abort if config/extensions invalid
 keel plan     .keel/project.yaml --root .    # read base_branch, implementer_agents, tier3_globs
+keel plan     .keel/project.yaml --root . --command implement --live --json
 ```
+
+The live plan is the operator-consent preflight. Before posting comments, creating a
+worktree/branch, delegating, editing files, committing, pushing, opening a PR, using
+secrets, publishing, or calling production-adjacent systems, parse
+`contract.operator_consent`; if `requires_operator_consent` is true, STOP and ask the
+operator to rerun with the required `--approve-scope` values. Store
+`operator_consent.delegated_agent_scope` for Step 5.
 
 Read the knobs you will need: `base_branch`, `implementer_agents`, `tier3_globs`,
 `build_gate_cmd`, `lint_cmd`.
@@ -75,6 +83,9 @@ id), and the planned branch name.
 Dispatch to the resolved implementer with the issue context. Mandatory steps the
 implementer must follow:
 
+0. Receive and obey the approved `operator_consent.delegated_agent_scope`. If the
+   implementer attempts work outside `approved_mutation_scopes`, the orchestrator blocks or
+   escalates. Secret access requires explicit `secrets` approval for this run.
 1. Read the project's source-of-truth doc (`knobs.sot_doc`) and any platform
    context it points to.
 2. **Workspace isolation (mandatory):** before any code-modifying work, create a

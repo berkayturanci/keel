@@ -45,7 +45,7 @@ Every command contract includes `operator_consent`:
 | `would_require_operator_consent` | Whether the command has live-run mutation classes, including under dry-run. |
 | `status` | `not-required-dry-run`, `not-required-read-only`, `missing`, or `approved`. |
 | `consent_scope` | Mutation classes required for a live run: `filesystem`, `git`, `github`, `secrets`, `release`, `production-adjacent`. |
-| `approved_scope` / `missing_scope` | Scope approved for the current run and any live-run gap. |
+| `approved_scope` / `effective_approved_scope` / `missing_scope` | Scope approved by the operator, the subset that matches the resolved plan, and any live-run gap. |
 | `consent_prompt` | Consumer-neutral prompt generated from the resolved command, target, mode, and scopes. |
 | `delegated_agent_scope` | Scope adapters must pass to delegated agents; scope expansion must block or escalate. |
 | `consent_record` | Local metadata for approved live runs: timestamp, operator, workflow, target, scopes, mode, and `secret_values_recorded: false`. |
@@ -68,7 +68,7 @@ behavior without creating branches, posting comments, or merging PRs.
 
 ## Adapter rules
 
-Adapters should:
+Adapters must:
 
 - read the contract before mutating files or GitHub state
 - stop when required capabilities are missing

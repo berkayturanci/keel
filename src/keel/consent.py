@@ -20,12 +20,15 @@ CONSENT_SCOPES = (
 _SIDE_EFFECT_SCOPES: dict[str, tuple[str, ...]] = {
     "capture": ("filesystem",),
     "deferral_queue": ("filesystem",),
+    "file_edit": ("filesystem",),
     "report_write": ("filesystem",),
     "session_recap": ("filesystem",),
     "session_report": ("filesystem",),
     "git_branch": ("git",),
     "git_commit": ("git",),
+    "git_checkout": ("git",),
     "git_push": ("git",),
+    "git_worktree": ("filesystem", "git"),
     "comments": ("github",),
     "issue_close": ("github",),
     "issue_write": ("github",),
@@ -41,15 +44,49 @@ _SIDE_EFFECT_SCOPES: dict[str, tuple[str, ...]] = {
     "production_write": ("production-adjacent",),
 }
 
+_READ_ONLY_SIDE_EFFECTS: tuple[str, ...] = (
+    "check_runs",
+    "issue_read",
+    "pr_read",
+)
+
+_CAPABILITY_SIDE_EFFECTS: dict[str, tuple[str, ...]] = {
+    "filesystem-write": ("file_edit",),
+    "worktree": ("git_worktree",),
+    "release-publish": ("release",),
+    "secret-access": ("secret_access",),
+    "production-adjacent": ("production_access",),
+    "private-setup": ("credential_access",),
+}
+
 _SCOPE_ORDER = {scope: i for i, scope in enumerate(CONSENT_SCOPES)}
 
 
 def side_effect_scopes(side_effects: Iterable[str]) -> tuple[str, ...]:
     """Map declared side effects to operator consent scopes."""
     scopes: set[str] = set()
+    unknown: list[str] = []
     for effect in side_effects:
-        scopes.update(_SIDE_EFFECT_SCOPES.get(effect, ()))
+        if effect in _READ_ONLY_SIDE_EFFECTS:
+            continue
+        mapped = _SIDE_EFFECT_SCOPES.get(effect)
+        if mapped is None:
+            unknown.append(effect)
+        else:
+            scopes.update(mapped)
+    if unknown:
+        raise ValueError(
+            f"unknown side effect {unknown[0]!r}; declare it as read-only or map it to consent"
+        )
     return _sort_scopes(scopes)
+
+
+def capability_side_effects(capabilities: Iterable[str]) -> tuple[str, ...]:
+    """Return consent side effects implied by generic runtime capabilities."""
+    effects: list[str] = []
+    for capability in capabilities:
+        effects.extend(_CAPABILITY_SIDE_EFFECTS.get(capability, ()))
+    return tuple(dict.fromkeys(effects))
 
 
 def normalize_scopes(scopes: Iterable[str]) -> tuple[str, ...]:
@@ -85,7 +122,8 @@ def build_consent_contract(
     """Build a JSON-compatible consent block for a command contract."""
     consent_scope = side_effect_scopes(side_effects)
     approved_scope = normalize_scopes(approved_scopes)
-    missing_scope = tuple(scope for scope in consent_scope if scope not in approved_scope)
+    effective_approved_scope = tuple(scope for scope in consent_scope if scope in approved_scope)
+    missing_scope = tuple(scope for scope in consent_scope if scope not in effective_approved_scope)
     would_require = bool(consent_scope)
     requires = (not dry_run) and bool(missing_scope)
     status = _status(dry_run=dry_run, would_require=would_require, requires=requires)
@@ -97,16 +135,17 @@ def build_consent_contract(
         "status": status,
         "consent_scope": list(consent_scope),
         "approved_scope": list(approved_scope),
+        "effective_approved_scope": list(effective_approved_scope),
         "missing_scope": list(missing_scope if not dry_run else ()),
         "consent_prompt": _prompt(command, target, dry_run, consent_scope, missing_scope),
         "delegated_agent_scope": {
-            "approved_mutation_scopes": list(approved_scope if approved_live else ()),
+            "approved_mutation_scopes": list(effective_approved_scope if approved_live else ()),
             "scope_expansion_policy": "block-or-escalate",
             "secret_values_permitted_in_prompt": False,
             "secret_access_requires_explicit_scope": "secrets",
         },
         "consent_record": (
-            _record(command, target, approved_scope, operator, dry_run, now)
+            _record(command, target, effective_approved_scope, operator, dry_run, now)
             if approved_live
             else None
         ),

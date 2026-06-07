@@ -23,24 +23,28 @@ _STEP_RE = re.compile(
     r"(?P<name>.*)$"
 )
 
-_SIDE_EFFECTS: dict[str, tuple[str, ...]] = {
-    "ship": ("git_branch", "git_push", "pull_request", "comments", "reviews", "merge",
+_BASE_SIDE_EFFECTS: dict[str, tuple[str, ...]] = {
+    "ship": ("git_worktree", "git_branch", "file_edit", "git_push", "pull_request", "comments",
+             "reviews", "merge",
              "issue_close", "capture"),
-    "ship-v2": ("git_branch", "git_push", "pull_request", "comments", "reviews", "merge",
+    "ship-v2": ("git_worktree", "git_branch", "file_edit", "git_push", "pull_request",
+                "comments", "reviews", "merge",
                 "issue_close", "capture"),
-    "pr-loop": ("git_commit", "git_push", "comments", "reviews", "check_runs", "merge"),
-    "review-cycle": ("comments", "reviews", "git_commit", "git_push"),
+    "pr-loop": ("file_edit", "git_commit", "git_push", "comments", "reviews", "check_runs",
+                "merge"),
+    "review-cycle": ("file_edit", "comments", "reviews", "git_commit", "git_push"),
     "morning": ("issue_read", "pr_read", "report_write"),
     "wrap": ("git_commit", "git_push", "pull_request", "session_recap"),
     "overnight": ("git_branch", "git_push", "pull_request", "comments", "reviews", "merge",
                   "deferral_queue", "session_report"),
-    "implement": ("git_branch", "git_commit", "git_push", "pull_request", "comments"),
+    "implement": ("git_worktree", "git_branch", "file_edit", "git_commit", "git_push",
+                  "pull_request", "comments"),
     "ci-check": ("check_runs",),
     "triage": ("labels", "comments"),
-    "stale-prs": ("comments", "git_push"),
-    "regression": ("issue_write", "comments"),
-    "review-all-day": ("issue_write", "comments"),
-    "coverage": ("comments", "labels", "issue_write"),
+    "stale-prs": ("comments", "git_checkout", "git_push"),
+    "regression": ("git_worktree", "issue_write", "comments"),
+    "review-all-day": ("git_checkout", "issue_write", "comments"),
+    "coverage": ("git_worktree", "git_checkout", "comments", "labels", "issue_write"),
     "deps-audit": ("comments", "issue_write"),
     "flake-audit": ("issue_write", "comments"),
 }
@@ -89,7 +93,7 @@ def build_command_contract(
     target: str | None = None,
 ) -> dict[str, Any]:
     """Build the stable adapter contract shared by ``plan --json`` and dry-run commands."""
-    declared_side_effects = _SIDE_EFFECTS.get(command, ())
+    declared_side_effects = command_side_effects(command, requirement, loaded)
     return {
         "schema_version": SCHEMA_VERSION,
         "command": command,
@@ -118,7 +122,23 @@ def build_command_contract(
             operator=operator,
             target=target,
         ),
-    }
+}
+
+
+def command_side_effects(
+    command: str,
+    requirement: runtime.CapabilityRequirement,
+    loaded: dict[str, list[Extension]],
+) -> tuple[str, ...]:
+    """Return command side effects plus project capability-derived consent effects."""
+    effects: list[str] = list(_BASE_SIDE_EFFECTS.get(command, ()))
+    effects.extend(consent.capability_side_effects(requirement.required))
+    effects.extend(consent.capability_side_effects(requirement.optional))
+    for extensions in loaded.values():
+        for ext in extensions:
+            effects.extend(consent.capability_side_effects(ext.required_capabilities))
+            effects.extend(consent.capability_side_effects(ext.optional_capabilities))
+    return tuple(dict.fromkeys(effects))
 
 
 def project_as_dict(config: cfg.ProjectConfig) -> dict[str, Any]:

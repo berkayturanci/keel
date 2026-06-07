@@ -34,6 +34,7 @@ Live mode:
 
 - exits before project gates or mutation when required scope is not approved
 - records approved scope metadata when all required scopes are approved
+- passes only the approved scopes that match the resolved plan to delegated agents
 - never records secret values
 
 Example:

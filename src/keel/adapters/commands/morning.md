@@ -24,7 +24,13 @@ one structured report. Be terse, English only (`knobs.sot_doc` § language polic
 ```bash
 keel validate .keel/project.yaml --root .
 keel plan     .keel/project.yaml --root .   # repo, base_branch, timezone, merge_window
+keel plan     .keel/project.yaml --root . --command morning --live --json
 ```
+
+The live plan is the operator-consent preflight. Before writing reports, sending
+notifications, using secrets, publishing, or calling production-adjacent systems, parse
+`contract.operator_consent`; if `requires_operator_consent` is true, STOP and ask the
+operator to rerun with the required `--approve-scope` values.
 
 Resolve GitHub access through the shared runtime contract (`keel capabilities --json` →
 `github_transport`). Use the selected transport for issue/PR reads and state any degraded

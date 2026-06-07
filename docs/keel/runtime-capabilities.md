@@ -32,6 +32,9 @@ the structured command contracts described in [`command-contracts.md`](command-c
 | `filesystem-write` | The configured root is writable. |
 | `worktree` | The runtime has `git` and a writable root. |
 | `release-publish` | The operator/runtime explicitly allowed release publishing through `KEEL_RELEASE_PUBLISH=1`. |
+| `secret-access` | The operator/runtime explicitly allowed secret or credential access through `KEEL_SECRET_ACCESS=1`. |
+| `production-adjacent` | The operator/runtime explicitly allowed production-adjacent service access through `KEEL_PRODUCTION_ADJACENT=1`. |
+| `private-setup` | The operator/runtime explicitly confirmed private setup prerequisites through `KEEL_PRIVATE_SETUP=1`. |
 
 ## Declaring requirements
 
@@ -63,7 +66,9 @@ Unknown capability names fail validation so typos do not silently degrade a run.
 
 Required capabilities fail before mutating work begins. Optional capabilities degrade
 explicitly: human output reports `degraded optional`, and JSON output includes
-`missing_optional`.
+`missing_optional`. Mutating or privileged capability names also extend the operator-consent
+scope in structured command contracts; for example, `release-publish` requires `release`
+consent and `secret-access` requires `secrets` consent for the current live run.
 
 For example, `keel ship --pr N` requires the selected GitHub transport to support
 `check_runs`. Authenticated `gh` supports that operation today; MCP/API hosts can support it

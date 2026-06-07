@@ -27,12 +27,17 @@ KNOWN_CAPABILITIES: tuple[str, ...] = (
     "filesystem-write",
     "worktree",
     "release-publish",
+    "secret-access",
+    "production-adjacent",
+    "private-setup",
 )
 
 MUTATING_CAPABILITIES: tuple[str, ...] = (
     "filesystem-write",
     "worktree",
     "release-publish",
+    "secret-access",
+    "production-adjacent",
 )
 
 
@@ -182,6 +187,12 @@ def detect(
                    "requires git and writable root", "derived"),
         Capability("release-publish", _truthy(env.get("KEEL_RELEASE_PUBLISH")),
                    "KEEL_RELEASE_PUBLISH", "environment"),
+        Capability("secret-access", _truthy(env.get("KEEL_SECRET_ACCESS")),
+                   "KEEL_SECRET_ACCESS", "environment"),
+        Capability("production-adjacent", _truthy(env.get("KEEL_PRODUCTION_ADJACENT")),
+                   "KEEL_PRODUCTION_ADJACENT", "environment"),
+        Capability("private-setup", _truthy(env.get("KEEL_PRIVATE_SETUP")),
+                   "KEEL_PRIVATE_SETUP", "environment"),
     )
     return CapabilityReport(caps)
 

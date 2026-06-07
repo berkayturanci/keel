@@ -20,8 +20,15 @@ idempotency check (Step 4) is load-bearing.
 ```bash
 keel validate .keel/project.yaml --root .
 keel plan     .keel/project.yaml --root .     # read base_branch, ci_workflows, merge window
+keel plan     .keel/project.yaml --root . --command stale-prs --live --json
 keel window   .keel/project.yaml              # is the merge window open right now?
 ```
+
+The live plan is the operator-consent preflight. Before posting comments, checking out or
+merging branches, pushing refresh commits, using secrets, publishing, or calling
+production-adjacent systems, parse `contract.operator_consent`; if
+`requires_operator_consent` is true, STOP and ask the operator to rerun with the required
+`--approve-scope` values.
 
 Arguments:
 - `--days <N>` — staleness threshold in calendar days. Default `3`. Reject `0`, negatives,
