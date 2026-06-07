@@ -35,6 +35,11 @@ class TestReviewerCount(unittest.TestCase):
         self.assertEqual(contract["reviewers"]["source"], "override")
         self.assertEqual(contract["reviewers"]["tier"], 3)
 
+    def test_unresolved_tier_is_explicit(self):
+        contract = ship.resolve_review_contract(tier=None)
+        self.assertEqual(contract["reviewers"]["source"], "unresolved")
+        self.assertIsNone(contract["reviewers"]["tier"])
+
 
 class TestJuryContract(unittest.TestCase):
     def test_tier3_auto_enables_gating_jury(self):

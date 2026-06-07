@@ -94,6 +94,7 @@ def build_command_contract(
     operator: str | None = None,
     target: str | None = None,
     reviewer_override: int | None = None,
+    review_tier: int | None = None,
     review_comments: str = "inline",
     jury: bool = False,
     no_jury: bool = False,
@@ -142,7 +143,7 @@ def build_command_contract(
     }
     if command in {"ship", "ship-v2", "pr-loop", "review-cycle", "overnight"}:
         contract["review_merge_contract"] = ship_decisions.resolve_review_contract(
-            tier=None,
+            tier=review_tier,
             reviewer_override=reviewer_override,
             review_comments=review_comments,
             gates=config.gates,

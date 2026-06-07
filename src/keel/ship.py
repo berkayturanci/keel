@@ -131,12 +131,16 @@ def resolve_review_contract(
     if review_comments not in POSTING_MODES:
         raise ValueError("review_comments must be 'inline' or 'summary'")
     count = reviewer_override if reviewer_override is not None else reviewer_count(tier or 2)
+    source = (
+        "override" if reviewer_override is not None
+        else ("risk-tier" if tier is not None else "unresolved")
+    )
     pack = policy_pack or {}
     review_policy = pack.get("review", {}) if isinstance(pack.get("review", {}), dict) else {}
     return {
         "reviewers": {
             "count": count,
-            "source": "override" if reviewer_override is not None else "risk-tier",
+            "source": source,
             "tier": tier,
             "independent": True,
             "self_review_counts_toward_lgtm": False,

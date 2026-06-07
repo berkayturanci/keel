@@ -310,6 +310,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         no_jury=args.no_jury,
         jury_advisory=args.jury_advisory,
     )
+    contract["review_merge_contract"] = a.review_contract
 
     if args.json:
         print(json.dumps({
