@@ -11,6 +11,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 CORE_WORKFLOW_SURFACES = (
     REPO_ROOT / "src/keel/adapters/commands",
     REPO_ROOT / "adapters",
+    REPO_ROOT / "GEMINI.md",
     REPO_ROOT / "docs/keel/commands.md",
     REPO_ROOT / "docs/keel/configuration.md",
     REPO_ROOT / "docs/keel/consumer-neutrality.md",
@@ -62,6 +63,13 @@ class TestConsumerNeutrality(unittest.TestCase):
             "Consumer-specific literals belong in project config/extensions, not core "
             "workflow surfaces.",
         )
+
+    def test_gemini_entrypoint_points_to_shared_skill_surface(self):
+        text = (REPO_ROOT / "GEMINI.md").read_text(encoding="utf-8")
+        self.assertIn(".agents/skills/keel-<cmd>/SKILL.md", text)
+        self.assertIn(".agents/skills/keel-ship/SKILL.md", text)
+        self.assertNotIn("adapters/gemini", text)
+        self.assertNotIn("adapters/agy", text)
 
 
 if __name__ == "__main__":
