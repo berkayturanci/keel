@@ -7,6 +7,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MATRIX = REPO_ROOT / "docs/keel/parity-matrix.md"
+SHIP_BASELINE = REPO_ROOT / "docs/keel/ship-baseline.md"
 
 EXPECTED_COLUMNS = (
     "Legacy command",
@@ -76,6 +77,48 @@ class TestParityMatrix(unittest.TestCase):
                 self.assertIn("#", row["Known gaps / owner issues"])
                 for column in EXPECTED_COLUMNS:
                     self.assertTrue(row[column], column)
+
+    def test_ship_row_records_baseline_without_claiming_parity(self):
+        rows = {row["Legacy command"].strip("`"): row for row in _matrix_rows()}
+        ship = rows["ship"]
+        self.assertEqual(ship["Status"], "`in-progress`")
+        self.assertIn("#81", ship["Known gaps / owner issues"])
+        self.assertIn("ship-baseline.md", ship["Known gaps / owner issues"])
+        self.assertIn("#69", ship["Known gaps / owner issues"])
+        self.assertNotEqual(ship["Status"], "`parity-proven`")
+
+
+class TestShipBaseline(unittest.TestCase):
+    def test_baseline_records_source_comparison_and_remaining_gap(self):
+        text = SHIP_BASELINE.read_text(encoding="utf-8")
+        for required in (
+            "Captured on",
+            "Source SHA-256",
+            "Compared against",
+            "Structured Contract Check",
+            "Delta Classification",
+            "Remaining Ship Gaps",
+            "#69",
+            "Until #69 ships, the parity matrix status for `ship` remains `in-progress`.",
+        ):
+            self.assertIn(required, text)
+
+    def test_baseline_classifies_required_delta_destinations(self):
+        text = SHIP_BASELINE.read_text(encoding="utf-8")
+        for classification in (
+            "Core invariant",
+            "Runtime / transport",
+            "Project policy / extension / project command",
+            "Extension / capture invariant",
+        ):
+            self.assertIn(classification, text)
+
+    def test_baseline_remains_consumer_neutral(self):
+        text = SHIP_BASELINE.read_text(encoding="utf-8").lower()
+        forbidden = ("smartinventory", "eventoid")
+        for term in forbidden:
+            with self.subTest(term=term):
+                self.assertNotIn(term, text)
 
 
 if __name__ == "__main__":
