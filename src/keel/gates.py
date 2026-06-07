@@ -40,6 +40,8 @@ class GateSpec:
     prompt: str | None = None
     agent: str = "inherit"
     source: str = "builtin"
+    required_capabilities: tuple[str, ...] = ()
+    optional_capabilities: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -80,7 +82,9 @@ def plan_gates(config: ProjectConfig, loaded: dict[str, list[Extension]]) -> tup
     for slot, phase in (("tester", "test"), ("pre-merge", "pre-merge")):
         for e in loaded.get(slot, []):
             specs.append(GateSpec(e.id, e.kind, phase, e.on_fail,
-                                  run=e.run, prompt=e.prompt, agent=e.agent, source=e.source))
+                                  run=e.run, prompt=e.prompt, agent=e.agent, source=e.source,
+                                  required_capabilities=e.required_capabilities,
+                                  optional_capabilities=e.optional_capabilities))
     return tuple(specs)
 
 

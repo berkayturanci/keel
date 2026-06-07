@@ -18,6 +18,7 @@ from pathlib import Path
 
 import yaml
 
+from . import runtime
 from .config import ProjectConfig
 from .model import SLOTS
 
@@ -43,6 +44,8 @@ class Extension:
     prompt: str | None
     body: str
     source: str
+    required_capabilities: tuple[str, ...] = ()
+    optional_capabilities: tuple[str, ...] = ()
 
 
 def split_frontmatter(text: str) -> tuple[dict, str]:
@@ -72,6 +75,8 @@ def parse_extension(text: str, *, source: str, expected_slot: str | None = None)
     agent = meta.get("agent", "inherit")
     run = meta.get("run")
     prompt = meta.get("prompt")
+    required_capabilities = tuple(meta.get("required_capabilities", []))
+    optional_capabilities = tuple(meta.get("optional_capabilities", []))
 
     if not ext_id:
         errors.append("missing 'id'")
@@ -95,6 +100,10 @@ def parse_extension(text: str, *, source: str, expected_slot: str | None = None)
         errors.append("a 'command' extension requires a 'run' value")
     if kind == "agentic" and not (prompt or body.strip()):
         errors.append("an 'agentic' extension requires a 'prompt' value or a body")
+    errors.extend(runtime.validate_names(required_capabilities,
+                                         source=f"{source}: required_capabilities"))
+    errors.extend(runtime.validate_names(optional_capabilities,
+                                         source=f"{source}: optional_capabilities"))
 
     if errors:
         raise ExtensionError(f"{source}: " + "; ".join(errors))
@@ -108,6 +117,8 @@ def parse_extension(text: str, *, source: str, expected_slot: str | None = None)
         anchorable=bool(meta.get("anchorable", False)),
         run=run,
         prompt=prompt,
+        required_capabilities=required_capabilities,
+        optional_capabilities=optional_capabilities,
         body=body,
         source=source,
     )

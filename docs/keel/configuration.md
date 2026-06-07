@@ -34,6 +34,8 @@ by `keel validate`. Unknown keys are rejected, so typos fail loudly.
 | `docs_gate_paths` | string[] | | paths that trigger the docs gate |
 | `docs_only_allowlist` | string[] | | paths allowed in a docs-only PR |
 | `sot_doc` | string | | source-of-truth doc, e.g. `AGENTS.md` |
+| `required_capabilities` | string[] | | runtime capabilities that must be present before mutating work starts |
+| `optional_capabilities` | string[] | | runtime capabilities that may degrade explicitly when unavailable |
 
 ## `gates` vs `extensions`
 
@@ -70,6 +72,8 @@ knobs:
     "App CI": "src/app/**"
     "Service CI": "src/service/**"
   sot_doc: AGENTS.md
+  required_capabilities: [shell]
+  optional_capabilities: [gh, gh-auth]
 
 gates: [build, lint]
 

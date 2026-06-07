@@ -69,6 +69,15 @@ class TestPlan(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("s10  merge", out)
         self.assertIn("gate: build", out)
+        self.assertIn("runtime capabilities", out)
+
+    def test_plan_json_includes_capabilities(self):
+        rc, out, _ = run(
+            ["plan", str(PROJECTS / "example-android.yaml"), "--root", str(REPO_ROOT), "--json"]
+        )
+        self.assertEqual(rc, 0)
+        self.assertIn('"capabilities"', out)
+        self.assertIn('"plan"', out)
 
     def test_plan_missing_config(self):
         rc, _, err = run(["plan", str(PROJECTS / "nope.yaml")])
@@ -222,6 +231,16 @@ class TestShip(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertTrue(err)
 
+    def test_missing_required_capability_blocks_before_ship(self):
+        p = _write_raw("extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: x\n"
+                       "gates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+                       "  required_capabilities: [release-publish]\n")
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, _, err = run(["ship", p, "--root", d])
+        self.assertEqual(rc, 1)
+        self.assertIn("missing required", err)
+
     def test_unloadable_extension_warned(self):
         import tempfile
         p = _write_raw("extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: x\n"
@@ -231,6 +250,28 @@ class TestShip(unittest.TestCase):
             rc, _, err = run(["ship", p, "--root", d])
         self.assertEqual(rc, 0)
         self.assertIn("extension not loaded", err)
+
+
+class TestCapabilities(unittest.TestCase):
+    def test_prints_runtime_report(self):
+        rc, out, _ = run(["capabilities", "--root", "."])
+        self.assertEqual(rc, 0)
+        self.assertIn("keel capabilities", out)
+        self.assertIn("shell", out)
+
+    def test_json_report(self):
+        rc, out, _ = run(["capabilities", "--root", ".", "--json"])
+        self.assertEqual(rc, 0)
+        self.assertIn('"report"', out)
+        self.assertIn('"capabilities"', out)
+
+    def test_project_requirement_failure_returns_nonzero(self):
+        p = _write_raw("extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: x\n"
+                       "knobs:\n  build_gate_cmd: 'true'\n"
+                       "  required_capabilities: [release-publish]\n")
+        rc, out, _ = run(["capabilities", "--project", p])
+        self.assertEqual(rc, 1)
+        self.assertIn("missing required", out)
 
 
 class TestInit(unittest.TestCase):
@@ -381,7 +422,7 @@ class TestParser(unittest.TestCase):
         self.assertTrue(actions)
         self.assertEqual(set(actions[0].choices),
                          {"version", "validate", "plan", "run-gates", "window", "ship",
-                          "init", "install-adapter"})
+                          "capabilities", "init", "install-adapter"})
 
 
 if __name__ == "__main__":

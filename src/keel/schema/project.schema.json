@@ -60,7 +60,17 @@
         },
         "docs_gate_paths": { "type": "array", "items": { "type": "string" } },
         "docs_only_allowlist": { "type": "array", "items": { "type": "string" } },
-        "sot_doc": { "type": "string", "description": "Source-of-truth doc, e.g. AGENTS.md." }
+        "sot_doc": { "type": "string", "description": "Source-of-truth doc, e.g. AGENTS.md." },
+        "required_capabilities": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Runtime capabilities that must be available before mutating work starts."
+        },
+        "optional_capabilities": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Runtime capabilities that may degrade when unavailable."
+        }
       }
     },
     "gates": {

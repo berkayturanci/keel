@@ -64,6 +64,23 @@ class TestParse(unittest.TestCase):
         self.assertEqual(config.base_branch, "main")
         self.assertEqual(config.extensions_dir, cfg.DEFAULT_EXTENSIONS_DIR)
         self.assertEqual(config.gates, ())
+        self.assertEqual(config.knobs.required_capabilities, ())
+        self.assertEqual(config.knobs.optional_capabilities, ())
+
+    def test_capability_knobs_parse(self):
+        data = copy.deepcopy(VALID)
+        data["knobs"]["required_capabilities"] = ["shell"]
+        data["knobs"]["optional_capabilities"] = ["gh"]
+        config = cfg.parse_config(data)
+        self.assertEqual(config.knobs.required_capabilities, ("shell",))
+        self.assertEqual(config.knobs.optional_capabilities, ("gh",))
+
+    def test_unknown_capability_rejected(self):
+        bad = copy.deepcopy(VALID)
+        bad["knobs"]["required_capabilities"] = ["bogus"]
+        with self.assertRaises(cfg.ConfigError) as ctx:
+            cfg.parse_config(bad)
+        self.assertIn("unknown capability", str(ctx.exception))
 
     def test_non_dict_rejected(self):
         with self.assertRaises(cfg.ConfigError) as ctx:

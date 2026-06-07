@@ -34,6 +34,7 @@ built-in gates.
 
 ```bash
 keel plan .claude/project.yaml
+keel plan .claude/project.yaml --json
 ```
 
 Example output:
@@ -72,6 +73,22 @@ keel run-gates .keel/project.yaml --root .
 ```
 
 Exits non-zero if any gate blocks (so it can be wired straight into CI).
+
+## `keel capabilities [--root DIR] [--project project.yaml] [--for plan|run-gates|ship] [--json]`
+
+Print the runtime capability report for the current execution environment. With
+`--project`, keel also evaluates the selected command's required and optional capabilities
+against that report.
+
+```bash
+keel capabilities --root .
+keel capabilities --project .keel/project.yaml --for ship --root .
+keel capabilities --project .keel/project.yaml --for ship --json
+```
+
+Required capabilities fail with a non-zero exit before mutating work starts. Optional
+capabilities are reported as degraded in human output and as `missing_optional` in JSON.
+See [`runtime-capabilities.md`](runtime-capabilities.md).
 
 ## `keel window <project.yaml>`
 

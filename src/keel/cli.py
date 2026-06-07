@@ -10,10 +10,11 @@ Subcommands
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
-from . import __version__, gates, git, github, install, jury, scaffold, ship, window
+from . import __version__, gates, git, github, install, jury, runtime, scaffold, ship, window
 from . import config as cfg
 from . import findings as fnd
 from . import orchestrator as orch
@@ -82,7 +83,17 @@ def _cmd_plan(args: argparse.Namespace) -> int:
     except gates.GateError as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    print(orch.render_plan(config, plan))
+    requirement = _capability_requirement("plan", config, loaded)
+    report = runtime.detect(args.root)
+    evaluation = runtime.evaluate(requirement, report)
+    if args.json:
+        print(json.dumps({
+            "plan": orch.plan_as_dict(plan),
+            "capabilities": evaluation.as_dict(),
+        }, indent=2, sort_keys=True))
+    else:
+        print(orch.render_plan(config, plan))
+        print(evaluation.render())
     for prob in problems:
         print(f"  ! extension not loaded: {prob}", file=sys.stderr)
     return 0
@@ -107,6 +118,14 @@ def _cmd_run_gates(args: argparse.Namespace) -> int:
     except gates.GateError as exc:
         print(str(exc), file=sys.stderr)
         return 1
+
+    requirement = _capability_requirement("run-gates", config, loaded)
+    evaluation = runtime.evaluate(requirement, runtime.detect(args.root))
+    if not evaluation.ok:
+        print(evaluation.render(), file=sys.stderr)
+        return 1
+    if evaluation.missing_optional:
+        print(evaluation.render(), file=sys.stderr)
 
     diff_text = git.diff(config.base_branch, "HEAD", cwd=args.root)
     outcomes = gates.run_gates(specs, _gate_runner(args.root, diff_text))
@@ -156,6 +175,12 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     for prob in problems:
         print(f"  ! extension not loaded: {prob}", file=sys.stderr)
 
+    requirement = _capability_requirement("ship", config, loaded, pr=args.pr)
+    evaluation = runtime.evaluate(requirement, runtime.detect(args.root))
+    if not evaluation.ok:
+        print(evaluation.render(), file=sys.stderr)
+        return 1
+
     changed = git.changed_files(config.base_branch, "HEAD", cwd=args.root)
     try:
         specs = gates.plan_gates(config, loaded)
@@ -189,6 +214,8 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     print(f"  ci            : {ci_str}")
     for o in outcomes:
         print(f"  gate {o.gate:<14} {'ok' if o.ok else 'FAIL'}")
+    if evaluation.missing_optional:
+        print(f"  degraded opt. : {', '.join(evaluation.missing_optional)}")
     if a.halted:  # pragma: no cover - display only; logic covered in ship.assess tests
         print("  pipeline      : HALTED (merge window paused)")
     if a.bypassed_window:  # pragma: no cover - display only; logic covered in ship.assess
@@ -196,6 +223,37 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     print(f"  decision      : {a.merge.action.upper()} — {a.merge.reason}")
     print("  note: dry assessment; live merge (s10) needs a configured runner (git + gh auth).")
     return 0 if a.merge.action != "block" else 1
+
+
+def _cmd_capabilities(args: argparse.Namespace) -> int:
+    report = runtime.detect(args.root)
+    requirement = runtime.CapabilityRequirement()
+    problems: list[str] = []
+    if args.path:
+        try:
+            config = cfg.load_config(args.path)
+        except FileNotFoundError:
+            print(f"no such config: {args.path}", file=sys.stderr)
+            return 1
+        except cfg.ConfigError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        loaded, problems = load_extensions(config, args.root, strict=False)
+        requirement = _capability_requirement(args.for_command, config, loaded, pr=args.pr)
+    evaluation = runtime.evaluate(requirement, report)
+    if args.json:
+        print(json.dumps({
+            "report": report.as_dict(),
+            "evaluation": evaluation.as_dict(),
+            "extension_problems": problems,
+        }, indent=2, sort_keys=True))
+    else:
+        print(report.render())
+        if args.path:
+            print(evaluation.render())
+        for prob in problems:
+            print(f"  ! extension not loaded: {prob}", file=sys.stderr)
+    return 0 if evaluation.ok else 1
 
 
 def _ask(prompt: str, default: str) -> str:  # pragma: no cover - interactive I/O
@@ -247,6 +305,38 @@ def _cmd_install_adapter(args: argparse.Namespace) -> int:
     return 0
 
 
+def _capability_requirement(
+    command: str,
+    config: cfg.ProjectConfig,
+    loaded: dict[str, list],
+    *,
+    pr: int | None = None,
+) -> runtime.CapabilityRequirement:
+    req = runtime.CapabilityRequirement(
+        required=config.knobs.required_capabilities,
+        optional=config.knobs.optional_capabilities,
+    )
+    try:
+        specs = gates.plan_gates(config, loaded)
+    except gates.GateError:
+        return req
+
+    if command in {"run-gates", "ship"} and any(s.kind == "command" for s in specs):
+        req = req.merged(runtime.CapabilityRequirement(required=("shell",)))
+    if command == "ship":
+        req = req.merged(runtime.CapabilityRequirement(required=("git", "worktree"),
+                                                       optional=("gh", "gh-auth")))
+        if pr is not None:
+            req = req.merged(runtime.CapabilityRequirement(required=("gh", "gh-auth")))
+    for spec in specs:
+        if spec.required_capabilities or spec.optional_capabilities:
+            req = req.merged(runtime.CapabilityRequirement(
+                required=spec.required_capabilities,
+                optional=spec.optional_capabilities,
+            ))
+    return req
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="keel", description="keel — workflow core")
     parser.add_argument("--version", action="version", version=f"keel {__version__}")
@@ -264,6 +354,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_plan = sub.add_parser("plan", help="render the backbone plan for a project")
     p_plan.add_argument("path", help="path to project.yaml")
     p_plan.add_argument("--root", default=".", help="repo root for resolving extensions")
+    p_plan.add_argument("--json", action="store_true", help="emit structured JSON")
     p_plan.set_defaults(func=_cmd_plan)
 
     p_run = sub.add_parser("run-gates", help="run a project's command gates")
@@ -281,6 +372,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_ship.add_argument("--pr", type=int, default=None, help="PR number for CI status (gh)")
     p_ship.add_argument("--hotfix", action="store_true", help="emergency: bypass the merge window")
     p_ship.set_defaults(func=_cmd_ship)
+
+    p_caps = sub.add_parser("capabilities", help="print runtime capability report")
+    p_caps.add_argument("--root", default=".", help="repo root for capability checks")
+    p_caps.add_argument("--project", dest="path", default=None,
+                        help="optional project.yaml to evaluate requirements")
+    p_caps.add_argument("--for", dest="for_command", default="ship",
+                        choices=("plan", "run-gates", "ship"),
+                        help="command requirement to evaluate when --project is set")
+    p_caps.add_argument("--pr", type=int, default=None,
+                        help="PR number for ship capability requirements")
+    p_caps.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_caps.set_defaults(func=_cmd_capabilities)
 
     p_init = sub.add_parser("init", help="scaffold a default .keel/project.yaml for this repo")
     p_init.add_argument("--root", default=".", help="repo root to scaffold into")

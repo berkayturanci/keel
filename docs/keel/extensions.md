@@ -37,6 +37,8 @@ kind: agentic              # agentic | command   (default: agentic)
 agent: inherit             # inherit | claude | codex | agy | ollama:<model>
 on_fail: suggest           # warn | suggest | block   (block only in pre-merge)
 anchorable: true           # may post inline diff comments
+required_capabilities: []  # optional: runtime capabilities that must be available
+optional_capabilities: []  # optional: runtime capabilities that may degrade
 ---
 Render the changed screens and compare against the Figma baseline.
 Report any pixel/layout delta above threshold as a finding.
@@ -64,6 +66,8 @@ run: ./scripts/check-design-parity.sh
   (a hard gate).
 - A failed gate with no explicit findings is reported at: `block`→`major`, `suggest`→`minor`,
   `warn`→`nit`.
+- `required_capabilities` and `optional_capabilities` must use known runtime capability names.
+  See [`runtime-capabilities.md`](runtime-capabilities.md).
 
 ## Fail-soft
 
