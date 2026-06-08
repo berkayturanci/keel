@@ -184,4 +184,4 @@ section for the dropped low-confidence findings.
   findings ⇒ same issues) · `/keel:regression` never edits code, pushes, or merges — fixes go
   through `/keel:ship`'s backbone (window + lock + review).
 
-<!-- keel-generated: surface=plugin command=regression keel_version=0.7.0 source_sha256=7dc6d2c10f65456516c39a47511347d297f4d96e55489ad3997176e80502e4e0 generated_sha256=7dc6d2c10f65456516c39a47511347d297f4d96e55489ad3997176e80502e4e0 -->
+<!-- keel-generated: surface=plugin command=regression keel_version=0.8.0 source_sha256=7dc6d2c10f65456516c39a47511347d297f4d96e55489ad3997176e80502e4e0 generated_sha256=7dc6d2c10f65456516c39a47511347d297f4d96e55489ad3997176e80502e4e0 -->

@@ -6,6 +6,8 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-06-09
+
 ### Added
 - **Claude Code plugin packaging** — keel now ships its `/keel:<command>` workflows as a
   Claude Code plugin. The repo is its own single-plugin marketplace, so users can add it with
@@ -35,6 +37,14 @@ All notable changes to keel are documented here. The format follows
 - **Resumable run checkpoints** — long ship runs persist a stable checkpoint
   (`keel.checkpoint.v1`, default `.keel/state/checkpoint.json`) with a per-step resume map, so
   an interrupted run can `resume` from the last completed backbone step instead of restarting.
+
+### Changed
+- **Agentic work-ownership positioning** — README, website, and docs now frame keel as the
+  backbone for agents that take ownership of software work from issue intake through shipped
+  outcome, including a public vision note for the future autonomous software team layer.
+- **Competitive comparison module** — the website now includes a comparison view that
+  distinguishes keel's issue-to-done work ownership model from adjacent agent, CI, and workflow
+  automation tools.
 
 ## [0.7.0] — 2026-06-08
 

@@ -135,4 +135,4 @@ print the would-be issues and route nothing.
   and skipped.
 - Deterministic for identical coverage data.
 
-<!-- keel-generated: surface=plugin command=coverage keel_version=0.7.0 source_sha256=5eb711e51226ef77fef65b200cca4a439ff44c950089e25364b60f16e5d37dc3 generated_sha256=5eb711e51226ef77fef65b200cca4a439ff44c950089e25364b60f16e5d37dc3 -->
+<!-- keel-generated: surface=plugin command=coverage keel_version=0.8.0 source_sha256=5eb711e51226ef77fef65b200cca4a439ff44c950089e25364b60f16e5d37dc3 generated_sha256=5eb711e51226ef77fef65b200cca4a439ff44c950089e25364b60f16e5d37dc3 -->

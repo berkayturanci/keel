@@ -70,4 +70,4 @@ handling, and durable-learning capture, while retaining the same merge and safet
 `workflow_profile`. It must not create branches, edit files, push commits, post comments,
 request reviews, merge, close issues, or write capture artifacts.
 
-<!-- keel-generated: surface=plugin command=ship-v2 keel_version=0.7.0 source_sha256=5c0c9191b0ed7d8cfd82d35aafd281627b3d8cf403fdc060c4c8fad7b75b16c8 generated_sha256=5c0c9191b0ed7d8cfd82d35aafd281627b3d8cf403fdc060c4c8fad7b75b16c8 -->
+<!-- keel-generated: surface=plugin command=ship-v2 keel_version=0.8.0 source_sha256=5c0c9191b0ed7d8cfd82d35aafd281627b3d8cf403fdc060c4c8fad7b75b16c8 generated_sha256=5c0c9191b0ed7d8cfd82d35aafd281627b3d8cf403fdc060c4c8fad7b75b16c8 -->

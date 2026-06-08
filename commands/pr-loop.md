@@ -180,4 +180,4 @@ Do every read plus `keel validate` / `keel plan` / `keel run-gates`, but redirec
 state-changing `git`/`gh` write to a logged `DRY-RUN: <action>` line. No push, no PR, no
 merge.
 
-<!-- keel-generated: surface=plugin command=pr-loop keel_version=0.7.0 source_sha256=7f48f17895ef70f8e5f5468575df35250c30983c357aeedab1708024b9aa677f generated_sha256=7f48f17895ef70f8e5f5468575df35250c30983c357aeedab1708024b9aa677f -->
+<!-- keel-generated: surface=plugin command=pr-loop keel_version=0.8.0 source_sha256=7f48f17895ef70f8e5f5468575df35250c30983c357aeedab1708024b9aa677f generated_sha256=7f48f17895ef70f8e5f5468575df35250c30983c357aeedab1708024b9aa677f -->
