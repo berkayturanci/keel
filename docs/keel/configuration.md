@@ -20,7 +20,7 @@ declared through `required_capabilities`, `policy_pack`, or extension docs.
 | field | type | required | description |
 |---|---|---|---|
 | `extends` | `"keel"` (const) | ✅ | marks the file as a keel consumer config |
-| `core_version` | string | ✅ | pinned keel core range, e.g. `^0.6` |
+| `core_version` | string | ✅ | pinned keel core range, e.g. `^0.7` |
 | `base_branch` | string | ✅ | branch PRs target (`develop`, `main`, …) |
 | `knobs` | object | ✅ | per-project values (see below) |
 | `owner` | string | | GitHub owner |
@@ -43,7 +43,7 @@ backbone.
 
 #### `core_version`
 
-The selected Keel core version range for this consumer, for example `^0.6`. Humans and
+The selected Keel core version range for this consumer, for example `^0.7`. Humans and
 adapters use it to keep installed command surfaces aligned with the expected core contract.
 
 #### `owner` and `repo`
@@ -498,7 +498,7 @@ document any earlier hook that can stop a live run.
 
 ```yaml
 extends: keel
-core_version: "^0.6"
+core_version: "^0.7"
 owner: example-owner
 repo: example-repo
 base_branch: main

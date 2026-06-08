@@ -5,7 +5,7 @@ name: keel-ship
 # PR's CI status, post its assessment as a comment, and gate the merge on the decision.
 #
 # Consumers copy this workflow and swap `pip install -e .` for a pinned keel install
-# (`pip install "git+https://github.com/berkayturanci/keel@v0.1.0"`) and the config path
+# (`pip install "git+https://github.com/berkayturanci/keel@v0.7.0"`) and the config path
 # for their own `.keel/project.yaml`.
 
 on:
@@ -44,7 +44,7 @@ jobs:
           PR: ${{ github.event.pull_request.number || github.event.inputs.pr }}
         run: |
           set +e
-          ARGS="projects/keel.yaml --root ."
+          ARGS=".keel/project.yaml --root ."
           if [ -n "$PR" ]; then ARGS="$ARGS --pr $PR"; fi
           keel ship $ARGS | tee ship.txt
           echo "code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"

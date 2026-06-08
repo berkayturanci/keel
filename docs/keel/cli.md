@@ -166,7 +166,7 @@ Example output:
 
 ```
 keel plan — example-flutter
-  base_branch: main   core_version: ^0.6
+  base_branch: main   core_version: ^0.7
   backbone:
      s0  config
      ...
@@ -273,9 +273,9 @@ auto-jury over off. `--jury-advisory` keeps an enabled jury report-only. No-jury
 preserves the reviewer, CI, tester, merge-window, merge-lock, closeout, and capture gates.
 
 ```bash
-keel ship projects/keel.yaml --root .
-keel ship projects/keel.yaml --root . --live --json
-keel ship projects/keel.yaml --root . --live --approve-scope filesystem,git,github --operator "$USER" --target "issue #123" --json
+keel ship .keel/project.yaml --root .
+keel ship .keel/project.yaml --root . --live --json
+keel ship .keel/project.yaml --root . --live --approve-scope filesystem,git,github --operator "$USER" --target "issue #123" --json
 # keel ship — keel  (base main)
 #   changed files : 53
 #   risk tier     : TIER-3  → 3 reviewer(s)
@@ -307,7 +307,7 @@ variant. `ship-v2` shares the ship backbone and safety gates, but its JSON contr
 `review`, `fixloop`, and `capture`.
 
 ```bash
-keel ship-v2 projects/keel.yaml --root . --dry-run --json
+keel ship-v2 .keel/project.yaml --root . --dry-run --json
 # contract.workflow_profile.profile == "compound"
 # contract.workflow_profile.inherits == "ship"
 ```
@@ -323,8 +323,8 @@ the s4 implement step: it resolves project config, implementer routing, branch/w
 planning, consent scopes, and the handoff target without running the full ship lifecycle.
 
 ```bash
-keel implement projects/keel.yaml 76 --root . --dry-run --json
-keel implement projects/keel.yaml 76 --root . --live --approve-scope filesystem,git,github --operator "$USER" --json
+keel implement .keel/project.yaml 76 --root . --dry-run --json
+keel implement .keel/project.yaml 76 --root . --live --approve-scope filesystem,git,github --operator "$USER" --json
 ```
 
 `implement` may create branches, worktrees, commits, pushes, PRs, and comments only in an
@@ -339,7 +339,7 @@ result shape an adapter must produce, and stays read-only: the adapter diagnosis
 one fix, but this CLI surface never edits, pushes, re-runs, posts comments, or merges.
 
 ```bash
-keel ci-check projects/keel.yaml --root . --pr 104 --json
+keel ci-check .keel/project.yaml --root . --pr 104 --json
 ```
 
 The JSON result records the configured workflow map, latest-run context shape, available

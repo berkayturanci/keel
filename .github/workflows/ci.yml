@@ -30,9 +30,9 @@ jobs:
         run: |
           coverage run -m unittest discover -s tests
           coverage report
-      - name: Validate seed configs
-        run: python -m keel.cli validate projects/*.yaml
+      - name: Validate seed configs and dogfood config
+        run: python -m keel validate projects/*.yaml .keel/project.yaml
       - name: Dogfood — keel runs its own gates on keel-core
         run: |
-          python -m keel.cli plan projects/keel.yaml
-          python -m keel.cli run-gates projects/keel.yaml --root .
+          python -m keel plan .keel/project.yaml --root .
+          python -m keel run-gates .keel/project.yaml --root .

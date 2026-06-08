@@ -101,7 +101,7 @@ gates/extensions slotted in — exactly what a dry-run executes:
 
 ```
 keel plan — example-flutter
-  base_branch: main   core_version: ^0.6
+  base_branch: main   core_version: ^0.7
   backbone:
      s4  implement  [agent]
      ...
@@ -134,13 +134,15 @@ the adapters are the agentic flows (per-round review, inline comments, delegatio
 
 ## Dogfooding
 
-keel drives **itself**: its config is `projects/keel.yaml` (Python, `make test` + `make lint`
-gates) and CI runs keel on keel-core on every push —
+keel drives **itself** from `.keel/project.yaml` using the latest `^0.7` core contract
+(Python, `make test` + `make lint` gates), and CI runs keel on keel-core on every push.
+`projects/keel.yaml` remains a seed copy and is tested to stay in sync with the dogfood
+config.
 
 ```bash
-keel plan      projects/keel.yaml          # render keel's own backbone
-keel run-gates projects/keel.yaml --root . # keel runs its own test + lint gates
-keel ship      projects/keel.yaml --root . # full dry assessment: tier, window, gates, decision
+keel plan      .keel/project.yaml --root . # render keel's own backbone
+keel run-gates .keel/project.yaml --root . # keel runs its own test + lint gates
+keel ship      .keel/project.yaml --root . # full dry assessment: tier, window, gates, decision
 #   risk tier     : TIER-3  → 3 reviewer(s)
 #   decision      : MERGE — clear to merge
 ```
@@ -177,7 +179,7 @@ Stdlib-first, pure-core + thin-I/O, deterministic, fully covered (ai-jury ethos)
 make test       # offline unit suite (no network, no credentials)
 make lint       # ruff
 make coverage   # coverage gate (fail_under in pyproject)
-make validate   # validate every projects/*.yaml
+make validate   # validate projects/*.yaml and .keel/project.yaml
 make site       # build the coverage report + serve the website at localhost:8000
 ```
 
@@ -190,7 +192,8 @@ runs in CI.
 ```
 src/keel/            the core package (config, model, extensions, findings, gates, orchestrator, cli)
 src/keel/schema/     project.schema.json (bundled)
-projects/*.yaml      example configs (example-android, example-flutter, keel)
+.keel/project.yaml   keel's own dogfood consumer config
+projects/*.yaml      example configs and the keel seed copy
 src/keel/adapters/   the packaged /keel:<command> bodies (install-adapter: claude commands + shared skills)
 adapters/            reference adapter (claude/keel-ship.md) + the adapter model (README)
 website/             static site + coverage report (make site)

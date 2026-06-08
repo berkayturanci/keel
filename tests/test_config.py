@@ -7,6 +7,7 @@ from pathlib import Path
 from keel import config as cfg
 
 PROJECTS_DIR = Path(__file__).resolve().parent.parent / "projects"
+DOGFOOD_CONFIG = Path(__file__).resolve().parent.parent / ".keel/project.yaml"
 
 VALID = {
     "extends": "keel",
@@ -70,6 +71,11 @@ class TestSeedConfigs(unittest.TestCase):
                 self.assertIn("health_providers", pack)
                 self.assertIn("scan", pack)
                 self.assertIn("command_routing", pack)
+
+    def test_keel_seed_matches_dogfood_config(self):
+        seed = (PROJECTS_DIR / "keel.yaml").read_text(encoding="utf-8")
+        dogfood = DOGFOOD_CONFIG.read_text(encoding="utf-8")
+        self.assertEqual(seed, dogfood)
 
     def test_example_android_declares_project_commands(self):
         config = cfg.load_config(PROJECTS_DIR / "example-android.yaml")

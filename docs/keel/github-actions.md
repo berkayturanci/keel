@@ -13,7 +13,7 @@ Actions minutes. So the cheapest place to run keel live is a GitHub Actions work
 1. checks out full history (so keel can diff against the base branch);
 2. installs keel (`pip install -e .` in this repo);
 3. fetches the base branch locally;
-4. runs **`keel ship projects/keel.yaml --root . --pr <N>`** — which reads the changed
+4. runs **`keel ship .keel/project.yaml --root . --pr <N>`** — which reads the changed
    files (git), the project gates, and the PR's CI rollup (`gh`), then prints the
    assessment (risk tier → reviewers, merge window, gates, decision);
 5. posts that assessment as a **PR comment**;
