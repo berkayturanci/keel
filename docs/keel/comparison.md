@@ -33,7 +33,7 @@ Keel does not compete with a single category. The closest tools each own one sli
 - **AI PR reviewers** such as CodeRabbit, Qodo / PR-Agent, Greptile, and Cursor Bugbot
   operate after a PR exists. Their strongest surface is review comments, summaries,
   suggested fixes, and repository context.
-  [Qodo / PR-Agent overview](https://qodo-merge-docs.qodo.ai/index),
+  [Qodo code review overview](https://docs.qodo.ai/code-review),
   [Cursor Bugbot docs](https://docs.cursor.com/bugbot)
 - **Merge queues** such as GitHub Merge Queue, Mergify, Graphite, and Trunk operate
   after a PR is ready to merge. They protect the base branch with queues, batching,
@@ -308,8 +308,8 @@ Legend: ✅ yes · ◑ partial/limited · ❌ no · `OSS`/`Prop.`
 - Trunk OSS/forked PR support: https://trunk.io/changelog/merge-support-for-forked-and-open-source-repos
 - GitHub Copilot coding agent issue-to-PR docs: https://docs.github.com/en/copilot/how-tos/use-copilot-agents/coding-agent/assign-copilot-to-an-issue
 - Qodo / PR-Agent launch: https://www.qodo.ai/blog/unveiling-the-future-of-streamlined-software-development/
-- Qodo / PR-Agent overview: https://qodo-merge-docs.qodo.ai/index
-- Qodo code review docs: https://docs.qodo.ai/qodo-documentation/code-review/qodo-merge/configuration
+- Qodo code review overview: https://docs.qodo.ai/code-review
+- Qodo configuration docs: https://docs.qodo.ai/install-and-configure/configuration-overview/configuration-file
 - PR-Agent community repo: https://github.com/The-PR-Agent/pr-agent
 - Qodo hands PR-Agent to community: https://futurumgroup.com/insights/qodo-hands-pr-agent-to-the-community-will-open-governance-accelerate-ai-code-review/
 - CodeRabbit: https://www.coderabbit.ai/
