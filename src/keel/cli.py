@@ -764,6 +764,11 @@ def _cmd_update_adapter(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_sync(args: argparse.Namespace) -> int:
+    args.agent = args.target
+    return _cmd_update_adapter(args)
+
+
 def _parse_legacy_mapping(raw: str) -> tuple[str, str]:
     if "=" not in raw:
         raise argparse.ArgumentTypeError("use LEGACY=KEEL, for example ship=ship")
@@ -1140,6 +1145,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_ua.add_argument("--root", default=".", help="project root to update")
     p_ua.add_argument("--dry-run", action="store_true", help="show planned updates only")
     p_ua.set_defaults(func=_cmd_update_adapter)
+
+    p_sync = sub.add_parser("sync", help="sync generated adapters with the installed keel package")
+    p_sync.add_argument("--root", default=".", help="project root to update")
+    p_sync.add_argument(
+        "--target",
+        choices=("all", *install.TARGETS),
+        default="all",
+        help="adapter surface to sync (default: all)",
+    )
+    p_sync.add_argument("--dry-run", action="store_true", help="show planned updates only")
+    p_sync.set_defaults(func=_cmd_sync)
 
     p_lw = sub.add_parser(
         "install-legacy-wrappers",

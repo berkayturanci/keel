@@ -51,7 +51,7 @@ agents, or migrate a repository onto keel without copying command bodies.
    update generated adapters with:
 
    ```bash
-   keel update-adapter all --root .
+   keel sync --root .
    ```
 
 ## Notes

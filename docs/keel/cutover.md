@@ -113,8 +113,8 @@ The cutover is a PR. If `/keel:*` misses something after merge, `git revert` the
 ```bash
 pipx install --force "git+https://github.com/berkayturanci/keel@vX.Y.Z"
 keel adapter-status all --root .
-keel update-adapter all --root . --dry-run
-keel update-adapter all --root .
+keel sync --root . --dry-run
+keel sync --root .
 keel validate .keel/project.yaml --root .
 keel plan .keel/project.yaml --root .
 ```
@@ -122,11 +122,11 @@ keel plan .keel/project.yaml --root .
 Only generated adapter files are candidates for automatic refresh:
 `.claude/commands/keel/*.md` and `.agents/skills/keel-*/SKILL.md`. Project-owned config,
 `.keel/extensions/*`, project-only commands, and policy docs are never touched by
-`update-adapter`.
+`sync`.
 
-Adapter files carry a `keel-generated` marker. `update-adapter` updates files reported as
-`missing` or `outdated`; it refuses to overwrite `locally-modified` or `unknown` files. Treat
-those as normal PR review work and merge them by hand if needed.
+Adapter files carry a `keel-generated` marker. `sync` updates files reported as `missing` or
+`outdated`; it refuses to overwrite `locally-modified` or `unknown` files. Treat those as
+normal PR review work and merge them by hand if needed.
 
 Extension compatibility is checked after every upgrade with strict validation and plan
 rendering. If an extension references a removed/renamed slot or has malformed frontmatter,

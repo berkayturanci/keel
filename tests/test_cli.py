@@ -1181,6 +1181,24 @@ class TestInstallAdapter(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("unknown target", err)
 
+    def test_sync_alias_updates_generated_adapters(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            run(["install-adapter", "all", "--root", d])
+            ship = Path(d) / ".claude/commands/keel/ship.md"
+            ship.unlink()
+
+            rc, out, _ = run(["sync", "--root", d, "--dry-run"])
+            self.assertEqual(rc, 0)
+            self.assertIn("would-update", out)
+            self.assertIn("dry-run: no adapter files were written", out)
+            self.assertFalse(ship.exists())
+
+            rc, out, _ = run(["sync", "--root", d, "--target", "claude"])
+            self.assertEqual(rc, 0)
+            self.assertIn("updated", out)
+            self.assertTrue(ship.exists())
+
 
 class TestInstallLegacyWrappers(unittest.TestCase):
     def test_installs_selected_legacy_wrapper(self):
@@ -1262,7 +1280,7 @@ class TestParser(unittest.TestCase):
                                  "wrap", "overnight", "init",
                                  "setup",
                                  "install-adapter",
-                                 "adapter-status", "update-adapter", "project-commands",
+                                 "adapter-status", "update-adapter", "sync", "project-commands",
                                  "install-legacy-wrappers"})
 
 

@@ -412,6 +412,8 @@ keel version, source hash, and generated-body hash. That marker powers the safe 
 keel adapter-status all --root <repo>
 keel update-adapter all --root <repo> --dry-run
 keel update-adapter all --root <repo>
+keel sync --root <repo> --dry-run
+keel sync --root <repo>
 ```
 
 `adapter-status` reports:
@@ -424,11 +426,13 @@ keel update-adapter all --root <repo>
 | `locally-modified` | generated file has a marker, but its body changed after install |
 | `unknown` | file exists without a keel generated marker |
 
-`update-adapter` updates only `missing` and `outdated` generated adapter files. It refuses to
-overwrite `locally-modified` or `unknown` files; those need a human merge. `--dry-run` prints
-the same planned changes as `would-update` rows without writing. Adapter updates never touch
-project-owned config, `.keel/extensions/*`, project-provided commands, or local compatibility
-wrappers unless those files are explicitly marked as generated keel adapter surfaces.
+`sync` is the short everyday name for the same safe adapter refresh as
+`update-adapter all`. It updates only `missing` and `outdated` generated adapter files. It
+refuses to overwrite `locally-modified` or `unknown` files; those need a human merge.
+`--dry-run` prints the same planned changes as `would-update` rows without writing. Adapter
+updates never touch project-owned config, `.keel/extensions/*`, project-provided commands,
+or local compatibility wrappers unless those files are explicitly marked as generated keel
+adapter surfaces.
 
 Extension schema migrations are separate from adapter command updates and must be documented
 as their own versioned migration.
