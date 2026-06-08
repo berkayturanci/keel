@@ -431,5 +431,111 @@ class TestInstallAll(unittest.TestCase):
             self.assertIn("# locally edited keel-ship", skill.read_text(encoding="utf-8"))
 
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+class TestClaudeCodePlugin(unittest.TestCase):
+    """Lock the repo-level Claude Code plugin packaging (issue #135)."""
+
+    def _read_manifest(self) -> dict:
+        import json
+        return json.loads((REPO_ROOT / install.PLUGIN_MANIFEST).read_text(encoding="utf-8"))
+
+    def _read_marketplace(self) -> dict:
+        import json
+        return json.loads((REPO_ROOT / install.PLUGIN_MARKETPLACE).read_text(encoding="utf-8"))
+
+    def test_plugin_files_render_from_adapter_bodies(self):
+        files = install.plugin_files()
+        names = {Path(rel).name for rel in files}
+        self.assertEqual(names, set(install.adapter_names()))
+        for rel, content in files.items():
+            with self.subTest(rel=rel):
+                self.assertTrue(rel.startswith(f"{install.PLUGIN_COMMANDS_DIR}/"))
+                command = Path(rel).stem
+                source_text = (install.ADAPTERS / f"{command}.md").read_text(encoding="utf-8")
+                body, marker = install._split_marker(content)
+                # plugin command body is the raw adapter body — same surface as `claude`.
+                self.assertEqual(body, source_text.rstrip() + "\n")
+                self.assertEqual(marker["surface"], "plugin")
+                self.assertEqual(marker["command"], command)
+                self.assertEqual(marker["source_sha256"], install._sha256(source_text))
+
+    def test_committed_plugin_files_match_generator(self):
+        """Drift guard: the committed commands/*.md must equal the generator output."""
+        offenders: list[str] = []
+        files = install.plugin_files()
+        for rel, expected in files.items():
+            actual_path = REPO_ROOT / rel
+            if not actual_path.exists():
+                offenders.append(f"missing: {rel}")
+                continue
+            if actual_path.read_text(encoding="utf-8") != expected:
+                offenders.append(f"drift: {rel}")
+        committed = sorted(
+            str(p.relative_to(REPO_ROOT)).replace("\\", "/")
+            for p in (REPO_ROOT / install.PLUGIN_COMMANDS_DIR).glob("*.md")
+        )
+        self.assertEqual(committed, sorted(files), "extra/missing committed plugin command files")
+        self.assertEqual(offenders, [], "run `make plugin` to regenerate the plugin command files")
+
+    def test_install_plugin_is_idempotent_and_force_rewrites(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            installed, skipped = install.install_plugin(root)
+            self.assertEqual(sorted(installed), sorted(install.plugin_files()))
+            self.assertEqual(skipped, [])
+            again_installed, again_skipped = install.install_plugin(root)
+            self.assertEqual(again_installed, [])
+            self.assertEqual(sorted(again_skipped), sorted(install.plugin_files()))
+            ship = root / install.PLUGIN_COMMANDS_DIR / "ship.md"
+            ship.write_text("local edit\n", encoding="utf-8")
+            forced_installed, forced_skipped = install.install_plugin(root, force=True)
+            self.assertEqual(sorted(forced_installed), sorted(install.plugin_files()))
+            self.assertEqual(forced_skipped, [])
+            self.assertNotEqual(ship.read_text(encoding="utf-8"), "local edit\n")
+
+    def test_install_plugin_rewrites_drifted_file_without_force(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            install.install_plugin(root)
+            ship = root / install.PLUGIN_COMMANDS_DIR / "ship.md"
+            ship.write_text("drifted\n", encoding="utf-8")
+            installed, _skipped = install.install_plugin(root)
+            self.assertIn(f"{install.PLUGIN_COMMANDS_DIR}/ship.md", installed)
+            self.assertNotEqual(ship.read_text(encoding="utf-8"), "drifted\n")
+
+    def test_plugin_manifest_version_matches_keel_version(self):
+        from keel import __version__
+        self.assertEqual(self._read_manifest()["version"], __version__)
+
+    def test_plugin_manifest_has_required_fields(self):
+        manifest = self._read_manifest()
+        self.assertEqual(manifest["name"], "keel")
+        self.assertEqual(manifest["license"], "Apache-2.0")
+        self.assertEqual(manifest["author"]["name"], "Berkay Turancı")
+        self.assertEqual(manifest["homepage"], "https://berkayturanci.github.io/keel/")
+        self.assertTrue(manifest["description"])
+
+    def test_marketplace_has_required_fields_and_keel_plugin(self):
+        marketplace = self._read_marketplace()
+        self.assertEqual(marketplace["name"], "keel")
+        self.assertEqual(marketplace["owner"]["name"], "Berkay Turancı")
+        entries = {p["name"]: p for p in marketplace["plugins"]}
+        self.assertIn("keel", entries)
+        self.assertEqual(entries["keel"]["source"], "./")
+        self.assertTrue(entries["keel"]["description"])
+
+    def test_committed_plugin_command_bodies_remain_consumer_neutral(self):
+        offenders: list[str] = []
+        for path in sorted((REPO_ROOT / install.PLUGIN_COMMANDS_DIR).glob("*.md")):
+            body, _marker = install._split_marker(path.read_text(encoding="utf-8"))
+            text = body.lower()
+            for term in CONSUMER_SPECIFIC_TERMS:
+                if term in text:
+                    offenders.append(f"{path.name}: {term}")
+        self.assertEqual(offenders, [])
+
+
 if __name__ == "__main__":
     unittest.main()

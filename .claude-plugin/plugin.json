@@ -1,12 +1,12 @@
 {
   "name": "keel",
-  "version": "0.1.0",
-  "description": "Add keel workflow onboarding guidance to Claude Code sessions.",
+  "version": "0.7.0",
+  "description": "Project-neutral, multi-agent workflow core: a fixed backbone of steps that drives an issue from backlog to done, customised per project via config + add-only Lego extensions.",
   "author": {
     "name": "Berkay Turancı",
     "url": "https://github.com/berkayturanci"
   },
-  "homepage": "https://github.com/berkayturanci/keel",
+  "homepage": "https://berkayturanci.github.io/keel/",
   "repository": "https://github.com/berkayturanci/keel",
   "license": "Apache-2.0",
   "keywords": [

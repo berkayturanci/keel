@@ -6,7 +6,16 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+- **Claude Code plugin packaging** — keel now ships its `/keel:<command>` workflows as a
+  Claude Code plugin. The repo is its own single-plugin marketplace, so users can add it with
+  `/plugin marketplace add berkayturanci/keel` and `/plugin install keel` — no `pip install`
+  required. The committed `commands/*.md` plugin bodies are generated from
+  `src/keel/adapters/commands/` (the single source of truth) via `make plugin` /
+  `keel install-adapter plugin`; a drift test keeps them byte-identical and a version test
+  keeps `.claude-plugin/plugin.json` in lockstep with `keel.__version__`. The existing
+  `pip install keel-workflow` + `keel install-adapter` flow is unchanged (additive). See
+  [`docs/keel/plugin.md`](docs/keel/plugin.md).
 
 ## [0.7.0] — 2026-06-08
 

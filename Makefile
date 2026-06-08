@@ -7,10 +7,12 @@
 #   make site      build the coverage report into website/ and serve it at :8000
 #   make adapters  (re)install keel's own /keel:* adapters — both surfaces
 #                  (.claude/commands/keel/ + the shared .agents/skills/keel-* skill set)
+#   make plugin    regenerate the committed Claude Code plugin command files (commands/*.md)
+#                  from src/keel/adapters/commands/ — the drift test locks these byte-for-byte
 
 PY ?= python3
 
-.PHONY: test lint coverage validate site adapters clean
+.PHONY: test lint coverage validate site adapters plugin clean
 
 test:
 	PYTHONPATH=src $(PY) -m unittest discover -s tests -v
@@ -33,6 +35,9 @@ site:
 
 adapters:
 	PYTHONPATH=src $(PY) -m keel install-adapter all --force
+
+plugin:
+	PYTHONPATH=src $(PY) -m keel install-adapter plugin --root . --force
 
 clean:
 	rm -rf .coverage htmlcov **/__pycache__ src/**/__pycache__

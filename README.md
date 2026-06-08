@@ -150,6 +150,22 @@ keel install-adapter skills   # one shared keel-<cmd> skill set under .agents/sk
 keel install-adapter all      # both surfaces
 ```
 
+### Claude Code plugin
+
+The same `/keel:<command>` flows are also packaged as a **Claude Code plugin**, so you can
+add them to a session without `pip install` — straight from this repo's built-in marketplace:
+
+```text
+/plugin marketplace add berkayturanci/keel   # register the keel marketplace (this repo)
+/plugin install keel                          # install the keel plugin → /keel:ship, /keel:regression, …
+```
+
+The plugin ships the same project-neutral command bodies as `keel install-adapter`; the two
+flows are additive. The plugin's command files under `commands/` are generated from
+`src/keel/adapters/commands/` (the single source of truth) by `make plugin` /
+`keel install-adapter plugin`, and a test fails on any drift. The `pip install keel-workflow`
++ `keel install-adapter` path is unchanged.
+
 **16 shipped commands** — `ship` (flagship), `ship-v2`, `implement`, `review-cycle`,
 `review-all-day`, `pr-loop`, `regression`, `triage`, `morning`, `overnight`, `wrap`,
 `ci-check`, `coverage`, `deps-audit`, `flake-audit`, `stale-prs`. Each is described in

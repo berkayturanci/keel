@@ -1,0 +1,335 @@
+---
+description: Drive a GitHub issue end-to-end through the keel backbone (select → branch → implement → CI → review → test → merge → close → capture), reading every project value from .keel/project.yaml via the keel CLI.
+argument-hint: "[issue numbers...] [--delegate <claude|codex|agy|ollama:MODEL>] [--review-delegate <claude|codex|agy|ollama:MODEL>] [--review-comments <inline|summary>] [--reviewers <1|2|3>] [--jury|--no-jury|--jury-advisory] [--hotfix] [--dry-run] [--wizard]"
+allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Bash(jury:*), Read, Edit, Write, Agent
+---
+
+# /keel:ship
+
+Project-neutral flagship workflow. **Every project value comes from `.keel/project.yaml`
+via the `keel` CLI** — never hardcode a branch, command, glob, agent, timezone, window,
+allowlist, or workflow name here. Reference knobs by name: `base_branch`, `build_gate_cmd`,
+`lint_cmd`, `implementer_agents`, `tier3_globs`, `ci_workflows`, `docs_gate_paths`,
+`merge_window`, `merge_window_mode`, `timezone`. Anything truly app-specific stays in the
+project (config knobs, or a `.keel/extensions/` Lego), never inlined here.
+
+All committed/published artifacts (commits, branch names, PR/issue titles + bodies,
+comments, queue files) follow the project's language policy. Free-form chat with the user
+may stay in any language.
+
+## Step 0 (s0) — orient (deterministic, via the CLI)
+
+```bash
+keel validate .keel/project.yaml --root .     # config + extensions must be valid
+keel plan     .keel/project.yaml --root .     # the backbone + this project's gates/Lego
+keel plan     .keel/project.yaml --root . --command ship --live --json
+keel window   .keel/project.yaml              # is the merge window open right now?
+```
+
+The live plan is the operator-consent preflight. Before s1 and before any branch,
+worktree, GitHub write, delegation, secret, release, or production-adjacent access, parse
+`contract.operator_consent`; if `requires_operator_consent` is true, STOP and ask the
+operator to rerun with the required `--approve-scope` values. Do not infer secret or
+credential approval from project knowledge. Store `operator_consent.delegated_agent_scope`
+for every later delegated-agent brief.
+
+`keel validate`/`plan` resolve `base_branch`, the knob commands (`build_gate_cmd`,
+`lint_cmd`), `implementer_agents`, `tier3_globs`, `ci_workflows`, `docs_gate_paths`,
+and the `tester` / `pre-merge` / `reviewers` / `capture` extensions. `keel window`
+evaluates `merge_window` in the project `timezone` and reports `merge_window_mode`
+(`pause` = halt outside the window; `freeze` = defer to the morning queue). Hold the
+**merge lock** for the merge step (s10) only.
+
+**GitHub transport.** Prefer the `gh` CLI when present (richer JSON, `--watch`); detect
+once at session start (`command -v gh`) and, when absent, fall back to an equivalent
+GitHub MCP/API transport for the same operations (issue read/list/comment/close/label,
+PR read/create/ready/merge/branch-update, check-runs, review writes). Translate field
+semantics consistently (e.g. mergeable-state `behind`/`dirty`, draft flag, base ref) and
+poll-with-delay where no native `--watch` exists. The orchestrator passes the resolved
+transport mode to the implementer so it uses the same one (push via `git push` first,
+fall back to an API push on an HTTP 403). Raw failed-CI-log access may be unavailable on
+the fallback transport — there the fixer gets the check name + details URL and reproduces
+locally; if it cannot, mark blocked and quote the details URL. State the detected transport
+mode in your first user-facing line.
+
+### Argument parsing
+
+- **Bare positive integers** ⇒ explicit issue number(s). Reject zero/negative.
+- `--delegate <claude|codex|agy|ollama:MODEL>` — the **implementer**. Per-run override
+  of any issue role/delegate label. `ollama:` requires a non-empty model. Default: the
+  **host agent** (the CLI driving this run).
+- `--review-delegate <…>` — the **reviewer** vendor (same value set). Default: host agent.
+- `--review-comments <inline|summary>` — how reviewer findings post (s7). Default `inline`.
+- `--reviewers <1|2|3>` — override the tier-derived reviewer count. Default: auto (from tier).
+- `--jury` / `--no-jury` / `--jury-advisory` — control the cross-vendor jury gate (s8).
+  Precedence `--no-jury` > `--jury` > tier-3 auto > off. `--jury-advisory` = report-only.
+- `--hotfix` — audited merge-window bypass (s10). Use sparingly.
+- `--dry-run` — read-only rehearsal (see `--dry-run` section).
+- `--wizard` — interactive opt-in only; runs the guided pre-s1 config collector (see
+  `--wizard` section). In any non-interactive context it degrades to a logged no-op.
+
+Reject unknown `--flags`, out-of-range `--reviewers`, an empty `ollama:` model, a flag
+missing its value, or a negative/zero positional. A flag and its value must appear
+together; positionals are everything not consumed by a flag. Repeated single-value flags
+(e.g. `--reviewers 2 --reviewers 3`) are user error. With **no issue numbers**, run in
+watch mode: take the top of the backlog (s1). Resolve **`HOST_AGENT`** from the runtime
+(the CLI executing this command: `claude` / `codex` / `agy`) — it is the default
+implementer and reviewer; a delegate label or an explicit `--delegate`/`--review-delegate`
+overrides it. State the detected window state and host agent in your first user-facing line.
+
+## Backbone (do not reorder; the step IDs are fixed)
+
+### s1 select
+Take the issue(s) from args, or the top of the backlog (highest priority first, then
+ascending issue number; cap the watch-mode batch and let the next run pick up the rest).
+Validate each issue (skip/warn on closed ones); on a `gh` rate-limit/auth/network error,
+log partial state and stop. Snapshot the queue once — do not re-poll mid-session. If the
+queue is empty, log a one-line summary and exit.
+
+### s2 branch
+Cut a work branch off `base_branch`. A **git worktree per issue** is the isolation
+contract: never mutate the user's primary checkout. Create it under a gitignored,
+repo-nested path (e.g. `worktrees/issue-<N>`); the worktree path is returned in the JSON
+contract and hard-validated at s10 (must be nested under the repo root, never the repo
+root or filesystem root). Every edit/build/push happens inside the worktree.
+
+### s3 guard
+Refuse if the working tree is dirty or the branch already has an open PR. **Blocker
+auto-detection** (any rule promotes the issue to a window-bypassing blocker — see s10):
+an explicit `--hotfix`/blocker flag; an alert/escalation label; a title/body match on a
+**word-boundary, case-insensitive** blocker regex (CI breakage, data loss, security fix,
+breaking change, crash, critical regression); a high-priority label plus an urgent-keyword
+title (`critical|urgent|blocker`); or `base_branch` currently red on a **gating**
+`ci_workflow` whose paths this PR touches. These are heuristics — humans override by
+passing or omitting the blocker flag. Word-bounded regexes still match negated phrasings
+("no crashes on…") — bounded false-positive risk, accepted. When the branch-scoped
+red-`base_branch` signal is unavailable on the fallback transport, treat that rule as
+no-fire and log it.
+
+### s4 implement *(agent)*
+Resolve the implementer: `implementer_agents` by the issue's role label, **overridden by
+`--delegate`**, defaulting to `HOST_AGENT`. Precedence: `--delegate` flag > issue
+`delegate:*` label > `HOST_AGENT`. Dispatch:
+
+- **Host / Claude-class subagent** — pick the role agent from `implementer_agents` by the
+  issue's labels/paths; run the standard implement brief.
+- **Delegated CLI implementer** (`codex exec`, `agy --print`, an Ollama model) — write the
+  prompt to a temp file and pipe via **stdin** (positional-arg passing hangs some CLIs);
+  run in the project root with the vendor's **network-enabled** mode so it can reach the
+  GitHub API (sandbox-blocking flags break PR creation). Pass any per-issue model override
+  from a `delegate-model:<name>` label. A bare local model (Ollama) **cannot run tools** —
+  there the orchestrator does every git/PR step itself and delegates only code generation
+  (generate a unified diff against a size-limited slice of the in-scope files, apply it,
+  run gates, then commit/push/open the PR); retry up to 2 times on a bad/unapplicable
+  diff, then fall back. **Local-model implementers are refused on tier-3** (high-risk,
+  per `tier3_globs`; pre-classified from the issue's target paths/labels before the diff
+  exists, ambiguous ⇒ treat as tier-2 and let s7 gate) — fall back to `HOST_AGENT` there.
+
+Every implementer (delegated or not) receives the same brief plus:
+- The approved `operator_consent.delegated_agent_scope`. If the implementer attempts work
+  outside `approved_mutation_scopes`, the orchestrator blocks or escalates instead of
+  silently continuing. Secret access requires the explicit `secrets` scope for this run.
+- Worktree isolation + branch-off-`base_branch` + `Closes #<N>` in the PR body + open as
+  **draft**.
+- A pre-push scope self-check: `git diff base_branch...HEAD --name-only`, revert anything
+  outside the issue's scope.
+- The vendor's `Co-Authored-By:` trailer on every commit.
+- **The JSON return contract** as the final fenced block of the response:
+  ```json
+  { "pr_number": <int>, "branch": "<string>", "files_changed": ["<string>"],
+    "test_results": "<string>", "codename": "<string>", "worktree_path": "<abs path>" }
+  ```
+  The orchestrator parses this for s5/s10. `worktree_path` must be the absolute path passed
+  to `git worktree add`. Free-text above the block is fine; the JSON envelope is the contract.
+
+**Quota / unavailability fail-over.** On a missing CLI, nonzero exit with no parseable
+JSON, or a quota error (HTTP 429 / RESOURCE_EXHAUSTED — do **not** retry; quota resets
+slowly), fall back to `HOST_AGENT` and log the reason. A local-model harness that already
+created a worktree must remove it before the host path recreates one at the same path
+(same obligation under `--dry-run` if it created one).
+
+**Attribution (mandatory on every path, even a plain run).** Record and persist a vendor
+label and the full `IMPLEMENTER_SYSTEM` string (vendor + model when known, e.g.
+`codex:<model>`, `ollama:<model>`). When a specific model is known, also add a versionless
+`model:<base>` label (strip an Ollama `:tag`; drop a trailing numeric run on non-hyphenated
+families, e.g. `<word>2.5`→`<word>`; keep `<word>-<major>` on hyphenated ones, dropping a
+`.minor`). Attribution always reflects the **effective** implementer that actually ran —
+never the requested-but-fell-back one — and is written at label-flip time (skipped only
+under `--dry-run`, logged instead).
+
+After the implementer returns, the **orchestrator** runs a **branch-scope validation gate**:
+diff `base_branch...origin/<branch>`, compare against the declared `files_changed`, and if
+anything falls outside the issue's scope (and is not a `docs_gate_paths` exempt path), hand
+it back for **one** correction pass; if it persists, mark blocked and quote the offending
+files. (One pass is intentionally stricter than the CI budget — the implementer's own
+pre-push self-check should have caught drift; a second failure is systemic.) Docs-only PRs
+(all paths in `docs_gate_paths`) treat the scope check as advisory. This gate is the primary
+defence against branch contamination — it catches scope creep before review spends budget.
+
+### s5 classify
+`keel ship .keel/project.yaml --root .` prints, deterministically: the **risk tier** (from
+`tier3_globs` against the diff) → reviewer count, the window state, the gate results, and
+the merge decision. Tiers: **tier-3** (any `tier3_globs` match → most reviewers + jury
+auto-on), **tier-1** (all paths in `docs_gate_paths` → fewest reviewers), **tier-2**
+(everything else). `--reviewers N` overrides the count but does **not** suppress the
+tier-3 jury auto-trigger logic below; log the detected tier and reason
+(`tier-<N> → reviewers=<N> (reason: <matched glob | docs-only>)`). When `--reviewers` is
+passed the tier is not computed, so the tier-3 jury auto-trigger does not apply.
+
+**Jury enablement** (always evaluated, even when `--reviewers` was passed; precedence
+`--no-jury` > `--jury` > tier-3 auto > off): tier-3 ⇒ auto-on. Mode is **gating** by
+default (`--jury-advisory` ⇒ advisory-only). The jury never changes the reviewer count.
+Log the decision (`jury: enabled (reason; mode) / disabled`).
+
+### s6 ci
+Push the branch, open the **draft** PR, and wait for the project's `ci_workflows` to go
+green. Evaluate the rollup with **failure-before-pending** precedence — a mixed state with
+any failure is a failure, never poll past it. Three branches:
+- **all green** (`success`/`skipped`/`neutral`/`stale`) ⇒ proceed.
+- **empty check set** ⇒ allow only if every changed path is in `docs_gate_paths`, else
+  mark blocked ("CI did not run on a non-docs PR").
+- **any failure/pending** ⇒ watch with a hard timeout (portable `timeout`/`gtimeout`
+  wrapper; require `coreutils` on hosts lacking GNU `timeout`), then on a real failure run
+  the fix-and-reply loop (read the failed log, fix, self-review, push) and re-enter s6.
+
+**Per-issue CI retry budget: 3 fix-and-push rounds**, then mark blocked.
+**Session-wide cooldown: 3 consecutive issues hitting a budget without a successful merge ⇒
+abort the session** (counter resets after any merge).
+
+### s7 review *(agent)* + slot `reviewers`
+Run **N reviewers** (N from the s5 tier, or `--reviewers`), the host or `--review-delegate`
+vendor. A non-host reviewer vendor runs **read-only / findings-only** (the vendor's
+read-only mode or local endpoint), the orchestrator still posts — the **orchestrator owns
+all writes**; reviewers never call a GitHub write API. Spawn all reviewers in a **single
+Agent message** so they run concurrently; each gets a fresh codename, the PR head SHA, its
+focus slice, and a no-cross-reading instruction. Coverage invariant: when the count drops,
+focus dimensions **merge, never drop** (a 1-reviewer slot covers all dimensions; suitable
+only for narrow tier-1 PRs). Run any `reviewers` Lego extensions. Capture per-reviewer
+**effective** vendor+model for attribution (lock-step parallel arrays so the s11 closure
+can zip them by index). On a missing/erroring delegate vendor, fall back to the host
+reviewer and log it (record the effective vendor that ran).
+
+**Post findings per `--review-comments` (inline default):**
+- `inline` → fetch the diff once; anchor each `critical`/`major` finding as an **inline
+  review comment** on its `file:line` (resolve `RIGHT`/`LEFT` side; `line` is the new-file
+  number on `RIGHT`, old-file on `LEFT`; non-anchorable or whole-PR findings go to the
+  summary), posting **one submitted review per reviewer** (create the review carrying its
+  inline comments in one call — do not post standalone unattached comments). On any
+  inline-API error for a reviewer, **fall soft to a summary comment for that one reviewer**
+  and continue (scoped to that reviewer, never a whole-round fallback).
+- `summary` → one consolidated review comment per reviewer.
+
+Severity → action: **critical/major = block**, minor = suggestion (gated — apply before
+merge unless explicitly user-deferred), nit = advisory. The s9 loop-exit parser reads the
+reviewer's **returned findings**, not the comment shape, so it is mode-independent.
+
+### s8 test (gates + jury)
+`keel run-gates .keel/project.yaml --root .` runs the project gates (`build_gate_cmd`,
+`lint_cmd`, plus the `tester` Lego — the manual-test list, which may loop back to the
+implementer defensively without spending review budget unless it surfaces a blocking fix).
+The **`jury` gate** runs the ai-jury CLI read-only on the PR diff when present (and a no-op
+fail-soft otherwise) using the committed panel; it never passes `--strict`. In **gating**
+mode the depth is the full verified run; only **verified consensus**
+`critical`/`major`/`minor` findings fold into s9 (`critical`/`major` ⇒ block, `minor` ⇒
+gated suggestion, `nit` ⇒ advisory; a jury-driven fix consumes one round). A sub-2-vendor
+panel is downgraded to advisory (count distinct participating vendors before assembling the
+verdict so the posted comment matches what is enforced), and any jury run that did not
+complete cleanly **never gates**. Honour `--review-comments` (pass the jury's native inline
+flag through in inline mode, never under `--dry-run`). The orchestrator posts the single
+jury summary/verdict comment via a body-file (never interpolate report text into a shell
+argument). Re-runs use the jury's incremental/cache flags to stay cheap.
+
+### s9 fixloop
+While there are blocking findings and the budget (**≤3 review-fix rounds**) is not spent:
+aggregate findings → hand to the implementer → fix → push → re-run s6/s7/s8. A **blocker**
+triggers a full re-review; **suggestion-only** fixes trigger a **narrowed re-review** of
+just the originating focus(es) (carry the original reviewer codename forward, fresh codename
+per narrowed reviewer, "verify only the applied fix in commit `<sha>`; do not re-review what
+you already approved" prompt; spawn multiple narrowed focuses in one Agent message). A
+suggestion is gated like a blocker — apply it, or obtain an explicit, tracked user deferral;
+never silently relabel one "advisory/flake". A narrowed reviewer that surfaces a NEW blocker
+escalates back to the full loop. Each round posts its own review (per `--review-comments`)
+and increments the counter; exceeding the budget marks the issue blocked with the
+outstanding findings quoted. Defensive loop-backs (tester, merge-conflict prep) don't spend
+budget unless they require a fix. Before exiting, surface any deferred suggestion/nit with
+its authorising decision/issue — a silent skip is a process violation.
+
+### s10 merge
+Only inside the **merge window** (unless the issue is a blocker / `--hotfix`), holding the
+**merge lock**:
+- **Pre-merge prep (outside the lock):** re-assert mergeability; if behind/dirty, integrate
+  `base_branch` (merge, not rebase), re-green CI, run a single focused merge-conflict review
+  (max 2 integration iterations, then blocked + morning queue). Run any `pre-merge` Lego.
+  Then pre-clean the worktree so `--delete-branch` won't be held by a local ref
+  (hard-validate `worktree_path` is nested under the repo root — reject the repo root, the
+  filesystem root, or any path outside the nested worktrees dir, and assert it is a
+  registered worktree — before removing). This sub-step may span multiple tool calls; the
+  literal merge (below) must not.
+- **Lock + literal merge (single shell block):** acquire an atomic `mkdir`-based mutex with
+  stale-PID recovery and a ~10-min acquisition budget (on timeout: mark the issue blocked,
+  comment, continue with the next); a trap releases it on exit. (Local POSIX filesystems
+  only — not NFS-safe.) Inside: re-assert `base == base_branch`, not behind/dirty (if it is,
+  abort and block — never resolve inside the lock), flip draft→ready; **re-check the window**
+  (`keel window`) — if closed and not a blocker, abort the merge, append to the morning
+  queue, post the deferral comment, leave the PR ready, release the lock, continue. Otherwise
+  **squash-merge** with a conventional-commit subject and `--delete-branch`. Treat the **PR
+  state (`MERGED`)** as authoritative, not `gh pr merge`'s exit code (a non-zero exit on a
+  successful server-side squash is just a local-cleanup failure — proceed to capture/close;
+  a real non-MERGED state aborts the closure block and blocks the issue).
+
+`merge_window_mode`: `pause` halts here outside the window; `freeze` defers to the morning
+queue. The merge lock and "never `gh pr merge` outside s10" are non-negotiable invariants.
+
+### s11 capture
+Record the run for `/keel:wrap`: the **effective** implementer + reviewer vendors/models,
+tier, rounds, window decision, and outcome. Post the **closure comment** to **both** the
+issue and the PR (implementer codename + system, reviewer codenames + vendor/model, tester
+codename, PR number, changed files, docs touched, capture outcome). Run any post-merge
+`capture` Lego (e.g. durable-learning capture: classify the merged PR's signal, optionally
+open a follow-up docs-only PR that itself merges inline through s10's lock with a
+window-bypass carve-out, or file a follow-up issue) fail-soft, emit its audit marker, and
+do a post-merge worktree safety-net cleanup. **Marker discipline:** every merged PR that
+reaches capture must emit exactly one canonical capture marker — a success-set or one of the
+closed skip vocabulary (`dry-run` / `deferred` / `merge-failed` / a recursion guard /
+capability-unavailable) — keyed by PR number; a session-end verifier greps these and flips
+the session to blocked if any merged PR is missing its marker. The closure comment's capture
+field is mandatory and never empty (empty = silent-skip bug).
+
+### s12 close
+Close the issue (idempotent if the squash auto-closed it via `Closes #<N>`), link the PR,
+flip the status label to done **only here** (post-merge), and drop the lock.
+
+## `--dry-run`
+
+Run s0–s8 read-only and print the plan + `keel ship` assessment (tier, window, gates,
+decision). Do **not** push, open a PR, post comments/labels, or merge — log every would-be
+write as `DRY-RUN: …` (every label edit, comment, ready-flip, merge, close, and any review-
+API or jury-inline write). The implementer is told not to push or open a PR; reviewers still
+run for real (read-only) so findings stay meaningful. The merge lock may still be
+acquired/released to exercise the path. The capture step is a logged no-op (`dry-run` marker).
+
+## `--wizard` (interactive opt-in only)
+
+A pre-s1 front layer that collects the same options the grammar above produces — it adds no
+new pipeline behaviour and cannot produce a config the grammar could not. **Hard
+interactivity guard:** never enter the wizard in any non-interactive context (watch mode,
+overnight/background/headless runs); there it degrades to a logged no-op and proceeds with
+the literal flags as parsed (never a hang, never a rejection). Best-effort tool/model probe
+(installed CLIs + local models) builds the offered choices; detection failures just yield
+shorter lists. First question is a **Quick-start vs Customize** fast path (Quick-start
+resolves every option to its default and only still asks for Issues). Every question shows
+its `(default)` option first with a one-line description of what the default does. After
+collecting, echo the resolved config in the worked-example shape, then proceed to s1.
+
+## Invariants (always)
+
+Merge lock around the merge only (search marker for the literal-merge block) · never merge
+in the night no-merge window except a blocker / audited `--hotfix` · fail-soft (a missing
+CLI/gate/jury/capture-path degrades, never crashes the run; an absent/erroring jury can
+never manufacture a block) · the **orchestrator owns all writes** (reviewers are
+findings-only, every vendor) · never push directly to `base_branch` · the status-done label
+is set in exactly one place (s12, post-merge) · attribute the **effective** vendor+model
+everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
+bypasses review/tester/merge gates or the lock.
+
+<!-- keel-generated: surface=plugin command=ship keel_version=0.7.0 source_sha256=1874aa0e7026e8bad30fc373392203d5188d9946dcbe50e39d557ae728035344 generated_sha256=1874aa0e7026e8bad30fc373392203d5188d9946dcbe50e39d557ae728035344 -->
