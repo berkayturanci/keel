@@ -1,6 +1,7 @@
 name: Publish to PyPI and GitHub Release
 
 on:
+  workflow_dispatch:
   push:
     tags:
       - "v*"
@@ -12,7 +13,7 @@ permissions:
 
 jobs:
   build-n-publish:
-    name: Build, Publish to PyPI, and Create GitHub Release
+    name: Build, Publish, and Release
     runs-on: ubuntu-latest
     permissions:
       id-token: write       # PyPI trusted publishing (OIDC) + provenance attestation
@@ -62,17 +63,28 @@ jobs:
         with:
           subject-path: "dist/*.whl, dist/*.tar.gz"
 
+      # TestPyPI trusted publishing: OIDC, no long-lived API token. Manual dispatch is
+      # the rehearsal path; configure TestPyPI for this repo + workflow before use.
+      - name: Publish package to TestPyPI
+        if: github.event_name == 'workflow_dispatch'
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # v1.14.0
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
+
       # PyPI trusted publishing: OIDC, no long-lived API token. dist/ holds only
       # the wheel + sdist (SBOM/checksums live in release/). NOT continue-on-error:
       # a failed publish must fail the release loudly. `skip-existing` keeps re-runs
       # idempotent. Requires a one-time trusted-publisher config on PyPI for this
       # repo + workflow.
       - name: Publish package to PyPI
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # v1.14.0
         with:
           skip-existing: true
 
       - name: Create GitHub Release and Upload Packages
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda  # v3.0.0
         with:
           files: |

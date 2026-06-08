@@ -83,6 +83,9 @@ pip install "git+https://github.com/berkayturanci/keel@v0.6.0"  # or pin an exis
 In a cloud agent session, install it from a `SessionStart` hook (or add keel to the
 session's repo scope) so the selected core ref is available before a run.
 
+Release maintainers should follow [`docs/keel/release.md`](docs/keel/release.md) and run
+`python scripts/release_smoke.py` before tagging or announcing a package.
+
 ## Quickstart
 
 ```bash
@@ -160,6 +163,7 @@ If a step's gate fails, keel blocks its own merge — the same backbone every co
 - [`docs/keel/cutover.md`](docs/keel/cutover.md) — staged guide to retire a project's copied command bodies (install → verify → retire), losing nothing
 - [`docs/keel/comparison.md`](docs/keel/comparison.md) — competitive landscape (Mergify, GitHub merge queue, Qodo/PR-Agent, CodeRabbit, Sweep, OpenHands, Danger, …) + ranked borrow-ideas
 - [`docs/keel/github-actions.md`](docs/keel/github-actions.md) — run keel live on GitHub's free runner (the `keel-ship` workflow)
+- [`docs/keel/release.md`](docs/keel/release.md) — PyPI/TestPyPI release runbook and package smoke test
 - [`docs/proposals/keel-architecture.md`](docs/proposals/keel-architecture.md) — full design
 
 ## Development

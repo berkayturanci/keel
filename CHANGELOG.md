@@ -6,6 +6,11 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Release verification** (#78) — `scripts/release_smoke.py` installs a local, PyPI, or
+  TestPyPI package into a clean virtual environment and verifies the `keel` CLI plus generated
+  adapter surfaces; `docs/keel/release.md` documents the repeatable PyPI release runbook.
+
 ## [0.6.0] — 2026-06-07
 
 ### Added
