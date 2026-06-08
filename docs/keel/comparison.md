@@ -8,8 +8,8 @@ keel is an **agent-agnostic, project-agnostic work-ownership backbone** that dri
 single GitHub issue end-to-end through a fixed lifecycle: issue intake/readiness →
 branch/worktree → implement (coding agent) → push → CI wait → multi-agent code review
 (review→debate→verify→synthesize) → project test/build/lint gates → risk classification
-(TIER 1/2/3 → reviewer count) → safe merge → close → post-merge capture. Distinctive
-elements:
+(TIER 1/2/3 → reviewer count) → safe merge → close → capture hooks. First-class durable
+post-merge learning capture is planned in #134. Distinctive elements:
 
 - **Agent adapters** (Claude Code, Codex, Gemini, Antigravity) behind one backbone.
 - **`.keel/project.yaml`** per project (base branch, build/lint/test commands, CI names, file globs) + pluggable "Lego" extension gates.
@@ -18,8 +18,8 @@ elements:
 
 The crux of keel's novelty hypothesis: nobody combines *(fixed issue→done ownership
 backbone)* + *(agent-agnostic adapters)* + *(merge-window/lock invariants)* +
-*(multi-agent debate review)* + *(post-merge learning capture)* in one open,
-deterministic tool. The research below tests that.
+*(multi-agent debate review)* + *(capture hooks today, durable learning capture planned)*
+in one open, deterministic tool. The research below tests that.
 
 ## Executive comparison — work ownership, not only automation
 
@@ -29,15 +29,21 @@ Keel does not compete with a single category. The closest tools each own one sli
   SWE-agent can take an issue or task, edit code, and create or update a pull request.
   GitHub's Copilot docs explicitly describe assigning an issue or prompt so the agent
   works on the task, raises a PR, and requests review.
+  [GitHub Copilot coding agent docs](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/coding-agent/assign-copilot-to-an-issue)
 - **AI PR reviewers** such as CodeRabbit, Qodo / PR-Agent, Greptile, and Cursor Bugbot
   operate after a PR exists. Their strongest surface is review comments, summaries,
   suggested fixes, and repository context.
+  [Qodo / PR-Agent overview](https://qodo-merge-docs.qodo.ai/index),
+  [Cursor Bugbot docs](https://docs.cursor.com/bugbot)
 - **Merge queues** such as GitHub Merge Queue, Mergify, Graphite, and Trunk operate
   after a PR is ready to merge. They protect the base branch with queues, batching,
   speculative checks, priority, pause/freeze, or anti-flake behavior.
+  [GitHub merge queue docs](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/managing-a-merge-queue),
+  [Mergify pause docs](https://docs.mergify.com/merge-queue/pause/)
 
 Keel's product claim is narrower and more integrated: it turns a coding agent into a
-work owner. It starts before the PR exists and ends after merge, closure, and capture.
+work owner. It starts before the PR exists and ends after merge, closure, and the current
+capture hook stage.
 
 | capability | Keel | Coding agents | PR reviewers | Merge queues |
 |---|---:|---:|---:|---:|
@@ -67,7 +73,7 @@ job is to connect those proven pieces into one deterministic, project-neutral li
 | Plan-before-code / readiness before implementation | coding agents + human team workflow | #147 |
 | Cloud/session progress and operator visibility | Copilot coding agent sessions, coding agent UX | #148 |
 | Checkpoint and resume after interrupted work | coding agent sessions + merge queue state | #149 |
-| Queue pause/freeze and out-of-order hotfix language | Mergify, Graphite, Trunk | shipped basics; refine in #146 |
+| Queue pause/freeze and out-of-order hotfix language | Mergify, Graphite, Trunk | shipped via #18/#20 |
 | Repository memory/context with redaction | Greptile, PR review tools | #134, #142, #143 |
 | Low-noise inline vs summary review UX | CodeRabbit, Qodo / PR-Agent, Cursor Bugbot | shipped basics; refine via review-cycle work |
 | Plugin/marketplace install surface | agent platforms and Claude Code plugin model | #135 |
@@ -302,15 +308,15 @@ Legend: ✅ yes · ◑ partial/limited · ❌ no · `OSS`/`Prop.`
 - Trunk OSS/forked PR support: https://trunk.io/changelog/merge-support-for-forked-and-open-source-repos
 - GitHub Copilot coding agent issue-to-PR docs: https://docs.github.com/en/copilot/how-tos/use-copilot-agents/coding-agent/assign-copilot-to-an-issue
 - Qodo / PR-Agent launch: https://www.qodo.ai/blog/unveiling-the-future-of-streamlined-software-development/
-- Qodo / PR-Agent overview: https://qodo-merge-docs.qodo.ai/
-- Qodo / PR-Agent review tool: https://qodo-merge-docs.qodo.ai/tools/review/
+- Qodo / PR-Agent overview: https://qodo-merge-docs.qodo.ai/index
+- Qodo code review docs: https://docs.qodo.ai/qodo-documentation/code-review/qodo-merge/configuration
 - PR-Agent community repo: https://github.com/The-PR-Agent/pr-agent
 - Qodo hands PR-Agent to community: https://futurumgroup.com/insights/qodo-hands-pr-agent-to-the-community-will-open-governance-accelerate-ai-code-review/
 - CodeRabbit: https://www.coderabbit.ai/
 - CodeRabbit docs: https://docs.coderabbit.ai/
 - CodeRabbit Martian benchmark: https://www.coderabbit.ai/blog/coderabbit-tops-martian-code-review-benchmark
 - Cursor Bugbot docs: https://docs.cursor.com/bugbot
-- Greptile docs: https://www.greptile.com/docs/api-reference
+- Greptile API introduction: https://greptile.mintlify.dev/docs/api-reference/introduction
 - Greptile product page: https://www.greptile.com/
 - Sweep repo: https://github.com/sweepai/sweep
 - Sweep details: https://aiagentslist.com/agents/sweep-ai

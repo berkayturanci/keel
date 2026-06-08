@@ -16,7 +16,7 @@
 > **Keel turns coding agents into work owners.** It is a project-neutral,
 > multi-agent **workflow backbone** that drives a unit of work — a GitHub issue —
 > from intake to done: understand readiness, branch, implement, wait on CI, review,
-> test, merge safely, close, and capture what was learned. Projects never fork the
+> test, merge safely, close, and run capture hooks. Projects never fork the
 > backbone: they set per-project **values** in `project.yaml` and snap their own
 > **Lego pieces** into named extension slots.
 
@@ -65,8 +65,8 @@ Keel sits between three established tool categories:
 
 | category | examples | where they usually stop | what Keel adds |
 |---|---|---|---|
-| Coding agents | OpenHands, SWE-agent, Copilot coding agent, Devin | create or update a PR | intake, review gates, merge policy, closeout, capture |
-| PR reviewers | CodeRabbit, Qodo / PR-Agent, Greptile, Cursor Bugbot | review an existing PR | implementation loop, tests, merge lock/window, learning |
+| Coding agents | OpenHands, SWE-agent, Copilot coding agent, Devin | create or update a PR | intake, review gates, merge policy, closeout, capture hooks |
+| PR reviewers | CodeRabbit, Qodo / PR-Agent, Greptile, Cursor Bugbot | review an existing PR | implementation loop, tests, merge lock/window, planned learning capture |
 | Merge queues | GitHub Merge Queue, Mergify, Graphite, Trunk | serialize tested PRs | issue ownership before the PR exists |
 
 Keel is not trying to replace those tools. It is the work-ownership backbone that can use

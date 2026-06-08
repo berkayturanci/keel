@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
-<meta name="description" content="keel turns coding agents into work owners: issue intake, implementation, review, safe merge, closure, and post-merge learning on one project-neutral backbone.">
+<meta name="description" content="keel turns coding agents into work owners: issue intake, implementation, review, safe merge, closure, and capture hooks on one project-neutral backbone.">
 <title>keel — coding agents into work owners</title>
 <style>
   :root { --bg:#0d1117; --panel:#161b22; --fg:#e6edf3; --muted:#9aa7b4; --accent:#58a6ff; --green:#3fb950; --border:#30363d; }
@@ -39,7 +39,7 @@
 <header>
   <img src="hero.svg" alt="keel setup installs config, Claude commands, and shared skills for the same workflow backbone" style="width:100%;height:auto;border-radius:12px;margin-bottom:8px">
   <h1>keel ⚓</h1>
-  <p class="tag"><b>Keel turns coding agents into work owners.</b> From issue intake to implementation, review, safe merge, closure, and post-merge learning.</p>
+  <p class="tag"><b>Keel turns coding agents into work owners.</b> From issue intake to implementation, review, safe merge, closure, and capture hooks.</p>
   <div class="badges">
     <span class="badge"><b>100%</b> line + branch coverage</span>
     <span class="badge">one-command setup</span>
@@ -66,7 +66,7 @@
 <h2>Where it is going</h2>
 <table>
   <tr><th>scope</th><th>goal</th></tr>
-  <tr><td><b>v1</b></td><td>One agent owns work end to end: intake → implement → review → safe merge → close → learning.</td></tr>
+  <tr><td><b>v1</b></td><td>One agent owns work end to end: intake → implement → review → safe merge → close → capture hooks.</td></tr>
   <tr><td><b>v2+</b></td><td>Autonomous software teams under human leadership: agents create, claim, review, hand off, and ship work while a product owner or team lead remains the decision point for ambiguity, credentials, approvals, and business tradeoffs.</td></tr>
 </table>
 
@@ -74,7 +74,7 @@
 <p>Keel is not just a coding agent, PR reviewer, or merge queue. It connects those pieces into one issue-to-done ownership loop.</p>
 <table>
   <tr><th>category</th><th>examples</th><th>usually stops at</th><th>Keel adds</th></tr>
-  <tr><td>Coding agents</td><td>OpenHands, SWE-agent, Copilot coding agent</td><td>PR opened or updated</td><td>review gates, merge policy, closeout, learning</td></tr>
+  <tr><td>Coding agents</td><td>OpenHands, SWE-agent, Copilot coding agent</td><td>PR opened or updated</td><td>review gates, merge policy, closeout, capture hooks</td></tr>
   <tr><td>PR review tools</td><td>CodeRabbit, Qodo, Greptile, Cursor Bugbot</td><td>findings on an existing PR</td><td>implementation loop, tests, merge lock/window</td></tr>
   <tr><td>Merge queues</td><td>GitHub Merge Queue, Mergify, Graphite, Trunk</td><td>safe PR serialization</td><td>issue intake and ownership before the PR exists</td></tr>
 </table>
