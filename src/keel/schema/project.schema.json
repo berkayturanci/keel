@@ -40,6 +40,11 @@
       "enum": ["freeze", "pause"],
       "description": "Outside the window: 'freeze' blocks the merge but keeps gates/CI running (default); 'pause' halts the pipeline entirely."
     },
+    "consent_mode": {
+      "type": "string",
+      "enum": ["explicit", "standing", "agent"],
+      "description": "Operator consent preflight mode. explicit requires per-run approval, standing allows audited env/config approval, agent delegates enforcement to the host agent permission system."
+    },
     "knobs": {
       "type": "object",
       "additionalProperties": false,

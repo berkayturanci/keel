@@ -67,10 +67,11 @@ Every command contract includes `operator_consent`:
 | `schema_version` | Consent contract schema identifier. Current value: `keel.operator-consent.v1`. |
 | `requires_operator_consent` | `true` only when this run is live and approved scope is missing. |
 | `would_require_operator_consent` | Whether the command has live-run mutation classes, including under dry-run. |
-| `status` | `not-required-dry-run`, `not-required-read-only`, `missing`, or `approved`. |
+| `status` | `not-required-dry-run`, `not-required-read-only`, `missing`, `approved`, or `agent-delegated`. |
+| `mode` | Resolved consent mode: `explicit`, `standing`, or `agent`. Mode precedence is CLI flag, `KEEL_CONSENT_MODE`, project config, built-in `explicit`. |
 | `consent_scope` | Mutation classes required for a live run: `filesystem`, `git`, `github`, `secrets`, `release`, `production-adjacent`. |
 | `approved_scope` / `effective_approved_scope` / `missing_scope` | Scope approved by the operator or standing approval, the subset that matches the resolved plan, and any live-run gap. |
-| `approval_source` | `none`, `flag`, `env`, or `config`, showing where approval came from. Precedence is flag, then `KEEL_APPROVE_SCOPE`, then `automation.approved_scopes`. |
+| `approval_source` | `none`, `flag`, `env`, or `config`, showing where approval came from. In `standing` mode, precedence is flag, then `KEEL_APPROVE_SCOPE`, then `automation.approved_scopes`. |
 | `consent_prompt` | Consumer-neutral prompt generated from the resolved command, target, mode, and scopes. |
 | `delegated_agent_scope` | Scope adapters must pass to delegated agents; scope expansion must block or escalate. |
 | `consent_record` | Local metadata for approved live runs: timestamp, operator, workflow, target, scopes, mode, approval `source`, and `secret_values_recorded: false`. |
@@ -78,6 +79,9 @@ Every command contract includes `operator_consent`:
 Dry-run contracts do not require approval, but still expose the live scopes that would need
 approval. Live contracts with missing consent are preflight blockers and must stop before
 files, git state, GitHub state, releases, secrets, or production-adjacent systems are touched.
+In `agent` mode, keel emits `status: agent-delegated`; adapters must rely on the host
+agent permission model for the actual approval prompt while still respecting the emitted
+scope and every non-consent gate.
 
 ## Dry-run result records
 

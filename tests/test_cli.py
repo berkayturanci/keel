@@ -981,13 +981,14 @@ class TestInit(unittest.TestCase):
         from unittest.mock import patch
         with tempfile.TemporaryDirectory() as d:
             (Path(d) / "pyproject.toml").write_text("x")
-            answers = ["develop", "Etc/GMT-3", "09:00-18:00", "pytest", ""]
+            answers = ["develop", "Etc/GMT-3", "09:00-18:00", "explicit", "pytest", ""]
             with patch("builtins.input", side_effect=answers):
                 rc, out, _ = run(["init", "--root", d, "--wizard"])
             self.assertEqual(rc, 0)
             written = (Path(d) / ".keel" / "project.yaml").read_text()
             self.assertIn("base_branch: develop", written)
             self.assertIn('merge_window: "09:00-18:00"', written)
+            self.assertIn("consent_mode: explicit", written)
             # validates
             vrc, _, _ = run(["validate", str(Path(d) / ".keel" / "project.yaml")])
             self.assertEqual(vrc, 0)
@@ -1051,7 +1052,7 @@ class TestSetup(unittest.TestCase):
         import tempfile
         with tempfile.TemporaryDirectory() as d:
             (Path(d) / "pyproject.toml").write_text("x")
-            answers = ["develop", "Etc/GMT-3", "09:00-18:00", "pytest", ""]
+            answers = ["develop", "Etc/GMT-3", "09:00-18:00", "explicit", "pytest", ""]
             with patch("builtins.input", side_effect=answers):
                 rc, out, err = run(["setup", "--root", d, "--wizard"])
             self.assertEqual(rc, 0, err)
@@ -1059,6 +1060,7 @@ class TestSetup(unittest.TestCase):
             written = (Path(d) / ".keel/project.yaml").read_text()
             self.assertIn("base_branch: develop", written)
             self.assertIn('merge_window: "09:00-18:00"', written)
+            self.assertIn("consent_mode: explicit", written)
 
     def test_invalid_existing_config_fails_validation(self):
         import tempfile

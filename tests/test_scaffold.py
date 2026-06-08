@@ -62,7 +62,14 @@ class TestDefaultConfig(unittest.TestCase):
 class TestWizard(unittest.TestCase):
     def test_sets_window_and_validates(self):
         import yaml
-        answers = iter(["develop", "Etc/GMT-3", "09:00-18:00", "pytest", "ruff check ."])
+        answers = iter([
+            "develop",
+            "Etc/GMT-3",
+            "09:00-18:00",
+            "agent",
+            "pytest",
+            "ruff check .",
+        ])
 
         def ask(prompt, default):
             return next(answers)
@@ -72,6 +79,7 @@ class TestWizard(unittest.TestCase):
         self.assertEqual(config.base_branch, "develop")
         self.assertEqual(config.timezone, "Etc/GMT-3")
         self.assertEqual(config.merge_window, "09:00-18:00")
+        self.assertEqual(config.consent_mode, "agent")
         self.assertEqual(config.knobs.build_gate_cmd, "pytest")
         self.assertIn("--wizard", text)
 
@@ -95,6 +103,7 @@ class TestRenderConfig(unittest.TestCase):
         import yaml
         text = scaffold.render_config(repo="x")
         self.assertEqual(cfg.parse_config(yaml.safe_load(text)).repo, "x")
+        self.assertEqual(cfg.parse_config(yaml.safe_load(text)).consent_mode, "explicit")
 
 
 if __name__ == "__main__":

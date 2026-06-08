@@ -29,6 +29,7 @@ declared through `required_capabilities`, `policy_pack`, or extension docs.
 | `timezone` | string | | IANA tz for the merge window (`Europe/Istanbul`, `Etc/GMT-3`) |
 | `merge_window` | string `HH:MM-HH:MM` | | open merge window; the complement is the night no-merge window |
 | `merge_window_mode` | `freeze` \| `pause` | `freeze` | outside the window: `freeze` blocks the merge but keeps gates/CI running; `pause` halts the pipeline |
+| `consent_mode` | `explicit` \| `standing` \| `agent` | `explicit` | default live-run consent mode for every command |
 | `gates` | string[] | | built-in gates to run: any of `build`, `lint`, `jury` |
 | `extensions` | object | | add-only Lego pieces keyed by named slot |
 | `extensions_dir` | string | | dir holding extension files (default `.keel/extensions`) |
@@ -78,6 +79,30 @@ Controls behavior outside the merge window:
 - `pause` halts the pipeline outside the window.
 
 If omitted, Keel defaults to `freeze`.
+
+#### `consent_mode`
+
+Default operator-consent mode for live command preflight. The built-in default is
+`explicit`, and per-run inputs override it in this order:
+
+1. `--consent-mode explicit|standing|agent`
+2. `KEEL_CONSENT_MODE`
+3. `consent_mode` in `.keel/project.yaml`
+4. built-in `explicit`
+
+Modes:
+
+- `explicit` requires the current run to pass `--approve-scope` for any live mutation
+  scopes.
+- `standing` allows trusted unattended approval from `KEEL_APPROVE_SCOPE` or
+  `automation.approved_scopes`, with an operator identity.
+- `agent` delegates prompting/enforcement to the host agent permission model. Keel still
+  emits the structured consent contract and delegated scope, but it does not double-prompt
+  or fail the preflight for missing `--approve-scope`.
+
+No mode bypasses findings, CI, project gates, merge windows, merge locks, or release
+policy. Read-only live contracts do not consume standing approvals, so stale or invalid
+standing approval environment values do not break read-only checks.
 
 #### `gates`
 

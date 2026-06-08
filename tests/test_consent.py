@@ -106,6 +106,27 @@ class TestConsentContract(unittest.TestCase):
                 approval_source="cron",
             )
 
+    def test_agent_mode_emits_contract_without_blocking(self):
+        contract = consent.build_consent_contract(
+            command="ship",
+            side_effects=("git_branch", "pull_request"),
+            dry_run=False,
+            mode="agent",
+        )
+        self.assertFalse(contract["requires_operator_consent"])
+        self.assertEqual(contract["status"], "agent-delegated")
+        self.assertEqual(contract["mode"], "agent")
+        self.assertEqual(contract["missing_scope"], ["git", "github"])
+
+    def test_unknown_consent_mode_rejected(self):
+        with self.assertRaises(ValueError):
+            consent.build_consent_contract(
+                command="ship",
+                side_effects=("git_branch",),
+                dry_run=False,
+                mode="maybe",
+            )
+
     def test_extra_approved_scope_is_not_delegated_without_planned_side_effect(self):
         contract = consent.build_consent_contract(
             command="ship",

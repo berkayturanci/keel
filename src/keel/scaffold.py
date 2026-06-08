@@ -48,7 +48,8 @@ def render_config(
     *, repo: str = "my-repo", base_branch: str = "main", platform: str = "generic",
     build_cmd: str = "make test", lint_cmd: str | None = None,
     tier3_globs: tuple[str, ...] = (), timezone: str | None = None,
-    merge_window: str | None = None, generator: str = "keel init",
+    merge_window: str | None = None, consent_mode: str = "explicit",
+    generator: str = "keel init",
 ) -> str:
     """Render a valid ``project.yaml`` from explicit values (passes ``keel validate``)."""
     lines = [
@@ -58,6 +59,7 @@ def render_config(
         f"repo: {repo}",
         f"base_branch: {base_branch}",
         f"platform: {platform}",
+        f"consent_mode: {consent_mode}",
     ]
     if timezone:
         lines.append(f"timezone: {timezone}")
@@ -91,10 +93,12 @@ def wizard(stack: str, ask: Callable[[str, str], str], *, repo: str = "my-repo")
     base = ask("Base branch", "main")
     tz = ask("Timezone (IANA, blank to skip)", "Europe/Istanbul")
     win = ask("Merge window HH:MM-HH:MM (blank to skip)", "07:00-01:30")
+    mode = ask("Consent mode (explicit, standing, agent)", "explicit")
     build = ask("Build/test command", t["build"])
     lint = ask("Lint command (blank to skip)", t["lint"] or "")
     return render_config(
         repo=repo, base_branch=base, platform=t["platform"], build_cmd=build,
         lint_cmd=lint or None, tier3_globs=t["globs"],
-        timezone=tz or None, merge_window=win or None, generator="keel init --wizard",
+        timezone=tz or None, merge_window=win or None, consent_mode=mode or "explicit",
+        generator="keel init --wizard",
     )

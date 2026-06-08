@@ -108,7 +108,13 @@ def _cmd_plan(args: argparse.Namespace) -> int:
     evaluation = runtime.evaluate(requirement, report)
     transport = github_transport.resolve(report)
     try:
-        approved_scopes, approval_source, approval_operator = _approved_consent(args, config)
+        approved_scopes, approval_source, approval_operator, consent_mode = _approved_consent(
+            args,
+            config,
+            _has_live_consent_scope(
+                args, args.command_contract, config, requirement, loaded
+            ),
+        )
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -124,6 +130,7 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         dry_run=not args.live,
         approved_consent_scopes=approved_scopes,
         consent_approval_source=approval_source,
+        consent_mode=consent_mode,
         operator=approval_operator,
         target=args.target,
         reviewer_override=args.reviewers,
@@ -247,7 +254,9 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         print("missing required GitHub transport capability: check_runs", file=sys.stderr)
         return 1
     try:
-        approved_scopes, approval_source, approval_operator = _approved_consent(args, config)
+        approved_scopes, approval_source, approval_operator, consent_mode = _approved_consent(
+            args, config, _has_live_consent_scope(args, command, config, requirement, loaded)
+        )
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -268,6 +277,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         dry_run=not args.live,
         approved_consent_scopes=approved_scopes,
         consent_approval_source=approval_source,
+        consent_mode=consent_mode,
         operator=approval_operator,
         target=args.target or (f"PR #{args.pr}" if args.pr is not None else None),
         reviewer_override=args.reviewers,
@@ -396,7 +406,9 @@ def _cmd_standalone(args: argparse.Namespace) -> int:
     transport = github_transport.resolve(report)
     target = _standalone_target(args)
     try:
-        approved_scopes, approval_source, approval_operator = _approved_consent(args, config)
+        approved_scopes, approval_source, approval_operator, consent_mode = _approved_consent(
+            args, config, _has_live_consent_scope(args, command, config, requirement, loaded)
+        )
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -417,6 +429,7 @@ def _cmd_standalone(args: argparse.Namespace) -> int:
         dry_run=not getattr(args, "live", False),
         approved_consent_scopes=approved_scopes,
         consent_approval_source=approval_source,
+        consent_mode=consent_mode,
         operator=approval_operator,
         target=target,
         reviewer_override=getattr(args, "reviewers", None),
@@ -530,27 +543,59 @@ def _standalone_target(args: argparse.Namespace) -> str | None:
 def _approved_consent(
     args: argparse.Namespace,
     config: cfg.ProjectConfig,
-) -> tuple[tuple[str, ...], str, str | None]:
+    has_standing_scope: bool,
+) -> tuple[tuple[str, ...], str, str | None, str]:
+    mode = _consent_mode(args, config)
     explicit = tuple(getattr(args, "approve_scope", ()) or ())
     if explicit:
-        return consent.normalize_scopes(explicit), "flag", getattr(args, "operator", None)
-    if not getattr(args, "live", False):
-        return (), "none", getattr(args, "operator", None)
+        return consent.normalize_scopes(explicit), "flag", getattr(args, "operator", None), mode
+    if mode == "agent" or not getattr(args, "live", False):
+        return (), "none", getattr(args, "operator", None), mode
+    if mode == "explicit":
+        return (), "none", getattr(args, "operator", None), mode
+    if not has_standing_scope:
+        return (), "none", getattr(args, "operator", None), mode
     env_value = os.environ.get("KEEL_APPROVE_SCOPE")
     if env_value:
         operator = os.environ.get("KEEL_OPERATOR")
         if not operator:
             raise ValueError("KEEL_OPERATOR is required when KEEL_APPROVE_SCOPE is used")
-        return consent.normalize_scopes((env_value,)), "env", operator
+        return consent.normalize_scopes((env_value,)), "env", operator, mode
     if config.automation.approved_scopes:
         if not config.automation.operator:
             raise ValueError(
                 "automation.operator is required when automation.approved_scopes is used"
             )
-        return consent.normalize_scopes(config.automation.approved_scopes), "config", (
-            config.automation.operator
+        return (
+            consent.normalize_scopes(config.automation.approved_scopes),
+            "config",
+            config.automation.operator,
+            mode,
         )
-    return (), "none", getattr(args, "operator", None)
+    return (), "none", getattr(args, "operator", None), mode
+
+
+def _consent_mode(args: argparse.Namespace, config: cfg.ProjectConfig) -> str:
+    mode = getattr(args, "consent_mode", None) or os.environ.get("KEEL_CONSENT_MODE")
+    mode = mode or config.consent_mode
+    if mode not in consent.CONSENT_MODES:
+        raise ValueError(
+            f"unknown consent mode {mode!r}; valid: {', '.join(consent.CONSENT_MODES)}"
+        )
+    return mode
+
+
+def _has_live_consent_scope(
+    args: argparse.Namespace,
+    command: str,
+    config: cfg.ProjectConfig,
+    requirement: runtime.CapabilityRequirement,
+    loaded: dict,
+) -> bool:
+    if not getattr(args, "live", False):
+        return False
+    side_effects = contracts.command_side_effects(command, config, requirement, loaded)
+    return bool(consent.side_effect_scopes(side_effects))
 
 
 def _ci_check_capability_requirement(config: cfg.ProjectConfig) -> runtime.CapabilityRequirement:
@@ -947,6 +992,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="approve a consent scope for this run; repeat or comma-separate")
     p_plan.add_argument("--operator", default=None,
                         help="operator identifier to include in an approved consent record")
+    p_plan.add_argument("--consent-mode", choices=consent.CONSENT_MODES, default=None,
+                        help="operator consent mode: explicit, standing, or agent")
     p_plan.add_argument("--target", default=None,
                         help="task target to include in the consent prompt and record")
     p_plan.add_argument("--review-comments", choices=("inline", "summary"), default="inline",
@@ -1000,6 +1047,8 @@ def build_parser() -> argparse.ArgumentParser:
                              help="approve a consent scope for this run; repeat or comma-separate")
     p_implement.add_argument("--operator", default=None,
                              help="operator identifier to include in an approved consent record")
+    p_implement.add_argument("--consent-mode", choices=consent.CONSENT_MODES, default=None,
+                             help="operator consent mode: explicit, standing, or agent")
     p_implement.add_argument("--target", default=None,
                              help="additional target text for the consent prompt")
     p_implement.add_argument("--json", action="store_true", help="emit structured JSON")
@@ -1036,6 +1085,8 @@ def build_parser() -> argparse.ArgumentParser:
                            help="approve a consent scope for this run; repeat or comma-separate")
     p_morning.add_argument("--operator", default=None,
                            help="operator identifier to include in an approved consent record")
+    p_morning.add_argument("--consent-mode", choices=consent.CONSENT_MODES, default=None,
+                           help="operator consent mode: explicit, standing, or agent")
     p_morning.add_argument("--json", action="store_true", help="emit structured JSON")
     p_morning.set_defaults(func=_cmd_standalone, standalone_command="morning")
 
@@ -1059,6 +1110,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="approve a consent scope for this run; repeat or comma-separate")
     p_wrap.add_argument("--operator", default=None,
                         help="operator identifier to include in an approved consent record")
+    p_wrap.add_argument("--consent-mode", choices=consent.CONSENT_MODES, default=None,
+                        help="operator consent mode: explicit, standing, or agent")
     p_wrap.add_argument("--json", action="store_true", help="emit structured JSON")
     p_wrap.set_defaults(func=_cmd_standalone, standalone_command="wrap")
 
@@ -1086,6 +1139,8 @@ def build_parser() -> argparse.ArgumentParser:
                              help="approve a consent scope for this run; repeat or comma-separate")
     p_overnight.add_argument("--operator", default=None,
                              help="operator identifier to include in an approved consent record")
+    p_overnight.add_argument("--consent-mode", choices=consent.CONSENT_MODES, default=None,
+                             help="operator consent mode: explicit, standing, or agent")
     p_overnight.add_argument("--json", action="store_true", help="emit structured JSON")
     p_overnight.set_defaults(func=_cmd_standalone, standalone_command="overnight")
 
@@ -1109,6 +1164,8 @@ def build_parser() -> argparse.ArgumentParser:
                               help="approve a consent scope for this run; repeat or comma-separate")
     p_regression.add_argument("--operator", default=None,
                               help="operator identifier to include in an approved consent record")
+    p_regression.add_argument("--consent-mode", choices=consent.CONSENT_MODES, default=None,
+                              help="operator consent mode: explicit, standing, or agent")
     p_regression.add_argument("--json", action="store_true", help="emit structured JSON")
     p_regression.set_defaults(func=_cmd_standalone, standalone_command="regression")
 
@@ -1132,6 +1189,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_review_all_day.add_argument("--operator", default=None,
                                   help=("operator identifier to include in an approved "
                                         "consent record"))
+    p_review_all_day.add_argument("--consent-mode", choices=consent.CONSENT_MODES, default=None,
+                                  help="operator consent mode: explicit, standing, or agent")
     p_review_all_day.add_argument("--json", action="store_true", help="emit structured JSON")
     p_review_all_day.set_defaults(func=_cmd_standalone, standalone_command="review-all-day")
 
@@ -1246,6 +1305,8 @@ def _add_ship_parser(parser: argparse.ArgumentParser, *, command: str) -> None:
                         help="approve a consent scope for this run; repeat or comma-separate")
     parser.add_argument("--operator", default=None,
                         help="operator identifier to include in an approved consent record")
+    parser.add_argument("--consent-mode", choices=consent.CONSENT_MODES, default=None,
+                        help="operator consent mode: explicit, standing, or agent")
     parser.add_argument("--target", default=None,
                         help="task target to include in the consent prompt and record")
     parser.add_argument("--review-comments", choices=("inline", "summary"), default="inline",

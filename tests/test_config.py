@@ -88,6 +88,7 @@ class TestParse(unittest.TestCase):
         config = cfg.parse_config(copy.deepcopy(VALID))
         self.assertEqual(config.base_branch, "main")
         self.assertEqual(config.extensions_dir, cfg.DEFAULT_EXTENSIONS_DIR)
+        self.assertEqual(config.consent_mode, "explicit")
         self.assertEqual(config.gates, ())
         self.assertEqual(config.knobs.required_capabilities, ())
         self.assertEqual(config.knobs.optional_capabilities, ())
@@ -104,6 +105,17 @@ class TestParse(unittest.TestCase):
         config = cfg.parse_config(data)
         self.assertEqual(config.automation.approved_scopes, ("filesystem", "git", "github"))
         self.assertEqual(config.automation.operator, "automation:nightly")
+
+    def test_consent_mode_parses(self):
+        data = copy.deepcopy(VALID)
+        data["consent_mode"] = "agent"
+        self.assertEqual(cfg.parse_config(data).consent_mode, "agent")
+
+    def test_invalid_consent_mode_rejected(self):
+        bad = copy.deepcopy(VALID)
+        bad["consent_mode"] = "maybe"
+        with self.assertRaises(cfg.ConfigError):
+            cfg.parse_config(bad)
 
     def test_automation_unknown_scope_rejected(self):
         bad = copy.deepcopy(VALID)

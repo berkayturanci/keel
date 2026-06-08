@@ -45,7 +45,7 @@ keel validate projects/*.yaml                 # schema only
 keel validate .claude/project.yaml --root .   # schema + extensions (use in CI)
 ```
 
-## `keel plan <project.yaml> [--root DIR] [--command COMMAND] [--live] [--approve-scope SCOPE] [--operator ID] [--target TARGET] [--json]`
+## `keel plan <project.yaml> [--root DIR] [--command COMMAND] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--target TARGET] [--json]`
 
 Render the backbone plan for a project: the fixed steps with the project's built-in gates
 and extensions slotted in. This is the dry-run view — what an actual run would execute.
@@ -60,6 +60,8 @@ keel plan .claude/project.yaml --json
 keel plan .claude/project.yaml --command morning --json
 keel plan .claude/project.yaml --command ship --live --json
 keel plan .claude/project.yaml --command ship --live --approve-scope filesystem,git,github --operator "$USER" --target "issue #123" --json
+keel plan .claude/project.yaml --command ship --live --consent-mode standing --json
+KEEL_CONSENT_MODE=agent keel plan .claude/project.yaml --command ship --live --json
 keel plan .claude/project.yaml --command ship --review-comments summary --reviewers 2 --jury-advisory --json
 ```
 
@@ -74,7 +76,12 @@ does not approve them with `--approve-scope`, `plan --live` exits non-zero after
 resolved contract. Dry-runs never require live-write consent, but still show the live scopes
 that would require approval.
 
-## `keel morning <project.yaml> [--root DIR] [--since WHEN] [--live] [--approve-scope SCOPE] [--operator ID] [--json]`
+Consent mode is resolved as `--consent-mode` > `KEEL_CONSENT_MODE` >
+`consent_mode` in `.keel/project.yaml` > built-in `explicit`. `standing` mode accepts
+trusted `KEEL_APPROVE_SCOPE` or `automation.approved_scopes`; `agent` mode delegates the
+approval prompt to the host agent permission system while keeping the structured contract.
+
+## `keel morning <project.yaml> [--root DIR] [--since WHEN] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--json]`
 
 Render the standalone daily-brief contract for a project. The core owns the generic
 brief shape: date/window context, deferral queue, shipped-since-last-brief and GitHub
@@ -93,7 +100,7 @@ health-provider capabilities are shown as unavailable/degraded, not as a success
 health section. Live mode is only a preflight contract; adapters perform approved report
 writes or provider execution after checking consent.
 
-## `keel wrap <project.yaml> [TITLE] [--root DIR] [--since WHEN] [--live] [--approve-scope SCOPE] [--operator ID] [--json]`
+## `keel wrap <project.yaml> [TITLE] [--root DIR] [--since WHEN] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--json]`
 
 Render the standalone session-wrap contract. The core owns the generic session closeout
 shape: linked-worktree and base-branch guards, configured gate source, Conventional Commit
@@ -110,7 +117,7 @@ Dry-run mode never runs gates, commits, pushes, opens PRs, or writes reports. Li
 only a preflight contract; adapters perform approved session closeout work after checking
 consent and GitHub transport support.
 
-## `keel overnight <project.yaml> [hours] [--max N] [--review-comments inline|summary] [--live] [--approve-scope SCOPE] [--operator ID] [--json]`
+## `keel overnight <project.yaml> [hours] [--max N] [--review-comments inline|summary] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--json]`
 
 Render the standalone overnight-session contract. The core owns the generic unattended
 session shape: merge-window mode from `keel window`, ship handoff, per-issue worktree
@@ -119,14 +126,14 @@ or morning report destinations, stop conditions, and the shared deferral queue.
 
 ```bash
 keel overnight .keel/project.yaml 8 --max 3 --json
-keel overnight .keel/project.yaml --live --approve-scope filesystem,git,github --operator "$USER" --json
+keel overnight .keel/project.yaml --live --consent-mode standing --json
 ```
 
 Dry-run mode never spawns ship runs, creates PRs, merges, or writes reports. Live mode is
 only a preflight contract; adapters hand approved consent scope to ship/implementer
 delegates and keep merge-window enforcement shared with `keel ship`.
 
-## `keel regression <project.yaml> [--scope full|changed|since] [--since REF] [--live] [--approve-scope SCOPE] [--operator ID] [--json]`
+## `keel regression <project.yaml> [--scope full|changed|since] [--since REF] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--json]`
 
 Render the standalone scan-and-file regression contract. The core owns the generic scan
 shape: canonical base scan target, clean-tree preflight, read-only worktree requirement,
@@ -144,7 +151,7 @@ Dry-run mode never opens issues, edits code, pushes, or merges. Live mode is onl
 preflight contract; adapters perform approved issue creation after checking consent and
 GitHub transport support.
 
-## `keel review-all-day <project.yaml> [days] [--live] [--approve-scope SCOPE] [--operator ID] [--json]`
+## `keel review-all-day <project.yaml> [days] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--json]`
 
 Render the standalone time-window scan-and-file contract. The core owns the generic
 time-window scan shape: merge-window timezone inputs, trunk plus active work branch scope,
