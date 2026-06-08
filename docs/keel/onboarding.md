@@ -73,9 +73,14 @@ Commit the generated config and adapters in a normal PR.
 
 ## Update contract
 
-When a project upgrades the pinned keel package version, update in a normal PR:
+`keel sync` does **not** download or install a newer keel package. Upgrade the package first
+from PyPI (or the pinned git tag your project uses), then sync generated adapter files from
+that installed version:
 
 ```bash
+pipx upgrade keel-workflow
+# or: python -m pip install --upgrade keel-workflow
+
 keel version
 keel adapter-status all --root .
 keel sync --root . --dry-run
@@ -98,6 +103,15 @@ Generated adapter files include a `keel-generated` marker with source and genera
 hashes. `sync` uses that marker to update only safe generated files. If an adapter was edited
 locally, `adapter-status` reports `locally-modified`; if a file has no marker, it reports
 `unknown`. Both cases require a human merge and are not overwritten automatically.
+
+New commands and adapter step changes are handled through the same marker boundary:
+
+- a new packaged command appears as `missing` and `sync` creates its generated Claude command
+  and shared skill;
+- changed packaged command prose appears as `outdated` and `sync` refreshes only the
+  unchanged generated adapter file;
+- changed project config, extension files, policy packs, and project-only commands are never
+  inferred or rewritten by `sync`.
 
 Extension compatibility is protected by config validation and planning:
 

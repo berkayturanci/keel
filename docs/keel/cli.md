@@ -409,6 +409,9 @@ Generated adapter files carry a trailing `keel-generated` marker with the surfac
 keel version, source hash, and generated-body hash. That marker powers the safe update flow:
 
 ```bash
+pipx upgrade keel-workflow
+# or: python -m pip install --upgrade keel-workflow
+
 keel adapter-status all --root <repo>
 keel update-adapter all --root <repo> --dry-run
 keel update-adapter all --root <repo>
@@ -433,6 +436,17 @@ refuses to overwrite `locally-modified` or `unknown` files; those need a human m
 updates never touch project-owned config, `.keel/extensions/*`, project-provided commands,
 or local compatibility wrappers unless those files are explicitly marked as generated keel
 adapter surfaces.
+
+`sync` uses the keel package that is already installed in the active Python environment. It
+does not contact PyPI, choose the latest version, or change the package installation. Upgrade
+`keel-workflow` with `pipx`/`pip` first, then run `sync` from the consumer repository.
+
+If a new keel release adds a command, `adapter-status` reports its generated files as
+`missing` and `sync` creates them. If a packaged adapter step changes, unchanged generated
+files become `outdated` and `sync` refreshes them. If a release changes the project config or
+extension contract, that is not an adapter sync; it must be handled as a documented migration
+and verified with `keel validate .keel/project.yaml --root .` plus
+`keel plan .keel/project.yaml --root .`.
 
 Extension schema migrations are separate from adapter command updates and must be documented
 as their own versioned migration.

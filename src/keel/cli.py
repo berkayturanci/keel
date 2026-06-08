@@ -766,7 +766,13 @@ def _cmd_update_adapter(args: argparse.Namespace) -> int:
 
 def _cmd_sync(args: argparse.Namespace) -> int:
     args.agent = args.target
-    return _cmd_update_adapter(args)
+    print(f"keel sync — installed keel {__version__}")
+    print("  package      : not upgraded by sync; upgrade keel-workflow with pip/pipx first")
+    rc = _cmd_update_adapter(args)
+    if rc == 0:
+        print("  next         : run keel validate .keel/project.yaml --root .")
+        print("  next         : run keel plan .keel/project.yaml --root .")
+    return rc
 
 
 def _parse_legacy_mapping(raw: str) -> tuple[str, str]:

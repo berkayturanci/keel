@@ -48,16 +48,21 @@ agents, or migrate a repository onto keel without copying command bodies.
    ```
 
 6. Commit the generated config and adapter files in a normal PR. When keel is later upgraded,
-   update generated adapters with:
+   upgrade the installed package first, then sync generated adapters:
 
    ```bash
+   pipx upgrade keel-workflow
+   # or: python -m pip install --upgrade keel-workflow
    keel sync --root .
+   keel validate .keel/project.yaml --root .
+   keel plan .keel/project.yaml --root .
    ```
 
 ## Notes
 
 - `keel setup` is the preferred onboarding command because it wraps `init`,
   `install-adapter`, strict `validate`, and `plan`.
+- `keel sync` uses the installed keel package; it does not download the latest PyPI package.
 - Existing `.keel/project.yaml` files are reused unless `--force` is supplied.
 - Generated adapter files are safe to refresh; project-owned extensions are separate and
   should remain owned by the consumer project.

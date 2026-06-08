@@ -111,7 +111,10 @@ The cutover is a PR. If `/keel:*` misses something after merge, `git revert` the
 ## Updating later
 
 ```bash
-pipx install --force "git+https://github.com/berkayturanci/keel@vX.Y.Z"
+pipx upgrade keel-workflow
+# or: python -m pip install --upgrade keel-workflow
+# or: pipx install --force "git+https://github.com/berkayturanci/keel@vX.Y.Z"
+
 keel adapter-status all --root .
 keel sync --root . --dry-run
 keel sync --root .
@@ -127,6 +130,10 @@ Only generated adapter files are candidates for automatic refresh:
 Adapter files carry a `keel-generated` marker. `sync` updates files reported as `missing` or
 `outdated`; it refuses to overwrite `locally-modified` or `unknown` files. Treat those as
 normal PR review work and merge them by hand if needed.
+
+`sync` uses the keel version already installed in the active Python environment. It does not
+download the latest PyPI package by itself; keep package upgrades explicit so the upgrade PR
+shows both the package-version change and the generated adapter diff.
 
 Extension compatibility is checked after every upgrade with strict validation and plan
 rendering. If an extension references a removed/renamed slot or has malformed frontmatter,

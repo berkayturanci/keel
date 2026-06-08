@@ -113,6 +113,7 @@ pip install "git+https://github.com/berkayturanci/keel@v0.6.1"
   <tr><td><code>keel install-adapter &lt;claude|skills|all&gt;</code></td><td>install the <code>/keel:&lt;command&gt;</code> workflows (below)</td></tr>
   <tr><td><code>keel sync [--dry-run]</code></td><td>refresh generated adapters after upgrading the pinned keel version</td></tr>
 </table>
+<p class="muted"><code>keel sync</code> does not install the latest PyPI package. Upgrade <code>keel-workflow</code> with <code>pipx upgrade keel-workflow</code> or <code>python -m pip install --upgrade keel-workflow</code>, then run <code>keel sync --dry-run</code> and <code>keel sync</code>. Sync only updates marker-protected generated adapter files; project config and extensions are validated afterward, never rewritten.</p>
 
 <h2>Claude plugin</h2>
 <p>The repository now includes a Claude plugin manifest and a <code>keel-onboard</code> skill. The plugin does not fork the command bodies; it teaches Claude Code to run <code>keel setup</code>, verify <code>.keel/project.yaml</code>, and keep project behavior in policy packs or extensions. The generated adapters remain the runtime surface for actual <code>/keel:&lt;command&gt;</code> work.</p>

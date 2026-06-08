@@ -1190,14 +1190,27 @@ class TestInstallAdapter(unittest.TestCase):
 
             rc, out, _ = run(["sync", "--root", d, "--dry-run"])
             self.assertEqual(rc, 0)
+            self.assertIn("not upgraded by sync", out)
             self.assertIn("would-update", out)
             self.assertIn("dry-run: no adapter files were written", out)
+            self.assertIn("keel validate .keel/project.yaml --root .", out)
+            self.assertIn("keel plan .keel/project.yaml --root .", out)
             self.assertFalse(ship.exists())
 
             rc, out, _ = run(["sync", "--root", d, "--target", "claude"])
             self.assertEqual(rc, 0)
             self.assertIn("updated", out)
             self.assertTrue(ship.exists())
+
+    def test_sync_failure_does_not_print_next_steps(self):
+        out, err = io.StringIO(), io.StringIO()
+        args = Namespace(target="codex", root=".", dry_run=False)
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = cli._cmd_sync(args)
+        self.assertEqual(rc, 1)
+        self.assertIn("not upgraded by sync", out.getvalue())
+        self.assertNotIn("keel validate", out.getvalue())
+        self.assertIn("unknown target", err.getvalue())
 
 
 class TestInstallLegacyWrappers(unittest.TestCase):
