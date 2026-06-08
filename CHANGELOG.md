@@ -8,6 +8,27 @@ All notable changes to keel are documented here. The format follows
 
 Nothing yet.
 
+## [0.7.0] — 2026-06-08
+
+### Added
+- **One-command onboarding** — `keel setup` creates or reuses `.keel/project.yaml`, installs
+  the generated Claude and shared-skill adapter surfaces, validates the project config, and
+  renders the plan in one first-run command. Existing configs are preserved unless `--force`
+  is explicit.
+- **Safe adapter refresh shortcut** — `keel sync` wraps the generated-adapter update flow with
+  a dry-run friendly command for existing consumers. It refreshes only marker-protected
+  generated adapter files, never project config, extensions, policy docs, or project-owned
+  commands.
+- **Claude plugin onboarding** — a local plugin manifest and `keel-onboard` skill document the
+  setup path for Claude users while keeping the CLI as the source of truth.
+
+### Changed
+- **Docs and website onboarding refresh** — README, CLI docs, cutover docs, onboarding docs,
+  and the website now explain `setup`, `sync`, package-upgrade boundaries, extension safety,
+  and the generated-surface contract.
+- **Release smoke coverage** — the package smoke test now exercises `keel setup` and `keel sync`
+  so published builds verify the current onboarding and adapter-refresh path.
+
 ## [0.6.1] — 2026-06-08
 
 ### Added

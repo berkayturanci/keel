@@ -99,9 +99,11 @@ def smoke(args: argparse.Namespace) -> dict[str, object]:
 
         help_text = _run([str(keel), "--help"])
         version_text = _run([str(keel), "version"]).strip()
-        _run([str(keel), "init", "--root", str(project)])
-        _run([str(keel), "install-adapter", "skills", "--root", str(project)])
-        _run([str(keel), "install-adapter", "claude", "--root", str(project)])
+        _run([str(keel), "setup", "--root", str(project)])
+        sync_text = _run([str(keel), "sync", "--root", str(project), "--dry-run"])
+        sync_text_lower = sync_text.lower()
+        if "installed keel" not in sync_text_lower or "not upgraded by sync" not in sync_text_lower:
+            raise AssertionError("sync output did not report the installed-package boundary")
 
         adapter_count = _adapter_count(python)
         skills = sorted((project / ".agents/skills").glob("keel-*/SKILL.md"))
@@ -127,6 +129,7 @@ def smoke(args: argparse.Namespace) -> dict[str, object]:
             "skills": len(skills),
             "claude_commands": len(commands),
             "help_mentions_keel": "keel" in help_text.lower(),
+            "sync_reports_package_boundary": True,
         }
 
 
@@ -136,7 +139,7 @@ def build_parser() -> argparse.ArgumentParser:
     source.add_argument("--wheel", help="wheel file to install")
     source.add_argument(
         "--requirement",
-        help="requirement spec to install, e.g. keel-workflow==0.6.0",
+        help="requirement spec to install, e.g. keel-workflow==0.7.0",
     )
     parser.add_argument(
         "--dist-dir",

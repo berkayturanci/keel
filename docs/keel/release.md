@@ -15,13 +15,13 @@ project intentionally publishes as `keel-workflow`.
 
 ## Current Release State
 
-As of 2026-06-08, production PyPI has `keel-workflow==0.6.0` owned by `berkayturanci`.
+As of 2026-06-08, production PyPI has `keel-workflow==0.6.1` owned by `berkayturanci`.
 The release contains both expected distributions:
 
-- `keel_workflow-0.6.0-py3-none-any.whl`
-- `keel_workflow-0.6.0.tar.gz`
+- `keel_workflow-0.6.1-py3-none-any.whl`
+- `keel_workflow-0.6.1.tar.gz`
 
-GitHub Release `v0.6.0` also contains:
+GitHub Release `v0.6.1` also contains:
 
 - the wheel
 - the source distribution
@@ -68,9 +68,8 @@ The smoke test verifies:
 
 - `keel --help`
 - `keel version`
-- `keel init --root <tmp-project>`
-- `keel install-adapter skills --root <tmp-project>`
-- `keel install-adapter claude --root <tmp-project>`
+- `keel setup --root <tmp-project>`
+- `keel sync --root <tmp-project> --dry-run`
 - packaged adapter command markdown is present
 - generated shared skills have YAML frontmatter and non-empty bodies
 - generated Claude commands have non-empty bodies
