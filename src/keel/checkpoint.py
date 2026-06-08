@@ -215,17 +215,7 @@ def resume_plan_as_dict(
     next_step = current_step
     action = record["resume"]["action"]
 
-    if live_worktree_state == "missing" and identifiers.get("worktree"):
-        status = "ambiguous"
-        can_resume = False
-        reason = "checkpoint references a worktree that live state reports missing"
-        warnings.append("recreate or reconcile the recorded worktree before resuming")
-    elif live_pr_state == "missing" and identifiers.get("pull_request"):
-        status = "ambiguous"
-        can_resume = False
-        reason = "checkpoint references a pull request that live state reports missing"
-        warnings.append("verify whether the PR was deleted or the checkpoint is stale")
-    elif live_pr_state == "merged" or state["merge"] == "merged":
+    if live_pr_state == "merged" or state["merge"] == "merged":
         if state["capture"] in {"not-started", "failed"}:
             status = "needs-capture"
             next_step = "s11"
@@ -242,6 +232,21 @@ def resume_plan_as_dict(
             next_step = None
             action = None
             reason = "merge, capture, and close are already complete"
+    elif live_pr_state == "closed" and identifiers.get("pull_request"):
+        status = "ambiguous"
+        can_resume = False
+        reason = "checkpoint references a pull request that live state reports closed"
+        warnings.append("reopen the PR or reconcile the checkpoint before resuming")
+    elif live_worktree_state == "missing" and identifiers.get("worktree"):
+        status = "ambiguous"
+        can_resume = False
+        reason = "checkpoint references a worktree that live state reports missing"
+        warnings.append("recreate or reconcile the recorded worktree before resuming")
+    elif live_pr_state == "missing" and identifiers.get("pull_request"):
+        status = "ambiguous"
+        can_resume = False
+        reason = "checkpoint references a pull request that live state reports missing"
+        warnings.append("verify whether the PR was deleted or the checkpoint is stale")
     elif current_step == "s6":
         status = "waiting-on-ci"
         reason = "resume by rechecking CI before review, test, or merge"
@@ -271,9 +276,18 @@ def validate_checkpoint(record: Any) -> None:
         raise CheckpointError("unsupported record_type")
     if record.get("command") not in COMMANDS:
         raise CheckpointError("unsupported command")
+    queue = record.get("queue")
+    if not isinstance(queue, dict) or not isinstance(queue.get("issues"), list):
+        raise CheckpointError("queue must be an object with issues")
     position = record.get("position")
     if not isinstance(position, dict) or position.get("current_step") not in _IDEMPOTENT_STEPS:
         raise CheckpointError("unsupported current_step")
+    completed = position.get("completed_steps")
+    if not isinstance(completed, list) or any(step not in STEP_IDS for step in completed):
+        raise CheckpointError("unsupported completed_steps")
+    identifiers = record.get("identifiers")
+    if not isinstance(identifiers, dict) or "base_branch" not in identifiers:
+        raise CheckpointError("identifiers must include base_branch")
     state = record.get("state")
     if not isinstance(state, dict):
         raise CheckpointError("state must be an object")
@@ -283,6 +297,13 @@ def validate_checkpoint(record: Any) -> None:
         raise CheckpointError("unsupported capture state")
     if state.get("close") not in CLOSE_STATES:
         raise CheckpointError("unsupported close state")
+    resume = record.get("resume")
+    if not isinstance(resume, dict):
+        raise CheckpointError("resume must be an object")
+    if resume.get("action") != _IDEMPOTENT_STEPS[position["current_step"]]:
+        raise CheckpointError("resume action does not match current_step")
+    if not isinstance(resume.get("repeat_policy"), dict):
+        raise CheckpointError("resume repeat_policy must be an object")
 
 
 def _live_state(live_pr_state: str, live_worktree_state: str) -> dict[str, str]:

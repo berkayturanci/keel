@@ -632,6 +632,30 @@ class TestShip(unittest.TestCase):
         self.assertEqual(plan["next_step"], "s11")
         self.assertEqual(plan["resume_action"], "run-or-verify-capture")
 
+    def test_resume_after_merge_ignores_missing_worktree(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_checkpoint("'true'")
+            rc_write, _, _ = run([
+                "checkpoint", config, "--root", d, "--write",
+                "--run-id", "RUN-149",
+                "--step", "s10",
+                "--worktree", "worktrees/issue-149",
+                "--pull-request", "170",
+                "--merge-state", "merged",
+            ])
+            rc, out, _ = run([
+                "resume", config, "--root", d, "--json",
+                "--live-pr-state", "merged",
+                "--live-worktree-state", "missing",
+            ])
+
+        self.assertEqual(rc_write, 0)
+        self.assertEqual(rc, 0)
+        plan = json.loads(out)["resume_plan"]
+        self.assertEqual(plan["status"], "needs-capture")
+        self.assertEqual(plan["next_step"], "s11")
+
     def test_resume_ambiguous_live_state_returns_one(self):
         import tempfile
         with tempfile.TemporaryDirectory() as d:
@@ -654,6 +678,27 @@ class TestShip(unittest.TestCase):
         self.assertEqual(plan["status"], "ambiguous")
         self.assertFalse(plan["can_resume"])
         self.assertTrue(plan["warnings"])
+
+    def test_resume_closed_unmerged_pr_returns_one(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_checkpoint("'true'")
+            rc_write, _, _ = run([
+                "checkpoint", config, "--root", d, "--write",
+                "--run-id", "RUN-149",
+                "--step", "s7",
+                "--pull-request", "170",
+            ])
+            rc, out, _ = run([
+                "resume", config, "--root", d, "--json",
+                "--live-pr-state", "closed",
+            ])
+
+        self.assertEqual(rc_write, 0)
+        self.assertEqual(rc, 1)
+        plan = json.loads(out)["resume_plan"]
+        self.assertEqual(plan["status"], "ambiguous")
+        self.assertIn("closed", plan["reason"])
 
     def test_checkpoint_human_missing_present_and_resume_output(self):
         import tempfile

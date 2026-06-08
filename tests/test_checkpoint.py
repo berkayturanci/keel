@@ -114,6 +114,27 @@ class TestCheckpointRecords(unittest.TestCase):
         bad_state["state"] = "not-an-object"
         with self.assertRaisesRegex(checkpoint.CheckpointError, "state must be an object"):
             checkpoint.validate_checkpoint(bad_state)
+        for field, message in (
+            ("queue", "queue must be an object"),
+            ("identifiers", "identifiers must include base_branch"),
+            ("resume", "resume must be an object"),
+        ):
+            record = _record()
+            del record[field]
+            with self.assertRaisesRegex(checkpoint.CheckpointError, message):
+                checkpoint.validate_checkpoint(record)
+        bad_completed = _record()
+        bad_completed["position"]["completed_steps"] = ["s99"]
+        with self.assertRaisesRegex(checkpoint.CheckpointError, "unsupported completed_steps"):
+            checkpoint.validate_checkpoint(bad_completed)
+        bad_action = _record()
+        bad_action["resume"]["action"] = "other"
+        with self.assertRaisesRegex(checkpoint.CheckpointError, "resume action"):
+            checkpoint.validate_checkpoint(bad_action)
+        bad_repeat = _record()
+        bad_repeat["resume"]["repeat_policy"] = "other"
+        with self.assertRaisesRegex(checkpoint.CheckpointError, "repeat_policy"):
+            checkpoint.validate_checkpoint(bad_repeat)
         for field, value, message in (
             ("merge", "bad", "unsupported merge state"),
             ("capture", "bad", "unsupported capture state"),
@@ -190,6 +211,29 @@ class TestResumePlan(unittest.TestCase):
             live_pr_state="missing",
         )
         self.assertEqual(missing_pr["status"], "ambiguous")
+
+    def test_closed_unmerged_pr_is_ambiguous(self):
+        plan = checkpoint.resume_plan_as_dict(
+            _record(pull_request=170),
+            live_pr_state="closed",
+        )
+        self.assertEqual(plan["status"], "ambiguous")
+        self.assertFalse(plan["can_resume"])
+        self.assertIn("closed", plan["reason"])
+
+    def test_merged_pr_ignores_missing_worktree_for_capture(self):
+        plan = checkpoint.resume_plan_as_dict(
+            _record(
+                current_step="s10",
+                worktree="worktrees/issue-149",
+                pull_request=170,
+                merge_state="merged",
+            ),
+            live_pr_state="merged",
+            live_worktree_state="missing",
+        )
+        self.assertEqual(plan["status"], "needs-capture")
+        self.assertEqual(plan["next_step"], "s11")
 
     def test_live_state_validation(self):
         with self.assertRaisesRegex(checkpoint.CheckpointError, "unsupported live_pr_state"):
