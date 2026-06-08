@@ -116,6 +116,7 @@ def _build(data: dict) -> ProjectConfig:
     )
     extensions = {slot: tuple(files) for slot, files in data.get("extensions", {}).items()}
     automation_data = data.get("automation", {})
+    automation_scopes = tuple(dict.fromkeys(automation_data.get("approved_scopes", [])))
     return ProjectConfig(
         extends=data["extends"],
         core_version=data["core_version"],
@@ -132,7 +133,7 @@ def _build(data: dict) -> ProjectConfig:
         extensions_dir=data.get("extensions_dir", DEFAULT_EXTENSIONS_DIR),
         policy_pack=json.loads(json.dumps(data.get("policy_pack", {}), sort_keys=True)),
         automation=Automation(
-            approved_scopes=tuple(automation_data.get("approved_scopes", [])),
+            approved_scopes=tuple(sorted(automation_scopes)),
             operator=automation_data.get("operator"),
         ),
     )

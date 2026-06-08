@@ -55,7 +55,10 @@ Standing approval only satisfies the consent preflight. It never bypasses findin
 project gates, CI, the merge window, or the merge lock. Scope remains least-privilege:
 only listed scopes are approved, and any broader required scope still stops the run.
 Use `KEEL_OPERATOR` with `KEEL_APPROVE_SCOPE`, or `automation.operator` with config-based
-approval, so the `consent_record` names the automation identity.
+approval, so the `consent_record` names the automation identity. Standing approval without
+an operator identity fails the live preflight. Dry-run and read-only commands ignore
+standing approval environment/config values unless an explicit `--approve-scope` flag is
+passed.
 
 Example:
 

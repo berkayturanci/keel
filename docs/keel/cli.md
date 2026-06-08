@@ -265,8 +265,10 @@ the live merge (s10) needs a configured runner with `git` + an authenticated `gh
 same structured contract and stops before running project gates if operator consent is
 missing. `--approve-scope` can be repeated or comma-separated. Trusted unattended runs may
 also set `KEEL_APPROVE_SCOPE=filesystem,git,github` and optionally
-`KEEL_OPERATOR=automation:nightly`, or use `automation.approved_scopes` in project config.
-Precedence is flag, then env, then config. Approved live runs include a local
+`KEEL_OPERATOR=automation:nightly`, or use `automation.approved_scopes` in project config
+with `automation.operator`. Env/config standing approval requires an operator identity.
+Dry-run and read-only commands ignore standing approval values. Precedence is flag, then
+env, then config. Approved live runs include a local
 `consent_record` in JSON output with the approval source; secret values are never recorded.
 
 Review and merge-gate parity is exposed through `review_merge_contract` in JSON output.

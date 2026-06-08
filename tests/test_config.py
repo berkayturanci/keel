@@ -315,6 +315,13 @@ class TestConfigHash(unittest.TestCase):
         b = cfg.parse_config(other)
         self.assertNotEqual(cfg.config_hash(a), cfg.config_hash(b))
 
+    def test_automation_scope_order_independent(self):
+        a = copy.deepcopy(VALID)
+        b = copy.deepcopy(VALID)
+        a["automation"] = {"approved_scopes": ["github", "filesystem", "git"]}
+        b["automation"] = {"approved_scopes": ["filesystem", "git", "github"]}
+        self.assertEqual(cfg.config_hash(cfg.parse_config(a)), cfg.config_hash(cfg.parse_config(b)))
+
     def test_key_order_independent(self):
         reordered = {
             "knobs": {"build_gate_cmd": "make test"},
