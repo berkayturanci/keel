@@ -1,47 +1,55 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 380" width="1200" height="380" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" role="img" aria-label="keel — a fixed backbone that drives a GitHub issue from backlog to merged">
-  <rect width="1200" height="380" rx="16" fill="#ffffff"/>
-  <rect x="0.5" y="0.5" width="1199" height="379" rx="16" fill="none" stroke="#d0d7de"/>
-
-  <text x="56" y="92" font-size="64" font-weight="700" fill="#1f2328" letter-spacing="-1">keel</text>
-  <text x="214" y="92" font-size="52" fill="#0969da">⚓</text>
-  <text x="58" y="132" font-size="21" fill="#656d76">A project-neutral, multi-agent <tspan fill="#1f2328" font-weight="600">workflow core</tspan>.</text>
-  <text x="58" y="160" font-size="21" fill="#656d76">One fixed backbone drives a GitHub issue from backlog to merged.</text>
-
-  <g>
-    <text x="56" y="244" font-size="13" fill="#656d76" letter-spacing="1.5">BACKBONE</text>
-    <line x1="92" y1="300" x2="1108" y2="300" stroke="#d0d7de" stroke-width="3"/>
-    <text x="56" y="346" font-size="13" fill="#656d76">issue</text>
-    <text x="1144" y="346" font-size="13" fill="#656d76" text-anchor="end">merged + closed</text>
-
-    <g fill="#0969da">
-      <circle cx="92"  cy="300" r="5"/>
-      <circle cx="176" cy="300" r="5"/>
-      <circle cx="261" cy="300" r="5"/>
-      <circle cx="346" cy="300" r="5"/>
-      <circle cx="515" cy="300" r="5"/>
-      <circle cx="600" cy="300" r="5"/>
-      <circle cx="769" cy="300" r="5"/>
-      <circle cx="1108" cy="300" r="5"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 430" width="1200" height="430" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif" role="img" aria-label="keel setup installs project config, Claude commands, and shared skills so every agent runs the same workflow backbone">
+  <rect width="1200" height="430" rx="16" fill="#ffffff"/>
+  <rect x="0.5" y="0.5" width="1199" height="429" rx="16" fill="none" stroke="#d0d7de"/>
+  <text x="56" y="78" font-size="58" font-weight="700" fill="#1f2328">keel setup</text>
+  <text x="56" y="116" font-size="21" fill="#656d76">One command installs the same project-neutral workflow for every coding agent.</text>
+  <g transform="translate(56,160)">
+    <rect width="250" height="118" rx="10" fill="#f6f8fa" stroke="#0969da"/>
+    <text x="24" y="38" font-size="20" font-weight="700" fill="#1f2328">keel setup --root .</text>
+    <text x="24" y="70" font-size="15" fill="#656d76">detect stack</text>
+    <text x="24" y="94" font-size="15" fill="#656d76">validate + render plan</text>
+  </g>
+  <path d="M326 219 H394" stroke="#0969da" stroke-width="3" fill="none"/>
+  <path d="M394 219 l-10 -7 v14 z" fill="#0969da"/>
+  <g transform="translate(418,132)">
+    <rect width="328" height="174" rx="10" fill="#f6f8fa" stroke="#d0d7de"/>
+    <text x="22" y="34" font-size="13" letter-spacing="1.4" fill="#656d76">GENERATED SURFACES</text>
+    <g transform="translate(22,58)">
+      <rect width="284" height="32" rx="6" fill="#ffffff" stroke="#d0d7de"/>
+      <circle cx="18" cy="16" r="5" fill="#1a7f37"/>
+      <text x="36" y="21" font-size="15" fill="#1f2328">.keel/project.yaml</text>
     </g>
-
-    <g>
-      <circle cx="431" cy="300" r="9" fill="#1a7f37"/>
-      <text x="431" y="272" font-size="12.5" fill="#1a7f37" text-anchor="middle">after-implement</text>
-      <circle cx="685" cy="300" r="9" fill="#1a7f37"/>
-      <text x="685" y="272" font-size="12.5" fill="#1a7f37" text-anchor="middle">reviewers</text>
-      <circle cx="854" cy="300" r="9" fill="#1a7f37"/>
-      <text x="854" y="338" font-size="12.5" fill="#1a7f37" text-anchor="middle">tester</text>
-      <circle cx="939" cy="300" r="9" fill="#1a7f37"/>
-      <text x="939" y="272" font-size="12.5" fill="#1a7f37" text-anchor="middle">pre-merge</text>
-      <circle cx="1023" cy="300" r="9" fill="#1a7f37"/>
-      <text x="1023" y="338" font-size="12.5" fill="#1a7f37" text-anchor="middle">post-merge</text>
+    <g transform="translate(22,100)">
+      <rect width="284" height="32" rx="6" fill="#ffffff" stroke="#d0d7de"/>
+      <circle cx="18" cy="16" r="5" fill="#0969da"/>
+      <text x="36" y="21" font-size="15" fill="#1f2328">.claude/commands/keel/*</text>
+    </g>
+    <g transform="translate(22,142)">
+      <rect width="284" height="32" rx="6" fill="#ffffff" stroke="#d0d7de"/>
+      <circle cx="18" cy="16" r="5" fill="#9a6700"/>
+      <text x="36" y="21" font-size="15" fill="#1f2328">.agents/skills/keel-*</text>
     </g>
   </g>
-
-  <g transform="translate(840,70)">
-    <circle cx="8" cy="0" r="5" fill="#0969da"/>
-    <text x="24" y="4" font-size="14" fill="#656d76">fixed step</text>
-    <circle cx="8" cy="26" r="7" fill="#1a7f37"/>
-    <text x="24" y="30" font-size="14" fill="#656d76">extension slot (your Lego)</text>
+  <path d="M766 219 H834" stroke="#0969da" stroke-width="3" fill="none"/>
+  <path d="M834 219 l-10 -7 v14 z" fill="#0969da"/>
+  <g transform="translate(858,132)">
+    <rect width="286" height="174" rx="10" fill="#f6f8fa" stroke="#d0d7de"/>
+    <text x="22" y="34" font-size="13" letter-spacing="1.4" fill="#656d76">SAME BACKBONE</text>
+    <text x="22" y="68" font-size="16" fill="#1f2328">Claude Code</text>
+    <text x="22" y="96" font-size="16" fill="#1f2328">Codex</text>
+    <text x="22" y="124" font-size="16" fill="#1f2328">Gemini</text>
+    <text x="22" y="152" font-size="16" fill="#1f2328">Antigravity</text>
+    <line x1="150" y1="110" x2="256" y2="110" stroke="#d0d7de" stroke-width="3"/>
+    <circle cx="150" cy="110" r="6" fill="#0969da"/>
+    <circle cx="185" cy="110" r="6" fill="#0969da"/>
+    <circle cx="220" cy="110" r="6" fill="#0969da"/>
+    <circle cx="256" cy="110" r="9" fill="#1a7f37"/>
+    <text x="150" y="142" font-size="13" fill="#656d76">issue</text>
+    <text x="256" y="142" font-size="13" fill="#656d76" text-anchor="end">merged</text>
+  </g>
+  <g transform="translate(56,348)">
+    <text x="0" y="0" font-size="14" fill="#656d76">Projects keep policy in config and extensions. The packaged command bodies stay in keel.</text>
+    <text x="0" y="30" font-size="14" fill="#656d76">Update later with: </text>
+    <text x="124" y="30" font-size="14" fill="#1f2328">keel update-adapter all --root .</text>
   </g>
 </svg>
