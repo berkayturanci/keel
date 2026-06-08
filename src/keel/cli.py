@@ -311,6 +311,14 @@ def _cmd_ship(args: argparse.Namespace) -> int:
                 for question in intake_record["questions"]:
                     print(f"  question: {question}", file=sys.stderr)
             return 1
+    if args.live and args.append_ledger and args.capture_status is None:
+        message = "--capture-status is required when --live --append-ledger is used"
+        if args.json:
+            print(json.dumps({"contract": contract, "error": message}, indent=2,
+                             sort_keys=True))
+        else:
+            print(message, file=sys.stderr)
+        return 1
 
     changed = git.changed_files(config.base_branch, "HEAD", cwd=args.root)
     # unreachable: orch.build_plan() above already calls plan_gates and surfaces GateError.
@@ -363,6 +371,9 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         head_sha=args.head_sha,
         capture_status=args.capture_status,
         capture_reason=args.capture_reason,
+        implementer=args.implementer,
+        reviewer_agents=args.reviewer_agent,
+        tester=args.tester,
     )
     ledger_path = ledger.resolve_path(args.root, config)
     ledger_result = {
@@ -1481,6 +1492,12 @@ def _add_ship_parser(parser: argparse.ArgumentParser, *, command: str) -> None:
                         help="capture outcome to store in the run ledger record")
     parser.add_argument("--capture-reason", default=None,
                         help="capture outcome reason to store in the run ledger record")
+    parser.add_argument("--implementer", default=None,
+                        help="effective implementer codename or vendor/model label")
+    parser.add_argument("--reviewer-agent", action="append", default=[],
+                        help="effective reviewer codename or vendor/model label; repeatable")
+    parser.add_argument("--tester", default=None,
+                        help="effective tester codename or vendor/model label")
     parser.add_argument("--issue-title", default=None,
                         help="issue title to include in the intake/readiness contract")
     parser.add_argument("--issue-body", default=None,

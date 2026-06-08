@@ -50,6 +50,9 @@ def _record() -> dict:
         head_sha="abc123",
         capture_status="applied",
         capture_reason="capture hook completed",
+        implementer="codex:gpt-5",
+        reviewer_agents=["reviewer-a:gpt-5", "reviewer-b:claude"],
+        tester="tester:gpt-5-mini",
     )
 
 
@@ -92,6 +95,7 @@ class TestLedgerRecords(unittest.TestCase):
             "gates",
             "verdict",
             "assessment",
+            "actors",
             "issue_intake",
             "capture",
         ])
@@ -99,6 +103,9 @@ class TestLedgerRecords(unittest.TestCase):
         self.assertEqual(record["issue"]["number"], 140)
         self.assertEqual(record["changes"]["file_count"], 1)
         self.assertEqual(record["gates"][0]["finding_count"], 0)
+        self.assertEqual(record["actors"]["implementer"], "codex:gpt-5")
+        self.assertEqual(record["actors"]["reviewers"], ["reviewer-a:gpt-5", "reviewer-b:claude"])
+        self.assertEqual(record["actors"]["tester"], "tester:gpt-5-mini")
 
     def test_encode_parse_append_and_read_records(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -456,6 +456,10 @@ class TestShip(unittest.TestCase):
                               "--issue", "140", "--pull-request", "160",
                               "--capture-status", "skipped",
                               "--capture-reason", "no capture hook configured",
+                              "--implementer", "codex:gpt-5",
+                              "--reviewer-agent", "reviewer-a:gpt-5",
+                              "--reviewer-agent", "reviewer-b:claude",
+                              "--tester", "tester:gpt-5-mini",
                               "--approve-scope", "filesystem,git,github",
                               "--operator", "tester"])
             ledger_path = Path(d) / "state" / "runs.jsonl"
@@ -471,6 +475,32 @@ class TestShip(unittest.TestCase):
         self.assertEqual(read["record_count"], 1)
         self.assertEqual(read["records"][0]["run_id"], "RUN-140")
         self.assertEqual(read["records"][0]["capture"]["status"], "skipped")
+        self.assertEqual(read["records"][0]["actors"]["implementer"], "codex:gpt-5")
+        self.assertEqual(read["records"][0]["actors"]["reviewers"],
+                         ["reviewer-a:gpt-5", "reviewer-b:claude"])
+
+    def test_ship_live_append_requires_capture_status(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["ship", _write_config_with_ledger("'true'"),
+                              "--root", d, "--live", "--json",
+                              "--append-ledger",
+                              "--approve-scope", "filesystem,git,github",
+                              "--operator", "tester"])
+        self.assertEqual(rc, 1)
+        data = json.loads(out)
+        self.assertEqual(data["error"],
+                         "--capture-status is required when --live --append-ledger is used")
+
+    def test_ship_live_append_requires_capture_status_human_output(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, _, err = run(["ship", _write_config_with_ledger("'true'"),
+                              "--root", d, "--live", "--append-ledger",
+                              "--approve-scope", "filesystem,git,github",
+                              "--operator", "tester"])
+        self.assertEqual(rc, 1)
+        self.assertIn("--capture-status is required", err)
 
     def test_ledger_reads_missing_file_as_empty(self):
         import tempfile
@@ -489,6 +519,7 @@ class TestShip(unittest.TestCase):
             for run_id in ("RUN-1", "RUN-2"):
                 rc, _, _ = run(["ship", config, "--root", d, "--live", "--append-ledger",
                                 "--run-id", run_id,
+                                "--capture-status", "skipped",
                                 "--approve-scope", "filesystem,git,github",
                                 "--operator", "tester"])
                 self.assertEqual(rc, 0)

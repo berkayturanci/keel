@@ -109,13 +109,16 @@ must not build morning/wrap/capture reports from corrupted history.
 ```bash
 keel ship .keel/project.yaml --root . --live --append-ledger \
   --run-id "$RUN_ID" --issue 123 --pull-request 456 \
-  --capture-status applied \
+  --capture-status applied --implementer "codex:gpt-5" \
+  --reviewer-agent "reviewer-a:gpt-5" --tester "tester:gpt-5-mini" \
   --approve-scope filesystem,git,github --operator "$USER" --json
 ```
 
 `--pull-request` records a PR number without asking keel to query CI. `--pr` still means
 "look up this PR's CI status" and therefore requires a GitHub transport that supports
 check runs. Dry-run output includes the same would-be record but never writes the file.
+`--capture-status` is required for live appends so offline capture verification never has
+to infer status from closure comments.
 
 ## `keel morning <project.yaml> [--root DIR] [--since WHEN] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--json]`
 

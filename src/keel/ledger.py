@@ -67,6 +67,9 @@ def build_ship_run_record(
     head_sha: str | None = None,
     capture_status: str | None = None,
     capture_reason: str | None = None,
+    implementer: str | None = None,
+    reviewer_agents: list[str] | None = None,
+    tester: str | None = None,
 ) -> dict[str, Any]:
     """Build one deterministic consumer-neutral ship ledger record."""
     return {
@@ -111,6 +114,11 @@ def build_ship_run_record(
             },
             "halted": assessment.halted,
             "bypassed_window": assessment.bypassed_window,
+        },
+        "actors": {
+            "implementer": implementer,
+            "reviewers": list(reviewer_agents or ()),
+            "tester": tester,
         },
         "issue_intake": issue_intake,
         "capture": {

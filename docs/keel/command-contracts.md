@@ -106,8 +106,9 @@ The block records:
 the ship assessment succeeds. `keel ship --json` always includes the would-be record under
 `result.run_ledger.record`; dry-run output never writes it. The record is consumer-neutral:
 it stores command, target, optional issue/PR numbers, branch/head SHA, changed-file count,
-gate summaries, verdict, risk/review/merge assessment, issue intake, and capture outcome.
-It does not store project labels, domain names, product paths, or stack-specific fields.
+gate summaries, verdict, risk/review/merge assessment, effective actor labels, issue
+intake, and capture outcome. It does not store project labels, domain names, product
+paths, or stack-specific fields.
 
 `keel ledger <project.yaml> --root <repo> --json` reads the ledger offline and returns an
 empty `records` array when the file is missing. `morning`, `wrap`, overnight session
