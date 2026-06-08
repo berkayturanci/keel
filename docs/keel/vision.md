@@ -28,11 +28,13 @@ bounded work block, and expect the same quality loop every time:
 The point is not full autonomy for its own sake. The point is that the work is observable,
 recoverable, reviewable, and governed by policy while the agent owns the execution details.
 
-## v2: autonomous software team layer
+## Future: autonomous software team layer
 
-The long-term direction is an autonomous software team layer built on the same contracts.
-In that future, multiple agents can create issues from signals, claim work, review each
-other, hand off blocked items, and keep a project moving.
+The long-term product direction is an autonomous software team layer built on the same
+contracts. This is not the existing `/keel:ship-v2` command/profile, which remains a
+compound-engineering variant of the one-agent ship workflow. In the future team layer,
+multiple agents can create issues from signals, claim work, review each other, hand off
+blocked items, and keep a project moving.
 
 That is intentionally future scope. A human product owner, team lead, or maintainer remains
 the decision point for ambiguous requirements, credentials, approvals, product tradeoffs,
