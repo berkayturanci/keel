@@ -6,10 +6,22 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.6.1] — 2026-06-08
+
 ### Added
 - **Release verification** (#78) — `scripts/release_smoke.py` installs a local, PyPI, or
   TestPyPI package into a clean virtual environment and verifies the `keel` CLI plus generated
   adapter surfaces; `docs/keel/release.md` documents the repeatable PyPI release runbook.
+
+### Changed
+- **Public docs refresh** (#119, #120) — README, website, and the `project.yaml` reference now
+  reflect the current `keel-workflow` package identity, `0.6.x` core line, every-step extension
+  hooks, runtime capabilities, project commands, workflow policies, and policy-pack fields.
+- **GitHub Actions maintenance** (#55) — bumped the grouped workflow actions and pinned the
+  updated actions to exact commit SHAs, including checkout, setup-python, CodeQL, Pages actions,
+  and the workflows that dogfood Keel's PR assessment.
 
 ## [0.6.0] — 2026-06-07
 
