@@ -88,6 +88,8 @@ class TestPlan(unittest.TestCase):
         self.assertEqual(data["contract"]["schema_version"], "keel.command-contract.v1")
         self.assertEqual(data["contract"]["command"], "ship")
         self.assertIn("review_merge_contract", data["contract"])
+        self.assertEqual(data["contract"]["run_ledger"]["schema_version"],
+                         "keel.run-ledger.v1")
 
     def test_plan_json_resolves_review_jury_flags(self):
         rc, out, _ = run(
@@ -191,6 +193,15 @@ def _write_config(build_cmd):
     return _write_raw(
         "extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
         f"repo: tmp\ngates: [build]\nknobs:\n  build_gate_cmd: {build_cmd}\n"
+    )
+
+
+def _write_config_with_ledger(build_cmd, ledger_path="state/runs.jsonl"):
+    return _write_raw(
+        "extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
+        f"repo: tmp\ngates: [build]\nknobs:\n  build_gate_cmd: {build_cmd}\n"
+        "policy_pack:\n  name: tmp\n  reports:\n"
+        f"    run_ledger: {ledger_path!r}\n"
     )
 
 
@@ -302,6 +313,8 @@ class TestShip(unittest.TestCase):
         self.assertEqual(data["contract"]["operator_consent"]["status"],
                          "not-required-dry-run")
         self.assertEqual(data["result"]["changed_file_count"], 0)
+        self.assertFalse(data["result"]["run_ledger"]["appended"])
+        self.assertEqual(data["result"]["run_ledger"]["record"]["record_type"], "ship_run")
         self.assertEqual(data["result"]["assessment"]["merge"]["action"], "merge")
         self.assertEqual(data["result"]["issue_intake"]["status"], "needs-input")
         review = data["result"]["assessment"]["review_merge_contract"]
@@ -433,6 +446,89 @@ class TestShip(unittest.TestCase):
         self.assertEqual(data["contract"]["mode"], "live")
         self.assertEqual(data["contract"]["operator_consent"]["status"], "approved")
         self.assertIn("result", data)
+
+    def test_ship_live_can_append_structured_ledger_record(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger("'true'")
+            rc, out, _ = run(["ship", config, "--root", d, "--live", "--json",
+                              "--append-ledger", "--run-id", "RUN-140",
+                              "--issue", "140", "--pull-request", "160",
+                              "--capture-status", "skipped",
+                              "--capture-reason", "no capture hook configured",
+                              "--approve-scope", "filesystem,git,github",
+                              "--operator", "tester"])
+            ledger_path = Path(d) / "state" / "runs.jsonl"
+            rc_read, out_read, _ = run(["ledger", config, "--root", d, "--json"])
+
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertTrue(data["result"]["run_ledger"]["appended"])
+        self.assertEqual(data["result"]["run_ledger"]["path"], str(ledger_path))
+        self.assertEqual(data["result"]["run_ledger"]["record"]["issue"]["number"], 140)
+        self.assertEqual(rc_read, 0)
+        read = json.loads(out_read)
+        self.assertEqual(read["record_count"], 1)
+        self.assertEqual(read["records"][0]["run_id"], "RUN-140")
+        self.assertEqual(read["records"][0]["capture"]["status"], "skipped")
+
+    def test_ledger_reads_missing_file_as_empty(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["ledger", _write_config_with_ledger("'true'"),
+                              "--root", d, "--json"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["status"], "missing")
+        self.assertEqual(data["records"], [])
+
+    def test_ledger_human_output_and_limit(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger("'true'")
+            for run_id in ("RUN-1", "RUN-2"):
+                rc, _, _ = run(["ship", config, "--root", d, "--live", "--append-ledger",
+                                "--run-id", run_id,
+                                "--approve-scope", "filesystem,git,github",
+                                "--operator", "tester"])
+                self.assertEqual(rc, 0)
+            rc, out, _ = run(["ledger", config, "--root", d, "--limit", "1"])
+            rc_json, out_json, _ = run(["ledger", config, "--root", d,
+                                        "--limit", "1", "--json"])
+
+        self.assertEqual(rc, 0)
+        self.assertIn("keel ledger", out)
+        self.assertIn("records       : 1", out)
+        self.assertEqual(rc_json, 0)
+        self.assertEqual(json.loads(out_json)["records"][0]["run_id"], "RUN-2")
+
+    def test_ledger_reports_missing_invalid_config_and_bad_file(self):
+        import tempfile
+        rc_missing, _, err_missing = run(["ledger", "/no/such.yaml"])
+        self.assertEqual(rc_missing, 1)
+        self.assertIn("no such config", err_missing)
+
+        rc_invalid, _, err_invalid = run(["ledger", _write_raw("extends: keel\n")])
+        self.assertEqual(rc_invalid, 1)
+        self.assertIn("invalid keel config", err_invalid)
+
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger("'true'")
+            path = Path(d) / "state" / "runs.jsonl"
+            path.parent.mkdir(parents=True)
+            path.write_text("{", encoding="utf-8")
+            rc_bad, _, err_bad = run(["ledger", config, "--root", d])
+        self.assertEqual(rc_bad, 1)
+        self.assertIn("invalid ledger", err_bad)
+
+    def test_ship_human_append_ledger_dry_run_message(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["ship", _write_config_with_ledger("'true'"),
+                              "--root", d, "--append-ledger"])
+        self.assertEqual(rc, 0)
+        self.assertIn("run ledger", out)
+        self.assertIn("ledger append : dry-run/no-live", out)
 
     def test_ship_live_json_allows_ready_issue_after_consent(self):
         import tempfile

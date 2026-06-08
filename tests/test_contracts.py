@@ -87,6 +87,8 @@ class TestBuildCommandContract(unittest.TestCase):
         ))
         self.assertIn("shell", contract["required_capabilities"])
         self.assertEqual(contract["github_transport"]["transport"], "mcp")
+        self.assertEqual(contract["run_ledger"]["schema_version"], "keel.run-ledger.v1")
+        self.assertEqual(contract["run_ledger"]["path"], ".keel/state/run-ledger.jsonl")
         self.assertFalse(contract["side_effects"]["mutates_in_dry_run"])
         self.assertEqual(contract["operator_consent"]["status"], "not-required-dry-run")
         self.assertEqual(
@@ -263,6 +265,7 @@ class TestBuildCommandContract(unittest.TestCase):
         self.assertTrue(morning["workflow_profile"]["first_class_variant"])
         self.assertIn("health_providers", morning["workflow_profile"]["shared_primitives"])
         self.assertIn("morning_contract", morning)
+        self.assertIn("run_ledger", morning["morning_contract"])
 
         wrap = contracts.build_command_contract(
             command="wrap",
@@ -282,6 +285,7 @@ class TestBuildCommandContract(unittest.TestCase):
         self.assertEqual(wrap["workflow_profile"]["profile"], "session-wrap")
         self.assertTrue(wrap["workflow_profile"]["first_class_variant"])
         self.assertIn("session_contract", wrap)
+        self.assertIn("run_ledger", wrap["session_contract"])
 
         overnight = contracts.build_command_contract(
             command="overnight",
@@ -301,6 +305,7 @@ class TestBuildCommandContract(unittest.TestCase):
         self.assertEqual(overnight["workflow_profile"]["profile"], "session-overnight")
         self.assertEqual(overnight["workflow_profile"]["inherits"], "ship")
         self.assertIn("review_merge_contract", overnight)
+        self.assertIn("run_ledger", overnight["session_contract"])
 
         pr_loop = contracts.build_command_contract(
             command="pr-loop",
@@ -470,6 +475,7 @@ class TestBuildCommandContract(unittest.TestCase):
             ["shell"],
         )
         self.assertEqual(morning["brief"]["deferral_queue"]["status"], "configured")
+        self.assertEqual(morning["brief"]["run_ledger"]["path"], ".keel/state/run-ledger.jsonl")
         self.assertFalse(morning["execution"]["runs_project_health_commands"])
 
         wrap = contracts.standalone_result_as_dict(
@@ -484,6 +490,7 @@ class TestBuildCommandContract(unittest.TestCase):
             wrap["session"]["wrap"]["workspace_preflight"]["must_run_from_linked_worktree"]
         )
         self.assertFalse(wrap["execution"]["creates_prs"])
+        self.assertEqual(wrap["session"]["run_ledger"]["path"], ".keel/state/run-ledger.jsonl")
 
         overnight = contracts.standalone_result_as_dict(
             command="overnight",

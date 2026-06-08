@@ -12,6 +12,7 @@ describe what a command would do before an adapter starts mutating work.
 - `keel ship <project.yaml> --live --json`
 - `keel ship-v2 <project.yaml> --dry-run --json`
 - `keel ship-v2 <project.yaml> --live --json`
+- `keel ledger <project.yaml> --json`
 - `keel implement <project.yaml> <issue> --dry-run --json`
 - `keel implement <project.yaml> <issue> --live --json`
 - `keel ci-check <project.yaml> --pr <number> --json`
@@ -46,6 +47,7 @@ Every contract includes:
 | `required_capabilities` / `optional_capabilities` | Capability names the adapter should evaluate before mutating work. |
 | `capabilities` | Runtime evaluation for the current environment. |
 | `github_transport` | Selected GitHub transport and degraded GitHub operation capabilities. |
+| `run_ledger` | Structured JSONL run-ledger storage and schema contract. |
 | `side_effects` | Declared possible live-run side effects and whether dry-run mutates. |
 | `operator_consent` | Operator consent requirement, approved mutation scopes, delegated-agent scope, and consent record metadata. |
 | `issue_intake` | Present for work-owning flows (`ship`, `ship-v2`, `implement`, `overnight`); extracted objective, deliverable, acceptance criteria, readiness, questions, and ledger metadata. |
@@ -84,6 +86,34 @@ In `agent` mode, keel emits `status: agent-delegated`; adapters must rely on the
 agent permission model for the actual approval prompt while still respecting the emitted
 scope and every non-consent gate.
 
+## Run ledger block
+
+Every command contract includes `run_ledger`. The ledger is the durable,
+machine-readable run history that adapters use instead of parsing free-form PR or issue
+comments. The default location is `.keel/state/run-ledger.jsonl`; projects can choose a
+different local path with `policy_pack.reports.run_ledger`.
+
+The block records:
+
+- `schema_version: keel.run-ledger.v1`
+- `format: jsonl`
+- `path` and `path_source`
+- `missing_handling: treat-as-empty`
+- append owners (`ship`, `ship-v2`) and offline readers (`morning`, `wrap`,
+  `overnight`, `capture-verification`, `ledger`)
+
+`keel ship --live --append-ledger` appends exactly one structured `ship_run` record after
+the ship assessment succeeds. `keel ship --json` always includes the would-be record under
+`result.run_ledger.record`; dry-run output never writes it. The record is consumer-neutral:
+it stores command, target, optional issue/PR numbers, branch/head SHA, changed-file count,
+gate summaries, verdict, risk/review/merge assessment, issue intake, and capture outcome.
+It does not store project labels, domain names, product paths, or stack-specific fields.
+
+`keel ledger <project.yaml> --root <repo> --json` reads the ledger offline and returns an
+empty `records` array when the file is missing. `morning`, `wrap`, overnight session
+recaps, and capture verification should use this reader or the same contract path instead
+of scraping closure comments.
+
 ## Issue intake block
 
 Work-owning commands expose `issue_intake` before branch/worktree creation or implementation.
@@ -113,6 +143,7 @@ with deterministic data:
 
 - changed files and changed-file count
 - issue intake readiness and ledger record
+- would-be run-ledger append record and resolved ledger path
 - gate outcomes and normalized findings
 - aggregate verdict
 - risk tier, reviewer count, window state, CI state, and merge decision

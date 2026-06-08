@@ -52,10 +52,21 @@ keel plan .keel/project.yaml --root . --command ship --live --json \
 
 Parse `contract.issue_intake` before s2. If `status` is `needs-input`, post or ask the
 generated `questions` and STOP that issue before branch/worktree/code mutation. If `status`
-is `blocked` or `out-of-scope`, record the `ledger_record`, skip mutation, and move to the
-next selected issue when watch/work-block policy allows. Only `ready` may proceed to s2.
-This is the same readiness discipline expected from a human teammate: clarify the ticket
-before starting work and keep the clarification trail in the run ledger.
+is `blocked` or `out-of-scope`, append or preserve the structured run-ledger record,
+skip mutation, and move to the next selected issue when watch/work-block policy allows.
+Only `ready` may proceed to s2. This is the same readiness discipline expected from a
+human teammate: clarify the ticket before starting work and keep the clarification trail
+in the run ledger.
+
+**Run ledger.** Read `contract.run_ledger` from `keel plan --json` or the
+`result.run_ledger` block from `keel ship --json`. Do not infer ship outcomes by parsing
+free-form PR or issue comments. For live runs, append exactly one structured record with
+`keel ship .keel/project.yaml --root . --live --append-ledger --run-id <id> --issue <N>
+--pull-request <PR> --capture-status <applied|deferred|skipped> --capture-reason <reason>
+--approve-scope <scopes> --operator <operator> --json` after the ship assessment and
+capture status are known. If the configured ledger path is missing, treat it as empty
+history; if a ledger record is malformed, stop capture/reporting and ask for operator
+help instead of silently falling back to comment scraping.
 
 **GitHub transport.** Prefer the `gh` CLI when present (richer JSON, `--watch`); detect
 once at session start (`command -v gh`) and, when absent, fall back to an equivalent
@@ -316,6 +327,11 @@ closed skip vocabulary (`dry-run` / `deferred` / `merge-failed` / a recursion gu
 capability-unavailable) — keyed by PR number; a session-end verifier greps these and flips
 the session to blocked if any merged PR is missing its marker. The closure comment's capture
 field is mandatory and never empty (empty = silent-skip bug).
+
+Also append the structured `ship_run` record to `contract.run_ledger.path` via
+`keel ship --live --append-ledger` or the equivalent core ledger writer. The ledger append
+is the machine-readable source for `/keel:morning`, `/keel:wrap`, overnight summaries, and
+capture verification; the closure comments are human/audit mirrors, not the parser source.
 
 ### s12 close
 Close the issue (idempotent if the squash auto-closed it via `Closes #<N>`), link the PR,

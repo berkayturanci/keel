@@ -43,11 +43,17 @@ Read the cross-session deferral store — items deferred by `/keel:ship` /
 unresolved blocker. Surface any entries at the **top** of the brief under a
 "Overnight deferrals" section, then clear the store after surfacing.
 
+Read the structured run ledger from `contract.run_ledger.path` with
+`keel ledger .keel/project.yaml --root . --json`. Missing ledger files mean an empty
+history. Malformed records are a report blocker; do not recover by scraping free-form
+comments.
+
 ## Step 2 — Shipped since last brief
 
 Query through the selected GitHub transport for issues closed and PRs merged since
 `--since` (default: the last brief's timestamp, else the prior 24h). Section: "Shipped".
-Include the effective agent + tier captured by `/keel:ship` (s11) where available.
+Include the effective agent, tier, gate summary, merge decision, and capture status from
+the structured ledger where available; use GitHub only to fill timeline gaps.
 
 ## Step 3 — Project health/telemetry signals (project-specific)
 

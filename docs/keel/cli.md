@@ -69,7 +69,8 @@ keel plan .claude/project.yaml --command ship --issue-title "Add setup docs" --i
 With `--json`, the output includes a structured command contract under `contract`: resolved
 project config, command step graph, backbone plan, gates, extension hooks, capability
 requirements/evaluation, selected GitHub transport, declared side effects, and operator
-consent requirements. See [`command-contracts.md`](command-contracts.md).
+consent requirements. It also includes the `run_ledger` storage contract so adapters know
+where structured run history lives. See [`command-contracts.md`](command-contracts.md).
 
 By default, `plan` renders a dry-run contract. `--live` renders the live preflight contract
 for an adapter or orchestrator. If the command has live mutation scopes and the current run
@@ -88,13 +89,43 @@ as `ready`, `needs-input`, `blocked`, or `out-of-scope`, extracts acceptance cri
 docs/test expectations, and emits concrete clarification questions. Live work must stop
 before mutation when an explicitly supplied issue is not `ready`.
 
+## `keel ledger <project.yaml> [--root DIR] [--limit N] [--json]`
+
+Read the structured run ledger offline. The default path is
+`.keel/state/run-ledger.jsonl`; projects can override it with
+`policy_pack.reports.run_ledger`.
+
+```bash
+keel ledger .keel/project.yaml --root . --json
+keel ledger .keel/project.yaml --root . --limit 10
+```
+
+Missing ledgers are not errors: JSON output returns `status: "missing"` and
+`records: []`. Invalid JSONL or unsupported record schemas are errors because adapters
+must not build morning/wrap/capture reports from corrupted history.
+
+`ship` and `ship-v2` can append one `ship_run` record with:
+
+```bash
+keel ship .keel/project.yaml --root . --live --append-ledger \
+  --run-id "$RUN_ID" --issue 123 --pull-request 456 \
+  --capture-status applied \
+  --approve-scope filesystem,git,github --operator "$USER" --json
+```
+
+`--pull-request` records a PR number without asking keel to query CI. `--pr` still means
+"look up this PR's CI status" and therefore requires a GitHub transport that supports
+check runs. Dry-run output includes the same would-be record but never writes the file.
+
 ## `keel morning <project.yaml> [--root DIR] [--since WHEN] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--json]`
 
 Render the standalone daily-brief contract for a project. The core owns the generic
 brief shape: date/window context, deferral queue, shipped-since-last-brief and GitHub
 status sections, project health provider metadata, priority sources, and report
 destinations. Project-specific health commands and focus signals stay in
-`policy_pack.health_providers`, `policy_pack.reports`, and extensions.
+`policy_pack.health_providers`, `policy_pack.reports`, and extensions. Morning also
+receives the structured run-ledger contract and can use `keel ledger` to read recent ship
+outcomes without parsing closure comments.
 
 ```bash
 keel morning .keel/project.yaml
@@ -113,7 +144,8 @@ Render the standalone session-wrap contract. The core owns the generic session c
 shape: linked-worktree and base-branch guards, configured gate source, Conventional Commit
 and `Closes #N` conventions, ready PR creation requirements, session recap destination,
 and the shared deferral queue. Project-specific changed-file gates and recap destinations
-stay in policy packs and extensions.
+stay in policy packs and extensions. Wrap also receives the run-ledger contract so session
+recaps can include structured ship outcomes offline.
 
 ```bash
 keel wrap .keel/project.yaml --json

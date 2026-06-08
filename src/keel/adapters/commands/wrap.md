@@ -90,4 +90,7 @@ If any gate FAILS — STOP. Report the failure. Do not commit broken code.
 
 Append a session recap to the project's session log: what was accomplished,
 what's still open, and what to pick up next session. Hand deferred items to the
-cross-session morning queue for `/keel:morning`.
+cross-session morning queue for `/keel:morning`. Read `contract.run_ledger.path` with
+`keel ledger .keel/project.yaml --root . --json` and include structured ship outcomes in
+the recap when present. Missing ledger files are an empty history; malformed records block
+the recap until the operator resolves the corrupted ledger.

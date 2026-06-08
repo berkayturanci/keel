@@ -13,7 +13,17 @@ from pathlib import Path
 from typing import Any
 
 from . import config as cfg
-from . import consent, gates, github_transport, install, intake, model, orchestrator, runtime
+from . import (
+    consent,
+    gates,
+    github_transport,
+    install,
+    intake,
+    ledger,
+    model,
+    orchestrator,
+    runtime,
+)
 from . import ship as ship_decisions
 from .extensions import Extension
 from .project_commands import get_project_command, list_project_commands
@@ -205,6 +215,7 @@ def build_command_contract(
         "optional_capabilities": list(requirement.optional),
         "capabilities": evaluation.as_dict(),
         "github_transport": transport.as_dict(),
+        "run_ledger": ledger.ledger_contract_as_dict(config),
         "side_effects": {
             "declared": list(declared_side_effects),
             "mutates_in_dry_run": False,
@@ -712,12 +723,14 @@ def ship_result_as_dict(
     verdict,
     assessment,
     issue_intake: dict[str, Any] | None = None,
+    run_ledger: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Normalized deterministic result record for ``keel ship --json``."""
     return {
         "changed_files": list(changed_files),
         "changed_file_count": len(changed_files),
         "issue_intake": issue_intake,
+        "run_ledger": run_ledger,
         "gate_outcomes": [
             {
                 "gate": outcome.gate,
@@ -1033,6 +1046,7 @@ def session_contract_as_dict(
         "github_transport": github,
         "reports": _report_destinations(reports),
         "deferral_queue": _deferral_queue_as_dict(reports),
+        "run_ledger": ledger.ledger_contract_as_dict(config),
         "project_policy_sources": {
             "gates": list(config.gates),
             "extensions": {slot: list(files) for slot, files in sorted(config.extensions.items())},
@@ -1168,6 +1182,7 @@ def morning_contract_as_dict(
         "priority_sources": _priority_sources(config, reports),
         "reports": _report_destinations(reports),
         "deferral_queue": _deferral_queue_as_dict(reports),
+        "run_ledger": ledger.ledger_contract_as_dict(config),
         "missing_optional_policy": "unavailable-not-success",
     }
 

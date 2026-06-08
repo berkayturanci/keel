@@ -25,6 +25,7 @@ from . import (
     github_transport,
     install,
     jury,
+    ledger,
     project_commands,
     runtime,
     scaffold,
@@ -346,6 +347,33 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         jury_advisory=args.jury_advisory,
     )
     contract["review_merge_contract"] = a.review_contract
+    ledger_record = ledger.build_ship_run_record(
+        command=command,
+        base_branch=config.base_branch,
+        changed_files=changed,
+        outcomes=outcomes,
+        verdict=verdict,
+        assessment=a,
+        issue_intake=contract.get("issue_intake"),
+        target=args.target or (f"PR #{args.pr}" if args.pr is not None else None),
+        run_id=args.run_id,
+        issue_number=args.issue,
+        pr_number=args.ledger_pr or args.pr,
+        branch=args.branch,
+        head_sha=args.head_sha,
+        capture_status=args.capture_status,
+        capture_reason=args.capture_reason,
+    )
+    ledger_path = ledger.resolve_path(args.root, config)
+    ledger_result = {
+        "contract": contract["run_ledger"],
+        "path": str(ledger_path),
+        "appended": False,
+        "record": ledger_record,
+    }
+    if args.append_ledger and args.live:
+        ledger.append_record(ledger_path, ledger_record)
+        ledger_result["appended"] = True
 
     if args.json:
         print(json.dumps({
@@ -356,6 +384,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
                 verdict=verdict,
                 assessment=a,
                 issue_intake=contract.get("issue_intake"),
+                run_ledger=ledger_result,
             ),
         }, indent=2, sort_keys=True))
         return 0 if a.merge.action != "block" else 1
@@ -375,6 +404,9 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     print(f"  github        : {transport.name}")
     print(f"  consent       : {contract['operator_consent']['status']}")
     print(f"  intake        : {intake_record['status']}")
+    print(f"  run ledger    : {ledger_result['path']}")
+    if args.append_ledger:
+        print(f"  ledger append : {'yes' if ledger_result['appended'] else 'dry-run/no-live'}")
     if intake_record["questions"]:
         print(f"  questions     : {len(intake_record['questions'])}")
     if transport.degraded:
@@ -390,6 +422,42 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     print(f"  decision      : {a.merge.action.upper()} — {a.merge.reason}")
     print("  note: dry assessment; live merge (s10) needs a configured runner (git + gh auth).")
     return 0 if a.merge.action != "block" else 1
+
+
+def _cmd_ledger(args: argparse.Namespace) -> int:
+    try:
+        config = cfg.load_config(args.path)
+    except FileNotFoundError:
+        print(f"no such config: {args.path}", file=sys.stderr)
+        return 1
+    except cfg.ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    contract = ledger.ledger_contract_as_dict(config)
+    path = ledger.resolve_path(args.root, config)
+    try:
+        records = ledger.read_records(path)
+    except ledger.LedgerError as exc:
+        print(f"invalid ledger {path}: {exc}", file=sys.stderr)
+        return 1
+    if args.limit is not None:
+        records = records[-args.limit:]
+    payload = {
+        "contract": contract,
+        "path": str(path),
+        "status": "present" if path.exists() else "missing",
+        "records": records,
+        "record_count": len(records),
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"keel ledger — {payload['status']}  {path}")
+        print(f"  schema        : {contract['schema_version']}")
+        print(f"  records       : {payload['record_count']}")
+        print(f"  missing       : {contract['missing_handling']}")
+    return 0
 
 
 def _cmd_standalone(args: argparse.Namespace) -> int:
@@ -1090,6 +1158,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_window.add_argument("path", help="path to project.yaml")
     p_window.set_defaults(func=_cmd_window)
 
+    p_ledger = sub.add_parser("ledger", help="read the structured run ledger offline")
+    p_ledger.add_argument("path", help="path to project.yaml")
+    p_ledger.add_argument("--root", default=".", help="repo root for resolving the ledger path")
+    p_ledger.add_argument("--limit", type=_positive_int, default=None,
+                          help="return only the newest N records")
+    p_ledger.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_ledger.set_defaults(func=_cmd_ledger)
+
     _add_ship_parser(
         sub.add_parser("ship", help="dry ship assessment (tier, window, gates, decision)"),
         command="ship",
@@ -1388,6 +1464,23 @@ def _add_ship_parser(parser: argparse.ArgumentParser, *, command: str) -> None:
                         help="operator consent mode: explicit, standing, or agent")
     parser.add_argument("--target", default=None,
                         help="task target to include in the consent prompt and record")
+    parser.add_argument("--append-ledger", action="store_true",
+                        help="append the structured ship run record when --live succeeds")
+    parser.add_argument("--run-id", default=None,
+                        help="operator/session run id to store in the run ledger record")
+    parser.add_argument("--issue", type=_positive_int, default=None,
+                        help="issue number to store in the run ledger record")
+    parser.add_argument("--pull-request", dest="ledger_pr", type=_positive_int, default=None,
+                        help="PR number to store in the run ledger record without CI lookup")
+    parser.add_argument("--branch", default=None,
+                        help="branch name to store in the run ledger record")
+    parser.add_argument("--head-sha", default=None,
+                        help="head commit SHA to store in the run ledger record")
+    parser.add_argument("--capture-status", choices=("applied", "deferred", "skipped"),
+                        default=None,
+                        help="capture outcome to store in the run ledger record")
+    parser.add_argument("--capture-reason", default=None,
+                        help="capture outcome reason to store in the run ledger record")
     parser.add_argument("--issue-title", default=None,
                         help="issue title to include in the intake/readiness contract")
     parser.add_argument("--issue-body", default=None,
