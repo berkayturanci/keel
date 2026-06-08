@@ -345,7 +345,7 @@ Use `ship` for the standard delivery path and `ship-v2` when the operator wants 
 compound-engineering flavor while retaining the same CI, review, merge-window, merge-lock,
 closeout, and capture safety gates.
 
-## `keel implement <project.yaml> <issue> [--root DIR] [--delegate AGENT] [--dry-run] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--json]`
+## `keel implement <project.yaml> <issue> [--root DIR] [--delegate AGENT] [--dry-run] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--json]`
 
 Render the standalone implement-step contract for one issue. This is the direct-use form of
 the s4 implement step: it resolves project config, implementer routing, branch/worktree
@@ -354,11 +354,15 @@ planning, consent scopes, and the handoff target without running the full ship l
 ```bash
 keel implement .keel/project.yaml 76 --root . --dry-run --json
 keel implement .keel/project.yaml 76 --root . --live --consent-mode standing --approve-scope filesystem,git,github --operator "$USER" --json
+keel implement .keel/project.yaml 76 --root . --live --issue-title "Add setup docs" --issue-body "$ISSUE_BODY" --issue-label enhancement --approve-scope filesystem,git,github --operator "$USER" --json
 ```
 
 `implement` may create branches, worktrees, commits, pushes, PRs, and comments only in an
 approved live adapter run. Its contract explicitly marks standalone implement as a
 non-merge path and points the next step at `ship` or `pr-loop`.
+When issue context is supplied, `contract.issue_intake` applies the same readiness gate as
+`ship`: non-ready issues stop before branch/worktree creation or delegation, and the
+generated questions or skip reason remain machine-readable.
 
 ## `keel ci-check <project.yaml> [--root DIR] [--pr N] [--json]`
 
