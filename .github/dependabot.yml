@@ -28,3 +28,13 @@ updates:
       python-tooling:
         patterns:
           - "*"
+
+  # Keep local pre-commit hook pins current.
+  - package-ecosystem: "pre-commit"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "build"
+    labels:
+      - "dependencies"

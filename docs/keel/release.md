@@ -111,9 +111,36 @@ One-time PyPI trusted publisher settings:
 - workflow: `publish.yml`
 - environment: leave unset unless the workflow is changed to require one
 
+## Tag Signing Policy
+
+Signed release tags are preferred, but they are not currently a production publish blocker.
+The required release evidence chain is:
+
+- PyPI trusted publishing through OIDC
+- GitHub build-provenance attestation
+- GitHub Release assets for the wheel, source distribution, SBOM, and `SHA256SUMS`
+- post-publish smoke testing of the package installed from PyPI
+
+Use a signed tag when GPG is available:
+
+```bash
+git tag -s v<version> -m "v<version>"
+```
+
+If the release environment cannot sign tags, use an annotated tag and record the fallback in
+the release notes or release issue:
+
+```bash
+git tag -a v<version> -m "v<version>"
+```
+
+Do not use a lightweight tag for production releases. If the project later decides to make
+signed tags mandatory, add workflow enforcement before changing this policy.
+
 Publish by pushing a version tag:
 
 ```bash
+# Prefer `git tag -s`; use `git tag -a` only when signing is unavailable.
 git tag -s v<version> -m "v<version>"
 git push origin v<version>
 ```

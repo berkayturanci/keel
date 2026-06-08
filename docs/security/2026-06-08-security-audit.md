@@ -18,10 +18,11 @@ The deterministic core has a small dependency surface, uses `yaml.safe_load`, ke
 and git subprocess calls on argv-based wrappers, documents the command-gate trust boundary,
 and publishes releases through OIDC trusted publishing with provenance attestations.
 
-Two follow-up hardening items remain:
+The audit opened two concrete hardening items and one release-policy decision:
 
 1. GitHub vulnerability alerts are currently disabled for the repository.
 2. `.pre-commit-config.yaml` is not covered by Dependabot update automation.
+3. Future release tag signing expectations should be documented.
 
 One accepted risk remains documented rather than treated as a vulnerability: command gates
 execute project-configured shell commands. This is keel's intended model and is already
@@ -86,6 +87,9 @@ the repository security settings.
 **Tracking:** [#123](https://github.com/berkayturanci/keel/issues/123) because this is a
 repository setting gap, not a private vulnerability disclosure.
 
+**Status:** Resolved on 2026-06-08 by enabling Dependabot vulnerability alerts and automated
+security fixes through the GitHub repository API.
+
 ### Low — Pre-commit hook updates are not automated
 
 **Evidence:** `.github/dependabot.yml` covers `github-actions` and `pip`, but not the
@@ -99,6 +103,8 @@ is still open-source supply-chain maintenance.
 
 **Tracking:** [#124](https://github.com/berkayturanci/keel/issues/124).
 
+**Status:** Addressed by adding Dependabot `pre-commit` ecosystem coverage.
+
 ### Informational — `v0.6.1` release tag is annotated, not signed
 
 **Evidence:** The local release attempt could not create a signed tag because `gpg` was not
@@ -111,6 +117,10 @@ publishing evidence, but the git tag itself does not add a maintainer signature 
 production releases should require a signed tag before publish.
 
 **Tracking:** [#125](https://github.com/berkayturanci/keel/issues/125).
+
+**Status:** Addressed by documenting the release tag signing policy in
+`docs/keel/release.md`: signed tags are preferred, annotated tags are accepted when signing is
+unavailable, and lightweight production release tags are not allowed.
 
 ## Accepted Risk
 
@@ -132,7 +142,5 @@ No issue was opened for this item because it is core behavior, not an implementa
 
 ## Recommended Next Steps
 
-1. Enable Dependabot vulnerability alerts/security updates in GitHub repository settings.
-2. Add Dependabot coverage for `.pre-commit-config.yaml`.
-3. Decide whether signed release tags should be mandatory for future production releases.
-4. Re-run this audit after the repository settings change and after the next release workflow.
+1. Re-run the GitHub repository security-settings check after future settings changes.
+2. Re-run this audit after the next release workflow.
