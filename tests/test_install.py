@@ -124,11 +124,18 @@ class TestLegacyWrappers(unittest.TestCase):
         matrix = """
 | Legacy command | Keel command | Status |
 |---|---|---|
+| `bad` | `/keel:bad` |
 | `ship` | `/keel:ship` | `parity-proven` |
 | `wrap` | `/keel:wrap` | `in-progress` |
 | `custom` | `/keel:triage` | `deferred` |
 """
         self.assertEqual(install.parity_ready_commands(matrix), {"ship", "triage"})
+
+    def test_default_legacy_mappings_are_one_to_one(self):
+        mappings = install.default_legacy_mappings()
+        self.assertEqual(mappings["ship"], "ship")
+        self.assertEqual(mappings["morning"], "morning")
+        self.assertIn("review-cycle", mappings)
 
     def test_renders_thin_claude_wrapper(self):
         body = install.render_legacy_claude_wrapper("ship", "ship")
@@ -172,6 +179,15 @@ class TestLegacyWrappers(unittest.TestCase):
             self.assertIn("`/keel:ship`", body)
             self.assertEqual(marker["surface"], "legacy-claude")
             self.assertEqual(marker["command"], "ship")
+
+    def test_legacy_wrapper_validation_rejects_bad_inputs(self):
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaisesRegex(KeyError, "codex"):
+                install.install_legacy_wrappers("codex", d, mappings={"ship": "ship"})
+            with self.assertRaisesRegex(ValueError, "non-empty"):
+                install.install_legacy_wrappers("claude", d, mappings={"": "ship"})
+            with self.assertRaisesRegex(ValueError, "unknown keel command"):
+                install.install_legacy_wrappers("claude", d, mappings={"ship": "missing"})
 
     def test_installs_all_legacy_wrapper_surfaces_and_preserves_existing(self):
         with tempfile.TemporaryDirectory() as d:

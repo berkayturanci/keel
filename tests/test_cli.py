@@ -1132,6 +1132,12 @@ class TestInstallLegacyWrappers(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("unknown target", err)
 
+    def test_legacy_mapping_parser_rejects_malformed_values(self):
+        with self.assertRaisesRegex(Exception, "use LEGACY=KEEL"):
+            cli._parse_legacy_mapping("ship")
+        with self.assertRaisesRegex(Exception, "must be non-empty"):
+            cli._parse_legacy_mapping("ship=")
+
     def test_rejects_non_ready_mapping_from_parity_matrix(self):
         import tempfile
         with tempfile.TemporaryDirectory() as d:
