@@ -6,6 +6,15 @@ allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Bash(jury:*), Read, Edit, 
 
 # /keel:ship-v2
 
+## Command step evidence
+
+Every numbered step in this command is contractual. Complete the step, record the
+evidence it asks for, or explicitly mark it `N/A — <reason>` before moving on. If a step
+has an external side effect such as a GitHub comment, issue, review, report, branch, or
+PR, the side effect must be posted or written through the selected transport and cited in
+the final summary. Never silently skip a step because the runtime, agent, or prompt feels
+obvious.
+
 Project-neutral compound-engineering variant of `/keel:ship`. It is a **first-class
 workflow profile**, not a project extension and not a copied second backbone.
 
@@ -37,6 +46,7 @@ All project values still come from `.keel/project.yaml` via the keel CLI: `base_
 - risk classification and reviewer-count policy
 - CI evaluation and project gates
 - review/jury/merge-gate contract from `review_merge_contract`
+- detailed PR body and public review/jury summary posting requirements from `/keel:ship`
 - merge window and merge lock
 - issue/PR closeout and capture marker discipline
 

@@ -6,6 +6,15 @@ allowed-tools: Bash(keel:*), Bash(gh:*), Read, Agent
 
 # /keel:triage
 
+## Command step evidence
+
+Every numbered step in this command is contractual. Complete the step, record the
+evidence it asks for, or explicitly mark it `N/A — <reason>` before moving on. If a step
+has an external side effect such as a GitHub comment, issue, review, report, branch, or
+PR, the side effect must be posted or written through the selected transport and cited in
+the final summary. Never silently skip a step because the runtime, agent, or prompt feels
+obvious.
+
 Project-neutral backlog triage. This adapter contains no repo, role name, path
 glob, or label literal beyond the generic vocabulary below — read every project
 specific from `.keel/project.yaml` via the `keel` CLI (`tier3_globs`,
@@ -264,4 +273,4 @@ writes. Hand ready items to `/keel:ship`.
   priority/status families) must exist in the repo. If any label is missing, fix
   the repo labels (not this command) before invoking.
 
-<!-- keel-generated: surface=plugin command=triage keel_version=0.8.0 source_sha256=611b9d568393e0c2078eb5c37d4634793a098a907b1c5dfb965c173c7686fd7a generated_sha256=611b9d568393e0c2078eb5c37d4634793a098a907b1c5dfb965c173c7686fd7a -->
+<!-- keel-generated: surface=plugin command=triage keel_version=0.8.0 source_sha256=1d4d48f86d8e01839e4b3ed9198259897070eed16d776cc1bf7acafa2b061305 generated_sha256=1d4d48f86d8e01839e4b3ed9198259897070eed16d776cc1bf7acafa2b061305 -->

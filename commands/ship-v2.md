@@ -6,6 +6,15 @@ allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Bash(jury:*), Read, Edit, 
 
 # /keel:ship-v2
 
+## Command step evidence
+
+Every numbered step in this command is contractual. Complete the step, record the
+evidence it asks for, or explicitly mark it `N/A — <reason>` before moving on. If a step
+has an external side effect such as a GitHub comment, issue, review, report, branch, or
+PR, the side effect must be posted or written through the selected transport and cited in
+the final summary. Never silently skip a step because the runtime, agent, or prompt feels
+obvious.
+
 Project-neutral compound-engineering variant of `/keel:ship`. It is a **first-class
 workflow profile**, not a project extension and not a copied second backbone.
 
@@ -37,6 +46,7 @@ All project values still come from `.keel/project.yaml` via the keel CLI: `base_
 - risk classification and reviewer-count policy
 - CI evaluation and project gates
 - review/jury/merge-gate contract from `review_merge_contract`
+- detailed PR body and public review/jury summary posting requirements from `/keel:ship`
 - merge window and merge lock
 - issue/PR closeout and capture marker discipline
 
@@ -70,4 +80,4 @@ handling, and durable-learning capture, while retaining the same merge and safet
 `workflow_profile`. It must not create branches, edit files, push commits, post comments,
 request reviews, merge, close issues, or write capture artifacts.
 
-<!-- keel-generated: surface=plugin command=ship-v2 keel_version=0.8.0 source_sha256=5c0c9191b0ed7d8cfd82d35aafd281627b3d8cf403fdc060c4c8fad7b75b16c8 generated_sha256=5c0c9191b0ed7d8cfd82d35aafd281627b3d8cf403fdc060c4c8fad7b75b16c8 -->
+<!-- keel-generated: surface=plugin command=ship-v2 keel_version=0.8.0 source_sha256=ceea25185e3e9d59da323a776518bd836cd565220c0f6d38ea414e77179cab25 generated_sha256=ceea25185e3e9d59da323a776518bd836cd565220c0f6d38ea414e77179cab25 -->

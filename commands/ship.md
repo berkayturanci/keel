@@ -6,6 +6,15 @@ allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Bash(jury:*), Read, Edit, 
 
 # /keel:ship
 
+## Command step evidence
+
+Every numbered step in this command is contractual. Complete the step, record the
+evidence it asks for, or explicitly mark it `N/A — <reason>` before moving on. If a step
+has an external side effect such as a GitHub comment, issue, review, report, branch, or
+PR, the side effect must be posted or written through the selected transport and cited in
+the final summary. Never silently skip a step because the runtime, agent, or prompt feels
+obvious.
+
 Project-neutral flagship workflow. **Every project value comes from `.keel/project.yaml`
 via the `keel` CLI** — never hardcode a branch, command, glob, agent, timezone, window,
 allowlist, or workflow name here. Reference knobs by name: `base_branch`, `build_gate_cmd`,
@@ -185,8 +194,11 @@ Every implementer (delegated or not) receives the same brief plus:
 - The approved `operator_consent.delegated_agent_scope`. If the implementer attempts work
   outside `approved_mutation_scopes`, the orchestrator blocks or escalates instead of
   silently continuing. Secret access requires the explicit `secrets` scope for this run.
-- Worktree isolation + branch-off-`base_branch` + `Closes #<N>` in the PR body + open as
-  **draft**.
+- Worktree isolation + branch-off-`base_branch` + a detailed PR body + open as **draft**.
+  The PR body MUST NOT be only a closing reference. It must include at least:
+  `Context`, `Changes Made`, `Testing`, `Docs Impact`, and a final `Closes #<N>` reference.
+  If any section is not applicable, write `N/A — <reason>` inside that section instead of
+  omitting it.
 - A pre-push scope self-check: `git diff base_branch...HEAD --name-only`, revert anything
   outside the issue's scope.
 - The vendor's `Co-Authored-By:` trailer on every commit.
@@ -265,7 +277,10 @@ only for narrow tier-1 PRs). Run any `reviewers` Lego extensions. Capture per-re
 can zip them by index). On a missing/erroring delegate vendor, fall back to the host
 reviewer and log it (record the effective vendor that ran).
 
-**Post findings per `--review-comments` (inline default):**
+**Post findings per `--review-comments` (inline default):** review findings are public PR
+evidence. The orchestrator MUST post each reviewer's final verdict to the GitHub PR through
+the selected transport; local/chat-only review output does not satisfy the step.
+
 - `inline` → fetch the diff once; anchor each `critical`/`major` finding as an **inline
   review comment** on its `file:line` (resolve `RIGHT`/`LEFT` side; `line` is the new-file
   number on `RIGHT`, old-file on `LEFT`; non-anchorable or whole-PR findings go to the
@@ -291,9 +306,11 @@ gated suggestion, `nit` ⇒ advisory; a jury-driven fix consumes one round). A s
 panel is downgraded to advisory (count distinct participating vendors before assembling the
 verdict so the posted comment matches what is enforced), and any jury run that did not
 complete cleanly **never gates**. Honour `--review-comments` (pass the jury's native inline
-flag through in inline mode, never under `--dry-run`). The orchestrator posts the single
-jury summary/verdict comment via a body-file (never interpolate report text into a shell
-argument). Re-runs use the jury's incremental/cache flags to stay cheap.
+flag through in inline mode, never under `--dry-run`). The orchestrator MUST POST the
+single jury summary/verdict comment to the GitHub PR via a body-file (for example,
+`gh pr comment <PR_ID> --body-file <file>` when `gh` is the selected transport). Never
+interpolate report text into a shell argument. Re-runs use the jury's incremental/cache
+flags to stay cheap.
 
 ### s9 fixloop
 While there are blocking findings and the budget (**≤3 review-fix rounds**) is not spent:
@@ -395,4 +412,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=plugin command=ship keel_version=0.8.0 source_sha256=d8586477c86246505b517fab0c123a4576b7730ff1f9b56473aa7c8f414ccc55 generated_sha256=d8586477c86246505b517fab0c123a4576b7730ff1f9b56473aa7c8f414ccc55 -->
+<!-- keel-generated: surface=plugin command=ship keel_version=0.8.0 source_sha256=a9473a40ed47914802b2008a639cabfa293f3e72804aff576958bc960fe50707 generated_sha256=a9473a40ed47914802b2008a639cabfa293f3e72804aff576958bc960fe50707 -->

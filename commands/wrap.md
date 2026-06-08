@@ -6,6 +6,15 @@ allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Read, Edit, Write, mcp__gi
 
 # /keel:wrap
 
+## Command step evidence
+
+Every numbered step in this command is contractual. Complete the step, record the
+evidence it asks for, or explicitly mark it `N/A — <reason>` before moving on. If a step
+has an external side effect such as a GitHub comment, issue, review, report, branch, or
+PR, the side effect must be posted or written through the selected transport and cited in
+the final summary. Never silently skip a step because the runtime, agent, or prompt feels
+obvious.
+
 Wrap up the current work session. This adapter is project-neutral: it contains no
 branch name, build/lint command, or path literal. Read every project specific
 from `.keel/project.yaml` via the `keel` CLI (`base_branch`, `build_gate_cmd`,
@@ -95,4 +104,4 @@ cross-session morning queue for `/keel:morning`. Read `contract.run_ledger.path`
 the recap when present. Missing ledger files are an empty history; malformed records block
 the recap until the operator resolves the corrupted ledger.
 
-<!-- keel-generated: surface=plugin command=wrap keel_version=0.8.0 source_sha256=8480acce61097aff985516cb48d6168a8cac3cf75fdc56d7abf8db7c36ad4368 generated_sha256=8480acce61097aff985516cb48d6168a8cac3cf75fdc56d7abf8db7c36ad4368 -->
+<!-- keel-generated: surface=plugin command=wrap keel_version=0.8.0 source_sha256=4241f2caf9598a9d1642731a28325bb6c7e456fd20ac1877100d55e507152c8b generated_sha256=4241f2caf9598a9d1642731a28325bb6c7e456fd20ac1877100d55e507152c8b -->

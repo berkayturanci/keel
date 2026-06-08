@@ -6,6 +6,15 @@ allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Read, Edit
 
 # /keel:flake-audit
 
+## Command step evidence
+
+Every numbered step in this command is contractual. Complete the step, record the
+evidence it asks for, or explicitly mark it `N/A — <reason>` before moving on. If a step
+has an external side effect such as a GitHub comment, issue, review, report, branch, or
+PR, the side effect must be posted or written through the selected transport and cited in
+the final summary. Never silently skip a step because the runtime, agent, or prompt feels
+obvious.
+
 Project-neutral flaky-test audit. Every project value — the CI workflows, the base branch, the
 test gate, the repo — is read from `.keel/project.yaml` via the `keel` CLI. The test command is
 **the project's** (`keel run-gates .keel/project.yaml --root .`); this adapter never names a
@@ -156,4 +165,4 @@ the operator to spelunk the tracker after the fact.
   skipped.
 - Fail-soft · deterministic for identical inputs.
 
-<!-- keel-generated: surface=plugin command=flake-audit keel_version=0.8.0 source_sha256=03d1f8af352cc367bf52313737d12e95561366a1794fb971bbeb8f1131e04de2 generated_sha256=03d1f8af352cc367bf52313737d12e95561366a1794fb971bbeb8f1131e04de2 -->
+<!-- keel-generated: surface=plugin command=flake-audit keel_version=0.8.0 source_sha256=17b5e120e6978bb027e088280a2f318252b676f77cc8498b3417b5cc06607c68 generated_sha256=17b5e120e6978bb027e088280a2f318252b676f77cc8498b3417b5cc06607c68 -->

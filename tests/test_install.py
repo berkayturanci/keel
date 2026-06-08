@@ -297,6 +297,39 @@ class TestInstallAll(unittest.TestCase):
                     self.assertIn("`.keel/project.yaml`", skill_body)
                     self.assertGreater(len(skill_body.strip()), len(source_body.strip()))
 
+    def test_packaged_adapters_include_step_evidence_contract(self):
+        required = [
+            "## Command step evidence",
+            "Every numbered step in this command is contractual.",
+            "N/A — <reason>",
+            "Never silently skip a step",
+        ]
+        for adapter in install.adapter_names():
+            with self.subTest(adapter=adapter):
+                body = (install.ADAPTERS / adapter).read_text(encoding="utf-8")
+                for phrase in required:
+                    self.assertIn(phrase, body)
+
+    def test_ship_generated_surfaces_require_public_pr_evidence(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            install.install_all(root)
+            surfaces = {
+                "claude": root / install.CLAUDE_DIR / "ship.md",
+                "skill": root / install.SKILLS_DIR / "keel-ship" / "SKILL.md",
+            }
+            for surface, path in surfaces.items():
+                with self.subTest(surface=surface):
+                    text = path.read_text(encoding="utf-8")
+                    self.assertIn("The PR body MUST NOT be only a closing reference.", text)
+                    self.assertIn("Context", text)
+                    self.assertIn("Changes Made", text)
+                    self.assertIn("Testing", text)
+                    self.assertIn("Docs Impact", text)
+                    self.assertIn("MUST POST", text)
+                    self.assertIn("single jury summary/verdict comment", text)
+                    self.assertIn("GitHub PR via a body-file", text)
+
     def test_generated_surfaces_are_idempotent_and_force_overwrites(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
@@ -460,6 +493,13 @@ class TestClaudeCodePlugin(unittest.TestCase):
                 self.assertEqual(marker["surface"], "plugin")
                 self.assertEqual(marker["command"], command)
                 self.assertEqual(marker["source_sha256"], install._sha256(source_text))
+
+    def test_plugin_ship_requires_public_pr_evidence(self):
+        body, _marker = install._split_marker(install.plugin_files()["commands/ship.md"])
+        self.assertIn("The PR body MUST NOT be only a closing reference.", body)
+        self.assertIn("MUST POST", body)
+        self.assertIn("single jury summary/verdict comment", body)
+        self.assertIn("GitHub PR via a body-file", body)
 
     def test_committed_plugin_files_match_generator(self):
         """Drift guard: the committed commands/*.md must equal the generator output."""

@@ -6,6 +6,15 @@ allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Bash(jury:*), Read, Edit, 
 
 # /keel:overnight
 
+## Command step evidence
+
+Every numbered step in this command is contractual. Complete the step, record the
+evidence it asks for, or explicitly mark it `N/A — <reason>` before moving on. If a step
+has an external side effect such as a GitHub comment, issue, review, report, branch, or
+PR, the side effect must be posted or written through the selected transport and cited in
+the final summary. Never silently skip a step because the runtime, agent, or prompt feels
+obvious.
+
 Run `/keel:ship` unattended over the backlog until the **merge window** closes,
 the time budget runs out, or `--max` issues are shipped. This adapter is
 project-neutral: it contains no timezone, branch, command, or path literal. Read
@@ -176,4 +185,4 @@ When stopped, write the session report immediately, even if partial.
 Never merge outside the window · merge lock · fail-soft per issue (one failure
 never aborts the loop) · attribute the effective agents (vendor + base model).
 
-<!-- keel-generated: surface=plugin command=overnight keel_version=0.8.0 source_sha256=f9fae7ec49031288482845ba251e9e5a92b207b4d203606e21b4495e28a91404 generated_sha256=f9fae7ec49031288482845ba251e9e5a92b207b4d203606e21b4495e28a91404 -->
+<!-- keel-generated: surface=plugin command=overnight keel_version=0.8.0 source_sha256=ae1c729a954f1881963e222406d6d7e55c8f217cb40e241282216585b2cb9d64 generated_sha256=ae1c729a954f1881963e222406d6d7e55c8f217cb40e241282216585b2cb9d64 -->

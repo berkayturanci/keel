@@ -6,6 +6,15 @@ allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Read, Write
 
 # /keel:morning
 
+## Command step evidence
+
+Every numbered step in this command is contractual. Complete the step, record the
+evidence it asks for, or explicitly mark it `N/A — <reason>` before moving on. If a step
+has an external side effect such as a GitHub comment, issue, review, report, branch, or
+PR, the side effect must be posted or written through the selected transport and cited in
+the final summary. Never silently skip a step because the runtime, agent, or prompt feels
+obvious.
+
 Project-neutral daily brief. This adapter contains no project, repo, dashboard,
 timezone, or data-source literal — read every project specific from
 `.keel/project.yaml` via the `keel` CLI (`timezone`, `merge_window`, repo). Emit
@@ -105,4 +114,4 @@ On the **first run** (no prior brief at the reports path), offer to schedule the
 brief on a recurring cadence at the configured `timezone` — the exact scheduler
 mechanism is project-specific.
 
-<!-- keel-generated: surface=plugin command=morning keel_version=0.8.0 source_sha256=d3dbed767f70ad7790639703a6f545dafa4827749fe4140c67f497d20558eca8 generated_sha256=d3dbed767f70ad7790639703a6f545dafa4827749fe4140c67f497d20558eca8 -->
+<!-- keel-generated: surface=plugin command=morning keel_version=0.8.0 source_sha256=25d8c88d4c247e23409b7542582b1e5438be2d73db0019a3d82a5510d8c12cb8 generated_sha256=25d8c88d4c247e23409b7542582b1e5438be2d73db0019a3d82a5510d8c12cb8 -->

@@ -23,6 +23,12 @@ Future team-level autonomy builds on this base, but the v1 command surface remai
 on one agent or delegated agent path owning each issue with review, gates, safe merge, and
 closure. See [`vision.md`](vision.md) for the public v1/v2 boundary.
 
+Every command step is an evidence-bearing contract. A generated adapter must complete the
+step, record the requested evidence, or explicitly mark the step `N/A — <reason>` before
+continuing. Public side effects such as PR bodies, review summaries, jury verdicts, issues,
+comments, reports, branches, and release artifacts must be posted or written through the
+selected transport; local/chat-only notes do not satisfy those steps.
+
 ## Flagship
 
 | command | what it does |

@@ -325,6 +325,12 @@ changing the packaged command bodies.
 
 Adapters must:
 
+- treat every command step as contractual: complete it, record the requested evidence, or
+  mark it `N/A — <reason>` before moving on
+- post or write required external side effects through the selected transport, including PR
+  bodies, review summaries, jury verdicts, issues, comments, reports, branches, and release
+  artifacts
+- reject local/chat-only evidence for steps that require public GitHub or file-system output
 - read the contract before mutating files or GitHub state
 - stop when required capabilities are missing
 - report optional capability degradation explicitly
@@ -338,3 +344,17 @@ Adapters must:
 
 Projects can still declare project-specific policy in config and extensions, but the
 contract shape itself stays consumer-neutral.
+
+## Command Step Evidence
+
+Generated command surfaces include a command-step evidence rule so autonomous agents cannot
+silently skip lifecycle steps. The rule is intentionally generic: a step is done only when the
+agent completed the work, recorded the evidence requested by the command, or explicitly marked
+the step not applicable with a reason. Mutating commands must make required side effects
+observable through GitHub, git, or the configured report path before moving forward.
+
+For `ship` and `ship-v2`, this means a PR body is not valid when it contains only a closing
+reference. It must include Context, Changes Made, Testing, Docs Impact, and the closing issue
+reference. If review or jury ran, the orchestrator must post the final reviewer verdicts and
+the single jury summary/verdict to the GitHub PR. A local transcript or chat-only note is not
+merge evidence.
