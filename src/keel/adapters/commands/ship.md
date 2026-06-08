@@ -40,6 +40,23 @@ evaluates `merge_window` in the project `timezone` and reports `merge_window_mod
 (`pause` = halt outside the window; `freeze` = defer to the morning queue). Hold the
 **merge lock** for the merge step (s10) only.
 
+After s1 selects an issue, rerun the live preflight with the selected issue title/body/labels:
+
+```bash
+keel plan .keel/project.yaml --root . --command ship --live --json \
+  --target "issue #<N>" \
+  --issue-title "$ISSUE_TITLE" \
+  --issue-body "$ISSUE_BODY" \
+  --issue-label "$ISSUE_LABELS"
+```
+
+Parse `contract.issue_intake` before s2. If `status` is `needs-input`, post or ask the
+generated `questions` and STOP that issue before branch/worktree/code mutation. If `status`
+is `blocked` or `out-of-scope`, record the `ledger_record`, skip mutation, and move to the
+next selected issue when watch/work-block policy allows. Only `ready` may proceed to s2.
+This is the same readiness discipline expected from a human teammate: clarify the ticket
+before starting work and keep the clarification trail in the run ledger.
+
 **GitHub transport.** Prefer the `gh` CLI when present (richer JSON, `--watch`); detect
 once at session start (`command -v gh`) and, when absent, fall back to an equivalent
 GitHub MCP/API transport for the same operations (issue read/list/comment/close/label,
@@ -85,6 +102,11 @@ ascending issue number; cap the watch-mode batch and let the next run pick up th
 Validate each issue (skip/warn on closed ones); on a `gh` rate-limit/auth/network error,
 log partial state and stop. Snapshot the queue once — do not re-poll mid-session. If the
 queue is empty, log a one-line summary and exit.
+
+For every selected issue, read title, body, and labels through the selected GitHub transport
+and feed them into the issue intake preflight described in s0. In work-block/watch mode,
+non-ready issues are skipped with their readiness reason and concrete questions recorded,
+then the run continues with the next ready issue if one exists.
 
 ### s2 branch
 Cut a work branch off `base_branch`. A **git worktree per issue** is the isolation

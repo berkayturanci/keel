@@ -102,6 +102,24 @@ class TestPlan(unittest.TestCase):
         self.assertEqual(review["posting"]["mode"], "summary")
         self.assertEqual(review["jury"]["mode"], "advisory")
 
+    def test_plan_json_includes_issue_intake(self):
+        body = (
+            "## Problem\nAgents need issue readiness.\n\n"
+            "## Deliverable\nExpose a structured intake record.\n\n"
+            "## Acceptance criteria\n"
+            "- Dry-run JSON includes readiness.\n"
+        )
+        rc, out, _ = run(
+            ["plan", str(PROJECTS / "example-android.yaml"), "--root", str(REPO_ROOT),
+             "--command", "ship", "--issue-title", "Add intake", "--issue-body", body,
+             "--issue-label", "enhancement,workflow", "--json"]
+        )
+        self.assertEqual(rc, 0)
+        intake = json.loads(out)["contract"]["issue_intake"]
+        self.assertEqual(intake["status"], "ready")
+        self.assertTrue(intake["provided"])
+        self.assertEqual(intake["ledger_record"]["readiness"], "ready")
+
     def test_plan_json_can_expose_other_command_graph(self):
         rc, out, _ = run(
             ["plan", str(PROJECTS / "example-android.yaml"), "--root", str(REPO_ROOT),
@@ -285,10 +303,55 @@ class TestShip(unittest.TestCase):
                          "not-required-dry-run")
         self.assertEqual(data["result"]["changed_file_count"], 0)
         self.assertEqual(data["result"]["assessment"]["merge"]["action"], "merge")
+        self.assertEqual(data["result"]["issue_intake"]["status"], "needs-input")
         review = data["result"]["assessment"]["review_merge_contract"]
         self.assertEqual(review["reviewers"]["count"], 1)
         self.assertEqual(review["posting"]["mode"], "summary")
         self.assertEqual(review["jury"]["mode"], "off")
+
+    def test_ship_live_blocks_non_ready_issue_before_gates(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["ship", _write_config("'false'"), "--root", d,
+                              "--live", "--json", "--issue-title", "Ambiguous work",
+                              "--issue-body", "Maybe improve this later.",
+                              "--approve-scope", "filesystem,git,github",
+                              "--operator", "tester"])
+        self.assertEqual(rc, 1)
+        data = json.loads(out)
+        self.assertIn("contract", data)
+        self.assertNotIn("result", data)
+        intake = data["contract"]["issue_intake"]
+        self.assertEqual(intake["status"], "needs-input")
+        self.assertFalse(intake["can_mutate_code"])
+        self.assertTrue(intake["questions"])
+
+    def test_ship_live_human_blocks_non_ready_issue_before_gates(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, _, err = run(["ship", _write_config("'false'"), "--root", d,
+                              "--live", "--issue-title", "Ambiguous work",
+                              "--issue-body", "Maybe improve this later.",
+                              "--approve-scope", "filesystem,git,github",
+                              "--operator", "tester"])
+        self.assertEqual(rc, 1)
+        self.assertIn("issue intake: needs-input", err)
+        self.assertIn("question:", err)
+
+    def test_ship_human_ready_issue_omits_question_count(self):
+        import tempfile
+        body = (
+            "## Problem\nAgents need issue readiness.\n\n"
+            "## Deliverable\nExpose intake status.\n\n"
+            "## Acceptance criteria\n"
+            "- Human output shows readiness.\n"
+        )
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["ship", _write_config("'true'"), "--root", d,
+                              "--issue-title", "Add intake", "--issue-body", body])
+        self.assertEqual(rc, 0)
+        self.assertIn("intake        : ready", out)
+        self.assertNotIn("questions", out)
 
     def test_ship_v2_json_dry_run_contract(self):
         import tempfile
@@ -369,6 +432,25 @@ class TestShip(unittest.TestCase):
         data = json.loads(out)
         self.assertEqual(data["contract"]["mode"], "live")
         self.assertEqual(data["contract"]["operator_consent"]["status"], "approved")
+        self.assertIn("result", data)
+
+    def test_ship_live_json_allows_ready_issue_after_consent(self):
+        import tempfile
+        body = (
+            "## Problem\nAgents need issue readiness.\n\n"
+            "## Deliverable\nExpose intake status.\n\n"
+            "## Acceptance criteria\n"
+            "- Live preflight continues for ready issues.\n"
+        )
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["ship", _write_config("'true'"), "--root", d,
+                              "--live", "--json", "--issue-title", "Add intake",
+                              "--issue-body", body,
+                              "--approve-scope", "filesystem,git,github",
+                              "--operator", "tester"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["contract"]["issue_intake"]["status"], "ready")
         self.assertIn("result", data)
 
     def test_failing_gate_blocks(self):
@@ -474,6 +556,53 @@ class TestStandaloneCommands(unittest.TestCase):
         data = json.loads(out)
         self.assertEqual(data["contract"]["mode"], "live")
         self.assertEqual(data["contract"]["operator_consent"]["status"], "approved")
+
+    def test_implement_live_json_blocks_non_ready_issue(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["implement", _write_config("'true'"), "76",
+                              "--root", d, "--live", "--json",
+                              "--issue-title", "Ambiguous implement",
+                              "--issue-body", "TBD.",
+                              "--approve-scope", "filesystem,git,github",
+                              "--operator", "tester"])
+        self.assertEqual(rc, 1)
+        data = json.loads(out)
+        self.assertEqual(data["contract"]["issue_intake"]["status"], "needs-input")
+        self.assertIn("result", data)
+
+    def test_implement_live_json_allows_ready_issue(self):
+        import tempfile
+        body = (
+            "## Problem\nImplementers need intake context.\n\n"
+            "## Deliverable\nExpose readiness to implement.\n\n"
+            "## Acceptance criteria\n"
+            "- Ready implement preflight succeeds.\n"
+        )
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["implement", _write_config("'true'"), "76",
+                              "--root", d, "--live", "--json",
+                              "--issue-title", "Implement intake",
+                              "--issue-body", body,
+                              "--approve-scope", "filesystem,git,github",
+                              "--operator", "tester"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["contract"]["issue_intake"]["status"], "ready")
+        self.assertIn("result", data)
+
+    def test_implement_live_human_blocks_non_ready_issue(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, _, err = run(["implement", _write_config("'true'"), "76",
+                              "--root", d, "--live",
+                              "--issue-title", "Ambiguous implement",
+                              "--issue-body", "TBD.",
+                              "--approve-scope", "filesystem,git,github",
+                              "--operator", "tester"])
+        self.assertEqual(rc, 1)
+        self.assertIn("issue intake: needs-input", err)
+        self.assertIn("question:", err)
 
     def test_ci_check_json_contract_is_read_only(self):
         import tempfile

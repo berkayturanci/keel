@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from . import config as cfg
-from . import consent, gates, github_transport, install, model, orchestrator, runtime
+from . import consent, gates, github_transport, install, intake, model, orchestrator, runtime
 from . import ship as ship_decisions
 from .extensions import Extension
 from .project_commands import get_project_command, list_project_commands
@@ -172,6 +172,9 @@ def build_command_contract(
     jury: bool = False,
     no_jury: bool = False,
     jury_advisory: bool = False,
+    issue_title: str | None = None,
+    issue_body: str | None = None,
+    issue_labels: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """Build the stable adapter contract shared by ``plan --json`` and dry-run commands."""
     declared_side_effects = command_side_effects(command, config, requirement, loaded)
@@ -251,6 +254,12 @@ def build_command_contract(
             jury=jury,
             no_jury=no_jury,
             jury_advisory=jury_advisory,
+        )
+    if command in {"ship", "ship-v2", "implement", "overnight"}:
+        contract["issue_intake"] = intake.assess_issue(
+            title=issue_title,
+            body=issue_body,
+            labels=issue_labels,
         )
     if command in {"pr-loop", "review-cycle"}:
         contract["feedback_workflow"] = feedback_workflow_as_dict(config, command)
@@ -702,11 +711,13 @@ def ship_result_as_dict(
     outcomes: list[gates.GateOutcome],
     verdict,
     assessment,
+    issue_intake: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Normalized deterministic result record for ``keel ship --json``."""
     return {
         "changed_files": list(changed_files),
         "changed_file_count": len(changed_files),
+        "issue_intake": issue_intake,
         "gate_outcomes": [
             {
                 "gate": outcome.gate,

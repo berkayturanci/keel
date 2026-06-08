@@ -101,8 +101,45 @@ class TestBuildCommandContract(unittest.TestCase):
         self.assertIn("Testing", contract["review_merge_contract"]["reviewers"]
                       ["required_sections"])
         self.assertEqual(contract["review_merge_contract"]["jury"]["mode"], "off")
+        self.assertIn("issue_intake", contract)
+        self.assertEqual(contract["issue_intake"]["status"], "needs-input")
+        self.assertFalse(contract["issue_intake"]["can_mutate_code"])
         self.assertTrue(contract["operator_consent"]["would_require_operator_consent"])
         self.assertFalse(contract["operator_consent"]["requires_operator_consent"])
+
+    def test_ship_contract_records_ready_issue_intake(self):
+        config = cfg.load_config(PROJECTS / "example-android.yaml")
+        loaded = {}
+        plan = orchestrator.build_plan(config, loaded)
+        report = runtime.CapabilityReport(())
+        requirement = runtime.CapabilityRequirement()
+
+        contract = contracts.build_command_contract(
+            command="ship",
+            config=config,
+            loaded=loaded,
+            plan=plan,
+            requirement=requirement,
+            evaluation=runtime.evaluate(requirement, report),
+            transport=github_transport.resolve(report),
+            issue_title="Add workflow readiness gate",
+            issue_body=(
+                "## Problem\nAgents need to know when work can start.\n\n"
+                "## Deliverable\nAdd a structured readiness gate.\n\n"
+                "## Acceptance criteria\n"
+                "- Dry-run output includes readiness.\n"
+                "- Needs-input issues do not mutate code.\n"
+            ),
+            issue_labels=("enhancement",),
+        )
+
+        intake = contract["issue_intake"]
+        self.assertEqual(intake["status"], "ready")
+        self.assertTrue(intake["provided"])
+        self.assertTrue(intake["can_mutate_code"])
+        self.assertEqual(intake["ledger_record"]["readiness"], "ready")
+        self.assertEqual(intake["work_block_policy"]["non_ready_statuses"],
+                         ["needs-input", "blocked", "out-of-scope"])
 
     def test_contract_resolves_review_flags_for_ship_like_commands(self):
         config = cfg.load_config(PROJECTS / "example-android.yaml")

@@ -48,6 +48,7 @@ Every contract includes:
 | `github_transport` | Selected GitHub transport and degraded GitHub operation capabilities. |
 | `side_effects` | Declared possible live-run side effects and whether dry-run mutates. |
 | `operator_consent` | Operator consent requirement, approved mutation scopes, delegated-agent scope, and consent record metadata. |
+| `issue_intake` | Present for work-owning flows (`ship`, `ship-v2`, `implement`, `overnight`); extracted objective, deliverable, acceptance criteria, readiness, questions, and ledger metadata. |
 | `morning_contract` | Present for `morning`; project-neutral daily-brief sections, health providers, report destinations, priority sources, and deferral queue metadata. |
 | `session_contract` | Present for `wrap` and `overnight`; project-neutral linked-worktree, gate, PR, merge-window, report, deferral, and ship-handoff metadata. |
 | `scan_contract` | Present for `regression` and `review-all-day`; project-neutral scan target, scope, dedupe, issue-write, reviewer-isolation, and final-report metadata. |
@@ -83,12 +84,35 @@ In `agent` mode, keel emits `status: agent-delegated`; adapters must rely on the
 agent permission model for the actual approval prompt while still respecting the emitted
 scope and every non-consent gate.
 
+## Issue intake block
+
+Work-owning commands expose `issue_intake` before branch/worktree creation or implementation.
+Adapters should pass the selected issue title, body, and labels into `keel plan` or
+`keel ship` using `--issue-title`, `--issue-body`, and repeated/comma-separated
+`--issue-label` flags. The core then classifies readiness as one of:
+
+- `ready` — objective, deliverable, and acceptance criteria are present; code mutation may
+  start after the other gates pass.
+- `needs-input` — missing or ambiguous scope; adapters must ask the generated questions
+  and must not mutate code for that issue.
+- `blocked` — a dependency or waiting condition is present; adapters must not mutate code.
+- `out-of-scope` — the issue is marked not planned or outside scope; adapters must not
+  mutate code.
+
+The block records `objective`, `deliverable`, `acceptance_criteria`, `risk_tier_inputs`,
+`required_docs_tests`, `missing_info`, `blockers`, `questions`, and a compact
+`ledger_record`. Work-block commands such as `overnight` should skip non-ready issues and
+continue with the next ready issue when their queue policy allows it. This mirrors a human
+teammate's readiness discipline: clarify the ticket before starting work, and preserve the
+clarification trail in the run ledger.
+
 ## Dry-run result records
 
 `keel ship --dry-run --json` and `keel ship-v2 --dry-run --json` add a `result` object
 with deterministic data:
 
 - changed files and changed-file count
+- issue intake readiness and ledger record
 - gate outcomes and normalized findings
 - aggregate verdict
 - risk tier, reviewer count, window state, CI state, and merge decision

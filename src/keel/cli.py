@@ -138,6 +138,9 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         jury=args.jury,
         no_jury=args.no_jury,
         jury_advisory=args.jury_advisory,
+        issue_title=args.issue_title,
+        issue_body=args.issue_body,
+        issue_labels=_issue_labels(args),
     )
     consent_ok, consent_message = consent.assert_operator_consent(contract["operator_consent"])
     if args.json:
@@ -285,6 +288,9 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         jury=args.jury,
         no_jury=args.no_jury,
         jury_advisory=args.jury_advisory,
+        issue_title=args.issue_title,
+        issue_body=args.issue_body,
+        issue_labels=_issue_labels(args),
     )
     consent_ok, consent_message = consent.assert_operator_consent(contract["operator_consent"])
     if not consent_ok:
@@ -293,6 +299,17 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         else:
             print(consent_message, file=sys.stderr)
         return 1
+    intake_record = contract["issue_intake"]
+    if args.live and _issue_context_provided(args) and intake_record:
+        if not intake_record["can_mutate_code"]:
+            if args.json:
+                print(json.dumps({"contract": contract}, indent=2, sort_keys=True))
+            else:
+                print(f"issue intake: {intake_record['status']} — {intake_record['reason']}",
+                      file=sys.stderr)
+                for question in intake_record["questions"]:
+                    print(f"  question: {question}", file=sys.stderr)
+            return 1
 
     changed = git.changed_files(config.base_branch, "HEAD", cwd=args.root)
     # unreachable: orch.build_plan() above already calls plan_gates and surfaces GateError.
@@ -338,6 +355,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
                 outcomes=outcomes,
                 verdict=verdict,
                 assessment=a,
+                issue_intake=contract.get("issue_intake"),
             ),
         }, indent=2, sort_keys=True))
         return 0 if a.merge.action != "block" else 1
@@ -356,6 +374,9 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     print(f"  ci            : {ci_str}")
     print(f"  github        : {transport.name}")
     print(f"  consent       : {contract['operator_consent']['status']}")
+    print(f"  intake        : {intake_record['status']}")
+    if intake_record["questions"]:
+        print(f"  questions     : {len(intake_record['questions'])}")
     if transport.degraded:
         print(f"  github degraded: {', '.join(transport.degraded)}")
     for o in outcomes:
@@ -434,6 +455,9 @@ def _cmd_standalone(args: argparse.Namespace) -> int:
         target=target,
         reviewer_override=getattr(args, "reviewers", None),
         review_comments=getattr(args, "review_comments", "inline"),
+        issue_title=getattr(args, "issue_title", None),
+        issue_body=getattr(args, "issue_body", None),
+        issue_labels=_issue_labels(args),
     )
     consent_ok, consent_message = consent.assert_operator_consent(contract["operator_consent"])
     result = contracts.standalone_result_as_dict(
@@ -451,6 +475,18 @@ def _cmd_standalone(args: argparse.Namespace) -> int:
         else:
             print(consent_message, file=sys.stderr)
         return 1
+    intake_record = contract.get("issue_intake")
+    if command == "implement" and getattr(args, "live", False) and _issue_context_provided(args):
+        if intake_record and not intake_record["can_mutate_code"]:
+            if args.json:
+                print(json.dumps({"contract": contract, "result": result}, indent=2,
+                                 sort_keys=True))
+            else:
+                print(f"issue intake: {intake_record['status']} — {intake_record['reason']}",
+                      file=sys.stderr)
+                for question in intake_record["questions"]:
+                    print(f"  question: {question}", file=sys.stderr)
+            return 1
     if args.json:
         print(json.dumps({"contract": contract, "result": result}, indent=2, sort_keys=True))
         return 0
@@ -538,6 +574,21 @@ def _standalone_target(args: argparse.Namespace) -> str | None:
         max_items = getattr(args, "max_items", None)
         return f"{target} (max {max_items})" if max_items is not None else target
     return getattr(args, "target", None)
+
+
+def _issue_labels(args: argparse.Namespace) -> tuple[str, ...]:
+    labels: list[str] = []
+    for raw in getattr(args, "issue_label", ()) or ():
+        labels.extend(part.strip() for part in raw.split(",") if part.strip())
+    return tuple(dict.fromkeys(labels))
+
+
+def _issue_context_provided(args: argparse.Namespace) -> bool:
+    return bool(
+        (getattr(args, "issue_title", None) or "").strip()
+        or (getattr(args, "issue_body", None) or "").strip()
+        or _issue_labels(args)
+    )
 
 
 def _approved_consent(
@@ -1011,6 +1062,12 @@ def build_parser() -> argparse.ArgumentParser:
                         help="operator consent mode: explicit, standing, or agent")
     p_plan.add_argument("--target", default=None,
                         help="task target to include in the consent prompt and record")
+    p_plan.add_argument("--issue-title", default=None,
+                        help="issue title to include in the intake/readiness contract")
+    p_plan.add_argument("--issue-body", default=None,
+                        help="issue body markdown to include in the intake/readiness contract")
+    p_plan.add_argument("--issue-label", action="append", default=[],
+                        help="issue label for intake/readiness; repeat or comma-separate")
     p_plan.add_argument("--review-comments", choices=("inline", "summary"), default="inline",
                         help="review posting mode for ship-like command contracts")
     p_plan.add_argument("--reviewers", type=int, choices=(1, 2, 3), default=None,
@@ -1066,6 +1123,12 @@ def build_parser() -> argparse.ArgumentParser:
                              help="operator consent mode: explicit, standing, or agent")
     p_implement.add_argument("--target", default=None,
                              help="additional target text for the consent prompt")
+    p_implement.add_argument("--issue-title", default=None,
+                             help="issue title to include in the intake/readiness contract")
+    p_implement.add_argument("--issue-body", default=None,
+                             help="issue body markdown to include in the intake/readiness contract")
+    p_implement.add_argument("--issue-label", action="append", default=[],
+                             help="issue label for intake/readiness; repeat or comma-separate")
     p_implement.add_argument("--json", action="store_true", help="emit structured JSON")
     p_implement.set_defaults(func=_cmd_standalone, standalone_command="implement")
 
@@ -1325,6 +1388,12 @@ def _add_ship_parser(parser: argparse.ArgumentParser, *, command: str) -> None:
                         help="operator consent mode: explicit, standing, or agent")
     parser.add_argument("--target", default=None,
                         help="task target to include in the consent prompt and record")
+    parser.add_argument("--issue-title", default=None,
+                        help="issue title to include in the intake/readiness contract")
+    parser.add_argument("--issue-body", default=None,
+                        help="issue body markdown to include in the intake/readiness contract")
+    parser.add_argument("--issue-label", action="append", default=[],
+                        help="issue label for intake/readiness; repeat or comma-separate")
     parser.add_argument("--review-comments", choices=("inline", "summary"), default="inline",
                         help="review posting mode for the resolved ship contract")
     parser.add_argument("--reviewers", type=int, choices=(1, 2, 3), default=None,
