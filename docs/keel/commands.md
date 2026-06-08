@@ -16,6 +16,13 @@ flows the host agent runs (per-round review, inline comments, delegation). Every
 `implementer_agents`, `tier3_globs`, `ci_workflows`, `timezone`, `merge_window`, …) from that
 project's `.keel/project.yaml`.
 
+Keel's product model is work ownership, not isolated automation. `/keel:ship` is the
+one-issue "own this until done" flow; daily commands such as `/keel:morning`,
+`/keel:overnight`, and `/keel:wrap` turn that same backbone into a workday rhythm.
+Future team-level autonomy builds on this base, but the v1 command surface remains focused
+on one agent or delegated agent path owning each issue with review, gates, safe merge, and
+closure.
+
 ## Flagship
 
 | command | what it does |

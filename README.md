@@ -13,14 +13,23 @@
 [![Python](https://img.shields.io/pypi/pyversions/keel-workflow)](https://pypi.org/project/keel-workflow/)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-> **keel** is a project-neutral, multi-agent **workflow core**. A *fixed backbone*
-> of steps drives a unit of work — a GitHub issue — from backlog to done
-> (branch → implement → CI → review → test → merge → close). Projects never fork the
+> **Keel turns coding agents into work owners.** It is a project-neutral,
+> multi-agent **workflow backbone** that drives a unit of work — a GitHub issue —
+> from intake to done: understand readiness, branch, implement, wait on CI, review,
+> test, merge safely, close, and capture what was learned. Projects never fork the
 > backbone: they set per-project **values** in `project.yaml` and snap their own
 > **Lego pieces** into named extension slots.
 
 The keel is a ship's backbone — the fixed spine every project builds on. The flagship
 command is `keel:ship`; keel is where ships are built.
+
+Keel is based on the work pattern of a strong teammate in a real engineering team:
+take an issue from the queue, decide whether it is ready, own the implementation,
+get it reviewed, keep the quality gates green, merge inside policy, and leave useful
+memory behind for the next session. v1 focuses on one agent owning work end to end.
+The long-term direction is autonomous software teams: multiple agents creating,
+claiming, reviewing, handing off, and shipping work under a human lead who remains
+the decision owner for product tradeoffs, credentials, approvals, and ambiguous scope.
 
 > Formerly **`ai-infra`** (a one-way file-copy sync of "portable" commands). keel replaces
 > that with a thin-consumer model: the core is installed + pinned, never copied, so the
