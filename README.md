@@ -30,6 +30,7 @@ memory behind for the next session. v1 focuses on one agent owning work end to e
 The long-term direction is autonomous software teams: multiple agents creating,
 claiming, reviewing, handing off, and shipping work under a human lead who remains
 the decision owner for product tradeoffs, credentials, approvals, and ambiguous scope.
+See [`docs/keel/vision.md`](docs/keel/vision.md) for the v1/v2 boundary.
 
 > Formerly **`ai-infra`** (a one-way file-copy sync of "portable" commands). keel replaces
 > that with a thin-consumer model: the core is installed + pinned, never copied, so the
@@ -195,6 +196,7 @@ If a step's gate fails, keel blocks its own merge — the same backbone every co
   `website/coverage/` and serves the site at <http://localhost:8000>. (Publishing to GitHub
   Pages is available via the manual `pages.yml` workflow once Pages is enabled.)
 - [`docs/keel/configuration.md`](docs/keel/configuration.md) — `project.yaml` reference
+- [`docs/keel/vision.md`](docs/keel/vision.md) — agentic work ownership vision and v1/v2 boundary
 - [`docs/keel/onboarding.md`](docs/keel/onboarding.md) — one-command consumer setup and follow-up checks
 - [`docs/keel/extensions.md`](docs/keel/extensions.md) — authoring Lego extensions
 - [`docs/keel/consumer-neutrality.md`](docs/keel/consumer-neutrality.md) — core vs project policy boundary

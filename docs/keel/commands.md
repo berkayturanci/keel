@@ -21,7 +21,7 @@ one-issue "own this until done" flow; daily commands such as `/keel:morning`,
 `/keel:overnight`, and `/keel:wrap` turn that same backbone into a workday rhythm.
 Future team-level autonomy builds on this base, but the v1 command surface remains focused
 on one agent or delegated agent path owning each issue with review, gates, safe merge, and
-closure.
+closure. See [`vision.md`](vision.md) for the public v1/v2 boundary.
 
 ## Flagship
 
