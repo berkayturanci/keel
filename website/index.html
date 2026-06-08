@@ -54,26 +54,30 @@
 <div class="cols">
   <div>
     <h3>① set values</h3>
-    <p class="muted">A small <code>.keel/project.yaml</code>: base branch, build/lint commands, timezone &amp; merge window, file globs.</p>
+    <p class="muted">A small <code>.keel/project.yaml</code>: package core range, base branch, gates, capabilities, workflow policy, health sources, and path globs.</p>
   </div>
   <div>
     <h3>② snap in Lego</h3>
-    <p class="muted">Add-only extensions into named slots (<code>reviewers</code>, <code>tester</code>, <code>pre-merge</code>…). The backbone stays fixed.</p>
+    <p class="muted">Add-only extensions into every backbone step hook plus <code>policy_pack</code> data for labels, local commands, reports, and review rules. The backbone stays fixed.</p>
   </div>
 </div>
 
 <h2>The backbone</h2>
 <table>
-  <tr><th>step</th><th>does</th><th>slot</th></tr>
-  <tr><td>branch → implement</td><td>cut a branch, agent writes the code</td><td><code>after-implement</code></td></tr>
-  <tr><td>classify → ci</td><td>risk tier (→ reviewer count), wait on CI</td><td></td></tr>
-  <tr><td>review</td><td>multi-agent debate → verify → synthesize</td><td><code>reviewers</code></td></tr>
-  <tr><td>test</td><td>build / lint / project gates</td><td><code>tester</code></td></tr>
-  <tr><td>merge → close</td><td>merge-window + lock, then close the issue</td><td><code>pre-merge</code></td></tr>
+  <tr><th>step</th><th>does</th><th>primary hooks</th></tr>
+  <tr><td>config → guard</td><td>validate config, select work, branch, and enforce preflight rules</td><td><code>after:config</code>, <code>select</code>, <code>guard</code></td></tr>
+  <tr><td>implement → ci</td><td>agent writes code, classify risk, wait on CI</td><td><code>before:implement</code>, <code>after-implement</code>, <code>classify</code></td></tr>
+  <tr><td>review → test</td><td>parallel reviewers, optional jury, build/lint/test gates</td><td><code>reviewers</code>, <code>tester</code>, <code>test</code></td></tr>
+  <tr><td>fixloop → merge</td><td>bounded fixes, merge-window + lock, pre-merge project gates</td><td><code>fixloop</code>, <code>pre-merge</code>, <code>after:merge</code></td></tr>
+  <tr><td>capture → close</td><td>write reports, post closeout, retire the issue</td><td><code>capture</code>, <code>post-merge</code>, <code>on-close</code></td></tr>
 </table>
 
 <h2>Install</h2>
-<pre>pip install "git+https://github.com/berkayturanci/keel@v0.3.0"</pre>
+<pre>pip install keel-workflow
+# provides the `keel` command
+
+pip install "git+https://github.com/berkayturanci/keel@v0.6.0"
+# or pin an existing git tag</pre>
 
 <h2>Quickstart</h2>
 <h3>Scaffold a config (with the wizard)</h3>
@@ -101,8 +105,14 @@
   <tr><td><code>keel run-gates &lt;cfg&gt;</code></td><td>run the project's build/lint/command gates</td></tr>
   <tr><td><code>keel window &lt;cfg&gt;</code></td><td>is the merge window open now?</td></tr>
   <tr><td><code>keel ship &lt;cfg&gt;</code></td><td>full dry assessment: tier, window, gates, decision</td></tr>
+  <tr><td><code>keel capabilities &lt;cfg&gt;</code></td><td>check runtime requirements and selected GitHub transport</td></tr>
+  <tr><td><code>keel project-commands &lt;cfg&gt;</code></td><td>list project-owned commands declared in <code>policy_pack</code></td></tr>
   <tr><td><code>keel install-adapter &lt;claude|skills|all&gt;</code></td><td>install the <code>/keel:&lt;command&gt;</code> workflows (below)</td></tr>
 </table>
+
+<h2>Configuration reference</h2>
+<p>A Keel consumer is configured with values, not copied command bodies. Top-level fields choose the core version, repository, base branch, timezone, merge window, built-in gates, extension directory, and add-only extension hooks. <code>knobs</code> declares runnable commands, risk globs, docs paths, CI workflow mapping, local agent roles, and runtime capabilities. <code>policy_pack</code> is durable project-owned data for labels, lifecycle transitions, risk rules, test groups, docs policy, health providers, scan scope, local project commands, workflow policies, report destinations, and review rubric additions.</p>
+<p class="muted">Every field and nested parameter is documented in <a href="https://github.com/berkayturanci/keel/blob/main/docs/keel/configuration.md">docs/keel/configuration.md</a>. Unknown keys are rejected by the bundled schema, so the reference is intentionally strict.</p>
 
 <h2>Workflow commands (<code>/keel:&lt;command&gt;</code>)</h2>
 <p class="muted">16 agentic workflows ship with the package. <code>keel install-adapter claude</code> installs native Claude commands; <code>keel install-adapter skills</code> installs <em>one shared</em> skill set under <code>.agents/skills/keel-&lt;command&gt;/</code> that every non-Claude agent (Codex, Antigravity, Gemini) reads. Each is project-neutral — behaviour comes from that repo's <code>.keel/project.yaml</code>. Full reference: <a href="https://github.com/berkayturanci/keel/blob/main/docs/keel/commands.md">docs/keel/commands.md</a>.</p>

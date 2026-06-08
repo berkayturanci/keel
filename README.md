@@ -42,9 +42,9 @@ Changing the backbone is a keel-core change. Projects only ever touch layers 2�
 
 - **One backbone, every agent** — install once; `/keel:<command>` runs as native Claude commands
   *and* as a single shared skill set every other agent (Codex, Antigravity, Gemini) reads.
-- **Project Lego** — snap your own gates/steps into named hooks (`guard`, `tester`,
-  `pre-merge`, …) without forking the backbone; hard `block` gates are limited to the
-  documented blocking hooks.
+- **Project Lego + policy packs** — snap gates/steps into named hooks (`guard`, `tester`,
+  `pre-merge`, …) and keep labels, path policy, health sources, local commands, and
+  workflow preferences in `policy_pack` data instead of packaged command prose.
 - **Opt-in `jury` gate** — runs the [ai-jury](https://github.com/berkayturanci/ai-jury) multi-agent
   reviewer on the diff when installed; a fail-soft no-op otherwise.
 - **Safe merges by construction** — timezone-aware night no-merge window, `mkdir` merge lock,
@@ -179,7 +179,7 @@ make site       # build the coverage report + serve the website at localhost:800
 ```
 
 The pure core (`config`, `model`, `extensions`, `findings`, `gates`, `orchestrator`,
-`cli`) is held at **100% line + branch coverage**; the coverage gate (`fail_under = 95`)
+`cli`) is held at **100% line + branch coverage**; the coverage gate (`fail_under = 100`)
 runs in CI.
 
 ## Repo layout
