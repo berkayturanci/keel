@@ -16,6 +16,25 @@ All notable changes to keel are documented here. The format follows
   keeps `.claude-plugin/plugin.json` in lockstep with `keel.__version__`. The existing
   `pip install keel-workflow` + `keel install-adapter` flow is unchanged (additive). See
   [`docs/keel/plugin.md`](docs/keel/plugin.md).
+- **Configurable consent modes** — live mutating runs can now satisfy the operator-consent
+  preflight from a standing approval source in addition to the interactive `--approve-scope`
+  flag: the `KEEL_APPROVE_SCOPE` / `KEEL_OPERATOR` environment variables and the typed
+  `automation.approved_scopes` / `automation.operator` config keys, with precedence
+  `--approve-scope` > env > config. Every consent contract and approved live record now
+  records its `approval_source` (`flag` / `env` / `config` / `none`) for audit. Standing
+  approval only satisfies the consent preflight — findings, CI, project gates, merge windows,
+  and merge locks are unaffected, and any unlisted required scope still fails closed. Closes #136.
+- **Issue intake readiness gate** — work-owning flows now classify an issue as
+  `ready` / `needs-input` / `blocked` / `out-of-scope` before any code mutation, exposed as
+  `issue_intake` in command contracts and ship dry-run results with `--issue-title`,
+  `--issue-body`, and `--issue-label` CLI inputs. Non-ready issues block the live
+  ship/implement preflight and are skipped in favour of the next ready issue. Closes #147.
+- **Structured run ledger** — ship runs can append deterministic, consumer-neutral JSONL
+  records (`keel.run-ledger.v1`) capturing the run outcome, so a work owner has an auditable
+  history of what it shipped.
+- **Resumable run checkpoints** — long ship runs persist a stable checkpoint
+  (`keel.checkpoint.v1`, default `.keel/state/checkpoint.json`) with a per-step resume map, so
+  an interrupted run can `resume` from the last completed backbone step instead of restarting.
 
 ## [0.7.0] — 2026-06-08
 
