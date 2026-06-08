@@ -11,6 +11,7 @@
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
   a { color:var(--accent); text-decoration:none; } a:hover { text-decoration:underline; }
+  a:focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:2px; }
   .wrap { max-width:860px; margin:0 auto; padding:0 20px; }
   header { padding:64px 0 32px; border-bottom:1px solid var(--border); }
   h1 { font-size:44px; margin:0 0 8px; letter-spacing:-1px; }
@@ -18,6 +19,7 @@
   .badges { margin-top:20px; display:flex; gap:10px; flex-wrap:wrap; }
   .badge { background:var(--panel); border:1px solid var(--border); border-radius:6px; padding:4px 10px; font-size:13px; color:var(--muted); }
   .badge b { color:var(--green); }
+  a.badge:hover, a.badge:focus-visible { border-color:var(--accent); color:var(--fg); text-decoration:none; }
   h2 { margin:40px 0 12px; font-size:24px; border-bottom:1px solid var(--border); padding-bottom:6px; }
   h3 { margin:24px 0 6px; font-size:17px; color:var(--fg); }
   p { color:var(--fg); } .muted { color:var(--muted); }
@@ -50,6 +52,7 @@
   </div>
 </header>
 
+<main>
 <h2>What it is</h2>
 <p>keel is a ship's backbone — the fixed spine every project builds on. It models the work pattern of a strong teammate: decide whether an issue is ready, own the implementation, get it reviewed, keep quality gates green, merge inside policy, close the loop, and leave useful memory behind. The same flow runs whether the coding agent is Claude Code, Codex, Gemini or Antigravity; projects never fork the backbone, they only:</p>
 <div class="cols">
@@ -164,6 +167,7 @@ pip install "git+https://github.com/berkayturanci/keel@v0.6.1"
 
 <h2>Runs on the free runner</h2>
 <p>The <a href="https://github.com/berkayturanci/keel/blob/main/.github/workflows/keel-ship.yml"><code>keel-ship</code></a> GitHub Action runs keel against every PR on GitHub's free hosted runner — using the runner's own <code>git</code> + <code>gh</code> — and posts the assessment as a comment. This very site &amp; its <a href="./coverage/">coverage report</a> are built and deployed the same way.</p>
+</main>
 
 <footer>
   keel — formerly <code>ai-infra</code>. Stdlib-first, deterministic, fully covered.
