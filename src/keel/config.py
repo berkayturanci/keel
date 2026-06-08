@@ -16,7 +16,8 @@ from typing import Any
 
 import yaml
 
-from . import jsonschema_min, runtime
+from . import jsonschema_min
+from .capabilities import validate_names
 from .model import SLOTS  # single source of truth for the named slots (re-exported)
 
 SCHEMA_PATH = Path(__file__).parent / "schema" / "project.schema.json"
@@ -129,17 +130,17 @@ def parse_config(data: Any, *, source: str = "<dict>", schema: dict | None = Non
     errors = validate_data(data, schema)
     if isinstance(data, dict) and isinstance(data.get("knobs"), dict):
         knobs = data["knobs"]
-        errors.extend(runtime.validate_names(
+        errors.extend(validate_names(
             tuple(knobs.get("required_capabilities", [])),
             source=f"{source}: knobs.required_capabilities",
         ))
-        errors.extend(runtime.validate_names(
+        errors.extend(validate_names(
             tuple(knobs.get("optional_capabilities", [])),
             source=f"{source}: knobs.optional_capabilities",
         ))
     if isinstance(data, dict) and isinstance(data.get("policy_pack"), dict):
         for path, names in _policy_capability_fields(data["policy_pack"]):
-            errors.extend(runtime.validate_names(tuple(names), source=f"{source}: {path}"))
+            errors.extend(validate_names(tuple(names), source=f"{source}: {path}"))
     if errors:
         raise ConfigError(source, errors)
     return _build(data)

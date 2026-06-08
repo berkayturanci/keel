@@ -10,10 +10,16 @@ from __future__ import annotations
 
 import re
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from .findings import Finding
-from .gates import GateRunner, GateSpec
+
+if TYPE_CHECKING:  # pragma: no cover
+    from .gates import GateSpec
+
+GateRunner = Callable[["GateSpec"], tuple[bool, list[Finding]]]
 
 _ON_FAIL_SEVERITY = {"block": "major", "suggest": "minor", "warn": "nit"}
 

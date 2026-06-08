@@ -15,24 +15,9 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-KNOWN_CAPABILITIES: tuple[str, ...] = (
-    "shell",
-    "git",
-    "gh",
-    "gh-auth",
-    "github-mcp",
-    "subagents",
-    "parallel-subagents",
-    "browser",
-    "adb",
-    "firebase",
-    "filesystem-write",
-    "worktree",
-    "release-publish",
-    "secret-access",
-    "production-adjacent",
-    "private-setup",
-)
+from . import capabilities
+
+KNOWN_CAPABILITIES = capabilities.KNOWN_CAPABILITIES
 
 @dataclass(frozen=True)
 class Capability:
@@ -205,14 +190,7 @@ def evaluate(requirement: CapabilityRequirement, report: CapabilityReport) -> Ca
 def validate_names(names: tuple[str, ...] | list[str], *, source: str) -> list[str]:
     """Return errors for unknown capability names."""
 
-    known = set(KNOWN_CAPABILITIES)
-    errors: list[str] = []
-    for name in names:
-        if name not in known:
-            errors.append(
-                f"{source}: unknown capability {name!r}; valid: {', '.join(KNOWN_CAPABILITIES)}"
-            )
-    return errors
+    return capabilities.validate_names(names, source=source)
 
 
 def _truthy(value: str | None) -> bool:

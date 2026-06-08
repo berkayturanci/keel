@@ -15,12 +15,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import yaml
 
-from . import runtime
-from .config import ProjectConfig
+from .capabilities import validate_names
 from .model import SLOTS, slot_meta
+
+if TYPE_CHECKING:  # pragma: no cover
+    from .config import ProjectConfig
 
 KINDS: tuple[str, ...] = ("agentic", "command")
 EXECUTION_MODES: tuple[str, ...] = ("deterministic", "agentic", "hybrid")
@@ -108,10 +111,8 @@ def parse_extension(text: str, *, source: str, expected_slot: str | None = None)
         errors.append("a 'command' extension requires a 'run' value")
     if kind == "agentic" and not (prompt or body.strip()):
         errors.append("an 'agentic' extension requires a 'prompt' value or a body")
-    errors.extend(runtime.validate_names(required_capabilities,
-                                         source=f"{source}: required_capabilities"))
-    errors.extend(runtime.validate_names(optional_capabilities,
-                                         source=f"{source}: optional_capabilities"))
+    errors.extend(validate_names(required_capabilities, source=f"{source}: required_capabilities"))
+    errors.extend(validate_names(optional_capabilities, source=f"{source}: optional_capabilities"))
 
     if errors:
         raise ExtensionError(f"{source}: " + "; ".join(errors))

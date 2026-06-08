@@ -19,9 +19,9 @@ class TestMergeLock(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             lock = Path(d) / "merge.lock"
             with merge_lock(lock):
+                second_lock = merge_lock(lock)
                 with self.assertRaises(LockError):
-                    with merge_lock(lock):
-                        pass
+                    second_lock.__enter__()
 
     def test_reacquire_after_release(self):
         with tempfile.TemporaryDirectory() as d:

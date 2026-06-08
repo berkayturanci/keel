@@ -12,10 +12,13 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-from .config import ProjectConfig
-from .extensions import Extension
 from .findings import Finding
+
+if TYPE_CHECKING:  # pragma: no cover
+    from .config import ProjectConfig
+    from .extensions import Extension
 
 #: Built-in gate names accepted in ``project.yaml``'s ``gates:`` list.
 BUILTIN_GATES: tuple[str, ...] = ("build", "lint", "jury")

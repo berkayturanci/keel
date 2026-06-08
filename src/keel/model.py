@@ -98,10 +98,8 @@ INVARIANTS: tuple[str, ...] = (
 )
 
 _BY_ID: dict[str, Step] = {s.id: s for s in BACKBONE}
-_BY_SLOT: dict[str, Step] = {
-    slot.name: _BY_ID[slot.step_id] for slot in SLOT_DEFINITIONS
-}
 _SLOT_META: dict[str, Slot] = {slot.name: slot for slot in SLOT_DEFINITIONS}
+_BY_SLOT: dict[str, Step] = {slot: _BY_ID[_SLOT_META[slot].step_id] for slot in SLOTS}
 
 
 def step_ids() -> tuple[str, ...]:
