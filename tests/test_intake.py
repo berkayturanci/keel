@@ -42,6 +42,20 @@ class TestIssueIntake(unittest.TestCase):
         self.assertIn("What acceptance criteria define done", record["questions"][0])
         self.assertEqual(record["ledger_record"]["readiness"], intake.NEEDS_INPUT)
 
+    def test_missing_deliverable_needs_input_even_with_acceptance(self):
+        record = intake.assess_issue(
+            title="Add setup guide",
+            body=(
+                "## Problem\nUsers need setup guidance.\n\n"
+                "## Acceptance criteria\n"
+                "- Guide behavior is clear.\n"
+            ),
+        )
+
+        self.assertEqual(record["status"], intake.NEEDS_INPUT)
+        self.assertIn("deliverable", record["missing_info"])
+        self.assertFalse(record["can_mutate_code"])
+
     def test_bullet_objective_and_empty_bullet_are_handled(self):
         record = intake.assess_issue(
             title="Add migration note",
@@ -106,6 +120,35 @@ class TestIssueIntake(unittest.TestCase):
 
         self.assertEqual(record["status"], intake.BLOCKED)
         self.assertEqual(record["blockers"], ["Declared blocked dependency."])
+
+    def test_none_dependency_text_does_not_block_ready_issue(self):
+        record = intake.assess_issue(
+            title="Add plugin publishing",
+            body=(
+                "## Problem\nPlugins need publishing.\n\n"
+                "## Deliverable\nShip plugin publish flow.\n\n"
+                "## Acceptance criteria\n"
+                "- Publish command is documented.\n\n"
+                "Dependencies: none.\n"
+            ),
+        )
+
+        self.assertEqual(record["status"], intake.READY)
+        self.assertEqual(record["blockers"], [])
+
+    def test_acceptance_heading_alone_does_not_require_tests(self):
+        record = intake.assess_issue(
+            title="Add setup guide",
+            body=(
+                "## Problem\nUsers need setup guidance.\n\n"
+                "## Deliverable\nWrite the guide.\n\n"
+                "## Acceptance criteria\n"
+                "- Guide behavior is clear.\n"
+            ),
+        )
+
+        self.assertEqual(record["status"], intake.READY)
+        self.assertEqual(record["required_docs_tests"]["tests"], "unspecified")
 
     def test_out_of_scope_wins_over_other_signals(self):
         record = intake.assess_issue(

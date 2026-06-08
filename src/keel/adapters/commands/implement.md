@@ -48,6 +48,22 @@ Read the issue (title, body, labels) via `gh` (CLI when available) or the GitHub
 MCP read tools (sandbox/web runtime). Capture `number`, `title`, `body`, and the
 `labels` array — the role/platform label drives implementer routing below.
 
+Rerun the live preflight with the selected issue context before branch/worktree
+or delegation:
+
+```bash
+keel plan .keel/project.yaml --root . --command implement --live --json \
+  --target "issue #<N>" \
+  --issue-title "$ISSUE_TITLE" \
+  --issue-body "$ISSUE_BODY" \
+  --issue-label "$ISSUE_LABELS"
+```
+
+Parse `contract.issue_intake`. If `status` is `needs-input`, ask or post the
+generated `questions` and stop before any code mutation. If `status` is
+`blocked` or `out-of-scope`, record the `ledger_record`, report the skip reason,
+and stop. Only `ready` may continue to Step 2.
+
 ## Step 2 — Check for an existing branch
 
 Look for a branch already associated with this issue (e.g. matching

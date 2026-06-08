@@ -118,7 +118,19 @@ the project's plans directory, use it as the queue instead.
 
 1. `keel window .keel/project.yaml --root .` — only merge while OPEN; in CLOSED
    mode leave PRs open (blocker exception above). Stop the loop at window close.
-2. Pick the next ready issue (queue order; skip blocked/needs-input).
+2. Pick the next candidate issue in queue order. Fetch its title, body, and labels, then
+   run the shared intake preflight before handing it to ship:
+   ```bash
+   keel plan .keel/project.yaml --root . --command ship --live --json \
+     --target "issue #<N>" \
+     --issue-title "$ISSUE_TITLE" \
+     --issue-body "$ISSUE_BODY" \
+     --issue-label "$ISSUE_LABELS"
+   ```
+   Parse `contract.issue_intake`. If the issue is `needs-input`, `blocked`, or
+   `out-of-scope`, record its `ledger_record`, skip reason, and generated questions in the
+   session report, then continue to the next candidate when policy allows. Only `ready`
+   issues may proceed.
 3. Run `/keel:ship` for it (full backbone, inline-hybrid review, `jury` gate if
    configured in `gates:`), respecting `--review-comments`.
 4. On a blocking failure that can't be auto-fixed within the round budget,
@@ -151,4 +163,4 @@ When stopped, write the session report immediately, even if partial.
 Never merge outside the window · merge lock · fail-soft per issue (one failure
 never aborts the loop) · attribute the effective agents (vendor + base model).
 
-<!-- keel-generated: surface=plugin command=overnight keel_version=0.7.0 source_sha256=206319924f6175e3b7a0c273e42f107f9dddb54d2e5b1c1266c2880453f1b67e generated_sha256=206319924f6175e3b7a0c273e42f107f9dddb54d2e5b1c1266c2880453f1b67e -->
+<!-- keel-generated: surface=plugin command=overnight keel_version=0.7.0 source_sha256=87ed08c8a4d014bef5e55ec847fc915655c2e83a4f737b6be8445eba52f9ad44 generated_sha256=87ed08c8a4d014bef5e55ec847fc915655c2e83a4f737b6be8445eba52f9ad44 -->

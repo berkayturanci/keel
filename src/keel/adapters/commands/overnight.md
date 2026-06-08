@@ -118,7 +118,19 @@ the project's plans directory, use it as the queue instead.
 
 1. `keel window .keel/project.yaml --root .` — only merge while OPEN; in CLOSED
    mode leave PRs open (blocker exception above). Stop the loop at window close.
-2. Pick the next ready issue (queue order; skip blocked/needs-input).
+2. Pick the next candidate issue in queue order. Fetch its title, body, and labels, then
+   run the shared intake preflight before handing it to ship:
+   ```bash
+   keel plan .keel/project.yaml --root . --command ship --live --json \
+     --target "issue #<N>" \
+     --issue-title "$ISSUE_TITLE" \
+     --issue-body "$ISSUE_BODY" \
+     --issue-label "$ISSUE_LABELS"
+   ```
+   Parse `contract.issue_intake`. If the issue is `needs-input`, `blocked`, or
+   `out-of-scope`, record its `ledger_record`, skip reason, and generated questions in the
+   session report, then continue to the next candidate when policy allows. Only `ready`
+   issues may proceed.
 3. Run `/keel:ship` for it (full backbone, inline-hybrid review, `jury` gate if
    configured in `gates:`), respecting `--review-comments`.
 4. On a blocking failure that can't be auto-fixed within the round budget,

@@ -48,6 +48,22 @@ Read the issue (title, body, labels) via `gh` (CLI when available) or the GitHub
 MCP read tools (sandbox/web runtime). Capture `number`, `title`, `body`, and the
 `labels` array — the role/platform label drives implementer routing below.
 
+Rerun the live preflight with the selected issue context before branch/worktree
+or delegation:
+
+```bash
+keel plan .keel/project.yaml --root . --command implement --live --json \
+  --target "issue #<N>" \
+  --issue-title "$ISSUE_TITLE" \
+  --issue-body "$ISSUE_BODY" \
+  --issue-label "$ISSUE_LABELS"
+```
+
+Parse `contract.issue_intake`. If `status` is `needs-input`, ask or post the
+generated `questions` and stop before any code mutation. If `status` is
+`blocked` or `out-of-scope`, record the `ledger_record`, report the skip reason,
+and stop. Only `ready` may continue to Step 2.
+
 ## Step 2 — Check for an existing branch
 
 Look for a branch already associated with this issue (e.g. matching
@@ -126,4 +142,4 @@ review / CI / merge.
 Fail over to the host agent on delegate quota errors; attribute the **effective**
 agent.
 
-<!-- keel-generated: surface=plugin command=implement keel_version=0.7.0 source_sha256=d4ee0e91724900eb0f4d3142e2bc9f572a3981ff73e1883817484297278e27c3 generated_sha256=d4ee0e91724900eb0f4d3142e2bc9f572a3981ff73e1883817484297278e27c3 -->
+<!-- keel-generated: surface=plugin command=implement keel_version=0.7.0 source_sha256=74f6a63084f4c28c1baf1effa9a063fdcad5546a6f2a3bdfece736c26e3c0ef1 generated_sha256=74f6a63084f4c28c1baf1effa9a063fdcad5546a6f2a3bdfece736c26e3c0ef1 -->

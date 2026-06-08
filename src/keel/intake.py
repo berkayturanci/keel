@@ -14,9 +14,13 @@ READINESS_STATUSES = (READY, NEEDS_INPUT, BLOCKED, OUT_OF_SCOPE)
 
 _SECTION_RE = re.compile(r"^#{1,6}\s+(?P<title>.+?)\s*$", re.MULTILINE)
 _BULLET_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+(?P<text>.+?)\s*$")
-_STATUS_PREFIX_RE = re.compile(r"^(?:status|state|workflow):", re.IGNORECASE)
 _BLOCKED_RE = re.compile(
     r"\b(blocked by|depends on|dependency|waiting on|needs dependency|blocked until)\b",
+    re.IGNORECASE,
+)
+_NON_BLOCKING_DEPENDENCY_RE = re.compile(
+    r"\b(no dependencies?|dependenc(?:y|ies):\s*(?:none|no|n/a)|depends on:\s*(?:none|no|n/a)|"
+    r"blocked by:\s*(?:none|no|n/a))\b",
     re.IGNORECASE,
 )
 _AMBIGUOUS_RE = re.compile(
@@ -28,7 +32,7 @@ _OUT_OF_SCOPE_RE = re.compile(
     re.IGNORECASE,
 )
 _DOCS_RE = re.compile(r"\b(doc|docs|documentation|readme|changelog)\b", re.IGNORECASE)
-_TESTS_RE = re.compile(r"\b(test|tests|coverage|acceptance|ci|lint)\b", re.IGNORECASE)
+_TESTS_RE = re.compile(r"\b(test|tests|coverage|ci|lint)\b", re.IGNORECASE)
 _RISK_RE = re.compile(
     r"\b(security|release|migration|schema|api|breaking|billing|secret|credential|ci|"
     r"production|compatibility)\b",
@@ -153,10 +157,11 @@ def _objective(title: str | None, body: str | None, sections: dict[str, str]) ->
 
 
 def _deliverable(sections: dict[str, str], acceptance: list[str]) -> str | None:
+    del acceptance
     for key in ("deliverable", "proposed direction", "proposal", "scope", "implementation"):
         if value := _first_sentence_or_bullet(sections.get(key, "")):
             return value
-    return acceptance[0] if acceptance else None
+    return None
 
 
 def _acceptance_criteria(sections: dict[str, str]) -> list[str]:
@@ -206,6 +211,9 @@ def _is_out_of_scope(combined: str, labels: tuple[str, ...]) -> bool:
 
 
 def _is_blocked(combined: str, labels: tuple[str, ...]) -> bool:
+    if _NON_BLOCKING_DEPENDENCY_RE.search(combined):
+        label_blocks = {"blocked", "status:blocked", "needs-dependency"}
+        return any(label in label_blocks for label in labels)
     return (
         any(label in {"blocked", "status:blocked", "needs-dependency"} for label in labels)
         or bool(_BLOCKED_RE.search(combined))
