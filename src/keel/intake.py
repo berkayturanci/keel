@@ -19,8 +19,9 @@ _BLOCKED_RE = re.compile(
     re.IGNORECASE,
 )
 _NON_BLOCKING_DEPENDENCY_RE = re.compile(
-    r"\b(no dependencies?|dependenc(?:y|ies):\s*(?:none|no|n/a)|depends on:\s*(?:none|no|n/a)|"
-    r"blocked by:\s*(?:none|no|n/a))\b",
+    r"\b(no dependenc(?:y|ies)|dependenc(?:y|ies):\s*(?:none|no|n/a)|"
+    r"depends on:\s*(?:none|no|n/a)|blocked by:\s*(?:none|no|n/a)|"
+    r"waiting on\s+(?:none|no one|nobody|no-one))\b",
     re.IGNORECASE,
 )
 _AMBIGUOUS_RE = re.compile(
@@ -211,21 +212,22 @@ def _is_out_of_scope(combined: str, labels: tuple[str, ...]) -> bool:
 
 
 def _is_blocked(combined: str, labels: tuple[str, ...]) -> bool:
-    if _NON_BLOCKING_DEPENDENCY_RE.search(combined):
-        label_blocks = {"blocked", "status:blocked", "needs-dependency"}
-        return any(label in label_blocks for label in labels)
-    return (
-        any(label in {"blocked", "status:blocked", "needs-dependency"} for label in labels)
-        or bool(_BLOCKED_RE.search(combined))
-    )
+    label_blocks = {"blocked", "status:blocked", "needs-dependency"}
+    if any(label in label_blocks for label in labels):
+        return True
+    return any(_is_actionable_blocker(sentence) for sentence in _sentences(combined))
 
 
 def _blocked_summary(combined: str) -> str:
     sentences = _sentences(combined)
     for sentence in sentences:
-        if _BLOCKED_RE.search(sentence):
+        if _is_actionable_blocker(sentence):
             return sentence
     return "Declared blocked dependency."
+
+
+def _is_actionable_blocker(text: str) -> bool:
+    return bool(_BLOCKED_RE.search(text)) and not bool(_NON_BLOCKING_DEPENDENCY_RE.search(text))
 
 
 def _risk_inputs(combined: str, labels: tuple[str, ...]) -> dict[str, Any]:

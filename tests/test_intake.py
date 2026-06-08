@@ -136,6 +136,37 @@ class TestIssueIntake(unittest.TestCase):
         self.assertEqual(record["status"], intake.READY)
         self.assertEqual(record["blockers"], [])
 
+    def test_non_blocking_dependency_sentence_does_not_hide_real_blocker(self):
+        record = intake.assess_issue(
+            title="Add plugin publishing",
+            body=(
+                "## Problem\nPlugins need publishing.\n\n"
+                "## Deliverable\nShip plugin publish flow.\n\n"
+                "## Acceptance criteria\n"
+                "- Publish command is documented.\n\n"
+                "Dependencies: none. Blocked by #120.\n"
+            ),
+        )
+
+        self.assertEqual(record["status"], intake.BLOCKED)
+        self.assertEqual(record["blockers"], ["Blocked by #120."])
+
+    def test_singular_and_waiting_none_dependency_text_do_not_block(self):
+        for text in ("No dependency.", "Waiting on no one."):
+            with self.subTest(text=text):
+                record = intake.assess_issue(
+                    title="Add plugin publishing",
+                    body=(
+                        "## Problem\nPlugins need publishing.\n\n"
+                        "## Deliverable\nShip plugin publish flow.\n\n"
+                        "## Acceptance criteria\n"
+                        "- Publish command is documented.\n\n"
+                        f"{text}\n"
+                    ),
+                )
+
+                self.assertEqual(record["status"], intake.READY)
+
     def test_acceptance_heading_alone_does_not_require_tests(self):
         record = intake.assess_issue(
             title="Add setup guide",
