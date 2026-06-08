@@ -1,0 +1,13 @@
+{
+  "name": "keel",
+  "owner": {
+    "name": "Berkay Turancı"
+  },
+  "plugins": [
+    {
+      "name": "keel",
+      "source": "./",
+      "description": "Set up keel in a project with config, adapters, validation, and plan rendering."
+    }
+  ]
+}

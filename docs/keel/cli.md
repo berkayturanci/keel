@@ -9,6 +9,27 @@ keel --version
 
 Print the keel version.
 
+## `keel setup [--root DIR] [--adapter-target all|claude|skills] [--wizard] [--force]`
+
+Set up keel in a consumer project in one pass. This command wraps the normal first-run
+sequence:
+
+1. create `.keel/project.yaml` if it does not exist;
+2. install the requested adapter surface (`all` by default);
+3. strict-validate the config and extensions;
+4. render the resolved backbone plan.
+
+```bash
+keel setup --root .
+keel setup --root . --wizard
+keel setup --root . --adapter-target claude
+keel setup --root . --force
+```
+
+Without `--force`, an existing `.keel/project.yaml` is reused so project-owned policy and
+extensions are not overwritten. With `--force`, both the scaffolded config and generated
+adapter files are replaced from the installed keel package.
+
 ## `keel validate <project.yaml…> [--root DIR]`
 
 Validate one or more project configs against the bundled schema. Reports `OK` /

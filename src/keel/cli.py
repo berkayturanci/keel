@@ -655,6 +655,15 @@ def _cmd_init(args: argparse.Namespace) -> int:
     return 0
 
 
+def _render_scaffolded_config(root: Path, *, wizard: bool) -> tuple[str, str]:
+    stack = scaffold.detect_stack(root)
+    repo = root.resolve().name
+    if wizard:
+        print(f"keel setup wizard — detected stack: {stack} (Enter accepts each default)")
+        return scaffold.wizard(stack, _ask, repo=repo), stack
+    return scaffold.default_config(stack, repo=repo), stack
+
+
 def _report_install(surface: str, installed: list[str], skipped: list[str]) -> None:
     for name in installed:
         print(f"  installed  [{surface}] {name}")
@@ -684,6 +693,50 @@ def _cmd_install_adapter(args: argparse.Namespace) -> int:
         total += len(installed)
     print(f"{total} adapter(s) installed — Claude: /keel:<command>; "
           f"other agents: keel-<command> skill (.agents/skills/)")
+    return 0
+
+
+def _cmd_setup(args: argparse.Namespace) -> int:
+    root = Path(args.root)
+    target = root / ".keel" / "project.yaml"
+    print(f"keel setup — {root}")
+
+    if target.exists() and not args.force:
+        print(f"  config       : using existing {target}")
+    else:
+        existed = target.exists()
+        text, stack = _render_scaffolded_config(root, wizard=args.wizard)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+        action = "overwrote" if existed else "wrote"
+        print(f"  config       : {action} {target} (detected stack: {stack})")
+
+    agent = args.adapter_target
+    if agent == "all":
+        results = install.install_all(root, force=args.force)
+    else:
+        results = {agent: install.install(agent, root, force=args.force)}
+    total = 0
+    for surface, (installed, skipped) in results.items():
+        _report_install(surface, installed, skipped)
+        total += len(installed)
+    print(f"  adapters     : {total} installed, "
+          f"{sum(len(skipped) for _, skipped in results.values())} skipped")
+
+    try:
+        config = cfg.load_config(target)
+        loaded, _ = load_extensions(config, root, strict=True)
+        plan = orch.build_plan(config, loaded)
+    except (cfg.ConfigError, ExtensionError, gates.GateError) as exc:
+        print(f"  validate     : failed ({exc})", file=sys.stderr)
+        return 1
+
+    print(f"  validate     : OK ({config.repo or '-'}, base {config.base_branch})")
+    print("  plan         :")
+    rendered = orch.render_plan(config, plan)
+    for line in rendered.splitlines():
+        print(f"    {line}")
+    print("  next         : run /keel:ship <issue> or the matching keel-<command> skill.")
     return 0
 
 
@@ -1049,6 +1102,25 @@ def build_parser() -> argparse.ArgumentParser:
     p_init.add_argument("--force", action="store_true", help="overwrite an existing config")
     p_init.add_argument("--wizard", action="store_true", help="prompt for values interactively")
     p_init.set_defaults(func=_cmd_init)
+
+    p_setup = sub.add_parser(
+        "setup",
+        help="scaffold config, install adapters, validate, and render the plan",
+    )
+    p_setup.add_argument("--root", default=".", help="project root to set up")
+    p_setup.add_argument(
+        "--adapter-target",
+        choices=("all", *install.TARGETS),
+        default="all",
+        help="adapter surface to install (default: all)",
+    )
+    p_setup.add_argument(
+        "--force",
+        action="store_true",
+        help="overwrite existing config and generated adapters",
+    )
+    p_setup.add_argument("--wizard", action="store_true", help="prompt for config values")
+    p_setup.set_defaults(func=_cmd_setup)
 
     p_ia = sub.add_parser("install-adapter", help="install the /keel:<command> adapters")
     p_ia.add_argument("agent", help=f"'all' or one of: {', '.join(install.TARGETS)}")

@@ -1,0 +1,20 @@
+{
+  "name": "keel",
+  "version": "0.1.0",
+  "description": "Add keel workflow onboarding guidance to Claude Code sessions.",
+  "author": {
+    "name": "Berkay Turancı",
+    "url": "https://github.com/berkayturanci"
+  },
+  "homepage": "https://github.com/berkayturanci/keel",
+  "repository": "https://github.com/berkayturanci/keel",
+  "license": "Apache-2.0",
+  "keywords": [
+    "workflow",
+    "github",
+    "automation",
+    "multi-agent",
+    "claude-code"
+  ],
+  "skills": "./skill"
+}

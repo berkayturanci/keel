@@ -77,7 +77,7 @@ keel is a Python (≥3.11) package with one runtime dependency (PyYAML):
 
 ```bash
 pip install keel-workflow                                     # from PyPI (provides the `keel` command)
-pip install "git+https://github.com/berkayturanci/keel@v0.6.0"  # or pin an existing git tag
+pip install "git+https://github.com/berkayturanci/keel@v0.6.1"  # or pin an existing git tag
 ```
 
 In a cloud agent session, install it from a `SessionStart` hook (or add keel to the
@@ -89,13 +89,15 @@ Release maintainers should follow [`docs/keel/release.md`](docs/keel/release.md)
 ## Quickstart
 
 ```bash
+keel setup --root .                                  # add keel config + adapters to a project
 keel validate projects/example-flutter.yaml          # validate a config against the schema
 keel plan      projects/example-flutter.yaml          # show the backbone plan for a project
 keel version
 ```
 
-`keel plan` renders the fixed backbone with each project's gates/extensions slotted in —
-exactly what a dry-run executes:
+`keel setup` wraps first-run onboarding (`init` + `install-adapter` + strict `validate` +
+`plan`) for a consumer project. `keel plan` renders the fixed backbone with each project's
+gates/extensions slotted in — exactly what a dry-run executes:
 
 ```
 keel plan — example-flutter
@@ -151,6 +153,7 @@ If a step's gate fails, keel blocks its own merge — the same backbone every co
   `website/coverage/` and serves the site at <http://localhost:8000>. (Publishing to GitHub
   Pages is available via the manual `pages.yml` workflow once Pages is enabled.)
 - [`docs/keel/configuration.md`](docs/keel/configuration.md) — `project.yaml` reference
+- [`docs/keel/onboarding.md`](docs/keel/onboarding.md) — one-command consumer setup and follow-up checks
 - [`docs/keel/extensions.md`](docs/keel/extensions.md) — authoring Lego extensions
 - [`docs/keel/consumer-neutrality.md`](docs/keel/consumer-neutrality.md) — core vs project policy boundary
 - [`docs/keel/parity-matrix.md`](docs/keel/parity-matrix.md) — legacy-to-keel command parity status and owning issues

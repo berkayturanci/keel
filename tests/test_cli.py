@@ -988,6 +988,54 @@ class TestInit(unittest.TestCase):
             self.assertEqual(vrc, 0)
 
 
+class TestSetup(unittest.TestCase):
+    def test_scaffolds_installs_validates_and_plans(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "pyproject.toml").write_text("[project]\nname = 'demo'\n")
+            rc, out, err = run(["setup", "--root", d])
+            self.assertEqual(rc, 0, err)
+            self.assertIn("keel setup", out)
+            self.assertIn("detected stack: python", out)
+            self.assertIn("validate     : OK", out)
+            self.assertIn("plan         :", out)
+            self.assertTrue((Path(d) / ".keel/project.yaml").exists())
+            self.assertTrue((Path(d) / ".claude/commands/keel/ship.md").exists())
+            self.assertTrue((Path(d) / ".agents/skills/keel-ship/SKILL.md").exists())
+
+    def test_reuses_existing_config_without_force(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            target = Path(d) / ".keel/project.yaml"
+            target.parent.mkdir()
+            text = (
+                "extends: keel\ncore_version: '^0.6'\nrepo: existing\nbase_branch: develop\n"
+                "knobs:\n  build_gate_cmd: 'true'\n"
+            )
+            target.write_text(text)
+            rc, out, err = run(["setup", "--root", d, "--adapter-target", "claude"])
+            self.assertEqual(rc, 0, err)
+            self.assertIn("using existing", out)
+            self.assertEqual(target.read_text(), text)
+            self.assertTrue((Path(d) / ".claude/commands/keel/ship.md").exists())
+            self.assertFalse((Path(d) / ".agents/skills/keel-ship/SKILL.md").exists())
+
+    def test_force_overwrites_config_and_adapters(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            target = Path(d) / ".keel/project.yaml"
+            target.parent.mkdir()
+            target.write_text("old")
+            adapter = Path(d) / ".claude/commands/keel/ship.md"
+            adapter.parent.mkdir(parents=True)
+            adapter.write_text("old")
+            rc, out, err = run(["setup", "--root", d, "--adapter-target", "claude", "--force"])
+            self.assertEqual(rc, 0, err)
+            self.assertIn("overwrote", out)
+            self.assertIn("extends: keel", target.read_text())
+            self.assertIn("keel-generated", adapter.read_text())
+
+
 class TestShipHotfix(unittest.TestCase):
     def _cfg(self):
         return _write_raw(
@@ -1188,6 +1236,7 @@ class TestParser(unittest.TestCase):
                                 {"version", "validate", "plan", "run-gates", "window", "ship",
                                  "ship-v2", "implement", "ci-check", "morning", "capabilities",
                                  "wrap", "overnight", "init",
+                                 "setup",
                                  "install-adapter",
                                  "adapter-status", "update-adapter", "project-commands",
                                  "install-legacy-wrappers"})
