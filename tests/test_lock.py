@@ -34,9 +34,13 @@ class TestMergeLock(unittest.TestCase):
     def test_released_on_exception(self):
         with tempfile.TemporaryDirectory() as d:
             lock = Path(d) / "merge.lock"
-            with self.assertRaises(ValueError):
+            try:
                 with merge_lock(lock):
                     raise ValueError("boom")
+            except ValueError:
+                pass
+            else:
+                self.fail("expected ValueError")
             self.assertFalse(lock.exists())
 
 
