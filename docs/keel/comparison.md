@@ -4,14 +4,74 @@
 
 ## What keel is (baseline for comparison)
 
-keel is an **agent-agnostic, project-agnostic workflow engine** that drives a single GitHub issue end-to-end through a *fixed backbone*: select issue → branch/worktree → implement (coding agent) → push → CI wait → multi-agent code review (review→debate→verify→synthesize) → project test/build/lint gates → risk classification (TIER 1/2/3 → reviewer count) → merge → close. Distinctive elements:
+keel is an **agent-agnostic, project-agnostic work-ownership backbone** that drives a
+single GitHub issue end-to-end through a fixed lifecycle: issue intake/readiness →
+branch/worktree → implement (coding agent) → push → CI wait → multi-agent code review
+(review→debate→verify→synthesize) → project test/build/lint gates → risk classification
+(TIER 1/2/3 → reviewer count) → safe merge → close → post-merge capture. Distinctive
+elements:
 
 - **Agent adapters** (Claude Code, Codex, Gemini, Antigravity) behind one backbone.
 - **`.keel/project.yaml`** per project (base branch, build/lint/test commands, CI names, file globs) + pluggable "Lego" extension gates.
 - **Merge invariants**: timezone-aware merge *window* ("night no-merge"), `mkdir`-based merge *lock* (mutual exclusion), risk-tiered reviewer counts, fix-loop with capped budget.
 - **Pure-core + thin-IO, deterministic, stdlib-only ethos** (sibling `ai-jury` is the multi-agent review engine).
 
-The crux of keel's novelty hypothesis: nobody combines *(fixed issue→merge backbone)* + *(agent-agnostic adapters)* + *(merge-window/lock invariants)* + *(multi-agent debate review)* in one open, deterministic tool. The research below tests that.
+The crux of keel's novelty hypothesis: nobody combines *(fixed issue→done ownership
+backbone)* + *(agent-agnostic adapters)* + *(merge-window/lock invariants)* +
+*(multi-agent debate review)* + *(post-merge learning capture)* in one open,
+deterministic tool. The research below tests that.
+
+## Executive comparison — work ownership, not only automation
+
+Keel does not compete with a single category. The closest tools each own one slice:
+
+- **Issue-to-PR coding agents** such as GitHub Copilot coding agent, OpenHands, and
+  SWE-agent can take an issue or task, edit code, and create or update a pull request.
+  GitHub's Copilot docs explicitly describe assigning an issue or prompt so the agent
+  works on the task, raises a PR, and requests review.
+- **AI PR reviewers** such as CodeRabbit, Qodo / PR-Agent, Greptile, and Cursor Bugbot
+  operate after a PR exists. Their strongest surface is review comments, summaries,
+  suggested fixes, and repository context.
+- **Merge queues** such as GitHub Merge Queue, Mergify, Graphite, and Trunk operate
+  after a PR is ready to merge. They protect the base branch with queues, batching,
+  speculative checks, priority, pause/freeze, or anti-flake behavior.
+
+Keel's product claim is narrower and more integrated: it turns a coding agent into a
+work owner. It starts before the PR exists and ends after merge, closure, and capture.
+
+| capability | Keel | Coding agents | PR reviewers | Merge queues |
+|---|---:|---:|---:|---:|
+| Takes an issue as input | yes | yes | no | no |
+| Performs intake/readiness gating | planned (#147) | partial | no | no |
+| Implements code | yes, through adapters | yes | no | no |
+| Opens or updates a PR | yes | yes | no | no |
+| Performs independent review / jury | yes | partial | yes | no |
+| Runs project gates | yes | partial | partial | yes, as required checks |
+| Owns merge window + lock | yes | no | no | partial queue controls |
+| Closes the issue / PR loop | yes | partial | no | partial |
+| Supports multi-issue work blocks | planned (#146) | partial | no | queue-only |
+| Supports resume/checkpoint/reconcile | planned (#149, #141) | partial | no | partial queue state |
+| Captures post-merge learning | planned (#134) | no | partial repo memory | no |
+| Project policy extensibility | yes | partial | partial | yes |
+| Agent/vendor agnostic | yes | partial | no | not applicable |
+
+**Assessment:** no reviewed tool owns this whole loop as a single product contract. The
+individual parts are proven elsewhere, which lowers risk: coding agents prove issue→PR,
+PR reviewers prove diff analysis, and merge queues prove safe merge serialization. Keel's
+job is to connect those proven pieces into one deterministic, project-neutral lifecycle.
+
+## Borrowed ideas mapped to the roadmap
+
+| idea to borrow | source category | Keel issue |
+|---|---|---|
+| Plan-before-code / readiness before implementation | coding agents + human team workflow | #147 |
+| Cloud/session progress and operator visibility | Copilot coding agent sessions, coding agent UX | #148 |
+| Checkpoint and resume after interrupted work | coding agent sessions + merge queue state | #149 |
+| Queue pause/freeze and out-of-order hotfix language | Mergify, Graphite, Trunk | shipped basics; refine in #146 |
+| Repository memory/context with redaction | Greptile, PR review tools | #134, #142, #143 |
+| Low-noise inline vs summary review UX | CodeRabbit, Qodo / PR-Agent, Cursor Bugbot | shipped basics; refine via review-cycle work |
+| Plugin/marketplace install surface | agent platforms and Claude Code plugin model | #135 |
+| Capability detection and safe degradation | agent platform packaging and local tool variance | shipped basics; reused by #134 |
 
 ---
 
@@ -199,7 +259,7 @@ Legend: ✅ yes · ◑ partial/limited · ❌ no · `OSS`/`Prop.`
 
 | Tool | Agent-agnostic | Merge queue | Merge window/freeze | AI review | Multi-agent debate | Policy/gate aggregation | Project config | Open source |
 |---|---|---|---|---|---|---|---|---|
-| **keel** | ✅ (CLI adapters) | ❌ (one-at-a-time + lock) | ✅ (native, TZ-aware) | ✅ (via ai-jury) | ✅ (review→debate→verify→synth) | ✅ (Lego gates) | ✅ (`.keel/project.yaml`) | (per project) |
+| **keel** | ✅ (CLI adapters) | ❌ (one-at-a-time + lock) | ✅ (native, TZ-aware) | ✅ (via ai-jury) | ✅ (review→debate→verify→synth) | ✅ (Lego gates) | ✅ (`.keel/project.yaml`) | OSS (Apache-2.0) |
 | **Mergify** | ❌ | ✅ | ✅ (schedule + pause/freeze) | ❌ | ❌ | ◑ (conditions) | ◑ (config.yml) | Prop. (OSS repo exists) |
 | **GitHub merge queue** | ❌ | ✅ | ❌ (workarounds only) | ❌ | ❌ | ◑ (required checks) | ◑ | Prop. |
 | **bors-ng** | ❌ | ✅ (batch+bisect) | ❌ | ❌ | ❌ | ◑ | ◑ | OSS (Apache-2.0, deprecated) |
@@ -238,13 +298,20 @@ Legend: ✅ yes · ◑ partial/limited · ❌ no · `OSS`/`Prop.`
 - Graphite merge queue: https://www.graphite.com/docs/graphite-merge-queue
 - Graphite merge queue tools guide: https://graphite.com/guides/merge-queue-tools-options
 - Trunk merge queue: https://trunk.io/merge-queue
+- Trunk merge queue product page: https://www.trunk.io/merge
 - Trunk OSS/forked PR support: https://trunk.io/changelog/merge-support-for-forked-and-open-source-repos
+- GitHub Copilot coding agent issue-to-PR docs: https://docs.github.com/en/copilot/how-tos/use-copilot-agents/coding-agent/assign-copilot-to-an-issue
 - Qodo / PR-Agent launch: https://www.qodo.ai/blog/unveiling-the-future-of-streamlined-software-development/
+- Qodo / PR-Agent overview: https://qodo-merge-docs.qodo.ai/
+- Qodo / PR-Agent review tool: https://qodo-merge-docs.qodo.ai/tools/review/
 - PR-Agent community repo: https://github.com/The-PR-Agent/pr-agent
 - Qodo hands PR-Agent to community: https://futurumgroup.com/insights/qodo-hands-pr-agent-to-the-community-will-open-governance-accelerate-ai-code-review/
 - CodeRabbit: https://www.coderabbit.ai/
 - CodeRabbit docs: https://docs.coderabbit.ai/
 - CodeRabbit Martian benchmark: https://www.coderabbit.ai/blog/coderabbit-tops-martian-code-review-benchmark
+- Cursor Bugbot docs: https://docs.cursor.com/bugbot
+- Greptile docs: https://www.greptile.com/docs/api-reference
+- Greptile product page: https://www.greptile.com/
 - Sweep repo: https://github.com/sweepai/sweep
 - Sweep details: https://aiagentslist.com/agents/sweep-ai
 - Aider / CLI agents list: https://github.com/bradAGI/awesome-cli-coding-agents

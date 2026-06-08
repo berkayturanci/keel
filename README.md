@@ -59,6 +59,21 @@ Changing the backbone is a keel-core change. Projects only ever touch layers 2�
 - **Safe merges by construction** — timezone-aware night no-merge window, `mkdir` merge lock,
   risk-tier → reviewer count, hotfix bypass with an audit line, vendor+model attribution.
 
+### How Keel compares
+
+Keel sits between three established tool categories:
+
+| category | examples | where they usually stop | what Keel adds |
+|---|---|---|---|
+| Coding agents | OpenHands, SWE-agent, Copilot coding agent, Devin | create or update a PR | intake, review gates, merge policy, closeout, capture |
+| PR reviewers | CodeRabbit, Qodo / PR-Agent, Greptile, Cursor Bugbot | review an existing PR | implementation loop, tests, merge lock/window, learning |
+| Merge queues | GitHub Merge Queue, Mergify, Graphite, Trunk | serialize tested PRs | issue ownership before the PR exists |
+
+Keel is not trying to replace those tools. It is the work-ownership backbone that can use
+coding agents, reviewers, gates, and merge policy in one lifecycle. See
+[`docs/keel/comparison.md`](docs/keel/comparison.md) for the source-backed comparison and
+the ideas Keel should borrow.
+
 ### The backbone
 
 | step | name | primary hooks | |

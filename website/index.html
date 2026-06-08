@@ -70,6 +70,16 @@
   <tr><td><b>v2+</b></td><td>Autonomous software teams under human leadership: agents create, claim, review, hand off, and ship work while a product owner or team lead remains the decision point for ambiguity, credentials, approvals, and business tradeoffs.</td></tr>
 </table>
 
+<h2>How it compares</h2>
+<p>Keel is not just a coding agent, PR reviewer, or merge queue. It connects those pieces into one issue-to-done ownership loop.</p>
+<table>
+  <tr><th>category</th><th>examples</th><th>usually stops at</th><th>Keel adds</th></tr>
+  <tr><td>Coding agents</td><td>OpenHands, SWE-agent, Copilot coding agent</td><td>PR opened or updated</td><td>review gates, merge policy, closeout, learning</td></tr>
+  <tr><td>PR review tools</td><td>CodeRabbit, Qodo, Greptile, Cursor Bugbot</td><td>findings on an existing PR</td><td>implementation loop, tests, merge lock/window</td></tr>
+  <tr><td>Merge queues</td><td>GitHub Merge Queue, Mergify, Graphite, Trunk</td><td>safe PR serialization</td><td>issue intake and ownership before the PR exists</td></tr>
+</table>
+<p class="muted">Full source-backed comparison: <a href="https://github.com/berkayturanci/keel/blob/main/docs/keel/comparison.md">docs/keel/comparison.md</a>.</p>
+
 <h2>The backbone</h2>
 <table>
   <tr><th>step</th><th>does</th><th>primary hooks</th></tr>
