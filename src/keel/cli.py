@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -107,7 +108,7 @@ def _cmd_plan(args: argparse.Namespace) -> int:
     evaluation = runtime.evaluate(requirement, report)
     transport = github_transport.resolve(report)
     try:
-        approved_scopes = _approved_scopes(args)
+        approved_scopes, approval_source = _approved_scopes(args, config)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -122,7 +123,8 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         extension_problems=tuple(problems),
         dry_run=not args.live,
         approved_consent_scopes=approved_scopes,
-        operator=args.operator,
+        consent_approval_source=approval_source,
+        operator=args.operator or _automation_operator(config, approval_source),
         target=args.target,
         reviewer_override=args.reviewers,
         review_comments=args.review_comments,
@@ -245,7 +247,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         print("missing required GitHub transport capability: check_runs", file=sys.stderr)
         return 1
     try:
-        approved_scopes = _approved_scopes(args)
+        approved_scopes, approval_source = _approved_scopes(args, config)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -265,7 +267,8 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         extension_problems=tuple(problems),
         dry_run=not args.live,
         approved_consent_scopes=approved_scopes,
-        operator=args.operator,
+        consent_approval_source=approval_source,
+        operator=args.operator or _automation_operator(config, approval_source),
         target=args.target or (f"PR #{args.pr}" if args.pr is not None else None),
         reviewer_override=args.reviewers,
         review_comments=args.review_comments,
@@ -393,7 +396,7 @@ def _cmd_standalone(args: argparse.Namespace) -> int:
     transport = github_transport.resolve(report)
     target = _standalone_target(args)
     try:
-        approved_scopes = _approved_scopes(args)
+        approved_scopes, approval_source = _approved_scopes(args, config)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -413,7 +416,8 @@ def _cmd_standalone(args: argparse.Namespace) -> int:
         extension_problems=tuple(problems),
         dry_run=not getattr(args, "live", False),
         approved_consent_scopes=approved_scopes,
-        operator=getattr(args, "operator", None),
+        consent_approval_source=approval_source,
+        operator=getattr(args, "operator", None) or _automation_operator(config, approval_source),
         target=target,
         reviewer_override=getattr(args, "reviewers", None),
         review_comments=getattr(args, "review_comments", "inline"),
@@ -523,8 +527,27 @@ def _standalone_target(args: argparse.Namespace) -> str | None:
     return getattr(args, "target", None)
 
 
-def _approved_scopes(args: argparse.Namespace) -> tuple[str, ...]:
-    return consent.normalize_scopes(getattr(args, "approve_scope", ()))
+def _approved_scopes(
+    args: argparse.Namespace,
+    config: cfg.ProjectConfig,
+) -> tuple[tuple[str, ...], str]:
+    explicit = tuple(getattr(args, "approve_scope", ()) or ())
+    if explicit:
+        return consent.normalize_scopes(explicit), "flag"
+    env_value = os.environ.get("KEEL_APPROVE_SCOPE")
+    if env_value:
+        return consent.normalize_scopes((env_value,)), "env"
+    if config.automation.approved_scopes:
+        return consent.normalize_scopes(config.automation.approved_scopes), "config"
+    return (), "none"
+
+
+def _automation_operator(config: cfg.ProjectConfig, approval_source: str) -> str | None:
+    if approval_source == "config":
+        return config.automation.operator
+    if approval_source == "env":
+        return os.environ.get("KEEL_OPERATOR")
+    return None
 
 
 def _ci_check_capability_requirement(config: cfg.ProjectConfig) -> runtime.CapabilityRequirement:

@@ -24,8 +24,9 @@ SCHEMA_PATH = Path(__file__).parent / "schema" / "project.schema.json"
 
 DEFAULT_EXTENSIONS_DIR = ".keel/extensions"
 
-__all__ = ["SLOTS", "DEFAULT_EXTENSIONS_DIR", "Knobs", "ProjectConfig", "ConfigError",
-           "load_config", "parse_config", "validate_data", "load_schema", "config_hash"]
+__all__ = ["SLOTS", "DEFAULT_EXTENSIONS_DIR", "Automation", "Knobs", "ProjectConfig",
+           "ConfigError", "load_config", "parse_config", "validate_data", "load_schema",
+           "config_hash"]
 
 
 class ConfigError(ValueError):
@@ -65,6 +66,14 @@ class Knobs:
 
 
 @dataclass(frozen=True)
+class Automation:
+    """Trusted unattended-run consent defaults."""
+
+    approved_scopes: tuple[str, ...] = ()
+    operator: str | None = None
+
+
+@dataclass(frozen=True)
 class ProjectConfig:
     """A resolved, immutable keel project config."""
 
@@ -82,6 +91,7 @@ class ProjectConfig:
     extensions: dict[str, tuple[str, ...]] = field(default_factory=dict)
     extensions_dir: str = DEFAULT_EXTENSIONS_DIR
     policy_pack: dict[str, Any] = field(default_factory=dict)
+    automation: Automation = field(default_factory=Automation)
 
     def slot(self, name: str) -> tuple[str, ...]:
         """Extension files registered for a named slot (``()`` if none)."""
@@ -105,6 +115,7 @@ def _build(data: dict) -> ProjectConfig:
         optional_capabilities=tuple(k.get("optional_capabilities", [])),
     )
     extensions = {slot: tuple(files) for slot, files in data.get("extensions", {}).items()}
+    automation_data = data.get("automation", {})
     return ProjectConfig(
         extends=data["extends"],
         core_version=data["core_version"],
@@ -120,6 +131,10 @@ def _build(data: dict) -> ProjectConfig:
         extensions=extensions,
         extensions_dir=data.get("extensions_dir", DEFAULT_EXTENSIONS_DIR),
         policy_pack=json.loads(json.dumps(data.get("policy_pack", {}), sort_keys=True)),
+        automation=Automation(
+            approved_scopes=tuple(automation_data.get("approved_scopes", [])),
+            operator=automation_data.get("operator"),
+        ),
     )
 
 
@@ -192,6 +207,10 @@ def _canonical(config: ProjectConfig) -> dict:
         "extensions_dir": config.extensions_dir,
         "extensions": {k: list(v) for k, v in sorted(config.extensions.items())},
         "policy_pack": config.policy_pack,
+        "automation": {
+            "approved_scopes": list(config.automation.approved_scopes),
+            "operator": config.automation.operator,
+        },
         "knobs": {
             "build_gate_cmd": config.knobs.build_gate_cmd,
             "lint_cmd": config.knobs.lint_cmd,

@@ -76,7 +76,35 @@ class TestConsentContract(unittest.TestCase):
             ["git", "github"],
         )
         self.assertEqual(contract["consent_record"]["timestamp"], "2026-06-07T12:00:00Z")
+        self.assertEqual(contract["consent_record"]["source"], "flag")
         self.assertFalse(contract["consent_record"]["secret_values_recorded"])
+
+    def test_live_standing_approval_records_source(self):
+        now = datetime(2026, 6, 7, 12, 0, tzinfo=UTC)
+        contract = consent.build_consent_contract(
+            command="overnight",
+            side_effects=("git_branch", "pull_request"),
+            dry_run=False,
+            approved_scopes=("git,github",),
+            approval_source="env",
+            operator="automation:nightly",
+            target="nightly queue",
+            now=now,
+        )
+        self.assertEqual(contract["status"], "approved")
+        self.assertEqual(contract["approval_source"], "env")
+        self.assertEqual(contract["consent_record"]["source"], "env")
+        self.assertEqual(contract["consent_record"]["operator"], "automation:nightly")
+
+    def test_unknown_approval_source_rejected(self):
+        with self.assertRaises(ValueError):
+            consent.build_consent_contract(
+                command="ship",
+                side_effects=("git_branch",),
+                dry_run=False,
+                approved_scopes=("git",),
+                approval_source="cron",
+            )
 
     def test_extra_approved_scope_is_not_delegated_without_planned_side_effect(self):
         contract = consent.build_consent_contract(

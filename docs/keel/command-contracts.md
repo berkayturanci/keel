@@ -69,10 +69,11 @@ Every command contract includes `operator_consent`:
 | `would_require_operator_consent` | Whether the command has live-run mutation classes, including under dry-run. |
 | `status` | `not-required-dry-run`, `not-required-read-only`, `missing`, or `approved`. |
 | `consent_scope` | Mutation classes required for a live run: `filesystem`, `git`, `github`, `secrets`, `release`, `production-adjacent`. |
-| `approved_scope` / `effective_approved_scope` / `missing_scope` | Scope approved by the operator, the subset that matches the resolved plan, and any live-run gap. |
+| `approved_scope` / `effective_approved_scope` / `missing_scope` | Scope approved by the operator or standing approval, the subset that matches the resolved plan, and any live-run gap. |
+| `approval_source` | `none`, `flag`, `env`, or `config`, showing where approval came from. Precedence is flag, then `KEEL_APPROVE_SCOPE`, then `automation.approved_scopes`. |
 | `consent_prompt` | Consumer-neutral prompt generated from the resolved command, target, mode, and scopes. |
 | `delegated_agent_scope` | Scope adapters must pass to delegated agents; scope expansion must block or escalate. |
-| `consent_record` | Local metadata for approved live runs: timestamp, operator, workflow, target, scopes, mode, and `secret_values_recorded: false`. |
+| `consent_record` | Local metadata for approved live runs: timestamp, operator, workflow, target, scopes, mode, approval `source`, and `secret_values_recorded: false`. |
 
 Dry-run contracts do not require approval, but still expose the live scopes that would need
 approval. Live contracts with missing consent are preflight blockers and must stop before

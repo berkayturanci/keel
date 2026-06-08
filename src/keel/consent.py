@@ -17,6 +17,8 @@ CONSENT_SCOPES = (
     "production-adjacent",
 )
 
+APPROVAL_SOURCES = ("none", "flag", "env", "config")
+
 _SIDE_EFFECT_SCOPES: dict[str, tuple[str, ...]] = {
     "capture": ("filesystem",),
     "deferral_queue": ("filesystem",),
@@ -115,6 +117,7 @@ def build_consent_contract(
     side_effects: Iterable[str],
     dry_run: bool,
     approved_scopes: Iterable[str] = (),
+    approval_source: str = "flag",
     operator: str | None = None,
     target: str | None = None,
     now: datetime | None = None,
@@ -122,6 +125,10 @@ def build_consent_contract(
     """Build a JSON-compatible consent block for a command contract."""
     consent_scope = side_effect_scopes(side_effects)
     approved_scope = normalize_scopes(approved_scopes)
+    if approval_source not in APPROVAL_SOURCES:
+        raise ValueError(
+            f"unknown approval source {approval_source!r}; valid: {', '.join(APPROVAL_SOURCES)}"
+        )
     effective_approved_scope = tuple(scope for scope in consent_scope if scope in approved_scope)
     missing_scope = tuple(scope for scope in consent_scope if scope not in effective_approved_scope)
     would_require = bool(consent_scope)
@@ -135,6 +142,7 @@ def build_consent_contract(
         "status": status,
         "consent_scope": list(consent_scope),
         "approved_scope": list(approved_scope),
+        "approval_source": approval_source if approved_scope else "none",
         "effective_approved_scope": list(effective_approved_scope),
         "missing_scope": list(missing_scope if not dry_run else ()),
         "consent_prompt": _prompt(command, target, dry_run, consent_scope, missing_scope),
@@ -146,6 +154,7 @@ def build_consent_contract(
         },
         "consent_record": (
             _record(command, target, effective_approved_scope, operator, dry_run, now)
+            | {"source": approval_source}
             if approved_live
             else None
         ),

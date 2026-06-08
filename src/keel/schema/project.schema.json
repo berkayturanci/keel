@@ -117,6 +117,32 @@
       "type": "string",
       "description": "Project-local dir holding extension files (default .keel/extensions)."
     },
+    "automation": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Trusted unattended-run consent defaults. Prefer env approval for CI secrets hygiene; config is for explicit, auditable project policy.",
+      "properties": {
+        "approved_scopes": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "filesystem",
+              "git",
+              "github",
+              "secrets",
+              "release",
+              "production-adjacent"
+            ]
+          },
+          "description": "Standing approval scopes for live unattended runs. Least-privilege only; any unlisted required scope still blocks."
+        },
+        "operator": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Automation identity recorded in consent records when config standing approval is used."
+        }
+      }
+    },
     "policy_pack": {
       "type": "object",
       "additionalProperties": false,

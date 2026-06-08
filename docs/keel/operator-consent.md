@@ -45,6 +45,18 @@ Live mode:
 - passes only the approved scopes that match the resolved plan to delegated agents
 - never records secret values
 
+Approval sources, in precedence order:
+
+1. `--approve-scope` flags for the current command invocation.
+2. `KEEL_APPROVE_SCOPE`, for trusted unattended environments such as cron or CI.
+3. `automation.approved_scopes` in `.keel/project.yaml`.
+
+Standing approval only satisfies the consent preflight. It never bypasses findings,
+project gates, CI, the merge window, or the merge lock. Scope remains least-privilege:
+only listed scopes are approved, and any broader required scope still stops the run.
+Use `KEEL_OPERATOR` with `KEEL_APPROVE_SCOPE`, or `automation.operator` with config-based
+approval, so the `consent_record` names the automation identity.
+
 Example:
 
 ```bash
@@ -54,6 +66,16 @@ keel plan .keel/project.yaml --command ship --live \
   --operator "$USER" \
   --target "issue #123" \
   --json
+KEEL_APPROVE_SCOPE=filesystem,git,github KEEL_OPERATOR=automation:nightly \
+  keel overnight .keel/project.yaml --live --json
+```
+
+Config-based standing approval:
+
+```yaml
+automation:
+  approved_scopes: [filesystem, git, github]
+  operator: automation:nightly
 ```
 
 ## Delegated agents

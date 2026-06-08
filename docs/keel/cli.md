@@ -263,8 +263,11 @@ the live merge (s10) needs a configured runner with `git` + an authenticated `gh
 
 `--live` turns the command into a live preflight gate for adapters. The command builds the
 same structured contract and stops before running project gates if operator consent is
-missing. `--approve-scope` can be repeated or comma-separated. Approved live runs include a
-local `consent_record` in JSON output; secret values are never recorded.
+missing. `--approve-scope` can be repeated or comma-separated. Trusted unattended runs may
+also set `KEEL_APPROVE_SCOPE=filesystem,git,github` and optionally
+`KEEL_OPERATOR=automation:nightly`, or use `automation.approved_scopes` in project config.
+Precedence is flag, then env, then config. Approved live runs include a local
+`consent_record` in JSON output with the approval source; secret values are never recorded.
 
 Review and merge-gate parity is exposed through `review_merge_contract` in JSON output.
 `--review-comments` selects inline or summary posting, `--reviewers` overrides the
@@ -276,6 +279,7 @@ preserves the reviewer, CI, tester, merge-window, merge-lock, closeout, and capt
 keel ship .keel/project.yaml --root .
 keel ship .keel/project.yaml --root . --live --json
 keel ship .keel/project.yaml --root . --live --approve-scope filesystem,git,github --operator "$USER" --target "issue #123" --json
+KEEL_APPROVE_SCOPE=filesystem,git,github KEEL_OPERATOR=automation:nightly keel overnight .keel/project.yaml --live --json
 # keel ship — keel  (base main)
 #   changed files : 53
 #   risk tier     : TIER-3  → 3 reviewer(s)

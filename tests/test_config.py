@@ -92,6 +92,26 @@ class TestParse(unittest.TestCase):
         self.assertEqual(config.knobs.required_capabilities, ())
         self.assertEqual(config.knobs.optional_capabilities, ())
         self.assertEqual(config.policy_pack, {})
+        self.assertEqual(config.automation.approved_scopes, ())
+        self.assertIsNone(config.automation.operator)
+
+    def test_automation_standing_approval_parses(self):
+        data = copy.deepcopy(VALID)
+        data["automation"] = {
+            "approved_scopes": ["filesystem", "git", "github"],
+            "operator": "automation:nightly",
+        }
+        config = cfg.parse_config(data)
+        self.assertEqual(config.automation.approved_scopes, ("filesystem", "git", "github"))
+        self.assertEqual(config.automation.operator, "automation:nightly")
+
+    def test_automation_unknown_scope_rejected(self):
+        bad = copy.deepcopy(VALID)
+        bad["automation"] = {"approved_scopes": ["filesystem", "bogus"]}
+        with self.assertRaises(cfg.ConfigError) as ctx:
+            cfg.parse_config(bad)
+        self.assertIn("automation", str(ctx.exception))
+        self.assertIn("bogus", str(ctx.exception))
 
     def test_policy_pack_parses_project_policy_contract(self):
         data = copy.deepcopy(VALID)
