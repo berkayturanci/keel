@@ -341,6 +341,26 @@
           "additionalProperties": { "type": "string" },
           "description": "Named report destinations, paths, or issue prefixes."
         },
+        "capture_redaction": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "deny_patterns": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["id", "pattern"],
+                "properties": {
+                  "id": { "type": "string", "minLength": 1 },
+                  "pattern": { "type": "string", "minLength": 1 },
+                  "replacement": { "type": "string", "minLength": 1 }
+                }
+              }
+            }
+          },
+          "description": "Additional project-owned redaction regexes applied before capture artifacts become durable."
+        },
         "review": {
           "type": "object",
           "additionalProperties": false,

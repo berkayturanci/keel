@@ -374,6 +374,11 @@ Also append the structured `ship_run` record to `contract.run_ledger.path` via
 `keel ship --live --append-ledger` or the equivalent core ledger writer. The ledger append
 is the machine-readable source for `/keel:morning`, `/keel:wrap`, overnight summaries, and
 capture verification; the closure comments are human/audit mirrors, not the parser source.
+Capture artifacts MUST pass through the core redaction policy first: default secret rules plus
+any project-owned `policy_pack.capture_redaction.deny_patterns`. If the configured redaction
+policy is invalid, skip the capture write with the allowed reason `invalid-policy` rather than
+persisting unsanitized output. The audit may include rule ids and counts, never original secret
+values.
 
 ### s12 close
 Close the issue (idempotent if the squash auto-closed it via `Closes #<N>`), link the PR,
@@ -412,4 +417,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=plugin command=ship keel_version=0.8.0 source_sha256=a9473a40ed47914802b2008a639cabfa293f3e72804aff576958bc960fe50707 generated_sha256=a9473a40ed47914802b2008a639cabfa293f3e72804aff576958bc960fe50707 -->
+<!-- keel-generated: surface=plugin command=ship keel_version=0.8.0 source_sha256=fea8098e49bf4027be7179cb9bbc1944a25d15e5944629c715946b4b1f952bd5 generated_sha256=fea8098e49bf4027be7179cb9bbc1944a25d15e5944629c715946b4b1f952bd5 -->

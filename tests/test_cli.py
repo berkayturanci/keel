@@ -198,12 +198,20 @@ def _write_config(build_cmd):
     )
 
 
-def _write_config_with_ledger(build_cmd, ledger_path="state/runs.jsonl"):
+def _write_config_with_ledger(
+    build_cmd,
+    ledger_path="state/runs.jsonl",
+    extra_policy_pack_lines: list[str] | None = None,
+):
+    extra = "\n".join(extra_policy_pack_lines or [])
+    if extra:
+        extra = f"\n{extra}\n"
     return _write_raw(
         "extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
         f"repo: tmp\ngates: [build]\nknobs:\n  build_gate_cmd: {build_cmd}\n"
         "policy_pack:\n  name: tmp\n  reports:\n"
         f"    run_ledger: {ledger_path!r}\n"
+        f"{extra}"
     )
 
 
@@ -489,6 +497,58 @@ class TestShip(unittest.TestCase):
         self.assertEqual(read["records"][0]["actors"]["implementer"], "codex:gpt-5")
         self.assertEqual(read["records"][0]["actors"]["reviewers"],
                          ["reviewer-a:gpt-5", "reviewer-b:claude"])
+        self.assertEqual(read["records"][0]["redaction"]["status"], "applied")
+
+    def test_ship_live_append_redacts_capture_record_before_write(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger(
+                "'true'",
+                extra_policy_pack_lines=[
+                    "  capture_redaction:",
+                    "    deny_patterns:",
+                    "      - id: private-host",
+                    "        pattern: 'internal\\.example\\.test'",
+                ],
+            )
+            rc, out, _ = run(["ship", config, "--root", d, "--live", "--json",
+                              "--append-ledger", "--capture-status", "skipped",
+                              "--capture-reason",
+                              "Bearer abcdefghijklmnopqrstuvwxyz at internal.example.test",
+                              "--approve-scope", "filesystem,git,github",
+                              "--operator", "tester"])
+            rc_read, out_read, _ = run(["ledger", config, "--root", d, "--json"])
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(rc_read, 0)
+        written = json.loads(out_read)["records"][0]
+        serialized = json.dumps(written, sort_keys=True)
+        self.assertNotIn("abcdefghijklmnopqrstuvwxyz", serialized)
+        self.assertNotIn("internal.example.test", serialized)
+        self.assertEqual(written["redaction"]["redaction_count"], 2)
+        self.assertEqual(json.loads(out)["result"]["run_ledger"]["record"], written)
+
+    def test_ship_live_append_skips_write_when_redaction_policy_invalid(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger(
+                "'true'",
+                extra_policy_pack_lines=[
+                    "  capture_redaction:",
+                    "    deny_patterns:",
+                    "      - id: bad-regex",
+                    "        pattern: '['",
+                ],
+            )
+            rc, out, _ = run(["ship", config, "--root", d, "--live", "--json",
+                              "--append-ledger", "--capture-status", "skipped",
+                              "--approve-scope", "filesystem,git,github",
+                              "--operator", "tester"])
+            ledger_path = Path(d) / "state" / "runs.jsonl"
+
+        self.assertEqual(rc, 1)
+        self.assertIn("capture redaction policy invalid", json.loads(out)["error"])
+        self.assertFalse(ledger_path.exists())
 
     def test_ship_live_append_requires_capture_status(self):
         import tempfile

@@ -29,6 +29,11 @@ continuing. Public side effects such as PR bodies, review summaries, jury verdic
 comments, reports, branches, and release artifacts must be posted or written through the
 selected transport; local/chat-only notes do not satisfy those steps.
 
+Capture artifacts are sanitized by default before they become durable. Keel applies generic
+secret redaction rules and any project-owned `policy_pack.capture_redaction.deny_patterns`,
+then stores only an audit of rule ids and counts. Invalid redaction policy skips the capture
+write with an explicit reason instead of writing unsanitized output.
+
 ## Flagship
 
 | command | what it does |

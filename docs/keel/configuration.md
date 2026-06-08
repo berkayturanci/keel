@@ -219,6 +219,7 @@ back to packaged command prose.
 | `command_routing` | map command→object | | compatibility routing map for older project command declarations |
 | `workflow_policies` | map command→object | | command-specific workflow policy such as posting mode, reviewer isolation, CI/fix-loop behavior, and completion markers |
 | `reports` | map name→string | | report destinations, paths, or issue prefixes |
+| `capture_redaction` | object | | additional project-owned deny regexes applied before capture artifacts are persisted |
 | `review` | object | | project-owned rubric additions and required PR/review sections |
 
 ## `automation`
@@ -262,6 +263,31 @@ can use these vocabularies instead of hardcoding labels in command bodies.
 Map from lifecycle transition name to the label or state target. Examples include
 `start`, `review`, and `done`. Ship-compatible adapters use this to move work through the
 project's issue lifecycle without embedding project label names in core.
+
+### `policy_pack.capture_redaction`
+
+Capture artifacts are sanitized by default before they are persisted or handed to durable
+learning tooling. Core redacts common credential shapes such as bearer tokens, GitHub tokens,
+private-key blocks, credential-bearing URLs, and token/password-style assignments. Projects can
+add organization-specific deny regexes without putting those patterns in keel core:
+
+```yaml
+policy_pack:
+  name: example
+  capture_redaction:
+    deny_patterns:
+      - id: private-host
+        pattern: 'internal\.example\.test'
+      - id: org-ticket-url
+        pattern: 'https://tickets\.example\.test/[A-Z]+-[0-9]+'
+        replacement: '[REDACTED:org-ticket-url]'
+```
+
+The redaction audit records rule ids and replacement counts only; it never records the original
+matched value. Invalid configured regexes make the capture write skip/fail with an explicit
+reason before the artifact is written. Redaction is a safety layer, not a complete DLP system:
+projects should still avoid sending raw secrets, full CI logs, or private production data into
+capture extensions.
 
 ### `policy_pack.risk_rules`
 

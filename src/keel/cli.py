@@ -376,6 +376,23 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         reviewer_agents=args.reviewer_agent,
         tester=args.tester,
     )
+    try:
+        ledger_record = ledger.sanitize_record(ledger_record, config)
+    except ledger.redaction.RedactionError as exc:
+        message = f"capture redaction policy invalid; skipping ledger append: {exc}"
+        if args.append_ledger and args.live:
+            if args.json:
+                print(json.dumps({"contract": contract, "error": message}, indent=2,
+                                 sort_keys=True))
+            else:
+                print(message, file=sys.stderr)
+            return 1
+        ledger_record = dict(ledger_record)
+        ledger_record["redaction"] = {
+            "schema_version": ledger.redaction.REDACTION_SCHEMA_VERSION,
+            "status": "skipped",
+            "reason": "invalid-policy",
+        }
     ledger_path = ledger.resolve_path(args.root, config)
     ledger_result = {
         "contract": contract["run_ledger"],

@@ -10,14 +10,21 @@ from keel import config as cfg
 from keel import ledger
 
 
-def _config(*, run_ledger: str | None = None) -> cfg.ProjectConfig:
+def _config(
+    *,
+    run_ledger: str | None = None,
+    deny_patterns: list[dict] | None = None,
+) -> cfg.ProjectConfig:
     reports = {"run_ledger": run_ledger} if run_ledger is not None else {}
+    policy_pack = {"name": "test", "reports": reports}
+    if deny_patterns is not None:
+        policy_pack["capture_redaction"] = {"deny_patterns": deny_patterns}
     return cfg.ProjectConfig(
         extends="keel",
         core_version="^0.7",
         base_branch="main",
         knobs=cfg.Knobs(build_gate_cmd="true"),
-        policy_pack={"name": "test", "reports": reports},
+        policy_pack=policy_pack,
     )
 
 
@@ -65,6 +72,8 @@ class TestLedgerContract(unittest.TestCase):
         self.assertEqual(contract["path"], ".keel/state/run-ledger.jsonl")
         self.assertEqual(contract["path_source"], "default")
         self.assertTrue(contract["consumer_neutral"])
+        self.assertTrue(contract["capture_redaction"]["default_redaction"])
+        self.assertFalse(contract["capture_redaction"]["audit_includes_original_values"])
         self.assertIn("ship", contract["append_owner"])
         self.assertIn("morning", contract["readers"])
 
@@ -107,12 +116,52 @@ class TestLedgerRecords(unittest.TestCase):
         self.assertEqual(record["actors"]["reviewers"], ["reviewer-a:gpt-5", "reviewer-b:claude"])
         self.assertEqual(record["actors"]["tester"], "tester:gpt-5-mini")
 
+    def test_sanitize_record_redacts_default_secret_patterns(self):
+        record = _record()
+        record["capture"]["reason"] = (
+            "Bearer abcdefghijklmnopqrstuvwxyz and "
+            "https://user:supersecret@example.test/repo"
+        )
+
+        sanitized = ledger.sanitize_record(record, _config())
+
+        serialized = json.dumps(sanitized, sort_keys=True)
+        self.assertNotIn("abcdefghijklmnopqrstuvwxyz", serialized)
+        self.assertNotIn("supersecret", serialized)
+        self.assertIn("[REDACTED:bearer-token]", serialized)
+        self.assertIn("[REDACTED:credentials]", serialized)
+        self.assertEqual(sanitized["redaction"]["status"], "applied")
+        self.assertEqual(sanitized["redaction"]["redaction_count"], 2)
+
+    def test_sanitize_record_uses_project_deny_patterns(self):
+        record = _record()
+        record["capture"]["reason"] = "Private host: internal.example.test"
+        config = _config(deny_patterns=[
+            {"id": "private-host", "pattern": r"internal\.example\.test"}
+        ])
+
+        sanitized = ledger.sanitize_record(record, config)
+
+        self.assertNotIn("internal.example.test", json.dumps(sanitized, sort_keys=True))
+        self.assertIn("[REDACTED:private-host]", sanitized["capture"]["reason"])
+        self.assertEqual(sanitized["redaction"]["rules"][0]["id"], "private-host")
+
+    def test_sanitize_record_leaves_safe_text_unchanged(self):
+        record = _record()
+        record["capture"]["reason"] = "Capture skipped because no hook is configured."
+
+        sanitized = ledger.sanitize_record(record, _config())
+
+        self.assertEqual(sanitized["capture"]["reason"], record["capture"]["reason"])
+        self.assertEqual(sanitized["redaction"]["redaction_count"], 0)
+
     def test_encode_parse_append_and_read_records(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / ".keel" / "state" / "run-ledger.jsonl"
             self.assertEqual(ledger.read_records(path), [])
 
             record = _record()
+            record = ledger.sanitize_record(record, _config())
             ledger.append_record(path, record)
             ledger.append_record(path, record)
 

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from . import config as cfg
+from . import redaction
 
 LEDGER_SCHEMA_VERSION = "keel.run-ledger.v1"
 DEFAULT_LEDGER_PATH = ".keel/state/run-ledger.jsonl"
@@ -29,6 +30,7 @@ def ledger_contract_as_dict(config: cfg.ProjectConfig) -> dict[str, Any]:
         "append_owner": ["ship", "ship-v2"],
         "readers": ["morning", "wrap", "overnight", "capture-verification", "ledger"],
         "consumer_neutral": True,
+        "capture_redaction": redaction.contract_as_dict(config),
         "record_types": [RECORD_TYPE_SHIP_RUN],
     }
 
@@ -163,6 +165,17 @@ def append_record(path: str | Path, record: dict[str, Any]) -> None:
     ledger_path.parent.mkdir(parents=True, exist_ok=True)
     with ledger_path.open("a", encoding="utf-8") as handle:
         handle.write(encode_record(record))
+
+
+def sanitize_record(
+    record: dict[str, Any],
+    config: cfg.ProjectConfig | None = None,
+) -> dict[str, Any]:
+    """Apply capture redaction before a ledger record becomes durable."""
+    result = redaction.sanitize(record, redaction.policy_from_config(config))
+    sanitized = dict(result.value)
+    sanitized["redaction"] = result.audit
+    return sanitized
 
 
 def _validate_record(record: Any, *, line_number: int | None = None) -> None:
