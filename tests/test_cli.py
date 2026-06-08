@@ -1035,6 +1035,30 @@ class TestSetup(unittest.TestCase):
             self.assertIn("extends: keel", target.read_text())
             self.assertIn("keel-generated", adapter.read_text())
 
+    def test_wizard_mode(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "pyproject.toml").write_text("x")
+            answers = ["develop", "Etc/GMT-3", "09:00-18:00", "pytest", ""]
+            with patch("builtins.input", side_effect=answers):
+                rc, out, err = run(["setup", "--root", d, "--wizard"])
+            self.assertEqual(rc, 0, err)
+            self.assertIn("keel setup wizard", out)
+            written = (Path(d) / ".keel/project.yaml").read_text()
+            self.assertIn("base_branch: develop", written)
+            self.assertIn('merge_window: "09:00-18:00"', written)
+
+    def test_invalid_existing_config_fails_validation(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            target = Path(d) / ".keel/project.yaml"
+            target.parent.mkdir()
+            target.write_text("extends: keel\n")
+            rc, out, err = run(["setup", "--root", d, "--adapter-target", "claude"])
+            self.assertEqual(rc, 1)
+            self.assertIn("using existing", out)
+            self.assertIn("validate     : failed", err)
+
 
 class TestShipHotfix(unittest.TestCase):
     def _cfg(self):
