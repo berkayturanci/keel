@@ -97,6 +97,15 @@ class TestWizard(unittest.TestCase):
         self.assertIsNone(config.merge_window)
         self.assertEqual(config.gates, ("build",))
 
+    def test_invalid_consent_mode_rejected(self):
+        def ask(prompt, default):
+            if "Consent mode" in prompt:
+                return "maybe"
+            return default
+
+        with self.assertRaises(ValueError):
+            scaffold.wizard("python", ask, repo="demo")
+
 
 class TestRenderConfig(unittest.TestCase):
     def test_minimal_validates(self):
@@ -104,6 +113,10 @@ class TestRenderConfig(unittest.TestCase):
         text = scaffold.render_config(repo="x")
         self.assertEqual(cfg.parse_config(yaml.safe_load(text)).repo, "x")
         self.assertEqual(cfg.parse_config(yaml.safe_load(text)).consent_mode, "explicit")
+
+    def test_invalid_consent_mode_rejected(self):
+        with self.assertRaises(ValueError):
+            scaffold.render_config(repo="x", consent_mode="maybe")
 
 
 if __name__ == "__main__":

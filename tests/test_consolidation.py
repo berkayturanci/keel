@@ -194,6 +194,19 @@ class TestCliPlanConsent(unittest.TestCase):
         self.assertEqual(consent_block["status"], "agent-delegated")
         self.assertFalse(consent_block["requires_operator_consent"])
 
+    def test_plan_live_config_agent_mode_does_not_block_missing_scope(self):
+        p = _write_raw(
+            "extends: keel\ncore_version: '^0.6'\nbase_branch: main\n"
+            "repo: tmp\nconsent_mode: agent\n"
+            "gates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+        )
+        with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {}, clear=True):
+            rc, out, err = run(["plan", p, "--root", d, "--command", "ship", "--live", "--json"])
+        self.assertEqual(rc, 0, err)
+        consent_block = json.loads(out)["contract"]["operator_consent"]
+        self.assertEqual(consent_block["mode"], "agent")
+        self.assertEqual(consent_block["status"], "agent-delegated")
+
     def test_plan_live_env_consent_mode_selects_standing(self):
         p = _write_raw(
             "extends: keel\ncore_version: '^0.6'\nbase_branch: main\n"
@@ -278,6 +291,38 @@ class TestCliPlanConsent(unittest.TestCase):
         consent_block = json.loads(out)["contract"]["operator_consent"]
         self.assertEqual(consent_block["status"], "not-required-read-only")
         self.assertEqual(consent_block["approval_source"], "none")
+
+    def test_plan_live_read_only_ci_check_ignores_invalid_config_standing_approval(self):
+        p = _write_raw(
+            "extends: keel\ncore_version: '^0.6'\nbase_branch: main\nrepo: tmp\n"
+            "consent_mode: standing\n"
+            "automation:\n"
+            "  approved_scopes: [bogus]\n"
+            "  operator: automation:nightly\n"
+            "gates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+        )
+        with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {}, clear=True):
+            rc, out, err = run([
+                "plan", p, "--root", d, "--command", "ci-check", "--live", "--json",
+            ])
+        self.assertEqual(rc, 0, err)
+        consent_block = json.loads(out)["contract"]["operator_consent"]
+        self.assertEqual(consent_block["status"], "not-required-read-only")
+        self.assertEqual(consent_block["approval_source"], "none")
+
+    def test_plan_live_mutating_standing_config_rejects_invalid_scope(self):
+        p = _write_raw(
+            "extends: keel\ncore_version: '^0.6'\nbase_branch: main\nrepo: tmp\n"
+            "consent_mode: standing\n"
+            "automation:\n"
+            "  approved_scopes: [filesystem, bogus]\n"
+            "  operator: automation:nightly\n"
+            "gates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+        )
+        with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {}, clear=True):
+            rc, _, err = run(["plan", p, "--root", d, "--command", "ship", "--live", "--json"])
+        self.assertEqual(rc, 1)
+        self.assertIn("unknown consent scope", err)
 
     def test_overnight_env_standing_approval_records_source_and_delegate_scope(self):
         p = _write_raw(

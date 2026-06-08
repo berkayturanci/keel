@@ -720,11 +720,15 @@ def _cmd_init(args: argparse.Namespace) -> int:
         return 1
     stack = scaffold.detect_stack(root)
     repo = root.resolve().name
-    if args.wizard:
-        print(f"keel init wizard — detected stack: {stack} (Enter accepts each default)")
-        text = scaffold.wizard(stack, _ask, repo=repo)
-    else:
-        text = scaffold.default_config(stack, repo=repo)
+    try:
+        if args.wizard:
+            print(f"keel init wizard — detected stack: {stack} (Enter accepts each default)")
+            text = scaffold.wizard(stack, _ask, repo=repo)
+        else:
+            text = scaffold.default_config(stack, repo=repo)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(text, encoding="utf-8")
     if args.force:
@@ -793,7 +797,11 @@ def _cmd_setup(args: argparse.Namespace) -> int:
                 ".keel/extensions/ will not be touched",
                 file=sys.stderr,
             )
-        text, stack = _render_scaffolded_config(root, wizard=args.wizard)
+        try:
+            text, stack = _render_scaffolded_config(root, wizard=args.wizard)
+        except ValueError as exc:
+            print(f"  config       : failed ({exc})", file=sys.stderr)
+            return 1
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(text, encoding="utf-8")
         action = "overwrote" if existed else "wrote"

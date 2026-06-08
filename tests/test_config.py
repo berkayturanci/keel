@@ -117,13 +117,11 @@ class TestParse(unittest.TestCase):
         with self.assertRaises(cfg.ConfigError):
             cfg.parse_config(bad)
 
-    def test_automation_unknown_scope_rejected(self):
+    def test_automation_unknown_scope_parses_for_consent_preflight(self):
         bad = copy.deepcopy(VALID)
         bad["automation"] = {"approved_scopes": ["filesystem", "bogus"]}
-        with self.assertRaises(cfg.ConfigError) as ctx:
-            cfg.parse_config(bad)
-        self.assertIn("automation", str(ctx.exception))
-        self.assertIn("bogus", str(ctx.exception))
+        config = cfg.parse_config(bad)
+        self.assertEqual(config.automation.approved_scopes, ("bogus", "filesystem"))
 
     def test_policy_pack_parses_project_policy_contract(self):
         data = copy.deepcopy(VALID)

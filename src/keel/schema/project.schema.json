@@ -130,14 +130,8 @@
         "approved_scopes": {
           "type": "array",
           "items": {
-            "enum": [
-              "filesystem",
-              "git",
-              "github",
-              "secrets",
-              "release",
-              "production-adjacent"
-            ]
+            "type": "string",
+            "minLength": 1
           },
           "description": "Standing approval scopes for live unattended runs. Least-privilege only; any unlisted required scope still blocks."
         },

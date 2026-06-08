@@ -255,7 +255,7 @@ keel window .keel/project.yaml
 # merge window OPEN  [Europe/Istanbul 07:00-01:30]
 ```
 
-## `keel ship <project.yaml> [--root DIR] [--pr N] [--dry-run] [--live] [--approve-scope SCOPE] [--operator ID] [--target TARGET] [--review-comments inline|summary] [--reviewers 1|2|3] [--jury|--no-jury] [--jury-advisory] [--json]`
+## `keel ship <project.yaml> [--root DIR] [--pr N] [--dry-run] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--target TARGET] [--review-comments inline|summary] [--reviewers 1|2|3] [--jury|--no-jury] [--jury-advisory] [--json]`
 
 Run the **deterministic slice of a ship** against the current checkout and print the
 assessment: how many files changed vs. the base branch, the **risk tier** (→ reviewer
@@ -270,12 +270,13 @@ the live merge (s10) needs a configured runner with `git` + an authenticated `gh
 
 `--live` turns the command into a live preflight gate for adapters. The command builds the
 same structured contract and stops before running project gates if operator consent is
-missing. `--approve-scope` can be repeated or comma-separated. Trusted unattended runs may
-also set `KEEL_APPROVE_SCOPE=filesystem,git,github` and optionally
+missing. `--approve-scope` can be repeated or comma-separated. Consent mode resolves as
+`--consent-mode` > `KEEL_CONSENT_MODE` > project `consent_mode` > built-in `explicit`.
+Trusted unattended runs may set `KEEL_APPROVE_SCOPE=filesystem,git,github` and
 `KEEL_OPERATOR=automation:nightly`, or use `automation.approved_scopes` in project config
-with `automation.operator`. Env/config standing approval requires an operator identity.
-Dry-run and read-only commands ignore standing approval values. Precedence is flag, then
-env, then config. Approved live runs include a local
+with `automation.operator`, when the resolved mode is `standing`. Env/config standing
+approval requires an operator identity. Dry-run and read-only commands ignore standing
+approval values. Approved live runs include a local
 `consent_record` in JSON output with the approval source; secret values are never recorded.
 
 Review and merge-gate parity is exposed through `review_merge_contract` in JSON output.
@@ -288,7 +289,7 @@ preserves the reviewer, CI, tester, merge-window, merge-lock, closeout, and capt
 keel ship .keel/project.yaml --root .
 keel ship .keel/project.yaml --root . --live --json
 keel ship .keel/project.yaml --root . --live --approve-scope filesystem,git,github --operator "$USER" --target "issue #123" --json
-KEEL_APPROVE_SCOPE=filesystem,git,github KEEL_OPERATOR=automation:nightly keel overnight .keel/project.yaml --live --json
+KEEL_APPROVE_SCOPE=filesystem,git,github KEEL_OPERATOR=automation:nightly keel overnight .keel/project.yaml --live --consent-mode standing --json
 # keel ship — keel  (base main)
 #   changed files : 53
 #   risk tier     : TIER-3  → 3 reviewer(s)

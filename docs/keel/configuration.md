@@ -230,12 +230,13 @@ wants an explicit auditable policy.
 | field | type | required | description |
 |---|---|---|---|
 | `approved_scopes` | string[] | | standing consent scopes such as `filesystem`, `git`, and `github` |
-| `operator` | string | required when `approved_scopes` is set | automation identity recorded in `consent_record` when config approval is used |
+| `operator` | string | runtime-required with `approved_scopes` | automation identity recorded in `consent_record` when config approval is used |
 
 `automation.approved_scopes` only satisfies the consent preflight. It never bypasses
 findings, CI, project gates, merge windows, or merge locks. Approval is least-privilege:
 any required scope not listed here still blocks the live run.
-If `approved_scopes` is set without `operator`, live preflight fails before mutation.
+If `approved_scopes` is selected by a live mutating `standing` run without `operator`,
+preflight fails before mutation.
 
 Example:
 
