@@ -640,7 +640,12 @@ def _cmd_init(args: argparse.Namespace) -> int:
     root = Path(args.root)
     target = root / ".keel" / "project.yaml"
     if target.exists() and not args.force:
-        print(f"{target} already exists (use --force to overwrite)", file=sys.stderr)
+        print(
+            f"{target} already exists; refusing to overwrite project config "
+            "(use --force only if you intentionally want to replace it). "
+            "Project extensions are not touched.",
+            file=sys.stderr,
+        )
         return 1
     stack = scaffold.detect_stack(root)
     repo = root.resolve().name
@@ -651,6 +656,11 @@ def _cmd_init(args: argparse.Namespace) -> int:
         text = scaffold.default_config(stack, repo=repo)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(text, encoding="utf-8")
+    if args.force:
+        print(
+            "warning: --force replaced .keel/project.yaml; .keel/extensions/ was not touched",
+            file=sys.stderr,
+        )
     print(f"wrote {target}  (detected stack: {stack})")
     return 0
 
@@ -703,13 +713,21 @@ def _cmd_setup(args: argparse.Namespace) -> int:
 
     if target.exists() and not args.force:
         print(f"  config       : using existing {target}")
+        print("  extensions   : preserved (setup never deletes .keel/extensions/)")
     else:
         existed = target.exists()
+        if existed:
+            print(
+                "warning: --force will replace .keel/project.yaml; "
+                ".keel/extensions/ will not be touched",
+                file=sys.stderr,
+            )
         text, stack = _render_scaffolded_config(root, wizard=args.wizard)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(text, encoding="utf-8")
         action = "overwrote" if existed else "wrote"
         print(f"  config       : {action} {target} (detected stack: {stack})")
+        print("  extensions   : preserved (setup never deletes .keel/extensions/)")
 
     agent = args.adapter_target
     if agent == "all":

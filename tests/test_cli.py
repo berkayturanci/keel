@@ -967,9 +967,14 @@ class TestInit(unittest.TestCase):
             keel = Path(d) / ".keel"
             keel.mkdir()
             (keel / "project.yaml").write_text("old")
-            rc, _, _ = run(["init", "--root", d, "--force"])
+            ext = keel / "extensions/local.md"
+            ext.parent.mkdir()
+            ext.write_text("extension\n")
+            rc, _, err = run(["init", "--root", d, "--force"])
             self.assertEqual(rc, 0)
+            self.assertIn("extensions/ was not touched", err)
             self.assertIn("extends: keel", (keel / "project.yaml").read_text())
+            self.assertEqual(ext.read_text(), "extension\n")
 
     def test_wizard_mode(self):
         import tempfile
@@ -1016,6 +1021,7 @@ class TestSetup(unittest.TestCase):
             rc, out, err = run(["setup", "--root", d, "--adapter-target", "claude"])
             self.assertEqual(rc, 0, err)
             self.assertIn("using existing", out)
+            self.assertIn("extensions   : preserved", out)
             self.assertEqual(target.read_text(), text)
             self.assertTrue((Path(d) / ".claude/commands/keel/ship.md").exists())
             self.assertFalse((Path(d) / ".agents/skills/keel-ship/SKILL.md").exists())
@@ -1026,13 +1032,19 @@ class TestSetup(unittest.TestCase):
             target = Path(d) / ".keel/project.yaml"
             target.parent.mkdir()
             target.write_text("old")
+            ext = Path(d) / ".keel/extensions/local.md"
+            ext.parent.mkdir()
+            ext.write_text("extension\n")
             adapter = Path(d) / ".claude/commands/keel/ship.md"
             adapter.parent.mkdir(parents=True)
             adapter.write_text("old")
             rc, out, err = run(["setup", "--root", d, "--adapter-target", "claude", "--force"])
             self.assertEqual(rc, 0, err)
             self.assertIn("overwrote", out)
+            self.assertIn("extensions   : preserved", out)
+            self.assertIn(".keel/extensions/ will not be touched", err)
             self.assertIn("extends: keel", target.read_text())
+            self.assertEqual(ext.read_text(), "extension\n")
             self.assertIn("keel-generated", adapter.read_text())
 
     def test_wizard_mode(self):

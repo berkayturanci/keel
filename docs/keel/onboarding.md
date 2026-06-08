@@ -44,7 +44,8 @@ Use `--adapter-target claude` or `--adapter-target skills` when only one discove
 should be installed. The default is `all`.
 
 Use `--force` only when intentionally regenerating the config and generated adapters from
-the installed keel package:
+the installed keel package. Even with `--force`, `setup` does not delete or rewrite
+`.keel/extensions/*`; it only replaces `.keel/project.yaml` and generated adapter files:
 
 ```bash
 keel setup --root . --force

@@ -34,7 +34,8 @@ agents, or migrate a repository onto keel without copying command bodies.
    Use `--wizard` when the project should choose base branch, build command, timezone, or
    merge window interactively. Use `--adapter-target claude` or `--adapter-target skills`
    only when the user wants one surface. Use `--force` only when intentionally replacing
-   existing generated config and adapter files.
+   existing generated config and adapter files; it still must not delete or rewrite
+   `.keel/extensions/*`.
 
 4. Review `.keel/project.yaml` and keep project-specific behavior in config, policy packs,
    or `.keel/extensions/`. Do not copy or fork the packaged `/keel:<command>` bodies.

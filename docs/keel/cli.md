@@ -27,8 +27,9 @@ keel setup --root . --force
 ```
 
 Without `--force`, an existing `.keel/project.yaml` is reused so project-owned policy and
-extensions are not overwritten. With `--force`, both the scaffolded config and generated
-adapter files are replaced from the installed keel package.
+extensions are not overwritten. With `--force`, the scaffolded config and generated adapter
+files are replaced from the installed keel package, but `.keel/extensions/*` is still never
+deleted or rewritten by `setup`.
 
 ## `keel validate <project.yaml…> [--root DIR]`
 
@@ -351,6 +352,9 @@ Scaffold a default `.keel/project.yaml` for the repo. keel detects the stack fro
 files (`pubspec.yaml`→Flutter, `pyproject.toml`/`setup.py`→Python, `package.json`→Node,
 `build.gradle*`→Android, else generic) and writes a config that already passes
 `keel validate`. Refuses to overwrite an existing config unless `--force`.
+
+`--force` replaces `.keel/project.yaml`; it does not delete or rewrite `.keel/extensions/*`.
+Use it only when intentionally regenerating project config.
 
 ```bash
 keel init                 # scaffold .keel/project.yaml for the detected stack
