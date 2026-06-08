@@ -24,7 +24,10 @@ GateRunner = Callable[["GateSpec"], tuple[bool, list[Finding]]]
 _ON_FAIL_SEVERITY = {"block": "major", "suggest": "minor", "warn": "nit"}
 
 #: reviewdog-style errorformat: ``path:line[:col]: message`` (first hit wins).
-_LOCATION_RE = re.compile(r"^[ \t]*(?P<path>[^\s:\n][^:\n]*?):(?P<line>\d+)(?::\d+)?[:\s]", re.MULTILINE)
+_LOCATION_RE = re.compile(
+    r"^[ \t]*(?P<path>[^\s:\n][^:\n]*?):(?P<line>\d+)(?::\d+)?[:\s]",
+    re.MULTILINE
+)
 
 
 def first_location(text: str) -> tuple[str | None, int | None]:
