@@ -35,6 +35,10 @@ SKILL_PREFIX = "keel-"
 
 #: the logical install surfaces (``all`` fans over these).
 TARGETS: tuple[str, ...] = ("claude", "skills")
+LEGACY_TARGETS: tuple[str, ...] = ("claude", "skills")
+LEGACY_CLAUDE_DIR = ".claude/commands"
+LEGACY_SKILL_PREFIX = "source-command-"
+PARITY_READY_STATUSES = frozenset({"parity-proven", "deferred"})
 
 MARKER_RE = re.compile(r"\n?<!-- keel-generated: (?P<meta>[^>]*) -->\n?$")
 
@@ -135,6 +139,169 @@ def render_skill(adapter_text: str, command: str) -> str:
         f"project value from `.keel/project.yaml` via the `keel` CLI."
     )
     return f"---\n{front}\n---\n\n# {name}\n\n{intro}\n\n{body}"
+
+
+def render_legacy_claude_wrapper(legacy_command: str, keel_command: str) -> str:
+    """Render a native legacy slash-command shim that delegates to ``/keel:<command>``."""
+    return (
+        f"# /{legacy_command}\n\n"
+        f"This legacy command is now a thin compatibility wrapper for `/keel:{keel_command}`.\n\n"
+        "Before doing any mutating work, run:\n\n"
+        "```bash\n"
+        f"keel plan .keel/project.yaml --root . --command {keel_command} --live --json \"$@\"\n"
+        "```\n\n"
+        f"Then execute `/keel:{keel_command}` with the user's original arguments and flags "
+        "unchanged. Preserve dry-run, jury/no-jury, review-comment mode, merge behavior, "
+        "issue targeting, PR targeting, and any project policy exposed by `.keel/project.yaml` "
+        "or `.keel/extensions/`. Do not duplicate the keel workflow body here; the installed "
+        f"`/keel:{keel_command}` adapter is the source of truth.\n\n"
+        "If the plan reports missing consent, unavailable required capabilities, or an "
+        "unverified migration row, stop and report that blocker instead of guessing.\n"
+    )
+
+
+def render_legacy_skill_wrapper(legacy_command: str, keel_command: str) -> str:
+    """Render a shared skill shim for non-Claude agents that delegates to ``keel-<command>``."""
+    name = f"{LEGACY_SKILL_PREFIX}{legacy_command}"
+    desc = (
+        f"Compatibility wrapper for the legacy `{legacy_command}` command; delegates to "
+        f"`/keel:{keel_command}` and the `keel-{keel_command}` skill without changing flags."
+    )
+    front = yaml.safe_dump({"name": name, "description": desc},
+                           sort_keys=False, allow_unicode=True, width=10**9).strip()
+    return (
+        f"---\n{front}\n---\n\n"
+        f"# {name}\n\n"
+        f"Use this skill when the user asks for the legacy `{legacy_command}` command. "
+        f"This is a thin compatibility wrapper for the project-neutral `keel-{keel_command}` "
+        f"skill and `/keel:{keel_command}` command.\n\n"
+        "1. Preserve the user's original issue or PR target and every flag, including "
+        "`--dry-run`, jury/no-jury choices, review-comment mode, and merge-mode flags.\n"
+        "2. Run a live structured preflight before mutating state:\n\n"
+        "```bash\n"
+        f"keel plan .keel/project.yaml --root . --command {keel_command} --live --json\n"
+        "```\n\n"
+        f"3. Delegate to the `keel-{keel_command}` skill. Do not copy or reinterpret the "
+        "workflow body in this wrapper.\n\n"
+        "Stop if consent, capabilities, or parity verification is missing.\n"
+    )
+
+
+def parity_ready_commands(matrix_text: str) -> set[str]:
+    """Return keel command names whose parity-matrix rows are ready for legacy wrappers."""
+    ready: set[str] = set()
+    for line in matrix_text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("| `") or "`/keel:" not in stripped:
+            continue
+        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+        if len(cells) < 3:
+            continue
+        match = re.search(r"`/keel:([^`]+)`", cells[1])
+        status = cells[2].strip("`")
+        if match and status in PARITY_READY_STATUSES:
+            ready.add(match.group(1))
+    return ready
+
+
+def _legacy_expected_files(
+    mappings: dict[str, str], *, _src: Path | None = None
+) -> dict[str, dict[str, tuple[Path, str, str, str]]]:
+    src = _src or ADAPTERS
+    expected: dict[str, dict[str, tuple[Path, str, str, str]]] = {"claude": {}, "skills": {}}
+    for legacy, command in sorted(mappings.items()):
+        source = src / f"{command}.md"
+        source_text = source.read_text(encoding="utf-8")
+        claude_body = render_legacy_claude_wrapper(legacy, command)
+        expected["claude"][f"{legacy}.md"] = (
+            Path(LEGACY_CLAUDE_DIR) / f"{legacy}.md",
+            command,
+            source_text,
+            claude_body,
+        )
+        skill_name = f"{LEGACY_SKILL_PREFIX}{legacy}"
+        skill_body = render_legacy_skill_wrapper(legacy, command)
+        expected["skills"][skill_name] = (
+            Path(SKILLS_DIR) / skill_name / "SKILL.md",
+            command,
+            source_text,
+            skill_body,
+        )
+    return expected
+
+
+def default_legacy_mappings(*, _src: Path | None = None) -> dict[str, str]:
+    """Default one-to-one legacy wrapper mapping for every packaged adapter command."""
+    return {Path(name).stem: Path(name).stem for name in adapter_names(_src=_src)}
+
+
+def _validate_legacy_mappings(
+    mappings: dict[str, str],
+    *,
+    ready_commands: set[str] | None,
+    _src: Path | None,
+) -> None:
+    packaged = {Path(name).stem for name in adapter_names(_src=_src)}
+    for legacy, command in mappings.items():
+        if not legacy or not command:
+            raise ValueError("legacy wrapper mappings must use non-empty command names")
+        if command not in packaged:
+            raise ValueError(f"unknown keel command for legacy wrapper: {command}")
+        if ready_commands is not None and command not in ready_commands:
+            raise ValueError(f"keel command is not parity-ready for legacy wrapper: {command}")
+
+
+def install_legacy_wrappers(
+    agent: str,
+    root: str | Path,
+    *,
+    mappings: dict[str, str] | None = None,
+    ready_commands: set[str] | None = None,
+    force: bool = False,
+    _src: Path | None = None,
+) -> tuple[list[str], list[str]]:
+    """Install thin legacy compatibility wrappers for one legacy surface."""
+    if agent not in LEGACY_TARGETS:
+        raise KeyError(agent)
+    wrapper_mappings = mappings or default_legacy_mappings(_src=_src)
+    _validate_legacy_mappings(wrapper_mappings, ready_commands=ready_commands, _src=_src)
+    expected = _legacy_expected_files(wrapper_mappings, _src=_src)[agent]
+    root_path = Path(root)
+    installed: list[str] = []
+    skipped: list[str] = []
+    surface = f"legacy-{agent}"
+    for name, (rel, command, source_text, generated_text) in expected.items():
+        dest = root_path / rel
+        if dest.exists() and not force:
+            skipped.append(name)
+            continue
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(_with_marker(surface, command, source_text, generated_text),
+                        encoding="utf-8")
+        installed.append(name)
+    return installed, skipped
+
+
+def install_all_legacy_wrappers(
+    root: str | Path,
+    *,
+    mappings: dict[str, str] | None = None,
+    ready_commands: set[str] | None = None,
+    force: bool = False,
+    _src: Path | None = None,
+) -> dict[str, tuple[list[str], list[str]]]:
+    """Install legacy compatibility wrappers into both supported discovery surfaces."""
+    return {
+        target: install_legacy_wrappers(
+            target,
+            root,
+            mappings=mappings,
+            ready_commands=ready_commands,
+            force=force,
+            _src=_src,
+        )
+        for target in LEGACY_TARGETS
+    }
 
 
 def _install_commands(

@@ -119,6 +119,132 @@ class TestInstallSkills(unittest.TestCase):
             self.assertIn("keel-ship", again)
 
 
+class TestLegacyWrappers(unittest.TestCase):
+    def test_parity_ready_commands_reads_matrix_statuses(self):
+        matrix = """
+| Legacy command | Keel command | Status |
+|---|---|---|
+| `bad` | `/keel:bad` |
+| `ship` | `/keel:ship` | `parity-proven` |
+| `wrap` | `/keel:wrap` | `in-progress` |
+| `custom` | `/keel:triage` | `deferred` |
+"""
+        self.assertEqual(install.parity_ready_commands(matrix), {"ship", "triage"})
+
+    def test_default_legacy_mappings_are_one_to_one(self):
+        mappings = install.default_legacy_mappings()
+        self.assertEqual(mappings["ship"], "ship")
+        self.assertEqual(mappings["morning"], "morning")
+        self.assertIn("review-cycle", mappings)
+
+    def test_renders_thin_claude_wrapper(self):
+        body = install.render_legacy_claude_wrapper("ship", "ship")
+        self.assertIn("# /ship", body)
+        self.assertIn("`/keel:ship`", body)
+        self.assertIn("--live --json", body)
+        self.assertIn("dry-run", body)
+        self.assertIn("jury/no-jury", body)
+        self.assertIn("review-comment mode", body)
+        self.assertIn("PR targeting", body)
+        self.assertIn("Do not duplicate", body)
+
+    def test_renders_thin_skill_wrapper(self):
+        body = install.render_legacy_skill_wrapper("ship", "ship")
+        meta, skill_body = install._split_frontmatter(body)
+        self.assertEqual(meta["name"], "source-command-ship")
+        self.assertIn("keel-ship", skill_body)
+        self.assertIn("Preserve the user's original issue or PR target", skill_body)
+        self.assertIn("Delegate to the `keel-ship` skill", skill_body)
+
+    def test_installs_legacy_wrappers_only_for_ready_commands(self):
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaisesRegex(ValueError, "not parity-ready"):
+                install.install_legacy_wrappers(
+                    "claude",
+                    d,
+                    mappings={"ship": "ship", "wrap": "wrap"},
+                    ready_commands={"ship"},
+                )
+
+            installed, skipped = install.install_legacy_wrappers(
+                "claude",
+                d,
+                mappings={"ship": "ship"},
+                ready_commands={"ship"},
+            )
+            self.assertEqual(installed, ["ship.md"])
+            self.assertEqual(skipped, [])
+            path = Path(d) / ".claude/commands/ship.md"
+            body, marker = install._split_marker(path.read_text(encoding="utf-8"))
+            self.assertIn("`/keel:ship`", body)
+            self.assertEqual(marker["surface"], "legacy-claude")
+            self.assertEqual(marker["command"], "ship")
+
+    def test_legacy_wrapper_validation_rejects_bad_inputs(self):
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaisesRegex(KeyError, "codex"):
+                install.install_legacy_wrappers("codex", d, mappings={"ship": "ship"})
+            with self.assertRaisesRegex(ValueError, "non-empty"):
+                install.install_legacy_wrappers("claude", d, mappings={"": "ship"})
+            with self.assertRaisesRegex(ValueError, "unknown keel command"):
+                install.install_legacy_wrappers("claude", d, mappings={"ship": "missing"})
+
+    def test_installs_all_legacy_wrapper_surfaces_and_preserves_existing(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            results = install.install_all_legacy_wrappers(
+                root,
+                mappings={"ship": "ship"},
+                ready_commands={"ship"},
+            )
+            self.assertEqual(results["claude"], (["ship.md"], []))
+            self.assertEqual(results["skills"], (["source-command-ship"], []))
+            self.assertTrue((root / ".claude/commands/ship.md").exists())
+            self.assertTrue((root / ".agents/skills/source-command-ship/SKILL.md").exists())
+
+            (root / ".claude/commands/ship.md").write_text("local legacy body\n",
+                                                            encoding="utf-8")
+            skipped = install.install_all_legacy_wrappers(
+                root,
+                mappings={"ship": "ship"},
+                ready_commands={"ship"},
+            )
+            self.assertEqual(skipped["claude"], ([], ["ship.md"]))
+            self.assertEqual((root / ".claude/commands/ship.md").read_text(encoding="utf-8"),
+                             "local legacy body\n")
+
+            forced = install.install_all_legacy_wrappers(
+                root,
+                mappings={"ship": "ship"},
+                ready_commands={"ship"},
+                force=True,
+            )
+            self.assertEqual(forced["claude"], (["ship.md"], []))
+            self.assertIn("`/keel:ship`",
+                          (root / ".claude/commands/ship.md").read_text(encoding="utf-8"))
+
+    def test_legacy_wrappers_remain_consumer_neutral(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            install.install_all_legacy_wrappers(
+                root,
+                mappings={"ship": "ship"},
+                ready_commands={"ship"},
+            )
+            offenders: list[str] = []
+            for path in sorted(
+                list((root / ".claude").rglob("*.md"))
+                + list((root / ".agents").rglob("SKILL.md"))
+            ):
+                body, _metadata = install._split_marker(path.read_text(encoding="utf-8"))
+                text = body.lower()
+                for term in CONSUMER_SPECIFIC_TERMS:
+                    if term in text:
+                        offenders.append(f"{path.relative_to(root)}: {term}")
+
+            self.assertEqual(offenders, [])
+
+
 class TestInstallAll(unittest.TestCase):
     def test_installs_both_surfaces(self):
         with tempfile.TemporaryDirectory() as d:

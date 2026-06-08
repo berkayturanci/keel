@@ -1110,6 +1110,74 @@ class TestInstallAdapter(unittest.TestCase):
         self.assertIn("unknown target", err)
 
 
+class TestInstallLegacyWrappers(unittest.TestCase):
+    def test_installs_selected_legacy_wrapper(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, err = run([
+                "install-legacy-wrappers",
+                "all",
+                "--root",
+                d,
+                "--command",
+                "ship=ship",
+            ])
+            self.assertEqual(rc, 0, err)
+            self.assertIn("legacy wrapper", out)
+            self.assertTrue((Path(d) / ".claude/commands/ship.md").exists())
+            self.assertTrue((Path(d) / ".agents/skills/source-command-ship/SKILL.md").exists())
+
+    def test_rejects_unknown_legacy_target(self):
+        rc, _, err = run(["install-legacy-wrappers", "codex", "--command", "ship=ship"])
+        self.assertEqual(rc, 1)
+        self.assertIn("unknown target", err)
+
+    def test_legacy_mapping_parser_rejects_malformed_values(self):
+        with self.assertRaisesRegex(Exception, "use LEGACY=KEEL"):
+            cli._parse_legacy_mapping("ship")
+        with self.assertRaisesRegex(Exception, "must be non-empty"):
+            cli._parse_legacy_mapping("ship=")
+
+    def test_rejects_non_ready_mapping_from_parity_matrix(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            matrix = Path(d) / "matrix.md"
+            matrix.write_text(
+                "| Legacy command | Keel command | Status |\n"
+                "|---|---|---|\n"
+                "| `ship` | `/keel:ship` | `in-progress` |\n",
+                encoding="utf-8",
+            )
+            rc, _, err = run([
+                "install-legacy-wrappers",
+                "claude",
+                "--root",
+                d,
+                "--parity-matrix",
+                str(matrix),
+                "--command",
+                "ship=ship",
+            ])
+            self.assertEqual(rc, 1)
+            self.assertIn("not parity-ready", err)
+
+    def test_missing_parity_matrix_is_a_blocker(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, _, err = run([
+                "install-legacy-wrappers",
+                "claude",
+                "--root",
+                d,
+                "--parity-matrix",
+                str(Path(d) / "missing.md"),
+                "--command",
+                "ship=ship",
+            ])
+            self.assertEqual(rc, 1)
+            self.assertIn("parity matrix not found", err)
+
+
 class TestParser(unittest.TestCase):
     def test_subcommands_present(self):
         parser = cli.build_parser()
@@ -1121,7 +1189,8 @@ class TestParser(unittest.TestCase):
                                  "ship-v2", "implement", "ci-check", "morning", "capabilities",
                                  "wrap", "overnight", "init",
                                  "install-adapter",
-                                 "adapter-status", "update-adapter", "project-commands"})
+                                 "adapter-status", "update-adapter", "project-commands",
+                                 "install-legacy-wrappers"})
 
 
 if __name__ == "__main__":

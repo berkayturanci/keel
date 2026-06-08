@@ -187,6 +187,54 @@ class TestParityMatrix(unittest.TestCase):
         self.assertIn("time-window-scan", review_all_day["Known gaps / owner issues"])
         self.assertIn("[review-all-day]", review_all_day["Known gaps / owner issues"])
 
+    def test_reporting_rows_record_parity_evidence(self):
+        rows = {row["Legacy command"].strip("`"): row for row in _matrix_rows()}
+
+        coverage = rows["coverage"]
+        self.assertEqual(coverage["Status"], "`parity-proven`")
+        self.assertIn("#72", coverage["Known gaps / owner issues"])
+        self.assertIn("one-comment-per-pr", coverage["Known gaps / owner issues"])
+        self.assertIn("do-not-post-duplicate", coverage["Known gaps / owner issues"])
+        self.assertIn("coverage-regression", coverage["Legacy behavior"])
+        self.assertIn("DRY-RUN:", coverage["Dry-run behavior"])
+
+        deps_audit = rows["deps-audit"]
+        self.assertEqual(deps_audit["Status"], "`parity-proven`")
+        self.assertIn("#72", deps_audit["Known gaps / owner issues"])
+        self.assertIn("append-per-run", deps_audit["Known gaps / owner issues"])
+        self.assertIn("deps-audit: <DATE>", deps_audit["Keel target behavior"])
+        self.assertIn("routes nothing", deps_audit["Dry-run behavior"])
+
+        flake_audit = rows["flake-audit"]
+        self.assertEqual(flake_audit["Status"], "`parity-proven`")
+        self.assertIn("#72", flake_audit["Known gaps / owner issues"])
+        self.assertIn("across-run-disagreement-only", flake_audit["Known gaps / owner issues"])
+        self.assertIn("fail_count >= 3", flake_audit["Keel target behavior"])
+        self.assertIn("does not comment on existing flake issues", flake_audit["Dry-run behavior"])
+
+    def test_reporting_details_document_exact_flag_mapping_and_idempotency(self):
+        text = MATRIX.read_text(encoding="utf-8")
+        for required in (
+            "## Reporting command parity details",
+            "`/keel:coverage [pr number]`",
+            "`/keel:coverage --base <branch>`",
+            "first line starts `COVERAGE-<PR>-`",
+            "does not post a duplicate",
+            "`coverage-regression`",
+            "`/keel:deps-audit [<ecosystem>\\|all]`",
+            "exact title `deps-audit: <DATE>`",
+            "first line starts `DEPS-AUDIT-<DATE>-`",
+            "`/keel:deps-audit --severity low\\|moderate\\|high\\|critical`",
+            "it never auto-applies dependency upgrades",
+            "`/keel:flake-audit --days <N> --runs <N>`",
+            "`/keel:flake-audit --threshold <P>`",
+            "`fail_count >= 3`",
+            "title `flaky test: <fully.qualified.name>`",
+            "Run-level mode reports failing runs",
+            "never edits tests or adds skip/quarantine annotations",
+        ):
+            self.assertIn(required, text)
+
 
 class TestShipBaseline(unittest.TestCase):
     def test_baseline_records_source_comparison_and_parity_evidence(self):
