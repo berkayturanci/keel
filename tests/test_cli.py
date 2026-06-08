@@ -90,6 +90,8 @@ class TestPlan(unittest.TestCase):
         self.assertIn("review_merge_contract", data["contract"])
         self.assertEqual(data["contract"]["run_ledger"]["schema_version"],
                          "keel.run-ledger.v1")
+        self.assertEqual(data["contract"]["checkpoint"]["schema_version"],
+                         "keel.checkpoint.v1")
 
     def test_plan_json_resolves_review_jury_flags(self):
         rc, out, _ = run(
@@ -202,6 +204,15 @@ def _write_config_with_ledger(build_cmd, ledger_path="state/runs.jsonl"):
         f"repo: tmp\ngates: [build]\nknobs:\n  build_gate_cmd: {build_cmd}\n"
         "policy_pack:\n  name: tmp\n  reports:\n"
         f"    run_ledger: {ledger_path!r}\n"
+    )
+
+
+def _write_config_with_checkpoint(build_cmd, checkpoint_path="state/checkpoint.json"):
+    return _write_raw(
+        "extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
+        f"repo: tmp\ngates: [build]\nknobs:\n  build_gate_cmd: {build_cmd}\n"
+        "policy_pack:\n  name: tmp\n  reports:\n"
+        f"    checkpoint: {checkpoint_path!r}\n"
     )
 
 
@@ -551,6 +562,186 @@ class TestShip(unittest.TestCase):
             rc_bad, _, err_bad = run(["ledger", config, "--root", d])
         self.assertEqual(rc_bad, 1)
         self.assertIn("invalid ledger", err_bad)
+
+    def test_checkpoint_write_read_and_resume_json(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_checkpoint("'true'")
+            rc, out, _ = run([
+                "checkpoint", config, "--root", d, "--write", "--json",
+                "--run-id", "RUN-149",
+                "--checkpoint-command", "ship",
+                "--step", "s6",
+                "--target", "issue #149",
+                "--issue-queue", "149",
+                "--active-issue", "149",
+                "--branch", "feat/issue-149-resume",
+                "--worktree", "worktrees/issue-149",
+                "--pull-request", "170",
+                "--head-sha", "abc123",
+                "--completed-step", "s0",
+                "--completed-step", "s1",
+                "--last-check", "ci",
+                "--stop-reason", "waiting on CI",
+            ])
+            checkpoint_path = Path(d) / "state" / "checkpoint.json"
+            rc_read, out_read, _ = run(["checkpoint", config, "--root", d, "--json"])
+            rc_resume, out_resume, _ = run([
+                "resume", config, "--root", d, "--json",
+                "--live-pr-state", "open",
+                "--live-worktree-state", "present",
+            ])
+
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["path"], str(checkpoint_path))
+        self.assertEqual(data["checkpoint"]["position"]["current_step"], "s6")
+        self.assertEqual(data["checkpoint"]["resume"]["action"], "recheck-ci")
+        self.assertEqual(rc_read, 0)
+        read = json.loads(out_read)
+        self.assertEqual(read["status"], "present")
+        self.assertEqual(read["checkpoint"]["run_id"], "RUN-149")
+        self.assertEqual(rc_resume, 0)
+        plan = json.loads(out_resume)["resume_plan"]
+        self.assertEqual(plan["status"], "waiting-on-ci")
+        self.assertEqual(plan["next_step"], "s6")
+        self.assertEqual(plan["resume_action"], "recheck-ci")
+
+    def test_resume_after_merge_before_capture(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_checkpoint("'true'")
+            rc_write, _, _ = run([
+                "checkpoint", config, "--root", d, "--write",
+                "--run-id", "RUN-149",
+                "--step", "s10",
+                "--pull-request", "170",
+                "--merge-state", "merged",
+                "--capture-state", "not-started",
+                "--close-state", "not-started",
+            ])
+            rc, out, _ = run([
+                "resume", config, "--root", d, "--json",
+                "--live-pr-state", "merged",
+            ])
+
+        self.assertEqual(rc_write, 0)
+        self.assertEqual(rc, 0)
+        plan = json.loads(out)["resume_plan"]
+        self.assertEqual(plan["status"], "needs-capture")
+        self.assertEqual(plan["next_step"], "s11")
+        self.assertEqual(plan["resume_action"], "run-or-verify-capture")
+
+    def test_resume_ambiguous_live_state_returns_one(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_checkpoint("'true'")
+            rc_write, _, _ = run([
+                "checkpoint", config, "--root", d, "--write",
+                "--run-id", "RUN-149",
+                "--step", "s7",
+                "--worktree", "worktrees/issue-149",
+                "--pull-request", "170",
+            ])
+            rc, out, _ = run([
+                "resume", config, "--root", d, "--json",
+                "--live-worktree-state", "missing",
+            ])
+
+        self.assertEqual(rc_write, 0)
+        self.assertEqual(rc, 1)
+        plan = json.loads(out)["resume_plan"]
+        self.assertEqual(plan["status"], "ambiguous")
+        self.assertFalse(plan["can_resume"])
+        self.assertTrue(plan["warnings"])
+
+    def test_checkpoint_human_missing_present_and_resume_output(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_checkpoint("'true'")
+            rc_missing, out_missing, _ = run(["checkpoint", config, "--root", d])
+            rc_resume_missing, out_resume_missing, _ = run(["resume", config, "--root", d])
+            rc_write, _, _ = run([
+                "checkpoint", config, "--root", d, "--write",
+                "--run-id", "RUN-149",
+                "--step", "s2",
+            ])
+            rc_present, out_present, _ = run(["checkpoint", config, "--root", d])
+            rc_resume, out_resume, _ = run(["resume", config, "--root", d])
+
+        self.assertEqual(rc_missing, 0)
+        self.assertIn("missing", out_missing)
+        self.assertEqual(rc_resume_missing, 0)
+        self.assertIn("no-checkpoint", out_resume_missing)
+        self.assertEqual(rc_write, 0)
+        self.assertEqual(rc_present, 0)
+        self.assertIn("RUN-149", out_present)
+        self.assertIn("safe boundary", out_present)
+        self.assertEqual(rc_resume, 0)
+        self.assertIn("ready", out_resume)
+        self.assertIn("ensure-branch-and-worktree", out_resume)
+
+    def test_checkpoint_reports_missing_invalid_config_and_bad_file(self):
+        import tempfile
+        rc_missing, _, err_missing = run(["checkpoint", "/no/such.yaml"])
+        self.assertEqual(rc_missing, 1)
+        self.assertIn("no such config", err_missing)
+
+        rc_checkpoint_invalid, _, err_checkpoint_invalid = run([
+            "checkpoint", _write_raw("extends: keel\n")
+        ])
+        self.assertEqual(rc_checkpoint_invalid, 1)
+        self.assertIn("invalid keel config", err_checkpoint_invalid)
+
+        rc_resume_missing, _, err_resume_missing = run(["resume", "/no/such.yaml"])
+        self.assertEqual(rc_resume_missing, 1)
+        self.assertIn("no such config", err_resume_missing)
+
+        rc_invalid, _, err_invalid = run(["resume", _write_raw("extends: keel\n")])
+        self.assertEqual(rc_invalid, 1)
+        self.assertIn("invalid keel config", err_invalid)
+
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_checkpoint("'true'")
+            path = Path(d) / "state" / "checkpoint.json"
+            path.parent.mkdir(parents=True)
+            path.write_text("{", encoding="utf-8")
+            rc_bad_checkpoint, _, err_bad_checkpoint = run(["checkpoint", config, "--root", d])
+            rc_bad_resume, _, err_bad_resume = run(["resume", config, "--root", d])
+            with patch("keel.cli.checkpoint.build_checkpoint_record",
+                       side_effect=cli.checkpoint.CheckpointError("cannot checkpoint")):
+                rc_bad_write, _, err_bad_write = run([
+                    "checkpoint", config, "--root", d, "--write",
+                    "--run-id", "RUN-149",
+                    "--step", "s0",
+                ])
+
+        self.assertEqual(rc_bad_checkpoint, 1)
+        self.assertIn("invalid checkpoint", err_bad_checkpoint)
+        self.assertEqual(rc_bad_resume, 1)
+        self.assertIn("invalid checkpoint", err_bad_resume)
+        self.assertEqual(rc_bad_write, 1)
+        self.assertIn("cannot checkpoint", err_bad_write)
+
+    def test_resume_human_ambiguous_prints_warning(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_checkpoint("'true'")
+            rc_write, _, _ = run([
+                "checkpoint", config, "--root", d, "--write",
+                "--run-id", "RUN-149",
+                "--step", "s7",
+                "--worktree", "worktrees/issue-149",
+            ])
+            rc, out, _ = run([
+                "resume", config, "--root", d,
+                "--live-worktree-state", "missing",
+            ])
+
+        self.assertEqual(rc_write, 0)
+        self.assertEqual(rc, 1)
+        self.assertIn("ambiguous", out)
+        self.assertIn("warning", out)
 
     def test_ship_human_append_ledger_dry_run_message(self):
         import tempfile

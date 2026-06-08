@@ -69,8 +69,9 @@ keel plan .claude/project.yaml --command ship --issue-title "Add setup docs" --i
 With `--json`, the output includes a structured command contract under `contract`: resolved
 project config, command step graph, backbone plan, gates, extension hooks, capability
 requirements/evaluation, selected GitHub transport, declared side effects, and operator
-consent requirements. It also includes the `run_ledger` storage contract so adapters know
-where structured run history lives. See [`command-contracts.md`](command-contracts.md).
+consent requirements. It also includes the `run_ledger` and `checkpoint` storage contracts
+so adapters know where structured run history and resumable run state live. See
+[`command-contracts.md`](command-contracts.md).
 
 By default, `plan` renders a dry-run contract. `--live` renders the live preflight contract
 for an adapter or orchestrator. If the command has live mutation scopes and the current run
@@ -119,6 +120,55 @@ keel ship .keel/project.yaml --root . --live --append-ledger \
 check runs. Dry-run output includes the same would-be record but never writes the file.
 `--capture-status` is required for live appends so offline capture verification never has
 to infer status from closure comments.
+
+## `keel checkpoint <project.yaml> [--root DIR] [--json]`
+
+Read the current resumable checkpoint. The default path is
+`.keel/state/checkpoint.json`; projects can override it with
+`policy_pack.reports.checkpoint`.
+
+```bash
+keel checkpoint .keel/project.yaml --root . --json
+```
+
+Missing checkpoints are not errors: JSON output returns `status: "missing"` and
+`checkpoint: null`. Invalid JSON or unsupported checkpoint schemas are errors because
+adapters must not resume from corrupted state.
+
+Adapters that own live `ship`, `ship-v2`, or `overnight` runs can write the current safe
+step boundary:
+
+```bash
+keel checkpoint .keel/project.yaml --root . --write \
+  --run-id "$RUN_ID" --checkpoint-command ship --step s6 \
+  --target "issue #123" --issue-queue 123 --active-issue 123 \
+  --branch feat/issue-123-example --worktree worktrees/issue-123 \
+  --pull-request 456 --head-sha "$HEAD_SHA" --last-check ci
+```
+
+The writer replaces the previous checkpoint. It is for the active resume point, not for
+append-only shipped-run history; use `keel ledger` for history.
+
+## `keel resume <project.yaml> [--root DIR] [--live-pr-state STATE] [--live-worktree-state STATE] [--json]`
+
+Render a dry-run resume plan from the checkpoint. This command never mutates files, git,
+GitHub, comments, or releases.
+
+```bash
+keel resume .keel/project.yaml --root . --json
+keel resume .keel/project.yaml --root . --live-pr-state merged --json
+keel resume .keel/project.yaml --root . --live-worktree-state missing --json
+```
+
+`STATE` values are adapter-supplied live-state reconciliation hints:
+
+- PR state: `unknown`, `missing`, `open`, `merged`, or `closed`
+- worktree state: `unknown`, `present`, or `missing`
+
+`status: no-checkpoint` means there is nothing to resume. `status: ambiguous` exits
+non-zero and includes warnings plus the reconciliation action, for example when a
+checkpoint references a PR or worktree that live state reports missing. If the PR is
+already merged, the plan resumes at capture or closeout and never repeats the merge.
 
 ## `keel morning <project.yaml> [--root DIR] [--since WHEN] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--json]`
 

@@ -69,6 +69,28 @@ If the configured ledger path is missing, treat it as empty history; if a ledger
 malformed, stop capture/reporting and ask for operator help instead of silently falling
 back to comment scraping.
 
+**Checkpoint / resume.** Read `contract.checkpoint` from `keel plan --json` before live
+work. At the start of a run, call `keel resume .keel/project.yaml --root . --json` and
+inspect `resume_plan`. If it returns `no-checkpoint`, start normally. If it returns
+`ambiguous`, stop and reconcile the PR/worktree state it names before doing any mutation.
+If it reports a merged PR, resume at capture or closeout; never repeat the merge.
+
+During live ship runs, write a checkpoint after each safe step boundary and before moving
+to the next step:
+
+```bash
+keel checkpoint .keel/project.yaml --root . --write \
+  --run-id "$RUN_ID" --checkpoint-command ship --step s6 \
+  --target "issue #<N>" --issue-queue <N> --active-issue <N> \
+  --branch "$BRANCH" --worktree "$WORKTREE" --pull-request "$PR" \
+  --head-sha "$HEAD_SHA" --last-check ci
+```
+
+Update the arguments to match the actual boundary: completed steps, last gate/review/check,
+merge state, capture state, close state, and stop reason. The checkpoint is the active
+resume point, not run history. Do not delete or overwrite project extensions while writing
+or resuming from it.
+
 **GitHub transport.** Prefer the `gh` CLI when present (richer JSON, `--watch`); detect
 once at session start (`command -v gh`) and, when absent, fall back to an equivalent
 GitHub MCP/API transport for the same operations (issue read/list/comment/close/label,

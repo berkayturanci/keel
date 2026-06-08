@@ -12,8 +12,8 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from . import config as cfg
 from . import (
+    checkpoint,
     consent,
     gates,
     github_transport,
@@ -24,6 +24,7 @@ from . import (
     orchestrator,
     runtime,
 )
+from . import config as cfg
 from . import ship as ship_decisions
 from .extensions import Extension
 from .project_commands import get_project_command, list_project_commands
@@ -215,6 +216,7 @@ def build_command_contract(
         "optional_capabilities": list(requirement.optional),
         "capabilities": evaluation.as_dict(),
         "github_transport": transport.as_dict(),
+        "checkpoint": checkpoint.checkpoint_contract_as_dict(config),
         "run_ledger": ledger.ledger_contract_as_dict(config),
         "side_effects": {
             "declared": list(declared_side_effects),

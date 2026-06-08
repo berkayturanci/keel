@@ -48,6 +48,19 @@ The boundary is shared with `/keel:ship`, so both commands defer or merge the
 same PR at the same wall-clock minute. Re-check `keel window` each loop — the
 mode can flip mid-session.
 
+Read `contract.checkpoint` from the live plan. At session start, call
+`keel resume .keel/project.yaml --root . --json`. If the resume plan is
+`no-checkpoint`, begin a new work block. If it is `ambiguous`, stop and reconcile the
+recorded PR/worktree state before selecting more work. If it points to an already-merged
+PR, hand off to capture/closeout and do not repeat the merge.
+
+Write a checkpoint at each work-block boundary: after queue selection, after each
+`/keel:ship` handoff returns, before stopping on CI/review/window blockers, and before the
+final report write. Use `--checkpoint-command overnight`, keep the active issue queue in
+`--issue-queue`, set `--active-issue` for the current issue, and preserve branch,
+worktree, PR, merge, capture, and close state when a child ship run has created them.
+The checkpoint is the active resume point; the run ledger remains append-only history.
+
 ## Two non-negotiable rules
 
 1. **Night mode — no auto-merge except blockers.** Every PR stays open for the

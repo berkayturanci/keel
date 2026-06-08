@@ -13,6 +13,8 @@ describe what a command would do before an adapter starts mutating work.
 - `keel ship-v2 <project.yaml> --dry-run --json`
 - `keel ship-v2 <project.yaml> --live --json`
 - `keel ledger <project.yaml> --json`
+- `keel checkpoint <project.yaml> --json`
+- `keel resume <project.yaml> --json`
 - `keel implement <project.yaml> <issue> --dry-run --json`
 - `keel implement <project.yaml> <issue> --live --json`
 - `keel ci-check <project.yaml> --pr <number> --json`
@@ -48,6 +50,7 @@ Every contract includes:
 | `capabilities` | Runtime evaluation for the current environment. |
 | `github_transport` | Selected GitHub transport and degraded GitHub operation capabilities. |
 | `run_ledger` | Structured JSONL run-ledger storage and schema contract. |
+| `checkpoint` | Resumable checkpoint storage and resume/reconcile contract for ship and work-block runs. |
 | `side_effects` | Declared possible live-run side effects and whether dry-run mutates. |
 | `operator_consent` | Operator consent requirement, approved mutation scopes, delegated-agent scope, and consent record metadata. |
 | `issue_intake` | Present for work-owning flows (`ship`, `ship-v2`, `implement`, `overnight`); extracted objective, deliverable, acceptance criteria, readiness, questions, and ledger metadata. |
@@ -114,6 +117,44 @@ paths, or stack-specific fields.
 empty `records` array when the file is missing. `morning`, `wrap`, overnight session
 recaps, and capture verification should use this reader or the same contract path instead
 of scraping closure comments.
+
+## Checkpoint block
+
+Every command contract includes `checkpoint`. The checkpoint is the durable current
+resume point for an active work-owning run. It is intentionally separate from the run
+ledger:
+
+- the run ledger is append-only history and shipped-run evidence;
+- the checkpoint is a replace-in-place state file for the latest safe step boundary.
+
+The default location is `.keel/state/checkpoint.json`; projects can choose a different
+local path with `policy_pack.reports.checkpoint`. The contract records:
+
+- `schema_version: keel.checkpoint.v1`
+- `format: json`
+- `path` and `path_source`
+- `missing_handling: no-checkpoint`
+- write owners (`ship`, `ship-v2`, `overnight`)
+- the `checkpoint` reader/writer command and the `resume` dry-run command
+- every backbone step id, whether it is a safe resume boundary, and the idempotent
+  resume action for that boundary
+
+Adapters should write a checkpoint at step boundaries, after the step's live state is
+known and before moving to the next step. The checkpoint stores the run id, command,
+target, issue queue, current and completed step ids, branch/worktree/PR/head SHA
+identifiers, last gate/review/check markers, merge/capture/close state, and a repeat
+policy. That policy is conservative: never repeat a merge when live PR state is already
+merged, use idempotent anchors or skip duplicate comments, and refuse to continue when a
+recorded worktree path conflicts with live state.
+
+`keel resume <project.yaml> --root <repo> --json` reads the checkpoint and returns a
+dry-run resume plan. It never mutates git, files, GitHub, comments, or releases. Adapters
+must reconcile live state before resuming and can pass the reconciled state into the
+dry-run plan with `--live-pr-state` and `--live-worktree-state`. Missing checkpoints
+return `status: no-checkpoint`. Ambiguous state, such as a checkpoint that names a PR or
+worktree that live state reports missing, returns `status: ambiguous`, exits non-zero,
+and includes the reconcile action to perform before retrying. If a PR is already merged,
+resume moves to capture or closeout and does not repeat the merge.
 
 ## Issue intake block
 

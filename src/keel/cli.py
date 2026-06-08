@@ -17,6 +17,7 @@ from pathlib import Path
 
 from . import (
     __version__,
+    checkpoint,
     consent,
     contracts,
     gates,
@@ -469,6 +470,109 @@ def _cmd_ledger(args: argparse.Namespace) -> int:
         print(f"  records       : {payload['record_count']}")
         print(f"  missing       : {contract['missing_handling']}")
     return 0
+
+
+def _cmd_checkpoint(args: argparse.Namespace) -> int:
+    try:
+        config = cfg.load_config(args.path)
+    except FileNotFoundError:
+        print(f"no such config: {args.path}", file=sys.stderr)
+        return 1
+    except cfg.ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    contract = checkpoint.checkpoint_contract_as_dict(config)
+    path = checkpoint.resolve_path(args.root, config)
+    if args.write:
+        try:
+            record = checkpoint.build_checkpoint_record(
+                run_id=args.run_id,
+                command=args.checkpoint_command_name,
+                current_step=args.step,
+                base_branch=config.base_branch,
+                target=args.target,
+                issue_queue=args.issue_queue,
+                active_issue=args.active_issue,
+                branch=args.branch,
+                worktree=args.worktree,
+                pull_request=args.pull_request,
+                head_sha=args.head_sha,
+                completed_steps=args.completed_step,
+                last_gate=args.last_gate,
+                last_review=args.last_review,
+                last_check=args.last_check,
+                merge_state=args.merge_state,
+                capture_state=args.capture_state,
+                close_state=args.close_state,
+                stop_reason=args.stop_reason,
+            )
+            checkpoint.write_checkpoint(path, record)
+        except checkpoint.CheckpointError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+    else:
+        try:
+            record = checkpoint.read_checkpoint(path)
+        except checkpoint.CheckpointError as exc:
+            print(f"invalid checkpoint {path}: {exc}", file=sys.stderr)
+            return 1
+    payload = {
+        "contract": contract,
+        "path": str(path),
+        "status": "present" if record is not None else "missing",
+        "checkpoint": record,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"keel checkpoint — {payload['status']}  {path}")
+        print(f"  schema        : {contract['schema_version']}")
+        if record:
+            print(f"  run           : {record['run_id']}")
+            print(f"  step          : {record['position']['current_step']}")
+            print(f"  safe boundary : {record['resume']['safe_boundary']}")
+    return 0
+
+
+def _cmd_resume(args: argparse.Namespace) -> int:
+    try:
+        config = cfg.load_config(args.path)
+    except FileNotFoundError:
+        print(f"no such config: {args.path}", file=sys.stderr)
+        return 1
+    except cfg.ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    contract = checkpoint.checkpoint_contract_as_dict(config)
+    path = checkpoint.resolve_path(args.root, config)
+    try:
+        record = checkpoint.read_checkpoint(path)
+        plan = checkpoint.resume_plan_as_dict(
+            record,
+            live_pr_state=args.live_pr_state,
+            live_worktree_state=args.live_worktree_state,
+        )
+    except checkpoint.CheckpointError as exc:
+        print(f"invalid checkpoint {path}: {exc}", file=sys.stderr)
+        return 1
+    payload = {
+        "contract": contract,
+        "path": str(path),
+        "resume_plan": plan,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"keel resume — {plan['status']}  {path}")
+        print(f"  can resume    : {str(plan['can_resume']).lower()}")
+        print(f"  next step     : {plan['next_step'] or '-'}")
+        print(f"  action        : {plan['resume_action'] or '-'}")
+        print(f"  reason        : {plan['reason']}")
+        for warning in plan["warnings"]:
+            print(f"  warning       : {warning}")
+    return 0 if plan["status"] != "ambiguous" else 1
 
 
 def _cmd_standalone(args: argparse.Namespace) -> int:
@@ -1176,6 +1280,62 @@ def build_parser() -> argparse.ArgumentParser:
                           help="return only the newest N records")
     p_ledger.add_argument("--json", action="store_true", help="emit structured JSON")
     p_ledger.set_defaults(func=_cmd_ledger)
+
+    p_checkpoint = sub.add_parser("checkpoint", help="read or write the resumable checkpoint")
+    p_checkpoint.add_argument("path", help="path to project.yaml")
+    p_checkpoint.add_argument("--root", default=".",
+                              help="repo root for resolving the checkpoint path")
+    p_checkpoint.add_argument("--write", action="store_true",
+                              help="write a checkpoint record instead of reading it")
+    p_checkpoint.add_argument("--run-id", default="run",
+                              help="run id for --write")
+    p_checkpoint.add_argument("--checkpoint-command", dest="checkpoint_command_name",
+                              choices=checkpoint.COMMANDS, default="ship",
+                              help="workflow command being checkpointed")
+    p_checkpoint.add_argument("--step", choices=checkpoint.STEP_IDS,
+                              default="s0", help="current backbone step for --write")
+    p_checkpoint.add_argument("--target", default=None,
+                              help="target text to store in the checkpoint")
+    p_checkpoint.add_argument("--issue-queue", type=_positive_int, action="append", default=[],
+                              help="queued issue number; repeatable")
+    p_checkpoint.add_argument("--active-issue", type=_positive_int, default=None,
+                              help="active issue number")
+    p_checkpoint.add_argument("--branch", default=None, help="recorded branch")
+    p_checkpoint.add_argument("--worktree", default=None, help="recorded worktree path")
+    p_checkpoint.add_argument("--pull-request", type=_positive_int, default=None,
+                              help="recorded pull request number")
+    p_checkpoint.add_argument("--head-sha", default=None, help="recorded head SHA")
+    p_checkpoint.add_argument("--completed-step", choices=checkpoint.STEP_IDS,
+                              action="append", default=[],
+                              help="completed backbone step; repeatable")
+    p_checkpoint.add_argument("--last-gate", default=None, help="last completed gate id")
+    p_checkpoint.add_argument("--last-review", default=None,
+                              help="last completed review marker")
+    p_checkpoint.add_argument("--last-check", default=None,
+                              help="last completed CI/check marker")
+    p_checkpoint.add_argument("--merge-state", choices=checkpoint.MERGE_STATES,
+                              default="not-started")
+    p_checkpoint.add_argument("--capture-state", choices=checkpoint.CAPTURE_STATES,
+                              default="not-started")
+    p_checkpoint.add_argument("--close-state", choices=checkpoint.CLOSE_STATES,
+                              default="not-started")
+    p_checkpoint.add_argument("--stop-reason", default=None,
+                              help="why the run stopped at this checkpoint")
+    p_checkpoint.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_checkpoint.set_defaults(func=_cmd_checkpoint)
+
+    p_resume = sub.add_parser("resume", help="render a dry-run resume plan")
+    p_resume.add_argument("path", help="path to project.yaml")
+    p_resume.add_argument("--root", default=".",
+                          help="repo root for resolving the checkpoint path")
+    p_resume.add_argument("--live-pr-state", choices=checkpoint.LIVE_PR_STATES,
+                          default="unknown",
+                          help="adapter-supplied live PR state for dry-run reconcile")
+    p_resume.add_argument("--live-worktree-state", choices=checkpoint.LIVE_WORKTREE_STATES,
+                          default="unknown",
+                          help="adapter-supplied live worktree state for dry-run reconcile")
+    p_resume.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_resume.set_defaults(func=_cmd_resume)
 
     _add_ship_parser(
         sub.add_parser("ship", help="dry ship assessment (tier, window, gates, decision)"),
