@@ -74,7 +74,7 @@ Every command contract includes `operator_consent`:
 | `approval_source` | `none`, `flag`, `env`, or `config`, showing where approval came from. In `standing` mode, precedence is flag, then `KEEL_APPROVE_SCOPE`, then `automation.approved_scopes`. |
 | `consent_prompt` | Consumer-neutral prompt generated from the resolved command, target, mode, and scopes. |
 | `delegated_agent_scope` | Scope adapters must pass to delegated agents; scope expansion must block or escalate. |
-| `consent_record` | Local metadata for approved live runs: timestamp, operator, workflow, target, scopes, mode, approval `source`, and `secret_values_recorded: false`. |
+| `consent_record` | Local metadata for approved live runs: timestamp, operator, workflow, target, scopes, approval `source`, and `secret_values_recorded: false`. |
 
 Dry-run contracts do not require approval, but still expose the live scopes that would need
 approval. Live contracts with missing consent are preflight blockers and must stop before

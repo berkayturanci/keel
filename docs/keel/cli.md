@@ -289,7 +289,7 @@ preserves the reviewer, CI, tester, merge-window, merge-lock, closeout, and capt
 keel ship .keel/project.yaml --root .
 keel ship .keel/project.yaml --root . --live --json
 keel ship .keel/project.yaml --root . --live --approve-scope filesystem,git,github --operator "$USER" --target "issue #123" --json
-KEEL_APPROVE_SCOPE=filesystem,git,github KEEL_OPERATOR=automation:nightly keel overnight .keel/project.yaml --live --consent-mode standing --json
+KEEL_APPROVE_SCOPE=filesystem,git,github KEEL_OPERATOR=automation:nightly keel ship .keel/project.yaml --root . --live --consent-mode standing --json
 # keel ship — keel  (base main)
 #   changed files : 53
 #   risk tier     : TIER-3  → 3 reviewer(s)
@@ -330,7 +330,7 @@ Use `ship` for the standard delivery path and `ship-v2` when the operator wants 
 compound-engineering flavor while retaining the same CI, review, merge-window, merge-lock,
 closeout, and capture safety gates.
 
-## `keel implement <project.yaml> <issue> [--root DIR] [--delegate AGENT] [--dry-run] [--live] [--approve-scope SCOPE] [--operator ID] [--json]`
+## `keel implement <project.yaml> <issue> [--root DIR] [--delegate AGENT] [--dry-run] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--json]`
 
 Render the standalone implement-step contract for one issue. This is the direct-use form of
 the s4 implement step: it resolves project config, implementer routing, branch/worktree
@@ -338,7 +338,7 @@ planning, consent scopes, and the handoff target without running the full ship l
 
 ```bash
 keel implement .keel/project.yaml 76 --root . --dry-run --json
-keel implement .keel/project.yaml 76 --root . --live --approve-scope filesystem,git,github --operator "$USER" --json
+keel implement .keel/project.yaml 76 --root . --live --consent-mode standing --approve-scope filesystem,git,github --operator "$USER" --json
 ```
 
 `implement` may create branches, worktrees, commits, pushes, PRs, and comments only in an
