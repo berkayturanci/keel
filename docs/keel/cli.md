@@ -379,13 +379,20 @@ never one copy per agent (that would re-introduce file-copy drift):
 | `claude` | `.claude/commands/keel/<cmd>.md` | Claude Code, as native `/keel:<cmd>` |
 | `skills` | `.agents/skills/keel-<cmd>/SKILL.md` | **every non-Claude agent** (Codex, Antigravity, Gemini, …) via its skill discovery / chat-command wrapper — **one shared copy** |
 | `all` | both of the above | |
+| `plugin` | `commands/<cmd>.md` (repo root) | the committed [Claude Code plugin](plugin.md) — `/plugin install keel` exposes `/keel:<cmd>` |
 
 ```bash
 keel install-adapter claude          # → /keel:ship, /keel:regression, …
 keel install-adapter skills          # → one shared keel-<cmd> skill set under .agents/skills/
 keel install-adapter all             # both surfaces
 keel install-adapter claude --force  # overwrite existing adapters
+keel install-adapter plugin          # regenerate the committed plugin command files (commands/)
 ```
+
+The `plugin` target is **repo-level**, not per-project: it regenerates the committed
+`commands/<cmd>.md` files that the Claude Code plugin ships (see [plugin.md](plugin.md)).
+`make plugin` is the same command; a drift test fails if the committed files diverge from the
+`src/keel/adapters/commands/` source bodies.
 
 The `skills` surface is a **single** universal skill set (`keel-<cmd>`), not a dir per agent:
 non-Claude agents all read `.agents/skills/`, so one copy serves Codex, Antigravity and Gemini

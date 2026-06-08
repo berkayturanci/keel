@@ -689,12 +689,19 @@ def _report_adapter_rows(rows: dict[str, list[install.AdapterFileStatus]]) -> No
 
 
 def _cmd_install_adapter(args: argparse.Namespace) -> int:
+    if args.agent == "plugin":
+        installed, skipped = install.install_plugin(args.root, force=args.force)
+        _report_install("plugin", installed, skipped)
+        print(f"{len(installed)} plugin command file(s) written under commands/ — "
+              "install via /plugin marketplace add berkayturanci/keel; /plugin install keel")
+        return 0
     if args.agent == "all":
         results = install.install_all(args.root, force=args.force)
     elif args.agent in install.TARGETS:
         results = {args.agent: install.install(args.agent, args.root, force=args.force)}
     else:
-        print(f"unknown target {args.agent!r}; valid: all, {', '.join(install.TARGETS)}",
+        print(f"unknown target {args.agent!r}; valid: all, plugin, "
+              f"{', '.join(install.TARGETS)}",
               file=sys.stderr)
         return 1
     total = 0
@@ -1152,7 +1159,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_setup.set_defaults(func=_cmd_setup)
 
     p_ia = sub.add_parser("install-adapter", help="install the /keel:<command> adapters")
-    p_ia.add_argument("agent", help=f"'all' or one of: {', '.join(install.TARGETS)}")
+    p_ia.add_argument("agent",
+                      help=f"'all', 'plugin', or one of: {', '.join(install.TARGETS)}")
     p_ia.add_argument("--root", default=".", help="project root to install into")
     p_ia.add_argument("--force", action="store_true", help="overwrite existing adapters")
     p_ia.set_defaults(func=_cmd_install_adapter)

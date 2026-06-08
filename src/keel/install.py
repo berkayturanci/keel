@@ -33,6 +33,14 @@ SKILLS_DIR = ".agents/skills"
 #: skill name prefix, so keel skills sit beside the project's own (e.g. ``source-command-*``).
 SKILL_PREFIX = "keel-"
 
+#: Claude Code plugin command dir (flat ``.md`` files at the plugin root). The plugin is
+#: named ``keel``, so a flat ``commands/<cmd>.md`` is discovered as ``/keel:<cmd>`` — the same
+#: surface as the native ``claude`` install, packaged for ``/plugin install keel``.
+PLUGIN_COMMANDS_DIR = "commands"
+#: the committed plugin manifest + marketplace catalog live here.
+PLUGIN_MANIFEST = ".claude-plugin/plugin.json"
+PLUGIN_MARKETPLACE = ".claude-plugin/marketplace.json"
+
 #: the logical install surfaces (``all`` fans over these).
 TARGETS: tuple[str, ...] = ("claude", "skills")
 LEGACY_TARGETS: tuple[str, ...] = ("claude", "skills")
@@ -369,6 +377,49 @@ def install_all(
     Returns ``surface -> (installed, skipped)`` for each entry in :data:`TARGETS`.
     """
     return {t: install(t, root, force=force, _src=_src) for t in TARGETS}
+
+
+def plugin_files(*, _src: Path | None = None) -> dict[str, str]:
+    """Render the committed Claude Code plugin command files (pure).
+
+    Returns a mapping of ``commands/<cmd>.md`` → file content, generated **from the same**
+    ``adapters/commands/*.md`` bodies that drive the ``claude`` install surface. The plugin is
+    named ``keel``, so each flat command file is discovered as ``/keel:<cmd>`` once the plugin
+    is installed via ``/plugin install keel``. This is the single source of truth for the
+    repo-level ``commands/`` directory — the drift test asserts the committed files match.
+    """
+    src = _src or ADAPTERS
+    out: dict[str, str] = {}
+    for f in sorted(src.glob("*.md")):
+        source_text = f.read_text(encoding="utf-8")
+        rel = f"{PLUGIN_COMMANDS_DIR}/{f.name}"
+        out[rel] = _with_marker("plugin", f.stem, source_text, source_text)
+    return out
+
+
+def install_plugin(
+    root: str | Path, *, force: bool = False, _src: Path | None = None
+) -> tuple[list[str], list[str]]:
+    """Write the generated plugin command files into ``root/commands/`` (idempotent).
+
+    Used by ``keel install-adapter plugin`` and ``make plugin`` to regenerate the committed
+    plugin command bodies. Unlike the per-project surfaces, this writes the repo-level plugin
+    files; ``force`` is unnecessary because the generator is deterministic, but existing files
+    are overwritten so the committed copy always tracks ``adapters/commands/``.
+    """
+    root_path = Path(root)
+    installed: list[str] = []
+    skipped: list[str] = []
+    for rel, content in plugin_files(_src=_src).items():
+        dest = root_path / rel
+        existing = dest.read_text(encoding="utf-8") if dest.exists() else None
+        if existing == content and not force:
+            skipped.append(rel)
+            continue
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(content, encoding="utf-8")
+        installed.append(rel)
+    return installed, skipped
 
 
 def adapter_status(

@@ -1183,6 +1183,25 @@ class TestInstallAdapter(unittest.TestCase):
             self.assertIn("updated", out)
             self.assertTrue(ship.exists())
 
+    def test_installs_plugin_command_files(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["install-adapter", "plugin", "--root", d])
+            self.assertEqual(rc, 0)
+            self.assertIn("plugin command file(s) written", out)
+            self.assertIn("/plugin install keel", out)
+            self.assertTrue((Path(d) / "commands" / "ship.md").exists())
+            # second run is a no-op (idempotent generator).
+            rc, out, _ = run(["install-adapter", "plugin", "--root", d])
+            self.assertEqual(rc, 0)
+            self.assertIn("0 plugin command file(s) written", out)
+
+    def test_install_adapter_unknown_target_lists_plugin(self):
+        rc, _, err = run(["install-adapter", "codex"])
+        self.assertEqual(rc, 1)
+        self.assertIn("unknown target", err)
+        self.assertIn("plugin", err)
+
     def test_adapter_status_unknown_target(self):
         rc, _, err = run(["adapter-status", "codex"])
         self.assertEqual(rc, 1)
