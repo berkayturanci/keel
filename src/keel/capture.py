@@ -10,6 +10,7 @@ from . import config as cfg
 
 CAPTURE_SCHEMA_VERSION = "keel.capture.v1"
 RECONCILE_SCHEMA_VERSION = "keel.capture-reconcile.v1"
+LEARNING_DECISION_SCHEMA_VERSION = "keel.capture-learning.v1"
 MARKER_PREFIX = "compound-learning"
 STATUSES = ("applied", "deferred", "skipped")
 SKIP_REASONS = (
@@ -20,6 +21,7 @@ SKIP_REASONS = (
     "capability-unavailable",
     "no-policy",
 )
+LEARNING_DECISIONS = ("create-learning", "marker-only", "defer", "duplicate")
 
 _MARKER_RE = re.compile(
     r"^compound-learning:\s+pr=(?P<pr>[1-9][0-9]*)\s+status="
@@ -89,6 +91,7 @@ def contract_as_dict(config: cfg.ProjectConfig | None = None) -> dict[str, Any]:
             "core_destination": "run-ledger",
             "project_destination": "extension-owned",
         },
+        "learning_quality": learning_quality_contract_as_dict(config),
         "session_end_verifier": {
             "primitive": "capture.verify_session",
             "cli": "keel capture-verify",
@@ -111,6 +114,30 @@ def contract_as_dict(config: cfg.ProjectConfig | None = None) -> dict[str, Any]:
                 "record-skip",
             ],
         },
+    }
+
+
+def learning_quality_contract_as_dict(config: cfg.ProjectConfig | None = None) -> dict[str, Any]:
+    """Return the consumer-neutral durable-learning quality contract."""
+    policy = _learning_policy(config)
+    dedupe = policy.get("dedupe") if isinstance(policy.get("dedupe"), dict) else {}
+    return {
+        "schema_version": LEARNING_DECISION_SCHEMA_VERSION,
+        "decisions": list(LEARNING_DECISIONS),
+        "policy_source": "policy_pack.capture.learning",
+        "policy_enabled": bool(policy.get("enabled", False)),
+        "policy_mode": policy.get("mode", "policy-unavailable"),
+        "default_decision": "marker-only",
+        "default_reason": "policy-unavailable",
+        "marker_required_for_every_merge": True,
+        "durable_learning_optional": True,
+        "dedupe": {
+            "enabled": bool(dedupe.get("enabled", True)),
+            "fingerprint": "sha256(normalized title + labels + changed files)",
+            "matching": "stable fingerprint plus configured matching rules",
+        },
+        "ledger_field": "capture.learning",
+        "closure_summary_field": "Capture",
     }
 
 
@@ -167,6 +194,11 @@ def record_marker(
     pr_number: int | None,
     status: str | None,
     reason: str | None = None,
+    title: str | None = None,
+    labels: list[str] | tuple[str, ...] = (),
+    changed_files: list[str] | tuple[str, ...] = (),
+    existing_records: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
+    config: cfg.ProjectConfig | None = None,
 ) -> dict[str, Any]:
     """Build the capture block stored in a ship run ledger record."""
     if status is None:
@@ -177,7 +209,25 @@ def record_marker(
             "marker_reason": None,
             "marker": None,
             "fail_soft": True,
+            "learning": learning_decision(
+                title=title,
+                labels=labels,
+                changed_files=changed_files,
+                capture_status=None,
+                capture_reason=reason,
+                existing_records=existing_records,
+                config=config,
+            ),
         }
+    learning = learning_decision(
+        title=title,
+        labels=labels,
+        changed_files=changed_files,
+        capture_status=status,
+        capture_reason=reason,
+        existing_records=existing_records,
+        config=config,
+    )
     marker_reason = _marker_reason(status, reason)
     if pr_number is None:
         clean_status, clean_marker_reason = normalize_status(status, marker_reason)
@@ -188,6 +238,7 @@ def record_marker(
             "marker_reason": clean_marker_reason,
             "marker": None,
             "fail_soft": True,
+            "learning": learning,
         }
     marker = build_marker(pr_number=pr_number, status=status, reason=marker_reason)
     return {
@@ -197,7 +248,95 @@ def record_marker(
         "marker_reason": marker.reason,
         "marker": marker.as_text(),
         "fail_soft": True,
+        "learning": learning,
     }
+
+
+def learning_decision(
+    *,
+    title: str | None = None,
+    labels: list[str] | tuple[str, ...] = (),
+    changed_files: list[str] | tuple[str, ...] = (),
+    capture_status: str | None = None,
+    capture_reason: str | None = None,
+    existing_records: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
+    config: cfg.ProjectConfig | None = None,
+) -> dict[str, Any]:
+    """Classify whether a merged PR deserves a durable learning artifact.
+
+    The marker is mandatory and independent from this decision. Durable learning is
+    optional, policy-driven, and deduped by a stable fingerprint so routine merges can stay
+    marker-only without losing auditability.
+    """
+    policy = _learning_policy(config)
+    fingerprint = learning_fingerprint(
+        title=title,
+        labels=labels,
+        changed_files=changed_files,
+    )
+    duplicate_of = _duplicate_learning_fingerprint(fingerprint, existing_records)
+    if duplicate_of is not None:
+        return _learning_result(
+            "duplicate",
+            reason="duplicate-learning",
+            fingerprint=fingerprint,
+            duplicate_of=duplicate_of,
+            policy=policy,
+        )
+    if not policy.get("enabled"):
+        return _learning_result(
+            "marker-only",
+            reason="policy-unavailable",
+            fingerprint=fingerprint,
+            policy=policy,
+        )
+    mode = policy.get("mode", "marker-only")
+    if mode == "create-learning":
+        if capture_status and capture_status.startswith("skipped"):
+            return _learning_result(
+                "marker-only",
+                reason="capture-skipped",
+                fingerprint=fingerprint,
+                policy=policy,
+            )
+        return _learning_result(
+            "create-learning",
+            reason=_policy_reason(policy, "policy-requested-learning"),
+            fingerprint=fingerprint,
+            policy=policy,
+        )
+    if mode == "defer":
+        return _learning_result(
+            "defer",
+            reason=_policy_reason(policy, capture_reason or "policy-deferred"),
+            fingerprint=fingerprint,
+            policy=policy,
+        )
+    return _learning_result(
+        "marker-only",
+        reason=_policy_reason(policy, "marker-only-policy"),
+        fingerprint=fingerprint,
+        policy=policy,
+    )
+
+
+def learning_fingerprint(
+    *,
+    title: str | None = None,
+    labels: list[str] | tuple[str, ...] = (),
+    changed_files: list[str] | tuple[str, ...] = (),
+) -> str:
+    """Return a stable, consumer-neutral dedupe fingerprint for learning candidates."""
+    import hashlib
+    import json
+
+    payload = {
+        "title": _normalize_text(title),
+        "labels": sorted(_normalize_text(label) for label in _strings(labels)),
+        "changed_files": sorted(_normalize_path(path) for path in _strings(changed_files)),
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def verify_session(
@@ -534,6 +673,12 @@ def _capture_policy(config: cfg.ProjectConfig | None) -> dict[str, Any]:
     return policy if isinstance(policy, dict) else {}
 
 
+def _learning_policy(config: cfg.ProjectConfig | None) -> dict[str, Any]:
+    policy = _capture_policy(config)
+    learning = policy.get("learning") if isinstance(policy, dict) else None
+    return learning if isinstance(learning, dict) else {}
+
+
 def _marker_reason(status: str, reason: str | None) -> str | None:
     raw = status.strip()
     if raw.startswith("skipped:"):
@@ -555,3 +700,59 @@ def _positive_ints(value: Any) -> list[int]:
     if not isinstance(value, list | tuple):
         return []
     return [item for item in value if isinstance(item, int) and item > 0]
+
+
+def _duplicate_learning_fingerprint(
+    fingerprint: str,
+    records: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+) -> str | None:
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        capture_block = record.get("capture")
+        learning = capture_block.get("learning") if isinstance(capture_block, dict) else None
+        if not isinstance(learning, dict):
+            continue
+        if learning.get("fingerprint") != fingerprint:
+            continue
+        decision = learning.get("decision")
+        if decision in {"create-learning", "duplicate"}:
+            return str(record.get("run_id") or (record.get("pull_request") or {}).get("number"))
+    return None
+
+
+def _learning_result(
+    decision: str,
+    *,
+    reason: str,
+    fingerprint: str,
+    policy: dict[str, Any],
+    duplicate_of: str | None = None,
+) -> dict[str, Any]:
+    if decision not in LEARNING_DECISIONS:
+        raise CaptureError(f"unsupported learning decision: {decision}")
+    result = {
+        "schema_version": LEARNING_DECISION_SCHEMA_VERSION,
+        "decision": decision,
+        "reason": reason,
+        "fingerprint": fingerprint,
+        "policy_source": "policy_pack.capture.learning",
+        "policy_mode": policy.get("mode", "policy-unavailable"),
+        "durable_artifact": decision == "create-learning",
+    }
+    if duplicate_of is not None:
+        result["duplicate_of"] = duplicate_of
+    return result
+
+
+def _policy_reason(policy: dict[str, Any], default: str) -> str:
+    reason = policy.get("reason")
+    return reason.strip() if isinstance(reason, str) and reason.strip() else default
+
+
+def _normalize_text(value: str | None) -> str:
+    return " ".join(value.lower().split()) if isinstance(value, str) else ""
+
+
+def _normalize_path(value: str) -> str:
+    return "/".join(value.strip().lower().replace("\\", "/").split("/"))

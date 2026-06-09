@@ -14,11 +14,14 @@ def _config(
     *,
     run_ledger: str | None = None,
     deny_patterns: list[dict] | None = None,
+    learning_policy: dict | None = None,
 ) -> cfg.ProjectConfig:
     reports = {"run_ledger": run_ledger} if run_ledger is not None else {}
     policy_pack = {"name": "test", "reports": reports}
     if deny_patterns is not None:
         policy_pack["capture_redaction"] = {"deny_patterns": deny_patterns}
+    if learning_policy is not None:
+        policy_pack["capture"] = {"learning": learning_policy}
     return cfg.ProjectConfig(
         extends="keel",
         core_version="^0.7",
@@ -28,7 +31,7 @@ def _config(
     )
 
 
-def _record() -> dict:
+def _record(*, config: cfg.ProjectConfig | None = None) -> dict:
     outcome = SimpleNamespace(gate="build", ok=True, skipped=False, error=None, findings=[])
     verdict = SimpleNamespace(blocked=False, counts={"blocker": 0})
     merge = SimpleNamespace(action="merge", reason="all gates passed")
@@ -57,6 +60,7 @@ def _record() -> dict:
         head_sha="abc123",
         capture_status="applied",
         capture_reason="capture hook completed",
+        config=config,
         implementer="codex:gpt-5",
         reviewer_agents=["reviewer-a:gpt-5", "reviewer-b:claude"],
         tester="tester:gpt-5-mini",
@@ -120,7 +124,23 @@ class TestLedgerRecords(unittest.TestCase):
         self.assertEqual(record["capture"]["schema_version"], "keel.capture.v1")
         self.assertEqual(record["capture"]["marker"],
                          "compound-learning: pr=160 status=applied")
+        self.assertEqual(record["capture"]["learning"]["decision"], "marker-only")
+        self.assertEqual(record["capture"]["learning"]["reason"], "policy-unavailable")
         self.assertTrue(record["capture"]["fail_soft"])
+
+    def test_ship_run_record_can_store_learning_create_decision(self):
+        record = _record(
+            config=_config(learning_policy={
+                "enabled": True,
+                "mode": "create-learning",
+                "reason": "new invariant",
+            })
+        )
+
+        learning = record["capture"]["learning"]
+        self.assertEqual(learning["decision"], "create-learning")
+        self.assertEqual(learning["reason"], "new invariant")
+        self.assertTrue(learning["durable_artifact"])
 
     def test_sanitize_record_redacts_default_secret_patterns(self):
         record = _record()

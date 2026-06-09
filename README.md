@@ -99,7 +99,10 @@ orchestrator-only-writes, vendor+model attribution.
 The capture step has a core marker/verifier contract:
 `compound-learning: pr=<N> status=<applied|deferred|skipped:reason>`. Projects provide
 capture content and destinations through `capture` / `post-merge` extensions; keel owns the
-marker, fail-soft semantics, redaction-before-durability, and offline `capture-verify`.
+marker, fail-soft semantics, redaction-before-durability, offline `capture-verify`, and the
+learning-quality decision recorded in `capture.learning`. Durable learning is optional:
+policy can choose `create-learning`, `marker-only`, or `defer`, while duplicate candidates
+are suppressed by stable fingerprints so routine merges do not flood the learning surface.
 
 ## Install
 

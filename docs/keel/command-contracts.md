@@ -142,6 +142,15 @@ The block records:
 - recursion guard semantics: capture-on-capture work skips with `skipped:recursion-guard`
 - durable-artifact safety: capture artifacts must pass through the run-ledger redaction
   contract before they are persisted
+- learning-quality decisions: the marker is mandatory, while durable learning is optional
+  and policy-driven. Core records one `capture.learning` decision:
+  `create-learning`, `marker-only`, `defer`, or `duplicate`. Missing or disabled learning
+  policy records `marker-only (policy-unavailable)` so routine merges still have an
+  auditable marker without creating noisy durable learning. Projects can opt into
+  `policy_pack.capture.learning.mode: create-learning`, `marker-only`, or `defer`; duplicate
+  candidates are suppressed by a stable fingerprint over normalized title, labels, and
+  changed files. The decision is stored in the structured run ledger and mirrored in the
+  closure comment's Capture line.
 - session-end verifier command: `keel capture-verify`
 - post-merge recovery command: `keel capture-reconcile`
 - reconcile plan guarantees: idempotent actions only, never reopen implementation, never

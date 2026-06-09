@@ -70,6 +70,8 @@ def build_ship_run_record(
     head_sha: str | None = None,
     capture_status: str | None = None,
     capture_reason: str | None = None,
+    existing_records: list[dict[str, Any]] | None = None,
+    config: cfg.ProjectConfig | None = None,
     implementer: str | None = None,
     reviewer_agents: list[str] | None = None,
     tester: str | None = None,
@@ -128,6 +130,9 @@ def build_ship_run_record(
             pr_number=pr_number,
             status=capture_status,
             reason=capture_reason,
+            changed_files=changed_files,
+            existing_records=existing_records or [],
+            config=config,
         ),
     }
 

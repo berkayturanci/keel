@@ -150,9 +150,22 @@ def _capture(capture: Any) -> str:
     if not isinstance(status, str) or not status:
         return "not recorded"
     reason = block.get("reason")
+    learning = _learning(block.get("learning"))
+    suffix = f"; learning: {learning}" if learning else ""
     if isinstance(reason, str) and reason.strip():
-        return f"{status} ({reason.strip()})"
-    return status
+        return f"{status} ({reason.strip()}){suffix}"
+    return f"{status}{suffix}"
+
+
+def _learning(learning: Any) -> str | None:
+    block = learning if isinstance(learning, dict) else {}
+    decision = block.get("decision")
+    if not isinstance(decision, str) or not decision.strip():
+        return None
+    reason = block.get("reason")
+    if isinstance(reason, str) and reason.strip():
+        return f"{decision.strip()} ({reason.strip()})"
+    return decision.strip()
 
 
 def _value(value: Any) -> str:

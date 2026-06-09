@@ -106,6 +106,21 @@ class TestRenderClosureComment(unittest.TestCase):
         record = _record(capture={"status": "applied", "reason": None})
         self.assertIn("- **Capture:** applied", closure.render_closure_comment(record))
 
+    def test_capture_includes_learning_decision_when_present(self):
+        record = _record(capture={
+            "status": "applied",
+            "reason": None,
+            "learning": {
+                "decision": "marker-only",
+                "reason": "policy-unavailable",
+            },
+        })
+
+        self.assertIn(
+            "- **Capture:** applied; learning: marker-only (policy-unavailable)",
+            closure.render_closure_comment(record),
+        )
+
     def test_capture_deferred_with_reason(self):
         record = _record(capture={"status": "deferred", "reason": "out of window"})
         self.assertIn(
