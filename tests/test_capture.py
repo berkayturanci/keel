@@ -338,6 +338,38 @@ class TestCaptureContract(unittest.TestCase):
         self.assertEqual(decision["duplicate_of"], "RUN-1")
         self.assertFalse(decision["durable_artifact"])
 
+    def test_learning_quality_can_disable_dedupe(self):
+        fingerprint = capture.learning_fingerprint(
+            title="Release invariant",
+            labels=["enhancement"],
+            changed_files=["src/keel/release.py"],
+        )
+        existing = [{
+            "run_id": "RUN-1",
+            "capture": {
+                "learning": {
+                    "decision": "create-learning",
+                    "fingerprint": fingerprint,
+                },
+            },
+        }]
+
+        decision = capture.learning_decision(
+            title="Release invariant",
+            labels=["enhancement"],
+            changed_files=["src/keel/release.py"],
+            capture_status="applied",
+            existing_records=existing,
+            config=_config_with_learning_policy({
+                "enabled": True,
+                "mode": "create-learning",
+                "dedupe": {"enabled": False},
+            }),
+        )
+
+        self.assertEqual(decision["decision"], "create-learning")
+        self.assertNotIn("duplicate_of", decision)
+
     def test_learning_quality_duplicate_scan_ignores_irrelevant_records(self):
         fingerprint = capture.learning_fingerprint(
             title="Release invariant",

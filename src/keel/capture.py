@@ -274,15 +274,16 @@ def learning_decision(
         labels=labels,
         changed_files=changed_files,
     )
-    duplicate_of = _duplicate_learning_fingerprint(fingerprint, existing_records)
-    if duplicate_of is not None:
-        return _learning_result(
-            "duplicate",
-            reason="duplicate-learning",
-            fingerprint=fingerprint,
-            duplicate_of=duplicate_of,
-            policy=policy,
-        )
+    if _learning_dedupe_enabled(policy):
+        duplicate_of = _duplicate_learning_fingerprint(fingerprint, existing_records)
+        if duplicate_of is not None:
+            return _learning_result(
+                "duplicate",
+                reason="duplicate-learning",
+                fingerprint=fingerprint,
+                duplicate_of=duplicate_of,
+                policy=policy,
+            )
     if not policy.get("enabled"):
         return _learning_result(
             "marker-only",
@@ -677,6 +678,13 @@ def _learning_policy(config: cfg.ProjectConfig | None) -> dict[str, Any]:
     policy = _capture_policy(config)
     learning = policy.get("learning") if isinstance(policy, dict) else None
     return learning if isinstance(learning, dict) else {}
+
+
+def _learning_dedupe_enabled(policy: dict[str, Any]) -> bool:
+    dedupe = policy.get("dedupe")
+    if not isinstance(dedupe, dict):
+        return True
+    return bool(dedupe.get("enabled", True))
 
 
 def _marker_reason(status: str, reason: str | None) -> str | None:
