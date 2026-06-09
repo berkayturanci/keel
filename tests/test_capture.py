@@ -218,6 +218,18 @@ class TestCaptureContract(unittest.TestCase):
         self.assertEqual(record["marker_reason"], "dry-run")
         self.assertIsNone(record["marker"])
 
+    def test_record_marker_without_status_still_records_learning_decision(self):
+        record = capture.record_marker(
+            pr_number=170,
+            status=None,
+            reason="not captured yet",
+        )
+
+        self.assertIsNone(record["status"])
+        self.assertIsNone(record["marker"])
+        self.assertEqual(record["learning"]["decision"], "marker-only")
+        self.assertEqual(record["learning"]["reason"], "policy-unavailable")
+
     def test_learning_quality_policy_unavailable_records_marker_only(self):
         record = capture.record_marker(
             pr_number=170,
@@ -246,6 +258,21 @@ class TestCaptureContract(unittest.TestCase):
         self.assertEqual(decision["decision"], "create-learning")
         self.assertEqual(decision["reason"], "new release invariant")
         self.assertTrue(decision["durable_artifact"])
+
+    def test_learning_quality_create_policy_is_marker_only_when_capture_skipped(self):
+        decision = capture.learning_decision(
+            title="Capture skipped by policy",
+            changed_files=["src/keel/capture.py"],
+            capture_status="skipped:no-policy",
+            config=_config_with_learning_policy({
+                "enabled": True,
+                "mode": "create-learning",
+            }),
+        )
+
+        self.assertEqual(decision["decision"], "marker-only")
+        self.assertEqual(decision["reason"], "capture-skipped")
+        self.assertFalse(decision["durable_artifact"])
 
     def test_learning_quality_policy_can_defer(self):
         decision = capture.learning_decision(
@@ -310,6 +337,67 @@ class TestCaptureContract(unittest.TestCase):
         self.assertEqual(decision["reason"], "duplicate-learning")
         self.assertEqual(decision["duplicate_of"], "RUN-1")
         self.assertFalse(decision["durable_artifact"])
+
+    def test_learning_quality_duplicate_scan_ignores_irrelevant_records(self):
+        fingerprint = capture.learning_fingerprint(
+            title="Release invariant",
+            labels=["enhancement"],
+            changed_files=["src/keel/release.py"],
+        )
+        existing = [
+            "not a record",
+            {"capture": "not a capture block"},
+            {"capture": {}},
+            {
+                "capture": {
+                    "learning": {
+                        "decision": "create-learning",
+                        "fingerprint": "different",
+                    },
+                },
+            },
+            {
+                "capture": {
+                    "learning": {
+                        "decision": "marker-only",
+                        "fingerprint": fingerprint,
+                    },
+                },
+            },
+            {
+                "pull_request": {"number": 12},
+                "capture": {
+                    "learning": {
+                        "decision": "duplicate",
+                        "fingerprint": fingerprint,
+                    },
+                },
+            },
+        ]
+
+        decision = capture.learning_decision(
+            title="Release invariant",
+            labels=["enhancement"],
+            changed_files=["src/keel/release.py"],
+            capture_status="applied",
+            existing_records=existing,
+            config=_config_with_learning_policy({
+                "enabled": True,
+                "mode": "create-learning",
+            }),
+        )
+
+        self.assertEqual(decision["decision"], "duplicate")
+        self.assertEqual(decision["duplicate_of"], "12")
+
+    def test_learning_result_rejects_unknown_decision(self):
+        with self.assertRaisesRegex(capture.CaptureError, "unsupported learning decision"):
+            capture._learning_result(  # noqa: SLF001 - exercising validation guard.
+                "unknown",
+                reason="test",
+                fingerprint="abc123",
+                policy={},
+            )
 
     def test_recursion_guard_detects_capture_work(self):
         self.assertTrue(capture.recursion_guard(title="Add capture contract"))

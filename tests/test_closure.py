@@ -121,6 +121,20 @@ class TestRenderClosureComment(unittest.TestCase):
             closure.render_closure_comment(record),
         )
 
+    def test_capture_includes_learning_decision_without_reason(self):
+        record = _record(capture={
+            "status": "applied",
+            "reason": None,
+            "learning": {
+                "decision": "defer",
+            },
+        })
+
+        self.assertIn(
+            "- **Capture:** applied; learning: defer",
+            closure.render_closure_comment(record),
+        )
+
     def test_capture_deferred_with_reason(self):
         record = _record(capture={"status": "deferred", "reason": "out of window"})
         self.assertIn(
