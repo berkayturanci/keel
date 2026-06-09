@@ -33,7 +33,7 @@ def _record(**overrides):
         },
         "actors": {
             "implementer": "codex (gpt-5)",
-            "reviewers": ["claude (opus)", "AI-Jury"],
+            "reviewers": ["claude (opus)", "qwen (ollama)", "AI Jury"],
             "tester": "host (manual list)",
         },
     }
@@ -77,7 +77,22 @@ class TestRenderClosureComment(unittest.TestCase):
 
     def test_jury_noted_when_present(self):
         rendered = closure.render_closure_comment(_record())
-        self.assertIn(f"(includes {closure.JURY_LABEL})", rendered)
+        self.assertIn(
+            f"- **Reviewers:** claude (opus), qwen (ollama) — {closure.JURY_LABEL}",
+            rendered,
+        )
+
+    def test_jury_only_no_real_reviewers(self):
+        record = _record(actors={"implementer": "codex (gpt-5)",
+                                 "reviewers": ["AI Jury"], "tester": None})
+        rendered = closure.render_closure_comment(record)
+        self.assertIn(f"- **Reviewers:** {closure.JURY_LABEL}", rendered)
+        self.assertNotIn("—", rendered)
+
+    def test_reviewers_blank_strings_only(self):
+        record = _record(actors={"implementer": "codex (gpt-5)",
+                                 "reviewers": [""], "tester": None})
+        self.assertIn("- **Reviewers:** none", closure.render_closure_comment(record))
 
     def test_jury_absent(self):
         record = _record(actors={"implementer": "codex (gpt-5)",

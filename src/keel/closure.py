@@ -46,8 +46,12 @@ def contract_as_dict() -> dict[str, Any]:
 def render_closure_comment(record: dict[str, Any]) -> str:
     """Render one ``ship_run`` ledger record as the ship outcome markdown comment.
 
-    Missing or ``None`` optional fields degrade gracefully (no tester line, empty
-    reviewer list, no PR number, ``capture_status=None``).
+    Missing or ``None`` optional fields degrade gracefully. Only the target line is
+    omitted when its value is absent or blank; every other field always renders. The
+    implementer, reviewers, tester, run id, and capture all render ``none`` (capture
+    renders ``not recorded``) when missing. An empty or jury-only reviewer list
+    renders ``none`` / ``AI Jury``; a missing PR number renders ``none``; a
+    ``capture`` status of ``None`` renders ``not recorded``.
     """
     actors = record.get("actors") or {}
     lines: list[str] = [f"## {HEADING}", ""]
@@ -69,16 +73,25 @@ def _target_line(target: Any) -> list[str]:
 
 
 def _reviewers(reviewers: Any) -> str:
-    if not isinstance(reviewers, list) or not reviewers:
+    if not isinstance(reviewers, list):
         return "none"
-    rendered = ", ".join(str(reviewer) for reviewer in reviewers)
-    if any(_is_jury(reviewer) for reviewer in reviewers):
-        return f"{rendered} (includes {JURY_LABEL})"
+    entries = [reviewer.strip() for reviewer in reviewers if _is_reviewer(reviewer)]
+    listed = [reviewer for reviewer in entries if not _is_jury(reviewer)]
+    has_jury = any(_is_jury(reviewer) for reviewer in entries)
+    if not listed:
+        return JURY_LABEL if has_jury else "none"
+    rendered = ", ".join(listed)
+    if has_jury:
+        return f"{rendered} — {JURY_LABEL}"
     return rendered
 
 
-def _is_jury(reviewer: Any) -> bool:
-    return isinstance(reviewer, str) and "jury" in reviewer.lower()
+def _is_reviewer(reviewer: Any) -> bool:
+    return isinstance(reviewer, str) and bool(reviewer.strip())
+
+
+def _is_jury(reviewer: str) -> bool:
+    return "jury" in reviewer.lower()
 
 
 def _pull_request(pull_request: Any) -> str:

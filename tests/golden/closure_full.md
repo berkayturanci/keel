@@ -3,7 +3,7 @@
 **Target:** issue #170
 
 - **Implementer:** codex (gpt-5)
-- **Reviewers:** claude (opus), AI-Jury (includes AI Jury)
+- **Reviewers:** claude (opus), qwen (ollama) — AI Jury
 - **Tester:** host (manual list)
 - **PR:** #190
 - **Changed files:** 2
