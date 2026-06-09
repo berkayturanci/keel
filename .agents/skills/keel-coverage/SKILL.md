@@ -9,6 +9,15 @@ Use this skill when the user asks to run the keel command `coverage` (e.g. `keel
 
 # /keel:coverage
 
+## Command step evidence
+
+Every numbered step in this command is contractual. Complete the step, record the
+evidence it asks for, or explicitly mark it `N/A — <reason>` before moving on. If a step
+has an external side effect such as a GitHub comment, issue, review, report, branch, or
+PR, the side effect must be posted or written through the selected transport and cited in
+the final summary. Never silently skip a step because the runtime, agent, or prompt feels
+obvious.
+
 Project-neutral coverage report. Every project value — the base branch, the coverage tooling
 per area, the risk map, the repo — is read from `.keel/project.yaml` via the `keel` CLI. The
 coverage command is **the project's** (its test/coverage command via its toolchain); this
@@ -25,7 +34,14 @@ MUST be English.
 ```bash
 keel validate .keel/project.yaml --root .
 keel plan     .keel/project.yaml --root .     # read base_branch, tier3_globs, repo
+keel plan     .keel/project.yaml --root . --command coverage --live --json
 ```
+
+The live plan is the operator-consent preflight. Before creating worktrees, writing local
+coverage cache files, posting comments/labels/issues, using secrets, publishing, or calling
+production-adjacent systems, parse `contract.operator_consent`; if
+`requires_operator_consent` is true, STOP and ask the operator to rerun with the required
+`--approve-scope` values.
 
 Arguments:
 - Positional, optional: a single positive integer **PR number**. Default: derive the PR from
@@ -130,3 +146,5 @@ print the would-be issues and route nothing.
 - **No silent dry-run mutations** — every comment/label/issue write is printed as `DRY-RUN: …`
   and skipped.
 - Deterministic for identical coverage data.
+
+<!-- keel-generated: surface=skills command=coverage keel_version=0.8.0 source_sha256=64fd36967be8b855e523cec7d22eb26eb47f16bccd4ea3d8b45c28ea821611a1 generated_sha256=d8ff41feade9512b67dea8b017ffe627580782e6f93363c03fbc11267f894c0c -->

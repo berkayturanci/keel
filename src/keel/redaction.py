@@ -25,6 +25,7 @@ class RedactionRule:
     pattern: re.Pattern[str]
     replacement: str
     source: str
+    literal_replacement: bool = False
 
 
 @dataclass(frozen=True)
@@ -148,7 +149,13 @@ def _configured_rules(config: cfg.ProjectConfig) -> list[RedactionRule]:
         if not isinstance(replacement, str) or not replacement:
             replacement = f"[REDACTED:{rule_id}]"
         source = f"policy_pack.capture_redaction.deny_patterns.{rule_id}"
-        rules.append(RedactionRule(rule_id, _compile(pattern, source), replacement, source))
+        rules.append(RedactionRule(
+            rule_id,
+            _compile(pattern, source),
+            replacement,
+            source,
+            literal_replacement=True,
+        ))
     return rules
 
 
@@ -172,7 +179,11 @@ def _sanitize_value(value: Any, policy: RedactionPolicy, counts: dict[str, int])
 def _sanitize_string(value: str, policy: RedactionPolicy, counts: dict[str, int]) -> str:
     text = value
     for rule in policy.rules:
-        text, count = rule.pattern.subn(rule.replacement, text)
+        replacement = (
+            (lambda _match, value=rule.replacement: value)
+            if rule.literal_replacement else rule.replacement
+        )
+        text, count = rule.pattern.subn(replacement, text)
         if count:
             counts[rule.id] = counts.get(rule.id, 0) + count
     return text

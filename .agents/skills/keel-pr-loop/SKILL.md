@@ -9,6 +9,15 @@ Use this skill when the user asks to run the keel command `pr-loop` (e.g. `keel 
 
 # /keel:pr-loop
 
+## Command step evidence
+
+Every numbered step in this command is contractual. Complete the step, record the
+evidence it asks for, or explicitly mark it `N/A — <reason>` before moving on. If a step
+has an external side effect such as a GitHub comment, issue, review, report, branch, or
+PR, the side effect must be posted or written through the selected transport and cited in
+the final summary. Never silently skip a step because the runtime, agent, or prompt feels
+obvious.
+
 Drive an already-implemented branch from open PR to merge-ready over the fixed keel
 backbone (`s6`–`s12`): open the PR, wait for CI, run the review+gate+fix loop, and hand a
 clean PR to the windowed, locked merge. **Project-neutral** — every project specific
@@ -23,17 +32,31 @@ name, timezone, or agent — stop and read it from config instead.
 keel validate .keel/project.yaml --root .   # abort if config/extensions are invalid
 keel plan     .keel/project.yaml --root .    # the run plan: backbone s6–s12 with this
                                              # project's gates + Lego extensions slotted in
+keel plan     .keel/project.yaml --root . --command pr-loop --live --json
 ```
+
+The live plan is the operator-consent preflight. Before pushing, opening/updating a PR,
+posting reviews/comments, committing fixes, merging, using secrets, publishing, or calling
+production-adjacent systems, parse `contract.operator_consent`; if
+`requires_operator_consent` is true, STOP and ask the operator to rerun with the required
+`--approve-scope` values. Pass `operator_consent.delegated_agent_scope` into any delegated
+review/fix agent brief. Delegates may use only `approved_mutation_scopes`; scope expansion
+blocks or escalates.
 
 Read the knobs you will need: `base_branch`, `ci_workflows` (name → path glob),
 `build_gate_cmd`, `lint_cmd`, `tier3_globs`, `implementer_agents`, `merge_window`,
 `merge_window_mode`.
 
+Resolve GitHub access through the shared runtime contract (`keel capabilities --json` →
+`github_transport`). Use the selected transport for all issue/PR/check/comment/review
+operations and treat any `github_transport.degraded` operation as an explicit limitation.
+Do not duplicate a local `gh` vs MCP capability table in this adapter.
+
 ## Step 1 — Find the PR
 
 - If a PR number is given as `$1`, use it. Otherwise auto-detect the open PR for the
-  current branch (`gh pr view --json number,headRefName,state`; the first open PR whose
-  head is the current branch).
+  current branch through the selected GitHub transport (the first open PR whose head is
+  the current branch).
 - If no PR exists for the current branch, halt and report — do not proceed.
 - **Workspace isolation:** this command runs `git commit` / `git push` against the working
   tree, so it MUST run from a **linked worktree**, never the user's primary checkout.
@@ -57,8 +80,9 @@ Gather the full PR state before deciding anything:
 - Reviews + the overall review decision.
 - The last few CI runs for the branch and their status/conclusion per workflow in
   `ci_workflows`.
-- If CI is failing, fetch the failed-run log (tail it) so fixes are evidence-based, not
-  guesses.
+- If CI is failing and `raw_actions_logs` is supported, fetch the failed-run log (tail it)
+  so fixes are evidence-based. If raw logs are degraded, quote the check name/details URL
+  and reproduce locally; do not imply raw-log access was available.
 
 ## Step 4 — Categorize feedback
 
@@ -167,3 +191,5 @@ posts them) · vendor+model attribution.
 Do every read plus `keel validate` / `keel plan` / `keel run-gates`, but redirect every
 state-changing `git`/`gh` write to a logged `DRY-RUN: <action>` line. No push, no PR, no
 merge.
+
+<!-- keel-generated: surface=skills command=pr-loop keel_version=0.8.0 source_sha256=c0543e98390a3c6cfab487ef0c9f06ef6340be0a0208dfcc49bf9b2da18ee0a1 generated_sha256=383547b288af9b6a4afead175ad223a153ae1b31b3aa217ff2f012d339a5470d -->

@@ -7,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from keel import config as cfg
-from keel import ledger
+from keel import ledger, redaction
 
 
 def _config(
@@ -145,6 +145,76 @@ class TestLedgerRecords(unittest.TestCase):
         self.assertNotIn("internal.example.test", json.dumps(sanitized, sort_keys=True))
         self.assertIn("[REDACTED:private-host]", sanitized["capture"]["reason"])
         self.assertEqual(sanitized["redaction"]["rules"][0]["id"], "private-host")
+
+    def test_sanitize_record_uses_project_custom_replacement(self):
+        record = _record()
+        record["capture"]["reason"] = "Ticket: https://tickets.example.test/ABC-123"
+        config = _config(deny_patterns=[
+            {
+                "id": "ticket-url",
+                "pattern": r"https://tickets\.example\.test/[A-Z]+-[0-9]+",
+                "replacement": "[REDACTED:ticket-url]",
+            }
+        ])
+
+        sanitized = ledger.sanitize_record(record, config)
+
+        self.assertEqual(sanitized["capture"]["reason"], "Ticket: [REDACTED:ticket-url]")
+        self.assertEqual(sanitized["redaction"]["rules"][0]["id"], "ticket-url")
+
+    def test_project_replacement_is_literal_and_cannot_reinsert_secret(self):
+        record = _record()
+        record["capture"]["reason"] = "captured top-secret-value"
+        config = _config(deny_patterns=[
+            {"id": "bad-replacement", "pattern": r"top-secret-value", "replacement": r"\g<0>"}
+        ])
+
+        sanitized = ledger.sanitize_record(record, config)
+
+        self.assertNotIn("top-secret-value", json.dumps(sanitized, sort_keys=True))
+        self.assertEqual(sanitized["capture"]["reason"], r"captured \g<0>")
+
+    def test_redaction_policy_without_config_uses_defaults(self):
+        policy = redaction.policy_from_config()
+
+        result = redaction.sanitize("ghp_" + "a" * 24, policy)
+
+        self.assertEqual(result.value, "[REDACTED:github-token]")
+        self.assertEqual(result.audit["redaction_count"], 1)
+
+    def test_malformed_project_redaction_entries_are_ignored_until_valid_regex_compiles(self):
+        record = _record()
+        record["capture"]["reason"] = "x marks the value"
+        config = _config(deny_patterns=[
+            "not-a-rule",
+            {"id": "missing-pattern"},
+            {"pattern": "x"},
+        ])
+
+        contract = ledger.ledger_contract_as_dict(config)["capture_redaction"]
+        sanitized = ledger.sanitize_record(record, config)
+
+        self.assertEqual(contract["configured_rule_ids"],
+                         ["missing-pattern", "deny-pattern-3"])
+        self.assertEqual(
+            sanitized["capture"]["reason"],
+            "[REDACTED:deny-pattern-3] marks the value",
+        )
+
+    def test_non_list_project_redaction_policy_is_ignored(self):
+        config = cfg.ProjectConfig(
+            extends="keel",
+            core_version="^0.7",
+            base_branch="main",
+            knobs=cfg.Knobs(build_gate_cmd="true"),
+            policy_pack={"name": "test", "capture_redaction": {"deny_patterns": "not-a-list"}},
+        )
+
+        contract = ledger.ledger_contract_as_dict(config)["capture_redaction"]
+        sanitized = ledger.sanitize_record(_record(), config)
+
+        self.assertEqual(contract["configured_rule_count"], 0)
+        self.assertEqual(sanitized["redaction"]["redaction_count"], 0)
 
     def test_sanitize_record_leaves_safe_text_unchanged(self):
         record = _record()

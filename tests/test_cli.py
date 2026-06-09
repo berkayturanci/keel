@@ -550,6 +550,52 @@ class TestShip(unittest.TestCase):
         self.assertIn("capture redaction policy invalid", json.loads(out)["error"])
         self.assertFalse(ledger_path.exists())
 
+    def test_ship_live_append_reports_invalid_redaction_policy_in_human_output(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger(
+                "'true'",
+                extra_policy_pack_lines=[
+                    "  capture_redaction:",
+                    "    deny_patterns:",
+                    "      - id: bad-regex",
+                    "        pattern: '['",
+                ],
+            )
+            rc, _, err = run(["ship", config, "--root", d, "--live",
+                              "--append-ledger", "--capture-status", "skipped",
+                              "--approve-scope", "filesystem,git,github",
+                              "--operator", "tester"])
+
+        self.assertEqual(rc, 1)
+        self.assertIn("capture redaction policy invalid", err)
+
+    def test_ship_json_invalid_redaction_policy_uses_default_redaction_for_output(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger(
+                "'true'",
+                extra_policy_pack_lines=[
+                    "  capture_redaction:",
+                    "    deny_patterns:",
+                    "      - id: bad-regex",
+                    "        pattern: '['",
+                ],
+            )
+            rc, out, _ = run(["ship", config, "--root", d, "--dry-run", "--json",
+                              "--capture-status", "skipped",
+                              "--capture-reason",
+                              "Bearer abcdefghijklmnopqrstuvwxyz should not leak"])
+
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        record = data["result"]["run_ledger"]["record"]
+        serialized = json.dumps(record, sort_keys=True)
+        self.assertNotIn("abcdefghijklmnopqrstuvwxyz", serialized)
+        self.assertEqual(record["redaction"]["status"], "partial")
+        self.assertEqual(record["redaction"]["reason"], "invalid-policy")
+        self.assertEqual(record["redaction"]["redaction_count"], 1)
+
     def test_ship_live_append_requires_capture_status(self):
         import tempfile
         with tempfile.TemporaryDirectory() as d:

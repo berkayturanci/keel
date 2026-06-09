@@ -9,6 +9,15 @@ Use this skill when the user asks to run the keel command `regression` (e.g. `ke
 
 # /keel:regression
 
+## Command step evidence
+
+Every numbered step in this command is contractual. Complete the step, record the
+evidence it asks for, or explicitly mark it `N/A — <reason>` before moving on. If a step
+has an external side effect such as a GitHub comment, issue, review, report, branch, or
+PR, the side effect must be posted or written through the selected transport and cited in
+the final summary. Never silently skip a step because the runtime, agent, or prompt feels
+obvious.
+
 Project-neutral, codebase-wide regression scan. Surfaces real bugs and regressions
 as new GitHub issues without duplicating issues that already exist, then routes each
 fix to `/keel:ship`. Every project specific (the base branch, the risk areas, the
@@ -20,10 +29,23 @@ hardcoded here.
 ```bash
 keel validate .keel/project.yaml --root .     # config + extensions must be valid
 keel plan     .keel/project.yaml --root .     # read base_branch, tier3_globs, ci_workflows
+keel plan     .keel/project.yaml --root . --command regression --live --json
+keel regression .keel/project.yaml --root . --scope full --live --json
 ```
 
-Read `base_branch`, `tier3_globs`, and `build_gate_cmd` from the plan. `tier3_globs` is
-the risk map used to tier every finding (Step 2). `gh` (or its MCP equivalent) is required
+The live regression contract is the operator-consent preflight and includes
+`scan_contract`: configured areas, active branch policy, dedupe rules, issue labels, and
+dry-run write suppression. Before creating scan worktrees, spawning
+reviewers, opening issues, handing fixes to `/keel:ship`, using secrets, publishing, or
+calling production-adjacent systems, parse `contract.operator_consent`; if
+`requires_operator_consent` is true, STOP and ask the operator to rerun with the required
+`--approve-scope` values. Pass `operator_consent.delegated_agent_scope` into every reviewer
+or fix handoff. Delegates may use only `approved_mutation_scopes`; scope expansion blocks
+or escalates.
+
+Read `base_branch`, `tier3_globs`, and scan areas from the contract. `tier3_globs` is
+the risk map used to tier every finding (Step 2), while `policy_pack.scan.areas` owns the
+project-specific fan-out modules. `gh` (or its MCP equivalent) is required
 for the issue list/search/create calls; if it is unavailable, exit cleanly with a single
 note rather than partial-running.
 
@@ -173,3 +195,5 @@ section for the dropped low-confidence findings.
 - Fail-soft (a missing tool degrades to a skipped check) · deterministic grouping (same
   findings ⇒ same issues) · `/keel:regression` never edits code, pushes, or merges — fixes go
   through `/keel:ship`'s backbone (window + lock + review).
+
+<!-- keel-generated: surface=skills command=regression keel_version=0.8.0 source_sha256=9e74e0d77be89e88ce1aaff098d2eff04510107b476fa79ce8694978f9859fe1 generated_sha256=969fa97b5559c60bb7d776bde300dfd58704f3dfe07a48746623371c619b07e1 -->

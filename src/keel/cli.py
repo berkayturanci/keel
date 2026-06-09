@@ -387,11 +387,17 @@ def _cmd_ship(args: argparse.Namespace) -> int:
             else:
                 print(message, file=sys.stderr)
             return 1
-        ledger_record = dict(ledger_record)
+        fallback = ledger.redaction.sanitize(
+            ledger_record,
+            ledger.redaction.policy_from_config(None),
+        )
+        ledger_record = dict(fallback.value)
         ledger_record["redaction"] = {
             "schema_version": ledger.redaction.REDACTION_SCHEMA_VERSION,
-            "status": "skipped",
+            "status": "partial",
             "reason": "invalid-policy",
+            "rules": fallback.audit["rules"],
+            "redaction_count": fallback.audit["redaction_count"],
         }
     ledger_path = ledger.resolve_path(args.root, config)
     ledger_result = {

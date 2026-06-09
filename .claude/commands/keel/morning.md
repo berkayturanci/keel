@@ -6,6 +6,15 @@ allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Read, Write
 
 # /keel:morning
 
+## Command step evidence
+
+Every numbered step in this command is contractual. Complete the step, record the
+evidence it asks for, or explicitly mark it `N/A — <reason>` before moving on. If a step
+has an external side effect such as a GitHub comment, issue, review, report, branch, or
+PR, the side effect must be posted or written through the selected transport and cited in
+the final summary. Never silently skip a step because the runtime, agent, or prompt feels
+obvious.
+
 Project-neutral daily brief. This adapter contains no project, repo, dashboard,
 timezone, or data-source literal — read every project specific from
 `.keel/project.yaml` via the `keel` CLI (`timezone`, `merge_window`, repo). Emit
@@ -24,7 +33,17 @@ one structured report. Be terse, English only (`knobs.sot_doc` § language polic
 ```bash
 keel validate .keel/project.yaml --root .
 keel plan     .keel/project.yaml --root .   # repo, base_branch, timezone, merge_window
+keel plan     .keel/project.yaml --root . --command morning --live --json
 ```
+
+The live plan is the operator-consent preflight. Before writing reports, sending
+notifications, using secrets, publishing, or calling production-adjacent systems, parse
+`contract.operator_consent`; if `requires_operator_consent` is true, STOP and ask the
+operator to rerun with the required `--approve-scope` values.
+
+Resolve GitHub access through the shared runtime contract (`keel capabilities --json` →
+`github_transport`). Use the selected transport for issue/PR reads and state any degraded
+operations at the top of the brief when they affect the report.
 
 ## Step 1 — Cross-session deferral queue (surface at top)
 
@@ -33,13 +52,17 @@ Read the cross-session deferral store — items deferred by `/keel:ship` /
 unresolved blocker. Surface any entries at the **top** of the brief under a
 "Overnight deferrals" section, then clear the store after surfacing.
 
+Read the structured run ledger from `contract.run_ledger.path` with
+`keel ledger .keel/project.yaml --root . --json`. Missing ledger files mean an empty
+history. Malformed records are a report blocker; do not recover by scraping free-form
+comments.
+
 ## Step 2 — Shipped since last brief
 
-Query (via `gh` CLI, or the GitHub MCP read tools in a sandbox/web runtime —
-note `Data source: GitHub MCP` at the top when you fall back) for issues closed
-and PRs merged since `--since` (default: the last brief's timestamp, else the
-prior 24h). Section: "Shipped". Include the effective agent + tier captured by
-`/keel:ship` (s11) where available.
+Query through the selected GitHub transport for issues closed and PRs merged since
+`--since` (default: the last brief's timestamp, else the prior 24h). Section: "Shipped".
+Include the effective agent, tier, gate summary, merge decision, and capture status from
+the structured ledger where available; use GitHub only to fill timeline gaps.
 
 ## Step 3 — Project health/telemetry signals (project-specific)
 
@@ -90,3 +113,5 @@ exist else omitted); otherwise skip.
 On the **first run** (no prior brief at the reports path), offer to schedule the
 brief on a recurring cadence at the configured `timezone` — the exact scheduler
 mechanism is project-specific.
+
+<!-- keel-generated: surface=claude command=morning keel_version=0.8.0 source_sha256=25d8c88d4c247e23409b7542582b1e5438be2d73db0019a3d82a5510d8c12cb8 generated_sha256=25d8c88d4c247e23409b7542582b1e5438be2d73db0019a3d82a5510d8c12cb8 -->

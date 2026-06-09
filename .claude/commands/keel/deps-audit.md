@@ -6,6 +6,15 @@ allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Read, Edit
 
 # /keel:deps-audit
 
+## Command step evidence
+
+Every numbered step in this command is contractual. Complete the step, record the
+evidence it asks for, or explicitly mark it `N/A — <reason>` before moving on. If a step
+has an external side effect such as a GitHub comment, issue, review, report, branch, or
+PR, the side effect must be posted or written through the selected transport and cited in
+the final summary. Never silently skip a step because the runtime, agent, or prompt feels
+obvious.
+
 Project-neutral dependency audit. Every project value — which ecosystems exist, the audit
 command per ecosystem, the licence baseline path, the timezone for the run date, the risk map
 — is read from `.keel/project.yaml` via the `keel` CLI. The actual audit tool for each
@@ -27,7 +36,14 @@ language.
 ```bash
 keel validate .keel/project.yaml --root .
 keel plan     .keel/project.yaml --root .     # read ecosystems, tier3_globs, timezone, repo
+keel plan     .keel/project.yaml --root . --command deps-audit --live --json
 ```
+
+The live plan is the operator-consent preflight. Before posting tracking comments, opening
+issues, routing fixes to `/keel:ship`, using secrets, publishing, or calling
+production-adjacent systems, parse `contract.operator_consent`; if
+`requires_operator_consent` is true, STOP and ask the operator to rerun with the required
+`--approve-scope` values.
 
 Arguments:
 - Positional, optional: one **ecosystem** the project declares, or `all`. Default `all`.
@@ -133,3 +149,5 @@ review). Never bump a dependency and merge directly from here. Under `--dry-run`
 - **No silent dry-run mutations** — every issue create / comment post is printed as `DRY-RUN: …`
   and skipped.
 - Fail-soft · deterministic for identical inputs.
+
+<!-- keel-generated: surface=claude command=deps-audit keel_version=0.8.0 source_sha256=2eb4428507b9b87917adae0dcff83e885423dc8eed861063698f2aa29ffa93f6 generated_sha256=2eb4428507b9b87917adae0dcff83e885423dc8eed861063698f2aa29ffa93f6 -->

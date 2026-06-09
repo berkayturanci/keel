@@ -1,10 +1,19 @@
 ---
-description: Find open PRs that have gone quiet or drifted off the base branch; triage, comment, and optionally rebase — respecting the merge window.
-argument-hint: "[--days <N>] [--rebase] [--dry-run]"
+description: Find open PRs that have gone quiet or drifted off the base branch; triage, comment, and optionally refresh from the configured base branch — respecting the merge window.
+argument-hint: "[--days <N>] [--rebase|--merge-develop] [--dry-run]"
 allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Read, Edit
 ---
 
 # /keel:stale-prs
+
+## Command step evidence
+
+Every numbered step in this command is contractual. Complete the step, record the
+evidence it asks for, or explicitly mark it `N/A — <reason>` before moving on. If a step
+has an external side effect such as a GitHub comment, issue, review, report, branch, or
+PR, the side effect must be posted or written through the selected transport and cited in
+the final summary. Never silently skip a step because the runtime, agent, or prompt feels
+obvious.
 
 Project-neutral stale-PR sweep. Triages open PRs that have either gone quiet or drifted out
 of sync with `base_branch`. All project values come from `.keel/project.yaml` via the `keel`
@@ -20,14 +29,24 @@ idempotency check (Step 4) is load-bearing.
 ```bash
 keel validate .keel/project.yaml --root .
 keel plan     .keel/project.yaml --root .     # read base_branch, ci_workflows, merge window
+keel plan     .keel/project.yaml --root . --command stale-prs --live --json
 keel window   .keel/project.yaml              # is the merge window open right now?
 ```
+
+The live plan is the operator-consent preflight. Before posting comments, checking out or
+merging branches, pushing refresh commits, using secrets, publishing, or calling
+production-adjacent systems, parse `contract.operator_consent`; if
+`requires_operator_consent` is true, STOP and ask the operator to rerun with the required
+`--approve-scope` values.
 
 Arguments:
 - `--days <N>` — staleness threshold in calendar days. Default `3`. Reject `0`, negatives,
   and non-integers.
 - `--rebase` — boolean; actually update each drift-bucket non-draft PR off `base_branch` and
   push. Without it the command is comment-only.
+- `--merge-develop` — legacy alias for `--rebase`. It MUST behave exactly like `--rebase`
+  and merge the configured `base_branch`, not a hardcoded `develop` branch. Reject runs that
+  pass both aliases together as repeated refresh intent.
 - `--dry-run` — boolean; print intended actions as `would …: …` lines and make **no** API
   call and **no** push. Every state-changing call (comment, checkout, merge, push) is
   redirected to stdout and skipped. May be combined with `--rebase` (prints the would-be
@@ -133,3 +152,5 @@ Print a summary table: PR · title · bucket · action, where action is one of `
 - **No silent dry-run mutations** — every would-be write is printed and skipped.
 - **Never modify a PR's tree** beyond the merge commit that brings in `base_branch`.
 - Fail-soft per PR; deterministic ordering.
+
+<!-- keel-generated: surface=claude command=stale-prs keel_version=0.8.0 source_sha256=d2784174b2a25febccd6a6eada629d6d2abfd7020b4faa6dab1efbc5ee5007e3 generated_sha256=d2784174b2a25febccd6a6eada629d6d2abfd7020b4faa6dab1efbc5ee5007e3 -->

@@ -9,6 +9,15 @@ Use this skill when the user asks to run the keel command `implement` (e.g. `kee
 
 # /keel:implement
 
+## Command step evidence
+
+Every numbered step in this command is contractual. Complete the step, record the
+evidence it asks for, or explicitly mark it `N/A — <reason>` before moving on. If a step
+has an external side effect such as a GitHub comment, issue, review, report, branch, or
+PR, the side effect must be posted or written through the selected transport and cited in
+the final summary. Never silently skip a step because the runtime, agent, or prompt feels
+obvious.
+
 The standalone **implement step (`s4`)** of the keel backbone. This adapter is
 project-neutral: it contains no branch name, build command, agent, path glob, or
 timezone. Read every project-specific value from `.keel/project.yaml` via the
@@ -32,7 +41,15 @@ project's source-of-truth doc — `knobs.sot_doc`.)
 ```bash
 keel validate .keel/project.yaml --root .   # abort if config/extensions invalid
 keel plan     .keel/project.yaml --root .    # read base_branch, implementer_agents, tier3_globs
+keel plan     .keel/project.yaml --root . --command implement --live --json
 ```
+
+The live plan is the operator-consent preflight. Before posting comments, creating a
+worktree/branch, delegating, editing files, committing, pushing, opening a PR, using
+secrets, publishing, or calling production-adjacent systems, parse
+`contract.operator_consent`; if `requires_operator_consent` is true, STOP and ask the
+operator to rerun with the required `--approve-scope` values. Store
+`operator_consent.delegated_agent_scope` for Step 5.
 
 Read the knobs you will need: `base_branch`, `implementer_agents`, `tier3_globs`,
 `build_gate_cmd`, `lint_cmd`.
@@ -42,6 +59,22 @@ Read the knobs you will need: `base_branch`, `implementer_agents`, `tier3_globs`
 Read the issue (title, body, labels) via `gh` (CLI when available) or the GitHub
 MCP read tools (sandbox/web runtime). Capture `number`, `title`, `body`, and the
 `labels` array — the role/platform label drives implementer routing below.
+
+Rerun the live preflight with the selected issue context before branch/worktree
+or delegation:
+
+```bash
+keel plan .keel/project.yaml --root . --command implement --live --json \
+  --target "issue #<N>" \
+  --issue-title "$ISSUE_TITLE" \
+  --issue-body "$ISSUE_BODY" \
+  --issue-label "$ISSUE_LABELS"
+```
+
+Parse `contract.issue_intake`. If `status` is `needs-input`, ask or post the
+generated `questions` and stop before any code mutation. If `status` is
+`blocked` or `out-of-scope`, record the `ledger_record`, report the skip reason,
+and stop. Only `ready` may continue to Step 2.
 
 ## Step 2 — Check for an existing branch
 
@@ -78,6 +111,9 @@ id), and the planned branch name.
 Dispatch to the resolved implementer with the issue context. Mandatory steps the
 implementer must follow:
 
+0. Receive and obey the approved `operator_consent.delegated_agent_scope`. If the
+   implementer attempts work outside `approved_mutation_scopes`, the orchestrator blocks or
+   escalates. Secret access requires explicit `secrets` approval for this run.
 1. Read the project's source-of-truth doc (`knobs.sot_doc`) and any platform
    context it points to.
 2. **Workspace isolation (mandatory):** before any code-modifying work, create a
@@ -97,9 +133,9 @@ implementer must follow:
    keel run-gates .keel/project.yaml --root .
    ```
    This executes the built-in `build_gate_cmd` / `lint_cmd` plus any `tester`
-   Lego. Gate selection that depends on which files changed (migration-, billing-,
-   or config-specific suites) is project-specific: express it as a Lego or mark
-   it "(project-specific; stays in the project)".
+   Lego. Gate selection that depends on which files changed (schema migration,
+   entitlement, or config-specific suites) is project-specific: express it as a
+   Lego or mark it "(project-specific; stays in the project)".
 5. Include the codename in commits / PR body / final summary when practical.
 6. Return the contract: codename, branch/commit, files changed, gate results,
    docs impact, and anything needing manual/device/infra verification.
@@ -117,3 +153,5 @@ review / CI / merge.
 
 Fail over to the host agent on delegate quota errors; attribute the **effective**
 agent.
+
+<!-- keel-generated: surface=skills command=implement keel_version=0.8.0 source_sha256=0195f50fbd70f3c6c8ee189d62e69494ab4e2eee72f1fa061d2f824d38aa9474 generated_sha256=4170fe1605d18923f8bed3ebc90ab62557bfbe0d09b7351822deec5b262a8df9 -->

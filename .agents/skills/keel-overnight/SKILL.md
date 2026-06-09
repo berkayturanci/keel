@@ -9,6 +9,15 @@ Use this skill when the user asks to run the keel command `overnight` (e.g. `kee
 
 # /keel:overnight
 
+## Command step evidence
+
+Every numbered step in this command is contractual. Complete the step, record the
+evidence it asks for, or explicitly mark it `N/A — <reason>` before moving on. If a step
+has an external side effect such as a GitHub comment, issue, review, report, branch, or
+PR, the side effect must be posted or written through the selected transport and cited in
+the final summary. Never silently skip a step because the runtime, agent, or prompt feels
+obvious.
+
 Run `/keel:ship` unattended over the backlog until the **merge window** closes,
 the time budget runs out, or `--max` issues are shipped. This adapter is
 project-neutral: it contains no timezone, branch, command, or path literal. Read
@@ -27,8 +36,17 @@ policy).
 ```bash
 keel validate .keel/project.yaml --root .
 keel plan     .keel/project.yaml --root .
+keel plan     .keel/project.yaml --root . --command overnight --live --json
 keel window   .keel/project.yaml --root .   # OPEN (merge-as-you-go) or CLOSED (no-merge)
 ```
+
+The live plan is the operator-consent preflight. Before selecting work, spawning
+implementers, creating PRs, merging, writing reports, using secrets, publishing, or calling
+production-adjacent systems, parse `contract.operator_consent`; if
+`requires_operator_consent` is true, STOP and ask the operator to rerun with the required
+`--approve-scope` values. Pass `operator_consent.delegated_agent_scope` into every
+`/keel:ship` or implementer handoff. Delegates may use only `approved_mutation_scopes`;
+scope expansion blocks or escalates.
 
 Mode is keyed on `keel window`, which derives the cutover from the configured
 `timezone` + `merge_window` (down to the exact minute, not just the hour):
@@ -41,6 +59,19 @@ Mode is keyed on `keel window`, which derives the cutover from the configured
 The boundary is shared with `/keel:ship`, so both commands defer or merge the
 same PR at the same wall-clock minute. Re-check `keel window` each loop — the
 mode can flip mid-session.
+
+Read `contract.checkpoint` from the live plan. At session start, call
+`keel resume .keel/project.yaml --root . --json`. If the resume plan is
+`no-checkpoint`, begin a new work block. If it is `ambiguous`, stop and reconcile the
+recorded PR/worktree state before selecting more work. If it points to an already-merged
+PR, hand off to capture/closeout and do not repeat the merge.
+
+Write a checkpoint at each work-block boundary: after queue selection, after each
+`/keel:ship` handoff returns, before stopping on CI/review/window blockers, and before the
+final report write. Use `--checkpoint-command overnight`, keep the active issue queue in
+`--issue-queue`, set `--active-issue` for the current issue, and preserve branch,
+worktree, PR, merge, capture, and close state when a child ship run has created them.
+The checkpoint is the active resume point; the run ledger remains append-only history.
 
 ## Two non-negotiable rules
 
@@ -112,7 +143,19 @@ the project's plans directory, use it as the queue instead.
 
 1. `keel window .keel/project.yaml --root .` — only merge while OPEN; in CLOSED
    mode leave PRs open (blocker exception above). Stop the loop at window close.
-2. Pick the next ready issue (queue order; skip blocked/needs-input).
+2. Pick the next candidate issue in queue order. Fetch its title, body, and labels, then
+   run the shared intake preflight before handing it to ship:
+   ```bash
+   keel plan .keel/project.yaml --root . --command ship --live --json \
+     --target "issue #<N>" \
+     --issue-title "$ISSUE_TITLE" \
+     --issue-body "$ISSUE_BODY" \
+     --issue-label "$ISSUE_LABELS"
+   ```
+   Parse `contract.issue_intake`. If the issue is `needs-input`, `blocked`, or
+   `out-of-scope`, record its `ledger_record`, skip reason, and generated questions in the
+   session report, then continue to the next candidate when policy allows. Only `ready`
+   issues may proceed.
 3. Run `/keel:ship` for it (full backbone, inline-hybrid review, `jury` gate if
    configured in `gates:`), respecting `--review-comments`.
 4. On a blocking failure that can't be auto-fixed within the round budget,
@@ -144,3 +187,5 @@ When stopped, write the session report immediately, even if partial.
 
 Never merge outside the window · merge lock · fail-soft per issue (one failure
 never aborts the loop) · attribute the effective agents (vendor + base model).
+
+<!-- keel-generated: surface=skills command=overnight keel_version=0.8.0 source_sha256=ae1c729a954f1881963e222406d6d7e55c8f217cb40e241282216585b2cb9d64 generated_sha256=88380ce8e2073a44ef71a1a66ca58ef8b8c9b6f49c5b2cc1df55d1895deb6a3b -->

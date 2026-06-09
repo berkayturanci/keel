@@ -9,6 +9,15 @@ Use this skill when the user asks to run the keel command `ship` (e.g. `keel shi
 
 # /keel:ship
 
+## Command step evidence
+
+Every numbered step in this command is contractual. Complete the step, record the
+evidence it asks for, or explicitly mark it `N/A — <reason>` before moving on. If a step
+has an external side effect such as a GitHub comment, issue, review, report, branch, or
+PR, the side effect must be posted or written through the selected transport and cited in
+the final summary. Never silently skip a step because the runtime, agent, or prompt feels
+obvious.
+
 Project-neutral flagship workflow. **Every project value comes from `.keel/project.yaml`
 via the `keel` CLI** — never hardcode a branch, command, glob, agent, timezone, window,
 allowlist, or workflow name here. Reference knobs by name: `base_branch`, `build_gate_cmd`,
@@ -25,8 +34,16 @@ may stay in any language.
 ```bash
 keel validate .keel/project.yaml --root .     # config + extensions must be valid
 keel plan     .keel/project.yaml --root .     # the backbone + this project's gates/Lego
+keel plan     .keel/project.yaml --root . --command ship --live --json
 keel window   .keel/project.yaml              # is the merge window open right now?
 ```
+
+The live plan is the operator-consent preflight. Before s1 and before any branch,
+worktree, GitHub write, delegation, secret, release, or production-adjacent access, parse
+`contract.operator_consent`; if `requires_operator_consent` is true, STOP and ask the
+operator to rerun with the required `--approve-scope` values. Do not infer secret or
+credential approval from project knowledge. Store `operator_consent.delegated_agent_scope`
+for every later delegated-agent brief.
 
 `keel validate`/`plan` resolve `base_branch`, the knob commands (`build_gate_cmd`,
 `lint_cmd`), `implementer_agents`, `tier3_globs`, `ci_workflows`, `docs_gate_paths`,
@@ -34,6 +51,57 @@ and the `tester` / `pre-merge` / `reviewers` / `capture` extensions. `keel windo
 evaluates `merge_window` in the project `timezone` and reports `merge_window_mode`
 (`pause` = halt outside the window; `freeze` = defer to the morning queue). Hold the
 **merge lock** for the merge step (s10) only.
+
+After s1 selects an issue, rerun the live preflight with the selected issue title/body/labels:
+
+```bash
+keel plan .keel/project.yaml --root . --command ship --live --json \
+  --target "issue #<N>" \
+  --issue-title "$ISSUE_TITLE" \
+  --issue-body "$ISSUE_BODY" \
+  --issue-label "$ISSUE_LABELS"
+```
+
+Parse `contract.issue_intake` before s2. If `status` is `needs-input`, post or ask the
+generated `questions` and STOP that issue before branch/worktree/code mutation. If `status`
+is `blocked` or `out-of-scope`, append or preserve the structured run-ledger record,
+skip mutation, and move to the next selected issue when watch/work-block policy allows.
+Only `ready` may proceed to s2. This is the same readiness discipline expected from a
+human teammate: clarify the ticket before starting work and keep the clarification trail
+in the run ledger.
+
+**Run ledger.** Read `contract.run_ledger` from `keel plan --json` or the
+`result.run_ledger` block from `keel ship --json`. Do not infer ship outcomes by parsing
+free-form PR or issue comments. For live runs, append exactly one structured record with
+`keel ship .keel/project.yaml --root . --live --append-ledger --run-id <id> --issue <N>
+--pull-request <PR> --capture-status <applied|deferred|skipped> --capture-reason <reason>
+--implementer <agent> --reviewer-agent <agent> --tester <agent> --approve-scope <scopes>
+--operator <operator> --json` after the ship assessment and capture status are known.
+If the configured ledger path is missing, treat it as empty history; if a ledger record is
+malformed, stop capture/reporting and ask for operator help instead of silently falling
+back to comment scraping.
+
+**Checkpoint / resume.** Read `contract.checkpoint` from `keel plan --json` before live
+work. At the start of a run, call `keel resume .keel/project.yaml --root . --json` and
+inspect `resume_plan`. If it returns `no-checkpoint`, start normally. If it returns
+`ambiguous`, stop and reconcile the PR/worktree state it names before doing any mutation.
+If it reports a merged PR, resume at capture or closeout; never repeat the merge.
+
+During live ship runs, write a checkpoint after each safe step boundary and before moving
+to the next step:
+
+```bash
+keel checkpoint .keel/project.yaml --root . --write \
+  --run-id "$RUN_ID" --checkpoint-command ship --step s6 \
+  --target "issue #<N>" --issue-queue <N> --active-issue <N> \
+  --branch "$BRANCH" --worktree "$WORKTREE" --pull-request "$PR" \
+  --head-sha "$HEAD_SHA" --last-check ci
+```
+
+Update the arguments to match the actual boundary: completed steps, last gate/review/check,
+merge state, capture state, close state, and stop reason. The checkpoint is the active
+resume point, not run history. Do not delete or overwrite project extensions while writing
+or resuming from it.
 
 **GitHub transport.** Prefer the `gh` CLI when present (richer JSON, `--watch`); detect
 once at session start (`command -v gh`) and, when absent, fall back to an equivalent
@@ -81,6 +149,11 @@ Validate each issue (skip/warn on closed ones); on a `gh` rate-limit/auth/networ
 log partial state and stop. Snapshot the queue once — do not re-poll mid-session. If the
 queue is empty, log a one-line summary and exit.
 
+For every selected issue, read title, body, and labels through the selected GitHub transport
+and feed them into the issue intake preflight described in s0. In work-block/watch mode,
+non-ready issues are skipped with their readiness reason and concrete questions recorded,
+then the run continues with the next ready issue if one exists.
+
 ### s2 branch
 Cut a work branch off `base_branch`. A **git worktree per issue** is the isolation
 contract: never mutate the user's primary checkout. Create it under a gitignored,
@@ -121,8 +194,14 @@ Resolve the implementer: `implementer_agents` by the issue's role label, **overr
   exists, ambiguous ⇒ treat as tier-2 and let s7 gate) — fall back to `HOST_AGENT` there.
 
 Every implementer (delegated or not) receives the same brief plus:
-- Worktree isolation + branch-off-`base_branch` + `Closes #<N>` in the PR body + open as
-  **draft**.
+- The approved `operator_consent.delegated_agent_scope`. If the implementer attempts work
+  outside `approved_mutation_scopes`, the orchestrator blocks or escalates instead of
+  silently continuing. Secret access requires the explicit `secrets` scope for this run.
+- Worktree isolation + branch-off-`base_branch` + a detailed PR body + open as **draft**.
+  The PR body MUST NOT be only a closing reference. It must include at least:
+  `Context`, `Changes Made`, `Testing`, `Docs Impact`, and a final `Closes #<N>` reference.
+  If any section is not applicable, write `N/A — <reason>` inside that section instead of
+  omitting it.
 - A pre-push scope self-check: `git diff base_branch...HEAD --name-only`, revert anything
   outside the issue's scope.
 - The vendor's `Co-Authored-By:` trailer on every commit.
@@ -201,7 +280,10 @@ only for narrow tier-1 PRs). Run any `reviewers` Lego extensions. Capture per-re
 can zip them by index). On a missing/erroring delegate vendor, fall back to the host
 reviewer and log it (record the effective vendor that ran).
 
-**Post findings per `--review-comments` (inline default):**
+**Post findings per `--review-comments` (inline default):** review findings are public PR
+evidence. The orchestrator MUST post each reviewer's final verdict to the GitHub PR through
+the selected transport; local/chat-only review output does not satisfy the step.
+
 - `inline` → fetch the diff once; anchor each `critical`/`major` finding as an **inline
   review comment** on its `file:line` (resolve `RIGHT`/`LEFT` side; `line` is the new-file
   number on `RIGHT`, old-file on `LEFT`; non-anchorable or whole-PR findings go to the
@@ -227,9 +309,11 @@ gated suggestion, `nit` ⇒ advisory; a jury-driven fix consumes one round). A s
 panel is downgraded to advisory (count distinct participating vendors before assembling the
 verdict so the posted comment matches what is enforced), and any jury run that did not
 complete cleanly **never gates**. Honour `--review-comments` (pass the jury's native inline
-flag through in inline mode, never under `--dry-run`). The orchestrator posts the single
-jury summary/verdict comment via a body-file (never interpolate report text into a shell
-argument). Re-runs use the jury's incremental/cache flags to stay cheap.
+flag through in inline mode, never under `--dry-run`). The orchestrator MUST POST the
+single jury summary/verdict comment to the GitHub PR via a body-file (for example,
+`gh pr comment <PR_ID> --body-file <file>` when `gh` is the selected transport). Never
+interpolate report text into a shell argument. Re-runs use the jury's incremental/cache
+flags to stay cheap.
 
 ### s9 fixloop
 While there are blocking findings and the budget (**≤3 review-fix rounds**) is not spent:
@@ -281,11 +365,23 @@ codename, PR number, changed files, docs touched, capture outcome). Run any post
 open a follow-up docs-only PR that itself merges inline through s10's lock with a
 window-bypass carve-out, or file a follow-up issue) fail-soft, emit its audit marker, and
 do a post-merge worktree safety-net cleanup. **Marker discipline:** every merged PR that
-reaches capture must emit exactly one canonical capture marker — a success-set or one of the
-closed skip vocabulary (`dry-run` / `deferred` / `merge-failed` / a recursion guard /
-capability-unavailable) — keyed by PR number; a session-end verifier greps these and flips
-the session to blocked if any merged PR is missing its marker. The closure comment's capture
-field is mandatory and never empty (empty = silent-skip bug).
+reaches capture must write exactly one structured ledger record with a non-empty
+`capture.status` — a success-set or one of the closed skip vocabulary (`dry-run` /
+`deferred` / `merge-failed` / a recursion guard / `capability-unavailable`) — keyed by PR
+number. A session-end verifier reads `keel ledger .keel/project.yaml --root . --json` and
+blocks the session if any merged PR is missing a structured capture status. The closure
+comment's capture field is mandatory and never empty, but it is a human audit mirror, not
+the parser source.
+
+Also append the structured `ship_run` record to `contract.run_ledger.path` via
+`keel ship --live --append-ledger` or the equivalent core ledger writer. The ledger append
+is the machine-readable source for `/keel:morning`, `/keel:wrap`, overnight summaries, and
+capture verification; the closure comments are human/audit mirrors, not the parser source.
+Capture artifacts MUST pass through the core redaction policy first: default secret rules plus
+any project-owned `policy_pack.capture_redaction.deny_patterns`. If the configured redaction
+policy is invalid, skip the capture write with the allowed reason `invalid-policy` rather than
+persisting unsanitized output. The audit may include rule ids and counts, never original secret
+values.
 
 ### s12 close
 Close the issue (idempotent if the squash auto-closed it via `Closes #<N>`), link the PR,
@@ -323,3 +419,5 @@ findings-only, every vendor) · never push directly to `base_branch` · the stat
 is set in exactly one place (s12, post-merge) · attribute the **effective** vendor+model
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
+
+<!-- keel-generated: surface=skills command=ship keel_version=0.8.0 source_sha256=fea8098e49bf4027be7179cb9bbc1944a25d15e5944629c715946b4b1f952bd5 generated_sha256=c09fbbfd6977d0cef3892a798cd388a825842a774c20a3781fb335403ab6529f -->

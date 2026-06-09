@@ -9,17 +9,26 @@ Use this skill when the user asks to run the keel command `triage` (e.g. `keel t
 
 # /keel:triage
 
+## Command step evidence
+
+Every numbered step in this command is contractual. Complete the step, record the
+evidence it asks for, or explicitly mark it `N/A — <reason>` before moving on. If a step
+has an external side effect such as a GitHub comment, issue, review, report, branch, or
+PR, the side effect must be posted or written through the selected transport and cited in
+the final summary. Never silently skip a step because the runtime, agent, or prompt feels
+obvious.
+
 Project-neutral backlog triage. This adapter contains no repo, role name, path
 glob, or label literal beyond the generic vocabulary below — read every project
 specific from `.keel/project.yaml` via the `keel` CLI (`tier3_globs`,
 `implementer_agents`, repo).
 
 The command scans open issues missing any `status:*` label, spawns one classifier
-subagent per issue that proposes a `role/platform:* + priority:* + status:*`
-label triple drawn **only from the existing repo label set**, applies those
-labels, and posts a one-line audit comment. It is **advisory and label-only**: it
-never edits titles or bodies, never closes or assigns issues (except the role
-label under `--assign`), and never invents new labels.
+subagent per issue that proposes a routing role + `priority:* + status:*` label
+triple drawn **only from the existing repo label set**, applies those labels, and
+posts a one-line audit comment. It is **advisory and label-only**: it never edits
+titles or bodies, never closes or assigns issues (except the role label under
+`--assign`), and never invents new labels.
 
 ## Language
 
@@ -33,10 +42,23 @@ published artifact and MUST be English.
 ```bash
 keel validate .keel/project.yaml --root .
 keel plan     .keel/project.yaml --root .   # tier3_globs, implementer_agents, repo
+keel plan     .keel/project.yaml --root . --command triage --live --json
 ```
+
+The live plan is the operator-consent preflight. Before spawning classifiers, applying
+labels, posting audit comments, using secrets, publishing, or calling production-adjacent
+systems, parse `contract.operator_consent`; if `requires_operator_consent` is true, STOP
+and ask the operator to rerun with the required `--approve-scope` values. Pass
+`operator_consent.delegated_agent_scope` into every classifier brief. Classifiers may use
+only `approved_mutation_scopes`; scope expansion blocks or escalates.
 
 The **role/platform** vocabulary is project-defined — derive it from the keys of
 `implementer_agents` (each key is a routing role). Do not hardcode role names.
+Legacy wrappers that used `platform:*` labels must migrate by either defining
+matching routing-role keys in project config for the transition or translating the
+legacy platform value to one configured role before invoking this adapter. keel
+core never invents `platform:*` labels and never broadens the vocabulary at
+runtime.
 
 ## Step 0 — Parse arguments
 
@@ -70,7 +92,7 @@ line. Mappings, applied whenever the prose names a `gh` call:
 | list open issues with labels/body | list-issues (state=open, page size 100); apply the same client-side filter (drop issues whose labels include any `status:*`) |
 | view issue / view issue comments (subagent) | issue-read (get / get-comments); subagents stay read-only |
 | comment on issue | add-issue-comment |
-| add labels to issue | issue-write (update). MCP **overwrites** the label set — compute the union of existing + new labels explicitly before calling. |
+| add labels to issue | issue-write (update). MCP **overwrites** the label set — compute the union of existing + new labels explicitly before calling and log the exact added vs. preserved label difference. |
 
 `--dry-run` semantics are identical in both modes: every would-be mutation is
 redirected to a `DRY-RUN:` stdout line and skipped.
@@ -253,3 +275,5 @@ writes. Hand ready items to `/keel:ship`.
 - The closed label vocabulary above (the `implementer_agents` roles + the
   priority/status families) must exist in the repo. If any label is missing, fix
   the repo labels (not this command) before invoking.
+
+<!-- keel-generated: surface=skills command=triage keel_version=0.8.0 source_sha256=1d4d48f86d8e01839e4b3ed9198259897070eed16d776cc1bf7acafa2b061305 generated_sha256=8ad3402c686d862522e65d8f686e6dd55dade2dcb5bace855938b4a1bc3caa83 -->

@@ -6,6 +6,15 @@ allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Bash(jury:*), Read, Edit, 
 
 # /keel:review-cycle
 
+## Command step evidence
+
+Every numbered step in this command is contractual. Complete the step, record the
+evidence it asks for, or explicitly mark it `N/A — <reason>` before moving on. If a step
+has an external side effect such as a GitHub comment, issue, review, report, branch, or
+PR, the side effect must be posted or written through the selected transport and cited in
+the final summary. Never silently skip a step because the runtime, agent, or prompt feels
+obvious.
+
 The standalone review→fix loop (`s7` + `s9`) over one or more existing PRs. For each PR, a
 set of reviewers reviews the same diff **in parallel**, findings are posted per the chosen
 posting mode, blocking findings drive a capped fix loop, and the loop exits clean or at the
@@ -23,20 +32,34 @@ for the windowed, locked merge.
 ```bash
 keel validate .keel/project.yaml --root .
 keel plan     .keel/project.yaml --root .    # read tier3_globs, ci_workflows, gates
+keel plan     .keel/project.yaml --root . --command review-cycle --live --json
 ```
+
+The live plan is the operator-consent preflight. Before posting reviews/comments,
+committing/pushing fixes, using secrets, publishing, or calling production-adjacent systems,
+parse `contract.operator_consent`; if `requires_operator_consent` is true, STOP and ask the
+operator to rerun with the required `--approve-scope` values. Pass
+`operator_consent.delegated_agent_scope` into every reviewer/fixer brief. Delegates may use
+only `approved_mutation_scopes`; scope expansion blocks or escalates.
 
 Argument grammar: zero or more PR numbers (positive integers, space-separated). Reject any
 non-integer / negative / zero argument and comma-separated lists. With **no PR argument**,
 default to the open PR for the current branch. State the parsed PR list in your first
 user-facing line.
 
+Resolve GitHub access through the shared runtime contract (`keel capabilities --json` →
+`github_transport`). Use the selected transport for PR reads, comments, reviews, file
+lists, and check data. If an operation is listed in `github_transport.degraded`, surface
+that limitation and avoid hidden best-effort behavior.
+
 ## Step 1 — Validate PRs
 
-For each PR number, confirm it exists and is open (`gh pr view --json
-number,state,isDraft,headRefName,baseRefName,title,url`). Drop already-merged/closed PRs —
-warn and list them under "Skipped" in the final report. Continue with the remaining open or
-draft PRs. If `gh` returns a non-zero exit (network / auth / rate limit), stop and surface
-the error; the final report still covers what completed.
+For each PR number, confirm it exists and is open through the selected GitHub transport,
+reading `number`, `state`, `isDraft`, `headRefName`, `baseRefName`, `title`, and `url`.
+Drop already-merged/closed PRs — warn and list them under "Skipped" in the final report.
+Continue with the remaining open or draft PRs. If the selected transport returns a network,
+auth, or rate-limit error, stop and surface the error; the final report still covers what
+completed.
 
 ## Step 2 — Per-PR loop (sequential across PRs)
 
@@ -189,3 +212,5 @@ Always print the final report on exit, even if partial.
 Do every read plus `keel validate` / `keel plan` / `keel run-gates` and the reviewer fan-out,
 but redirect every state-changing `gh` write (comments, label) to a logged
 `DRY-RUN: <action>` line.
+
+<!-- keel-generated: surface=claude command=review-cycle keel_version=0.8.0 source_sha256=950f8d2ef9d84e486405a88aac1934713643bc41204254b978c5f49d27b11e25 generated_sha256=950f8d2ef9d84e486405a88aac1934713643bc41204254b978c5f49d27b11e25 -->

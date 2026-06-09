@@ -9,6 +9,15 @@ Use this skill when the user asks to run the keel command `flake-audit` (e.g. `k
 
 # /keel:flake-audit
 
+## Command step evidence
+
+Every numbered step in this command is contractual. Complete the step, record the
+evidence it asks for, or explicitly mark it `N/A — <reason>` before moving on. If a step
+has an external side effect such as a GitHub comment, issue, review, report, branch, or
+PR, the side effect must be posted or written through the selected transport and cited in
+the final summary. Never silently skip a step because the runtime, agent, or prompt feels
+obvious.
+
 Project-neutral flaky-test audit. Every project value — the CI workflows, the base branch, the
 test gate, the repo — is read from `.keel/project.yaml` via the `keel` CLI. The test command is
 **the project's** (`keel run-gates .keel/project.yaml --root .`); this adapter never names a
@@ -31,7 +40,13 @@ published artifacts (report, issue bodies) MUST be English.
 ```bash
 keel validate .keel/project.yaml --root .
 keel plan     .keel/project.yaml --root .     # read base_branch, ci_workflows, repo
+keel plan     .keel/project.yaml --root . --command flake-audit --live --json
 ```
+
+The live plan is the operator-consent preflight. Before opening issues, routing fixes to
+`/keel:ship`, using secrets, publishing, or calling production-adjacent systems, parse
+`contract.operator_consent`; if `requires_operator_consent` is true, STOP and ask the
+operator to rerun with the required `--approve-scope` values.
 
 Arguments:
 - `--days <N>` — CI-history lookback window in calendar days (UTC). Default `14`. Reject `0`,
@@ -152,3 +167,5 @@ the operator to spelunk the tracker after the fact.
 - **No silent dry-run mutations** — each create is printed as `would create: <title>` and
   skipped.
 - Fail-soft · deterministic for identical inputs.
+
+<!-- keel-generated: surface=skills command=flake-audit keel_version=0.8.0 source_sha256=17b5e120e6978bb027e088280a2f318252b676f77cc8498b3417b5cc06607c68 generated_sha256=77250792011b635ccd1596b38bd3e071276fc8667a29cdec110112400e5f0e07 -->
