@@ -309,7 +309,7 @@ def learning_decision(
     if mode == "defer":
         return _learning_result(
             "defer",
-            reason=_policy_reason(policy, capture_reason or "policy-deferred"),
+            reason=_policy_reason(policy, "policy-deferred"),
             fingerprint=fingerprint,
             policy=policy,
         )

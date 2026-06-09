@@ -358,6 +358,12 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         jury_advisory=args.jury_advisory,
     )
     contract["review_merge_contract"] = a.review_contract
+    ledger_path = ledger.resolve_path(args.root, config)
+    try:
+        existing_ledger_records = ledger.read_records(ledger_path)
+    except ledger.LedgerError as exc:
+        print(f"invalid ledger {ledger_path}: {exc}", file=sys.stderr)
+        return 1
     ledger_record = ledger.build_ship_run_record(
         command=command,
         base_branch=config.base_branch,
@@ -374,6 +380,10 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         head_sha=args.head_sha,
         capture_status=args.capture_status,
         capture_reason=args.capture_reason,
+        issue_title=args.issue_title,
+        issue_labels=_issue_labels(args),
+        existing_records=existing_ledger_records,
+        config=config,
         implementer=args.implementer,
         reviewer_agents=args.reviewer_agent,
         tester=args.tester,
@@ -401,7 +411,6 @@ def _cmd_ship(args: argparse.Namespace) -> int:
             "rules": fallback.audit["rules"],
             "redaction_count": fallback.audit["redaction_count"],
         }
-    ledger_path = ledger.resolve_path(args.root, config)
     ledger_result = {
         "contract": contract["run_ledger"],
         "path": str(ledger_path),

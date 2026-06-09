@@ -519,6 +519,117 @@ class TestShip(unittest.TestCase):
                          ["reviewer-a:gpt-5", "reviewer-b:claude"])
         self.assertEqual(read["records"][0]["redaction"]["status"], "applied")
 
+    def test_ship_json_uses_learning_policy_in_ledger_record(self):
+        import tempfile
+        body = (
+            "## Problem\nLearning policy must affect ship records.\n\n"
+            "## Deliverable\nEmit the configured learning decision.\n\n"
+            "## Acceptance criteria\n"
+            "- JSON contains create-learning.\n"
+        )
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger(
+                "'true'",
+                extra_policy_pack_lines=[
+                    "  capture:",
+                    "    learning:",
+                    "      enabled: true",
+                    "      mode: create-learning",
+                    "      reason: new invariant",
+                ],
+            )
+            rc, out, _ = run([
+                "ship", config, "--root", d, "--dry-run", "--json",
+                "--issue-title", "Release invariant",
+                "--issue-body", body,
+                "--issue-label", "enhancement,release",
+                "--pull-request", "181",
+                "--capture-status", "applied",
+            ])
+
+        self.assertEqual(rc, 0)
+        learning = json.loads(out)["result"]["run_ledger"]["record"]["capture"]["learning"]
+        self.assertEqual(learning["decision"], "create-learning")
+        self.assertEqual(learning["reason"], "new invariant")
+        self.assertTrue(learning["durable_artifact"])
+
+    def test_ship_json_uses_existing_ledger_and_issue_context_for_learning_dedupe(self):
+        import tempfile
+        body = (
+            "## Problem\nLearning dedupe needs issue context.\n\n"
+            "## Deliverable\nUse title and labels in the fingerprint.\n\n"
+            "## Acceptance criteria\n"
+            "- Same title and labels duplicate.\n"
+            "- Different title does not duplicate.\n"
+        )
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger(
+                "'true'",
+                extra_policy_pack_lines=[
+                    "  capture:",
+                    "    learning:",
+                    "      enabled: true",
+                    "      mode: create-learning",
+                ],
+            )
+            first = [
+                "ship", config, "--root", d, "--live", "--append-ledger", "--json",
+                "--run-id", "RUN-FIRST",
+                "--issue-title", "Release invariant",
+                "--issue-body", body,
+                "--issue-label", "enhancement,release",
+                "--pull-request", "181",
+                "--capture-status", "applied",
+                "--approve-scope", "filesystem,git,github",
+                "--operator", "tester",
+            ]
+            rc_first, _, _ = run(first)
+            second = [
+                "ship", config, "--root", d, "--dry-run", "--json",
+                "--issue-title", "Release invariant",
+                "--issue-body", body,
+                "--issue-label", "enhancement,release",
+                "--pull-request", "182",
+                "--capture-status", "applied",
+            ]
+            rc_second, out_second, _ = run(second)
+            different_title = [
+                "ship", config, "--root", d, "--dry-run", "--json",
+                "--issue-title", "Different release invariant",
+                "--issue-body", body,
+                "--issue-label", "enhancement,release",
+                "--pull-request", "183",
+                "--capture-status", "applied",
+            ]
+            rc_third, out_third, _ = run(different_title)
+
+        self.assertEqual(rc_first, 0)
+        self.assertEqual(rc_second, 0)
+        duplicate = json.loads(out_second)["result"]["run_ledger"]["record"]["capture"]["learning"]
+        self.assertEqual(duplicate["decision"], "duplicate")
+        self.assertEqual(duplicate["duplicate_of"], "RUN-FIRST")
+        self.assertEqual(rc_third, 0)
+        not_duplicate = json.loads(out_third)["result"]["run_ledger"]["record"]["capture"][
+            "learning"
+        ]
+        self.assertEqual(not_duplicate["decision"], "create-learning")
+        self.assertNotIn("duplicate_of", not_duplicate)
+
+    def test_ship_json_blocks_on_malformed_existing_ledger_before_record_build(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger("'true'")
+            ledger_path = Path(d) / "state" / "runs.jsonl"
+            ledger_path.parent.mkdir(parents=True)
+            ledger_path.write_text("{", encoding="utf-8")
+            rc, _, err = run([
+                "ship", config, "--root", d, "--dry-run", "--json",
+                "--capture-status", "applied",
+            ])
+
+        self.assertEqual(rc, 1)
+        self.assertIn("invalid ledger", err)
+
     def test_ship_live_append_redacts_capture_record_before_write(self):
         import tempfile
         with tempfile.TemporaryDirectory() as d:

@@ -289,6 +289,21 @@ class TestCaptureContract(unittest.TestCase):
         self.assertEqual(decision["reason"], "policy-deferred")
         self.assertFalse(decision["durable_artifact"])
 
+    def test_learning_quality_defer_does_not_use_raw_capture_reason(self):
+        decision = capture.learning_decision(
+            title="Needs human synthesis",
+            changed_files=["docs/keel/release.md"],
+            capture_status="deferred",
+            capture_reason="operator-specific temporary note",
+            config=_config_with_learning_policy({
+                "enabled": True,
+                "mode": "defer",
+            }),
+        )
+
+        self.assertEqual(decision["decision"], "defer")
+        self.assertEqual(decision["reason"], "policy-deferred")
+
     def test_learning_quality_marker_only_policy(self):
         decision = capture.learning_decision(
             title="Routine generated adapter sync",
