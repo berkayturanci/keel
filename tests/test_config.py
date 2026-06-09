@@ -192,6 +192,16 @@ class TestParse(unittest.TestCase):
                 "additions": ["Check rollout notes."],
                 "required_sections": ["Testing", "Docs Impact"],
             },
+            "capture": {
+                "enabled": True,
+                "mode": "extension",
+                "learning": {
+                    "enabled": True,
+                    "mode": "create-learning",
+                    "reason": "new invariant",
+                    "dedupe": {"enabled": True},
+                },
+            },
         }
         config = cfg.parse_config(data)
         self.assertEqual(config.policy_pack["name"], "example-service")
@@ -202,6 +212,8 @@ class TestParse(unittest.TestCase):
         self.assertEqual(config.policy_pack["scan"]["areas"]["app"], ["src/app/**"])
         self.assertEqual(config.policy_pack["project_commands"]["device-smoke"]["command"],
                          ".keel/commands/device-smoke")
+        self.assertEqual(config.policy_pack["capture"]["learning"]["mode"],
+                         "create-learning")
 
     def test_policy_pack_required_fields_fail_validation(self):
         bad = copy.deepcopy(VALID)

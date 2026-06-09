@@ -373,6 +373,37 @@
               "type": "string",
               "enum": ["extension", "marker-only"],
               "description": "extension lets a project hook produce content; marker-only records only the core capture marker."
+            },
+            "learning": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "description": "Whether durable learning quality decisions are enabled for this project."
+                },
+                "mode": {
+                  "type": "string",
+                  "enum": ["create-learning", "marker-only", "defer"],
+                  "description": "Project-owned durable-learning decision mode. The core marker remains mandatory regardless of this value."
+                },
+                "reason": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Optional project-owned reason recorded with the learning decision."
+                },
+                "dedupe": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean",
+                      "description": "Whether stable learning fingerprints suppress duplicate durable learning candidates."
+                    }
+                  }
+                }
+              },
+              "description": "Policy for optional durable learning artifacts. Core records the decision in capture.learning and suppresses duplicates by stable fingerprint."
             }
           },
           "description": "Project-owned post-merge capture policy. Core owns marker/verifier mechanics; capture content and destinations remain extension-owned."
