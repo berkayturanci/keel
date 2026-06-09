@@ -159,6 +159,7 @@ class TestRenderClosureComment(unittest.TestCase):
         self.assertIn("- **Changed files:** 1", rendered)
         self.assertIn("  - `src/keel/closure.py`", rendered)
         self.assertNotIn("docs/", rendered)
+        self.assertIn("- **Docs touched:** no", rendered)
 
     def test_no_changed_files(self):
         record = _record(changes={"file_count": 0, "files": []})
@@ -220,13 +221,33 @@ class TestRenderClosureComment(unittest.TestCase):
         self.assertIn("- **Docs touched:** yes", closure.render_closure_comment(record))
 
     def test_docs_touched_various_doc_suffixes(self):
-        for name in ("guide.mdx", "spec.markdown", "manual.rst", "page.adoc", "notes.txt"):
+        for name in ("guide.mdx", "spec.markdown", "manual.rst", "page.adoc"):
             record = _record(changes={"file_count": 1, "files": [name]})
             self.assertIn(
                 "- **Docs touched:** yes",
                 closure.render_closure_comment(record),
                 msg=name,
             )
+
+    def test_docs_touched_md_suffix(self):
+        record = _record(changes={"file_count": 1, "files": ["guide.md"]})
+        self.assertIn("- **Docs touched:** yes", closure.render_closure_comment(record))
+
+    def test_docs_touched_no_for_txt_outside_docs_dir(self):
+        # ``.txt`` is intentionally excluded from the doc-suffix set: a bare text
+        # file (e.g. ``requirements.txt``) must not trip a false ``yes``.
+        record = _record(
+            changes={
+                "file_count": 2,
+                "files": ["src/keel/closure.py", "requirements.txt"],
+            }
+        )
+        self.assertIn("- **Docs touched:** no", closure.render_closure_comment(record))
+
+    def test_docs_touched_yes_for_txt_under_docs_dir(self):
+        # A doc-ish text file still counts — via the ``docs/`` path-component rule.
+        record = _record(changes={"file_count": 1, "files": ["docs/notes.txt"]})
+        self.assertIn("- **Docs touched:** yes", closure.render_closure_comment(record))
 
     def test_docs_touched_no_when_no_changes_block(self):
         record = _record()

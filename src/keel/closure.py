@@ -23,7 +23,12 @@ JURY_LABEL = "AI Jury"
 # path component equals ``docs`` (case-insensitive) or its suffix is a documentation
 # format. Custom docs paths are a project-config/policy concern, not core: keep this
 # set generic so the consumer-neutrality guard holds.
-_DOC_SUFFIXES = frozenset({".md", ".mdx", ".markdown", ".rst", ".adoc", ".txt"})
+#
+# ``.txt`` is intentionally excluded: it is false-positive prone (e.g.
+# ``requirements.txt``, lockfile-style manifests) and matches plenty of non-docs.
+# A doc-ish text file (e.g. ``docs/notes.txt``) still counts via the ``docs/``
+# path-component rule, so rely on that directory rule for text docs.
+_DOC_SUFFIXES = frozenset({".md", ".mdx", ".markdown", ".rst", ".adoc"})
 
 
 def contract_as_dict() -> dict[str, Any]:

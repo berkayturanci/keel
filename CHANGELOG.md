@@ -22,7 +22,9 @@ All notable changes to keel are documented here. The format follows
   `docs_touched` section. The value is derived deterministically and consumer-neutrally from
   the ledger's existing `changes.files`: a file counts as docs when any path component equals
   `docs` (case-insensitive) or its suffix is one of `.md`, `.mdx`, `.markdown`, `.rst`,
-  `.adoc`, `.txt`. No ledger-schema or project-config changes.
+  `.adoc`. `.txt` is intentionally excluded (false-positive prone, e.g. `requirements.txt`);
+  text docs are covered by the `docs/` directory rule. No ledger-schema or project-config
+  changes.
 
 ## [0.8.0] — 2026-06-09
 

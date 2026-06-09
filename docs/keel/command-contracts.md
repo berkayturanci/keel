@@ -165,8 +165,10 @@ The block records:
 - the `docs_touched` section renders `- **Docs touched:** yes|no` directly after the
   Changed files block. Its value is derived deterministically and consumer-neutrally from
   `changes.files`: a file counts as documentation when any path component equals `docs`
-  (case-insensitive) or its suffix is one of `.md`, `.mdx`, `.markdown`, `.rst`, `.adoc`,
-  `.txt`. The set is intentionally project-neutral; custom documentation paths are a
+  (case-insensitive) or its suffix is one of `.md`, `.mdx`, `.markdown`, `.rst`, `.adoc`.
+  `.txt` is intentionally excluded (false-positive prone, e.g. `requirements.txt`); a
+  text doc such as `docs/notes.txt` is still covered by the `docs/` directory rule. The
+  set is intentionally project-neutral; custom documentation paths are a
   project-config/policy concern, not a core renderer concern. Missing/empty/non-list
   `files` (or a missing `changes` block) render `no`
 - `source: run-ledger ship_run record`
