@@ -88,6 +88,9 @@ class TestPlan(unittest.TestCase):
         self.assertEqual(data["contract"]["schema_version"], "keel.command-contract.v1")
         self.assertEqual(data["contract"]["command"], "ship")
         self.assertIn("review_merge_contract", data["contract"])
+        self.assertEqual(data["contract"]["capture"]["schema_version"],
+                         "keel.capture.v1")
+        self.assertTrue(data["contract"]["capture"]["fail_soft"]["enabled"])
         self.assertEqual(data["contract"]["run_ledger"]["schema_version"],
                          "keel.run-ledger.v1")
         self.assertEqual(data["contract"]["checkpoint"]["schema_version"],
@@ -494,6 +497,9 @@ class TestShip(unittest.TestCase):
         self.assertEqual(read["record_count"], 1)
         self.assertEqual(read["records"][0]["run_id"], "RUN-140")
         self.assertEqual(read["records"][0]["capture"]["status"], "skipped")
+        self.assertEqual(read["records"][0]["capture"]["marker_reason"], "no-policy")
+        self.assertEqual(read["records"][0]["capture"]["marker"],
+                         "compound-learning: pr=160 status=skipped:no-policy")
         self.assertEqual(read["records"][0]["actors"]["implementer"], "codex:gpt-5")
         self.assertEqual(read["records"][0]["actors"]["reviewers"],
                          ["reviewer-a:gpt-5", "reviewer-b:claude"])
@@ -646,6 +652,20 @@ class TestShip(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("--capture-status is required", err)
 
+    def test_ship_reports_invalid_capture_status_json_and_human(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger("'true'")
+            rc_json, out_json, _ = run(["ship", config, "--root", d, "--dry-run", "--json",
+                                        "--capture-status", "unknown"])
+            rc_human, _, err_human = run(["ship", config, "--root", d, "--dry-run",
+                                          "--capture-status", "unknown"])
+
+        self.assertEqual(rc_json, 1)
+        self.assertIn("unsupported capture status", json.loads(out_json)["error"])
+        self.assertEqual(rc_human, 1)
+        self.assertIn("unsupported capture status", err_human)
+
     def test_ledger_reads_missing_file_as_empty(self):
         import tempfile
         with tempfile.TemporaryDirectory() as d:
@@ -676,6 +696,78 @@ class TestShip(unittest.TestCase):
         self.assertIn("records       : 1", out)
         self.assertEqual(rc_json, 0)
         self.assertEqual(json.loads(out_json)["records"][0]["run_id"], "RUN-2")
+
+    def test_capture_verify_reports_complete_from_ledger_marker(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger("'true'")
+            rc_ship, _, _ = run(["ship", config, "--root", d, "--live", "--append-ledger",
+                                 "--pull-request", "160",
+                                 "--capture-status", "skipped",
+                                 "--capture-reason", "no capture hook configured",
+                                 "--approve-scope", "filesystem,git,github",
+                                 "--operator", "tester"])
+            rc, out, _ = run(["capture-verify", config, "--root", d,
+                              "--merged-pr", "160", "--json"])
+
+        self.assertEqual(rc_ship, 0)
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["verification"]["status"], "complete")
+        self.assertEqual(data["verification"]["results"][0]["marker"],
+                         "compound-learning: pr=160 status=skipped:no-policy")
+
+    def test_capture_verify_reports_missing_marker(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger("'true'")
+            rc, out, _ = run(["capture-verify", config, "--root", d,
+                              "--merged-pr", "160", "--json"])
+
+        self.assertEqual(rc, 1)
+        data = json.loads(out)
+        self.assertEqual(data["verification"]["status"], "incomplete")
+        self.assertEqual(data["verification"]["results"][0]["status"], "missing")
+
+    def test_capture_verify_human_output(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger("'true'")
+            rc_ship, _, _ = run(["ship", config, "--root", d, "--live", "--append-ledger",
+                                 "--pull-request", "160",
+                                 "--capture-status", "applied",
+                                 "--approve-scope", "filesystem,git,github",
+                                 "--operator", "tester"])
+            rc, out, _ = run(["capture-verify", config, "--root", d,
+                              "--merged-pr", "160"])
+
+        self.assertEqual(rc_ship, 0)
+        self.assertEqual(rc, 0)
+        self.assertIn("keel capture-verify", out)
+        self.assertIn("ok  PR #160", out)
+
+    def test_capture_verify_reports_config_and_ledger_errors(self):
+        import tempfile
+        rc_missing, _, err_missing = run(["capture-verify", "/no/such.yaml",
+                                          "--merged-pr", "160"])
+        self.assertEqual(rc_missing, 1)
+        self.assertIn("no such config", err_missing)
+
+        rc_invalid, _, err_invalid = run(["capture-verify", _write_raw("extends: keel\n"),
+                                          "--merged-pr", "160"])
+        self.assertEqual(rc_invalid, 1)
+        self.assertIn("invalid keel config", err_invalid)
+
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger("'true'")
+            path = Path(d) / "state" / "runs.jsonl"
+            path.parent.mkdir(parents=True)
+            path.write_text("{", encoding="utf-8")
+            rc_bad, _, err_bad = run(["capture-verify", config, "--root", d,
+                                      "--merged-pr", "160"])
+
+        self.assertEqual(rc_bad, 1)
+        self.assertIn("invalid ledger", err_bad)
 
     def test_ledger_reports_missing_invalid_config_and_bad_file(self):
         import tempfile

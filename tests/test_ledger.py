@@ -74,6 +74,8 @@ class TestLedgerContract(unittest.TestCase):
         self.assertTrue(contract["consumer_neutral"])
         self.assertTrue(contract["capture_redaction"]["default_redaction"])
         self.assertFalse(contract["capture_redaction"]["audit_includes_original_values"])
+        self.assertEqual(contract["capture_contract"]["schema_version"], "keel.capture.v1")
+        self.assertTrue(contract["capture_contract"]["fail_soft"]["enabled"])
         self.assertIn("ship", contract["append_owner"])
         self.assertIn("morning", contract["readers"])
 
@@ -115,6 +117,10 @@ class TestLedgerRecords(unittest.TestCase):
         self.assertEqual(record["actors"]["implementer"], "codex:gpt-5")
         self.assertEqual(record["actors"]["reviewers"], ["reviewer-a:gpt-5", "reviewer-b:claude"])
         self.assertEqual(record["actors"]["tester"], "tester:gpt-5-mini")
+        self.assertEqual(record["capture"]["schema_version"], "keel.capture.v1")
+        self.assertEqual(record["capture"]["marker"],
+                         "compound-learning: pr=160 status=applied")
+        self.assertTrue(record["capture"]["fail_soft"])
 
     def test_sanitize_record_redacts_default_secret_patterns(self):
         record = _record()

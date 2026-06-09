@@ -34,6 +34,12 @@ secret redaction rules and any project-owned `policy_pack.capture_redaction.deny
 then stores only an audit of rule ids and counts. Invalid redaction policy skips the capture
 write with an explicit reason instead of writing unsanitized output.
 
+Post-merge capture has a stable marker contract exposed in `keel plan --json` as
+`contract.capture`: `compound-learning: pr=<N> status=<applied|deferred|skipped:reason>`.
+The allowed skip reasons are closed (`dry-run`, `deferred`, `merge-failed`,
+`recursion-guard`, `capability-unavailable`, `no-policy`), capture is fail-soft after a
+successful merge, and `keel capture-verify` can check the run ledger offline at session end.
+
 ## Flagship
 
 | command | what it does |

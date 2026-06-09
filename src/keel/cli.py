@@ -17,6 +17,7 @@ from pathlib import Path
 
 from . import (
     __version__,
+    capture,
     checkpoint,
     consent,
     contracts,
@@ -356,26 +357,34 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         jury_advisory=args.jury_advisory,
     )
     contract["review_merge_contract"] = a.review_contract
-    ledger_record = ledger.build_ship_run_record(
-        command=command,
-        base_branch=config.base_branch,
-        changed_files=changed,
-        outcomes=outcomes,
-        verdict=verdict,
-        assessment=a,
-        issue_intake=contract.get("issue_intake"),
-        target=args.target or (f"PR #{args.pr}" if args.pr is not None else None),
-        run_id=args.run_id,
-        issue_number=args.issue,
-        pr_number=args.ledger_pr or args.pr,
-        branch=args.branch,
-        head_sha=args.head_sha,
-        capture_status=args.capture_status,
-        capture_reason=args.capture_reason,
-        implementer=args.implementer,
-        reviewer_agents=args.reviewer_agent,
-        tester=args.tester,
-    )
+    try:
+        ledger_record = ledger.build_ship_run_record(
+            command=command,
+            base_branch=config.base_branch,
+            changed_files=changed,
+            outcomes=outcomes,
+            verdict=verdict,
+            assessment=a,
+            issue_intake=contract.get("issue_intake"),
+            target=args.target or (f"PR #{args.pr}" if args.pr is not None else None),
+            run_id=args.run_id,
+            issue_number=args.issue,
+            pr_number=args.ledger_pr or args.pr,
+            branch=args.branch,
+            head_sha=args.head_sha,
+            capture_status=args.capture_status,
+            capture_reason=args.capture_reason,
+            implementer=args.implementer,
+            reviewer_agents=args.reviewer_agent,
+            tester=args.tester,
+        )
+    except capture.CaptureError as exc:
+        if args.json:
+            print(json.dumps({"contract": contract, "error": str(exc)}, indent=2,
+                             sort_keys=True))
+        else:
+            print(str(exc), file=sys.stderr)
+        return 1
     try:
         ledger_record = ledger.sanitize_record(ledger_record, config)
     except ledger.redaction.RedactionError as exc:
@@ -493,6 +502,41 @@ def _cmd_ledger(args: argparse.Namespace) -> int:
         print(f"  records       : {payload['record_count']}")
         print(f"  missing       : {contract['missing_handling']}")
     return 0
+
+
+def _cmd_capture_verify(args: argparse.Namespace) -> int:
+    try:
+        config = cfg.load_config(args.path)
+    except FileNotFoundError:
+        print(f"no such config: {args.path}", file=sys.stderr)
+        return 1
+    except cfg.ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    ledger_path = ledger.resolve_path(args.root, config)
+    try:
+        records = ledger.read_records(ledger_path)
+    except ledger.LedgerError as exc:
+        print(f"invalid ledger {ledger_path}: {exc}", file=sys.stderr)
+        return 1
+    report = capture.verify_session(records, args.merged_pr)
+    payload = {
+        "contract": capture.contract_as_dict(config),
+        "ledger_path": str(ledger_path),
+        "verification": report,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"keel capture-verify — {report['status']}  {ledger_path}")
+        for result in report["results"]:
+            state = "ok" if result["ok"] else "FAIL"
+            print(
+                f"  {state:>4}  PR #{result['pr']}  "
+                f"{result['status']}  {result['reason'] or '-'}"
+            )
+    return 0 if report["status"] == "complete" else 1
 
 
 def _cmd_checkpoint(args: argparse.Namespace) -> int:
@@ -1304,6 +1348,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_ledger.add_argument("--json", action="store_true", help="emit structured JSON")
     p_ledger.set_defaults(func=_cmd_ledger)
 
+    p_capture = sub.add_parser(
+        "capture-verify",
+        help="verify post-merge capture markers for merged PRs",
+    )
+    p_capture.add_argument("path", help="path to project.yaml")
+    p_capture.add_argument("--root", default=".",
+                           help="repo root for resolving the ledger path")
+    p_capture.add_argument("--merged-pr", type=_positive_int, action="append", required=True,
+                           help="merged PR number expected to have a capture marker")
+    p_capture.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_capture.set_defaults(func=_cmd_capture_verify)
+
     p_checkpoint = sub.add_parser("checkpoint", help="read or write the resumable checkpoint")
     p_checkpoint.add_argument("path", help="path to project.yaml")
     p_checkpoint.add_argument("--root", default=".",
@@ -1670,8 +1726,7 @@ def _add_ship_parser(parser: argparse.ArgumentParser, *, command: str) -> None:
                         help="branch name to store in the run ledger record")
     parser.add_argument("--head-sha", default=None,
                         help="head commit SHA to store in the run ledger record")
-    parser.add_argument("--capture-status", choices=("applied", "deferred", "skipped"),
-                        default=None,
+    parser.add_argument("--capture-status", default=None,
                         help="capture outcome to store in the run ledger record")
     parser.add_argument("--capture-reason", default=None,
                         help="capture outcome reason to store in the run ledger record")

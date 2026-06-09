@@ -96,6 +96,11 @@ the ideas Keel should borrow.
 Invariants the backbone always preserves: merge lock, night no-merge window, fail-soft,
 orchestrator-only-writes, vendor+model attribution.
 
+The capture step has a core marker/verifier contract:
+`compound-learning: pr=<N> status=<applied|deferred|skipped:reason>`. Projects provide
+capture content and destinations through `capture` / `post-merge` extensions; keel owns the
+marker, fail-soft semantics, redaction-before-durability, and offline `capture-verify`.
+
 ## Install
 
 keel is a Python (≥3.11) package with one runtime dependency (PyYAML):

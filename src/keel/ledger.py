@@ -6,8 +6,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from . import capture, redaction
 from . import config as cfg
-from . import redaction
 
 LEDGER_SCHEMA_VERSION = "keel.run-ledger.v1"
 DEFAULT_LEDGER_PATH = ".keel/state/run-ledger.jsonl"
@@ -31,6 +31,7 @@ def ledger_contract_as_dict(config: cfg.ProjectConfig) -> dict[str, Any]:
         "readers": ["morning", "wrap", "overnight", "capture-verification", "ledger"],
         "consumer_neutral": True,
         "capture_redaction": redaction.contract_as_dict(config),
+        "capture_contract": capture.contract_as_dict(config),
         "record_types": [RECORD_TYPE_SHIP_RUN],
     }
 
@@ -123,10 +124,11 @@ def build_ship_run_record(
             "tester": tester,
         },
         "issue_intake": issue_intake,
-        "capture": {
-            "status": capture_status,
-            "reason": capture_reason,
-        },
+        "capture": capture.record_marker(
+            pr_number=pr_number,
+            status=capture_status,
+            reason=capture_reason,
+        ),
     }
 
 

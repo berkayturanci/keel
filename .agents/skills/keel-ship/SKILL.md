@@ -74,7 +74,7 @@ in the run ledger.
 `result.run_ledger` block from `keel ship --json`. Do not infer ship outcomes by parsing
 free-form PR or issue comments. For live runs, append exactly one structured record with
 `keel ship .keel/project.yaml --root . --live --append-ledger --run-id <id> --issue <N>
---pull-request <PR> --capture-status <applied|deferred|skipped> --capture-reason <reason>
+--pull-request <PR> --capture-status <applied|deferred|skipped[:reason]> --capture-reason <reason>
 --implementer <agent> --reviewer-agent <agent> --tester <agent> --approve-scope <scopes>
 --operator <operator> --json` after the ship assessment and capture status are known.
 If the configured ledger path is missing, treat it as empty history; if a ledger record is
@@ -362,16 +362,16 @@ tier, rounds, window decision, and outcome. Post the **closure comment** to **bo
 issue and the PR (implementer codename + system, reviewer codenames + vendor/model, tester
 codename, PR number, changed files, docs touched, capture outcome). Run any post-merge
 `capture` Lego (e.g. durable-learning capture: classify the merged PR's signal, optionally
-open a follow-up docs-only PR that itself merges inline through s10's lock with a
-window-bypass carve-out, or file a follow-up issue) fail-soft, emit its audit marker, and
-do a post-merge worktree safety-net cleanup. **Marker discipline:** every merged PR that
-reaches capture must write exactly one structured ledger record with a non-empty
-`capture.status` — a success-set or one of the closed skip vocabulary (`dry-run` /
-`deferred` / `merge-failed` / a recursion guard / `capability-unavailable`) — keyed by PR
-number. A session-end verifier reads `keel ledger .keel/project.yaml --root . --json` and
-blocks the session if any merged PR is missing a structured capture status. The closure
-comment's capture field is mandatory and never empty, but it is a human audit mirror, not
-the parser source.
+file a follow-up issue or hand off to a project-owned destination) fail-soft, emit its
+core marker, and do a post-merge worktree safety-net cleanup. **Marker discipline:** every
+merged PR that reaches capture must write exactly one structured ledger record with this
+stable marker: `compound-learning: pr=<N> status=<applied|deferred|skipped:reason>`.
+Allowed skip reasons are closed: `dry-run`, `deferred`, `merge-failed`,
+`recursion-guard`, `capability-unavailable`, and `no-policy`. Capture-on-capture recursion
+must skip with `skipped:recursion-guard`. A session-end verifier runs
+`keel capture-verify .keel/project.yaml --root . --merged-pr <PR> ...` and blocks the
+session if any merged PR is missing a valid marker. The closure comment's capture field is
+mandatory and never empty, but it is a human audit mirror, not the parser source.
 
 Also append the structured `ship_run` record to `contract.run_ledger.path` via
 `keel ship --live --append-ledger` or the equivalent core ledger writer. The ledger append
@@ -379,9 +379,8 @@ is the machine-readable source for `/keel:morning`, `/keel:wrap`, overnight summ
 capture verification; the closure comments are human/audit mirrors, not the parser source.
 Capture artifacts MUST pass through the core redaction policy first: default secret rules plus
 any project-owned `policy_pack.capture_redaction.deny_patterns`. If the configured redaction
-policy is invalid, skip the capture write with the allowed reason `invalid-policy` rather than
-persisting unsanitized output. The audit may include rule ids and counts, never original secret
-values.
+policy is invalid, stop the durable write and ask for operator help rather than persisting
+unsanitized output. The audit may include rule ids and counts, never original secret values.
 
 ### s12 close
 Close the issue (idempotent if the squash auto-closed it via `Closes #<N>`), link the PR,
@@ -420,4 +419,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=skills command=ship keel_version=0.8.0 source_sha256=fea8098e49bf4027be7179cb9bbc1944a25d15e5944629c715946b4b1f952bd5 generated_sha256=c09fbbfd6977d0cef3892a798cd388a825842a774c20a3781fb335403ab6529f -->
+<!-- keel-generated: surface=skills command=ship keel_version=0.8.0 source_sha256=471a203b6b469ca0c26ee1b976e0745845845a6a5e13ef7647e4ea74c98479e9 generated_sha256=fc8a1d2a468401e3d793cc7e47a5edd0daf177893c617f9e83fdfe0470888304 -->

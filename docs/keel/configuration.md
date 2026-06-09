@@ -220,6 +220,7 @@ back to packaged command prose.
 | `workflow_policies` | map command→object | | command-specific workflow policy such as posting mode, reviewer isolation, CI/fix-loop behavior, and completion markers |
 | `reports` | map name→string | | report destinations, paths, or issue prefixes |
 | `capture_redaction` | object | | additional project-owned deny regexes applied before capture artifacts are persisted |
+| `capture` | object | | post-merge capture enablement/mode; content and destinations remain extension-owned |
 | `review` | object | | project-owned rubric additions and required PR/review sections |
 
 ## `automation`
@@ -288,6 +289,34 @@ matched value. Invalid configured regexes make the capture write skip/fail with 
 reason before the artifact is written. Redaction is a safety layer, not a complete DLP system:
 projects should still avoid sending raw secrets, full CI logs, or private production data into
 capture extensions.
+
+### `policy_pack.capture`
+
+Core owns the post-merge capture mechanics: the stable marker, fail-soft semantics,
+recursion guard, redaction-before-durability requirement, and the offline session-end
+verifier. Projects own the content and destination by declaring a `capture` or `post-merge`
+extension.
+
+```yaml
+policy_pack:
+  name: example
+  capture:
+    enabled: true
+    mode: extension
+```
+
+`mode: extension` means a project hook can produce the learning content after the core
+checks and records the marker. `mode: marker-only` records the core marker without running
+a project content hook. The marker format is:
+
+```text
+compound-learning: pr=<N> status=<applied|deferred|skipped:reason>
+```
+
+Allowed skip reasons are `dry-run`, `deferred`, `merge-failed`, `recursion-guard`,
+`capability-unavailable`, and `no-policy`. Capture failures after a successful merge are
+fail-soft: the merge is not reverted, but the marker and ledger must record the applied,
+deferred, or allowed skipped state so `keel capture-verify` can surface gaps.
 
 ### `policy_pack.risk_rules`
 
