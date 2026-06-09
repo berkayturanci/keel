@@ -212,6 +212,33 @@ class TestCaptureContract(unittest.TestCase):
         self.assertEqual(plan["summary"], {"complete": 1, "actionable": 0, "blocked": 0})
         self.assertEqual(plan["results"][0]["actions"], [])
 
+    def test_reconcile_valid_marker_can_still_close_unambiguous_issue(self):
+        plan = capture.reconcile_session(
+            [_record(170, marker="compound-learning: pr=170 status=applied")],
+            [{"number": 170, "issue_numbers": [45]}],
+        )
+        result = plan["results"][0]
+
+        self.assertEqual(plan["status"], "actionable")
+        self.assertEqual(result["marker"], "compound-learning: pr=170 status=applied")
+        self.assertEqual(result["issue_numbers"], [45])
+        self.assertEqual(result["actions"], [{
+            "type": "close-linked-issue",
+            "pr": 170,
+            "idempotency_key": "close-linked-issue:issue-45:pr-170",
+            "issue": 45,
+        }])
+
+    def test_reconcile_valid_marker_blocks_ambiguous_issue_closeout(self):
+        plan = capture.reconcile_session(
+            [_record(170, marker="compound-learning: pr=170 status=applied")],
+            [{"number": 170, "issue_numbers": [45, 46]}],
+        )
+
+        self.assertEqual(plan["status"], "blocked")
+        self.assertEqual(plan["results"][0]["status"], "ambiguous")
+        self.assertEqual(plan["results"][0]["actions"], [])
+
     def test_reconcile_missing_marker_records_no_policy_skip_and_issue_close(self):
         plan = capture.reconcile_session([_record(170, issue=45)], [170])
         result = plan["results"][0]
@@ -241,6 +268,23 @@ class TestCaptureContract(unittest.TestCase):
             "emit-capture-marker",
             "post-closure-summary",
             "record-skip",
+        ])
+
+    def test_reconcile_marker_only_policy_records_applied_marker(self):
+        plan = capture.reconcile_session(
+            [_record(171, issue=46)],
+            [171],
+            config=_config_with_capture_policy({"enabled": True, "mode": "marker-only"}),
+            capture_capability_available=False,
+        )
+
+        result = plan["results"][0]
+        self.assertEqual(result["marker"], "compound-learning: pr=171 status=applied")
+        self.assertEqual(result["reason"], "marker-only capture policy configured")
+        self.assertEqual([action["type"] for action in result["actions"]], [
+            "emit-capture-marker",
+            "post-closure-summary",
+            "close-linked-issue",
         ])
 
     def test_reconcile_defers_to_capture_extension_when_capability_available(self):

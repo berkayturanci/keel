@@ -146,8 +146,9 @@ The JSON output lists exact actions an adapter may apply after its transport and
 checks: `emit-capture-marker`, `run-capture-extension`, `post-closure-summary`,
 `close-linked-issue`, and `record-skip`. Allowed skip markers include
 `skipped:capability-unavailable`, `skipped:no-policy`, and `skipped:recursion-guard`.
-Ambiguous linked issues or invalid/duplicate existing markers block the plan instead of
-guessing.
+`policy_pack.capture.mode: marker-only` plans an `applied` core marker without requiring a
+project capture extension. Ambiguous linked issues or invalid/duplicate existing markers
+block the plan instead of guessing.
 
 ## `keel checkpoint <project.yaml> [--root DIR] [--json]`
 

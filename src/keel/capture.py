@@ -309,7 +309,30 @@ def _reconcile_pr(
 ) -> dict[str, Any]:
     pr_number = item["number"]
     verification = _verify_pr(records, pr_number)
+    issue_numbers = _linked_issue_numbers(records, item)
+    if len(issue_numbers) > 1:
+        return _reconcile_result(
+            pr_number,
+            status="ambiguous",
+            reason="multiple linked issues found for merged PR",
+            verification=verification,
+            issue_numbers=issue_numbers,
+            blocked=True,
+        )
     if verification["ok"]:
+        if len(issue_numbers) == 1:
+            return _reconcile_result(
+                pr_number,
+                status="actionable",
+                reason="capture marker already present; linked issue closeout can be reconciled",
+                verification=verification,
+                issue_numbers=issue_numbers,
+                marker=verification["marker"],
+                actions=[
+                    _action("close-linked-issue", pr_number=pr_number,
+                            issue_number=issue_numbers[0]),
+                ],
+            )
         return _reconcile_result(
             pr_number,
             status="complete",
@@ -321,15 +344,6 @@ def _reconcile_pr(
             pr_number,
             status="invalid",
             reason=verification["reason"],
-            verification=verification,
-            blocked=True,
-        )
-    issue_numbers = _linked_issue_numbers(records, item)
-    if len(issue_numbers) > 1:
-        return _reconcile_result(
-            pr_number,
-            status="ambiguous",
-            reason="multiple linked issues found for merged PR",
             verification=verification,
             issue_numbers=issue_numbers,
             blocked=True,
@@ -464,6 +478,8 @@ def _reconcile_marker_decision(
     ):
         return "skipped", "recursion-guard", "capture recursion guard matched"
     policy = _capture_policy(config)
+    if policy.get("enabled") and policy.get("mode", "extension") == "marker-only":
+        return "applied", None, "marker-only capture policy configured"
     if policy.get("enabled") and policy.get("mode", "extension") == "extension":
         if capture_capability_available:
             return "deferred", None, "capture extension can be rerun"

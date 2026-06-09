@@ -159,7 +159,9 @@ ledger and returns a dry-run-safe recovery plan for merged PRs whose capture boo
 incomplete. It may plan idempotent actions such as emitting the missing marker, rerunning a
 capture extension when policy and capability allow it, posting a closure summary, closing a
 single unambiguous linked issue, or recording an allowed skip reason. Ambiguous links or
-invalid/duplicate markers block the plan instead of guessing.
+invalid/duplicate markers block the plan instead of guessing. Projects configured for
+`policy_pack.capture.mode: marker-only` plan an `applied` core marker without requiring a
+project capture extension.
 
 ## Closure comment block
 
