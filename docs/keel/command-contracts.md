@@ -12,6 +12,8 @@ describe what a command would do before an adapter starts mutating work.
 - `keel ship <project.yaml> --live --json`
 - `keel ship-v2 <project.yaml> --dry-run --json`
 - `keel ship-v2 <project.yaml> --live --json`
+- `keel work-block <project.yaml> --json`
+- `keel work-block <project.yaml> --live --json`
 - `keel ledger <project.yaml> --json`
 - `keel status <project.yaml> --json`
 - `keel checkpoint <project.yaml> --json`
