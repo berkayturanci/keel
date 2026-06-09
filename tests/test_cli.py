@@ -780,6 +780,96 @@ class TestShip(unittest.TestCase):
         self.assertEqual(rc_bad, 1)
         self.assertIn("invalid ledger", err_bad)
 
+    def test_capture_reconcile_plans_missing_marker_actions(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger("'true'")
+            rc, out, _ = run([
+                "capture-reconcile", config, "--root", d,
+                "--merged-pr", "160", "--linked-issue", "160=42", "--json",
+            ])
+
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        reconcile = data["reconcile"]
+        self.assertEqual(data["contract"]["schema_version"], "keel.capture-reconcile.v1")
+        self.assertTrue(data["no_mutations"])
+        self.assertEqual(reconcile["status"], "actionable")
+        self.assertEqual(reconcile["results"][0]["marker"],
+                         "compound-learning: pr=160 status=skipped:no-policy")
+        self.assertEqual(reconcile["results"][0]["actions"][-1]["type"],
+                         "close-linked-issue")
+
+    def test_capture_reconcile_human_output_lists_dry_run_actions(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger("'true'")
+            rc, out, _ = run(["capture-reconcile", config, "--root", d,
+                              "--merged-pr", "160", "--linked-issue", "160=42"])
+
+        self.assertEqual(rc, 0)
+        self.assertIn("DRY-RUN: emit-capture-marker", out)
+        self.assertIn("close-linked-issue:issue-42:pr-160", out)
+
+    def test_capture_reconcile_human_output_and_blocked_exit(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger("'true'")
+            path = Path(d) / "state" / "runs.jsonl"
+            path.parent.mkdir(parents=True)
+            path.write_text(
+                '{"schema_version":"keel.run-ledger.v1","record_type":"ship_run",'
+                '"pull_request":{"number":160},"capture":{"marker":"not a marker"}}\n',
+                encoding="utf-8",
+            )
+            rc, out, _ = run(["capture-reconcile", config, "--root", d,
+                              "--merged-pr", "160"])
+
+        self.assertEqual(rc, 1)
+        self.assertIn("keel capture-reconcile", out)
+        self.assertIn("PR #160  invalid", out)
+
+    def test_capture_reconcile_reports_bad_mapping_and_reconcile_errors(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger("'true'")
+            with patch("keel.cli.capture.reconcile_session",
+                       side_effect=cli.capture.CaptureError("bad reconcile")):
+                rc_error, _, err_error = run([
+                    "capture-reconcile", config, "--root", d,
+                    "--merged-pr", "160",
+                ])
+
+        with self.assertRaisesRegex(cli.argparse.ArgumentTypeError, "linked issue mapping"):
+            cli._parse_pr_issue_mapping("bad")
+        with self.assertRaisesRegex(cli.argparse.ArgumentTypeError, "linked issue mapping"):
+            cli._parse_pr_issue_mapping("160=0")
+        self.assertEqual(rc_error, 1)
+        self.assertIn("bad reconcile", err_error)
+
+    def test_capture_reconcile_reports_config_and_ledger_errors(self):
+        import tempfile
+        rc_missing, _, err_missing = run(["capture-reconcile", "/no/such.yaml",
+                                          "--merged-pr", "160"])
+        self.assertEqual(rc_missing, 1)
+        self.assertIn("no such config", err_missing)
+
+        rc_invalid, _, err_invalid = run(["capture-reconcile", _write_raw("extends: keel\n"),
+                                          "--merged-pr", "160"])
+        self.assertEqual(rc_invalid, 1)
+        self.assertIn("invalid keel config", err_invalid)
+
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger("'true'")
+            path = Path(d) / "state" / "runs.jsonl"
+            path.parent.mkdir(parents=True)
+            path.write_text("{", encoding="utf-8")
+            rc_bad, _, err_bad = run(["capture-reconcile", config, "--root", d,
+                                      "--merged-pr", "160"])
+
+        self.assertEqual(rc_bad, 1)
+        self.assertIn("invalid ledger", err_bad)
+
     def test_ledger_reports_missing_invalid_config_and_bad_file(self):
         import tempfile
         rc_missing, _, err_missing = run(["ledger", "/no/such.yaml"])

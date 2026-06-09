@@ -143,6 +143,9 @@ The block records:
 - durable-artifact safety: capture artifacts must pass through the run-ledger redaction
   contract before they are persisted
 - session-end verifier command: `keel capture-verify`
+- post-merge recovery command: `keel capture-reconcile`
+- reconcile plan guarantees: idempotent actions only, never reopen implementation, never
+  push code, and never merge PRs
 
 Core owns marker generation, validation, and offline verification. Projects own what to
 learn and where the learning goes through `policy_pack.capture` plus a `capture` or
@@ -150,6 +153,13 @@ learn and where the learning goes through `policy_pack.capture` plus a `capture`
 reads the configured run ledger and returns `complete` only when every expected merged PR
 has exactly one valid marker. Missing, invalid, or duplicate markers make verification
 `incomplete` and exit non-zero.
+
+`keel capture-reconcile <project.yaml> --root <repo> --merged-pr <N>` reads the same
+ledger and returns a dry-run-safe recovery plan for merged PRs whose capture bookkeeping is
+incomplete. It may plan idempotent actions such as emitting the missing marker, rerunning a
+capture extension when policy and capability allow it, posting a closure summary, closing a
+single unambiguous linked issue, or recording an allowed skip reason. Ambiguous links or
+invalid/duplicate markers block the plan instead of guessing.
 
 ## Closure comment block
 

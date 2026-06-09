@@ -16,6 +16,16 @@ def _config_with_capture_policy(policy):
     )
 
 
+def _record(pr, *, issue=None, marker=None):
+    return {
+        "schema_version": "keel.run-ledger.v1",
+        "record_type": "ship_run",
+        "issue": {"number": issue},
+        "pull_request": {"number": pr},
+        "capture": {"marker": marker},
+    }
+
+
 class TestCaptureContract(unittest.TestCase):
     def test_contract_is_consumer_neutral(self):
         contract = capture.contract_as_dict()
@@ -26,6 +36,8 @@ class TestCaptureContract(unittest.TestCase):
         self.assertEqual(contract["durable_artifacts"]["project_destination"],
                          "extension-owned")
         self.assertTrue(contract["fail_soft"]["enabled"])
+        self.assertEqual(contract["reconcile"]["primitive"], "capture.reconcile_session")
+        self.assertTrue(contract["reconcile"]["idempotent"])
 
     def test_contract_reads_project_capture_policy(self):
         contract = capture.contract_as_dict(
@@ -189,3 +201,102 @@ class TestCaptureContract(unittest.TestCase):
         self.assertTrue(capture.recursion_guard(labels=["capture"]))
         self.assertTrue(capture.recursion_guard(changed_files=["src/keel/capture.py"]))
         self.assertFalse(capture.recursion_guard(title="Add review contract"))
+
+    def test_reconcile_reports_already_complete_without_actions(self):
+        plan = capture.reconcile_session(
+            [_record(170, marker="compound-learning: pr=170 status=applied")],
+            [170],
+        )
+
+        self.assertEqual(plan["status"], "complete")
+        self.assertEqual(plan["summary"], {"complete": 1, "actionable": 0, "blocked": 0})
+        self.assertEqual(plan["results"][0]["actions"], [])
+
+    def test_reconcile_missing_marker_records_no_policy_skip_and_issue_close(self):
+        plan = capture.reconcile_session([_record(170, issue=45)], [170])
+        result = plan["results"][0]
+
+        self.assertEqual(plan["status"], "actionable")
+        self.assertEqual(result["marker"], "compound-learning: pr=170 status=skipped:no-policy")
+        self.assertEqual([action["type"] for action in result["actions"]], [
+            "emit-capture-marker",
+            "post-closure-summary",
+            "record-skip",
+            "close-linked-issue",
+        ])
+        self.assertEqual(result["actions"][-1]["issue"], 45)
+
+    def test_reconcile_records_capability_unavailable_when_extension_policy_exists(self):
+        plan = capture.reconcile_session(
+            [_record(999, issue=1), {"record_type": "other"}, _record(172, issue=2)],
+            [171],
+            config=_config_with_capture_policy({"enabled": True, "mode": "extension"}),
+            capture_capability_available=False,
+        )
+
+        result = plan["results"][0]
+        self.assertIn("capability-unavailable", result["marker"])
+        self.assertEqual(result["actions"][2]["reason"], "capability-unavailable")
+        self.assertEqual([action["type"] for action in result["actions"]], [
+            "emit-capture-marker",
+            "post-closure-summary",
+            "record-skip",
+        ])
+
+    def test_reconcile_defers_to_capture_extension_when_capability_available(self):
+        plan = capture.reconcile_session(
+            [_record(172)],
+            [{
+                "number": 172,
+                "labels": ["enhancement"],
+                "changed_files": ["src/keel/runner.py"],
+                "issue_numbers": [50],
+            }],
+            config=_config_with_capture_policy({"enabled": True, "mode": "extension"}),
+            capture_capability_available=True,
+        )
+
+        result = plan["results"][0]
+        self.assertEqual(result["marker"], "compound-learning: pr=172 status=deferred")
+        self.assertEqual(result["actions"][0]["type"], "run-capture-extension")
+        self.assertEqual(result["actions"][1]["type"], "emit-capture-marker")
+        self.assertEqual(result["actions"][-1]["type"], "close-linked-issue")
+
+    def test_reconcile_respects_recursion_guard(self):
+        plan = capture.reconcile_session(
+            [_record(173)],
+            [{
+                "number": 173,
+                "title": "Add capture reconcile",
+                "labels": "capture",
+                "changed_files": "src/keel/capture.py",
+                "issue_numbers": "47",
+            }],
+            config=_config_with_capture_policy({"enabled": True, "mode": "extension"}),
+            capture_capability_available=True,
+        )
+
+        result = plan["results"][0]
+        self.assertIn("skipped:recursion-guard", result["marker"])
+        self.assertEqual(result["reason"], "capture recursion guard matched")
+        self.assertEqual(result["issue_numbers"], [])
+
+    def test_reconcile_blocks_ambiguous_link_and_invalid_markers(self):
+        ambiguous = capture.reconcile_session(
+            [_record(174, issue=48), _record(174, issue=49)],
+            [174],
+        )
+        invalid = capture.reconcile_session(
+            [_record(175, marker="not a marker")],
+            [175],
+        )
+
+        self.assertEqual(ambiguous["status"], "blocked")
+        self.assertEqual(ambiguous["results"][0]["status"], "ambiguous")
+        self.assertEqual(ambiguous["results"][0]["actions"], [])
+        self.assertEqual(invalid["status"], "blocked")
+        self.assertEqual(invalid["results"][0]["status"], "invalid")
+
+    def test_reconcile_rejects_invalid_pr_info(self):
+        with self.assertRaisesRegex(capture.CaptureError, "positive number"):
+            capture.reconcile_session([], [{"number": 0}])

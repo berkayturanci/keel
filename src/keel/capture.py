@@ -9,6 +9,7 @@ from typing import Any
 from . import config as cfg
 
 CAPTURE_SCHEMA_VERSION = "keel.capture.v1"
+RECONCILE_SCHEMA_VERSION = "keel.capture-reconcile.v1"
 MARKER_PREFIX = "compound-learning"
 STATUSES = ("applied", "deferred", "skipped")
 SKIP_REASONS = (
@@ -93,6 +94,22 @@ def contract_as_dict(config: cfg.ProjectConfig | None = None) -> dict[str, Any]:
             "cli": "keel capture-verify",
             "missing_marker_status": "missing",
             "invalid_marker_status": "invalid",
+        },
+        "reconcile": {
+            "schema_version": RECONCILE_SCHEMA_VERSION,
+            "primitive": "capture.reconcile_session",
+            "cli": "keel capture-reconcile",
+            "idempotent": True,
+            "never_reopens_implementation": True,
+            "never_pushes_code": True,
+            "never_merges_prs": True,
+            "actions": [
+                "emit-capture-marker",
+                "run-capture-extension",
+                "post-closure-summary",
+                "close-linked-issue",
+                "record-skip",
+            ],
         },
     }
 
@@ -205,6 +222,49 @@ def verify_session(
     }
 
 
+def reconcile_session(
+    records: list[dict[str, Any]],
+    merged_prs: list[int | dict[str, Any]] | tuple[int | dict[str, Any], ...],
+    *,
+    config: cfg.ProjectConfig | None = None,
+    capture_capability_available: bool = False,
+) -> dict[str, Any]:
+    """Plan idempotent post-merge reconciliation actions for capture gaps.
+
+    The returned plan is pure data. It never writes ledger records, comments, issues, git
+    state, or PR state; adapters may apply the listed actions after their own transport and
+    consent checks. This keeps reconcile recovery deterministic and safe to run repeatedly.
+    """
+    items = [_merged_pr_info(item) for item in merged_prs]
+    results = [
+        _reconcile_pr(
+            records,
+            item,
+            config=config,
+            capture_capability_available=capture_capability_available,
+        )
+        for item in items
+    ]
+    actionable = [item for item in results if item["actions"]]
+    blocked = [item for item in results if item["status"] in {"invalid", "ambiguous"}]
+    complete = [item for item in results if item["status"] == "complete"]
+    status = "blocked" if blocked else "actionable" if actionable else "complete"
+    return {
+        "schema_version": RECONCILE_SCHEMA_VERSION,
+        "status": status,
+        "dry_run_safe": True,
+        "idempotent": True,
+        "no_code_mutations": True,
+        "expected_prs": [item["number"] for item in items],
+        "results": results,
+        "summary": {
+            "complete": len(complete),
+            "actionable": len(actionable),
+            "blocked": len(blocked),
+        },
+    }
+
+
 def recursion_guard(
     *,
     title: str | None = None,
@@ -217,6 +277,99 @@ def recursion_guard(
     path_hit = any("/capture" in path.lower() or path.lower().endswith("capture.py")
                    for path in changed_files)
     return title_hit or label_hit or path_hit
+
+
+def _merged_pr_info(item: int | dict[str, Any]) -> dict[str, Any]:
+    if isinstance(item, int):
+        return {
+            "number": item,
+            "title": None,
+            "labels": [],
+            "changed_files": [],
+            "issue_numbers": [],
+        }
+    number = item.get("number")
+    if not isinstance(number, int) or number <= 0:
+        raise CaptureError("merged PR entry requires a positive number")
+    return {
+        "number": number,
+        "title": item.get("title") if isinstance(item.get("title"), str) else None,
+        "labels": _strings(item.get("labels")),
+        "changed_files": _strings(item.get("changed_files")),
+        "issue_numbers": _positive_ints(item.get("issue_numbers")),
+    }
+
+
+def _reconcile_pr(
+    records: list[dict[str, Any]],
+    item: dict[str, Any],
+    *,
+    config: cfg.ProjectConfig | None,
+    capture_capability_available: bool,
+) -> dict[str, Any]:
+    pr_number = item["number"]
+    verification = _verify_pr(records, pr_number)
+    if verification["ok"]:
+        return _reconcile_result(
+            pr_number,
+            status="complete",
+            reason="capture marker already present",
+            verification=verification,
+        )
+    if verification["status"] == "invalid":
+        return _reconcile_result(
+            pr_number,
+            status="invalid",
+            reason=verification["reason"],
+            verification=verification,
+            blocked=True,
+        )
+    issue_numbers = _linked_issue_numbers(records, item)
+    if len(issue_numbers) > 1:
+        return _reconcile_result(
+            pr_number,
+            status="ambiguous",
+            reason="multiple linked issues found for merged PR",
+            verification=verification,
+            issue_numbers=issue_numbers,
+            blocked=True,
+        )
+    marker_status, marker_reason, reason = _reconcile_marker_decision(
+        item,
+        config=config,
+        capture_capability_available=capture_capability_available,
+    )
+    marker = marker_text(
+        pr_number=pr_number,
+        status=marker_status,
+        reason=marker_reason,
+    )
+    actions = [
+        _action(
+            "emit-capture-marker",
+            pr_number=pr_number,
+            marker=marker,
+            status=marker_status,
+            reason=marker_reason,
+        ),
+        _action("post-closure-summary", pr_number=pr_number),
+    ]
+    if marker_status == "deferred":
+        actions.insert(0, _action("run-capture-extension", pr_number=pr_number))
+    if marker_status == "skipped":
+        actions.append(_action("record-skip", pr_number=pr_number, reason=marker_reason))
+    if len(issue_numbers) == 1:
+        actions.append(_action("close-linked-issue", pr_number=pr_number,
+                               issue_number=issue_numbers[0]))
+    return _reconcile_result(
+        pr_number,
+        status="actionable",
+        reason=reason,
+        verification=verification,
+        issue_numbers=issue_numbers,
+        marker=marker,
+        actions=actions,
+    )
 
 
 def _verify_pr(records: list[dict[str, Any]], pr_number: int) -> dict[str, Any]:
@@ -275,6 +428,89 @@ def _verify_pr(records: list[dict[str, Any]], pr_number: int) -> dict[str, Any]:
     }
 
 
+def _reconcile_result(
+    pr_number: int,
+    *,
+    status: str,
+    reason: str,
+    verification: dict[str, Any],
+    issue_numbers: list[int] | None = None,
+    marker: str | None = None,
+    actions: list[dict[str, Any]] | None = None,
+    blocked: bool = False,
+) -> dict[str, Any]:
+    return {
+        "pr": pr_number,
+        "status": status,
+        "reason": reason,
+        "verification_status": verification["status"],
+        "blocked": blocked,
+        "issue_numbers": list(issue_numbers or ()),
+        "marker": marker,
+        "actions": list(actions or ()),
+    }
+
+
+def _reconcile_marker_decision(
+    item: dict[str, Any],
+    *,
+    config: cfg.ProjectConfig | None,
+    capture_capability_available: bool,
+) -> tuple[str, str | None, str]:
+    if recursion_guard(
+        title=item["title"],
+        labels=item["labels"],
+        changed_files=item["changed_files"],
+    ):
+        return "skipped", "recursion-guard", "capture recursion guard matched"
+    policy = _capture_policy(config)
+    if policy.get("enabled") and policy.get("mode", "extension") == "extension":
+        if capture_capability_available:
+            return "deferred", None, "capture extension can be rerun"
+        return "skipped", "capability-unavailable", "capture extension capability unavailable"
+    return "skipped", "no-policy", "no capture policy configured"
+
+
+def _linked_issue_numbers(records: list[dict[str, Any]], item: dict[str, Any]) -> list[int]:
+    numbers = set(item["issue_numbers"])
+    pr_number = item["number"]
+    for record in records:
+        if record.get("record_type") != "ship_run":
+            continue
+        if (record.get("pull_request") or {}).get("number") != pr_number:
+            continue
+        issue_number = (record.get("issue") or {}).get("number")
+        if isinstance(issue_number, int) and issue_number > 0:
+            numbers.add(issue_number)
+    return sorted(numbers)
+
+
+def _action(
+    action_type: str,
+    *,
+    pr_number: int,
+    marker: str | None = None,
+    status: str | None = None,
+    reason: str | None = None,
+    issue_number: int | None = None,
+) -> dict[str, Any]:
+    action = {
+        "type": action_type,
+        "pr": pr_number,
+        "idempotency_key": f"{action_type}:pr-{pr_number}",
+    }
+    if marker is not None:
+        action["marker"] = marker
+    if status is not None:
+        action["status"] = status
+    if reason is not None:
+        action["reason"] = reason
+    if issue_number is not None:
+        action["issue"] = issue_number
+        action["idempotency_key"] = f"{action_type}:issue-{issue_number}:pr-{pr_number}"
+    return action
+
+
 def _capture_policy(config: cfg.ProjectConfig | None) -> dict[str, Any]:
     if config is None or not isinstance(config.policy_pack, dict):
         return {}
@@ -291,3 +527,15 @@ def _marker_reason(status: str, reason: str | None) -> str | None:
     if reason in SKIP_REASONS:
         return reason
     return "no-policy"
+
+
+def _strings(value: Any) -> list[str]:
+    if not isinstance(value, list | tuple):
+        return []
+    return [item for item in value if isinstance(item, str)]
+
+
+def _positive_ints(value: Any) -> list[int]:
+    if not isinstance(value, list | tuple):
+        return []
+    return [item for item in value if isinstance(item, int) and item > 0]
