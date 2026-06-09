@@ -359,8 +359,12 @@ queue. The merge lock and "never `gh pr merge` outside s10" are non-negotiable i
 ### s11 capture
 Record the run for `/keel:wrap`: the **effective** implementer + reviewer vendors/models,
 tier, rounds, window decision, and outcome. Post the **closure comment** to **both** the
-issue and the PR (implementer codename + system, reviewer codenames + vendor/model, tester
-codename, PR number, changed files, docs touched, capture outcome). Run any post-merge
+issue and the PR. Render it deterministically from the `ship_run` ledger record via the
+`result.closure_comment` field of `keel ship --json` (the `contract.closure_comment`
+contract describes its sections: heading, Implementer `vendor (model)`, Reviewers — noting
+AI Jury when present, Tester, PR number, changed files, capture outcome, run id). Do **not**
+hand-write closure prose: post the rendered markdown verbatim so the issue and PR comments
+mirror the ledger byte-for-byte. Run any post-merge
 `capture` Lego (e.g. durable-learning capture: classify the merged PR's signal, optionally
 file a follow-up issue or hand off to a project-owned destination) fail-soft, emit its
 core marker, and do a post-merge worktree safety-net cleanup. **Marker discipline:** every
@@ -419,4 +423,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=skills command=ship keel_version=0.8.0 source_sha256=471a203b6b469ca0c26ee1b976e0745845845a6a5e13ef7647e4ea74c98479e9 generated_sha256=fc8a1d2a468401e3d793cc7e47a5edd0daf177893c617f9e83fdfe0470888304 -->
+<!-- keel-generated: surface=skills command=ship keel_version=0.8.0 source_sha256=be6eb58914e6cc1aceb37f9f3afe41d319a43365041b511dca67aee69aeea303 generated_sha256=72ec27b9a3164f3a9055478639d182ce689c965f03cc40bc7c4bde33a0eb6103 -->

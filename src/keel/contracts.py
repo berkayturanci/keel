@@ -15,6 +15,7 @@ from typing import Any
 from . import (
     capture,
     checkpoint,
+    closure,
     consent,
     gates,
     github_transport,
@@ -270,6 +271,8 @@ def build_command_contract(
             no_jury=no_jury,
             jury_advisory=jury_advisory,
         )
+    if command in {"ship", "ship-v2"}:
+        contract["closure_comment"] = closure.contract_as_dict()
     if command in {"ship", "ship-v2", "implement", "overnight"}:
         contract["issue_intake"] = intake.assess_issue(
             title=issue_title,
@@ -730,11 +733,17 @@ def ship_result_as_dict(
     run_ledger: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Normalized deterministic result record for ``keel ship --json``."""
+    closure_comment = None
+    if isinstance(run_ledger, dict):
+        record = run_ledger.get("record")
+        if isinstance(record, dict):
+            closure_comment = closure.render_closure_comment(record)
     return {
         "changed_files": list(changed_files),
         "changed_file_count": len(changed_files),
         "issue_intake": issue_intake,
         "run_ledger": run_ledger,
+        "closure_comment": closure_comment,
         "gate_outcomes": [
             {
                 "gate": outcome.gate,

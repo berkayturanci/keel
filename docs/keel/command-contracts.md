@@ -53,6 +53,7 @@ Every contract includes:
 | `run_ledger` | Structured JSONL run-ledger storage and schema contract. |
 | `checkpoint` | Resumable checkpoint storage and resume/reconcile contract for ship and work-block runs. |
 | `capture` | Post-merge capture marker, skip vocabulary, fail-soft, recursion-guard, redaction, and verifier contract. |
+| `closure_comment` | Present for `ship` and `ship-v2`; the deterministic, consumer-neutral closure-comment contract describing how the s11 ship-outcome comment is rendered from the `ship_run` ledger record. |
 | `side_effects` | Declared possible live-run side effects and whether dry-run mutates. |
 | `operator_consent` | Operator consent requirement, approved mutation scopes, delegated-agent scope, and consent record metadata. |
 | `issue_intake` | Present for work-owning flows (`ship`, `ship-v2`, `implement`, `overnight`); extracted objective, deliverable, acceptance criteria, readiness, questions, and ledger metadata. |
@@ -147,6 +148,31 @@ learn and where the learning goes through `policy_pack.capture` plus a `capture`
 reads the configured run ledger and returns `complete` only when every expected merged PR
 has exactly one valid marker. Missing, invalid, or duplicate markers make verification
 `incomplete` and exit non-zero.
+
+## Closure comment block
+
+`ship` and `ship-v2` contracts include `closure_comment`, the contract for the human-readable
+"ship outcome" comment that the s11 step posts to both the issue and the PR. The comment is a
+**mirror** of the `ship_run` ledger record, never a parser source — adapters read the ledger
+(or `keel ship --json`'s `result.run_ledger.record`) for machine state and post the rendered
+markdown verbatim for humans.
+
+The block records:
+
+- `schema_version: keel.closure-comment.v1`
+- `heading` (`Ship outcome`) and the ordered `sections`: implementer, reviewers, tester,
+  pull_request, changed_files, capture, run_id
+- `source: run-ledger ship_run record`
+- `deterministic: true`, `consumer_neutral: true`, `mirror_not_parser: true`
+- `renderer: keel.closure.render_closure_comment`
+- `jury_label` (`AI Jury`) — the label appended to the Reviewers line when a reviewer agent
+  is an AI-Jury participant
+
+`keel ship --json` renders the comment under `result.closure_comment` whenever a ledger
+record is present (`null` otherwise). Rendering is pure and deterministic: the project
+codename comes from the record's `target`, not a baked-in literal; optional fields degrade
+gracefully (no tester line, empty reviewers, no PR, `capture_status=None`). Identical records
+always produce identical markdown.
 
 ## Progress status surface
 

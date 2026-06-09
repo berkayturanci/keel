@@ -6,6 +6,17 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Deterministic closure-comment renderer** — keel core now renders the s11 "ship outcome"
+  comment from the structured `ship_run` ledger record via the pure
+  `keel.closure.render_closure_comment` function, exposed under `result.closure_comment` of
+  `keel ship --json` and described by the new `closure_comment` contract on `ship` /
+  `ship-v2`. The comment is consumer-neutral (the project codename comes from the record's
+  `target`, never a literal), deterministic (golden-tested), and a mirror of the ledger — not
+  a parser source. The `ship` adapter s11 step now posts this rendered markdown verbatim
+  instead of hand-written prose. See
+  [`docs/keel/command-contracts.md`](docs/keel/command-contracts.md).
+
 ## [0.8.0] — 2026-06-09
 
 ### Added

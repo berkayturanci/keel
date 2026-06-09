@@ -1,0 +1,13 @@
+## Ship outcome
+
+**Target:** issue #170
+
+- **Implementer:** codex (gpt-5)
+- **Reviewers:** claude (opus), AI-Jury (includes AI Jury)
+- **Tester:** host (manual list)
+- **PR:** #190
+- **Changed files:** 2
+  - `src/keel/closure.py`
+  - `docs/keel/cli.md`
+- **Capture:** applied (capture hook completed)
+- **Run id:** RUN-170
