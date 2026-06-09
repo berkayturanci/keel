@@ -96,6 +96,14 @@ the ideas Keel should borrow.
 Invariants the backbone always preserves: merge lock, night no-merge window, fail-soft,
 orchestrator-only-writes, vendor+model attribution.
 
+The capture step has a core marker/verifier contract:
+`compound-learning: pr=<N> status=<applied|deferred|skipped:reason>`. Projects provide
+capture content and destinations through `capture` / `post-merge` extensions; keel owns the
+marker, fail-soft semantics, redaction-before-durability, offline `capture-verify`, and the
+learning-quality decision recorded in `capture.learning`. Durable learning is optional:
+policy can choose `create-learning`, `marker-only`, or `defer`, while duplicate candidates
+are suppressed by stable fingerprints so routine merges do not flood the learning surface.
+
 ## Install
 
 keel is a Python (≥3.11) package with one runtime dependency (PyYAML):
@@ -167,9 +175,10 @@ flows are additive. The plugin's command files under `commands/` are generated f
 `keel install-adapter plugin`, and a test fails on any drift. The `pip install keel-workflow`
 + `keel install-adapter` path is unchanged.
 
-**16 shipped commands** — `ship` (flagship), `ship-v2`, `implement`, `review-cycle`,
-`review-all-day`, `pr-loop`, `regression`, `triage`, `morning`, `overnight`, `wrap`,
-`ci-check`, `coverage`, `deps-audit`, `flake-audit`, `stale-prs`. Each is described in
+**17 shipped commands** — `ship` (flagship), `ship-v2`, `implement`, `review-cycle`,
+`review-all-day`, `pr-loop`, `regression`, `triage`, `morning`, `work-block`,
+`overnight`, `wrap`, `ci-check`, `coverage`, `deps-audit`, `flake-audit`, `stale-prs`.
+Each is described in
 [`docs/keel/commands.md`](docs/keel/commands.md). The `keel` CLI does the deterministic work;
 the adapters are the agentic flows (per-round review, inline comments, delegation).
 

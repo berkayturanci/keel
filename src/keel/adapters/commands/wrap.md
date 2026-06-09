@@ -6,6 +6,15 @@ allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Read, Edit, Write, mcp__gi
 
 # /keel:wrap
 
+## Command step evidence
+
+Every numbered step in this command is contractual. Complete the step, record the
+evidence it asks for, or explicitly mark it `N/A — <reason>` before moving on. If a step
+has an external side effect such as a GitHub comment, issue, review, report, branch, or
+PR, the side effect must be posted or written through the selected transport and cited in
+the final summary. Never silently skip a step because the runtime, agent, or prompt feels
+obvious.
+
 Wrap up the current work session. This adapter is project-neutral: it contains no
 branch name, build/lint command, or path literal. Read every project specific
 from `.keel/project.yaml` via the `keel` CLI (`base_branch`, `build_gate_cmd`,
@@ -94,3 +103,10 @@ cross-session morning queue for `/keel:morning`. Read `contract.run_ledger.path`
 `keel ledger .keel/project.yaml --root . --json` and include structured ship outcomes in
 the recap when present. Missing ledger files are an empty history; malformed records block
 the recap until the operator resolves the corrupted ledger.
+
+Before declaring the session clean, include the ledger payload's `capture_health` block in
+the recap. The recap must distinguish applied capture, marker-only learning, allowed
+skips, deferred capture, and missing markers. If `capture_health.status` is
+`needs-reconcile`, list the dry-run-safe commands from
+`capture_health.reconcile_actions` and hand the gap to the morning queue; do not mutate the
+ledger, GitHub, or project capture destinations from this reporting step.

@@ -6,6 +6,15 @@ allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Read, Write
 
 # /keel:morning
 
+## Command step evidence
+
+Every numbered step in this command is contractual. Complete the step, record the
+evidence it asks for, or explicitly mark it `N/A — <reason>` before moving on. If a step
+has an external side effect such as a GitHub comment, issue, review, report, branch, or
+PR, the side effect must be posted or written through the selected transport and cited in
+the final summary. Never silently skip a step because the runtime, agent, or prompt feels
+obvious.
+
 Project-neutral daily brief. This adapter contains no project, repo, dashboard,
 timezone, or data-source literal — read every project specific from
 `.keel/project.yaml` via the `keel` CLI (`timezone`, `merge_window`, repo). Emit
@@ -47,6 +56,12 @@ Read the structured run ledger from `contract.run_ledger.path` with
 `keel ledger .keel/project.yaml --root . --json`. Missing ledger files mean an empty
 history. Malformed records are a report blocker; do not recover by scraping free-form
 comments.
+
+Also read the ledger payload's `capture_health` block and surface it in the brief. It is a
+dry-run/no-mutation summary: morning must report missing markers, allowed skips grouped by
+reason, deferred capture, learning decisions, and the safe reconcile commands listed under
+`capture_health.reconcile_actions`; it must not write capture artifacts or mutate GitHub
+while producing the brief.
 
 ## Step 2 — Shipped since last brief
 
@@ -91,7 +106,7 @@ its no-merge phase.
 ## Step 6 — Output, save, notify
 
 Emit in this order: Overnight deferrals (if any) → Shipped → project health
-sections (if any) → Window status → ranked Suggested Focus.
+sections (if any) → Capture Health → Window status → ranked Suggested Focus.
 
 Write the brief to the project's reports path (deterministic for identical
 state; do not `git add` a gitignored reports path). Fire a push notification
@@ -105,4 +120,4 @@ On the **first run** (no prior brief at the reports path), offer to schedule the
 brief on a recurring cadence at the configured `timezone` — the exact scheduler
 mechanism is project-specific.
 
-<!-- keel-generated: surface=plugin command=morning keel_version=0.8.0 source_sha256=d3dbed767f70ad7790639703a6f545dafa4827749fe4140c67f497d20558eca8 generated_sha256=d3dbed767f70ad7790639703a6f545dafa4827749fe4140c67f497d20558eca8 -->
+<!-- keel-generated: surface=plugin command=morning keel_version=0.9.0 source_sha256=578c29dadc635d4c38540019d36c049e4c9aa511ed4fecba7cd6a1c6df5bc33e generated_sha256=578c29dadc635d4c38540019d36c049e4c9aa511ed4fecba7cd6a1c6df5bc33e -->

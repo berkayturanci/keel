@@ -17,6 +17,7 @@ from pathlib import Path
 
 from . import (
     __version__,
+    capture,
     checkpoint,
     consent,
     contracts,
@@ -31,6 +32,7 @@ from . import (
     runtime,
     scaffold,
     ship,
+    status,
     window,
 )
 from . import config as cfg
@@ -376,6 +378,29 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         reviewer_agents=args.reviewer_agent,
         tester=args.tester,
     )
+    try:
+        ledger_record = ledger.sanitize_record(ledger_record, config)
+    except ledger.redaction.RedactionError as exc:
+        message = f"capture redaction policy invalid; skipping ledger append: {exc}"
+        if args.append_ledger and args.live:
+            if args.json:
+                print(json.dumps({"contract": contract, "error": message}, indent=2,
+                                 sort_keys=True))
+            else:
+                print(message, file=sys.stderr)
+            return 1
+        fallback = ledger.redaction.sanitize(
+            ledger_record,
+            ledger.redaction.policy_from_config(config, strict=False),
+        )
+        ledger_record = dict(fallback.value)
+        ledger_record["redaction"] = {
+            "schema_version": ledger.redaction.REDACTION_SCHEMA_VERSION,
+            "status": "partial",
+            "reason": "invalid-policy",
+            "rules": fallback.audit["rules"],
+            "redaction_count": fallback.audit["redaction_count"],
+        }
     ledger_path = ledger.resolve_path(args.root, config)
     ledger_result = {
         "contract": contract["run_ledger"],
@@ -461,6 +486,7 @@ def _cmd_ledger(args: argparse.Namespace) -> int:
         "status": "present" if path.exists() else "missing",
         "records": records,
         "record_count": len(records),
+        "capture_health": ledger.capture_health_summary(records),
     }
     if args.json:
         print(json.dumps(payload, indent=2, sort_keys=True))
@@ -469,6 +495,134 @@ def _cmd_ledger(args: argparse.Namespace) -> int:
         print(f"  schema        : {contract['schema_version']}")
         print(f"  records       : {payload['record_count']}")
         print(f"  missing       : {contract['missing_handling']}")
+        print(f"  capture       : {payload['capture_health']['status']}")
+        print(f"  capture gaps  : {payload['capture_health']['counts']['needs_reconcile']}")
+    return 0
+
+
+def _cmd_capture_verify(args: argparse.Namespace) -> int:
+    try:
+        config = cfg.load_config(args.path)
+    except FileNotFoundError:
+        print(f"no such config: {args.path}", file=sys.stderr)
+        return 1
+    except cfg.ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    ledger_path = ledger.resolve_path(args.root, config)
+    try:
+        records = ledger.read_records(ledger_path)
+    except ledger.LedgerError as exc:
+        print(f"invalid ledger {ledger_path}: {exc}", file=sys.stderr)
+        return 1
+    report = capture.verify_session(records, args.merged_pr)
+    payload = {
+        "contract": capture.contract_as_dict(config),
+        "ledger_path": str(ledger_path),
+        "verification": report,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"keel capture-verify — {report['status']}  {ledger_path}")
+        for result in report["results"]:
+            state = "ok" if result["ok"] else "FAIL"
+            print(
+                f"  {state:>4}  PR #{result['pr']}  "
+                f"{result['status']}  {result['reason'] or '-'}"
+            )
+    return 0 if report["status"] == "complete" else 1
+
+
+def _cmd_capture_reconcile(args: argparse.Namespace) -> int:
+    try:
+        config = cfg.load_config(args.path)
+    except FileNotFoundError:
+        print(f"no such config: {args.path}", file=sys.stderr)
+        return 1
+    except cfg.ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    ledger_path = ledger.resolve_path(args.root, config)
+    try:
+        records = ledger.read_records(ledger_path)
+    except ledger.LedgerError as exc:
+        print(f"invalid ledger {ledger_path}: {exc}", file=sys.stderr)
+        return 1
+    linked_issues: dict[int, list[int]] = {}
+    for pr, issue in args.linked_issue:
+        linked_issues.setdefault(pr, []).append(issue)
+    merged_prs = [
+        {"number": pr, "issue_numbers": linked_issues.get(pr, [])}
+        for pr in args.merged_pr
+    ]
+    try:
+        plan = capture.reconcile_session(
+            records,
+            merged_prs,
+            config=config,
+            capture_capability_available=args.capture_capability == "available",
+        )
+    except capture.CaptureError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    payload = {
+        "contract": capture.contract_as_dict(config)["reconcile"],
+        "mode": "live-plan" if args.live else "dry-run",
+        "no_mutations": True,
+        "ledger_path": str(ledger_path),
+        "reconcile": plan,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"keel capture-reconcile — {plan['status']}  {ledger_path}")
+        for result in plan["results"]:
+            print(f"  PR #{result['pr']}  {result['status']}  {result['reason']}")
+            for action in result["actions"]:
+                print(f"    DRY-RUN: {action['type']}  {action['idempotency_key']}")
+    return 0 if plan["status"] != "blocked" else 1
+
+
+def _cmd_status(args: argparse.Namespace) -> int:
+    try:
+        config = cfg.load_config(args.path)
+    except FileNotFoundError:
+        print(f"no such config: {args.path}", file=sys.stderr)
+        return 1
+    except cfg.ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    checkpoint_path = checkpoint.resolve_path(args.root, config)
+    ledger_path = ledger.resolve_path(args.root, config)
+    try:
+        checkpoint_record = checkpoint.read_checkpoint(checkpoint_path)
+    except checkpoint.CheckpointError as exc:
+        print(f"invalid checkpoint {checkpoint_path}: {exc}", file=sys.stderr)
+        return 1
+    try:
+        ledger_records = ledger.read_records(ledger_path)
+    except ledger.LedgerError as exc:
+        print(f"invalid ledger {ledger_path}: {exc}", file=sys.stderr)
+        return 1
+    snapshot = status.build_status_snapshot(
+        config=config,
+        checkpoint_record=checkpoint_record,
+        ledger_records=ledger_records,
+    )
+    payload = {
+        "contract": status.status_contract_as_dict(config),
+        "checkpoint_path": str(checkpoint_path),
+        "ledger_path": str(ledger_path),
+        "snapshot": snapshot,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(status.render_status(snapshot))
     return 0
 
 
@@ -702,7 +856,7 @@ def _cmd_standalone(args: argparse.Namespace) -> int:
         if unavailable:
             print(f"  unavailable   : {', '.join(unavailable)}")
         print(f"  deferrals     : {brief['deferral_queue']['status']}")
-    elif command in {"wrap", "overnight"}:
+    elif command in {"wrap", "work-block", "overnight"}:
         session = result["session"]
         report_names = ", ".join(session["reports"]) or "not configured"
         print(f"  reports       : {report_names}")
@@ -713,6 +867,11 @@ def _cmd_standalone(args: argparse.Namespace) -> int:
             )
             print(f"  worktree      : linked required={linked_required}")
             print("  pr            : ready PR after configured gates")
+        elif command == "work-block":
+            print("  mode source   : keel work-block")
+            print("  queue         : explicit issues or selector")
+            print("  handoff       : ship per issue")
+            print("  outcomes      : shipped, PR-open, deferred, blocked, skipped, needs-input")
         else:
             print(f"  window        : {session['merge_window'] or 'not configured'}")
             print(f"  mode source   : {session['overnight']['mode_source']['command']}")
@@ -750,6 +909,20 @@ def _standalone_target(args: argparse.Namespace) -> str | None:
         return f"{scope} ({extra})" if extra else scope
     if getattr(args, "days", None) is not None:
         return f"{args.days} day scan"
+    if getattr(args, "issues", None):
+        target = "issues " + ", ".join(f"#{issue}" for issue in args.issues)
+        max_items = getattr(args, "max_items", None)
+        extra = getattr(args, "target", None)
+        if max_items is not None:
+            target = f"{target} (max {max_items})"
+        return f"{target} ({extra})" if extra else target
+    if getattr(args, "queue", None) is not None:
+        target = f"queue {args.queue}"
+        max_items = getattr(args, "max_items", None)
+        extra = getattr(args, "target", None)
+        if max_items is not None:
+            target = f"{target} (max {max_items})"
+        return f"{target} ({extra})" if extra else target
     if getattr(args, "title", None) is not None:
         return args.title
     if getattr(args, "hours", None) is not None:
@@ -1192,12 +1365,14 @@ def _capability_requirement(
         ))
 
     command_gate_commands = {
-        "run-gates", "ship", "ship-v2", "pr-loop", "wrap", "overnight", "implement",
-        "coverage", "deps-audit", "flake-audit",
+        "run-gates", "ship", "ship-v2", "pr-loop", "wrap", "work-block", "overnight",
+        "implement", "coverage", "deps-audit", "flake-audit",
     }
     if command in command_gate_commands and any(s.kind == "command" for s in specs):
         req = req.merged(runtime.CapabilityRequirement(required=("shell",)))
-    worktree_commands = {"ship", "ship-v2", "pr-loop", "wrap", "overnight", "implement"}
+    worktree_commands = {
+        "ship", "ship-v2", "pr-loop", "wrap", "work-block", "overnight", "implement"
+    }
     github_read_commands = {
         "morning", "review-cycle", "triage", "stale-prs", "regression", "review-all-day",
         "coverage", "deps-audit", "flake-audit", "ci-check",
@@ -1280,6 +1455,52 @@ def build_parser() -> argparse.ArgumentParser:
                           help="return only the newest N records")
     p_ledger.add_argument("--json", action="store_true", help="emit structured JSON")
     p_ledger.set_defaults(func=_cmd_ledger)
+
+    p_capture = sub.add_parser(
+        "capture-verify",
+        help="verify post-merge capture markers for merged PRs",
+    )
+    p_capture.add_argument("path", help="path to project.yaml")
+    p_capture.add_argument("--root", default=".",
+                           help="repo root for resolving the ledger path")
+    p_capture.add_argument("--merged-pr", type=_positive_int, action="append", required=True,
+                           help="merged PR number expected to have a capture marker")
+    p_capture.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_capture.set_defaults(func=_cmd_capture_verify)
+
+    p_reconcile = sub.add_parser(
+        "capture-reconcile",
+        help="plan idempotent post-merge capture reconciliation actions",
+    )
+    p_reconcile.add_argument("path", help="path to project.yaml")
+    p_reconcile.add_argument("--root", default=".",
+                             help="repo root for resolving the ledger path")
+    p_reconcile.add_argument("--merged-pr", type=_positive_int, action="append", required=True,
+                             help="merged PR number to reconcile")
+    p_reconcile.add_argument(
+        "--linked-issue",
+        type=_parse_pr_issue_mapping,
+        action="append",
+        default=[],
+        help="unambiguous PR-to-issue mapping as PR=ISSUE; repeat for multiple issues",
+    )
+    p_reconcile.add_argument(
+        "--capture-capability",
+        choices=("available", "unavailable"),
+        default="unavailable",
+        help="whether the capture extension capability is currently available",
+    )
+    p_reconcile.add_argument("--live", action="store_true",
+                             help="label the output as a live reconciliation plan")
+    p_reconcile.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_reconcile.set_defaults(func=_cmd_capture_reconcile)
+
+    p_status = sub.add_parser("status", help="show active/recent run progress")
+    p_status.add_argument("path", help="path to project.yaml")
+    p_status.add_argument("--root", default=".",
+                          help="repo root for resolving checkpoint and ledger paths")
+    p_status.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_status.set_defaults(func=_cmd_status)
 
     p_checkpoint = sub.add_parser("checkpoint", help="read or write the resumable checkpoint")
     p_checkpoint.add_argument("path", help="path to project.yaml")
@@ -1439,6 +1660,44 @@ def build_parser() -> argparse.ArgumentParser:
                         help="operator consent mode: explicit, standing, or agent")
     p_wrap.add_argument("--json", action="store_true", help="emit structured JSON")
     p_wrap.set_defaults(func=_cmd_standalone, standalone_command="wrap")
+
+    p_work_block = sub.add_parser(
+        "work-block",
+        help="standalone daytime multi-issue work-block preflight contract",
+    )
+    p_work_block.add_argument("path", help="path to project.yaml")
+    p_work_block.add_argument("issues", nargs="*", type=_positive_int,
+                              help="explicit issue numbers to process in order")
+    p_work_block.add_argument("--root", default=".",
+                              help="repo root for git and capability checks")
+    p_work_block.add_argument("--queue", default=None,
+                              help=(
+                                  "project queue selector to use when no explicit issues "
+                                  "are given"
+                              ))
+    p_work_block.add_argument("--max", dest="max_items", type=_positive_int, default=None,
+                              help="maximum issues to attempt in this work block")
+    p_work_block.add_argument("--hours", type=float, default=None,
+                              help="optional time budget in hours")
+    p_work_block.add_argument("--review-comments", choices=("inline", "summary"),
+                              default="inline",
+                              help="review posting mode to pass through ship handoffs")
+    p_work_block.add_argument("--reviewers", type=int, choices=(1, 2, 3), default=None,
+                              help="reviewer override for ship handoff contracts")
+    p_work_block.add_argument("--target", default=None,
+                              help="target text to include in the work-block contract")
+    p_work_block.add_argument("--dry-run", action="store_true",
+                              help="explicitly mark the assessment as non-mutating")
+    p_work_block.add_argument("--live", action="store_true",
+                              help="render a live preflight and fail if consent is missing")
+    p_work_block.add_argument("--approve-scope", action="append", default=[],
+                              help="approve a consent scope for this run; repeat or comma-separate")
+    p_work_block.add_argument("--operator", default=None,
+                              help="operator identifier to include in an approved consent record")
+    p_work_block.add_argument("--consent-mode", choices=consent.CONSENT_MODES, default=None,
+                              help="operator consent mode: explicit, standing, or agent")
+    p_work_block.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_work_block.set_defaults(func=_cmd_standalone, standalone_command="work-block")
 
     p_overnight = sub.add_parser(
         "overnight",
@@ -1647,8 +1906,7 @@ def _add_ship_parser(parser: argparse.ArgumentParser, *, command: str) -> None:
                         help="branch name to store in the run ledger record")
     parser.add_argument("--head-sha", default=None,
                         help="head commit SHA to store in the run ledger record")
-    parser.add_argument("--capture-status", choices=("applied", "deferred", "skipped"),
-                        default=None,
+    parser.add_argument("--capture-status", type=_capture_status_arg, default=None,
                         help="capture outcome to store in the run ledger record")
     parser.add_argument("--capture-reason", default=None,
                         help="capture outcome reason to store in the run ledger record")
@@ -1683,6 +1941,28 @@ def _positive_int(value: str) -> int:
     if parsed <= 0:
         raise argparse.ArgumentTypeError("must be a positive integer")
     return parsed
+
+
+def _parse_pr_issue_mapping(value: str) -> tuple[int, int]:
+    if "=" not in value:
+        raise argparse.ArgumentTypeError("linked issue mapping must be PR=ISSUE")
+    raw_pr, raw_issue = value.split("=", 1)
+    try:
+        pr = _positive_int(raw_pr)
+        issue = _positive_int(raw_issue)
+    except (argparse.ArgumentTypeError, ValueError) as exc:
+        raise argparse.ArgumentTypeError("linked issue mapping must be PR=ISSUE") from exc
+    return pr, issue
+
+
+def _capture_status_arg(value: str) -> str:
+    if value == "skipped":
+        return value
+    try:
+        capture.normalize_status(value)
+    except capture.CaptureError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+    return value
 
 
 def main(argv: list[str] | None = None) -> int:

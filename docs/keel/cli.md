@@ -121,6 +121,35 @@ check runs. Dry-run output includes the same would-be record but never writes th
 `--capture-status` is required for live appends so offline capture verification never has
 to infer status from closure comments.
 
+## `keel capture-verify <project.yaml> --merged-pr <N> [--json]`
+
+Verify that merged PRs have exactly one valid capture marker in the configured run ledger.
+Missing, invalid, or duplicate markers make the command exit non-zero.
+
+```bash
+keel capture-verify .keel/project.yaml --root . --merged-pr 456 --json
+```
+
+## `keel capture-reconcile <project.yaml> --merged-pr <N> [--json]`
+
+Plan idempotent post-merge recovery actions for merged PRs whose capture marker, closure
+summary, or linked issue closeout is incomplete. Reconcile is a recovery plan, not a second
+implementation path: it never reopens work, pushes code, or merges PRs.
+
+```bash
+keel capture-reconcile .keel/project.yaml --root . --merged-pr 456 --json
+keel capture-reconcile .keel/project.yaml --root . \
+  --merged-pr 456 --linked-issue 456=123 --capture-capability available
+```
+
+The JSON output lists exact actions an adapter may apply after its transport and consent
+checks: `emit-capture-marker`, `run-capture-extension`, `post-closure-summary`,
+`close-linked-issue`, and `record-skip`. Allowed skip markers include
+`skipped:capability-unavailable`, `skipped:no-policy`, and `skipped:recursion-guard`.
+`policy_pack.capture.mode: marker-only` plans an `applied` core marker without requiring a
+project capture extension. Ambiguous linked issues or invalid/duplicate existing markers
+block the plan instead of guessing.
+
 ## `keel checkpoint <project.yaml> [--root DIR] [--json]`
 
 Read the current resumable checkpoint. The default path is

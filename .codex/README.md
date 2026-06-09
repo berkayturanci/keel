@@ -22,6 +22,7 @@ load the matching skill under `.agents/skills/` and follow it exactly:
 - `pr-loop` or `/keel:pr-loop` -> `.agents/skills/keel-pr-loop/SKILL.md`
 - `wrap` or `/keel:wrap` -> `.agents/skills/keel-wrap/SKILL.md`
 - `morning` or `/keel:morning` -> `.agents/skills/keel-morning/SKILL.md`
+- `work-block` or `/keel:work-block` -> `.agents/skills/keel-work-block/SKILL.md`
 - `overnight` or `/keel:overnight` -> `.agents/skills/keel-overnight/SKILL.md`
 - `triage` or `/keel:triage` -> `.agents/skills/keel-triage/SKILL.md`
 - `ci-check` or `/keel:ci-check` -> `.agents/skills/keel-ci-check/SKILL.md`

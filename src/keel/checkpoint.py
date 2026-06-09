@@ -13,7 +13,7 @@ CHECKPOINT_SCHEMA_VERSION = "keel.checkpoint.v1"
 DEFAULT_CHECKPOINT_PATH = ".keel/state/checkpoint.json"
 RECORD_TYPE_RUN_CHECKPOINT = "run_checkpoint"
 
-COMMANDS = ("ship", "ship-v2", "overnight")
+COMMANDS = ("ship", "ship-v2", "work-block", "overnight")
 STEP_IDS = tuple(step.id for step in model.BACKBONE)
 MERGE_STATES = ("not-started", "pending", "merged", "failed", "skipped")
 CAPTURE_STATES = ("not-started", "applied", "deferred", "skipped", "failed")
@@ -51,7 +51,7 @@ def checkpoint_contract_as_dict(config: cfg.ProjectConfig) -> dict[str, Any]:
         "path": path,
         "path_source": source,
         "missing_handling": "no-checkpoint",
-        "write_owner": ["ship", "ship-v2", "overnight"],
+        "write_owner": ["ship", "ship-v2", "work-block", "overnight"],
         "resume_command": "resume",
         "checkpoint_command": "checkpoint",
         "steps": [

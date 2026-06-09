@@ -30,6 +30,7 @@ EXPECTED_LEGACY_COMMANDS = (
     "pr-loop",
     "review-cycle",
     "overnight",
+    "work-block",
     "wrap",
     "triage",
     "stale-prs",
@@ -127,6 +128,17 @@ class TestParityMatrix(unittest.TestCase):
         self.assertIn("feedback_workflow", review_cycle["Known gaps / owner issues"])
         self.assertIn("review-cycle-complete", review_cycle["Known gaps / owner issues"])
         self.assertIn("no-merge", review_cycle["Keel target behavior"])
+
+    def test_work_block_row_records_first_class_session_evidence(self):
+        rows = {row["Legacy command"].strip("`"): row for row in _matrix_rows()}
+        work_block = rows["work-block"]
+
+        self.assertEqual(work_block["Status"], "`parity-proven`")
+        self.assertIn("#146", work_block["Known gaps / owner issues"])
+        self.assertIn("session-work-block-daytime", work_block["Known gaps / owner issues"])
+        self.assertIn("work_block", work_block["Known gaps / owner issues"])
+        self.assertIn("child ship handoff", work_block["Keel target behavior"])
+        self.assertIn("consent scopes", work_block["Dry-run behavior"])
 
     def test_triage_and_stale_prs_rows_record_parity_evidence(self):
         rows = {row["Legacy command"].strip("`"): row for row in _matrix_rows()}

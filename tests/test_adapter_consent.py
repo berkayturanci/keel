@@ -19,6 +19,7 @@ MUTATING_COMMANDS = (
     "ship",
     "stale-prs",
     "triage",
+    "work-block",
     "wrap",
 )
 
@@ -31,6 +32,7 @@ DELEGATING_COMMANDS = (
     "review-cycle",
     "ship",
     "triage",
+    "work-block",
 )
 
 

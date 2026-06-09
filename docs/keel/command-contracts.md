@@ -12,7 +12,10 @@ describe what a command would do before an adapter starts mutating work.
 - `keel ship <project.yaml> --live --json`
 - `keel ship-v2 <project.yaml> --dry-run --json`
 - `keel ship-v2 <project.yaml> --live --json`
+- `keel work-block <project.yaml> --json`
+- `keel work-block <project.yaml> --live --json`
 - `keel ledger <project.yaml> --json`
+- `keel status <project.yaml> --json`
 - `keel checkpoint <project.yaml> --json`
 - `keel resume <project.yaml> --json`
 - `keel implement <project.yaml> <issue> --dry-run --json`
@@ -51,11 +54,13 @@ Every contract includes:
 | `github_transport` | Selected GitHub transport and degraded GitHub operation capabilities. |
 | `run_ledger` | Structured JSONL run-ledger storage and schema contract. |
 | `checkpoint` | Resumable checkpoint storage and resume/reconcile contract for ship and work-block runs. |
+| `capture` | Post-merge capture marker, skip vocabulary, fail-soft, recursion-guard, redaction, and verifier contract. |
+| `closure_comment` | Present for `ship` and `ship-v2`; the deterministic, consumer-neutral closure-comment contract describing how the s11 ship-outcome comment is rendered from the `ship_run` ledger record. |
 | `side_effects` | Declared possible live-run side effects and whether dry-run mutates. |
 | `operator_consent` | Operator consent requirement, approved mutation scopes, delegated-agent scope, and consent record metadata. |
 | `issue_intake` | Present for work-owning flows (`ship`, `ship-v2`, `implement`, `overnight`); extracted objective, deliverable, acceptance criteria, readiness, questions, and ledger metadata. |
 | `morning_contract` | Present for `morning`; project-neutral daily-brief sections, health providers, report destinations, priority sources, and deferral queue metadata. |
-| `session_contract` | Present for `wrap` and `overnight`; project-neutral linked-worktree, gate, PR, merge-window, report, deferral, and ship-handoff metadata. |
+| `session_contract` | Present for `wrap`, `work-block`, and `overnight`; project-neutral linked-worktree, gate, PR, merge-window, report, deferral, work-block, and ship-handoff metadata. |
 | `scan_contract` | Present for `regression` and `review-all-day`; project-neutral scan target, scope, dedupe, issue-write, reviewer-isolation, and final-report metadata. |
 | `reporting_contract` | Present for `coverage`, `deps-audit`, and `flake-audit`; project-neutral codename anchors, idempotency/dedupe rules, dry-run write behavior, degradation modes, and ship handoff metadata. |
 
@@ -118,6 +123,120 @@ empty `records` array when the file is missing. `morning`, `wrap`, overnight ses
 recaps, and capture verification should use this reader or the same contract path instead
 of scraping closure comments.
 
+The JSON payload also includes `capture_health` (`keel.capture-health.v1`), a
+consumer-neutral summary derived from `ship_run.capture` blocks. It reports applied
+capture, marker-only learning, durable-learning decisions, allowed skips by reason,
+deferred capture, missing markers, and dry-run-safe reconcile commands. Missing ledger
+files produce a clean empty summary. Malformed ledgers still block the reader instead of
+guessing from comments.
+
+## Capture block
+
+Every command contract includes `capture`. It is the core post-merge capture contract that
+adapters should use instead of re-deriving marker or verifier behavior from prose.
+
+The block records:
+
+- `schema_version: keel.capture.v1`
+- stable marker format:
+  `compound-learning: pr=<N> status=<applied|deferred|skipped:reason>`
+- allowed statuses: `applied`, `deferred`, and `skipped`
+- allowed skip reasons: `dry-run`, `deferred`, `merge-failed`, `recursion-guard`,
+  `capability-unavailable`, and `no-policy`
+- extension slots that may provide project-owned capture content: `capture` and
+  `post-merge`
+- fail-soft semantics: capture failure after a successful merge must not revert the merge
+- recursion guard semantics: capture-on-capture work skips with `skipped:recursion-guard`
+- durable-artifact safety: capture artifacts must pass through the run-ledger redaction
+  contract before they are persisted
+- learning-quality decisions: the marker is mandatory, while durable learning is optional
+  and policy-driven. Core records one `capture.learning` decision:
+  `create-learning`, `marker-only`, `defer`, or `duplicate`. Missing or disabled learning
+  policy records `marker-only (policy-unavailable)` so routine merges still have an
+  auditable marker without creating noisy durable learning. Projects can opt into
+  `policy_pack.capture.learning.mode: create-learning`, `marker-only`, or `defer`; duplicate
+  candidates are suppressed by a stable fingerprint over normalized title, labels, and
+  changed files. The decision is stored in the structured run ledger and mirrored in the
+  closure comment's Capture line.
+- session-end verifier command: `keel capture-verify`
+- post-merge recovery command: `keel capture-reconcile`
+- reconcile plan guarantees: idempotent actions only, never reopen implementation, never
+  push code, and never merge PRs
+
+Core owns marker generation, validation, and offline verification. Projects own what to
+learn and where the learning goes through `policy_pack.capture` plus a `capture` or
+`post-merge` extension. `keel capture-verify <project.yaml> --root <repo> --merged-pr <N>`
+reads the configured run ledger and returns `complete` only when every expected merged PR
+has exactly one valid marker. Missing, invalid, or duplicate markers make verification
+`incomplete` and exit non-zero.
+
+`keel capture-reconcile <project.yaml> --root <repo> --merged-pr <N>` reads the same
+ledger and returns a dry-run-safe recovery plan for merged PRs whose capture bookkeeping is
+incomplete. It may plan idempotent actions such as emitting the missing marker, rerunning a
+capture extension when policy and capability allow it, posting a closure summary, closing a
+single unambiguous linked issue, or recording an allowed skip reason. Ambiguous links or
+invalid/duplicate markers block the plan instead of guessing. Projects configured for
+`policy_pack.capture.mode: marker-only` plan an `applied` core marker without requiring a
+project capture extension.
+
+## Closure comment block
+
+`ship` and `ship-v2` contracts include `closure_comment`, the contract for the human-readable
+"ship outcome" comment that the s11 step posts to both the issue and the PR. The comment is a
+**mirror** of the `ship_run` ledger record, never a parser source — adapters read the ledger
+(or `keel ship --json`'s `result.run_ledger.record`) for machine state and post the rendered
+markdown verbatim for humans.
+
+The block records:
+
+- `schema_version: keel.closure-comment.v1`
+- `heading` (`Ship outcome`) and the ordered `sections`: implementer, reviewers, tester,
+  pull_request, changed_files, docs_touched, capture, run_id
+- the `docs_touched` section renders `- **Docs touched:** yes|no` directly after the
+  Changed files block. Its value is derived deterministically and consumer-neutrally from
+  `changes.files`: a file counts as documentation when any path component equals `docs`
+  (case-insensitive) or its suffix is one of `.md`, `.mdx`, `.markdown`, `.rst`, `.adoc`.
+  `.txt` is intentionally excluded (false-positive prone, e.g. `requirements.txt`); a
+  text doc such as `docs/notes.txt` is still covered by the `docs/` directory rule. The
+  set is intentionally project-neutral; custom documentation paths are a
+  project-config/policy concern, not a core renderer concern. Missing/empty/non-list
+  `files` (or a missing `changes` block) render `no`
+- `source: run-ledger ship_run record`
+- `deterministic: true`, `consumer_neutral: true`, `mirror_not_parser: true`
+- `renderer: keel.closure.render_closure_comment`
+- `jury_label` (`AI Jury`) — the label appended to the Reviewers line when a reviewer agent
+  is an AI-Jury participant
+
+`keel ship --json` renders the comment under `result.closure_comment` whenever a ledger
+record is present (`null` otherwise). Rendering is pure and deterministic: the project
+codename comes from the record's `target`, not a baked-in literal; optional fields degrade
+gracefully (no tester line, empty reviewers, no PR, `capture_status=None`). Identical records
+always produce identical markdown.
+
+## Progress status surface
+
+`keel status <project.yaml> --root <repo> --json` exposes the
+`keel.progress-status.v1` snapshot surface. It is intentionally not a realtime daemon.
+The command reads the latest checkpoint plus the structured run ledger and reports the last
+safe boundary known to keel.
+
+The snapshot includes:
+
+- `status`: `no-active-run`, `active`, `waiting`, `interrupted`, or `completed`
+- `current`: active issue, step, PR, branch, worktree, head SHA, and wait reason when a
+  checkpoint exists
+- `history`: shipped, blocked, deferred, and skipped counts plus item summaries from the
+  run ledger
+- `capture_health`: the same ledger-derived capture-health summary used by `morning` and
+  `wrap`; `needs-reconcile` means at least one marker is missing or a deferred capture can
+  be reconciled
+- `next`: the next queued issue when the checkpoint queue names one
+
+Human-readable output is ordered by actionability: current issue/step/wait reason first,
+then PR/branch, shipped/blocked/deferred/skipped counts, capture health, and next item.
+This lets an operator check long-running work-block progress without scraping chat logs or
+PR comments.
+
 ## Checkpoint block
 
 Every command contract includes `checkpoint`. The checkpoint is the durable current
@@ -134,7 +253,7 @@ local path with `policy_pack.reports.checkpoint`. The contract records:
 - `format: json`
 - `path` and `path_source`
 - `missing_handling: no-checkpoint`
-- write owners (`ship`, `ship-v2`, `overnight`)
+- write owners (`ship`, `ship-v2`, `work-block`, `overnight`)
 - the `checkpoint` reader/writer command and the `resume` dry-run command
 - every backbone step id, whether it is a safe resume boundary, and the idempotent
   resume action for that boundary
@@ -155,6 +274,32 @@ return `status: no-checkpoint`. Ambiguous state, such as a checkpoint that names
 worktree that live state reports missing, returns `status: ambiguous`, exits non-zero,
 and includes the reconcile action to perform before retrying. If a PR is already merged,
 resume moves to capture or closeout and does not repeat the merge.
+
+## Work-block block
+
+`work-block` and `overnight` session contracts include
+`session_contract.work_block`, the shared queue primitive for multi-issue runs. It keeps the
+daytime and overnight flows from duplicating queue-driving logic.
+
+The block records:
+
+- `schema_version: keel.work-block.v1`
+- `mode`: `daytime` for `/keel:work-block`, `overnight` for `/keel:overnight`
+- queue inputs: explicit issue numbers or a project queue selector
+- deterministic ordering: explicit issue numbers keep the provided order; selectors sort by
+  project policy
+- readiness refresh before each child `ship` handoff
+- per-issue isolated branch/worktree lifecycle
+- inherited child `ship` invariants: consent scope, capture contract, run ledger append,
+  merge lock, and merge-window recheck
+- final report buckets: shipped, PR-opened-not-merged, deferred, blocked, skipped, and
+  needs-input
+- stop conditions including consent gaps, needs-input, blocked findings, window close,
+  time budget, max items, and user cancellation
+
+`/keel:work-block` is the daytime mode: the operator may approve or redirect between items,
+and needs-input/consent gaps stop for operator attention. `/keel:overnight` reuses the same
+primitive but keeps its unattended/no-night-merge policy.
 
 ## Issue intake block
 
@@ -203,12 +348,14 @@ Standalone commands also emit deterministic result records:
   routing recommendations. It is read-only and proposes at most one fix.
 - `morning` shows the brief target/window, generic report sections, selected GitHub
   transport, project-declared health providers, priority sources, report destinations,
-  and the shared deferral queue. It does not run project health commands or write reports
-  in dry-run output. Missing optional provider capabilities are reported as
+  capture-health summary, and the shared deferral queue. It does not run project health
+  commands, write capture artifacts, or write reports in dry-run output. Missing optional
+  provider capabilities are reported as
   `unavailable`, not as a successful empty health section.
 - `wrap` shows linked-worktree and base-branch guards, configured gate source, commit and
-  ready-PR conventions, session recap destination, and the shared deferral queue. It does
-  not run gates, commit, push, open a PR, or write reports in dry-run output.
+  ready-PR conventions, session recap destination, capture-health summary, and the shared
+  deferral queue. It does not run gates, commit, push, open a PR, write capture artifacts,
+  or write reports in dry-run output.
 - `overnight` shows merge-window mode sourced from `keel window`, no-night-merge policy,
   ship handoff, priority queue shape, session or morning report destinations, stop
   conditions, and the shared deferral queue. It does not spawn ship runs, create PRs,
@@ -277,10 +424,11 @@ Standalone direct-use commands use first-class profiles too:
   read-only behavior, and routing recommendations.
 - `morning` uses `workflow_profile.profile: "daily-brief"`. Its shared primitives include
   date/window handling, the deferral queue, shipped-since-last-brief and GitHub summaries,
-  project health providers, priority sources, ranked focus, and report output.
+  capture health, project health providers, priority sources, ranked focus, and report
+  output.
 - `wrap` uses `workflow_profile.profile: "session-wrap"`. Its shared primitives include
   linked-worktree and base-branch preflights, configured gates, conventional commits, ready
-  PR creation, session recap, the deferral queue, and operator consent.
+  PR creation, session recap, capture health, the deferral queue, and operator consent.
 - `overnight` uses `workflow_profile.profile: "session-overnight"` and inherits `ship`.
   Its shared primitives include merge-window handling, ship handoff, priority queue,
   per-issue worktrees, no-night-merge policy, blocker policy, session reports, the
@@ -325,6 +473,12 @@ changing the packaged command bodies.
 
 Adapters must:
 
+- treat every command step as contractual: complete it, record the requested evidence, or
+  mark it `N/A — <reason>` before moving on
+- post or write required external side effects through the selected transport, including PR
+  bodies, review summaries, jury verdicts, issues, comments, reports, branches, and release
+  artifacts
+- reject local/chat-only evidence for steps that require public GitHub or file-system output
 - read the contract before mutating files or GitHub state
 - stop when required capabilities are missing
 - report optional capability degradation explicitly
@@ -338,3 +492,17 @@ Adapters must:
 
 Projects can still declare project-specific policy in config and extensions, but the
 contract shape itself stays consumer-neutral.
+
+## Command Step Evidence
+
+Generated command surfaces include a command-step evidence rule so autonomous agents cannot
+silently skip lifecycle steps. The rule is intentionally generic: a step is done only when the
+agent completed the work, recorded the evidence requested by the command, or explicitly marked
+the step not applicable with a reason. Mutating commands must make required side effects
+observable through GitHub, git, or the configured report path before moving forward.
+
+For `ship` and `ship-v2`, this means a PR body is not valid when it contains only a closing
+reference. It must include Context, Changes Made, Testing, Docs Impact, and the closing issue
+reference. If review or jury ran, the orchestrator must post the final reviewer verdicts and
+the single jury summary/verdict to the GitHub PR. A local transcript or chat-only note is not
+merge evidence.

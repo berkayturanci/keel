@@ -2,6 +2,7 @@
 
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from keel import config as cfg
 from keel import contracts, github_transport, orchestrator, runtime
@@ -103,6 +104,10 @@ class TestBuildCommandContract(unittest.TestCase):
         self.assertIn("Testing", contract["review_merge_contract"]["reviewers"]
                       ["required_sections"])
         self.assertEqual(contract["review_merge_contract"]["jury"]["mode"], "off")
+        self.assertEqual(
+            contract["closure_comment"]["schema_version"], "keel.closure-comment.v1"
+        )
+        self.assertEqual(contract["closure_comment"]["heading"], "Ship outcome")
         self.assertIn("issue_intake", contract)
         self.assertEqual(contract["issue_intake"]["status"], "needs-input")
         self.assertFalse(contract["issue_intake"]["can_mutate_code"])
@@ -287,6 +292,33 @@ class TestBuildCommandContract(unittest.TestCase):
         self.assertIn("session_contract", wrap)
         self.assertIn("run_ledger", wrap["session_contract"])
 
+        work_block = contracts.build_command_contract(
+            command="work-block",
+            config=config,
+            loaded=loaded,
+            plan=plan,
+            requirement=runtime.CapabilityRequirement(required=("git", "worktree")),
+            evaluation=runtime.evaluate(
+                runtime.CapabilityRequirement(required=("git", "worktree")),
+                runtime.CapabilityReport((
+                    runtime.Capability("git", True, "ok", "test"),
+                    runtime.Capability("worktree", True, "ok", "test"),
+                )),
+            ),
+            transport=github_transport.resolve(report),
+        )
+        self.assertEqual(
+            work_block["workflow_profile"]["profile"],
+            "session-work-block-daytime",
+        )
+        self.assertEqual(work_block["workflow_profile"]["inherits"], "ship")
+        self.assertIn("review_merge_contract", work_block)
+        self.assertIn("work_block", work_block["session_contract"])
+        self.assertEqual(work_block["session_contract"]["work_block"]["mode"], "daytime")
+        self.assertIn("needs_input",
+                      work_block["session_contract"]["work_block"]
+                      ["final_report"]["outcome_buckets"])
+
         overnight = contracts.build_command_contract(
             command="overnight",
             config=config,
@@ -306,6 +338,7 @@ class TestBuildCommandContract(unittest.TestCase):
         self.assertEqual(overnight["workflow_profile"]["inherits"], "ship")
         self.assertIn("review_merge_contract", overnight)
         self.assertIn("run_ledger", overnight["session_contract"])
+        self.assertEqual(overnight["session_contract"]["work_block"]["mode"], "overnight")
 
         pr_loop = contracts.build_command_contract(
             command="pr-loop",
@@ -491,6 +524,19 @@ class TestBuildCommandContract(unittest.TestCase):
         )
         self.assertFalse(wrap["execution"]["creates_prs"])
         self.assertEqual(wrap["session"]["run_ledger"]["path"], ".keel/state/run-ledger.jsonl")
+
+        work_block = contracts.standalone_result_as_dict(
+            command="work-block",
+            config=config,
+            target="issues #146, #172",
+            transport=transport,
+        )
+        self.assertEqual(work_block["session"]["work_block"]["mode"], "daytime")
+        self.assertTrue(
+            work_block["session"]["daytime"]["ship_handoff"]
+            ["refreshes_readiness_between_issues"]
+        )
+        self.assertFalse(work_block["execution"]["merges"])
 
         overnight = contracts.standalone_result_as_dict(
             command="overnight",
@@ -982,6 +1028,62 @@ class TestBuildCommandContract(unittest.TestCase):
             extension_problems=tuple(problems),
         )
         self.assertTrue(contract["extension_problems"])
+
+
+class TestShipResultClosureComment(unittest.TestCase):
+    def _assessment(self):
+        merge = SimpleNamespace(action="merge", reason="all gates passed")
+        return SimpleNamespace(
+            tier=2,
+            reviewers=2,
+            window_open=True,
+            ci_ok=None,
+            merge=merge,
+            halted=False,
+            bypassed_window=False,
+            review_contract={},
+        )
+
+    def _verdict(self):
+        return SimpleNamespace(blocked=False, counts={"blocker": 0}, findings=[])
+
+    def test_closure_comment_rendered_from_ledger_record(self):
+        record = {
+            "actors": {"implementer": "codex (gpt-5)", "reviewers": [], "tester": None},
+            "pull_request": {"number": 190},
+            "changes": {"file_count": 0, "files": []},
+            "capture": {"status": "applied", "reason": None},
+            "run_id": "RUN-1",
+            "target": "issue #1",
+        }
+        result = contracts.ship_result_as_dict(
+            changed_files=[],
+            outcomes=[],
+            verdict=self._verdict(),
+            assessment=self._assessment(),
+            run_ledger={"record": record},
+        )
+        self.assertIn("## Ship outcome", result["closure_comment"])
+        self.assertIn("- **Implementer:** codex (gpt-5)", result["closure_comment"])
+
+    def test_closure_comment_none_without_record(self):
+        result = contracts.ship_result_as_dict(
+            changed_files=[],
+            outcomes=[],
+            verdict=self._verdict(),
+            assessment=self._assessment(),
+            run_ledger={"appended": False},
+        )
+        self.assertIsNone(result["closure_comment"])
+
+    def test_closure_comment_none_without_ledger(self):
+        result = contracts.ship_result_as_dict(
+            changed_files=[],
+            outcomes=[],
+            verdict=self._verdict(),
+            assessment=self._assessment(),
+        )
+        self.assertIsNone(result["closure_comment"])
 
 
 if __name__ == "__main__":
