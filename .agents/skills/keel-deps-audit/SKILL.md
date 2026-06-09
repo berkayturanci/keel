@@ -153,4 +153,4 @@ review). Never bump a dependency and merge directly from here. Under `--dry-run`
   and skipped.
 - Fail-soft · deterministic for identical inputs.
 
-<!-- keel-generated: surface=skills command=deps-audit keel_version=0.9.0 source_sha256=2eb4428507b9b87917adae0dcff83e885423dc8eed861063698f2aa29ffa93f6 generated_sha256=07144841e71775913aeb99d320b12b02d1e03d5ca1a1f35ff2d1b9d6689b3e59 -->
+<!-- keel-generated: surface=skills command=deps-audit keel_version=1.0.1 source_sha256=2eb4428507b9b87917adae0dcff83e885423dc8eed861063698f2aa29ffa93f6 generated_sha256=07144841e71775913aeb99d320b12b02d1e03d5ca1a1f35ff2d1b9d6689b3e59 -->

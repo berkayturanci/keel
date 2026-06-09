@@ -168,4 +168,4 @@ the operator to spelunk the tracker after the fact.
   skipped.
 - Fail-soft · deterministic for identical inputs.
 
-<!-- keel-generated: surface=skills command=flake-audit keel_version=0.9.0 source_sha256=17b5e120e6978bb027e088280a2f318252b676f77cc8498b3417b5cc06607c68 generated_sha256=77250792011b635ccd1596b38bd3e071276fc8667a29cdec110112400e5f0e07 -->
+<!-- keel-generated: surface=skills command=flake-audit keel_version=1.0.1 source_sha256=17b5e120e6978bb027e088280a2f318252b676f77cc8498b3417b5cc06607c68 generated_sha256=77250792011b635ccd1596b38bd3e071276fc8667a29cdec110112400e5f0e07 -->
