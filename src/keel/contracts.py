@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import Any
 
 from . import (
-    capture,
     checkpoint,
     consent,
     gates,
@@ -218,7 +217,6 @@ def build_command_contract(
         "capabilities": evaluation.as_dict(),
         "github_transport": transport.as_dict(),
         "checkpoint": checkpoint.checkpoint_contract_as_dict(config),
-        "capture": capture.contract_as_dict(config),
         "run_ledger": ledger.ledger_contract_as_dict(config),
         "side_effects": {
             "declared": list(declared_side_effects),

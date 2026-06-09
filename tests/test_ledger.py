@@ -7,24 +7,17 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from keel import config as cfg
-from keel import ledger, redaction
+from keel import ledger
 
 
-def _config(
-    *,
-    run_ledger: str | None = None,
-    deny_patterns: list[dict] | None = None,
-) -> cfg.ProjectConfig:
+def _config(*, run_ledger: str | None = None) -> cfg.ProjectConfig:
     reports = {"run_ledger": run_ledger} if run_ledger is not None else {}
-    policy_pack = {"name": "test", "reports": reports}
-    if deny_patterns is not None:
-        policy_pack["capture_redaction"] = {"deny_patterns": deny_patterns}
     return cfg.ProjectConfig(
         extends="keel",
         core_version="^0.7",
         base_branch="main",
         knobs=cfg.Knobs(build_gate_cmd="true"),
-        policy_pack=policy_pack,
+        policy_pack={"name": "test", "reports": reports},
     )
 
 
@@ -72,10 +65,6 @@ class TestLedgerContract(unittest.TestCase):
         self.assertEqual(contract["path"], ".keel/state/run-ledger.jsonl")
         self.assertEqual(contract["path_source"], "default")
         self.assertTrue(contract["consumer_neutral"])
-        self.assertTrue(contract["capture_redaction"]["default_redaction"])
-        self.assertFalse(contract["capture_redaction"]["audit_includes_original_values"])
-        self.assertEqual(contract["capture_contract"]["schema_version"], "keel.capture.v1")
-        self.assertTrue(contract["capture_contract"]["fail_soft"]["enabled"])
         self.assertIn("ship", contract["append_owner"])
         self.assertIn("morning", contract["readers"])
 
@@ -117,119 +106,6 @@ class TestLedgerRecords(unittest.TestCase):
         self.assertEqual(record["actors"]["implementer"], "codex:gpt-5")
         self.assertEqual(record["actors"]["reviewers"], ["reviewer-a:gpt-5", "reviewer-b:claude"])
         self.assertEqual(record["actors"]["tester"], "tester:gpt-5-mini")
-        self.assertEqual(record["capture"]["schema_version"], "keel.capture.v1")
-        self.assertEqual(record["capture"]["marker"],
-                         "compound-learning: pr=160 status=applied")
-        self.assertTrue(record["capture"]["fail_soft"])
-
-    def test_sanitize_record_redacts_default_secret_patterns(self):
-        record = _record()
-        record["capture"]["reason"] = (
-            "Bearer abcdefghijklmnopqrstuvwxyz and "
-            "https://user:supersecret@example.test/repo"
-        )
-
-        sanitized = ledger.sanitize_record(record, _config())
-
-        serialized = json.dumps(sanitized, sort_keys=True)
-        self.assertNotIn("abcdefghijklmnopqrstuvwxyz", serialized)
-        self.assertNotIn("supersecret", serialized)
-        self.assertIn("[REDACTED:bearer-token]", serialized)
-        self.assertIn("[REDACTED:credentials]", serialized)
-        self.assertEqual(sanitized["redaction"]["status"], "applied")
-        self.assertEqual(sanitized["redaction"]["redaction_count"], 2)
-
-    def test_sanitize_record_uses_project_deny_patterns(self):
-        record = _record()
-        record["capture"]["reason"] = "Private host: internal.example.test"
-        config = _config(deny_patterns=[
-            {"id": "private-host", "pattern": r"internal\.example\.test"}
-        ])
-
-        sanitized = ledger.sanitize_record(record, config)
-
-        self.assertNotIn("internal.example.test", json.dumps(sanitized, sort_keys=True))
-        self.assertIn("[REDACTED:private-host]", sanitized["capture"]["reason"])
-        self.assertEqual(sanitized["redaction"]["rules"][0]["id"], "private-host")
-
-    def test_sanitize_record_uses_project_custom_replacement(self):
-        record = _record()
-        record["capture"]["reason"] = "Ticket: https://tickets.example.test/ABC-123"
-        config = _config(deny_patterns=[
-            {
-                "id": "ticket-url",
-                "pattern": r"https://tickets\.example\.test/[A-Z]+-[0-9]+",
-                "replacement": "[REDACTED:ticket-url]",
-            }
-        ])
-
-        sanitized = ledger.sanitize_record(record, config)
-
-        self.assertEqual(sanitized["capture"]["reason"], "Ticket: [REDACTED:ticket-url]")
-        self.assertEqual(sanitized["redaction"]["rules"][0]["id"], "ticket-url")
-
-    def test_project_replacement_is_literal_and_cannot_reinsert_secret(self):
-        record = _record()
-        record["capture"]["reason"] = "captured top-secret-value"
-        config = _config(deny_patterns=[
-            {"id": "bad-replacement", "pattern": r"top-secret-value", "replacement": r"\g<0>"}
-        ])
-
-        sanitized = ledger.sanitize_record(record, config)
-
-        self.assertNotIn("top-secret-value", json.dumps(sanitized, sort_keys=True))
-        self.assertEqual(sanitized["capture"]["reason"], r"captured \g<0>")
-
-    def test_redaction_policy_without_config_uses_defaults(self):
-        policy = redaction.policy_from_config()
-
-        result = redaction.sanitize("ghp_" + "a" * 24, policy)
-
-        self.assertEqual(result.value, "[REDACTED:github-token]")
-        self.assertEqual(result.audit["redaction_count"], 1)
-
-    def test_malformed_project_redaction_entries_are_ignored_until_valid_regex_compiles(self):
-        record = _record()
-        record["capture"]["reason"] = "x marks the value"
-        config = _config(deny_patterns=[
-            "not-a-rule",
-            {"id": "missing-pattern"},
-            {"pattern": "x"},
-        ])
-
-        contract = ledger.ledger_contract_as_dict(config)["capture_redaction"]
-        sanitized = ledger.sanitize_record(record, config)
-
-        self.assertEqual(contract["configured_rule_ids"],
-                         ["missing-pattern", "deny-pattern-3"])
-        self.assertEqual(
-            sanitized["capture"]["reason"],
-            "[REDACTED:deny-pattern-3] marks the value",
-        )
-
-    def test_non_list_project_redaction_policy_is_ignored(self):
-        config = cfg.ProjectConfig(
-            extends="keel",
-            core_version="^0.7",
-            base_branch="main",
-            knobs=cfg.Knobs(build_gate_cmd="true"),
-            policy_pack={"name": "test", "capture_redaction": {"deny_patterns": "not-a-list"}},
-        )
-
-        contract = ledger.ledger_contract_as_dict(config)["capture_redaction"]
-        sanitized = ledger.sanitize_record(_record(), config)
-
-        self.assertEqual(contract["configured_rule_count"], 0)
-        self.assertEqual(sanitized["redaction"]["redaction_count"], 0)
-
-    def test_sanitize_record_leaves_safe_text_unchanged(self):
-        record = _record()
-        record["capture"]["reason"] = "Capture skipped because no hook is configured."
-
-        sanitized = ledger.sanitize_record(record, _config())
-
-        self.assertEqual(sanitized["capture"]["reason"], record["capture"]["reason"])
-        self.assertEqual(sanitized["redaction"]["redaction_count"], 0)
 
     def test_encode_parse_append_and_read_records(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -237,7 +113,6 @@ class TestLedgerRecords(unittest.TestCase):
             self.assertEqual(ledger.read_records(path), [])
 
             record = _record()
-            record = ledger.sanitize_record(record, _config())
             ledger.append_record(path, record)
             ledger.append_record(path, record)
 
