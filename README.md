@@ -201,9 +201,10 @@ If a step's gate fails, keel blocks its own merge — the same backbone every co
 
 ## Docs
 
-- 🌐 **Website + live coverage report** — `make site` builds the coverage HTML into
-  `website/coverage/` and serves the site at <http://localhost:8000>. (Publishing to GitHub
-  Pages is available via the manual `pages.yml` workflow once Pages is enabled.)
+- 🌐 **[Website + live coverage report](https://berkayturanci.github.io/keel/)** — the
+  published site is live at <https://berkayturanci.github.io/keel/> (deployed via the
+  `pages.yml` workflow). Locally, `make site` builds the coverage HTML into
+  `website/coverage/` and serves it at <http://localhost:8000>.
 - [`docs/keel/configuration.md`](docs/keel/configuration.md) — `project.yaml` reference
 - [`docs/keel/vision.md`](docs/keel/vision.md) — agentic work ownership vision and v1/v2 boundary
 - [`docs/keel/onboarding.md`](docs/keel/onboarding.md) — one-command consumer setup and follow-up checks
