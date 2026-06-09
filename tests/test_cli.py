@@ -652,19 +652,16 @@ class TestShip(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("--capture-status is required", err)
 
-    def test_ship_reports_invalid_capture_status_json_and_human(self):
-        import tempfile
-        with tempfile.TemporaryDirectory() as d:
-            config = _write_config_with_ledger("'true'")
-            rc_json, out_json, _ = run(["ship", config, "--root", d, "--dry-run", "--json",
-                                        "--capture-status", "unknown"])
-            rc_human, _, err_human = run(["ship", config, "--root", d, "--dry-run",
-                                          "--capture-status", "unknown"])
+    def test_ship_rejects_invalid_capture_status_before_command_runs(self):
+        parser = cli.build_parser()
 
-        self.assertEqual(rc_json, 1)
-        self.assertIn("unsupported capture status", json.loads(out_json)["error"])
-        self.assertEqual(rc_human, 1)
-        self.assertIn("unsupported capture status", err_human)
+        with self.assertRaises(SystemExit):
+            parser.parse_args([
+                "ship",
+                _write_config_with_ledger("'true'"),
+                "--capture-status",
+                "skipped:not-allowed",
+            ])
 
     def test_ledger_reads_missing_file_as_empty(self):
         import tempfile

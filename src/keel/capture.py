@@ -225,11 +225,22 @@ def _verify_pr(records: list[dict[str, Any]], pr_number: int) -> dict[str, Any]:
         if record.get("record_type") == "ship_run"
         and (record.get("pull_request") or {}).get("number") == pr_number
     ]
-    for record in reversed(candidates):
-        capture_block = record.get("capture") if isinstance(record.get("capture"), dict) else {}
-        marker = capture_block.get("marker")
-        if not marker:
-            continue
+    markers = [
+        capture_block.get("marker")
+        for record in candidates
+        if isinstance(capture_block := record.get("capture"), dict)
+        and capture_block.get("marker")
+    ]
+    if len(markers) > 1:
+        return {
+            "pr": pr_number,
+            "ok": False,
+            "status": "invalid",
+            "reason": "multiple capture markers found for merged PR",
+            "marker": markers[-1],
+            "marker_count": len(markers),
+        }
+    for marker in markers:
         try:
             parsed = parse_marker(marker)
         except CaptureError as exc:

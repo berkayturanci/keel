@@ -357,34 +357,26 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         jury_advisory=args.jury_advisory,
     )
     contract["review_merge_contract"] = a.review_contract
-    try:
-        ledger_record = ledger.build_ship_run_record(
-            command=command,
-            base_branch=config.base_branch,
-            changed_files=changed,
-            outcomes=outcomes,
-            verdict=verdict,
-            assessment=a,
-            issue_intake=contract.get("issue_intake"),
-            target=args.target or (f"PR #{args.pr}" if args.pr is not None else None),
-            run_id=args.run_id,
-            issue_number=args.issue,
-            pr_number=args.ledger_pr or args.pr,
-            branch=args.branch,
-            head_sha=args.head_sha,
-            capture_status=args.capture_status,
-            capture_reason=args.capture_reason,
-            implementer=args.implementer,
-            reviewer_agents=args.reviewer_agent,
-            tester=args.tester,
-        )
-    except capture.CaptureError as exc:
-        if args.json:
-            print(json.dumps({"contract": contract, "error": str(exc)}, indent=2,
-                             sort_keys=True))
-        else:
-            print(str(exc), file=sys.stderr)
-        return 1
+    ledger_record = ledger.build_ship_run_record(
+        command=command,
+        base_branch=config.base_branch,
+        changed_files=changed,
+        outcomes=outcomes,
+        verdict=verdict,
+        assessment=a,
+        issue_intake=contract.get("issue_intake"),
+        target=args.target or (f"PR #{args.pr}" if args.pr is not None else None),
+        run_id=args.run_id,
+        issue_number=args.issue,
+        pr_number=args.ledger_pr or args.pr,
+        branch=args.branch,
+        head_sha=args.head_sha,
+        capture_status=args.capture_status,
+        capture_reason=args.capture_reason,
+        implementer=args.implementer,
+        reviewer_agents=args.reviewer_agent,
+        tester=args.tester,
+    )
     try:
         ledger_record = ledger.sanitize_record(ledger_record, config)
     except ledger.redaction.RedactionError as exc:
@@ -1726,7 +1718,7 @@ def _add_ship_parser(parser: argparse.ArgumentParser, *, command: str) -> None:
                         help="branch name to store in the run ledger record")
     parser.add_argument("--head-sha", default=None,
                         help="head commit SHA to store in the run ledger record")
-    parser.add_argument("--capture-status", default=None,
+    parser.add_argument("--capture-status", type=_capture_status_arg, default=None,
                         help="capture outcome to store in the run ledger record")
     parser.add_argument("--capture-reason", default=None,
                         help="capture outcome reason to store in the run ledger record")
@@ -1761,6 +1753,16 @@ def _positive_int(value: str) -> int:
     if parsed <= 0:
         raise argparse.ArgumentTypeError("must be a positive integer")
     return parsed
+
+
+def _capture_status_arg(value: str) -> str:
+    if value == "skipped":
+        return value
+    try:
+        capture.normalize_status(value)
+    except capture.CaptureError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+    return value
 
 
 def main(argv: list[str] | None = None) -> int:

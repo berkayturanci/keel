@@ -51,6 +51,7 @@ Every contract includes:
 | `github_transport` | Selected GitHub transport and degraded GitHub operation capabilities. |
 | `run_ledger` | Structured JSONL run-ledger storage and schema contract. |
 | `checkpoint` | Resumable checkpoint storage and resume/reconcile contract for ship and work-block runs. |
+| `capture` | Post-merge capture marker, skip vocabulary, fail-soft, recursion-guard, redaction, and verifier contract. |
 | `side_effects` | Declared possible live-run side effects and whether dry-run mutates. |
 | `operator_consent` | Operator consent requirement, approved mutation scopes, delegated-agent scope, and consent record metadata. |
 | `issue_intake` | Present for work-owning flows (`ship`, `ship-v2`, `implement`, `overnight`); extracted objective, deliverable, acceptance criteria, readiness, questions, and ledger metadata. |
@@ -117,6 +118,34 @@ paths, or stack-specific fields.
 empty `records` array when the file is missing. `morning`, `wrap`, overnight session
 recaps, and capture verification should use this reader or the same contract path instead
 of scraping closure comments.
+
+## Capture block
+
+Every command contract includes `capture`. It is the core post-merge capture contract that
+adapters should use instead of re-deriving marker or verifier behavior from prose.
+
+The block records:
+
+- `schema_version: keel.capture.v1`
+- stable marker format:
+  `compound-learning: pr=<N> status=<applied|deferred|skipped:reason>`
+- allowed statuses: `applied`, `deferred`, and `skipped`
+- allowed skip reasons: `dry-run`, `deferred`, `merge-failed`, `recursion-guard`,
+  `capability-unavailable`, and `no-policy`
+- extension slots that may provide project-owned capture content: `capture` and
+  `post-merge`
+- fail-soft semantics: capture failure after a successful merge must not revert the merge
+- recursion guard semantics: capture-on-capture work skips with `skipped:recursion-guard`
+- durable-artifact safety: capture artifacts must pass through the run-ledger redaction
+  contract before they are persisted
+- session-end verifier command: `keel capture-verify`
+
+Core owns marker generation, validation, and offline verification. Projects own what to
+learn and where the learning goes through `policy_pack.capture` plus a `capture` or
+`post-merge` extension. `keel capture-verify <project.yaml> --root <repo> --merged-pr <N>`
+reads the configured run ledger and returns `complete` only when every expected merged PR
+has exactly one valid marker. Missing, invalid, or duplicate markers make verification
+`incomplete` and exit non-zero.
 
 ## Checkpoint block
 

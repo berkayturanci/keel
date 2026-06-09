@@ -124,6 +124,29 @@ class TestCaptureContract(unittest.TestCase):
         self.assertEqual(report["results"][0]["status"], "invalid")
         self.assertEqual(report["results"][0]["reason"], "invalid capture marker")
 
+    def test_verify_session_rejects_duplicate_markers(self):
+        records = [
+            {
+                "schema_version": "keel.run-ledger.v1",
+                "record_type": "ship_run",
+                "pull_request": {"number": 168},
+                "capture": {"marker": "compound-learning: pr=168 status=applied"},
+            },
+            {
+                "schema_version": "keel.run-ledger.v1",
+                "record_type": "ship_run",
+                "pull_request": {"number": 168},
+                "capture": {"marker": "compound-learning: pr=168 status=skipped:no-policy"},
+            },
+        ]
+
+        report = capture.verify_session(records, [168])
+
+        self.assertEqual(report["status"], "incomplete")
+        self.assertEqual(report["summary"]["invalid"], 1)
+        self.assertEqual(report["results"][0]["status"], "invalid")
+        self.assertEqual(report["results"][0]["marker_count"], 2)
+
     def test_verify_session_ignores_records_without_marker(self):
         records = [
             {
