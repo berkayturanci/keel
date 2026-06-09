@@ -23,12 +23,35 @@ Future team-level autonomy builds on this base, but the v1 command surface remai
 on one agent or delegated agent path owning each issue with review, gates, safe merge, and
 closure. See [`vision.md`](vision.md) for the public v1/v2 boundary.
 
+Every command step is an evidence-bearing contract. A generated adapter must complete the
+step, record the requested evidence, or explicitly mark the step `N/A — <reason>` before
+continuing. Public side effects such as PR bodies, review summaries, jury verdicts, issues,
+comments, reports, branches, and release artifacts must be posted or written through the
+selected transport; local/chat-only notes do not satisfy those steps.
+
+Capture artifacts are sanitized by default before they become durable. Keel applies generic
+secret redaction rules and any project-owned `policy_pack.capture_redaction.deny_patterns`,
+then stores only an audit of rule ids and counts. Invalid redaction policy skips the capture
+write with an explicit reason instead of writing unsanitized output.
+
+Post-merge capture has a stable marker contract exposed in `keel plan --json` as
+`contract.capture`: `compound-learning: pr=<N> status=<applied|deferred|skipped:reason>`.
+The allowed skip reasons are closed (`dry-run`, `deferred`, `merge-failed`,
+`recursion-guard`, `capability-unavailable`, `no-policy`), capture is fail-soft after a
+successful merge, and `keel capture-verify` can check the run ledger offline at session end.
+
+Long-running work blocks expose progress through `keel status`. This is a snapshot command,
+not a daemon: it reads the last safe checkpoint plus the structured run ledger and reports
+the current issue/step, PR/branch/worktree, wait reason, completed item counts, and next
+queued issue without parsing free-form logs.
+
 ## Flagship
 
 | command | what it does |
 |---|---|
 | **`/keel:ship`** | Drive a GitHub issue end-to-end through the keel backbone (select → branch → implement → CI → review → test → merge → close → capture). The full flow: per-round review, inline `file:line` comments, `--delegate` / `--review-delegate`, `--review-comments inline\|summary`, `--reviewers N`, the `jury` gate, the timezone-aware merge window + `mkdir` merge lock, and vendor+model attribution. |
 | `/keel:ship-v2` | First-class compound-engineering variant of the ship workflow. It reuses the shared ship backbone for selection, worktree safety, CI, review gates, merge window, merge lock, closeout, and capture markers, while its `workflow_profile` marks `implement`, `review`, `fixloop`, and `capture` as compound step overrides. |
+| `keel status` | Read checkpoint + run ledger state and print a concise active/recent progress snapshot for long-running work blocks. Use `--json` for the machine-readable `keel.progress-status.v1` surface. |
 
 ## Per-step (standalone slices of the backbone)
 

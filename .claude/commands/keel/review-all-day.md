@@ -6,6 +6,15 @@ allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Bash(jury:*), Read, Edit, 
 
 # /keel:review-all-day
 
+## Command step evidence
+
+Every numbered step in this command is contractual. Complete the step, record the
+evidence it asks for, or explicitly mark it `N/A — <reason>` before moving on. If a step
+has an external side effect such as a GitHub comment, issue, review, report, branch, or
+PR, the side effect must be posted or written through the selected transport and cited in
+the final summary. Never silently skip a step because the runtime, agent, or prompt feels
+obvious.
+
 A continuous, time-windowed review sweep over recent history. Resolve a span (a window
 aligned to the project's configured timezone), collect every commit in that span across the
 trunk plus active work branches, fan reviewers out over the diffs, classify each for
@@ -24,11 +33,22 @@ strictly findings-only and never call a GitHub write API — the orchestrator ow
 ```bash
 keel validate .keel/project.yaml --root .                 # abort if config/extensions invalid
 keel plan     .keel/project.yaml --root .                 # base_branch, ci_workflows, tier3_globs, gates
+keel plan     .keel/project.yaml --root . --command review-all-day --live --json
+keel review-all-day .keel/project.yaml 1 --root . --live --json
 keel window   .keel/project.yaml --root .                 # window state in the project timezone
 ```
 
+The live review-all-day contract is the operator-consent preflight and includes
+`scan_contract`: configured active branch patterns, title prefix, dedupe rules, diff
+truncation, issue labels, and dry-run write suppression. Before fetching/checking refs, spawning
+reviewers, opening issues, using secrets, publishing, or calling production-adjacent
+systems, parse `contract.operator_consent`; if `requires_operator_consent` is true, STOP
+and ask the operator to rerun with the required `--approve-scope` values. Pass
+`operator_consent.delegated_agent_scope` into every reviewer brief. Delegates may use only
+`approved_mutation_scopes`; scope expansion blocks or escalates.
+
 Read the knobs you will need: `base_branch`, `tier3_globs` (the risk map used to tier every
-finding), `ci_workflows`, `build_gate_cmd`, `lint_cmd`, `implementer_agents`. The span
+finding), `ci_workflows`, and `policy_pack.scan.active_branch_patterns`. The span
 boundaries are derived from the project **timezone** and **`merge_window`** as reported by
 `keel window` — never hardcode a timezone or offset here. `gh` (or its MCP equivalent) is
 required for the issue calls; if it is unavailable, exit cleanly with a single note rather
@@ -116,7 +136,7 @@ concatenated `git show` outputs (delimited `----- COMMIT k -----`), and this cla
 contract. For each commit, classify the diff for:
 
 - **Bug-insert** — logic error, null/nil deref, incorrect branching.
-- **Regression risk** — breaks an existing flow (data-layer, billing/entitlement,
+- **Regression risk** — breaks an existing flow (data-layer, entitlement,
   lifecycle/concurrency, auth) — generalize to the project's own high-risk areas implied by
   `tier3_globs`.
 - **Security** — secrets, injection, OWASP-class, race condition.
@@ -232,3 +252,5 @@ Always print the final report on exit, even if partial.
   a timezone or offset, and keep it in lockstep with `/keel:ship`'s window resolution.
 - Fail-soft (a missing tool/gate degrades to a skipped check, never aborts) · deterministic
   ordering (same commits ⇒ same findings ⇒ same issues).
+
+<!-- keel-generated: surface=claude command=review-all-day keel_version=0.8.0 source_sha256=8e4b1f2652a13d57d558324fceb8da61ad8a29f744fd0e1a922c8542e57992bd generated_sha256=8e4b1f2652a13d57d558324fceb8da61ad8a29f744fd0e1a922c8542e57992bd -->

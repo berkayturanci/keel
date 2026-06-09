@@ -341,6 +341,42 @@
           "additionalProperties": { "type": "string" },
           "description": "Named report destinations, paths, or issue prefixes."
         },
+        "capture_redaction": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "deny_patterns": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["id", "pattern"],
+                "properties": {
+                  "id": { "type": "string", "minLength": 1 },
+                  "pattern": { "type": "string", "minLength": 1 },
+                  "replacement": { "type": "string", "minLength": 1 }
+                }
+              }
+            }
+          },
+          "description": "Additional project-owned redaction regexes applied before capture artifacts become durable."
+        },
+        "capture": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Whether this project intends to run a capture/post-merge extension after merged PRs."
+            },
+            "mode": {
+              "type": "string",
+              "enum": ["extension", "marker-only"],
+              "description": "extension lets a project hook produce content; marker-only records only the core capture marker."
+            }
+          },
+          "description": "Project-owned post-merge capture policy. Core owns marker/verifier mechanics; capture content and destinations remain extension-owned."
+        },
         "review": {
           "type": "object",
           "additionalProperties": false,

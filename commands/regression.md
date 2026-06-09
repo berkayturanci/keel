@@ -6,6 +6,15 @@ allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Read, Edit, Agent
 
 # /keel:regression
 
+## Command step evidence
+
+Every numbered step in this command is contractual. Complete the step, record the
+evidence it asks for, or explicitly mark it `N/A — <reason>` before moving on. If a step
+has an external side effect such as a GitHub comment, issue, review, report, branch, or
+PR, the side effect must be posted or written through the selected transport and cited in
+the final summary. Never silently skip a step because the runtime, agent, or prompt feels
+obvious.
+
 Project-neutral, codebase-wide regression scan. Surfaces real bugs and regressions
 as new GitHub issues without duplicating issues that already exist, then routes each
 fix to `/keel:ship`. Every project specific (the base branch, the risk areas, the
@@ -184,4 +193,4 @@ section for the dropped low-confidence findings.
   findings ⇒ same issues) · `/keel:regression` never edits code, pushes, or merges — fixes go
   through `/keel:ship`'s backbone (window + lock + review).
 
-<!-- keel-generated: surface=plugin command=regression keel_version=0.8.0 source_sha256=7dc6d2c10f65456516c39a47511347d297f4d96e55489ad3997176e80502e4e0 generated_sha256=7dc6d2c10f65456516c39a47511347d297f4d96e55489ad3997176e80502e4e0 -->
+<!-- keel-generated: surface=plugin command=regression keel_version=0.8.0 source_sha256=9e74e0d77be89e88ce1aaff098d2eff04510107b476fa79ce8694978f9859fe1 generated_sha256=9e74e0d77be89e88ce1aaff098d2eff04510107b476fa79ce8694978f9859fe1 -->

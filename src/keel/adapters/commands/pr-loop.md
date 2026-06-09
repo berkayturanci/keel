@@ -6,6 +6,15 @@ allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Bash(jury:*), Read, Edit, 
 
 # /keel:pr-loop
 
+## Command step evidence
+
+Every numbered step in this command is contractual. Complete the step, record the
+evidence it asks for, or explicitly mark it `N/A — <reason>` before moving on. If a step
+has an external side effect such as a GitHub comment, issue, review, report, branch, or
+PR, the side effect must be posted or written through the selected transport and cited in
+the final summary. Never silently skip a step because the runtime, agent, or prompt feels
+obvious.
+
 Drive an already-implemented branch from open PR to merge-ready over the fixed keel
 backbone (`s6`–`s12`): open the PR, wait for CI, run the review+gate+fix loop, and hand a
 clean PR to the windowed, locked merge. **Project-neutral** — every project specific

@@ -6,6 +6,15 @@ allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Read, Edit, Write, mcp__gi
 
 # /keel:wrap
 
+## Command step evidence
+
+Every numbered step in this command is contractual. Complete the step, record the
+evidence it asks for, or explicitly mark it `N/A — <reason>` before moving on. If a step
+has an external side effect such as a GitHub comment, issue, review, report, branch, or
+PR, the side effect must be posted or written through the selected transport and cited in
+the final summary. Never silently skip a step because the runtime, agent, or prompt feels
+obvious.
+
 Wrap up the current work session. This adapter is project-neutral: it contains no
 branch name, build/lint command, or path literal. Read every project specific
 from `.keel/project.yaml` via the `keel` CLI (`base_branch`, `build_gate_cmd`,

@@ -6,6 +6,15 @@ allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Read, Edit
 
 # /keel:deps-audit
 
+## Command step evidence
+
+Every numbered step in this command is contractual. Complete the step, record the
+evidence it asks for, or explicitly mark it `N/A — <reason>` before moving on. If a step
+has an external side effect such as a GitHub comment, issue, review, report, branch, or
+PR, the side effect must be posted or written through the selected transport and cited in
+the final summary. Never silently skip a step because the runtime, agent, or prompt feels
+obvious.
+
 Project-neutral dependency audit. Every project value — which ecosystems exist, the audit
 command per ecosystem, the licence baseline path, the timezone for the run date, the risk map
 — is read from `.keel/project.yaml` via the `keel` CLI. The actual audit tool for each
@@ -141,4 +150,4 @@ review). Never bump a dependency and merge directly from here. Under `--dry-run`
   and skipped.
 - Fail-soft · deterministic for identical inputs.
 
-<!-- keel-generated: surface=plugin command=deps-audit keel_version=0.8.0 source_sha256=301f8d34d311be97460972b0717913c601766488a2b9dc786b4f860f10357d79 generated_sha256=301f8d34d311be97460972b0717913c601766488a2b9dc786b4f860f10357d79 -->
+<!-- keel-generated: surface=plugin command=deps-audit keel_version=0.8.0 source_sha256=2eb4428507b9b87917adae0dcff83e885423dc8eed861063698f2aa29ffa93f6 generated_sha256=2eb4428507b9b87917adae0dcff83e885423dc8eed861063698f2aa29ffa93f6 -->

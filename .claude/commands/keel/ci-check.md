@@ -6,6 +6,15 @@ allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Read, Grep
 
 # /keel:ci-check
 
+## Command step evidence
+
+Every numbered step in this command is contractual. Complete the step, record the
+evidence it asks for, or explicitly mark it `N/A — <reason>` before moving on. If a step
+has an external side effect such as a GitHub comment, issue, review, report, branch, or
+PR, the side effect must be posted or written through the selected transport and cited in
+the final summary. Never silently skip a step because the runtime, agent, or prompt feels
+obvious.
+
 Project-neutral CI status check. Reads `.keel/project.yaml` (`ci_workflows`, `base_branch`)
 via the `keel` CLI — the workflow names and branch are never hardcoded here. It inspects the
 latest CI run, and when that run failed it pulls the failing log, reads the offending source,
@@ -73,3 +82,5 @@ Route by the Step 2 classification — never merge here:
 - **Read-only** — propose a fix, never apply, push, re-kick, or merge.
 - **Deterministic** for identical CI state.
 - **Fail-soft** — a missing CLI degrades to the Step 0 clean-exit note, not a crash.
+
+<!-- keel-generated: surface=claude command=ci-check keel_version=0.8.0 source_sha256=a9515465d188c9db8ab6ce3badfcd87837ac61abaaff5396946992af9f677fd7 generated_sha256=a9515465d188c9db8ab6ce3badfcd87837ac61abaaff5396946992af9f677fd7 -->

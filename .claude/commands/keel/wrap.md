@@ -6,6 +6,15 @@ allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Read, Edit, Write, mcp__gi
 
 # /keel:wrap
 
+## Command step evidence
+
+Every numbered step in this command is contractual. Complete the step, record the
+evidence it asks for, or explicitly mark it `N/A — <reason>` before moving on. If a step
+has an external side effect such as a GitHub comment, issue, review, report, branch, or
+PR, the side effect must be posted or written through the selected transport and cited in
+the final summary. Never silently skip a step because the runtime, agent, or prompt feels
+obvious.
+
 Wrap up the current work session. This adapter is project-neutral: it contains no
 branch name, build/lint command, or path literal. Read every project specific
 from `.keel/project.yaml` via the `keel` CLI (`base_branch`, `build_gate_cmd`,
@@ -22,10 +31,18 @@ stay in any language (`knobs.sot_doc` § language policy).
 ```bash
 keel validate .keel/project.yaml --root .
 keel plan     .keel/project.yaml --root .   # base_branch, build_gate_cmd, lint_cmd
+keel plan     .keel/project.yaml --root . --command wrap --live --json
 ```
 
-GitHub writes go through `gh` (CLI when available) or the GitHub MCP tools
-(sandbox/web runtime). The PR is opened **ready** (not draft) in both modes.
+The live plan is the operator-consent preflight. Before committing, pushing, opening a PR,
+writing a recap, using secrets, publishing, or calling production-adjacent systems, parse
+`contract.operator_consent`; if `requires_operator_consent` is true, STOP and ask the
+operator to rerun with the required `--approve-scope` values.
+
+Resolve GitHub access through the shared runtime contract (`keel capabilities --json` →
+`github_transport`). GitHub writes use the selected transport. The PR is opened **ready**
+(not draft) only when `pr_write` is supported; otherwise stop with the degraded operation
+listed instead of falling through to an implicit best effort.
 
 ## Step 1 — Sanity check
 
@@ -51,10 +68,10 @@ config-driven (`build_gate_cmd` + `lint_cmd` plus any `tester` Lego):
 keel run-gates .keel/project.yaml --root .
 ```
 
-Any file-change-conditional suites (migration-, billing-, or config-validation
-checks gated on which paths changed) are **(project-specific; stay in the
-project)** — express them as a `.keel/extensions/` Lego that `run-gates` picks
-up, never inline a project command here.
+Any file-change-conditional suites (schema migration, entitlement, or
+config-validation checks gated on which paths changed) are **project-specific;
+stay in the project** — express them as a `.keel/extensions/` Lego that
+`run-gates` picks up, never inline a project command here.
 
 If any gate FAILS — STOP. Report the failure. Do not commit broken code.
 
@@ -82,4 +99,9 @@ If any gate FAILS — STOP. Report the failure. Do not commit broken code.
 
 Append a session recap to the project's session log: what was accomplished,
 what's still open, and what to pick up next session. Hand deferred items to the
-cross-session morning queue for `/keel:morning`.
+cross-session morning queue for `/keel:morning`. Read `contract.run_ledger.path` with
+`keel ledger .keel/project.yaml --root . --json` and include structured ship outcomes in
+the recap when present. Missing ledger files are an empty history; malformed records block
+the recap until the operator resolves the corrupted ledger.
+
+<!-- keel-generated: surface=claude command=wrap keel_version=0.8.0 source_sha256=4241f2caf9598a9d1642731a28325bb6c7e456fd20ac1877100d55e507152c8b generated_sha256=4241f2caf9598a9d1642731a28325bb6c7e456fd20ac1877100d55e507152c8b -->

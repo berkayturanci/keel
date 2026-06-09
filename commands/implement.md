@@ -6,6 +6,15 @@ allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Read, Write, Agent
 
 # /keel:implement
 
+## Command step evidence
+
+Every numbered step in this command is contractual. Complete the step, record the
+evidence it asks for, or explicitly mark it `N/A — <reason>` before moving on. If a step
+has an external side effect such as a GitHub comment, issue, review, report, branch, or
+PR, the side effect must be posted or written through the selected transport and cited in
+the final summary. Never silently skip a step because the runtime, agent, or prompt feels
+obvious.
+
 The standalone **implement step (`s4`)** of the keel backbone. This adapter is
 project-neutral: it contains no branch name, build command, agent, path glob, or
 timezone. Read every project-specific value from `.keel/project.yaml` via the
@@ -142,4 +151,4 @@ review / CI / merge.
 Fail over to the host agent on delegate quota errors; attribute the **effective**
 agent.
 
-<!-- keel-generated: surface=plugin command=implement keel_version=0.8.0 source_sha256=74f6a63084f4c28c1baf1effa9a063fdcad5546a6f2a3bdfece736c26e3c0ef1 generated_sha256=74f6a63084f4c28c1baf1effa9a063fdcad5546a6f2a3bdfece736c26e3c0ef1 -->
+<!-- keel-generated: surface=plugin command=implement keel_version=0.8.0 source_sha256=0195f50fbd70f3c6c8ee189d62e69494ab4e2eee72f1fa061d2f824d38aa9474 generated_sha256=0195f50fbd70f3c6c8ee189d62e69494ab4e2eee72f1fa061d2f824d38aa9474 -->

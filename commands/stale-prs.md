@@ -6,6 +6,15 @@ allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Read, Edit
 
 # /keel:stale-prs
 
+## Command step evidence
+
+Every numbered step in this command is contractual. Complete the step, record the
+evidence it asks for, or explicitly mark it `N/A — <reason>` before moving on. If a step
+has an external side effect such as a GitHub comment, issue, review, report, branch, or
+PR, the side effect must be posted or written through the selected transport and cited in
+the final summary. Never silently skip a step because the runtime, agent, or prompt feels
+obvious.
+
 Project-neutral stale-PR sweep. Triages open PRs that have either gone quiet or drifted out
 of sync with `base_branch`. All project values come from `.keel/project.yaml` via the `keel`
 CLI — the base branch, the merge window, and the CI workflows are never hardcoded here.
@@ -144,4 +153,4 @@ Print a summary table: PR · title · bucket · action, where action is one of `
 - **Never modify a PR's tree** beyond the merge commit that brings in `base_branch`.
 - Fail-soft per PR; deterministic ordering.
 
-<!-- keel-generated: surface=plugin command=stale-prs keel_version=0.8.0 source_sha256=d62da6abaca612417687e8a6cd6aafc1a23af238991d44ca3690221b3d0796ea generated_sha256=d62da6abaca612417687e8a6cd6aafc1a23af238991d44ca3690221b3d0796ea -->
+<!-- keel-generated: surface=plugin command=stale-prs keel_version=0.8.0 source_sha256=d2784174b2a25febccd6a6eada629d6d2abfd7020b4faa6dab1efbc5ee5007e3 generated_sha256=d2784174b2a25febccd6a6eada629d6d2abfd7020b4faa6dab1efbc5ee5007e3 -->
