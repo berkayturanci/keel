@@ -29,6 +29,7 @@ def status_contract_as_dict(config: cfg.ProjectConfig) -> dict[str, Any]:
             "checkpoint": checkpoint.checkpoint_contract_as_dict(config),
             "run_ledger": ledger.ledger_contract_as_dict(config),
         },
+        "capture_health": ledger.capture_health_contract_as_dict(),
         "realtime": False,
         "snapshot_semantics": "last-safe-boundary",
         "consumer_neutral": True,
@@ -45,6 +46,7 @@ def build_status_snapshot(
 ) -> dict[str, Any]:
     """Build a concise, consumer-neutral progress snapshot."""
     history = _history(ledger_records)
+    capture_health = ledger.capture_health_summary(ledger_records)
     current = _current(checkpoint_record)
     state = _state(checkpoint_record, history)
     return {
@@ -57,6 +59,7 @@ def build_status_snapshot(
         },
         "current": current,
         "history": history,
+        "capture_health": capture_health,
         "next": _next_item(checkpoint_record),
     }
 
@@ -76,6 +79,9 @@ def render_status(snapshot: dict[str, Any]) -> str:
     lines.append(f"  blocked       : {history['counts']['blocked']}")
     lines.append(f"  deferred      : {history['counts']['deferred']}")
     lines.append(f"  skipped       : {history['counts']['skipped']}")
+    capture_health = snapshot["capture_health"]
+    lines.append(f"  capture       : {capture_health['status']}")
+    lines.append(f"  capture gaps  : {capture_health['counts']['needs_reconcile']}")
     lines.append(f"  next          : {snapshot['next']['issue'] or '-'}")
     return "\n".join(lines)
 

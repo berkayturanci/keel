@@ -486,6 +486,7 @@ def _cmd_ledger(args: argparse.Namespace) -> int:
         "status": "present" if path.exists() else "missing",
         "records": records,
         "record_count": len(records),
+        "capture_health": ledger.capture_health_summary(records),
     }
     if args.json:
         print(json.dumps(payload, indent=2, sort_keys=True))
@@ -494,6 +495,8 @@ def _cmd_ledger(args: argparse.Namespace) -> int:
         print(f"  schema        : {contract['schema_version']}")
         print(f"  records       : {payload['record_count']}")
         print(f"  missing       : {contract['missing_handling']}")
+        print(f"  capture       : {payload['capture_health']['status']}")
+        print(f"  capture gaps  : {payload['capture_health']['counts']['needs_reconcile']}")
     return 0
 
 

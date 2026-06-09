@@ -10,6 +10,7 @@ from . import capture, redaction
 from . import config as cfg
 
 LEDGER_SCHEMA_VERSION = "keel.run-ledger.v1"
+CAPTURE_HEALTH_SCHEMA_VERSION = "keel.capture-health.v1"
 DEFAULT_LEDGER_PATH = ".keel/state/run-ledger.jsonl"
 RECORD_TYPE_SHIP_RUN = "ship_run"
 
@@ -32,7 +33,25 @@ def ledger_contract_as_dict(config: cfg.ProjectConfig) -> dict[str, Any]:
         "consumer_neutral": True,
         "capture_redaction": redaction.contract_as_dict(config),
         "capture_contract": capture.contract_as_dict(config),
+        "capture_health": capture_health_contract_as_dict(),
         "record_types": [RECORD_TYPE_SHIP_RUN],
+    }
+
+
+def capture_health_contract_as_dict() -> dict[str, Any]:
+    """Return the ledger-derived capture-health summary contract."""
+    return {
+        "schema_version": CAPTURE_HEALTH_SCHEMA_VERSION,
+        "source": "run-ledger ship_run records",
+        "readers": ["morning", "wrap", "status", "ledger"],
+        "consumer_neutral": True,
+        "missing_ledger_handling": "clean-empty-history",
+        "dry_run": {
+            "no_mutations": True,
+            "safe_reconcile_actions_only": True,
+        },
+        "states": ["clean", "needs-reconcile"],
+        "item_statuses": ["applied", "deferred", "skipped", "missing-marker"],
     }
 
 
@@ -166,6 +185,60 @@ def read_records(path: str | Path) -> list[dict[str, Any]]:
     return parse_records(ledger_path.read_text(encoding="utf-8"))
 
 
+def capture_health_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize capture visibility for morning, wrap, status, and ledger readers."""
+    items = [_capture_health_item(record) for record in records]
+    counts = {
+        "applied": 0,
+        "marker_only": 0,
+        "create_learning": 0,
+        "duplicate_learning": 0,
+        "deferred": 0,
+        "skipped": 0,
+        "missing_marker": 0,
+        "needs_reconcile": 0,
+    }
+    skipped_by_reason: dict[str, int] = {}
+    for item in items:
+        status = item["status"]
+        learning = item["learning_decision"]
+        if status == "applied":
+            counts["applied"] += 1
+        elif status == "deferred":
+            counts["deferred"] += 1
+        elif status == "skipped":
+            counts["skipped"] += 1
+            skipped_by_reason[item["reason"] or "unspecified"] = (
+                skipped_by_reason.get(item["reason"] or "unspecified", 0) + 1
+            )
+        else:
+            counts["missing_marker"] += 1
+        if learning == "marker-only":
+            counts["marker_only"] += 1
+        elif learning == "create-learning":
+            counts["create_learning"] += 1
+        elif learning == "duplicate":
+            counts["duplicate_learning"] += 1
+        if item["needs_reconcile"]:
+            counts["needs_reconcile"] += 1
+    return {
+        "schema_version": CAPTURE_HEALTH_SCHEMA_VERSION,
+        "status": "needs-reconcile" if counts["needs_reconcile"] else "clean",
+        "record_count": len(records),
+        "counts": counts,
+        "skipped_by_reason": dict(sorted(skipped_by_reason.items())),
+        "items": items,
+        "reconcile_actions": [
+            action for item in items for action in item["reconcile_actions"]
+        ],
+        "dry_run": {
+            "no_mutations": True,
+            "description": "Morning and wrap surface these actions; they do not mutate "
+            "ledger, GitHub, or capture destinations.",
+        },
+    }
+
+
 def append_record(path: str | Path, record: dict[str, Any]) -> None:
     """Append one validated JSONL record, creating parent directories as needed."""
     ledger_path = Path(path)
@@ -193,3 +266,54 @@ def _validate_record(record: Any, *, line_number: int | None = None) -> None:
         raise LedgerError(f"{prefix}unsupported schema_version")
     if record.get("record_type") != RECORD_TYPE_SHIP_RUN:
         raise LedgerError(f"{prefix}unsupported record_type")
+
+
+def _capture_health_item(record: dict[str, Any]) -> dict[str, Any]:
+    block = record.get("capture") if isinstance(record.get("capture"), dict) else {}
+    status = block.get("status")
+    marker = block.get("marker")
+    reason = block.get("marker_reason") or block.get("reason")
+    learning = block.get("learning") if isinstance(block.get("learning"), dict) else {}
+    item_status = _capture_health_status(status, marker)
+    needs_reconcile = item_status in {"missing-marker", "deferred"}
+    pr_number = (record.get("pull_request") or {}).get("number")
+    item = {
+        "run_id": record.get("run_id"),
+        "issue": (record.get("issue") or {}).get("number"),
+        "pull_request": pr_number,
+        "status": item_status,
+        "capture_status": status,
+        "marker": marker if isinstance(marker, str) and marker.strip() else None,
+        "reason": reason if isinstance(reason, str) and reason.strip() else None,
+        "learning_decision": learning.get("decision"),
+        "learning_reason": learning.get("reason"),
+        "needs_reconcile": needs_reconcile,
+        "reconcile_actions": [],
+    }
+    if needs_reconcile:
+        item["reconcile_actions"].append(_capture_reconcile_action(pr_number, item_status))
+    return item
+
+
+def _capture_health_status(status: Any, marker: Any) -> str:
+    if not isinstance(marker, str) or not marker.strip():
+        return "missing-marker"
+    if status == "deferred":
+        return "deferred"
+    if status == "skipped":
+        return "skipped"
+    return "applied"
+
+
+def _capture_reconcile_action(pr_number: Any, status: str) -> dict[str, Any]:
+    return {
+        "type": "capture-reconcile",
+        "reason": status,
+        "pr": pr_number if isinstance(pr_number, int) else None,
+        "command": (
+            f"keel capture-reconcile .keel/project.yaml --root . --merged-pr {pr_number}"
+            if isinstance(pr_number, int)
+            else "keel capture-reconcile .keel/project.yaml --root ."
+        ),
+        "dry_run": True,
+    }

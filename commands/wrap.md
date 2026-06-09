@@ -104,4 +104,11 @@ cross-session morning queue for `/keel:morning`. Read `contract.run_ledger.path`
 the recap when present. Missing ledger files are an empty history; malformed records block
 the recap until the operator resolves the corrupted ledger.
 
-<!-- keel-generated: surface=plugin command=wrap keel_version=0.9.0 source_sha256=4241f2caf9598a9d1642731a28325bb6c7e456fd20ac1877100d55e507152c8b generated_sha256=4241f2caf9598a9d1642731a28325bb6c7e456fd20ac1877100d55e507152c8b -->
+Before declaring the session clean, include the ledger payload's `capture_health` block in
+the recap. The recap must distinguish applied capture, marker-only learning, allowed
+skips, deferred capture, and missing markers. If `capture_health.status` is
+`needs-reconcile`, list the dry-run-safe commands from
+`capture_health.reconcile_actions` and hand the gap to the morning queue; do not mutate the
+ledger, GitHub, or project capture destinations from this reporting step.
+
+<!-- keel-generated: surface=plugin command=wrap keel_version=0.9.0 source_sha256=a1776fd1ab56af6529de3bc4adecd6b2960a345fd4cf37a098130c1d1febc973 generated_sha256=a1776fd1ab56af6529de3bc4adecd6b2960a345fd4cf37a098130c1d1febc973 -->

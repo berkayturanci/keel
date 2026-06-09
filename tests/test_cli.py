@@ -686,6 +686,7 @@ class TestShip(unittest.TestCase):
         data = json.loads(out)
         self.assertEqual(data["status"], "missing")
         self.assertEqual(data["records"], [])
+        self.assertEqual(data["capture_health"]["status"], "clean")
 
     def test_ledger_human_output_and_limit(self):
         import tempfile
@@ -694,6 +695,7 @@ class TestShip(unittest.TestCase):
             for run_id in ("RUN-1", "RUN-2"):
                 rc, _, _ = run(["ship", config, "--root", d, "--live", "--append-ledger",
                                 "--run-id", run_id,
+                                "--pull-request", "160",
                                 "--capture-status", "skipped",
                                 "--approve-scope", "filesystem,git,github",
                                 "--operator", "tester"])
@@ -705,8 +707,12 @@ class TestShip(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("keel ledger", out)
         self.assertIn("records       : 1", out)
+        self.assertIn("capture       : clean", out)
+        self.assertIn("capture gaps  : 0", out)
         self.assertEqual(rc_json, 0)
-        self.assertEqual(json.loads(out_json)["records"][0]["run_id"], "RUN-2")
+        read = json.loads(out_json)
+        self.assertEqual(read["records"][0]["run_id"], "RUN-2")
+        self.assertEqual(read["capture_health"]["counts"]["skipped"], 1)
 
     def test_capture_verify_reports_complete_from_ledger_marker(self):
         import tempfile
@@ -923,6 +929,7 @@ class TestShip(unittest.TestCase):
         self.assertEqual(payload["snapshot"]["status"], "waiting")
         self.assertEqual(payload["snapshot"]["current"]["wait_reason"], "ci")
         self.assertEqual(payload["snapshot"]["history"]["counts"]["shipped"], 1)
+        self.assertEqual(payload["snapshot"]["capture_health"]["status"], "clean")
         self.assertEqual(payload["snapshot"]["next"]["issue"], 146)
 
     def test_status_human_output_no_active_run(self):
@@ -934,6 +941,8 @@ class TestShip(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("keel status", out)
         self.assertIn("no-active-run", out)
+        self.assertIn("capture       : clean", out)
+        self.assertIn("capture gaps  : 0", out)
         self.assertIn("next          : -", out)
 
     def test_status_reports_missing_invalid_config_checkpoint_and_ledger(self):

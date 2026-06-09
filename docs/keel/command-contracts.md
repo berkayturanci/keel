@@ -123,6 +123,13 @@ empty `records` array when the file is missing. `morning`, `wrap`, overnight ses
 recaps, and capture verification should use this reader or the same contract path instead
 of scraping closure comments.
 
+The JSON payload also includes `capture_health` (`keel.capture-health.v1`), a
+consumer-neutral summary derived from `ship_run.capture` blocks. It reports applied
+capture, marker-only learning, durable-learning decisions, allowed skips by reason,
+deferred capture, missing markers, and dry-run-safe reconcile commands. Missing ledger
+files produce a clean empty summary. Malformed ledgers still block the reader instead of
+guessing from comments.
+
 ## Capture block
 
 Every command contract includes `capture`. It is the core post-merge capture contract that
@@ -220,11 +227,15 @@ The snapshot includes:
   checkpoint exists
 - `history`: shipped, blocked, deferred, and skipped counts plus item summaries from the
   run ledger
+- `capture_health`: the same ledger-derived capture-health summary used by `morning` and
+  `wrap`; `needs-reconcile` means at least one marker is missing or a deferred capture can
+  be reconciled
 - `next`: the next queued issue when the checkpoint queue names one
 
 Human-readable output is ordered by actionability: current issue/step/wait reason first,
-then PR/branch, shipped/blocked/deferred/skipped counts, and next item. This lets an
-operator check long-running work-block progress without scraping chat logs or PR comments.
+then PR/branch, shipped/blocked/deferred/skipped counts, capture health, and next item.
+This lets an operator check long-running work-block progress without scraping chat logs or
+PR comments.
 
 ## Checkpoint block
 
@@ -337,12 +348,14 @@ Standalone commands also emit deterministic result records:
   routing recommendations. It is read-only and proposes at most one fix.
 - `morning` shows the brief target/window, generic report sections, selected GitHub
   transport, project-declared health providers, priority sources, report destinations,
-  and the shared deferral queue. It does not run project health commands or write reports
-  in dry-run output. Missing optional provider capabilities are reported as
+  capture-health summary, and the shared deferral queue. It does not run project health
+  commands, write capture artifacts, or write reports in dry-run output. Missing optional
+  provider capabilities are reported as
   `unavailable`, not as a successful empty health section.
 - `wrap` shows linked-worktree and base-branch guards, configured gate source, commit and
-  ready-PR conventions, session recap destination, and the shared deferral queue. It does
-  not run gates, commit, push, open a PR, or write reports in dry-run output.
+  ready-PR conventions, session recap destination, capture-health summary, and the shared
+  deferral queue. It does not run gates, commit, push, open a PR, write capture artifacts,
+  or write reports in dry-run output.
 - `overnight` shows merge-window mode sourced from `keel window`, no-night-merge policy,
   ship handoff, priority queue shape, session or morning report destinations, stop
   conditions, and the shared deferral queue. It does not spawn ship runs, create PRs,
@@ -411,10 +424,11 @@ Standalone direct-use commands use first-class profiles too:
   read-only behavior, and routing recommendations.
 - `morning` uses `workflow_profile.profile: "daily-brief"`. Its shared primitives include
   date/window handling, the deferral queue, shipped-since-last-brief and GitHub summaries,
-  project health providers, priority sources, ranked focus, and report output.
+  capture health, project health providers, priority sources, ranked focus, and report
+  output.
 - `wrap` uses `workflow_profile.profile: "session-wrap"`. Its shared primitives include
   linked-worktree and base-branch preflights, configured gates, conventional commits, ready
-  PR creation, session recap, the deferral queue, and operator consent.
+  PR creation, session recap, capture health, the deferral queue, and operator consent.
 - `overnight` uses `workflow_profile.profile: "session-overnight"` and inherits `ship`.
   Its shared primitives include merge-window handling, ship handoff, priority queue,
   per-issue worktrees, no-night-merge policy, blocker policy, session reports, the

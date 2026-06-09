@@ -78,6 +78,8 @@ class TestStatusContract(unittest.TestCase):
                          "keel.checkpoint.v1")
         self.assertEqual(contract["source"]["run_ledger"]["schema_version"],
                          "keel.run-ledger.v1")
+        self.assertEqual(contract["capture_health"]["schema_version"],
+                         "keel.capture-health.v1")
 
     def test_no_active_run_snapshot(self):
         snapshot = progress.build_status_snapshot(
@@ -89,6 +91,7 @@ class TestStatusContract(unittest.TestCase):
         self.assertEqual(snapshot["status"], "no-active-run")
         self.assertIsNone(snapshot["current"])
         self.assertEqual(snapshot["history"]["counts"]["shipped"], 0)
+        self.assertEqual(snapshot["capture_health"]["status"], "clean")
         self.assertEqual(snapshot["next"]["source"], "no-active-run")
 
     def test_waiting_snapshot_from_checkpoint(self):
@@ -197,6 +200,20 @@ class TestStatusContract(unittest.TestCase):
             "skipped": 1,
         })
         self.assertEqual(snapshot["history"]["items"][0]["state"], "shipped")
+        self.assertEqual(snapshot["capture_health"]["counts"]["skipped"], 1)
+
+    def test_snapshot_surfaces_capture_gaps(self):
+        record = _ledger_record(issue=1, pr=10)
+        record["capture"]["marker"] = None
+
+        snapshot = progress.build_status_snapshot(
+            config=_config(),
+            checkpoint_record=None,
+            ledger_records=[record],
+        )
+
+        self.assertEqual(snapshot["capture_health"]["status"], "needs-reconcile")
+        self.assertEqual(snapshot["capture_health"]["counts"]["missing_marker"], 1)
 
     def test_render_status_orders_actionable_fields(self):
         snapshot = progress.build_status_snapshot(
@@ -210,3 +227,5 @@ class TestStatusContract(unittest.TestCase):
         self.assertIn("keel status", rendered)
         self.assertIn("wait          : review", rendered)
         self.assertIn("shipped       : 1", rendered)
+        self.assertIn("capture       : clean", rendered)
+        self.assertIn("capture gaps  : 0", rendered)

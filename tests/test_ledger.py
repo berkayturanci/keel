@@ -80,6 +80,9 @@ class TestLedgerContract(unittest.TestCase):
         self.assertFalse(contract["capture_redaction"]["audit_includes_original_values"])
         self.assertEqual(contract["capture_contract"]["schema_version"], "keel.capture.v1")
         self.assertTrue(contract["capture_contract"]["fail_soft"]["enabled"])
+        self.assertEqual(contract["capture_health"]["schema_version"],
+                         "keel.capture-health.v1")
+        self.assertTrue(contract["capture_health"]["consumer_neutral"])
         self.assertIn("ship", contract["append_owner"])
         self.assertIn("morning", contract["readers"])
 
@@ -141,6 +144,101 @@ class TestLedgerRecords(unittest.TestCase):
         self.assertEqual(learning["decision"], "create-learning")
         self.assertEqual(learning["reason"], "new invariant")
         self.assertTrue(learning["durable_artifact"])
+
+    def test_capture_health_clean_session(self):
+        record = _record(
+            config=_config(learning_policy={
+                "enabled": True,
+                "mode": "create-learning",
+            })
+        )
+
+        summary = ledger.capture_health_summary([record])
+
+        self.assertEqual(summary["schema_version"], "keel.capture-health.v1")
+        self.assertEqual(summary["status"], "clean")
+        self.assertEqual(summary["counts"]["applied"], 1)
+        self.assertEqual(summary["counts"]["create_learning"], 1)
+        self.assertEqual(summary["counts"]["needs_reconcile"], 0)
+        self.assertEqual(summary["reconcile_actions"], [])
+        self.assertTrue(summary["dry_run"]["no_mutations"])
+
+    def test_capture_health_surfaces_missing_marker_distinctly(self):
+        record = _record()
+        record["capture"]["marker"] = None
+
+        summary = ledger.capture_health_summary([record])
+
+        self.assertEqual(summary["status"], "needs-reconcile")
+        self.assertEqual(summary["counts"]["missing_marker"], 1)
+        self.assertEqual(summary["counts"]["skipped"], 0)
+        self.assertEqual(summary["items"][0]["status"], "missing-marker")
+        self.assertEqual(summary["items"][0]["reconcile_actions"][0]["type"],
+                         "capture-reconcile")
+
+    def test_capture_health_counts_skipped_by_allowed_reason(self):
+        record = _record()
+        record["capture"] = {
+            "schema_version": "keel.capture.v1",
+            "status": "skipped",
+            "reason": "capture recursion guard matched",
+            "marker_reason": "recursion-guard",
+            "marker": "compound-learning: pr=160 status=skipped:recursion-guard",
+            "learning": {
+                "decision": "marker-only",
+                "reason": "capture-skipped",
+            },
+        }
+
+        summary = ledger.capture_health_summary([record])
+
+        self.assertEqual(summary["status"], "clean")
+        self.assertEqual(summary["counts"]["skipped"], 1)
+        self.assertEqual(summary["counts"]["marker_only"], 1)
+        self.assertEqual(summary["skipped_by_reason"], {"recursion-guard": 1})
+
+    def test_capture_health_deferred_capture_needs_reconcile(self):
+        record = _record(
+            config=_config(learning_policy={
+                "enabled": True,
+                "mode": "defer",
+            })
+        )
+        record["capture"]["status"] = "deferred"
+        record["capture"]["reason"] = "capture extension can be rerun"
+        record["capture"]["marker"] = "compound-learning: pr=160 status=deferred"
+
+        summary = ledger.capture_health_summary([record])
+
+        self.assertEqual(summary["status"], "needs-reconcile")
+        self.assertEqual(summary["counts"]["deferred"], 1)
+        self.assertEqual(summary["counts"]["needs_reconcile"], 1)
+        self.assertEqual(summary["reconcile_actions"][0]["pr"], 160)
+        self.assertIn("--merged-pr 160", summary["reconcile_actions"][0]["command"])
+
+    def test_capture_health_counts_duplicate_learning(self):
+        record = _record()
+        record["capture"]["learning"] = {
+            "decision": "duplicate",
+            "reason": "duplicate-learning",
+        }
+
+        summary = ledger.capture_health_summary([record])
+
+        self.assertEqual(summary["counts"]["duplicate_learning"], 1)
+        self.assertEqual(summary["status"], "clean")
+
+    def test_capture_health_handles_malformed_capture_block_without_pr(self):
+        record = _record()
+        record["pull_request"] = {"number": None}
+        record["capture"] = "not a capture block"
+
+        summary = ledger.capture_health_summary([record])
+
+        self.assertEqual(summary["counts"]["missing_marker"], 1)
+        self.assertEqual(summary["counts"]["marker_only"], 0)
+        self.assertEqual(summary["reconcile_actions"][0]["pr"], None)
+        self.assertNotIn("--merged-pr", summary["reconcile_actions"][0]["command"])
 
     def test_sanitize_record_redacts_default_secret_patterns(self):
         record = _record()
