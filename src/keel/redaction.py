@@ -69,14 +69,18 @@ _DEFAULT_RULES: tuple[tuple[str, str, str], ...] = (
 )
 
 
-def policy_from_config(config: cfg.ProjectConfig | None = None) -> RedactionPolicy:
+def policy_from_config(
+    config: cfg.ProjectConfig | None = None,
+    *,
+    strict: bool = True,
+) -> RedactionPolicy:
     """Compile the default policy plus project-provided deny patterns."""
     rules = [
         RedactionRule(rule_id, _compile(pattern, f"default.{rule_id}"), replacement, "default")
         for rule_id, pattern, replacement in _DEFAULT_RULES
     ]
     if config is not None:
-        rules.extend(_configured_rules(config))
+        rules.extend(_configured_rules(config, strict=strict))
     return RedactionPolicy(tuple(rules))
 
 
@@ -129,7 +133,7 @@ def _configured_rule_ids(config: cfg.ProjectConfig) -> list[str]:
     return ids
 
 
-def _configured_rules(config: cfg.ProjectConfig) -> list[RedactionRule]:
+def _configured_rules(config: cfg.ProjectConfig, *, strict: bool = True) -> list[RedactionRule]:
     pack = config.policy_pack or {}
     section = pack.get("capture_redaction")
     if not isinstance(section, dict):
@@ -149,13 +153,14 @@ def _configured_rules(config: cfg.ProjectConfig) -> list[RedactionRule]:
         if not isinstance(replacement, str) or not replacement:
             replacement = f"[REDACTED:{rule_id}]"
         source = f"policy_pack.capture_redaction.deny_patterns.{rule_id}"
-        rules.append(RedactionRule(
-            rule_id,
-            _compile(pattern, source),
-            replacement,
-            source,
-            literal_replacement=True,
-        ))
+        try:
+            compiled = _compile(pattern, source)
+        except RedactionError:
+            if strict:
+                raise
+            continue
+        rules.append(RedactionRule(rule_id, compiled, replacement, source,
+                                   literal_replacement=True))
     return rules
 
 

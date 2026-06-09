@@ -389,7 +389,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
             return 1
         fallback = ledger.redaction.sanitize(
             ledger_record,
-            ledger.redaction.policy_from_config(None),
+            ledger.redaction.policy_from_config(config, strict=False),
         )
         ledger_record = dict(fallback.value)
         ledger_record["redaction"] = {

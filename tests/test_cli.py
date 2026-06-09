@@ -596,6 +596,33 @@ class TestShip(unittest.TestCase):
         self.assertEqual(record["redaction"]["reason"], "invalid-policy")
         self.assertEqual(record["redaction"]["redaction_count"], 1)
 
+    def test_ship_json_invalid_redaction_policy_keeps_valid_project_redactions(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger(
+                "'true'",
+                extra_policy_pack_lines=[
+                    "  capture_redaction:",
+                    "    deny_patterns:",
+                    "      - id: private-host",
+                    "        pattern: 'internal\\.example\\.test'",
+                    "      - id: bad-regex",
+                    "        pattern: '['",
+                ],
+            )
+            rc, out, _ = run(["ship", config, "--root", d, "--dry-run", "--json",
+                              "--capture-status", "skipped",
+                              "--capture-reason",
+                              "Bearer abcdefghijklmnopqrstuvwxyz at internal.example.test"])
+
+        self.assertEqual(rc, 0)
+        record = json.loads(out)["result"]["run_ledger"]["record"]
+        serialized = json.dumps(record, sort_keys=True)
+        self.assertNotIn("abcdefghijklmnopqrstuvwxyz", serialized)
+        self.assertNotIn("internal.example.test", serialized)
+        self.assertEqual(record["redaction"]["status"], "partial")
+        self.assertEqual(record["redaction"]["redaction_count"], 2)
+
     def test_ship_live_append_requires_capture_status(self):
         import tempfile
         with tempfile.TemporaryDirectory() as d:
