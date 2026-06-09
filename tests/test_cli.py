@@ -227,6 +227,20 @@ def _write_config_with_checkpoint(build_cmd, checkpoint_path="state/checkpoint.j
     )
 
 
+def _write_config_with_state_paths(
+    build_cmd,
+    ledger_path="state/runs.jsonl",
+    checkpoint_path="state/checkpoint.json",
+):
+    return _write_raw(
+        "extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
+        f"repo: tmp\ngates: [build]\nknobs:\n  build_gate_cmd: {build_cmd}\n"
+        "policy_pack:\n  name: tmp\n  reports:\n"
+        f"    run_ledger: {ledger_path!r}\n"
+        f"    checkpoint: {checkpoint_path!r}\n"
+    )
+
+
 def _run_git(root: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=root, check=True, capture_output=True, text=True)
 
@@ -784,6 +798,83 @@ class TestShip(unittest.TestCase):
             rc_bad, _, err_bad = run(["ledger", config, "--root", d])
         self.assertEqual(rc_bad, 1)
         self.assertIn("invalid ledger", err_bad)
+
+    def test_status_json_reads_checkpoint_and_ledger(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_state_paths("'true'")
+            rc_checkpoint, _, _ = run([
+                "checkpoint", config, "--root", d, "--write",
+                "--run-id", "RUN-148",
+                "--checkpoint-command", "overnight",
+                "--step", "s6",
+                "--issue-queue", "148",
+                "--issue-queue", "146",
+                "--active-issue", "148",
+                "--pull-request", "168",
+                "--branch", "feature/issue-148-progress-status",
+                "--worktree", "worktrees/issue-148",
+            ])
+            rc_ship, _, _ = run([
+                "ship", config, "--root", d, "--live", "--append-ledger",
+                "--issue", "147",
+                "--pull-request", "167",
+                "--capture-status", "applied",
+                "--approve-scope", "filesystem,git,github",
+                "--operator", "tester",
+            ])
+            rc, out, _ = run(["status", config, "--root", d, "--json"])
+
+        self.assertEqual(rc_checkpoint, 0)
+        self.assertEqual(rc_ship, 0)
+        self.assertEqual(rc, 0)
+        payload = json.loads(out)
+        self.assertEqual(payload["contract"]["schema_version"], "keel.progress-status.v1")
+        self.assertEqual(payload["snapshot"]["status"], "waiting")
+        self.assertEqual(payload["snapshot"]["current"]["wait_reason"], "ci")
+        self.assertEqual(payload["snapshot"]["history"]["counts"]["shipped"], 1)
+        self.assertEqual(payload["snapshot"]["next"]["issue"], 146)
+
+    def test_status_human_output_no_active_run(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_state_paths("'true'")
+            rc, out, _ = run(["status", config, "--root", d])
+
+        self.assertEqual(rc, 0)
+        self.assertIn("keel status", out)
+        self.assertIn("no-active-run", out)
+        self.assertIn("next          : -", out)
+
+    def test_status_reports_missing_invalid_config_checkpoint_and_ledger(self):
+        import tempfile
+        rc_missing, _, err_missing = run(["status", "/no/such.yaml"])
+        self.assertEqual(rc_missing, 1)
+        self.assertIn("no such config", err_missing)
+
+        rc_invalid, _, err_invalid = run(["status", _write_raw("extends: keel\n")])
+        self.assertEqual(rc_invalid, 1)
+        self.assertIn("invalid keel config", err_invalid)
+
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_state_paths("'true'")
+            checkpoint_path = Path(d) / "state" / "checkpoint.json"
+            checkpoint_path.parent.mkdir(parents=True)
+            checkpoint_path.write_text("{", encoding="utf-8")
+            rc_bad_checkpoint, _, err_bad_checkpoint = run(["status", config, "--root", d])
+
+        self.assertEqual(rc_bad_checkpoint, 1)
+        self.assertIn("invalid checkpoint", err_bad_checkpoint)
+
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_state_paths("'true'")
+            ledger_path = Path(d) / "state" / "runs.jsonl"
+            ledger_path.parent.mkdir(parents=True)
+            ledger_path.write_text("{", encoding="utf-8")
+            rc_bad_ledger, _, err_bad_ledger = run(["status", config, "--root", d])
+
+        self.assertEqual(rc_bad_ledger, 1)
+        self.assertIn("invalid ledger", err_bad_ledger)
 
     def test_checkpoint_write_read_and_resume_json(self):
         import tempfile

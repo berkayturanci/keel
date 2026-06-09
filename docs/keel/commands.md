@@ -40,12 +40,18 @@ The allowed skip reasons are closed (`dry-run`, `deferred`, `merge-failed`,
 `recursion-guard`, `capability-unavailable`, `no-policy`), capture is fail-soft after a
 successful merge, and `keel capture-verify` can check the run ledger offline at session end.
 
+Long-running work blocks expose progress through `keel status`. This is a snapshot command,
+not a daemon: it reads the last safe checkpoint plus the structured run ledger and reports
+the current issue/step, PR/branch/worktree, wait reason, completed item counts, and next
+queued issue without parsing free-form logs.
+
 ## Flagship
 
 | command | what it does |
 |---|---|
 | **`/keel:ship`** | Drive a GitHub issue end-to-end through the keel backbone (select → branch → implement → CI → review → test → merge → close → capture). The full flow: per-round review, inline `file:line` comments, `--delegate` / `--review-delegate`, `--review-comments inline\|summary`, `--reviewers N`, the `jury` gate, the timezone-aware merge window + `mkdir` merge lock, and vendor+model attribution. |
 | `/keel:ship-v2` | First-class compound-engineering variant of the ship workflow. It reuses the shared ship backbone for selection, worktree safety, CI, review gates, merge window, merge lock, closeout, and capture markers, while its `workflow_profile` marks `implement`, `review`, `fixloop`, and `capture` as compound step overrides. |
+| `keel status` | Read checkpoint + run ledger state and print a concise active/recent progress snapshot for long-running work blocks. Use `--json` for the machine-readable `keel.progress-status.v1` surface. |
 
 ## Per-step (standalone slices of the backbone)
 

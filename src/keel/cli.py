@@ -32,6 +32,7 @@ from . import (
     runtime,
     scaffold,
     ship,
+    status,
     window,
 )
 from . import config as cfg
@@ -529,6 +530,46 @@ def _cmd_capture_verify(args: argparse.Namespace) -> int:
                 f"{result['status']}  {result['reason'] or '-'}"
             )
     return 0 if report["status"] == "complete" else 1
+
+
+def _cmd_status(args: argparse.Namespace) -> int:
+    try:
+        config = cfg.load_config(args.path)
+    except FileNotFoundError:
+        print(f"no such config: {args.path}", file=sys.stderr)
+        return 1
+    except cfg.ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    checkpoint_path = checkpoint.resolve_path(args.root, config)
+    ledger_path = ledger.resolve_path(args.root, config)
+    try:
+        checkpoint_record = checkpoint.read_checkpoint(checkpoint_path)
+    except checkpoint.CheckpointError as exc:
+        print(f"invalid checkpoint {checkpoint_path}: {exc}", file=sys.stderr)
+        return 1
+    try:
+        ledger_records = ledger.read_records(ledger_path)
+    except ledger.LedgerError as exc:
+        print(f"invalid ledger {ledger_path}: {exc}", file=sys.stderr)
+        return 1
+    snapshot = status.build_status_snapshot(
+        config=config,
+        checkpoint_record=checkpoint_record,
+        ledger_records=ledger_records,
+    )
+    payload = {
+        "contract": status.status_contract_as_dict(config),
+        "checkpoint_path": str(checkpoint_path),
+        "ledger_path": str(ledger_path),
+        "snapshot": snapshot,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(status.render_status(snapshot))
+    return 0
 
 
 def _cmd_checkpoint(args: argparse.Namespace) -> int:
@@ -1351,6 +1392,13 @@ def build_parser() -> argparse.ArgumentParser:
                            help="merged PR number expected to have a capture marker")
     p_capture.add_argument("--json", action="store_true", help="emit structured JSON")
     p_capture.set_defaults(func=_cmd_capture_verify)
+
+    p_status = sub.add_parser("status", help="show active/recent run progress")
+    p_status.add_argument("path", help="path to project.yaml")
+    p_status.add_argument("--root", default=".",
+                          help="repo root for resolving checkpoint and ledger paths")
+    p_status.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_status.set_defaults(func=_cmd_status)
 
     p_checkpoint = sub.add_parser("checkpoint", help="read or write the resumable checkpoint")
     p_checkpoint.add_argument("path", help="path to project.yaml")
