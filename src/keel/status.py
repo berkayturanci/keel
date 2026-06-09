@@ -83,6 +83,13 @@ def render_status(snapshot: dict[str, Any]) -> str:
 def _state(checkpoint_record: dict[str, Any] | None, history: dict[str, Any]) -> str:
     if checkpoint_record is None:
         return "completed" if history["total"] else "no-active-run"
+    run_state = checkpoint_record.get("state", {})
+    if (
+        run_state.get("merge") == "merged"
+        and run_state.get("capture") not in {"not-started", "failed"}
+        and run_state.get("close") == "closed"
+    ):
+        return "completed"
     stop_reason = checkpoint_record.get("state", {}).get("stop_reason")
     if stop_reason:
         return "interrupted"
@@ -123,9 +130,13 @@ def _next_item(record: dict[str, Any] | None) -> dict[str, Any]:
         return {"issue": None, "source": "no-active-run"}
     queue = record.get("queue", {})
     active = queue.get("active_issue")
-    for issue in queue.get("issues", []):
-        if issue != active:
-            return {"issue": issue, "source": "checkpoint.queue"}
+    issues = queue.get("issues", [])
+    if active in issues:
+        active_index = issues.index(active)
+        if active_index + 1 < len(issues):
+            return {"issue": issues[active_index + 1], "source": "checkpoint.queue"}
+    elif issues:
+        return {"issue": issues[0], "source": "checkpoint.queue"}
     return {"issue": None, "source": "checkpoint.queue"}
 
 
@@ -160,11 +171,10 @@ def _history_item(record: dict[str, Any]) -> dict[str, Any]:
 def _item_state(record: dict[str, Any]) -> str:
     assessment = record.get("assessment", {})
     merge = assessment.get("merge", {})
+    if merge.get("action") == "skip":
+        return "skipped"
     if assessment.get("halted") or merge.get("action") == "defer":
         return "deferred"
     if record.get("verdict", {}).get("blocked") or merge.get("action") == "block":
         return "blocked"
-    capture_status = (record.get("capture") or {}).get("status")
-    if capture_status == "skipped":
-        return "skipped"
     return "shipped"

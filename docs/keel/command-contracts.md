@@ -53,7 +53,6 @@ Every contract includes:
 | `run_ledger` | Structured JSONL run-ledger storage and schema contract. |
 | `checkpoint` | Resumable checkpoint storage and resume/reconcile contract for ship and work-block runs. |
 | `capture` | Post-merge capture marker, skip vocabulary, fail-soft, recursion-guard, redaction, and verifier contract. |
-| `progress status` | Exposed by `keel status`; active/recent run snapshot read from checkpoint + run ledger. |
 | `side_effects` | Declared possible live-run side effects and whether dry-run mutates. |
 | `operator_consent` | Operator consent requirement, approved mutation scopes, delegated-agent scope, and consent record metadata. |
 | `issue_intake` | Present for work-owning flows (`ship`, `ship-v2`, `implement`, `overnight`); extracted objective, deliverable, acceptance criteria, readiness, questions, and ledger metadata. |

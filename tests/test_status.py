@@ -124,10 +124,51 @@ class TestStatusContract(unittest.TestCase):
         self.assertEqual(snapshot["status"], "interrupted")
         self.assertEqual(snapshot["current"]["wait_reason"], "rate-limit")
 
+    def test_completed_checkpoint_reports_completed(self):
+        snapshot = progress.build_status_snapshot(
+            config=_config(),
+            checkpoint_record=_checkpoint(
+                current_step="s12",
+                merge_state="merged",
+                capture_state="skipped",
+                close_state="closed",
+            ),
+            ledger_records=[],
+        )
+
+        self.assertEqual(snapshot["status"], "completed")
+
     def test_checkpoint_without_next_item_reports_none(self):
         snapshot = progress.build_status_snapshot(
             config=_config(),
             checkpoint_record=_checkpoint(issue_queue=[148], active_issue=148),
+            ledger_records=[],
+        )
+
+        self.assertEqual(snapshot["next"], {"issue": None, "source": "checkpoint.queue"})
+
+    def test_next_item_uses_item_after_active_issue(self):
+        snapshot = progress.build_status_snapshot(
+            config=_config(),
+            checkpoint_record=_checkpoint(issue_queue=[140, 148, 146], active_issue=148),
+            ledger_records=[],
+        )
+
+        self.assertEqual(snapshot["next"], {"issue": 146, "source": "checkpoint.queue"})
+
+    def test_next_item_uses_first_issue_when_active_is_absent(self):
+        snapshot = progress.build_status_snapshot(
+            config=_config(),
+            checkpoint_record=_checkpoint(issue_queue=[140, 146], active_issue=148),
+            ledger_records=[],
+        )
+
+        self.assertEqual(snapshot["next"], {"issue": 140, "source": "checkpoint.queue"})
+
+    def test_empty_queue_reports_no_next_item(self):
+        snapshot = progress.build_status_snapshot(
+            config=_config(),
+            checkpoint_record=_checkpoint(issue_queue=[], active_issue=148),
             ledger_records=[],
         )
 
@@ -139,6 +180,7 @@ class TestStatusContract(unittest.TestCase):
             _ledger_record(issue=2, pr=20, action="defer"),
             _ledger_record(issue=3, pr=30, action="block", blocked=True),
             _ledger_record(issue=4, pr=40, capture_status="skipped"),
+            _ledger_record(issue=5, pr=50, action="skip"),
         ]
 
         snapshot = progress.build_status_snapshot(
@@ -149,7 +191,7 @@ class TestStatusContract(unittest.TestCase):
 
         self.assertEqual(snapshot["status"], "completed")
         self.assertEqual(snapshot["history"]["counts"], {
-            "shipped": 1,
+            "shipped": 2,
             "blocked": 1,
             "deferred": 1,
             "skipped": 1,
