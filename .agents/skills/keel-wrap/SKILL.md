@@ -107,4 +107,4 @@ cross-session morning queue for `/keel:morning`. Read `contract.run_ledger.path`
 the recap when present. Missing ledger files are an empty history; malformed records block
 the recap until the operator resolves the corrupted ledger.
 
-<!-- keel-generated: surface=skills command=wrap keel_version=0.8.0 source_sha256=4241f2caf9598a9d1642731a28325bb6c7e456fd20ac1877100d55e507152c8b generated_sha256=5ba5386cf17923d20f51774691282ebd76b38c9a91af00231adaa8a135719341 -->
+<!-- keel-generated: surface=skills command=wrap keel_version=0.9.0 source_sha256=4241f2caf9598a9d1642731a28325bb6c7e456fd20ac1877100d55e507152c8b generated_sha256=5ba5386cf17923d20f51774691282ebd76b38c9a91af00231adaa8a135719341 -->

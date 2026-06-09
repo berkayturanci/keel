@@ -6,14 +6,41 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-06-09
+
 ### Added
 - **Daytime work-block command** — `keel work-block` / `/keel:work-block` now exposes a
   first-class daytime multi-issue work-block preflight contract. It accepts explicit issue
   numbers or a queue selector, hands each ready item to `ship`, refreshes issue readiness
   between items, preserves per-issue worktree isolation, consent, capture, run-ledger, merge
   lock, and merge-window invariants, and reports shipped / PR-open-not-merged / deferred /
-  blocked / skipped / needs-input buckets. `overnight` now references the same
-  `keel.work-block.v1` primitive instead of owning a parallel queue contract.
+  blocked / skipped / needs-input buckets.
+- **Command step evidence** — every packaged `/keel:` adapter now carries a "Command step
+  evidence" contract requiring observable per-step work output, so a command run leaves a
+  visible trail instead of opaque prose. `/keel:ship` additionally requires a meaningful
+  draft-PR body (Context / Changes Made / Testing / Docs Impact sections plus a closing issue
+  reference) and public PR evidence for its review verdicts and jury summaries (posted via a
+  body file). Closes #162.
+- **Capture artifact redaction** — durable capture records are sanitized before persistence,
+  stripping private-key blocks, bearer / GitHub tokens, credential-bearing URLs, and
+  token / password assignments. Projects can extend the deny set without leaking
+  project-specifics into core via `policy_pack.capture_redaction.deny_patterns`. An invalid
+  redaction policy skips the durable ledger append with an `invalid-policy` reason rather than
+  persisting unsanitized data, and the audit block records rule ids and match counts only —
+  never the redacted secret. Closes #142.
+- **First-class post-merge capture** — a consumer-neutral `keel.capture.v1` contract with the
+  stable marker `compound-learning: pr=<N> status=<status>`, exposed as `contract.capture` in
+  `keel plan --json` and nested under the run-ledger contract. `ship_run` ledger records now
+  store the capture marker metadata, offline session-end verification is available via
+  `keel capture-verify`, and the flow has a recursion guard plus fail-soft semantics (a
+  capture failure after a successful merge never reverts the merge). Projects own what to
+  learn and where it goes through the `capture` / `post-merge` Lego extensions or policy.
+  Closes #134.
+- **Progress snapshot** — `keel status --root [--json]` emits a `keel.progress-status.v1`
+  last-safe-boundary snapshot. It reads the active checkpoint (current issue / step, PR,
+  branch, worktree, wait reason, next queued issue) and the run ledger (shipped / blocked /
+  deferred / skipped counts), reporting the last safe boundary known to keel. It is a
+  checkpoint + ledger snapshot, not a live process stream, and is consumer-neutral. Closes #148.
 - **Deterministic closure-comment renderer** — keel core now renders the s11 "ship outcome"
   comment from the structured `ship_run` ledger record via the pure
   `keel.closure.render_closure_comment` function, exposed under `result.closure_comment` of
@@ -32,6 +59,11 @@ All notable changes to keel are documented here. The format follows
   `.adoc`. `.txt` is intentionally excluded (false-positive prone, e.g. `requirements.txt`);
   text docs are covered by the `docs/` directory rule. No ledger-schema or project-config
   changes.
+
+### Changed
+- **Shared work-block primitive** — `overnight` now references the same `keel.work-block.v1`
+  primitive exposed by the new `work-block` command instead of owning a parallel queue
+  contract.
 
 ## [0.8.0] — 2026-06-09
 

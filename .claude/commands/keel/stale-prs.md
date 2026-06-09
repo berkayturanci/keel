@@ -153,4 +153,4 @@ Print a summary table: PR · title · bucket · action, where action is one of `
 - **Never modify a PR's tree** beyond the merge commit that brings in `base_branch`.
 - Fail-soft per PR; deterministic ordering.
 
-<!-- keel-generated: surface=claude command=stale-prs keel_version=0.8.0 source_sha256=d2784174b2a25febccd6a6eada629d6d2abfd7020b4faa6dab1efbc5ee5007e3 generated_sha256=d2784174b2a25febccd6a6eada629d6d2abfd7020b4faa6dab1efbc5ee5007e3 -->
+<!-- keel-generated: surface=claude command=stale-prs keel_version=0.9.0 source_sha256=d2784174b2a25febccd6a6eada629d6d2abfd7020b4faa6dab1efbc5ee5007e3 generated_sha256=d2784174b2a25febccd6a6eada629d6d2abfd7020b4faa6dab1efbc5ee5007e3 -->
