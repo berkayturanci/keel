@@ -9,10 +9,11 @@ dispatch).
 
 Then, for the task at hand:
 
-- **Driving an issue end-to-end** (`/keel:ship`): the adapter is
-  [`adapters/claude/keel-ship.md`](adapters/claude/keel-ship.md). It is
-  project-neutral and reads every keel-specific value from `projects/keel.yaml` via
-  the `keel` CLI.
+- **Driving an issue end-to-end** (`/keel:ship`): the adapter source is
+  [`src/keel/adapters/commands/ship.md`](src/keel/adapters/commands/ship.md),
+  generated into the plugin `commands/`, the installed `.claude/commands/keel/`, and
+  `.agents/skills/keel-*`. It is project-neutral and reads every keel-specific value
+  from `projects/keel.yaml` via the `keel` CLI.
 - **Architecture / design questions**:
   [`docs/proposals/keel-architecture.md`](docs/proposals/keel-architecture.md).
 - **Config / extensions / CLI reference**: [`docs/keel/`](docs/keel/).

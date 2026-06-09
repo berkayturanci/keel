@@ -101,10 +101,11 @@ the consistency tests fail.
 
 ## Agents (keel-specific)
 
-keel's agentic steps are driven by the **keel:ship adapter** (`adapters/claude/keel-ship.md`
-for Claude Code; a ~20-line re-skin per other host). The adapter is project-neutral — it
-reads every project specific from `projects/keel.yaml` (this repo's own config) via the
-`keel` CLI and never hardcodes a value. For keel itself:
+keel's agentic steps are driven by the **keel:ship adapter**, whose project-neutral source
+lives in `src/keel/adapters/commands/` and is generated per host (the plugin `commands/`,
+the installed `.claude/commands/keel/`, and `.agents/skills/keel-*`). The adapter is
+project-neutral — it reads every project specific from `projects/keel.yaml` (this repo's own
+config) via the `keel` CLI and never hardcodes a value. For keel itself:
 
 - **Implementer** — resolved from `knobs.implementer_agents` by the issue's role; keel
   maps `core → backend-developer`. Overridable per run with `--delegate`; defaults to the
@@ -151,8 +152,8 @@ src/keel/            core package (config, model, extensions, findings, gates, o
 src/keel/schema/     project.schema.json (bundled, package-data)
 projects/*.yaml      seed configs — one per consumer project (keel itself dogfoods via projects/keel.yaml)
 tests/               unit suite (mirrors src/keel modules)
-adapters/            thin, project-neutral invocation adapters (e.g. adapters/claude/keel-ship.md)
-commands/ agents/ gemini-agents/   workflow assets rendered per agent (mid-migration)
+src/keel/adapters/commands/   project-neutral adapter source (e.g. ship.md), generated per host
+commands/            generated plugin command surface (.claude/commands/keel/, .agents/skills/keel-*)
 docs/                docs (docs/keel/*) + proposals (docs/proposals/*)
 website/             static site + live coverage report (make site)
 ```

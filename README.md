@@ -246,7 +246,6 @@ src/keel/schema/     project.schema.json (bundled)
 .keel/project.yaml   keel's own dogfood consumer config
 projects/*.yaml      example configs and the keel seed copy
 src/keel/adapters/   the packaged /keel:<command> bodies (install-adapter: claude commands + shared skills)
-adapters/            reference adapter (claude/keel-ship.md) + the adapter model (README)
 website/             static site + coverage report (make site)
 tests/               unit suite
 docs/                docs + proposals

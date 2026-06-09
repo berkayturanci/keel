@@ -10,7 +10,6 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 CORE_WORKFLOW_SURFACES = (
     REPO_ROOT / "src/keel/adapters/commands",
-    REPO_ROOT / "adapters",
     REPO_ROOT / "commands",
     REPO_ROOT / "GEMINI.md",
     REPO_ROOT / "docs/keel/commands.md",

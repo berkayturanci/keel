@@ -6,6 +6,12 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Removed
+- Removed the stale legacy `adapters/` directory; the canonical adapter source is
+  `src/keel/adapters/commands/` (generated into the plugin `commands/`,
+  `.claude/commands/keel/`, and `.agents/skills/keel-*`). Docs (`CLAUDE.md`, `AGENTS.md`,
+  `README.md`) repointed accordingly.
+
 ## [1.0.1] — 2026-06-09
 
 ### Fixed
