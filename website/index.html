@@ -98,7 +98,7 @@
 <pre>pip install keel-workflow
 # provides the `keel` command
 
-pip install "git+https://github.com/berkayturanci/keel@v0.6.1"
+pip install "git+https://github.com/berkayturanci/keel@v1.0.0"
 # or pin an existing git tag</pre>
 
 <h2>Quickstart</h2>
@@ -144,7 +144,7 @@ pip install "git+https://github.com/berkayturanci/keel@v0.6.1"
 <p class="muted">Every field and nested parameter is documented in <a href="https://github.com/berkayturanci/keel/blob/main/docs/keel/configuration.md">docs/keel/configuration.md</a>. Unknown keys are rejected by the bundled schema, so the reference is intentionally strict.</p>
 
 <h2>Workflow commands (<code>/keel:&lt;command&gt;</code>)</h2>
-<p class="muted">16 agentic workflows ship with the package. <code>keel install-adapter claude</code> installs native Claude commands; <code>keel install-adapter skills</code> installs <em>one shared</em> skill set under <code>.agents/skills/keel-&lt;command&gt;/</code> that every non-Claude agent (Codex, Antigravity, Gemini) reads. Each is project-neutral — behaviour comes from that repo's <code>.keel/project.yaml</code>. Full reference: <a href="https://github.com/berkayturanci/keel/blob/main/docs/keel/commands.md">docs/keel/commands.md</a>.</p>
+<p class="muted">17 agentic workflows ship with the package. <code>keel install-adapter claude</code> installs native Claude commands; <code>keel install-adapter skills</code> installs <em>one shared</em> skill set under <code>.agents/skills/keel-&lt;command&gt;/</code> that every non-Claude agent (Codex, Antigravity, Gemini) reads. Each is project-neutral — behaviour comes from that repo's <code>.keel/project.yaml</code>. Full reference: <a href="https://github.com/berkayturanci/keel/blob/main/docs/keel/commands.md">docs/keel/commands.md</a>.</p>
 <table>
   <tr><th>command</th><th>what</th></tr>
   <tr><td><code>/keel:ship</code></td><td>drive an issue end-to-end (select → branch → implement → CI → review → test → merge → close) — per-round review, inline comments, delegation, jury gate, merge window + lock, attribution</td></tr>

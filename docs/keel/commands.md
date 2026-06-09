@@ -1,6 +1,6 @@
 # keel commands (`/keel:<command>`)
 
-keel ships **16** agentic workflow commands with the package. Install them with
+keel ships **17** agentic workflow commands with the package. Install them with
 [`keel install-adapter`](cli.md#keel-install-adapter-target---root-dir---force):
 
 ```bash

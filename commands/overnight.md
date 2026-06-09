@@ -185,4 +185,4 @@ When stopped, write the session report immediately, even if partial.
 Never merge outside the window · merge lock · fail-soft per issue (one failure
 never aborts the loop) · attribute the effective agents (vendor + base model).
 
-<!-- keel-generated: surface=plugin command=overnight keel_version=0.9.0 source_sha256=ae1c729a954f1881963e222406d6d7e55c8f217cb40e241282216585b2cb9d64 generated_sha256=ae1c729a954f1881963e222406d6d7e55c8f217cb40e241282216585b2cb9d64 -->
+<!-- keel-generated: surface=plugin command=overnight keel_version=1.0.0 source_sha256=ae1c729a954f1881963e222406d6d7e55c8f217cb40e241282216585b2cb9d64 generated_sha256=ae1c729a954f1881963e222406d6d7e55c8f217cb40e241282216585b2cb9d64 -->

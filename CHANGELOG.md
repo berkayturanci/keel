@@ -6,6 +6,20 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.0.0] — 2026-06-09
+
+### Added
+- **1.0 work-ownership release line** — Keel now promotes the complete v1 backbone:
+  consent, issue intake, run ledger, checkpointing, status snapshots, work blocks,
+  capture, redaction, reconcile hooks, learning-quality gates, capture-health visibility,
+  and Claude plugin packaging.
+
+### Changed
+- **Release readiness alignment** — package metadata, plugin metadata, dogfood configs,
+  examples, README, website, and docs now point at the `1.0.0` / `^1.0` line.
+- **Stable command surface** — public docs now describe the full 17-command adapter set,
+  including `/keel:work-block`.
+
 ## [0.9.0] — 2026-06-09
 
 ### Added

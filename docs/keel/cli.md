@@ -294,7 +294,7 @@ Example output:
 
 ```
 keel plan — example-flutter
-  base_branch: main   core_version: ^0.7
+  base_branch: main   core_version: ^1.0
   backbone:
      s0  config
      ...

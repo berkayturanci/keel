@@ -15,22 +15,29 @@ project intentionally publishes as `keel-workflow`.
 
 ## Current Release State
 
-As of 2026-06-08, production PyPI has `keel-workflow==0.7.0` owned by `berkayturanci`.
-The release contains both expected distributions:
+As of 2026-06-09, the latest production PyPI release before the `1.0.0` tag is
+`keel-workflow==0.9.0`, owned by `berkayturanci`. Verify the current state before every
+new release with:
 
-- `keel_workflow-0.7.0-py3-none-any.whl`
-- `keel_workflow-0.7.0.tar.gz`
+```bash
+python -m pip index versions keel-workflow
+```
 
-GitHub Release `v0.7.0` also contains:
+A production release must contain both expected distributions:
+
+- `keel_workflow-<version>-py3-none-any.whl`
+- `keel_workflow-<version>.tar.gz`
+
+The matching GitHub Release must also contain:
 
 - the wheel
 - the source distribution
 - `sbom.cdx.json`
 - `SHA256SUMS`
 
-The PyPI wheel and source-distribution SHA256 digests match the GitHub Release asset digests.
-TestPyPI does not currently contain `keel-workflow`; use the rehearsal flow below before the
-next production publish if TestPyPI trusted publishing has been configured.
+The PyPI wheel and source-distribution SHA256 digests must match the GitHub Release asset
+digests. TestPyPI does not currently contain `keel-workflow`; use the rehearsal flow below
+before the next production publish if TestPyPI trusted publishing has been configured.
 
 ## Preflight Checklist
 

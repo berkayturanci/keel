@@ -110,7 +110,7 @@ keel is a Python (≥3.11) package with one runtime dependency (PyYAML):
 
 ```bash
 pip install keel-workflow                                     # from PyPI (provides the `keel` command)
-pip install "git+https://github.com/berkayturanci/keel@v0.7.0"  # or pin an existing git tag
+pip install "git+https://github.com/berkayturanci/keel@v1.0.0"  # or pin an existing git tag
 ```
 
 In a cloud agent session, install it from a `SessionStart` hook (or add keel to the
@@ -134,7 +134,7 @@ gates/extensions slotted in — exactly what a dry-run executes:
 
 ```
 keel plan — example-flutter
-  base_branch: main   core_version: ^0.7
+  base_branch: main   core_version: ^1.0
   backbone:
      s4  implement  [agent]
      ...
@@ -184,7 +184,7 @@ the adapters are the agentic flows (per-round review, inline comments, delegatio
 
 ## Dogfooding
 
-keel drives **itself** from `.keel/project.yaml` using the latest `^0.7` core contract
+keel drives **itself** from `.keel/project.yaml` using the latest `^1.0` core contract
 (Python, `make test` + `make lint` gates), and CI runs keel on keel-core on every push.
 `projects/keel.yaml` remains a seed copy and is tested to stay in sync with the dogfood
 config.
@@ -215,7 +215,7 @@ If a step's gate fails, keel blocks its own merge — the same backbone every co
 - [`docs/keel/command-contracts.md`](docs/keel/command-contracts.md) — structured JSON plan/result contracts for adapters
 - [`docs/keel/operator-consent.md`](docs/keel/operator-consent.md) — live-run operator consent scopes and delegated-agent scope rules
 - [`docs/keel/cli.md`](docs/keel/cli.md) — CLI reference
-- [`docs/keel/commands.md`](docs/keel/commands.md) — the 16 `/keel:<command>` workflows, each with its description
+- [`docs/keel/commands.md`](docs/keel/commands.md) — the 17 `/keel:<command>` workflows, each with its description
 - [`docs/keel/cutover.md`](docs/keel/cutover.md) — staged guide to retire a project's copied command bodies (install → verify → retire), losing nothing
 - [`docs/keel/comparison.md`](docs/keel/comparison.md) — competitive landscape (Mergify, GitHub merge queue, Qodo/PR-Agent, CodeRabbit, Sweep, OpenHands, Danger, …) + ranked borrow-ideas
 - [`docs/keel/github-actions.md`](docs/keel/github-actions.md) — run keel live on GitHub's free runner (the `keel-ship` workflow)
