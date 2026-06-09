@@ -6,6 +6,18 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.0.1] — 2026-06-09
+
+### Fixed
+- **Ship learning-capture policy wiring** — `keel ship` now passes the loaded project
+  config, existing ledger records, issue title, and issue labels into the ship run ledger
+  record builder. Learning-quality decisions configured under
+  `policy_pack.capture.learning` now take effect in the production CLI flow, duplicate
+  suppression compares against existing ledger history, and the learning fingerprint uses
+  the intended issue context.
+- **Learning defer reason hygiene** — defer-mode learning decisions now keep the reason
+  policy-owned instead of propagating raw operator capture notes.
+
 ## [1.0.0] — 2026-06-09
 
 ### Added

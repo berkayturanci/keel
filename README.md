@@ -110,7 +110,7 @@ keel is a Python (≥3.11) package with one runtime dependency (PyYAML):
 
 ```bash
 pip install keel-workflow                                     # from PyPI (provides the `keel` command)
-pip install "git+https://github.com/berkayturanci/keel@v1.0.0"  # or pin an existing git tag
+pip install "git+https://github.com/berkayturanci/keel@v1.0.1"  # or pin an existing git tag
 ```
 
 In a cloud agent session, install it from a `SessionStart` hook (or add keel to the
