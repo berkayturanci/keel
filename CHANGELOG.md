@@ -16,6 +16,13 @@ All notable changes to keel are documented here. The format follows
   a parser source. The `ship` adapter s11 step now posts this rendered markdown verbatim
   instead of hand-written prose. See
   [`docs/keel/command-contracts.md`](docs/keel/command-contracts.md).
+- **`Docs touched` line in the closure comment** — the deterministic closure-comment renderer
+  (`keel.closure.render_closure_comment`) now emits a `- **Docs touched:** yes|no` line
+  directly after the Changed files block, and the `closure_comment` contract lists the new
+  `docs_touched` section. The value is derived deterministically and consumer-neutrally from
+  the ledger's existing `changes.files`: a file counts as docs when any path component equals
+  `docs` (case-insensitive) or its suffix is one of `.md`, `.mdx`, `.markdown`, `.rst`,
+  `.adoc`, `.txt`. No ledger-schema or project-config changes.
 
 ## [0.8.0] — 2026-06-09
 

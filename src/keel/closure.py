@@ -19,6 +19,12 @@ CLOSURE_SCHEMA_VERSION = "keel.closure-comment.v1"
 HEADING = "Ship outcome"
 JURY_LABEL = "AI Jury"
 
+# Project-neutral documentation detection. A changed file counts as docs when any
+# path component equals ``docs`` (case-insensitive) or its suffix is a documentation
+# format. Custom docs paths are a project-config/policy concern, not core: keep this
+# set generic so the consumer-neutrality guard holds.
+_DOC_SUFFIXES = frozenset({".md", ".mdx", ".markdown", ".rst", ".adoc", ".txt"})
+
 
 def contract_as_dict() -> dict[str, Any]:
     """Return the stable closure-comment contract consumed by ship adapters."""
@@ -36,6 +42,7 @@ def contract_as_dict() -> dict[str, Any]:
             "tester",
             "pull_request",
             "changed_files",
+            "docs_touched",
             "capture",
             "run_id",
         ],
@@ -61,6 +68,7 @@ def render_closure_comment(record: dict[str, Any]) -> str:
     lines.append(f"- **Tester:** {_value(actors.get('tester'))}")
     lines.append(f"- **PR:** {_pull_request(record.get('pull_request'))}")
     lines.extend(_changed_files(record.get("changes")))
+    lines.append(f"- **Docs touched:** {_docs_touched(record.get('changes'))}")
     lines.append(f"- **Capture:** {_capture(record.get('capture'))}")
     lines.append(f"- **Run id:** {_value(record.get('run_id'))}")
     return "\n".join(lines) + "\n"
@@ -108,6 +116,27 @@ def _changed_files(changes: Any) -> list[str]:
     lines = [f"- **Changed files:** {count}"]
     lines.extend(f"  - `{file}`" for file in files)
     return lines
+
+
+def _docs_touched(changes: Any) -> str:
+    """Return ``"yes"`` when any changed file is documentation, else ``"no"``.
+
+    Derived deterministically and consumer-neutrally from ``changes.files``; the
+    ledger schema is unchanged and no project config is read.
+    """
+    block = changes if isinstance(changes, dict) else {}
+    files = block.get("files")
+    files = files if isinstance(files, list) else []
+    return "yes" if any(_is_doc(file) for file in files) else "no"
+
+
+def _is_doc(file: Any) -> bool:
+    if not isinstance(file, str):
+        return False
+    lowered = file.lower()
+    if any(part == "docs" for part in lowered.replace("\\", "/").split("/")):
+        return True
+    return any(lowered.endswith(suffix) for suffix in _DOC_SUFFIXES)
 
 
 def _capture(capture: Any) -> str:

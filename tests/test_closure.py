@@ -66,6 +66,7 @@ class TestRenderClosureComment(unittest.TestCase):
             "**Tester:**",
             "**PR:**",
             "**Changed files:**",
+            "**Docs touched:**",
             "**Capture:**",
             "**Run id:**",
         ):
@@ -193,6 +194,57 @@ class TestRenderClosureComment(unittest.TestCase):
         rendered = closure.render_closure_comment(record)
         self.assertNotIn("**Target:**", rendered)
 
+    def test_docs_touched_yes_in_full_record(self):
+        # The full fixture mixes code + a docs/... path.
+        rendered = closure.render_closure_comment(_record())
+        self.assertIn("- **Docs touched:** yes", rendered)
+        # Stable position: directly after the Changed files block.
+        self.assertRegex(rendered, r"  - `docs/keel/cli.md`\n- \*\*Docs touched:\*\* yes\n")
+
+    def test_docs_touched_no_code_only(self):
+        record = _record(changes={"file_count": 1, "files": ["src/keel/closure.py"]})
+        self.assertIn("- **Docs touched:** no", closure.render_closure_comment(record))
+
+    def test_docs_touched_docs_only(self):
+        record = _record(changes={"file_count": 1, "files": ["docs/keel/cli.md"]})
+        self.assertIn("- **Docs touched:** yes", closure.render_closure_comment(record))
+
+    def test_docs_touched_detected_by_extension(self):
+        # No `docs` dir component; matched purely on the documentation suffix.
+        record = _record(changes={"file_count": 1, "files": ["README.md"]})
+        self.assertIn("- **Docs touched:** yes", closure.render_closure_comment(record))
+
+    def test_docs_touched_detected_by_docs_dir(self):
+        # Matched on a `docs` path component despite a non-doc suffix.
+        record = _record(changes={"file_count": 1, "files": ["DOCS/architecture.png"]})
+        self.assertIn("- **Docs touched:** yes", closure.render_closure_comment(record))
+
+    def test_docs_touched_various_doc_suffixes(self):
+        for name in ("guide.mdx", "spec.markdown", "manual.rst", "page.adoc", "notes.txt"):
+            record = _record(changes={"file_count": 1, "files": [name]})
+            self.assertIn(
+                "- **Docs touched:** yes",
+                closure.render_closure_comment(record),
+                msg=name,
+            )
+
+    def test_docs_touched_no_when_no_changes_block(self):
+        record = _record()
+        del record["changes"]
+        self.assertIn("- **Docs touched:** no", closure.render_closure_comment(record))
+
+    def test_docs_touched_no_when_files_empty(self):
+        record = _record(changes={"file_count": 0, "files": []})
+        self.assertIn("- **Docs touched:** no", closure.render_closure_comment(record))
+
+    def test_docs_touched_no_when_files_not_a_list(self):
+        record = _record(changes={"file_count": None, "files": None})
+        self.assertIn("- **Docs touched:** no", closure.render_closure_comment(record))
+
+    def test_docs_touched_ignores_non_string_file_entries(self):
+        record = _record(changes={"file_count": 1, "files": [123]})
+        self.assertIn("- **Docs touched:** no", closure.render_closure_comment(record))
+
     def test_no_run_id(self):
         record = _record(run_id=None)
         self.assertIn("- **Run id:** none", closure.render_closure_comment(record))
@@ -209,6 +261,11 @@ class TestClosureContract(unittest.TestCase):
         self.assertEqual(contract["jury_label"], closure.JURY_LABEL)
         self.assertIn("implementer", contract["sections"])
         self.assertIn("capture", contract["sections"])
+        self.assertIn("docs_touched", contract["sections"])
+        sections = contract["sections"]
+        self.assertEqual(
+            sections.index("docs_touched"), sections.index("changed_files") + 1
+        )
 
 
 if __name__ == "__main__":

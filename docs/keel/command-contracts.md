@@ -161,7 +161,14 @@ The block records:
 
 - `schema_version: keel.closure-comment.v1`
 - `heading` (`Ship outcome`) and the ordered `sections`: implementer, reviewers, tester,
-  pull_request, changed_files, capture, run_id
+  pull_request, changed_files, docs_touched, capture, run_id
+- the `docs_touched` section renders `- **Docs touched:** yes|no` directly after the
+  Changed files block. Its value is derived deterministically and consumer-neutrally from
+  `changes.files`: a file counts as documentation when any path component equals `docs`
+  (case-insensitive) or its suffix is one of `.md`, `.mdx`, `.markdown`, `.rst`, `.adoc`,
+  `.txt`. The set is intentionally project-neutral; custom documentation paths are a
+  project-config/policy concern, not a core renderer concern. Missing/empty/non-list
+  `files` (or a missing `changes` block) render `no`
 - `source: run-ledger ship_run record`
 - `deterministic: true`, `consumer_neutral: true`, `mirror_not_parser: true`
 - `renderer: keel.closure.render_closure_comment`

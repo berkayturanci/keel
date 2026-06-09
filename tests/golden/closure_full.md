@@ -9,5 +9,6 @@
 - **Changed files:** 2
   - `src/keel/closure.py`
   - `docs/keel/cli.md`
+- **Docs touched:** yes
 - **Capture:** applied (capture hook completed)
 - **Run id:** RUN-170
