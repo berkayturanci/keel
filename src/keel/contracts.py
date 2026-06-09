@@ -25,6 +25,7 @@ from . import (
     model,
     orchestrator,
     runtime,
+    workblock,
 )
 from . import config as cfg
 from . import ship as ship_decisions
@@ -56,6 +57,8 @@ _BASE_SIDE_EFFECTS: dict[str, tuple[str, ...]] = {
     "review-cycle": ("file_edit", "comments", "reviews", "git_commit", "git_push"),
     "morning": ("issue_read", "pr_read", "report_write"),
     "wrap": ("git_commit", "git_push", "pull_request", "session_recap"),
+    "work-block": ("git_branch", "git_push", "pull_request", "comments", "reviews", "merge",
+                   "deferral_queue", "session_report"),
     "overnight": ("git_branch", "git_push", "pull_request", "comments", "reviews", "merge",
                   "deferral_queue", "session_report"),
     "implement": ("git_worktree", "git_branch", "file_edit", "git_commit", "git_push",
@@ -248,7 +251,7 @@ def build_command_contract(
             config=config,
             transport=transport,
         )
-    if command in {"wrap", "overnight"}:
+    if command in {"wrap", "work-block", "overnight"}:
         contract["session_contract"] = session_contract_as_dict(
             command=command,
             config=config,
@@ -260,7 +263,7 @@ def build_command_contract(
             config=config,
             transport=transport,
         )
-    if command in {"ship", "ship-v2", "pr-loop", "review-cycle", "overnight"}:
+    if command in {"ship", "ship-v2", "pr-loop", "review-cycle", "work-block", "overnight"}:
         contract["review_merge_contract"] = ship_decisions.resolve_review_contract(
             tier=review_tier,
             reviewer_override=reviewer_override,
@@ -405,12 +408,34 @@ def workflow_profile(command: str) -> dict[str, Any]:
             "inherits": "ship",
             "first_class_variant": True,
             "shared_primitives": [
+                "work_block",
                 "merge_window",
                 "ship_handoff",
                 "priority_queue",
                 "per_issue_worktree",
                 "no_night_merge",
                 "blocker_policy",
+                "session_report",
+                "deferral_queue",
+                "stop_conditions",
+                "operator_consent",
+            ],
+            "step_overrides": {},
+        }
+    if command == "work-block":
+        return {
+            "name": "work-block",
+            "profile": "session-work-block-daytime",
+            "inherits": "ship",
+            "first_class_variant": True,
+            "shared_primitives": [
+                "work_block",
+                "queue_snapshot",
+                "readiness_refresh",
+                "ship_handoff",
+                "per_issue_worktree",
+                "operator_between_item_control",
+                "progress_snapshot",
                 "session_report",
                 "deferral_queue",
                 "stop_conditions",
@@ -844,7 +869,7 @@ def standalone_result_as_dict(
                 "live_work_owner": "adapter-or-extension-after-consent",
             },
         }
-    if command in {"wrap", "overnight"}:
+    if command in {"wrap", "work-block", "overnight"}:
         return {
             "command": command,
             "target": target,
@@ -1047,7 +1072,7 @@ def session_contract_as_dict(
     config: cfg.ProjectConfig,
     transport: github_transport.GitHubTransport | None = None,
 ) -> dict[str, Any]:
-    """Project-neutral session workflow contract for ``wrap`` and ``overnight``."""
+    """Project-neutral session workflow contract for session/work-block commands."""
     pack = config.policy_pack or {}
     reports = pack.get("reports") if isinstance(pack.get("reports"), dict) else {}
     github = transport.as_dict() if transport is not None else {}
@@ -1068,6 +1093,12 @@ def session_contract_as_dict(
             "source_of_truth_doc": config.knobs.sot_doc,
         },
     }
+    if command in {"work-block", "overnight"}:
+        base["work_block"] = workblock.contract_as_dict(
+            config=config,
+            mode="overnight" if command == "overnight" else "daytime",
+            transport=github,
+        )
     if command == "wrap":
         base["wrap"] = {
             "workspace_preflight": {
@@ -1096,6 +1127,35 @@ def session_contract_as_dict(
                 else "unconfigured",
             },
         }
+    elif command == "work-block":
+        base["daytime"] = {
+            "mode_source": {
+                "command": "keel work-block",
+                "shared_with_overnight": True,
+            },
+            "queue": {
+                "source": "explicit issue numbers or project queue selector",
+                "deterministic_order": (
+                    "explicit numbers keep their provided order; selectors sort by policy"
+                ),
+            },
+            "ship_handoff": {
+                "command": "ship",
+                "passes_operator_consent_scope": True,
+                "per_issue_worktree": True,
+                "refreshes_readiness_between_issues": True,
+            },
+            "operator_control": {
+                "between_items": True,
+                "stop_on_consent_gap": True,
+                "stop_on_needs_input": True,
+            },
+            "report": {
+                "day_key": "session",
+                "day_path": reports.get("session"),
+                "status": "configured" if reports.get("session") else "unconfigured",
+            },
+        }
     elif command == "overnight":
         base["overnight"] = {
             "mode_source": {
@@ -1119,6 +1179,7 @@ def session_contract_as_dict(
                 "command": "ship",
                 "passes_operator_consent_scope": True,
                 "per_issue_worktree": True,
+                "shared_work_block_contract": True,
             },
             "report": {
                 "night_key": "overnight",

@@ -58,7 +58,7 @@ Every contract includes:
 | `operator_consent` | Operator consent requirement, approved mutation scopes, delegated-agent scope, and consent record metadata. |
 | `issue_intake` | Present for work-owning flows (`ship`, `ship-v2`, `implement`, `overnight`); extracted objective, deliverable, acceptance criteria, readiness, questions, and ledger metadata. |
 | `morning_contract` | Present for `morning`; project-neutral daily-brief sections, health providers, report destinations, priority sources, and deferral queue metadata. |
-| `session_contract` | Present for `wrap` and `overnight`; project-neutral linked-worktree, gate, PR, merge-window, report, deferral, and ship-handoff metadata. |
+| `session_contract` | Present for `wrap`, `work-block`, and `overnight`; project-neutral linked-worktree, gate, PR, merge-window, report, deferral, work-block, and ship-handoff metadata. |
 | `scan_contract` | Present for `regression` and `review-all-day`; project-neutral scan target, scope, dedupe, issue-write, reviewer-isolation, and final-report metadata. |
 | `reporting_contract` | Present for `coverage`, `deps-audit`, and `flake-audit`; project-neutral codename anchors, idempotency/dedupe rules, dry-run write behavior, degradation modes, and ship handoff metadata. |
 
@@ -219,7 +219,7 @@ local path with `policy_pack.reports.checkpoint`. The contract records:
 - `format: json`
 - `path` and `path_source`
 - `missing_handling: no-checkpoint`
-- write owners (`ship`, `ship-v2`, `overnight`)
+- write owners (`ship`, `ship-v2`, `work-block`, `overnight`)
 - the `checkpoint` reader/writer command and the `resume` dry-run command
 - every backbone step id, whether it is a safe resume boundary, and the idempotent
   resume action for that boundary
@@ -240,6 +240,32 @@ return `status: no-checkpoint`. Ambiguous state, such as a checkpoint that names
 worktree that live state reports missing, returns `status: ambiguous`, exits non-zero,
 and includes the reconcile action to perform before retrying. If a PR is already merged,
 resume moves to capture or closeout and does not repeat the merge.
+
+## Work-block block
+
+`work-block` and `overnight` session contracts include
+`session_contract.work_block`, the shared queue primitive for multi-issue runs. It keeps the
+daytime and overnight flows from duplicating queue-driving logic.
+
+The block records:
+
+- `schema_version: keel.work-block.v1`
+- `mode`: `daytime` for `/keel:work-block`, `overnight` for `/keel:overnight`
+- queue inputs: explicit issue numbers or a project queue selector
+- deterministic ordering: explicit issue numbers keep the provided order; selectors sort by
+  project policy
+- readiness refresh before each child `ship` handoff
+- per-issue isolated branch/worktree lifecycle
+- inherited child `ship` invariants: consent scope, capture contract, run ledger append,
+  merge lock, and merge-window recheck
+- final report buckets: shipped, PR-opened-not-merged, deferred, blocked, skipped, and
+  needs-input
+- stop conditions including consent gaps, needs-input, blocked findings, window close,
+  time budget, max items, and user cancellation
+
+`/keel:work-block` is the daytime mode: the operator may approve or redirect between items,
+and needs-input/consent gaps stop for operator attention. `/keel:overnight` reuses the same
+primitive but keeps its unattended/no-night-merge policy.
 
 ## Issue intake block
 

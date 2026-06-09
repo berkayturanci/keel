@@ -74,6 +74,7 @@ queued issue without parsing free-form logs.
 | command | what it does |
 |---|---|
 | `/keel:morning` | Daily morning briefing — cross-session deferrals, shipped-since-last-brief, production/health signals, GitHub status, and a ranked focus list. |
+| `/keel:work-block` | Daytime multi-issue work block — process explicit issue numbers or a queue selector through `/keel:ship`, with per-issue worktrees, readiness refresh between items, operator-visible stop points, progress snapshots, and a final bucketed report. |
 | `/keel:overnight` | Unattended overnight work block — time-aware merge mode keyed on the merge window; runs `/keel:ship` over the queue until the window closes, then writes a session/morning report. |
 | `/keel:wrap` | Finish the current work session — run the configured gates, commit, push, open a PR, and record a session recap. |
 

@@ -802,7 +802,7 @@ def _cmd_standalone(args: argparse.Namespace) -> int:
         if unavailable:
             print(f"  unavailable   : {', '.join(unavailable)}")
         print(f"  deferrals     : {brief['deferral_queue']['status']}")
-    elif command in {"wrap", "overnight"}:
+    elif command in {"wrap", "work-block", "overnight"}:
         session = result["session"]
         report_names = ", ".join(session["reports"]) or "not configured"
         print(f"  reports       : {report_names}")
@@ -813,6 +813,11 @@ def _cmd_standalone(args: argparse.Namespace) -> int:
             )
             print(f"  worktree      : linked required={linked_required}")
             print("  pr            : ready PR after configured gates")
+        elif command == "work-block":
+            print("  mode source   : keel work-block")
+            print("  queue         : explicit issues or selector")
+            print("  handoff       : ship per issue")
+            print("  outcomes      : shipped, PR-open, deferred, blocked, skipped, needs-input")
         else:
             print(f"  window        : {session['merge_window'] or 'not configured'}")
             print(f"  mode source   : {session['overnight']['mode_source']['command']}")
@@ -850,6 +855,20 @@ def _standalone_target(args: argparse.Namespace) -> str | None:
         return f"{scope} ({extra})" if extra else scope
     if getattr(args, "days", None) is not None:
         return f"{args.days} day scan"
+    if getattr(args, "issues", None):
+        target = "issues " + ", ".join(f"#{issue}" for issue in args.issues)
+        max_items = getattr(args, "max_items", None)
+        extra = getattr(args, "target", None)
+        if max_items is not None:
+            target = f"{target} (max {max_items})"
+        return f"{target} ({extra})" if extra else target
+    if getattr(args, "queue", None) is not None:
+        target = f"queue {args.queue}"
+        max_items = getattr(args, "max_items", None)
+        extra = getattr(args, "target", None)
+        if max_items is not None:
+            target = f"{target} (max {max_items})"
+        return f"{target} ({extra})" if extra else target
     if getattr(args, "title", None) is not None:
         return args.title
     if getattr(args, "hours", None) is not None:
@@ -1292,12 +1311,14 @@ def _capability_requirement(
         ))
 
     command_gate_commands = {
-        "run-gates", "ship", "ship-v2", "pr-loop", "wrap", "overnight", "implement",
-        "coverage", "deps-audit", "flake-audit",
+        "run-gates", "ship", "ship-v2", "pr-loop", "wrap", "work-block", "overnight",
+        "implement", "coverage", "deps-audit", "flake-audit",
     }
     if command in command_gate_commands and any(s.kind == "command" for s in specs):
         req = req.merged(runtime.CapabilityRequirement(required=("shell",)))
-    worktree_commands = {"ship", "ship-v2", "pr-loop", "wrap", "overnight", "implement"}
+    worktree_commands = {
+        "ship", "ship-v2", "pr-loop", "wrap", "work-block", "overnight", "implement"
+    }
     github_read_commands = {
         "morning", "review-cycle", "triage", "stale-prs", "regression", "review-all-day",
         "coverage", "deps-audit", "flake-audit", "ci-check",
@@ -1558,6 +1579,44 @@ def build_parser() -> argparse.ArgumentParser:
                         help="operator consent mode: explicit, standing, or agent")
     p_wrap.add_argument("--json", action="store_true", help="emit structured JSON")
     p_wrap.set_defaults(func=_cmd_standalone, standalone_command="wrap")
+
+    p_work_block = sub.add_parser(
+        "work-block",
+        help="standalone daytime multi-issue work-block preflight contract",
+    )
+    p_work_block.add_argument("path", help="path to project.yaml")
+    p_work_block.add_argument("issues", nargs="*", type=_positive_int,
+                              help="explicit issue numbers to process in order")
+    p_work_block.add_argument("--root", default=".",
+                              help="repo root for git and capability checks")
+    p_work_block.add_argument("--queue", default=None,
+                              help=(
+                                  "project queue selector to use when no explicit issues "
+                                  "are given"
+                              ))
+    p_work_block.add_argument("--max", dest="max_items", type=_positive_int, default=None,
+                              help="maximum issues to attempt in this work block")
+    p_work_block.add_argument("--hours", type=float, default=None,
+                              help="optional time budget in hours")
+    p_work_block.add_argument("--review-comments", choices=("inline", "summary"),
+                              default="inline",
+                              help="review posting mode to pass through ship handoffs")
+    p_work_block.add_argument("--reviewers", type=int, choices=(1, 2, 3), default=None,
+                              help="reviewer override for ship handoff contracts")
+    p_work_block.add_argument("--target", default=None,
+                              help="target text to include in the work-block contract")
+    p_work_block.add_argument("--dry-run", action="store_true",
+                              help="explicitly mark the assessment as non-mutating")
+    p_work_block.add_argument("--live", action="store_true",
+                              help="render a live preflight and fail if consent is missing")
+    p_work_block.add_argument("--approve-scope", action="append", default=[],
+                              help="approve a consent scope for this run; repeat or comma-separate")
+    p_work_block.add_argument("--operator", default=None,
+                              help="operator identifier to include in an approved consent record")
+    p_work_block.add_argument("--consent-mode", choices=consent.CONSENT_MODES, default=None,
+                              help="operator consent mode: explicit, standing, or agent")
+    p_work_block.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_work_block.set_defaults(func=_cmd_standalone, standalone_command="work-block")
 
     p_overnight = sub.add_parser(
         "overnight",

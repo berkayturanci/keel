@@ -1420,6 +1420,67 @@ class TestStandaloneCommands(unittest.TestCase):
         )
         self.assertFalse(data["result"]["execution"]["merges"])
 
+    def test_work_block_json_contract_surfaces_shared_queue_primitive(self):
+        import tempfile
+        fake_report = runtime.CapabilityReport((
+            runtime.Capability("shell", True, "ok", "test"),
+            runtime.Capability("git", True, "ok", "test"),
+            runtime.Capability("worktree", True, "ok", "test"),
+            runtime.Capability("gh", False, "missing", "test"),
+            runtime.Capability("gh-auth", False, "missing", "test"),
+        ))
+        with tempfile.TemporaryDirectory() as d, patch("keel.cli.runtime.detect",
+                                                       return_value=fake_report):
+            rc, out, _ = run(["work-block", str(PROJECTS / "example-flutter.yaml"),
+                              "146", "172", "--max", "2", "--root", d, "--json"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["contract"]["command"], "work-block")
+        self.assertEqual(
+            data["contract"]["workflow_profile"]["profile"],
+            "session-work-block-daytime",
+        )
+        self.assertEqual(data["result"]["target"], "issues #146, #172 (max 2)")
+        self.assertEqual(data["result"]["session"]["work_block"]["mode"], "daytime")
+        self.assertTrue(
+            data["result"]["session"]["daytime"]["ship_handoff"]
+            ["refreshes_readiness_between_issues"]
+        )
+        self.assertIn("pr_open_not_merged",
+                      data["result"]["session"]["work_block"]
+                      ["final_report"]["outcome_buckets"])
+
+    def test_work_block_queue_selector_target(self):
+        import tempfile
+        fake_report = runtime.CapabilityReport((
+            runtime.Capability("shell", True, "ok", "test"),
+            runtime.Capability("git", True, "ok", "test"),
+            runtime.Capability("worktree", True, "ok", "test"),
+        ))
+        with tempfile.TemporaryDirectory() as d, patch("keel.cli.runtime.detect",
+                                                       return_value=fake_report):
+            rc, out, _ = run(["work-block", str(PROJECTS / "example-flutter.yaml"),
+                              "--queue", "priority", "--max", "3", "--target",
+                              "daytime block", "--root", d, "--json"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["result"]["target"], "queue priority (max 3) (daytime block)")
+
+    def test_work_block_queue_selector_without_max(self):
+        import tempfile
+        fake_report = runtime.CapabilityReport((
+            runtime.Capability("shell", True, "ok", "test"),
+            runtime.Capability("git", True, "ok", "test"),
+            runtime.Capability("worktree", True, "ok", "test"),
+        ))
+        with tempfile.TemporaryDirectory() as d, patch("keel.cli.runtime.detect",
+                                                       return_value=fake_report):
+            rc, out, _ = run(["work-block", str(PROJECTS / "example-flutter.yaml"),
+                              "--queue", "priority", "--root", d, "--json"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["result"]["target"], "queue priority")
+
     def test_regression_json_contract_surfaces_scan_policy_and_issue_consent(self):
         import tempfile
         fake_report = runtime.CapabilityReport((
@@ -1623,7 +1684,7 @@ class TestStandaloneCommands(unittest.TestCase):
         self.assertIn("health", out)
         self.assertNotIn("unavailable   :", out)
 
-    def test_wrap_and_overnight_human_output(self):
+    def test_wrap_work_block_and_overnight_human_output(self):
         import tempfile
         fake_report = runtime.CapabilityReport((
             runtime.Capability("shell", True, "ok", "test"),
@@ -1636,13 +1697,19 @@ class TestStandaloneCommands(unittest.TestCase):
                                                        return_value=fake_report):
             rc, wrap_out, _ = run(["wrap", str(PROJECTS / "example-flutter.yaml"),
                                    "--root", d])
+            rc_work, work_out, _ = run(["work-block", str(PROJECTS / "example-flutter.yaml"),
+                                        "146", "--root", d])
             rc2, overnight_out, _ = run(["overnight", str(PROJECTS / "example-flutter.yaml"),
                                          "2", "--root", d])
         self.assertEqual(rc, 0)
+        self.assertEqual(rc_work, 0)
         self.assertEqual(rc2, 0)
         self.assertIn("keel wrap", wrap_out)
         self.assertIn("linked required=True", wrap_out)
         self.assertIn("ready PR", wrap_out)
+        self.assertIn("keel work-block", work_out)
+        self.assertIn("ship per issue", work_out)
+        self.assertIn("needs-input", work_out)
         self.assertIn("keel overnight", overnight_out)
         self.assertIn("mode source", overnight_out)
         self.assertIn("no-night-merge", overnight_out)

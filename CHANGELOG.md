@@ -7,6 +7,13 @@ All notable changes to keel are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Daytime work-block command** — `keel work-block` / `/keel:work-block` now exposes a
+  first-class daytime multi-issue work-block preflight contract. It accepts explicit issue
+  numbers or a queue selector, hands each ready item to `ship`, refreshes issue readiness
+  between items, preserves per-issue worktree isolation, consent, capture, run-ledger, merge
+  lock, and merge-window invariants, and reports shipped / PR-open-not-merged / deferred /
+  blocked / skipped / needs-input buckets. `overnight` now references the same
+  `keel.work-block.v1` primitive instead of owning a parallel queue contract.
 - **Deterministic closure-comment renderer** — keel core now renders the s11 "ship outcome"
   comment from the structured `ship_run` ledger record via the pure
   `keel.closure.render_closure_comment` function, exposed under `result.closure_comment` of

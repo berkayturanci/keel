@@ -53,6 +53,7 @@ class TestCheckpointContract(unittest.TestCase):
         self.assertEqual(default["path_source"], "default")
         self.assertTrue(default["consumer_neutral"])
         self.assertIn("resume", default["resume_command"])
+        self.assertIn("work-block", default["write_owner"])
         self.assertEqual(default["steps"][0]["step_id"], "s0")
 
         config = _config(checkpoint_path="state/resume.json")
