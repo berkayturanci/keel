@@ -30,6 +30,7 @@ EXPECTED_LEGACY_COMMANDS = (
     "pr-loop",
     "review-cycle",
     "overnight",
+    "work-block",
     "wrap",
     "triage",
     "stale-prs",

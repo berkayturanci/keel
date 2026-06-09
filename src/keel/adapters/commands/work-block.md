@@ -24,15 +24,17 @@ to `ship`.
 
 ```bash
 keel validate .keel/project.yaml --root .
-keel plan     .keel/project.yaml --root .
+keel plan     .keel/project.yaml --root . --command work-block --live --json
 keel work-block .keel/project.yaml --root . --live --json
 keel window   .keel/project.yaml --root .
 ```
 
 Parse `contract.operator_consent` before selecting work, creating branches/worktrees,
 spawning implementers, opening PRs, merging, writing reports, or touching GitHub labels or
-comments. If consent is missing, stop and ask for the required `--approve-scope` values.
-Pass `operator_consent.delegated_agent_scope` into every child `/keel:ship` handoff.
+comments. If `requires_operator_consent` is true, STOP and ask the operator to rerun with
+the required `--approve-scope` values. Pass
+`operator_consent.delegated_agent_scope` into every child `/keel:ship` handoff. Children
+may use only `approved_mutation_scopes`; scope expansion blocks or escalates.
 
 Read `contract.session_contract.work_block`. It is the queue primitive shared with
 `/keel:overnight`: queue snapshot, readiness refresh, per-issue worktree isolation, ship
