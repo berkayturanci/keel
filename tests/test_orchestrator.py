@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from keel import config as cfg
+from keel import model
 from keel import orchestrator as orch
 from keel.extensions import load_extensions, parse_extension
 
@@ -17,6 +18,40 @@ class TestBuildPlan(unittest.TestCase):
         self.assertEqual(len(plan), 13)  # s0..s12
         self.assertEqual(plan[0].step_id, "s0")
         self.assertEqual(plan[-1].step_id, "s12")
+        for item in plan:
+            self.assertEqual(
+                [slot.name for slot in item.extension_slots],
+                [slot.name for slot in model.slots_for_step(item.step_id)],
+            )
+
+    def test_plan_json_exposes_empty_add_only_slots(self):
+        config = cfg.load_config(PROJECTS / "keel.yaml")
+        plan = orch.plan_as_dict(orch.build_plan(config, {}))
+        by_step = {item["step_id"]: item for item in plan}
+        self.assertEqual(by_step["s10"]["extension_slots"], [
+            {
+                "name": "pre-merge",
+                "step_id": "s10",
+                "execution_mode": "deterministic",
+                "may_block": True,
+                "adapter_required": False,
+                "hook_count": 0,
+                "customization": "add-only",
+                "failure_mode": "blocking-capable",
+            },
+            {
+                "name": "after:merge",
+                "step_id": "s10",
+                "execution_mode": "deterministic",
+                "may_block": False,
+                "adapter_required": False,
+                "hook_count": 0,
+                "customization": "add-only",
+                "failure_mode": "fail-soft",
+            },
+        ])
+        self.assertEqual(by_step["s0"]["extension_slots"][0]["name"], "after:config")
+        self.assertTrue(all(item["extension_slots"] for item in plan))
 
     def test_builtin_gates_land_on_test_step(self):
         config = cfg.load_config(PROJECTS / "example-android.yaml")
@@ -78,6 +113,7 @@ class TestBuildPlan(unittest.TestCase):
         close_step = next(p for p in plan if p.step_name == "close")
         self.assertEqual(guard_step.gates, ("guard-check",))
         self.assertEqual(guard_step.hooks[0].slot, "guard")
+        self.assertEqual(guard_step.extension_slots[0].hook_count, 1)
         self.assertEqual(ci_step.hooks[0].optional_capabilities, ("gh",))
         self.assertEqual(close_step.hooks[0].id, "close-note")
         rendered = orch.render_plan(config, plan)
@@ -90,6 +126,44 @@ class TestBuildPlan(unittest.TestCase):
         plan = orch.build_plan(config, {})
         agentic = {p.step_name for p in plan if p.agentic}
         self.assertEqual(agentic, {"implement", "classify", "review"})
+
+    def test_extensions_are_add_only_and_do_not_change_backbone_order(self):
+        config = cfg.parse_config({
+            "extends": "keel",
+            "core_version": "^1.0",
+            "base_branch": "main",
+            "knobs": {"build_gate_cmd": "make test"},
+            "extensions": {
+                "before:select": ["queue-note.md"],
+                "pre-merge": ["merge-gate.md"],
+                "after:close": ["close-report.md"],
+            },
+        })
+        loaded = {
+            "before:select": [parse_extension(
+                "---\nid: queue-note\nslot: before:select\nkind: command\nrun: true\n---\n",
+                source="queue-note.md",
+            )],
+            "pre-merge": [parse_extension(
+                "---\nid: merge-gate\nslot: pre-merge\nkind: command\n"
+                "on_fail: block\nrun: true\n---\n",
+                source="merge-gate.md",
+            )],
+            "after:close": [parse_extension(
+                "---\nid: close-report\nslot: after:close\nkind: command\nrun: true\n---\n",
+                source="close-report.md",
+            )],
+        }
+
+        plan = orch.build_plan(config, loaded)
+
+        self.assertEqual([item.step_id for item in plan], list(model.step_ids()))
+        self.assertEqual(plan[0].step_name, "config")
+        self.assertEqual(plan[-1].step_name, "close")
+        self.assertEqual(
+            [hook.id for item in plan for hook in item.hooks],
+            ["queue-note", "merge-gate", "close-report"],
+        )
 
 
 class TestNoForeignLeak(unittest.TestCase):

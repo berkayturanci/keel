@@ -44,7 +44,7 @@ Every contract includes:
 | `project` | Resolved project config summary plus stable `config_hash`. |
 | `workflow_profile` | Command profile metadata. `ship` is `standard`; `ship-v2` is a first-class `compound` variant that inherits shared ship primitives and declares step overrides. |
 | `graph` | Command step graph. `ship` and `ship-v2` use the fixed backbone steps; other adapters expose their command-local steps; project commands expose a single `project_command` graph entry. |
-| `backbone_plan` | Fixed keel backbone with gates slotted onto steps. |
+| `backbone_plan` | Fixed keel backbone with gates, add-only extension slots, and loaded hooks slotted onto steps. |
 | `gates` | Planned gate specs, including kind, phase, failure behavior, source, and capability declarations. |
 | `project_commands` | Project-provided commands declared by policy, separate from packaged keel adapters. |
 | `extension_hooks` | Loaded extension hooks grouped by slot. |
@@ -69,6 +69,13 @@ Project command entries include name, local command path, description, agent rol
 selectors, required/optional capabilities, side effects, dry-run safety, and source
 (`policy_pack.project_commands` or `policy_pack.command_routing`). The contract never embeds
 the project command body.
+
+`backbone_plan[].extension_slots` exposes every customization slot for every fixed backbone
+step, even when no project extension is loaded there. Each slot entry includes `name`,
+`step_id`, `execution_mode`, `may_block`, `adapter_required`, `hook_count`,
+`customization: add-only`, and `failure_mode` (`fail-soft` or `blocking-capable`). This is
+the machine-readable guarantee that project customization can add checks, reports, gates, or
+capture behavior without removing, replacing, reordering, or weakening core steps.
 
 ## Operator consent block
 
@@ -520,7 +527,8 @@ Adapters must:
 - block or escalate if a delegated agent attempts work outside `approved_mutation_scopes`
 - never infer secret or credential approval from project knowledge; require the `secrets` scope
 - preserve `no_mutations: true` under dry-run
-- use `extension_hooks` and `gates` from the contract rather than reparsing project config
+- use `backbone_plan[].extension_slots`, `extension_hooks`, and `gates` from the contract
+  rather than reparsing project config or project-local prose
 
 Projects can still declare project-specific policy in config and extensions, but the
 contract shape itself stays consumer-neutral.

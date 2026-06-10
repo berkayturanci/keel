@@ -33,6 +33,18 @@ class PlanHook:
 
 
 @dataclass(frozen=True)
+class PlanSlot:
+    """One add-only extension slot exposed by a backbone step."""
+
+    name: str
+    step_id: str
+    execution_mode: str
+    may_block: bool
+    adapter_required: bool
+    hook_count: int
+
+
+@dataclass(frozen=True)
 class PlanItem:
     """One backbone step plus the gate ids that execute at it."""
 
@@ -40,6 +52,7 @@ class PlanItem:
     step_name: str
     agentic: bool
     gates: tuple[str, ...] = ()
+    extension_slots: tuple[PlanSlot, ...] = ()
     hooks: tuple[PlanHook, ...] = ()
 
 
@@ -59,8 +72,14 @@ def build_plan(config: ProjectConfig, loaded: dict[str, list[Extension]]) -> tup
             step_gates = pre_merge_gates
         else:
             step_gates = ()
-        items.append(PlanItem(step.id, step.name, step.agentic, step_gates,
-                              _hooks_for_step(step.id, loaded)))
+        items.append(PlanItem(
+            step.id,
+            step.name,
+            step.agentic,
+            step_gates,
+            _slots_for_step(step.id, loaded),
+            _hooks_for_step(step.id, loaded),
+        ))
     return tuple(items)
 
 
@@ -95,6 +114,19 @@ def plan_as_dict(plan: tuple[PlanItem, ...]) -> list[dict]:
             "step_name": item.step_name,
             "agentic": item.agentic,
             "gates": list(item.gates),
+            "extension_slots": [
+                {
+                    "name": slot.name,
+                    "step_id": slot.step_id,
+                    "execution_mode": slot.execution_mode,
+                    "may_block": slot.may_block,
+                    "adapter_required": slot.adapter_required,
+                    "hook_count": slot.hook_count,
+                    "customization": "add-only",
+                    "failure_mode": "blocking-capable" if slot.may_block else "fail-soft",
+                }
+                for slot in item.extension_slots
+            ],
             "hooks": [
                 {
                     "slot": hook.slot,
@@ -111,6 +143,20 @@ def plan_as_dict(plan: tuple[PlanItem, ...]) -> list[dict]:
         }
         for item in plan
     ]
+
+
+def _slots_for_step(step_id: str, loaded: dict[str, list[Extension]]) -> tuple[PlanSlot, ...]:
+    return tuple(
+        PlanSlot(
+            name=slot.name,
+            step_id=slot.step_id,
+            execution_mode=slot.execution_mode,
+            may_block=slot.may_block,
+            adapter_required=slot.adapter_required,
+            hook_count=len(loaded.get(slot.name, [])),
+        )
+        for slot in model.slots_for_step(step_id)
+    )
 
 
 def _hooks_for_step(step_id: str, loaded: dict[str, list[Extension]]) -> tuple[PlanHook, ...]:

@@ -83,6 +83,15 @@ class TestBuildCommandContract(unittest.TestCase):
         ])
         self.assertIn("build", [gate["id"] for gate in contract["gates"]])
         self.assertEqual(contract["extension_hooks"]["tester"][0]["id"], "smoke")
+        test_step = next(
+            step for step in contract["backbone_plan"] if step["step_id"] == "s8"
+        )
+        tester_slot = next(
+            slot for slot in test_step["extension_slots"] if slot["name"] == "tester"
+        )
+        self.assertEqual(tester_slot["customization"], "add-only")
+        self.assertEqual(tester_slot["failure_mode"], "blocking-capable")
+        self.assertEqual(tester_slot["hook_count"], 1)
         self.assertTrue(any(
             command["name"] == "android-build" for command in contract["project_commands"]
         ))

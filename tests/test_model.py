@@ -1,10 +1,14 @@
 """Unit tests for the backbone model + schema/model slot consistency."""
 
 import json
+import re
 import unittest
+from pathlib import Path
 
 from keel import config as cfg
 from keel import model
+
+DOCS = Path(__file__).resolve().parent.parent / "docs"
 
 
 class TestBackbone(unittest.TestCase):
@@ -63,6 +67,25 @@ class TestSchemaModelConsistency(unittest.TestCase):
 
     def test_config_reexports_model_slots(self):
         self.assertIs(cfg.SLOTS, model.SLOTS)
+
+    def test_extensions_doc_slot_table_matches_model(self):
+        text = (DOCS / "keel" / "extensions.md").read_text(encoding="utf-8")
+        documented: list[str] = []
+        in_table = False
+        for line in text.splitlines():
+            if line.startswith("| slot |"):
+                in_table = True
+                continue
+            if not in_table:
+                continue
+            if line.startswith("|---"):
+                continue
+            if not line.startswith("|"):
+                break
+            cell = line.split("|", 2)[1]
+            documented.extend(re.findall(r"`([^`]+)`", cell))
+
+        self.assertEqual(tuple(documented), model.SLOTS)
 
 
 if __name__ == "__main__":
