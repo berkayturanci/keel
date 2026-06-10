@@ -1444,6 +1444,10 @@ class TestShip(unittest.TestCase):
         data = json.loads(out)
         self.assertTrue(data["enforced"])
         self.assertEqual(data["verification"]["status"], "fail")
+        # Fail for the right reason: the gate is enforced and reports the
+        # missing evidence, not an unrelated error.
+        self.assertGreaterEqual(data["verification"]["required_count"], 1)
+        self.assertTrue(data["verification"]["missing"])
 
     def test_evidence_verify_gate_label_override(self):
         rc, out, _ = run([
@@ -1464,6 +1468,16 @@ class TestShip(unittest.TestCase):
         self.assertEqual(data["gate_label"], "ship-me")
         self.assertTrue(data["enforced"])
         self.assertEqual(data["pr_labels"], ["ship-me"])
+
+    def test_label_names_handles_absent_and_malformed_labels(self):
+        # A live PR payload may omit `labels`, send null, or carry malformed
+        # entries; _label_names must degrade to a clean list of name strings.
+        self.assertEqual(cli._label_names(None), [])
+        self.assertEqual(cli._label_names("nope"), [])
+        self.assertEqual(
+            cli._label_names([{"name": "keel:ship"}, {"no_name": 1}, "x", {"name": 7}]),
+            ["keel:ship"],
+        )
 
     def test_capture_reconcile_plans_missing_marker_actions(self):
         import tempfile

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections.abc import Iterable
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -41,8 +41,14 @@ class EvidenceItem:
         }
 
 
-def gate_active(labels: Iterable[str] | None, gate_label: str) -> bool:
-    """Return whether ``gate_label`` is present in ``labels`` (None/empty -> False)."""
+def gate_active(labels: Sequence[str] | None, gate_label: str) -> bool:
+    """Return whether ``gate_label`` is present in ``labels`` (None/empty -> False).
+
+    An empty ``gate_label`` is never active, so a misconfigured (blank) label can
+    never silently match — the schema also forbids an empty ``evidence_gate_label``.
+    """
+    if not gate_label:
+        return False
     return gate_label in set(labels or ())
 
 

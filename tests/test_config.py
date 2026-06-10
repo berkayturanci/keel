@@ -33,6 +33,26 @@ class TestMergeWindowMode(unittest.TestCase):
             cfg.parse_config(data)
 
 
+class TestEvidenceGateLabel(unittest.TestCase):
+    def test_default_label(self):
+        self.assertEqual(
+            cfg.parse_config(copy.deepcopy(VALID)).knobs.evidence_gate_label, "keel:ship"
+        )
+
+    def test_custom_label_parsed(self):
+        data = copy.deepcopy(VALID)
+        data["knobs"]["evidence_gate_label"] = "ship-me"
+        self.assertEqual(cfg.parse_config(data).knobs.evidence_gate_label, "ship-me")
+
+    def test_empty_label_rejected(self):
+        # An empty gate label would silently disable the evidence gate for every
+        # PR; the schema must reject it (minLength: 1).
+        data = copy.deepcopy(VALID)
+        data["knobs"]["evidence_gate_label"] = ""
+        with self.assertRaises(cfg.ConfigError):
+            cfg.parse_config(data)
+
+
 class TestSeedConfigs(unittest.TestCase):
     """Every shipped projects/*.yaml must be valid against the schema."""
 

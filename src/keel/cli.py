@@ -1760,7 +1760,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_evidence.add_argument("--head-sha", default=None,
                             help="offline PR head SHA used to bind verdict evidence")
     p_evidence.add_argument("--pr-label", action="append", default=[],
-                            help="offline PR label name; repeat to inject labels for the gate")
+                            help="inject a PR label name (repeatable); merged with live labels. "
+                                 "A live PR fetch still runs unless an offline fixture flag is "
+                                 "also supplied")
     p_evidence.add_argument("--gate-label", default=None,
                             help="override the evidence_gate_label knob that opts a PR in")
     p_evidence.add_argument("--json", action="store_true", help="emit structured JSON")

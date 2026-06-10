@@ -183,15 +183,23 @@ keel evidence-verify .keel/project.yaml --root . --pr 456 --no-jury
 ```
 
 `--gate-label <name>` overrides the `evidence_gate_label` knob for a single run, and
-`--pr-label <name>` (repeatable) injects PR label names for offline/test harnesses so the
-gate decision can be exercised without a live fetch. The JSON payload reports the resolved
-`gate_label`, the boolean `enforced`, and the observed `pr_labels`.
+`--pr-label <name>` (repeatable) injects PR label names that are merged with the labels read
+from the live PR. Injected labels are additive — they can only make the gate *more*
+enforced, never less. A live PR fetch still runs unless an offline fixture flag (below) is
+also supplied. The JSON payload reports the resolved `gate_label`, the boolean `enforced`,
+and the observed `pr_labels`. The `evidence_gate_label` knob must be non-empty (the schema
+forbids a blank value, which would silently disable the gate for every PR).
 
-Use `--deferral <id|kind|all>` only for an explicit, recorded operator deferral (within an
-enforced run). `--dry-run` prints the contract shape without fetching live artifacts or
-requiring evidence. Tests and offline CI harnesses can provide `--pr-comments-json`,
-`--issue-comments-json`, `--pr-reviews-json`, `--pr-body-file`, `--changed-file`, and
-`--head-sha` fixtures; the same verifier path is used either way.
+A failed live fetch (for example, `gh` cannot read the PR or its labels) is **fail-closed**:
+the command errors and exits non-zero rather than treating the gate as unenforced.
+
+Use `--deferral <id|kind|all>` only for an explicit, recorded operator deferral; it applies
+only within an enforced run and has no effect when the gate is unenforced. `--dry-run`
+prints the contract shape without fetching live artifacts or requiring evidence; pass
+`--pr-label` alongside it to preview the enforcement state a labelled PR would see. Tests and
+offline CI harnesses can provide `--pr-comments-json`, `--issue-comments-json`,
+`--pr-reviews-json`, `--pr-body-file`, `--changed-file`, and `--head-sha` fixtures; the same
+verifier path is used either way.
 
 ## `keel checkpoint <project.yaml> [--root DIR] [--json]`
 

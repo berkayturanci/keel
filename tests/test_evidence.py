@@ -243,6 +243,13 @@ class TestGateActive(unittest.TestCase):
     def test_none_labels(self):
         self.assertFalse(evidence.gate_active(None, "keel:ship"))
 
+    def test_empty_gate_label_never_matches(self):
+        # A blank gate label must never activate the gate, even if a PR somehow
+        # carried an empty-string label — otherwise the gate would silently
+        # disable itself. (The schema also forbids a blank evidence_gate_label.)
+        self.assertFalse(evidence.gate_active(["keel:ship", ""], ""))
+        self.assertFalse(evidence.gate_active([], ""))
+
 
 class TestEvidenceEnforcement(unittest.TestCase):
     def test_verify_not_enforced_passes_with_no_required(self):
