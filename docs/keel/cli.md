@@ -70,7 +70,9 @@ With `--json`, the output includes a structured command contract under `contract
 project config, command step graph, backbone plan, gates, extension hooks, capability
 requirements/evaluation, selected GitHub transport, declared side effects, and operator
 consent requirements. It also includes the `run_ledger` and `checkpoint` storage contracts
-so adapters know where structured run history and resumable run state live. See
+so adapters know where structured run history and resumable run state live. For `ship` and
+`ship-v2`, it also includes `contract.evidence`: the exact posted GitHub evidence that must
+exist before merge. See
 [`command-contracts.md`](command-contracts.md).
 
 By default, `plan` renders a dry-run contract. `--live` renders the live preflight contract
@@ -149,6 +151,30 @@ checks: `emit-capture-marker`, `run-capture-extension`, `post-closure-summary`,
 `policy_pack.capture.mode: marker-only` plans an `applied` core marker without requiring a
 project capture extension. Ambiguous linked issues or invalid/duplicate existing markers
 block the plan instead of guessing.
+
+## `keel evidence-verify <project.yaml> --pr <N> [--issue <N>] [--json]`
+
+Verify that a PR has the public evidence required by the ship contract before merge. The
+verifier is fail-closed and accepts only durable GitHub artifacts:
+
+- a `keel.closure-comment.v1` closure marker on both the PR and linked issue;
+- the required count of posted s7 reviewer verdicts from PR comments or reviews;
+- a posted jury verdict when jury is enabled in gating mode.
+
+PR bodies, chat summaries, and the automated `keel ship` assessment comment are never
+accepted as evidence. The PR body may only be used to infer `Closes #N` when `--issue` is
+not supplied.
+
+```bash
+keel evidence-verify .keel/project.yaml --root . --pr 456
+keel evidence-verify .keel/project.yaml --root . --pr 456 --reviewers 3 --jury --json
+keel evidence-verify .keel/project.yaml --root . --pr 456 --no-jury
+```
+
+Use `--deferral <id|kind|all>` only for an explicit, recorded operator deferral. `--dry-run`
+prints the contract shape without requiring evidence. Tests and offline CI harnesses can
+provide `--pr-comments-json`, `--issue-comments-json`, `--pr-reviews-json`, and
+`--pr-body-file` fixtures; the same verifier path is used either way.
 
 ## `keel checkpoint <project.yaml> [--root DIR] [--json]`
 

@@ -19,8 +19,9 @@ can delegate implementation and reviews.
    files (git), the project gates, and the PR's CI rollup (`gh`), then prints the
    assessment (risk tier → reviewers, merge window, gates, decision);
 5. posts that assessment as a **PR comment**;
-6. **fails the check when the decision is `BLOCK`** (failing gates / CI / blocking findings),
-   so keel gates the merge.
+6. runs **`keel evidence-verify .keel/project.yaml --root . --pr <N>`**, which fails until
+   the PR and linked issue have the required closure, reviewer-verdict, and optional
+   jury-verdict comments.
 
 ```yaml
 permissions:
@@ -42,10 +43,19 @@ Copy the workflow and change two things:
 
 Everything else (the runner, `git`, `gh`, the free minutes) comes from GitHub.
 
+## Branch protection
+
+To make evidence mandatory, add the workflow job **`keel evidence (required)`** to the
+protected branch's required status checks. The check is intentionally fail-closed: a fresh
+PR can be red until the ship adapter posts the public evidence artifacts. Rerun the workflow
+after the reviewer, jury, and closure comments are present. If an operator intentionally
+defers evidence, record that deferral in the PR/issue conversation and rerun the command with
+the matching `--deferral <id|kind|all>` flag in the project workflow.
+
 ## Boundary
 
-This workflow runs the **agent-free** slice (classify → CI → gates → decision) and comments
-it. The live *merge* and the *agentic* steps (implement / multi-agent review) intentionally
-remain in the installed `/keel:<command>` adapters and their agent host, where operator
-consent, delegation, model attribution, worktree isolation, and project extensions are
-available.
+This workflow runs the **agent-free** slice (classify → CI → gates → decision) and the
+deterministic public-evidence verifier. The live *merge* and the *agentic* steps
+(implement / multi-agent review) intentionally remain in the installed `/keel:<command>`
+adapters and their agent host, where operator consent, delegation, model attribution,
+worktree isolation, and project extensions are available.

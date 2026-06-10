@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -21,6 +22,7 @@ from . import (
     checkpoint,
     consent,
     contracts,
+    evidence,
     gates,
     git,
     github,
@@ -40,7 +42,7 @@ from . import findings as fnd
 from . import orchestrator as orch
 from .extensions import ExtensionError, load_extensions
 from .gates import GateSpec
-from .runner import command_gate_runner
+from .runner import command_gate_runner, run_argv
 
 
 def _gate_runner(root: str, diff_text: str):
@@ -595,6 +597,66 @@ def _cmd_capture_reconcile(args: argparse.Namespace) -> int:
     return 0 if plan["status"] != "blocked" else 1
 
 
+def _cmd_evidence_verify(args: argparse.Namespace) -> int:
+    try:
+        config = cfg.load_config(args.path)
+    except FileNotFoundError:
+        print(f"no such config: {args.path}", file=sys.stderr)
+        return 1
+    except cfg.ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    review_contract = ship.resolve_review_contract(
+        tier=None,
+        reviewer_override=args.reviewers,
+        review_comments=args.review_comments,
+        gates=config.gates,
+        policy_pack=config.policy_pack,
+        jury=args.jury,
+        no_jury=args.no_jury,
+        jury_advisory=args.jury_advisory,
+    )
+    try:
+        artifacts = _load_evidence_artifacts(args, config)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    report = evidence.verify(
+        review_contract,
+        pr_comments=artifacts["pr_comments"],
+        issue_comments=artifacts["issue_comments"],
+        pr_reviews=artifacts["pr_reviews"],
+        pr_body=artifacts["pr_body"],
+        dry_run=args.dry_run,
+        deferrals=tuple(args.deferral or ()),
+    )
+    payload = {
+        "contract": evidence.contract_as_dict(
+            review_contract,
+            dry_run=args.dry_run,
+            deferrals=tuple(args.deferral or ()),
+        ),
+        "pull_request": args.pr,
+        "issue": artifacts["issue"],
+        "verification": report,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"keel evidence-verify — {report['status']}  PR #{args.pr}")
+        print(f"  issue         : {artifacts['issue'] or 'not resolved'}")
+        print(f"  dry-run       : {str(args.dry_run).lower()}")
+        print(f"  required      : {report['required_count']}")
+        if report["missing"]:
+            print(f"  missing       : {', '.join(report['missing'])}")
+        for result in report["results"]:
+            state = "ok" if result["ok"] else "FAIL"
+            suffix = " (deferred)" if result["deferred"] else ""
+            print(f"  {state:>4}  {result['id']}{suffix}")
+    return 0 if report["status"] == "pass" else 1
+
+
 def _cmd_status(args: argparse.Namespace) -> int:
     try:
         config = cfg.load_config(args.path)
@@ -954,6 +1016,97 @@ def _issue_context_provided(args: argparse.Namespace) -> bool:
         or (getattr(args, "issue_body", None) or "").strip()
         or _issue_labels(args)
     )
+
+
+def _load_evidence_artifacts(
+    args: argparse.Namespace,
+    config: cfg.ProjectConfig,
+) -> dict[str, object]:
+    pr_body = _read_optional_text(args.pr_body_file)
+    pr_comments = _read_optional_json_list(args.pr_comments_json)
+    issue_comments = _read_optional_json_list(args.issue_comments_json)
+    pr_reviews = _read_optional_json_list(args.pr_reviews_json)
+    issue_number = args.issue
+    using_fixtures = any(
+        path is not None for path in (
+            args.pr_body_file,
+            args.pr_comments_json,
+            args.issue_comments_json,
+            args.pr_reviews_json,
+        )
+    )
+    if not using_fixtures:
+        owner_repo = _owner_repo(config)
+        pr = _gh_json(["repos", owner_repo, "pulls", str(args.pr)], cwd=args.root)
+        pr_body = pr.get("body") if isinstance(pr.get("body"), str) else ""
+        pr_comments = _gh_json_list(
+            ["repos", owner_repo, "issues", str(args.pr), "comments"], cwd=args.root
+        )
+        pr_reviews = _gh_json_list(
+            ["repos", owner_repo, "pulls", str(args.pr), "reviews"], cwd=args.root
+        )
+        if issue_number is None:
+            issue_number = _linked_issue_from_body(pr_body)
+        if issue_number is not None:
+            issue_comments = _gh_json_list(
+                ["repos", owner_repo, "issues", str(issue_number), "comments"], cwd=args.root
+            )
+    elif issue_number is None:
+        issue_number = _linked_issue_from_body(pr_body)
+    return {
+        "pr_body": pr_body,
+        "pr_comments": pr_comments,
+        "issue_comments": issue_comments,
+        "pr_reviews": pr_reviews,
+        "issue": issue_number,
+    }
+
+
+def _owner_repo(config: cfg.ProjectConfig) -> str:
+    if not config.owner or not config.repo:
+        raise ValueError("project config must define owner and repo for live evidence fetch")
+    return f"{config.owner}/{config.repo}"
+
+
+def _read_optional_text(path: str | None) -> str:
+    return Path(path).read_text(encoding="utf-8") if path else ""
+
+
+def _read_optional_json_list(path: str | None) -> list[dict[str, object]]:
+    if path is None:
+        return []
+    value = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
+        raise ValueError(f"{path} must contain a JSON array of objects")
+    return value
+
+
+def _gh_json(args: list[str], *, cwd: str) -> dict[str, object]:
+    endpoint = "/".join(args)
+    result = run_argv(["gh", "api", endpoint], cwd=cwd)
+    if not result.ok:
+        raise ValueError(f"gh api {endpoint} failed: {result.output.strip()}")
+    value = json.loads(result.output or "{}")
+    if not isinstance(value, dict):
+        raise ValueError(f"gh api {endpoint} did not return a JSON object")
+    return value
+
+
+def _gh_json_list(args: list[str], *, cwd: str) -> list[dict[str, object]]:
+    endpoint = "/".join(args)
+    result = run_argv(["gh", "api", "--paginate", endpoint], cwd=cwd)
+    if not result.ok:
+        raise ValueError(f"gh api {endpoint} failed: {result.output.strip()}")
+    value = json.loads(result.output or "[]")
+    if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
+        raise ValueError(f"gh api {endpoint} did not return a JSON array")
+    return value
+
+
+def _linked_issue_from_body(body: str) -> int | None:
+    match = re.search(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(?P<n>[1-9]\d*)",
+                      body, re.IGNORECASE)
+    return int(match.group("n")) if match else None
 
 
 def _approved_consent(
@@ -1503,6 +1656,41 @@ def build_parser() -> argparse.ArgumentParser:
                              help="label the output as a live reconciliation plan")
     p_reconcile.add_argument("--json", action="store_true", help="emit structured JSON")
     p_reconcile.set_defaults(func=_cmd_capture_reconcile)
+
+    p_evidence = sub.add_parser(
+        "evidence-verify",
+        help="verify required pre-merge ship evidence artifacts",
+    )
+    p_evidence.add_argument("path", help="path to project.yaml")
+    p_evidence.add_argument("--root", default=".", help="repo root for live gh fetches")
+    p_evidence.add_argument("--pr", type=_positive_int, required=True,
+                            help="pull request number to verify")
+    p_evidence.add_argument("--issue", type=_positive_int, default=None,
+                            help="linked issue number; otherwise inferred from PR body")
+    p_evidence.add_argument("--review-comments", choices=("inline", "summary"),
+                            default="inline", help="review posting mode in the ship contract")
+    p_evidence.add_argument("--reviewers", type=int, choices=(1, 2, 3), default=None,
+                            help="override the required reviewer verdict count")
+    p_evidence.add_argument("--jury", action="store_true",
+                            help="enable the cross-vendor jury requirement")
+    p_evidence.add_argument("--no-jury", action="store_true",
+                            help="disable the cross-vendor jury requirement")
+    p_evidence.add_argument("--jury-advisory", action="store_true",
+                            help="make an enabled jury advisory instead of required")
+    p_evidence.add_argument("--dry-run", action="store_true",
+                            help="emit the contract without requiring evidence")
+    p_evidence.add_argument("--deferral", action="append", default=[],
+                            help="explicitly defer an evidence id, kind, or all")
+    p_evidence.add_argument("--pr-comments-json", default=None,
+                            help="offline PR issue-comments JSON fixture")
+    p_evidence.add_argument("--issue-comments-json", default=None,
+                            help="offline linked-issue comments JSON fixture")
+    p_evidence.add_argument("--pr-reviews-json", default=None,
+                            help="offline PR reviews JSON fixture")
+    p_evidence.add_argument("--pr-body-file", default=None,
+                            help="offline PR body fixture, used only to infer linked issue")
+    p_evidence.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_evidence.set_defaults(func=_cmd_evidence_verify)
 
     p_status = sub.add_parser("status", help="show active/recent run progress")
     p_status.add_argument("path", help="path to project.yaml")
