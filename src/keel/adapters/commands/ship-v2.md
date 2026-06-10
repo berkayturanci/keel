@@ -46,7 +46,7 @@ All project values still come from `.keel/project.yaml` via the keel CLI: `base_
 - risk classification and reviewer-count policy
 - CI evaluation and project gates
 - review/jury/merge-gate contract from `review_merge_contract`
-- detailed PR body and public review/jury summary posting requirements from `/keel:ship`
+- canonical PR body and public review/jury artifact renderers from `/keel:ship`
 - merge window and merge lock
 - issue/PR closeout and capture marker discipline
 

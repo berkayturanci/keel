@@ -15,7 +15,6 @@ CORE_WORKFLOW_SURFACES = (
     REPO_ROOT / "docs/keel/commands.md",
     REPO_ROOT / "docs/keel/configuration.md",
     REPO_ROOT / "docs/keel/consumer-neutrality.md",
-    REPO_ROOT / "docs/keel/vision.md",
 )
 
 CONSUMER_SPECIFIC_TERMS = (

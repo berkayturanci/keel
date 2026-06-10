@@ -44,7 +44,7 @@ Every contract includes:
 | `project` | Resolved project config summary plus stable `config_hash`. |
 | `workflow_profile` | Command profile metadata. `ship` is `standard`; `ship-v2` is a first-class `compound` variant that inherits shared ship primitives and declares step overrides. |
 | `graph` | Command step graph. `ship` and `ship-v2` use the fixed backbone steps; other adapters expose their command-local steps; project commands expose a single `project_command` graph entry. |
-| `backbone_plan` | Fixed keel backbone with gates slotted onto steps. |
+| `backbone_plan` | Fixed keel backbone with gates, add-only extension slots, and loaded hooks slotted onto steps. |
 | `gates` | Planned gate specs, including kind, phase, failure behavior, source, and capability declarations. |
 | `project_commands` | Project-provided commands declared by policy, separate from packaged keel adapters. |
 | `extension_hooks` | Loaded extension hooks grouped by slot. |
@@ -57,6 +57,7 @@ Every contract includes:
 | `capture` | Post-merge capture marker, skip vocabulary, fail-soft, recursion-guard, redaction, and verifier contract. |
 | `closure_comment` | Present for `ship` and `ship-v2`; the deterministic, consumer-neutral closure-comment contract describing how the s11 ship-outcome comment is rendered from the `ship_run` ledger record. |
 | `evidence` | Present for `ship` and `ship-v2`; the pre-merge evidence contract used by `keel evidence-verify`. The gate is opt-in via the `evidence_gate_label` knob (default `keel:ship`) applied at PR open; the contract carries an `enforced` flag and, when not enforced, an empty `required` set (a PR without the label passes). When enforced it is fail-closed. |
+| `artifact_renderers` | Present for `ship` and `ship-v2`; canonical renderer contract for PR bodies, issue updates, review verdicts, jury verdicts, and extension result output. |
 | `side_effects` | Declared possible live-run side effects and whether dry-run mutates. |
 | `operator_consent` | Operator consent requirement, approved mutation scopes, delegated-agent scope, and consent record metadata. |
 | `issue_intake` | Present for work-owning flows (`ship`, `ship-v2`, `implement`, `overnight`); extracted objective, deliverable, acceptance criteria, readiness, questions, and ledger metadata. |
@@ -69,6 +70,13 @@ Project command entries include name, local command path, description, agent rol
 selectors, required/optional capabilities, side effects, dry-run safety, and source
 (`policy_pack.project_commands` or `policy_pack.command_routing`). The contract never embeds
 the project command body.
+
+`backbone_plan[].extension_slots` exposes every customization slot for every fixed backbone
+step, even when no project extension is loaded there. Each slot entry includes `name`,
+`step_id`, `execution_mode`, `may_block`, `adapter_required`, `hook_count`,
+`customization: add-only`, and `failure_mode` (`fail-soft` or `blocking-capable`). This is
+the machine-readable guarantee that project customization can add checks, reports, gates, or
+capture behavior without removing, replacing, reordering, or weakening core steps.
 
 ## Operator consent block
 
@@ -216,6 +224,29 @@ record is present (`null` otherwise). Rendering is pure and deterministic: the p
 codename comes from the record's `target`, not a baked-in literal; optional fields degrade
 gracefully (no tester line, empty reviewers, no PR, `capture_status=None`). Identical records
 always produce identical markdown.
+
+## Canonical artifact renderers
+
+`ship` and `ship-v2` contracts include `artifact_renderers`, the deterministic artifact
+renderer contract for public GitHub/writeable outputs that agents previously had to compose
+from prose. The renderer contract is consumer-neutral and tells adapters to post rendered
+Markdown verbatim when available.
+
+`keel ship --json` exposes the rendered bodies under `result.artifact_bodies`:
+
+- `pr_body`: canonical PR description with Summary, Context / Root Cause, Changes Made,
+  Testing, Docs Impact, and a closing or reference line
+- `issue_update`: stable issue progress/update comment with `keel.issue-update.v1`
+- `review_verdict_template`: marker-based reviewer verdict carrying
+  `keel.review-verdict.v1`, `reviewer: <id>`, and `head: <sha>` when available
+- `jury_verdict_template`: marker-based jury verdict carrying `keel.jury-verdict.v1` and
+  `head: <sha>` when available
+- `extension_result_template`: stable `keel.extension-result.v1` shape for slot/extension
+  status, mode, summary, artifacts, and follow-up references
+
+Project customization changes the content supplied to these renderers through config,
+policy, and extension results; it does not change the artifact shape. PR bodies remain
+explicitly excluded from review/jury/closure evidence.
 
 ## Evidence block
 
@@ -520,7 +551,8 @@ Adapters must:
 - block or escalate if a delegated agent attempts work outside `approved_mutation_scopes`
 - never infer secret or credential approval from project knowledge; require the `secrets` scope
 - preserve `no_mutations: true` under dry-run
-- use `extension_hooks` and `gates` from the contract rather than reparsing project config
+- use `backbone_plan[].extension_slots`, `extension_hooks`, and `gates` from the contract
+  rather than reparsing project config or project-local prose
 
 Projects can still declare project-specific policy in config and extensions, but the
 contract shape itself stays consumer-neutral.

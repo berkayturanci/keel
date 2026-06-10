@@ -16,6 +16,12 @@ All notable changes to keel are documented here. The format follows
   `gate_label`, `enforced`, and `pr_labels` (additive — `keel.evidence.v1` is unchanged).
   References #221.
 
+### Removed
+- **Outdated forward-looking docs** — deleted `docs/keel/vision.md` and removed its
+  forward-looking positioning content and links from `README.md`, `website/index.html`, and
+  `docs/keel/commands.md`; dropped the file from the consumer-neutrality scan surfaces.
+  Current-product positioning is unchanged.
+
 ### Fixed
 - **Docs correctness** — removed a dead `docs/proposals/divergence-audit-2035.md` link from
   the README; documented `keel status` and `keel work-block` in `docs/keel/cli.md`; and
@@ -159,7 +165,7 @@ All notable changes to keel are documented here. The format follows
 ### Changed
 - **Agentic work-ownership positioning** — README, website, and docs now frame keel as the
   backbone for agents that take ownership of software work from issue intake through shipped
-  outcome, including a public vision note for the future autonomous software team layer.
+  outcome.
 - **Competitive comparison module** — the website now includes a comparison view that
   distinguishes keel's issue-to-done work ownership model from adjacent agent, CI, and workflow
   automation tools.

@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from . import (
+    artifacts,
     capture,
     checkpoint,
     closure,
@@ -282,6 +283,7 @@ def build_command_contract(
             )
     if command in {"ship", "ship-v2"}:
         contract["closure_comment"] = closure.contract_as_dict()
+        contract["artifact_renderers"] = artifacts.contract_as_dict()
     if command in {"ship", "ship-v2", "implement", "overnight"}:
         contract["issue_intake"] = intake.assess_issue(
             title=issue_title,
@@ -765,16 +767,67 @@ def ship_result_as_dict(
 ) -> dict[str, Any]:
     """Normalized deterministic result record for ``keel ship --json``."""
     closure_comment = None
+    issue_number = None
+    pr_number = None
+    head_sha = None
     if isinstance(run_ledger, dict):
         record = run_ledger.get("record")
         if isinstance(record, dict):
             closure_comment = closure.render_closure_comment(record)
+            issue = record.get("issue")
+            pull_request = record.get("pull_request")
+            issue_number = issue.get("number") if isinstance(issue, dict) else None
+            pr_number = pull_request.get("number") if isinstance(pull_request, dict) else None
+            head_sha = record.get("head_sha")
+            head_sha = head_sha if isinstance(head_sha, str) else None
+    finding_dicts = [_finding_as_dict(finding) for finding in verdict.findings]
+    testing = _testing_summary(outcomes)
+    artifact_bodies = {
+        "pr_body": artifacts.render_pr_body(
+            issue_number=issue_number,
+            issue_intake=issue_intake,
+            changed_files=changed_files,
+            testing=testing,
+            docs_impact=_docs_impact(changed_files),
+        ),
+        "issue_update": artifacts.render_issue_update(
+            issue_number=issue_number,
+            pull_request=pr_number,
+            status="ready-for-merge" if not verdict.blocked else "blocked",
+            summary=assessment.merge.reason,
+            next_step="Merge when CI and evidence are green."
+            if not verdict.blocked else "Resolve blocking findings before merge.",
+        ),
+        "review_verdict_template": artifacts.render_review_verdict(
+            reviewer="reviewer",
+            head_sha=head_sha,
+            verdict="REQUEST_CHANGES" if verdict.blocked else "LGTM",
+            scope="Full changed-file diff and keel command contract.",
+            findings=finding_dicts,
+            testing="; ".join(testing) if testing else "See PR Testing section.",
+        ),
+        "jury_verdict_template": artifacts.render_jury_verdict(
+            head_sha=head_sha,
+            participants=("reviewer-a", "reviewer-b", "reviewer-c", "orchestrator"),
+            verdict="REQUEST_CHANGES" if verdict.blocked else "LGTM",
+            findings_summary=_finding_summaries(finding_dicts),
+            remaining_risks="blocking findings present" if verdict.blocked else "none identified",
+        ),
+        "extension_result_template": artifacts.render_extension_result(
+            slot="<slot>",
+            extension_id="<extension-id>",
+            status="not-run",
+            mode="advisory",
+            summary="Extension result summary goes here.",
+        ),
+    }
     return {
         "changed_files": list(changed_files),
         "changed_file_count": len(changed_files),
         "issue_intake": issue_intake,
         "run_ledger": run_ledger,
         "closure_comment": closure_comment,
+        "artifact_bodies": artifact_bodies,
         "gate_outcomes": [
             {
                 "gate": outcome.gate,
@@ -804,6 +857,46 @@ def ship_result_as_dict(
             "review_merge_contract": assessment.review_contract,
         },
     }
+
+
+def _testing_summary(outcomes: list[gates.GateOutcome]) -> list[str]:
+    if not outcomes:
+        return []
+    lines: list[str] = []
+    for outcome in outcomes:
+        if outcome.skipped:
+            state = "skipped"
+        elif outcome.ok:
+            state = "passed"
+        else:
+            state = "failed"
+        suffix = f" ({outcome.error})" if outcome.error else ""
+        lines.append(f"{outcome.gate}: {state}{suffix}")
+    return lines
+
+
+def _docs_impact(changed_files: list[str]) -> str:
+    docs = [file for file in changed_files if _is_doc_path(file)]
+    if docs:
+        return "Updated docs: " + ", ".join(f"`{file}`" for file in docs)
+    return "Docs Impact: none — no documentation files changed."
+
+
+def _is_doc_path(file: str) -> bool:
+    lowered = file.lower()
+    return (
+        "/docs/" in f"/{lowered}"
+        or lowered.startswith("docs/")
+        or lowered.endswith((".md", ".mdx", ".rst", ".adoc"))
+    )
+
+
+def _finding_summaries(findings: list[dict[str, Any]]) -> list[str]:
+    return [
+        f"{finding['severity']}: {finding['message']}"
+        for finding in findings
+        if isinstance(finding.get("severity"), str) and isinstance(finding.get("message"), str)
+    ]
 
 
 def standalone_result_as_dict(

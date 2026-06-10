@@ -97,10 +97,16 @@ backbone.
 
 ## Plan Visibility
 
-`keel plan` renders every loaded hook under its backbone step with slot, kind, `on_fail`,
+`keel plan --json` renders every exposed slot under its backbone step, even when no project
+extension is loaded there. Each `extension_slots[]` entry includes the slot name, step id,
+execution mode, whether it may block, whether an adapter is required, `hook_count`,
+`customization: add-only`, and a `failure_mode` of `fail-soft` or `blocking-capable`.
+
+Loaded extensions still render as `hooks[]` under the same step with slot, kind, `on_fail`,
 execution mode, adapter requirement, and required/optional capabilities. Agentic or hybrid
 hooks may require a host adapter even when the deterministic CLI can validate and display
-them.
+them. Adapters should read this plan/contract surface instead of reparsing project-local
+extension prose.
 
 ## Worked example: design parity
 
