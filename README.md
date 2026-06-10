@@ -32,8 +32,7 @@ claiming, reviewing, handing off, and shipping work under a human lead who remai
 the decision owner for product tradeoffs, credentials, approvals, and ambiguous scope.
 See [`docs/keel/vision.md`](docs/keel/vision.md) for the v1/v2 boundary.
 
-> Formerly **`ai-infra`** (a one-way file-copy sync of "portable" commands). keel replaces
-> that with a thin-consumer model: the core is installed + pinned, never copied, so the
+> keel uses a thin-consumer model: the core is installed + pinned, never copied, so the
 > drift/overwrite class of bug is structurally gone. Background:
 > [`docs/proposals/keel-architecture.md`](docs/proposals/keel-architecture.md).
 
