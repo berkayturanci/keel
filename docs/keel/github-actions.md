@@ -43,7 +43,7 @@ Copy the workflow and change two things:
 
 - **Install keel from a controlled ref** instead of the local checkout:
   ```yaml
-  - run: pip install "git+https://github.com/berkayturanci/keel@v1.0.2"
+  - run: pip install "git+https://github.com/berkayturanci/keel@v1.1.0"
   ```
 - **Point at your config**: `keel ship .keel/project.yaml --root . --pr <N>`.
 

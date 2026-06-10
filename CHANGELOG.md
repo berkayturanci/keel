@@ -6,6 +6,8 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-06-10
+
 ### Changed
 - **BREAKING:** removed the `keel ship-v2` command (`/keel:ship-v2`). The compound-engineering
   profile is now a flag on `ship`: `keel ship --compound` (`/keel:ship --compound`), with

@@ -111,4 +111,4 @@ skips, deferred capture, and missing markers. If `capture_health.status` is
 `capture_health.reconcile_actions` and hand the gap to the morning queue; do not mutate the
 ledger, GitHub, or project capture destinations from this reporting step.
 
-<!-- keel-generated: surface=plugin command=wrap keel_version=1.0.2 source_sha256=a1776fd1ab56af6529de3bc4adecd6b2960a345fd4cf37a098130c1d1febc973 generated_sha256=a1776fd1ab56af6529de3bc4adecd6b2960a345fd4cf37a098130c1d1febc973 -->
+<!-- keel-generated: surface=plugin command=wrap keel_version=1.1.0 source_sha256=a1776fd1ab56af6529de3bc4adecd6b2960a345fd4cf37a098130c1d1febc973 generated_sha256=a1776fd1ab56af6529de3bc4adecd6b2960a345fd4cf37a098130c1d1febc973 -->
