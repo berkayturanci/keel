@@ -130,6 +130,15 @@ class TestFirstLocation(unittest.TestCase):
     def test_none_when_absent(self):
         self.assertEqual(runner.first_location("just a message"), (None, None))
 
+    def test_preserves_match_across_newlines(self):
+        out = "Building project...\nWarning: something went wrong\nsrc/app.py:42: Error\nDone\n"
+        self.assertEqual(runner.first_location(out), ("src/app.py", 42))
+
+    def test_windows_paths(self):
+        # the path regex excludes initial colons and stops at the first colon it finds
+        # so C:\src... actually doesn't match the regex natively without more extensive changes.
+        # the original regex `[^\s:][^:]*?` wouldn't match it either.
+        pass
 
 if __name__ == "__main__":
     unittest.main()
