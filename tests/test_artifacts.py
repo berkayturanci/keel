@@ -14,6 +14,10 @@ class TestArtifactContract(unittest.TestCase):
                          evidence.REVIEW_VERDICT_MARKER)
         self.assertEqual(contract["markers"]["jury_verdict"], evidence.JURY_VERDICT_MARKER)
         self.assertEqual(contract["markers"]["step_handoff"], "<!-- keel.step-handoff.v1 -->")
+        self.assertEqual(
+            contract["markers"]["run_control_halt"],
+            "<!-- keel.run-control-halt.v1 -->",
+        )
         self.assertEqual(contract["adapter_rule"], "post rendered markdown verbatim when available")
 
 

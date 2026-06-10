@@ -123,6 +123,9 @@ class TestBuildCommandContract(unittest.TestCase):
         )
         self.assertEqual(contract["evidence"]["schema_version"], "keel.evidence.v1")
         self.assertTrue(contract["evidence"]["fail_closed"])
+        self.assertEqual(contract["run_controls"]["schema_version"], "keel.run-controls.v1")
+        self.assertTrue(contract["run_controls"]["fail_closed"])
+        self.assertIn("fixloop", contract["run_controls"]["step_caps"]["overrides"])
         self.assertEqual(
             contract["step_verification"]["schema_version"],
             "keel.step-verification.v1",
@@ -381,6 +384,7 @@ class TestBuildCommandContract(unittest.TestCase):
         )
         self.assertEqual(work_block["workflow_profile"]["inherits"], "ship")
         self.assertIn("review_merge_contract", work_block)
+        self.assertEqual(work_block["run_controls"]["schema_version"], "keel.run-controls.v1")
         self.assertIn("work_block", work_block["session_contract"])
         self.assertEqual(work_block["session_contract"]["work_block"]["mode"], "daytime")
         self.assertIn("needs_input",
@@ -405,6 +409,7 @@ class TestBuildCommandContract(unittest.TestCase):
         self.assertEqual(overnight["workflow_profile"]["profile"], "session-overnight")
         self.assertEqual(overnight["workflow_profile"]["inherits"], "ship")
         self.assertIn("review_merge_contract", overnight)
+        self.assertEqual(overnight["run_controls"]["schema_version"], "keel.run-controls.v1")
         self.assertIn("run_ledger", overnight["session_contract"])
         self.assertEqual(overnight["session_contract"]["work_block"]["mode"], "overnight")
 

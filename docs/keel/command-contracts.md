@@ -58,6 +58,7 @@ Every contract includes:
 | `closure_comment` | Present for `ship` (both profiles); the deterministic, consumer-neutral closure-comment contract describing how the s11 ship-outcome comment is rendered from the `ship_run` ledger record. |
 | `evidence` | Present for `ship` (both profiles); the pre-merge evidence contract used by `keel evidence-verify`. The gate is opt-in via the `evidence_gate_label` knob (default `keel:ship`) applied at PR open; the contract carries an `enforced` flag and, when not enforced, an empty `required` set (a PR without the label passes). When enforced it is fail-closed. |
 | `step_verification` | Present for `ship` (both profiles); the fail-closed step completion contract that maps required public evidence onto backbone steps and defines the structured handoff object every successful step must produce. |
+| `run_controls` | Present for agentic/looping commands (`ship`, `pr-loop`, `review-cycle`, `work-block`, `overnight`); deterministic run budgets, per-slot step caps, and oscillation hard-halt rules. |
 | `artifact_renderers` | Present for `ship` (both profiles); canonical renderer contract for PR bodies, issue updates, review verdicts, jury verdicts, and extension result output. |
 | `side_effects` | Declared possible live-run side effects and whether dry-run mutates. |
 | `operator_consent` | Operator consent requirement, approved mutation scopes, delegated-agent scope, and consent record metadata. |
@@ -246,10 +247,37 @@ Markdown verbatim when available.
   status, mode, summary, artifacts, and follow-up references
 - `step_handoff`: stable `keel.step-handoff.v1` shape for step-to-step handoff status,
   summary, next step, and evidence ids
+- `run_control_halt`: stable `keel.run-control-halt.v1` shape for budget, step-cap, or
+  oscillation hard-halt reasons
 
 Project customization changes the content supplied to these renderers through config,
 policy, and extension results; it does not change the artifact shape. PR bodies remain
 explicitly excluded from review/jury/closure evidence.
+
+## Run controls block
+
+Agentic and looping command contracts include `run_controls`, the pure-core guardrail
+contract for bounded work. It is deterministic and count-based: keel does not use
+wall-clock timeouts in the pure core. Adapters feed observed work events into
+`keel.runcontrols.evaluate_run_controls`, and the evaluator returns either `pass` or a
+fail-closed hard halt with a structured reason rendered through
+`keel.artifacts.render_run_control_halt`.
+
+The block records:
+
+- `schema_version: keel.run-controls.v1`
+- per-run budget units (`work_unit`) and the default maximum
+- per-slot step caps for every extension slot, with explicit overrides for slots such as
+  `fixloop`, `reviewers`, `tester`, and `test`
+- deterministic oscillation checks for repeated identical actions and alternating
+  non-converging diff fingerprints
+- `hard_halts`: `run-budget-exceeded`, `step-cap-exceeded`, and `oscillation-detected`
+- `fail_soft_preserved`: soft failures remain owned by their step; only budget/cap/
+  oscillation breaches become hard halts
+
+Run-control halt reasons are intentionally structured so operators and adapters can log,
+post, or checkpoint the exact control, scope, observed value, limit, and action without
+parsing prose.
 
 ## Step verification block
 
