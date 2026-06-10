@@ -13,6 +13,7 @@ class TestArtifactContract(unittest.TestCase):
         self.assertEqual(contract["markers"]["review_verdict"],
                          evidence.REVIEW_VERDICT_MARKER)
         self.assertEqual(contract["markers"]["jury_verdict"], evidence.JURY_VERDICT_MARKER)
+        self.assertEqual(contract["markers"]["step_handoff"], "<!-- keel.step-handoff.v1 -->")
         self.assertEqual(contract["adapter_rule"], "post rendered markdown verbatim when available")
 
 
@@ -110,6 +111,24 @@ class TestExtensionResultRenderer(unittest.TestCase):
         self.assertIn("- **Slot:** `pre-merge`", body)
         self.assertIn("- **Extension:** `design-parity`", body)
         self.assertIn("  - reports/design.md", body)
+
+
+class TestStepHandoffRenderer(unittest.TestCase):
+    def test_step_handoff_has_stable_marker_and_evidence_list(self):
+        body = artifacts.render_step_handoff(
+            step_id="s7",
+            step_name="review",
+            status="complete",
+            summary="Two reviewers posted LGTM.",
+            next_step="s8",
+            evidence_ids=["review-verdict-1", "review-verdict-2"],
+        )
+
+        self.assertIn("<!-- keel.step-handoff.v1 -->", body)
+        self.assertIn("- **Step:** `s7`", body)
+        self.assertIn("- **Status:** complete", body)
+        self.assertIn("  - review-verdict-1", body)
+        self.assertIn("  - review-verdict-2", body)
 
 
 if __name__ == "__main__":

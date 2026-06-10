@@ -27,6 +27,7 @@ from . import (
     model,
     orchestrator,
     runtime,
+    stepverifier,
     workblock,
 )
 from . import config as cfg
@@ -278,6 +279,10 @@ def build_command_contract(
         )
         if command == "ship":
             contract["evidence"] = evidence.contract_as_dict(
+                contract["review_merge_contract"],
+                dry_run=dry_run,
+            )
+            contract["step_verification"] = stepverifier.contract_as_dict(
                 contract["review_merge_contract"],
                 dry_run=dry_run,
             )

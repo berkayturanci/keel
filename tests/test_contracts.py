@@ -123,6 +123,19 @@ class TestBuildCommandContract(unittest.TestCase):
         )
         self.assertEqual(contract["evidence"]["schema_version"], "keel.evidence.v1")
         self.assertTrue(contract["evidence"]["fail_closed"])
+        self.assertEqual(
+            contract["step_verification"]["schema_version"],
+            "keel.step-verification.v1",
+        )
+        self.assertTrue(contract["step_verification"]["no_premature_termination"])
+        review_step = next(
+            step for step in contract["step_verification"]["steps"]
+            if step["step_id"] == "s7"
+        )
+        self.assertEqual(review_step["required_evidence"], [
+            "review-verdict-1",
+            "review-verdict-2",
+        ])
         self.assertEqual(contract["artifact_renderers"]["schema_version"], "keel.artifacts.v1")
         self.assertEqual(
             contract["artifact_renderers"]["adapter_rule"],

@@ -14,6 +14,7 @@ from . import evidence
 SCHEMA_VERSION = "keel.artifacts.v1"
 EXTENSION_RESULT_MARKER = "<!-- keel.extension-result.v1 -->"
 ISSUE_UPDATE_MARKER = "<!-- keel.issue-update.v1 -->"
+STEP_HANDOFF_MARKER = "<!-- keel.step-handoff.v1 -->"
 
 
 def contract_as_dict() -> dict[str, Any]:
@@ -28,12 +29,14 @@ def contract_as_dict() -> dict[str, Any]:
             "review_verdict": "keel.artifacts.render_review_verdict",
             "jury_verdict": "keel.artifacts.render_jury_verdict",
             "extension_result": "keel.artifacts.render_extension_result",
+            "step_handoff": "keel.artifacts.render_step_handoff",
         },
         "markers": {
             "review_verdict": evidence.REVIEW_VERDICT_MARKER,
             "jury_verdict": evidence.JURY_VERDICT_MARKER,
             "issue_update": ISSUE_UPDATE_MARKER,
             "extension_result": EXTENSION_RESULT_MARKER,
+            "step_handoff": STEP_HANDOFF_MARKER,
         },
         "adapter_rule": "post rendered markdown verbatim when available",
     }
@@ -183,6 +186,33 @@ def render_extension_result(
     lines.append("- **Follow-ups:**")
     follow_up_lines = _string_bullets(follow_ups)
     lines.extend(follow_up_lines if follow_up_lines else ["  - none"])
+    return "\n".join(lines) + "\n"
+
+
+def render_step_handoff(
+    *,
+    step_id: str,
+    step_name: str | None = None,
+    status: str = "complete",
+    summary: str | None = None,
+    next_step: str | None = None,
+    evidence_ids: list[str] | tuple[str, ...] = (),
+) -> str:
+    """Render the canonical structured handoff between backbone steps."""
+    lines = [
+        STEP_HANDOFF_MARKER,
+        "",
+        "## Step handoff",
+        "",
+        f"- **Step:** `{_value(step_id, 'unknown')}`",
+        f"- **Name:** {_value(step_name, 'not recorded')}",
+        f"- **Status:** {_value(status, 'complete')}",
+        f"- **Summary:** {_value(summary, 'No summary recorded.')}",
+        f"- **Next step:** {_value(next_step, 'Continue the backbone plan.')}",
+        "- **Evidence:**",
+    ]
+    evidence_lines = _string_bullets(evidence_ids)
+    lines.extend(evidence_lines if evidence_lines else ["  - none"])
     return "\n".join(lines) + "\n"
 
 

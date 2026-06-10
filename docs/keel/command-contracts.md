@@ -57,6 +57,7 @@ Every contract includes:
 | `capture` | Post-merge capture marker, skip vocabulary, fail-soft, recursion-guard, redaction, and verifier contract. |
 | `closure_comment` | Present for `ship` (both profiles); the deterministic, consumer-neutral closure-comment contract describing how the s11 ship-outcome comment is rendered from the `ship_run` ledger record. |
 | `evidence` | Present for `ship` (both profiles); the pre-merge evidence contract used by `keel evidence-verify`. The gate is opt-in via the `evidence_gate_label` knob (default `keel:ship`) applied at PR open; the contract carries an `enforced` flag and, when not enforced, an empty `required` set (a PR without the label passes). When enforced it is fail-closed. |
+| `step_verification` | Present for `ship` (both profiles); the fail-closed step completion contract that maps required public evidence onto backbone steps and defines the structured handoff object every successful step must produce. |
 | `artifact_renderers` | Present for `ship` (both profiles); canonical renderer contract for PR bodies, issue updates, review verdicts, jury verdicts, and extension result output. |
 | `side_effects` | Declared possible live-run side effects and whether dry-run mutates. |
 | `operator_consent` | Operator consent requirement, approved mutation scopes, delegated-agent scope, and consent record metadata. |
@@ -243,10 +244,36 @@ Markdown verbatim when available.
   `head: <sha>` when available
 - `extension_result_template`: stable `keel.extension-result.v1` shape for slot/extension
   status, mode, summary, artifacts, and follow-up references
+- `step_handoff`: stable `keel.step-handoff.v1` shape for step-to-step handoff status,
+  summary, next step, and evidence ids
 
 Project customization changes the content supplied to these renderers through config,
 policy, and extension results; it does not change the artifact shape. PR bodies remain
 explicitly excluded from review/jury/closure evidence.
+
+## Step verification block
+
+`ship` contracts (both profiles) include `step_verification`, the deterministic
+no-premature-termination contract for the fixed backbone. The block keeps step completion
+separate from private chat: an adapter may mark a step successful only when it has a
+structured handoff object with `schema_version: keel.step-handoff.v1`, status `complete`,
+and the canonical `keel.step-handoff.v1` marker rendered by
+`keel.artifacts.render_step_handoff`.
+
+The block records:
+
+- `schema_version: keel.step-verification.v1`
+- `fail_closed: true`
+- `no_premature_termination: true`
+- `handoff_schema`: required handoff fields, renderer, and marker
+- `steps`: every `s0`–`s12` backbone step with the evidence ids that must be `ok`
+  before that step can transition as successful
+
+The required evidence ids are derived from the same `review_merge_contract` and public
+evidence contract used by `keel evidence-verify`. Review verdict evidence is attached to
+`s7 review`; gating jury evidence is attached to `s8 test`; closure comments are attached
+to `s12 close`. Steps without public GitHub evidence still require a complete structured
+handoff, so a generated command cannot silently skip or prematurely terminate a step.
 
 ## Evidence block
 
