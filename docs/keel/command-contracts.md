@@ -56,6 +56,7 @@ Every contract includes:
 | `checkpoint` | Resumable checkpoint storage and resume/reconcile contract for ship and work-block runs. |
 | `capture` | Post-merge capture marker, skip vocabulary, fail-soft, recursion-guard, redaction, and verifier contract. |
 | `closure_comment` | Present for `ship` and `ship-v2`; the deterministic, consumer-neutral closure-comment contract describing how the s11 ship-outcome comment is rendered from the `ship_run` ledger record. |
+| `evidence` | Present for `ship` and `ship-v2`; the fail-closed pre-merge evidence contract used by `keel evidence-verify`. |
 | `side_effects` | Declared possible live-run side effects and whether dry-run mutates. |
 | `operator_consent` | Operator consent requirement, approved mutation scopes, delegated-agent scope, and consent record metadata. |
 | `issue_intake` | Present for work-owning flows (`ship`, `ship-v2`, `implement`, `overnight`); extracted objective, deliverable, acceptance criteria, readiness, questions, and ledger metadata. |
@@ -215,6 +216,34 @@ record is present (`null` otherwise). Rendering is pure and deterministic: the p
 codename comes from the record's `target`, not a baked-in literal; optional fields degrade
 gracefully (no tester line, empty reviewers, no PR, `capture_status=None`). Identical records
 always produce identical markdown.
+
+## Evidence block
+
+`ship` and `ship-v2` contracts include `evidence`, the deterministic pre-merge evidence
+set derived from the resolved `review_merge_contract` plus the closure-comment contract.
+Adapters and CI use it to prove that a ship run completed its public review/closeout
+artifacts instead of trusting a private chat summary.
+
+The block records:
+
+- `schema_version: keel.evidence.v1`
+- `accepted_sources`: PR/issue comments with `keel.closure-comment.v1`, PR comments or
+  reviews with a reviewer verdict, and PR comments with a jury verdict
+- `not_accepted`: PR body, chat summaries, and the automated `keel ship` assessment comment
+- `required`: stable ids such as `closure-comment-pr`, `closure-comment-issue`,
+  `review-verdict-1`, `review-verdict-2`, and `jury-verdict` when jury is gating
+- `dry_run_disables_gating: true` and `fail_closed: true`
+
+`keel evidence-verify <project.yaml> --pr <N>` reads those public artifacts through `gh`,
+derives the current PR tier from the live changed-file list, binds verdict evidence to the
+current PR head, and exits non-zero when required evidence is missing. Reviewer evidence
+must carry `keel.review-verdict.v1` plus a stable `reviewer: <id>` field; jury evidence
+must carry `keel.jury-verdict.v1`. When the PR head SHA is known, those comments must also
+carry `head: <sha>` unless the source is a formal PR review whose `commit_id` matches the
+head. The verifier may use the PR body only to infer a linked `Closes #N` issue; the body
+itself never satisfies evidence. Explicit operator deferrals must be passed as
+`--deferral <id|kind|all>` and should be recorded in the PR/issue conversation before
+branch protection is bypassed.
 
 ## Progress status surface
 

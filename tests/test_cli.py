@@ -4,6 +4,7 @@ import contextlib
 import io
 import json
 import subprocess
+import tempfile
 import unittest
 from argparse import Namespace
 from pathlib import Path
@@ -95,6 +96,8 @@ class TestPlan(unittest.TestCase):
                          "keel.run-ledger.v1")
         self.assertEqual(data["contract"]["checkpoint"]["schema_version"],
                          "keel.checkpoint.v1")
+        self.assertEqual(data["contract"]["evidence"]["schema_version"], "keel.evidence.v1")
+        self.assertIn("pull_request_body", data["contract"]["evidence"]["not_accepted"])
 
     def test_plan_json_resolves_review_jury_flags(self):
         rc, out, _ = run(
@@ -108,6 +111,22 @@ class TestPlan(unittest.TestCase):
         self.assertEqual(review["reviewers"]["source"], "override")
         self.assertEqual(review["posting"]["mode"], "summary")
         self.assertEqual(review["jury"]["mode"], "advisory")
+
+    def test_plan_json_exposes_evidence_requirements_from_review_flags(self):
+        rc, out, _ = run(
+            ["plan", str(PROJECTS / "example-android.yaml"), "--root", str(REPO_ROOT),
+             "--command", "ship", "--reviewers", "2", "--jury", "--json"]
+        )
+        self.assertEqual(rc, 0)
+        evidence_contract = json.loads(out)["contract"]["evidence"]
+        ids = [item["id"] for item in evidence_contract["required"]]
+        self.assertEqual(ids, [
+            "closure-comment-pr",
+            "closure-comment-issue",
+            "review-verdict-1",
+            "review-verdict-2",
+            "jury-verdict",
+        ])
 
     def test_plan_json_includes_issue_intake(self):
         body = (
@@ -896,6 +915,458 @@ class TestShip(unittest.TestCase):
 
         self.assertEqual(rc_bad, 1)
         self.assertIn("invalid ledger", err_bad)
+
+    def test_evidence_verify_passes_from_offline_artifacts(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            pr_comments = root / "pr-comments.json"
+            issue_comments = root / "issue-comments.json"
+            reviews = root / "reviews.json"
+            body = root / "body.md"
+            pr_comments.write_text(json.dumps([
+                {"body": "<!-- keel.closure-comment.v1 -->"},
+                {"body": "keel.review-verdict.v1\nReviewer A LGTM"},
+                {"body": "keel.jury-verdict.v1\nAI Jury LGTM"},
+            ]), encoding="utf-8")
+            issue_comments.write_text(json.dumps([
+                {"body": "<!-- keel.closure-comment.v1 -->"},
+            ]), encoding="utf-8")
+            reviews.write_text(json.dumps([
+                {"body": "keel.review-verdict.v1\nReviewer B LGTM"},
+            ]), encoding="utf-8")
+            body.write_text("Closes #212", encoding="utf-8")
+            rc, out, _ = run([
+                "evidence-verify", str(PROJECTS / "example-android.yaml"),
+                "--root", str(REPO_ROOT),
+                "--pr", "300",
+                "--reviewers", "2",
+                "--jury",
+                "--pr-comments-json", str(pr_comments),
+                "--issue-comments-json", str(issue_comments),
+                "--pr-reviews-json", str(reviews),
+                "--pr-body-file", str(body),
+                "--json",
+            ])
+
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["issue"], 212)
+        self.assertEqual(data["verification"]["status"], "pass")
+        self.assertEqual(data["verification"]["counts"]["review_verdict"], 2)
+
+    def test_evidence_verify_rejects_body_and_assessment_as_evidence(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            pr_comments = root / "pr-comments.json"
+            issue_comments = root / "issue-comments.json"
+            reviews = root / "reviews.json"
+            body = root / "body.md"
+            pr_comments.write_text(json.dumps([
+                {"body": "### \U0001f6a2 keel ship\nReviewer verdict LGTM"},
+            ]), encoding="utf-8")
+            issue_comments.write_text("[]", encoding="utf-8")
+            reviews.write_text("[]", encoding="utf-8")
+            body.write_text(
+                "Closes #212\n<!-- keel.closure-comment.v1 -->\n"
+                "keel.review-verdict.v1\nLGTM",
+                encoding="utf-8",
+            )
+            rc, out, _ = run([
+                "evidence-verify", str(PROJECTS / "example-android.yaml"),
+                "--root", str(REPO_ROOT),
+                "--pr", "300",
+                "--reviewers", "1",
+                "--pr-comments-json", str(pr_comments),
+                "--issue-comments-json", str(issue_comments),
+                "--pr-reviews-json", str(reviews),
+                "--pr-body-file", str(body),
+                "--json",
+            ])
+
+        self.assertEqual(rc, 1)
+        data = json.loads(out)
+        self.assertEqual(data["verification"]["status"], "fail")
+        self.assertEqual(data["verification"]["counts"]["review_verdict"], 0)
+        self.assertEqual(data["verification"]["missing"], [
+            "closure-comment-pr",
+            "closure-comment-issue",
+            "review-verdict-1",
+        ])
+
+    def test_evidence_verify_human_output_and_dry_run(self):
+        rc, out, _ = run([
+            "evidence-verify", str(PROJECTS / "example-android.yaml"),
+            "--root", str(REPO_ROOT),
+            "--pr", "300",
+            "--dry-run",
+            "--pr-comments-json", _write_raw("[]"),
+            "--issue-comments-json", _write_raw("[]"),
+            "--pr-reviews-json", _write_raw("[]"),
+        ])
+
+        self.assertEqual(rc, 0)
+        self.assertIn("keel evidence-verify", out)
+        self.assertIn("required      : 0", out)
+
+    def test_evidence_verify_fixture_keeps_explicit_issue(self):
+        rc, out, _ = run([
+            "evidence-verify", str(PROJECTS / "example-android.yaml"),
+            "--root", str(REPO_ROOT),
+            "--pr", "300",
+            "--issue", "99",
+            "--dry-run",
+            "--pr-comments-json", _write_raw("[]"),
+            "--issue-comments-json", _write_raw("[]"),
+            "--pr-reviews-json", _write_raw("[]"),
+            "--pr-body-file", _write_raw("Closes #212"),
+            "--json",
+        ])
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(out)["issue"], 99)
+
+    def test_evidence_verify_fixture_uses_explicit_issue_without_body_infer(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            pr_comments = root / "pr-comments.json"
+            issue_comments = root / "issue-comments.json"
+            reviews = root / "reviews.json"
+            body = root / "body.md"
+            pr_comments.write_text(json.dumps([
+                {"body": "<!-- keel.closure-comment.v1 -->"},
+                {"body": "keel.review-verdict.v1\nreviewer: a\nLGTM"},
+                {"body": "keel.review-verdict.v1\nreviewer: b\nLGTM"},
+            ]), encoding="utf-8")
+            issue_comments.write_text(json.dumps([
+                {"body": "<!-- keel.closure-comment.v1 -->"},
+            ]), encoding="utf-8")
+            reviews.write_text("[]", encoding="utf-8")
+            body.write_text("Closes #212", encoding="utf-8")
+            rc, out, _ = run([
+                "evidence-verify", str(PROJECTS / "example-android.yaml"),
+                "--root", str(REPO_ROOT),
+                "--pr", "300",
+                "--issue", "99",
+                "--reviewers", "2",
+                "--pr-comments-json", str(pr_comments),
+                "--issue-comments-json", str(issue_comments),
+                "--pr-reviews-json", str(reviews),
+                "--pr-body-file", str(body),
+                "--json",
+            ])
+
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["issue"], 99)
+        self.assertEqual(data["verification"]["status"], "pass")
+
+    def test_evidence_verify_human_output_lists_missing_and_deferrals(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            pr_comments = root / "pr-comments.json"
+            issue_comments = root / "issue-comments.json"
+            reviews = root / "reviews.json"
+            pr_comments.write_text(json.dumps([
+                {"body": "<!-- keel.closure-comment.v1 -->"},
+            ]), encoding="utf-8")
+            issue_comments.write_text("[]", encoding="utf-8")
+            reviews.write_text("[]", encoding="utf-8")
+            rc, out, _ = run([
+                "evidence-verify", str(PROJECTS / "example-android.yaml"),
+                "--root", str(REPO_ROOT),
+                "--pr", "300",
+                "--reviewers", "1",
+                "--deferral", "review",
+                "--pr-comments-json", str(pr_comments),
+                "--issue-comments-json", str(issue_comments),
+                "--pr-reviews-json", str(reviews),
+            ])
+
+        self.assertEqual(rc, 1)
+        self.assertIn("missing       : closure-comment-issue", out)
+        self.assertIn("review-verdict-1 (deferred)", out)
+
+    def test_evidence_verify_reports_config_and_artifact_errors(self):
+        rc_missing, _, err_missing = run([
+            "evidence-verify", "/no/such.yaml", "--pr", "1", "--json",
+        ])
+        self.assertEqual(rc_missing, 1)
+        self.assertIn("no such config", err_missing)
+
+        rc_invalid, _, err_invalid = run([
+            "evidence-verify", _write_raw("extends: keel\n"), "--pr", "1", "--json",
+        ])
+        self.assertEqual(rc_invalid, 1)
+        self.assertIn("invalid keel config", err_invalid)
+
+        with tempfile.TemporaryDirectory() as d:
+            bad_json = Path(d) / "bad.json"
+            bad_json.write_text("{}", encoding="utf-8")
+            rc_bad, _, err_bad = run([
+                "evidence-verify", str(PROJECTS / "example-android.yaml"),
+                "--pr", "1",
+                "--pr-comments-json", str(bad_json),
+            ])
+        self.assertEqual(rc_bad, 1)
+        self.assertIn("must contain a JSON array of objects", err_bad)
+
+        rc_repo, _, err_repo = run([
+            "evidence-verify", _write_config("'true'"), "--pr", "1",
+        ])
+        self.assertEqual(rc_repo, 1)
+        self.assertIn("project config must define owner and repo", err_repo)
+
+    def test_evidence_verify_live_fetch_uses_gh_artifacts(self):
+        calls = []
+
+        def fake_run(argv, **_kw):
+            calls.append(argv)
+            endpoint = argv[-1]
+            if endpoint.endswith("/pulls/300"):
+                return Namespace(ok=True, output=json.dumps({
+                    "body": "Closes #212",
+                    "head": {"sha": "abc123"},
+                }))
+            if endpoint.endswith("/pulls/300/files"):
+                return Namespace(ok=True, output=json.dumps([
+                    [{"filename": "src/keel/evidence.py"}],
+                ]))
+            if endpoint.endswith("/issues/300/comments"):
+                return Namespace(ok=True, output=json.dumps([
+                    {"body": "<!-- keel.closure-comment.v1 -->"},
+                    {"body": "keel.review-verdict.v1\nreviewer: a\nhead: abc123\nLGTM"},
+                ]))
+            if endpoint.endswith("/pulls/300/reviews"):
+                return Namespace(ok=True, output=json.dumps([
+                    {"body": "keel.review-verdict.v1\nreviewer: b\nLGTM",
+                     "commit_id": "abc123"},
+                ]))
+            if endpoint.endswith("/issues/212/comments"):
+                return Namespace(ok=True, output=json.dumps([
+                    {"body": "<!-- keel.closure-comment.v1 -->"},
+                ]))
+            return Namespace(ok=False, output="unexpected endpoint")
+
+        with patch("keel.cli.run_argv", side_effect=fake_run):
+            rc, out, _ = run([
+                "evidence-verify", str(PROJECTS / "example-android.yaml"),
+                "--root", str(REPO_ROOT),
+                "--pr", "300",
+                "--reviewers", "2",
+                "--json",
+            ])
+
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["verification"]["status"], "pass")
+        self.assertEqual(data["head_sha"], "abc123")
+        self.assertEqual(data["changed_files"], ["src/keel/evidence.py"])
+        self.assertTrue(any(argv[:3] == ["gh", "api", "--paginate"] for argv in calls))
+
+    def test_evidence_verify_live_fetch_derives_tier3_requirements(self):
+        def fake_run(argv, **_kw):
+            endpoint = argv[-1]
+            if endpoint.endswith("/pulls/300"):
+                return Namespace(ok=True, output=json.dumps({
+                    "body": "Closes #212",
+                    "head": {"sha": "abc123"},
+                }))
+            if endpoint.endswith("/pulls/300/files"):
+                return Namespace(ok=True, output=json.dumps([
+                    [{"filename": ".github/workflows/keel-ship.yml"}],
+                ]))
+            if endpoint.endswith("/issues/300/comments"):
+                return Namespace(ok=True, output=json.dumps([
+                    {"body": "<!-- keel.closure-comment.v1 -->"},
+                    {"body": "keel.review-verdict.v1\nreviewer: a\nhead: abc123\nLGTM"},
+                    {"body": "keel.review-verdict.v1\nreviewer: b\nhead: abc123\nLGTM"},
+                ]))
+            if endpoint.endswith("/pulls/300/reviews"):
+                return Namespace(ok=True, output="[]")
+            if endpoint.endswith("/issues/212/comments"):
+                return Namespace(ok=True, output=json.dumps([
+                    {"body": "<!-- keel.closure-comment.v1 -->"},
+                ]))
+            return Namespace(ok=False, output="unexpected endpoint")
+
+        with patch("keel.cli.run_argv", side_effect=fake_run):
+            rc, out, _ = run([
+                "evidence-verify", str(PROJECTS / "example-android.yaml"),
+                "--root", str(REPO_ROOT),
+                "--pr", "300",
+                "--json",
+            ])
+
+        self.assertEqual(rc, 1)
+        data = json.loads(out)
+        self.assertEqual(data["changed_files"], [".github/workflows/keel-ship.yml"])
+        self.assertEqual(data["verification"]["missing"], [
+            "review-verdict-3",
+            "jury-verdict",
+        ])
+
+    def test_evidence_verify_offline_changed_files_and_head_sha(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            pr_comments = root / "pr-comments.json"
+            issue_comments = root / "issue-comments.json"
+            reviews = root / "reviews.json"
+            body = root / "body.md"
+            pr_comments.write_text(json.dumps([
+                {"body": "<!-- keel.closure-comment.v1 -->"},
+                {"body": "keel.review-verdict.v1\nreviewer: a\nhead: abc123\nLGTM"},
+                {"body": "keel.review-verdict.v1\nreviewer: b\nhead: abc123\nLGTM"},
+                {"body": "keel.review-verdict.v1\nreviewer: c\nhead: abc123\nLGTM"},
+                {"body": "keel.jury-verdict.v1\nhead: abc123\nAI Jury LGTM"},
+            ]), encoding="utf-8")
+            issue_comments.write_text(json.dumps([
+                {"body": "<!-- keel.closure-comment.v1 -->"},
+            ]), encoding="utf-8")
+            reviews.write_text("[]", encoding="utf-8")
+            body.write_text("Closes #212", encoding="utf-8")
+            rc, out, _ = run([
+                "evidence-verify", str(PROJECTS / "example-android.yaml"),
+                "--root", str(REPO_ROOT),
+                "--pr", "300",
+                "--changed-file", ".github/workflows/keel-ship.yml",
+                "--head-sha", "abc123",
+                "--pr-comments-json", str(pr_comments),
+                "--issue-comments-json", str(issue_comments),
+                "--pr-reviews-json", str(reviews),
+                "--pr-body-file", str(body),
+                "--json",
+            ])
+
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["verification"]["required_count"], 6)
+        self.assertEqual(data["verification"]["status"], "pass")
+
+    def test_evidence_verify_live_fetch_uses_explicit_issue_without_body_infer(self):
+        calls = []
+
+        def fake_run(argv, **_kw):
+            calls.append(argv)
+            endpoint = argv[-1]
+            if endpoint.endswith("/pulls/300"):
+                return Namespace(ok=True, output=json.dumps({"body": "Closes #212"}))
+            if endpoint.endswith("/pulls/300/files"):
+                return Namespace(ok=True, output=json.dumps([
+                    [{"filename": "src/keel/evidence.py"}],
+                ]))
+            if endpoint.endswith("/issues/300/comments"):
+                return Namespace(ok=True, output=json.dumps([
+                    {"body": "<!-- keel.closure-comment.v1 -->"},
+                    {"body": "keel.review-verdict.v1\nReviewer A LGTM"},
+                    {"body": "keel.review-verdict.v1\nReviewer B LGTM"},
+                ]))
+            if endpoint.endswith("/pulls/300/reviews"):
+                return Namespace(ok=True, output="[]")
+            if endpoint.endswith("/issues/99/comments"):
+                return Namespace(ok=True, output=json.dumps([
+                    {"body": "<!-- keel.closure-comment.v1 -->"},
+                ]))
+            return Namespace(ok=False, output="unexpected endpoint")
+
+        with patch("keel.cli.run_argv", side_effect=fake_run):
+            rc, out, _ = run([
+                "evidence-verify", str(PROJECTS / "example-android.yaml"),
+                "--root", str(REPO_ROOT),
+                "--pr", "300",
+                "--issue", "99",
+                "--reviewers", "2",
+                "--json",
+            ])
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(out)["issue"], 99)
+        self.assertTrue(any("/issues/99/comments" in argv[-1] for argv in calls))
+        self.assertFalse(any("/issues/212/comments" in argv[-1] for argv in calls))
+
+    def test_evidence_verify_reports_live_gh_errors_and_bad_shapes(self):
+        def failing_run(_argv, **_kw):
+            return Namespace(ok=False, output="no auth")
+
+        with patch("keel.cli.run_argv", side_effect=failing_run):
+            rc_fail, _, err_fail = run([
+                "evidence-verify", str(PROJECTS / "example-android.yaml"),
+                "--root", str(REPO_ROOT),
+                "--pr", "300",
+            ])
+        self.assertEqual(rc_fail, 1)
+        self.assertIn("gh api repos/berkayturanci/example-android/pulls/300 failed", err_fail)
+
+        def bad_object_run(argv, **_kw):
+            endpoint = argv[-1]
+            if endpoint.endswith("/pulls/300"):
+                return Namespace(ok=True, output="[]")
+            return Namespace(ok=True, output="[]")
+
+        with patch("keel.cli.run_argv", side_effect=bad_object_run):
+            rc_obj, _, err_obj = run([
+                "evidence-verify", str(PROJECTS / "example-android.yaml"),
+                "--root", str(REPO_ROOT),
+                "--pr", "300",
+            ])
+        self.assertEqual(rc_obj, 1)
+        self.assertIn("did not return a JSON object", err_obj)
+
+        def bad_list_run(argv, **_kw):
+            endpoint = argv[-1]
+            if endpoint.endswith("/pulls/300"):
+                return Namespace(ok=True, output=json.dumps({"body": ""}))
+            return Namespace(ok=True, output="{}")
+
+        with patch("keel.cli.run_argv", side_effect=bad_list_run):
+            rc_list, _, err_list = run([
+                "evidence-verify", str(PROJECTS / "example-android.yaml"),
+                "--root", str(REPO_ROOT),
+                "--pr", "300",
+            ])
+        self.assertEqual(rc_list, 1)
+        self.assertIn("did not return a JSON array", err_list)
+
+        def failing_paginated_run(argv, **_kw):
+            endpoint = argv[-1]
+            if endpoint.endswith("/pulls/300"):
+                return Namespace(ok=True, output=json.dumps({"body": ""}))
+            return Namespace(ok=False, output="page failed")
+
+        with patch("keel.cli.run_argv", side_effect=failing_paginated_run):
+            rc_page, _, err_page = run([
+                "evidence-verify", str(PROJECTS / "example-android.yaml"),
+                "--root", str(REPO_ROOT),
+                "--pr", "300",
+            ])
+        self.assertEqual(rc_page, 1)
+        self.assertIn("page failed", err_page)
+
+    def test_evidence_verify_live_fetch_allows_missing_linked_issue(self):
+        calls = []
+
+        def fake_run(argv, **_kw):
+            calls.append(argv)
+            endpoint = argv[-1]
+            if endpoint.endswith("/pulls/300"):
+                return Namespace(ok=True, output=json.dumps({"body": "Refs #212"}))
+            if endpoint.endswith("/pulls/300/files"):
+                return Namespace(ok=True, output=json.dumps([
+                    [{"filename": "src/keel/evidence.py"}],
+                ]))
+            return Namespace(ok=True, output="[]")
+
+        with patch("keel.cli.run_argv", side_effect=fake_run):
+            rc, out, _ = run([
+                "evidence-verify", str(PROJECTS / "example-android.yaml"),
+                "--root", str(REPO_ROOT),
+                "--pr", "300",
+                "--json",
+            ])
+
+        self.assertEqual(rc, 1)
+        data = json.loads(out)
+        self.assertIsNone(data["issue"])
+        self.assertFalse(any("/issues/212/comments" in argv[-1] for argv in calls))
 
     def test_capture_reconcile_plans_missing_marker_actions(self):
         import tempfile

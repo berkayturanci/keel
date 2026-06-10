@@ -15,9 +15,13 @@ on:
       pr:
         description: "PR number to assess (optional)"
         required: false
+      deferral:
+        description: "Optional evidence deferral id, kind, or all"
+        required: false
 
 permissions:
   contents: read
+  issues: write
   pull-requests: write
 
 jobs:
@@ -66,3 +70,28 @@ jobs:
             echo "_decision exit code: ${CODE} (0 = not BLOCK). Informational — not a required gate._"
           } > body.md
           gh pr comment "$PR" --body-file body.md
+
+  evidence:
+    name: keel evidence (required)
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'pull_request' || github.event.inputs.pr != '' }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.12"
+      - name: Install keel
+        run: python -m pip install --upgrade pip && pip install -e .
+      - name: Verify posted ship evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number || github.event.inputs.pr }}
+          DEFERRAL: ${{ github.event.inputs.deferral }}
+        run: |
+          ARGS=(.keel/project.yaml --root . --pr "$PR")
+          if [ -n "$DEFERRAL" ]; then
+            ARGS+=(--deferral "$DEFERRAL")
+          fi
+          keel evidence-verify "${ARGS[@]}"

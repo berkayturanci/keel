@@ -17,6 +17,7 @@ from . import (
     checkpoint,
     closure,
     consent,
+    evidence,
     gates,
     github_transport,
     install,
@@ -274,6 +275,11 @@ def build_command_contract(
             no_jury=no_jury,
             jury_advisory=jury_advisory,
         )
+        if command in {"ship", "ship-v2"}:
+            contract["evidence"] = evidence.contract_as_dict(
+                contract["review_merge_contract"],
+                dry_run=dry_run,
+            )
     if command in {"ship", "ship-v2"}:
         contract["closure_comment"] = closure.contract_as_dict()
     if command in {"ship", "ship-v2", "implement", "overnight"}:

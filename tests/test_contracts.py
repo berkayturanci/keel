@@ -107,6 +107,8 @@ class TestBuildCommandContract(unittest.TestCase):
         self.assertEqual(
             contract["closure_comment"]["schema_version"], "keel.closure-comment.v1"
         )
+        self.assertEqual(contract["evidence"]["schema_version"], "keel.evidence.v1")
+        self.assertTrue(contract["evidence"]["fail_closed"])
         self.assertEqual(contract["closure_comment"]["heading"], "Ship outcome")
         self.assertIn("issue_intake", contract)
         self.assertEqual(contract["issue_intake"]["status"], "needs-input")
@@ -176,6 +178,13 @@ class TestBuildCommandContract(unittest.TestCase):
         self.assertEqual(review["jury"]["mode"], "advisory")
         self.assertTrue(review["jury"]["configured_gate"])
         self.assertTrue(review["merge_gate"]["final_mergeability_recheck_inside_lock"])
+        evidence_ids = [item["id"] for item in contract["evidence"]["required"]]
+        self.assertEqual(evidence_ids, [
+            "closure-comment-pr",
+            "closure-comment-issue",
+            "review-verdict-1",
+            "review-verdict-2",
+        ])
 
     def test_ship_v2_contract_exposes_first_class_compound_profile(self):
         config = cfg.load_config(PROJECTS / "example-android.yaml")
