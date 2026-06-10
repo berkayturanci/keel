@@ -6,6 +6,12 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Removed
+- **Public v1/v2 vision doc** — deleted `docs/keel/vision.md` and removed the
+  forward-looking "autonomous software teams" / v1/v2-boundary content and its links from
+  `README.md`, `website/index.html`, and `docs/keel/commands.md`; dropped the file from the
+  consumer-neutrality scan surfaces. Current-product positioning is unchanged.
+
 ### Fixed
 - **Docs correctness** — removed a dead `docs/proposals/divergence-audit-2035.md` link from
   the README; documented `keel status` and `keel work-block` in `docs/keel/cli.md`; and
