@@ -26,6 +26,7 @@ can delegate implementation and reviews.
 ```yaml
 permissions:
   contents: read
+  issues: write          # to read/write PR and issue comments
   pull-requests: write   # to comment
 env:
   GH_TOKEN: ${{ github.token }}   # gh authenticates from this
