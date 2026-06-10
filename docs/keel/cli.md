@@ -199,6 +199,26 @@ non-zero and includes warnings plus the reconciliation action, for example when 
 checkpoint references a PR or worktree that live state reports missing. If the PR is
 already merged, the plan resumes at capture or closeout and never repeats the merge.
 
+## `keel status <project.yaml> [--root DIR] [--json]`
+
+Show the operator-facing progress snapshot for the active or most recent run. `status`
+reads the resumable checkpoint and the run ledger (same paths as `keel checkpoint` and
+`keel ledger`, resolved under `--root DIR`, default `.`) and renders a single
+`keel.progress-status.v1` snapshot. It never mutates files, git, GitHub, or reports.
+
+```bash
+keel status .keel/project.yaml --root .
+keel status .keel/project.yaml --root . --json
+```
+
+The snapshot is taken at the **last safe step boundary**, not in real time. It reports an
+overall run `status` (`no-active-run`, `active`, `waiting`, `interrupted`, or `completed`),
+the current run's issue, step, wait reason, PR, branch, and worktree, the next queued issue
+from the checkpoint queue, ledger counts of shipped / blocked / deferred / skipped runs, and
+capture-health gaps. A missing checkpoint or ledger is not an error — the snapshot degrades
+to `no-active-run`/`completed` and empty counts — but an invalid checkpoint or corrupted
+ledger exits non-zero, since adapters must not report progress from corrupted state.
+
 ## `keel morning <project.yaml> [--root DIR] [--since WHEN] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--json]`
 
 Render the standalone daily-brief contract for a project. The core owns the generic
@@ -237,6 +257,33 @@ keel wrap .keel/project.yaml "feat: finish queue contract" --live --approve-scop
 Dry-run mode never runs gates, commits, pushes, opens PRs, or writes reports. Live mode is
 only a preflight contract; adapters perform approved session closeout work after checking
 consent and GitHub transport support.
+
+## `keel work-block <project.yaml> [issues…] [--root DIR] [--queue SELECTOR] [--max N] [--hours H] [--review-comments inline|summary] [--reviewers 1|2|3] [--target TEXT] [--dry-run] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--json]`
+
+Render the standalone daytime multi-issue work-block contract. The core owns the generic
+`keel.work-block.v1` queue primitive: explicit issue numbers (processed in the order given)
+or a `--queue SELECTOR` (ordered by priority then issue number), snapshotted once per session
+with readiness re-checked between issues. Each item is handed off to `ship` in an isolated
+branch/worktree, inheriting the operator consent scope and honoring the same capture, run
+ledger, merge-lock, and merge-window contracts as a standalone ship.
+
+```bash
+keel work-block .keel/project.yaml 76 82 91 --json
+keel work-block .keel/project.yaml --queue ready --max 3 --hours 6 --json
+keel work-block .keel/project.yaml 76 --live --approve-scope filesystem,git,github --operator "$USER" --json
+```
+
+`--max` caps how many issues are attempted, `--hours` sets an optional time budget, and
+`--review-comments` / `--reviewers` pass through to the per-issue ship handoffs. The contract
+shares its queue primitive with `overnight`; the daytime mode lets the operator redirect
+between items, while a blocked item stops the daytime block instead of continuing. Final
+reporting buckets each issue as shipped, PR-open-not-merged, deferred, blocked, skipped, or
+needs-input. Stop conditions include queue exhaustion, the max/time budget, an operator
+pause, a consent gap, a non-ready or blocking finding, and merge-window close.
+
+Dry-run mode never spawns ship runs, creates PRs, merges, or writes reports. Live mode is
+only a preflight contract; adapters hand the approved consent scope to each ship delegate and
+keep merge-window and merge-lock enforcement shared with `keel ship`.
 
 ## `keel overnight <project.yaml> [hours] [--max N] [--review-comments inline|summary] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--json]`
 
