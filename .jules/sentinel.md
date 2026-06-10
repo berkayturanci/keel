@@ -6,4 +6,4 @@
 ## 2026-06-09 - Prevent ReDoS Vulnerability in Capture Redaction Rules
 **Vulnerability:** The default credential-url redaction rule (`r"([A-Za-z][A-Za-z0-9+.-]*://)([^/\s:@]+):([^/\s@]+)@"`) contained a catastrophic backtracking vulnerability (ReDoS) due to unbounded star/plus combinations in overlapping capture groups before a required literal (`@`). Attempting to redact a large payload resembling a malformed URL with no `@` character caused exponential evaluation time.
 **Learning:** Even built-in "trusted" regexes must bound their quantifiers when deployed against unbounded/untrusted payload files. Overlapping quantifiers without bounds cause ReDoS.
-**Prevention:** Always bound URL scheme patterns and other multi-character prefix matches before open-ended character class searches in redaction filters. I updated `[A-Za-z0-9+.-]*` to `[A-Za-z0-9+.-]{0,256}`.
+**Prevention:** Always bound URL scheme patterns and other multi-character prefix matches before open-ended character class searches in redaction filters. I updated `[A-Za-z0-9+.-]*` to `[A-Za-z0-9+.-]{0,64}`.

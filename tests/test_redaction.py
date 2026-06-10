@@ -1,8 +1,10 @@
 """Unit tests for the redaction helpers."""
 
-import unittest
 import time
+import unittest
+
 from keel import redaction
+
 
 class TestRedaction(unittest.TestCase):
     def test_default_rules_redact_credential_url(self):
