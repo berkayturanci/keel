@@ -124,6 +124,34 @@ class TestEvidenceVerify(unittest.TestCase):
         self.assertEqual(report["counts"]["closure_pr"], 0)
         self.assertEqual(report["counts"]["review_verdict"], 0)
 
+    def test_review_marker_wins_even_when_comment_mentions_jury(self):
+        report = evidence.verify(
+            _review_contract(reviewers=1),
+            pr_comments=[
+                _comment(closure.COMMENT_MARKER),
+                _comment("keel.review-verdict.v1\nReviewer LGTM; --no-jury was checked."),
+            ],
+            issue_comments=[_comment(closure.COMMENT_MARKER)],
+        )
+
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["counts"]["review_verdict"], 1)
+
+    def test_prose_review_verdict_is_accepted_but_prose_jury_is_not_review(self):
+        report = evidence.verify(
+            _review_contract(reviewers=1),
+            pr_comments=[
+                _comment(closure.COMMENT_MARKER),
+                _comment("Reviewer verdict: LGTM"),
+                _comment("AI Jury verdict: LGTM"),
+            ],
+            issue_comments=[_comment(closure.COMMENT_MARKER)],
+        )
+
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["counts"]["review_verdict"], 1)
+        self.assertEqual(report["counts"]["jury_verdict"], 1)
+
     def test_unknown_item_is_not_present(self):
         item = evidence.EvidenceItem("future", "future", True, "future evidence")
 

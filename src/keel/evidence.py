@@ -212,13 +212,16 @@ def _is_ship_assessment(body: str) -> bool:
 def _is_review_verdict(body: str) -> bool:
     if not body or _is_ship_assessment(body) or _has_closure_marker(body):
         return False
-    if JURY_VERDICT_MARKER in body or _JURY_RE.search(body) is not None:
+    if JURY_VERDICT_MARKER in body:
+        return False
+    if REVIEW_VERDICT_MARKER in body:
+        return True
+    if _JURY_RE.search(body) is not None:
         return False
     if "chat summary" in body.lower():
         return False
     return (
-        REVIEW_VERDICT_MARKER in body
-        or ("LGTM" in body and _REVIEW_RE.search(body) is not None)
+        ("LGTM" in body and _REVIEW_RE.search(body) is not None)
         or (_LGTM_RE.search(body) is not None and "review" in body.lower())
     )
 
