@@ -474,6 +474,10 @@ class TestBuildCommandContract(unittest.TestCase):
         self.assertTrue(regression["workflow_profile"]["first_class_variant"])
         self.assertIn("scan_contract", regression)
         self.assertIn("dedupe", regression["workflow_profile"]["shared_primitives"])
+        self.assertEqual(
+            regression["scan_contract"]["work_creation_policy"]["schema_version"],
+            "keel.work-creation.v1",
+        )
 
         review_all_day = contracts.build_command_contract(
             command="review-all-day",
@@ -968,6 +972,10 @@ class TestBuildCommandContract(unittest.TestCase):
                 self.assertTrue(profile["first_class_variant"])
                 self.assertIn(expected["primitive"], profile["shared_primitives"])
                 self.assertEqual(reporting["codename_prefix"], expected["prefix"])
+                self.assertEqual(
+                    reporting["work_creation_policy"]["schema_version"],
+                    "keel.work-creation.v1",
+                )
                 self.assertFalse(reporting["dry_run"]["mutates"])
                 self.assertTrue(reporting["dry_run"]["prints_planned_writes"])
                 self.assertEqual(reporting["handoff"]["fixes_route_to"], "ship")

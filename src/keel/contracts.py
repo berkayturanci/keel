@@ -30,6 +30,7 @@ from . import (
     runtime,
     stepverifier,
     workblock,
+    workcreation,
 )
 from . import config as cfg
 from . import ship as ship_decisions
@@ -639,6 +640,7 @@ def reporting_contract_as_dict(
             "fixes_route_to": "ship",
             "auto_applies_fixes": False,
         },
+        "work_creation_policy": workcreation.contract_as_dict(),
     }
     if command == "coverage":
         return {
@@ -1100,6 +1102,7 @@ def scan_contract_as_dict(
             for key, value in sorted(issue_labels.items())
             if isinstance(value, list)
         },
+        "work_creation_policy": workcreation.contract_as_dict(),
     }
     if command == "regression":
         base["regression"] = {

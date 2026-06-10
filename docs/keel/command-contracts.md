@@ -279,6 +279,29 @@ Run-control halt reasons are intentionally structured so operators and adapters 
 post, or checkpoint the exact control, scope, observed value, limit, and action without
 parsing prose.
 
+## Work Creation Policy
+
+Signal-driven commands that can open follow-up work (`regression`, `review-all-day`,
+`coverage`, `deps-audit`, and `flake-audit`) expose `work_creation_policy` through their
+scan or reporting contract. This is the shared pure-core policy for deciding whether a
+signal becomes a new issue.
+
+The block records:
+
+- `schema_version: keel.work-creation.v1`
+- transient filtering defaults: minimum occurrences and minimum confidence
+- dedupe keys: explicit `dedupe_key`, normalized title, and near-text similarity
+- per-cycle issue creation limit and the `limit-reached` outcome
+- the stable decision vocabulary: `create`, `suppress-transient`,
+  `suppress-duplicate`, and `limit-reached`
+
+Adapters should route all signal-driven issue creation through
+`keel.workcreation.evaluate_candidates`. Transient signals are suppressed before any issue
+write, duplicates are checked against open work, and once the per-cycle creation cap is
+reached later eligible candidates receive `limit-reached` instead of creating more issues.
+The core policy is consumer-neutral; command-specific issue titles, labels, and body
+templates remain owned by the command contract and project policy.
+
 ## Step verification block
 
 `ship` contracts (both profiles) include `step_verification`, the deterministic
