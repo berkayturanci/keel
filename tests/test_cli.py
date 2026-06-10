@@ -1025,6 +1025,41 @@ class TestShip(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(json.loads(out)["issue"], 99)
 
+    def test_evidence_verify_fixture_uses_explicit_issue_without_body_infer(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            pr_comments = root / "pr-comments.json"
+            issue_comments = root / "issue-comments.json"
+            reviews = root / "reviews.json"
+            body = root / "body.md"
+            pr_comments.write_text(json.dumps([
+                {"body": "<!-- keel.closure-comment.v1 -->"},
+                {"body": "keel.review-verdict.v1\nreviewer: a\nLGTM"},
+                {"body": "keel.review-verdict.v1\nreviewer: b\nLGTM"},
+            ]), encoding="utf-8")
+            issue_comments.write_text(json.dumps([
+                {"body": "<!-- keel.closure-comment.v1 -->"},
+            ]), encoding="utf-8")
+            reviews.write_text("[]", encoding="utf-8")
+            body.write_text("Closes #212", encoding="utf-8")
+            rc, out, _ = run([
+                "evidence-verify", str(PROJECTS / "example-android.yaml"),
+                "--root", str(REPO_ROOT),
+                "--pr", "300",
+                "--issue", "99",
+                "--reviewers", "2",
+                "--pr-comments-json", str(pr_comments),
+                "--issue-comments-json", str(issue_comments),
+                "--pr-reviews-json", str(reviews),
+                "--pr-body-file", str(body),
+                "--json",
+            ])
+
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["issue"], 99)
+        self.assertEqual(data["verification"]["status"], "pass")
+
     def test_evidence_verify_human_output_lists_missing_and_deferrals(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
@@ -1088,15 +1123,23 @@ class TestShip(unittest.TestCase):
             calls.append(argv)
             endpoint = argv[-1]
             if endpoint.endswith("/pulls/300"):
-                return Namespace(ok=True, output=json.dumps({"body": "Closes #212"}))
+                return Namespace(ok=True, output=json.dumps({
+                    "body": "Closes #212",
+                    "head": {"sha": "abc123"},
+                }))
+            if endpoint.endswith("/pulls/300/files"):
+                return Namespace(ok=True, output=json.dumps([
+                    [{"filename": "src/keel/evidence.py"}],
+                ]))
             if endpoint.endswith("/issues/300/comments"):
                 return Namespace(ok=True, output=json.dumps([
                     {"body": "<!-- keel.closure-comment.v1 -->"},
-                    {"body": "keel.review-verdict.v1\nReviewer A LGTM"},
+                    {"body": "keel.review-verdict.v1\nreviewer: a\nhead: abc123\nLGTM"},
                 ]))
             if endpoint.endswith("/pulls/300/reviews"):
                 return Namespace(ok=True, output=json.dumps([
-                    {"body": "keel.review-verdict.v1\nReviewer B LGTM"},
+                    {"body": "keel.review-verdict.v1\nreviewer: b\nLGTM",
+                     "commit_id": "abc123"},
                 ]))
             if endpoint.endswith("/issues/212/comments"):
                 return Namespace(ok=True, output=json.dumps([
@@ -1114,8 +1157,90 @@ class TestShip(unittest.TestCase):
             ])
 
         self.assertEqual(rc, 0)
-        self.assertEqual(json.loads(out)["verification"]["status"], "pass")
+        data = json.loads(out)
+        self.assertEqual(data["verification"]["status"], "pass")
+        self.assertEqual(data["head_sha"], "abc123")
+        self.assertEqual(data["changed_files"], ["src/keel/evidence.py"])
         self.assertTrue(any(argv[:3] == ["gh", "api", "--paginate"] for argv in calls))
+
+    def test_evidence_verify_live_fetch_derives_tier3_requirements(self):
+        def fake_run(argv, **_kw):
+            endpoint = argv[-1]
+            if endpoint.endswith("/pulls/300"):
+                return Namespace(ok=True, output=json.dumps({
+                    "body": "Closes #212",
+                    "head": {"sha": "abc123"},
+                }))
+            if endpoint.endswith("/pulls/300/files"):
+                return Namespace(ok=True, output=json.dumps([
+                    [{"filename": ".github/workflows/keel-ship.yml"}],
+                ]))
+            if endpoint.endswith("/issues/300/comments"):
+                return Namespace(ok=True, output=json.dumps([
+                    {"body": "<!-- keel.closure-comment.v1 -->"},
+                    {"body": "keel.review-verdict.v1\nreviewer: a\nhead: abc123\nLGTM"},
+                    {"body": "keel.review-verdict.v1\nreviewer: b\nhead: abc123\nLGTM"},
+                ]))
+            if endpoint.endswith("/pulls/300/reviews"):
+                return Namespace(ok=True, output="[]")
+            if endpoint.endswith("/issues/212/comments"):
+                return Namespace(ok=True, output=json.dumps([
+                    {"body": "<!-- keel.closure-comment.v1 -->"},
+                ]))
+            return Namespace(ok=False, output="unexpected endpoint")
+
+        with patch("keel.cli.run_argv", side_effect=fake_run):
+            rc, out, _ = run([
+                "evidence-verify", str(PROJECTS / "example-android.yaml"),
+                "--root", str(REPO_ROOT),
+                "--pr", "300",
+                "--json",
+            ])
+
+        self.assertEqual(rc, 1)
+        data = json.loads(out)
+        self.assertEqual(data["changed_files"], [".github/workflows/keel-ship.yml"])
+        self.assertEqual(data["verification"]["missing"], [
+            "review-verdict-3",
+            "jury-verdict",
+        ])
+
+    def test_evidence_verify_offline_changed_files_and_head_sha(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            pr_comments = root / "pr-comments.json"
+            issue_comments = root / "issue-comments.json"
+            reviews = root / "reviews.json"
+            body = root / "body.md"
+            pr_comments.write_text(json.dumps([
+                {"body": "<!-- keel.closure-comment.v1 -->"},
+                {"body": "keel.review-verdict.v1\nreviewer: a\nhead: abc123\nLGTM"},
+                {"body": "keel.review-verdict.v1\nreviewer: b\nhead: abc123\nLGTM"},
+                {"body": "keel.review-verdict.v1\nreviewer: c\nhead: abc123\nLGTM"},
+                {"body": "keel.jury-verdict.v1\nhead: abc123\nAI Jury LGTM"},
+            ]), encoding="utf-8")
+            issue_comments.write_text(json.dumps([
+                {"body": "<!-- keel.closure-comment.v1 -->"},
+            ]), encoding="utf-8")
+            reviews.write_text("[]", encoding="utf-8")
+            body.write_text("Closes #212", encoding="utf-8")
+            rc, out, _ = run([
+                "evidence-verify", str(PROJECTS / "example-android.yaml"),
+                "--root", str(REPO_ROOT),
+                "--pr", "300",
+                "--changed-file", ".github/workflows/keel-ship.yml",
+                "--head-sha", "abc123",
+                "--pr-comments-json", str(pr_comments),
+                "--issue-comments-json", str(issue_comments),
+                "--pr-reviews-json", str(reviews),
+                "--pr-body-file", str(body),
+                "--json",
+            ])
+
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["verification"]["required_count"], 6)
+        self.assertEqual(data["verification"]["status"], "pass")
 
     def test_evidence_verify_live_fetch_uses_explicit_issue_without_body_infer(self):
         calls = []
@@ -1125,6 +1250,10 @@ class TestShip(unittest.TestCase):
             endpoint = argv[-1]
             if endpoint.endswith("/pulls/300"):
                 return Namespace(ok=True, output=json.dumps({"body": "Closes #212"}))
+            if endpoint.endswith("/pulls/300/files"):
+                return Namespace(ok=True, output=json.dumps([
+                    [{"filename": "src/keel/evidence.py"}],
+                ]))
             if endpoint.endswith("/issues/300/comments"):
                 return Namespace(ok=True, output=json.dumps([
                     {"body": "<!-- keel.closure-comment.v1 -->"},
@@ -1220,6 +1349,10 @@ class TestShip(unittest.TestCase):
             endpoint = argv[-1]
             if endpoint.endswith("/pulls/300"):
                 return Namespace(ok=True, output=json.dumps({"body": "Refs #212"}))
+            if endpoint.endswith("/pulls/300/files"):
+                return Namespace(ok=True, output=json.dumps([
+                    [{"filename": "src/keel/evidence.py"}],
+                ]))
             return Namespace(ok=True, output="[]")
 
         with patch("keel.cli.run_argv", side_effect=fake_run):

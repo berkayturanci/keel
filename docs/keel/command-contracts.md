@@ -234,11 +234,16 @@ The block records:
   `review-verdict-1`, `review-verdict-2`, and `jury-verdict` when jury is gating
 - `dry_run_disables_gating: true` and `fail_closed: true`
 
-`keel evidence-verify <project.yaml> --pr <N>` reads those public artifacts through `gh`
-and exits non-zero when required evidence is missing. The verifier may use the PR body only
-to infer a linked `Closes #N` issue; the body itself never satisfies evidence. Explicit
-operator deferrals must be passed as `--deferral <id|kind|all>` and should be recorded in
-the PR/issue conversation before branch protection is bypassed.
+`keel evidence-verify <project.yaml> --pr <N>` reads those public artifacts through `gh`,
+derives the current PR tier from the live changed-file list, binds verdict evidence to the
+current PR head, and exits non-zero when required evidence is missing. Reviewer evidence
+must carry `keel.review-verdict.v1` plus a stable `reviewer: <id>` field; jury evidence
+must carry `keel.jury-verdict.v1`. When the PR head SHA is known, those comments must also
+carry `head: <sha>` unless the source is a formal PR review whose `commit_id` matches the
+head. The verifier may use the PR body only to infer a linked `Closes #N` issue; the body
+itself never satisfies evidence. Explicit operator deferrals must be passed as
+`--deferral <id|kind|all>` and should be recorded in the PR/issue conversation before
+branch protection is bypassed.
 
 ## Progress status surface
 

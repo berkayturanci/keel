@@ -20,6 +20,7 @@ from . import (
     __version__,
     capture,
     checkpoint,
+    classify,
     consent,
     contracts,
     evidence,
@@ -607,8 +608,22 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
 
+    try:
+        artifacts = _load_evidence_artifacts(args, config)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    changed_files = artifacts["changed_files"]
+    tier = (
+        classify.tier_for_files(
+            changed_files,
+            tier3_globs=config.knobs.tier3_globs,
+            docs_globs=config.knobs.docs_gate_paths,
+        )
+        if changed_files else None
+    )
     review_contract = ship.resolve_review_contract(
-        tier=None,
+        tier=tier,
         reviewer_override=args.reviewers,
         review_comments=args.review_comments,
         gates=config.gates,
@@ -617,17 +632,13 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
         no_jury=args.no_jury,
         jury_advisory=args.jury_advisory,
     )
-    try:
-        artifacts = _load_evidence_artifacts(args, config)
-    except ValueError as exc:
-        print(str(exc), file=sys.stderr)
-        return 1
     report = evidence.verify(
         review_contract,
         pr_comments=artifacts["pr_comments"],
         issue_comments=artifacts["issue_comments"],
         pr_reviews=artifacts["pr_reviews"],
         pr_body=artifacts["pr_body"],
+        head_sha=artifacts["head_sha"],
         dry_run=args.dry_run,
         deferrals=tuple(args.deferral or ()),
     )
@@ -639,6 +650,8 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
         ),
         "pull_request": args.pr,
         "issue": artifacts["issue"],
+        "head_sha": artifacts["head_sha"],
+        "changed_files": artifacts["changed_files"],
         "verification": report,
     }
     if args.json:
@@ -1026,6 +1039,8 @@ def _load_evidence_artifacts(
     pr_comments = _read_optional_json_list(args.pr_comments_json)
     issue_comments = _read_optional_json_list(args.issue_comments_json)
     pr_reviews = _read_optional_json_list(args.pr_reviews_json)
+    changed_files = list(getattr(args, "changed_file", ()) or ())
+    head_sha = args.head_sha
     issue_number = args.issue
     using_fixtures = any(
         path is not None for path in (
@@ -1035,10 +1050,23 @@ def _load_evidence_artifacts(
             args.pr_reviews_json,
         )
     )
+    if args.dry_run:
+        return {
+            "pr_body": pr_body,
+            "pr_comments": [],
+            "issue_comments": [],
+            "pr_reviews": [],
+            "issue": issue_number,
+            "head_sha": head_sha,
+            "changed_files": changed_files,
+        }
     if not using_fixtures:
         owner_repo = _owner_repo(config)
         pr = _gh_json(["repos", owner_repo, "pulls", str(args.pr)], cwd=args.root)
         pr_body = pr.get("body") if isinstance(pr.get("body"), str) else ""
+        head = pr.get("head") if isinstance(pr.get("head"), dict) else {}
+        head_sha = head.get("sha") if isinstance(head.get("sha"), str) else None
+        changed_files = _pr_changed_files(owner_repo, args.pr, cwd=args.root)
         pr_comments = _gh_json_list(
             ["repos", owner_repo, "issues", str(args.pr), "comments"], cwd=args.root
         )
@@ -1059,6 +1087,8 @@ def _load_evidence_artifacts(
         "issue_comments": issue_comments,
         "pr_reviews": pr_reviews,
         "issue": issue_number,
+        "head_sha": head_sha,
+        "changed_files": changed_files,
     }
 
 
@@ -1094,13 +1124,20 @@ def _gh_json(args: list[str], *, cwd: str) -> dict[str, object]:
 
 def _gh_json_list(args: list[str], *, cwd: str) -> list[dict[str, object]]:
     endpoint = "/".join(args)
-    result = run_argv(["gh", "api", "--paginate", endpoint], cwd=cwd)
+    result = run_argv(["gh", "api", "--paginate", "--slurp", endpoint], cwd=cwd)
     if not result.ok:
         raise ValueError(f"gh api {endpoint} failed: {result.output.strip()}")
     value = json.loads(result.output or "[]")
+    if value and all(isinstance(item, list) for item in value):
+        value = [entry for page in value for entry in page]
     if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
         raise ValueError(f"gh api {endpoint} did not return a JSON array")
     return value
+
+
+def _pr_changed_files(owner_repo: str, pr: int, *, cwd: str) -> list[str]:
+    files = _gh_json_list(["repos", owner_repo, "pulls", str(pr), "files"], cwd=cwd)
+    return [item["filename"] for item in files if isinstance(item.get("filename"), str)]
 
 
 def _linked_issue_from_body(body: str) -> int | None:
@@ -1689,6 +1726,10 @@ def build_parser() -> argparse.ArgumentParser:
                             help="offline PR reviews JSON fixture")
     p_evidence.add_argument("--pr-body-file", default=None,
                             help="offline PR body fixture, used only to infer linked issue")
+    p_evidence.add_argument("--changed-file", action="append", default=[],
+                            help="offline changed file path; repeat to derive tier from fixtures")
+    p_evidence.add_argument("--head-sha", default=None,
+                            help="offline PR head SHA used to bind verdict evidence")
     p_evidence.add_argument("--json", action="store_true", help="emit structured JSON")
     p_evidence.set_defaults(func=_cmd_evidence_verify)
 

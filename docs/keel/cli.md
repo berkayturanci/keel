@@ -158,12 +158,18 @@ Verify that a PR has the public evidence required by the ship contract before me
 verifier is fail-closed and accepts only durable GitHub artifacts:
 
 - a `keel.closure-comment.v1` closure marker on both the PR and linked issue;
-- the required count of posted s7 reviewer verdicts from PR comments or reviews;
-- a posted jury verdict when jury is enabled in gating mode.
+- the required count of distinct posted s7 reviewer verdicts from PR comments or reviews
+  carrying `keel.review-verdict.v1`, `reviewer: <stable-id>`, and the current
+  `head: <sha>` (formal PR reviews may use GitHub's review `commit_id` as the head
+  binding);
+- a posted jury verdict carrying `keel.jury-verdict.v1` and the current `head: <sha>`
+  when jury is enabled in gating mode.
 
 PR bodies, chat summaries, and the automated `keel ship` assessment comment are never
 accepted as evidence. The PR body may only be used to infer `Closes #N` when `--issue` is
-not supplied.
+not supplied. In live mode, keel reads the PR changed files and head SHA through `gh`, then
+derives the risk tier, reviewer count, and jury requirement from the same project policy
+used by `keel ship`.
 
 ```bash
 keel evidence-verify .keel/project.yaml --root . --pr 456
@@ -172,9 +178,10 @@ keel evidence-verify .keel/project.yaml --root . --pr 456 --no-jury
 ```
 
 Use `--deferral <id|kind|all>` only for an explicit, recorded operator deferral. `--dry-run`
-prints the contract shape without requiring evidence. Tests and offline CI harnesses can
-provide `--pr-comments-json`, `--issue-comments-json`, `--pr-reviews-json`, and
-`--pr-body-file` fixtures; the same verifier path is used either way.
+prints the contract shape without fetching live artifacts or requiring evidence. Tests and
+offline CI harnesses can provide `--pr-comments-json`, `--issue-comments-json`,
+`--pr-reviews-json`, `--pr-body-file`, `--changed-file`, and `--head-sha` fixtures; the
+same verifier path is used either way.
 
 ## `keel checkpoint <project.yaml> [--root DIR] [--json]`
 

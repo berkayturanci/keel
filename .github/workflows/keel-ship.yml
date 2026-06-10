@@ -15,6 +15,9 @@ on:
       pr:
         description: "PR number to assess (optional)"
         required: false
+      deferral:
+        description: "Optional evidence deferral id, kind, or all"
+        required: false
 
 permissions:
   contents: read
@@ -85,5 +88,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number || github.event.inputs.pr }}
+          DEFERRAL: ${{ github.event.inputs.deferral }}
         run: |
-          keel evidence-verify .keel/project.yaml --root . --pr "$PR"
+          ARGS=(.keel/project.yaml --root . --pr "$PR")
+          if [ -n "$DEFERRAL" ]; then
+            ARGS+=(--deferral "$DEFERRAL")
+          fi
+          keel evidence-verify "${ARGS[@]}"

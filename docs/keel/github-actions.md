@@ -19,18 +19,23 @@ can delegate implementation and reviews.
    files (git), the project gates, and the PR's CI rollup (`gh`), then prints the
    assessment (risk tier → reviewers, merge window, gates, decision);
 5. posts that assessment as a **PR comment**;
-6. runs **`keel evidence-verify .keel/project.yaml --root . --pr <N>`**, which fails until
-   the PR and linked issue have the required closure, reviewer-verdict, and optional
-   jury-verdict comments.
+6. runs **`keel evidence-verify .keel/project.yaml --root . --pr <N>`**, which reads the
+   live PR changed files/head SHA and fails until the PR and linked issue have the
+   required closure, reviewer-verdict, and optional jury-verdict comments for the current
+   tier and head.
 
 ```yaml
 permissions:
   contents: read
-  issues: write          # to read/write PR and issue comments
-  pull-requests: write   # to comment
+  issues: write          # to read issue comments and post assessment comments
+  pull-requests: write   # to read PR reviews/files and comment
 env:
   GH_TOKEN: ${{ github.token }}   # gh authenticates from this
 ```
+
+Manual `workflow_dispatch` runs also accept an optional `deferral` input. Use it only for
+an explicitly recorded evidence deferral (`review`, `jury`, a concrete evidence id, or
+`all`); normal PR runs remain fail-closed.
 
 ## Adopting it in a consumer repo
 

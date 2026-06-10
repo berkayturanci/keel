@@ -8,6 +8,7 @@ without trusting prose in an agent prompt.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -19,9 +20,8 @@ REVIEW_VERDICT_MARKER = "keel.review-verdict.v1"
 JURY_VERDICT_MARKER = "keel.jury-verdict.v1"
 SHIP_ASSESSMENT_HEADING = "### \U0001f6a2 keel ship"
 
-_LGTM_RE = re.compile(r"\bLGTM\b", re.IGNORECASE)
-_REVIEW_RE = re.compile(r"\b(review|reviewer|verdict)\b", re.IGNORECASE)
-_JURY_RE = re.compile(r"\b(jury|ai jury)\b", re.IGNORECASE)
+_FIELD_RE = re.compile(r"^\s*(?P<key>reviewer|head)\s*:\s*(?P<value>\S+)\s*$",
+                       re.IGNORECASE | re.MULTILINE)
 
 
 @dataclass(frozen=True)
@@ -54,8 +54,8 @@ def contract_as_dict(
         "fail_closed": True,
         "accepted_sources": {
             "closure": "issue/PR comments carrying keel.closure-comment.v1",
-            "review": "PR review or PR comment carrying a reviewer verdict",
-            "jury": "PR comment carrying the jury verdict",
+            "review": "PR review/comment carrying keel.review-verdict.v1 and current head",
+            "jury": "PR comment carrying keel.jury-verdict.v1 and current head",
         },
         "not_accepted": [
             "pull_request_body",
@@ -125,6 +125,7 @@ def verify(
     issue_comments: list[dict[str, Any]] | None = None,
     pr_reviews: list[dict[str, Any]] | None = None,
     pr_body: str | None = None,
+    head_sha: str | None = None,
     dry_run: bool = False,
     deferrals: tuple[str, ...] = (),
 ) -> dict[str, Any]:
@@ -136,6 +137,7 @@ def verify(
         pr_comments=pr_comments or [],
         issue_comments=issue_comments or [],
         pr_reviews=pr_reviews or [],
+        head_sha=head_sha,
     )
     results = []
     for item in items:
@@ -168,18 +170,20 @@ def _evidence_counts(
     pr_comments: list[dict[str, Any]],
     issue_comments: list[dict[str, Any]],
     pr_reviews: list[dict[str, Any]],
+    head_sha: str | None = None,
 ) -> dict[str, int]:
     pr_comment_bodies = [_body(comment) for comment in pr_comments]
     issue_comment_bodies = [_body(comment) for comment in issue_comments]
-    review_bodies = [_body(review) for review in pr_reviews]
+    review_keys = _review_evidence_keys(
+        [*pr_comments, *pr_reviews],
+        head_sha=head_sha,
+    )
     return {
         "closure_pr": sum(_has_closure_marker(body) for body in pr_comment_bodies),
         "closure_issue": sum(_has_closure_marker(body) for body in issue_comment_bodies),
-        "review_verdict": (
-            sum(_is_review_verdict(body) for body in pr_comment_bodies)
-            + sum(_is_review_verdict(body) for body in review_bodies)
-        ),
-        "jury_verdict": sum(_is_jury_verdict(body) for body in pr_comment_bodies),
+        "review_verdict": len(review_keys),
+        "jury_verdict": sum(_is_jury_verdict(comment, head_sha=head_sha)
+                            for comment in pr_comments),
     }
 
 
@@ -209,26 +213,60 @@ def _is_ship_assessment(body: str) -> bool:
     return SHIP_ASSESSMENT_HEADING in body or "keel ship \u2014" in body
 
 
-def _is_review_verdict(body: str) -> bool:
+def _review_evidence_keys(
+    items: list[dict[str, Any]],
+    *,
+    head_sha: str | None = None,
+) -> set[str]:
+    keys: set[str] = set()
+    for item in items:
+        body = _body(item)
+        if not _is_review_verdict_body(body):
+            continue
+        if not _matches_head(item, body, head_sha):
+            continue
+        keys.add(_reviewer_key(item, body))
+    return keys
+
+
+def _reviewer_key(item: dict[str, Any], body: str) -> str:
+    fields = _fields(body)
+    reviewer = fields.get("reviewer")
+    if reviewer:
+        return f"reviewer:{reviewer.lower()}"
+    user = item.get("user")
+    if isinstance(user, dict) and isinstance(user.get("login"), str) and user["login"]:
+        return f"user:{user['login'].lower()}"
+    digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
+    return f"body:{digest}"
+
+
+def _matches_head(item: dict[str, Any], body: str, head_sha: str | None) -> bool:
+    if not head_sha:
+        return True
+    fields = _fields(body)
+    recorded = fields.get("head")
+    if recorded:
+        return recorded == head_sha
+    commit_id = item.get("commit_id")
+    return isinstance(commit_id, str) and commit_id == head_sha
+
+
+def _fields(body: str) -> dict[str, str]:
+    return {match.group("key").lower(): match.group("value")
+            for match in _FIELD_RE.finditer(body)}
+
+
+def _is_review_verdict_body(body: str) -> bool:
     if not body or _is_ship_assessment(body) or _has_closure_marker(body):
         return False
     if JURY_VERDICT_MARKER in body:
         return False
-    if REVIEW_VERDICT_MARKER in body:
-        return True
-    if _JURY_RE.search(body) is not None:
-        return False
-    if "chat summary" in body.lower():
-        return False
-    return (
-        ("LGTM" in body and _REVIEW_RE.search(body) is not None)
-        or (_LGTM_RE.search(body) is not None and "review" in body.lower())
-    )
+    return REVIEW_VERDICT_MARKER in body
 
 
-def _is_jury_verdict(body: str) -> bool:
+def _is_jury_verdict(item: dict[str, Any], *, head_sha: str | None = None) -> bool:
+    body = _body(item)
     if not body or _is_ship_assessment(body) or _has_closure_marker(body):
         return False
-    return JURY_VERDICT_MARKER in body or (
-        _JURY_RE.search(body) is not None and _LGTM_RE.search(body) is not None
-    )
+    return JURY_VERDICT_MARKER in body and _matches_head(item, body, head_sha)

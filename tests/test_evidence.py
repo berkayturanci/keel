@@ -137,7 +137,7 @@ class TestEvidenceVerify(unittest.TestCase):
         self.assertEqual(report["status"], "pass")
         self.assertEqual(report["counts"]["review_verdict"], 1)
 
-    def test_prose_review_verdict_is_accepted_but_prose_jury_is_not_review(self):
+    def test_prose_review_and_jury_verdicts_are_not_evidence(self):
         report = evidence.verify(
             _review_contract(reviewers=1),
             pr_comments=[
@@ -148,9 +148,81 @@ class TestEvidenceVerify(unittest.TestCase):
             issue_comments=[_comment(closure.COMMENT_MARKER)],
         )
 
+        self.assertEqual(report["status"], "fail")
+        self.assertEqual(report["counts"]["review_verdict"], 0)
+        self.assertEqual(report["counts"]["jury_verdict"], 0)
+
+    def test_review_verdicts_are_distinct_by_declared_reviewer(self):
+        report = evidence.verify(
+            _review_contract(reviewers=2),
+            pr_comments=[
+                _comment(closure.COMMENT_MARKER),
+                _comment("keel.review-verdict.v1\nreviewer: alpha\nLGTM"),
+                _comment("keel.review-verdict.v1\nreviewer: alpha\nLGTM again"),
+                _comment("keel.review-verdict.v1\nreviewer: beta\nLGTM"),
+            ],
+            issue_comments=[_comment(closure.COMMENT_MARKER)],
+        )
+
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["counts"]["review_verdict"], 2)
+
+    def test_review_verdicts_can_fall_back_to_github_user_identity(self):
+        report = evidence.verify(
+            _review_contract(reviewers=1),
+            pr_comments=[
+                _comment(closure.COMMENT_MARKER),
+                {
+                    "body": "keel.review-verdict.v1\nLGTM",
+                    "user": {"login": "reviewer-one"},
+                },
+            ],
+            issue_comments=[_comment(closure.COMMENT_MARKER)],
+        )
+
         self.assertEqual(report["status"], "pass")
         self.assertEqual(report["counts"]["review_verdict"], 1)
+
+    def test_review_verdicts_are_bound_to_current_head(self):
+        report = evidence.verify(
+            _review_contract(reviewers=2, jury=True),
+            pr_comments=[
+                _comment(closure.COMMENT_MARKER),
+                _comment("keel.review-verdict.v1\nreviewer: alpha\nhead: old\nLGTM"),
+                _comment("keel.review-verdict.v1\nreviewer: beta\nhead: abc123\nLGTM"),
+                _comment("keel.jury-verdict.v1\nhead: old\nAI Jury LGTM"),
+                _comment("keel.jury-verdict.v1\nhead: abc123\nAI Jury LGTM"),
+            ],
+            issue_comments=[_comment(closure.COMMENT_MARKER)],
+            pr_reviews=[
+                {
+                    "body": "keel.review-verdict.v1\nreviewer: gamma\nLGTM",
+                    "commit_id": "abc123",
+                },
+            ],
+            head_sha="abc123",
+        )
+
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["counts"]["review_verdict"], 2)
         self.assertEqual(report["counts"]["jury_verdict"], 1)
+
+    def test_review_verdicts_without_matching_head_are_ignored_when_head_known(self):
+        report = evidence.verify(
+            _review_contract(reviewers=1, jury=True),
+            pr_comments=[
+                _comment(closure.COMMENT_MARKER),
+                _comment("keel.review-verdict.v1\nreviewer: alpha\nLGTM"),
+                _comment("keel.jury-verdict.v1\nAI Jury LGTM"),
+            ],
+            issue_comments=[_comment(closure.COMMENT_MARKER)],
+            head_sha="abc123",
+        )
+
+        self.assertEqual(report["status"], "fail")
+        self.assertEqual(report["counts"]["review_verdict"], 0)
+        self.assertEqual(report["counts"]["jury_verdict"], 0)
+        self.assertEqual(report["missing"], ["review-verdict-1", "jury-verdict"])
 
     def test_unknown_item_is_not_present(self):
         item = evidence.EvidenceItem("future", "future", True, "future evidence")
