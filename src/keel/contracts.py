@@ -36,7 +36,7 @@ from .project_commands import get_project_command, list_project_commands
 
 SCHEMA_VERSION = "keel.command-contract.v1"
 
-_SHIP_V2_OVERRIDES: dict[str, str] = {
+_COMPOUND_OVERRIDES: dict[str, str] = {
     "s4": "compound",
     "s7": "compound",
     "s9": "compound",
@@ -52,9 +52,6 @@ _BASE_SIDE_EFFECTS: dict[str, tuple[str, ...]] = {
     "ship": ("git_worktree", "git_branch", "file_edit", "git_push", "pull_request", "comments",
              "reviews", "merge",
              "issue_close", "capture"),
-    "ship-v2": ("git_worktree", "git_branch", "file_edit", "git_push", "pull_request",
-                "comments", "reviews", "merge",
-                "issue_close", "capture"),
     "pr-loop": ("file_edit", "git_commit", "git_push", "comments", "reviews", "check_runs"),
     "review-cycle": ("file_edit", "comments", "reviews", "git_commit", "git_push"),
     "morning": ("issue_read", "pr_read", "report_write"),
@@ -144,14 +141,16 @@ def available_commands() -> tuple[str, ...]:
     return tuple(name.removesuffix(".md") for name in install.adapter_names())
 
 
-def command_graph(command: str) -> list[dict[str, Any]]:
+def command_graph(command: str, *, profile: str = "standard") -> list[dict[str, Any]]:
     """Return the command's step graph as JSON-compatible records.
 
-    ``ship`` and ``ship-v2`` use the fixed keel backbone as the canonical graph. Other
+    ``ship`` uses the fixed keel backbone as the canonical graph. When the ``compound``
+    profile is selected, the s4/s7/s9/s11 steps are marked as compound overrides. Other
     commands expose their adapter step headings, so adapters can still reason about their
     command-local sequence without parsing Markdown themselves.
     """
-    if command in {"ship", "ship-v2"}:
+    if command == "ship":
+        compound = profile == "compound"
         return [
             {
                 "step_id": step.id,
@@ -159,8 +158,8 @@ def command_graph(command: str) -> list[dict[str, Any]]:
                 "agentic": step.agentic,
                 "slot": step.slot,
                 "source": "backbone",
-                "profile_step": _SHIP_V2_OVERRIDES.get(step.id, "standard")
-                if command == "ship-v2" else "standard",
+                "profile_step": _COMPOUND_OVERRIDES.get(step.id, "standard")
+                if compound else "standard",
             }
             for step in model.BACKBONE
         ]
@@ -171,6 +170,7 @@ def command_graph(command: str) -> list[dict[str, Any]]:
 def build_command_contract(
     *,
     command: str,
+    profile: str = "standard",
     config: cfg.ProjectConfig,
     loaded: dict[str, list[Extension]],
     plan: tuple[orchestrator.PlanItem, ...],
@@ -196,7 +196,7 @@ def build_command_contract(
 ) -> dict[str, Any]:
     """Build the stable adapter contract shared by ``plan --json`` and dry-run commands."""
     declared_side_effects = command_side_effects(command, config, requirement, loaded)
-    graph = command_graph(command)
+    graph = command_graph(command, profile=profile)
     if not graph and (project_command := get_project_command(config, command)):
         graph = [{
             "step_id": f"project-command:{project_command.name}",
@@ -212,7 +212,7 @@ def build_command_contract(
         "dry_run": dry_run,
         "no_mutations": dry_run,
         "project": project_as_dict(config),
-        "workflow_profile": workflow_profile(command),
+        "workflow_profile": workflow_profile(command, profile=profile),
         "graph": graph,
         "backbone_plan": orchestrator.plan_as_dict(plan),
         "gates": [gate_as_dict(spec) for spec in gates.plan_gates(config, loaded)],
@@ -265,7 +265,7 @@ def build_command_contract(
             config=config,
             transport=transport,
         )
-    if command in {"ship", "ship-v2", "pr-loop", "review-cycle", "work-block", "overnight"}:
+    if command in {"ship", "pr-loop", "review-cycle", "work-block", "overnight"}:
         contract["review_merge_contract"] = ship_decisions.resolve_review_contract(
             tier=review_tier,
             reviewer_override=reviewer_override,
@@ -276,15 +276,15 @@ def build_command_contract(
             no_jury=no_jury,
             jury_advisory=jury_advisory,
         )
-        if command in {"ship", "ship-v2"}:
+        if command == "ship":
             contract["evidence"] = evidence.contract_as_dict(
                 contract["review_merge_contract"],
                 dry_run=dry_run,
             )
-    if command in {"ship", "ship-v2"}:
+    if command == "ship":
         contract["closure_comment"] = closure.contract_as_dict()
         contract["artifact_renderers"] = artifacts.contract_as_dict()
-    if command in {"ship", "ship-v2", "implement", "overnight"}:
+    if command in {"ship", "implement", "overnight"}:
         contract["issue_intake"] = intake.assess_issue(
             title=issue_title,
             body=issue_body,
@@ -295,8 +295,56 @@ def build_command_contract(
     return contract
 
 
-def workflow_profile(command: str) -> dict[str, Any]:
-    """First-class workflow profile metadata for command variants."""
+def workflow_profile(command: str, *, profile: str = "standard") -> dict[str, Any]:
+    """First-class workflow profile metadata for command variants.
+
+    ``ship`` carries the ``standard`` profile by default; selecting the ``compound``
+    profile swaps the s4/s7/s9/s11 steps to compound step overrides without forking the
+    backbone.
+    """
+    if command == "ship" and profile == "compound":
+        return {
+            "name": "ship",
+            "profile": "compound",
+            "inherits": "ship",
+            "first_class_variant": True,
+            "shared_primitives": [
+                "select",
+                "branch",
+                "worktree",
+                "guard",
+                "classify",
+                "ci",
+                "test",
+                "merge_window",
+                "merge_lock",
+                "merge",
+                "capture_marker",
+                "close",
+            ],
+            "step_overrides": {
+                "s4": {
+                    "step": "implement",
+                    "mode": "compound",
+                    "reason": "compound implement and PR-quality pass",
+                },
+                "s7": {
+                    "step": "review",
+                    "mode": "compound",
+                    "reason": "persona and diff-aware reviewer fan-out",
+                },
+                "s9": {
+                    "step": "fixloop",
+                    "mode": "compound",
+                    "reason": "structured PR-feedback resolution",
+                },
+                "s11": {
+                    "step": "capture",
+                    "mode": "compound",
+                    "reason": "durable-learning capture",
+                },
+            },
+        }
     if command == "pr-loop":
         return {
             "name": "pr-loop",
@@ -467,49 +515,6 @@ def workflow_profile(command: str) -> dict[str, Any]:
                 "operator_consent",
             ],
             "step_overrides": {},
-        }
-    if command == "ship-v2":
-        return {
-            "name": "ship-v2",
-            "profile": "compound",
-            "inherits": "ship",
-            "first_class_variant": True,
-            "shared_primitives": [
-                "select",
-                "branch",
-                "worktree",
-                "guard",
-                "classify",
-                "ci",
-                "test",
-                "merge_window",
-                "merge_lock",
-                "merge",
-                "capture_marker",
-                "close",
-            ],
-            "step_overrides": {
-                "s4": {
-                    "step": "implement",
-                    "mode": "compound",
-                    "reason": "compound implement and PR-quality pass",
-                },
-                "s7": {
-                    "step": "review",
-                    "mode": "compound",
-                    "reason": "persona and diff-aware reviewer fan-out",
-                },
-                "s9": {
-                    "step": "fixloop",
-                    "mode": "compound",
-                    "reason": "structured PR-feedback resolution",
-                },
-                "s11": {
-                    "step": "capture",
-                    "mode": "compound",
-                    "reason": "durable-learning capture",
-                },
-            },
         }
     if command == "regression":
         return {

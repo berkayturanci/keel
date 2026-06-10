@@ -19,14 +19,18 @@ class TestCommandGraph(unittest.TestCase):
         self.assertTrue(any(step["slot"] == "reviewers" for step in graph))
         self.assertTrue(all(step["profile_step"] == "standard" for step in graph))
 
-    def test_ship_v2_uses_backbone_with_compound_overrides(self):
-        graph = contracts.command_graph("ship-v2")
+    def test_ship_compound_profile_uses_backbone_with_compound_overrides(self):
+        graph = contracts.command_graph("ship", profile="compound")
         by_id = {step["step_id"]: step for step in graph}
         self.assertEqual(by_id["s4"]["profile_step"], "compound")
         self.assertEqual(by_id["s7"]["profile_step"], "compound")
         self.assertEqual(by_id["s9"]["profile_step"], "compound")
         self.assertEqual(by_id["s11"]["profile_step"], "compound")
         self.assertEqual(by_id["s10"]["profile_step"], "standard")
+
+    def test_ship_standard_profile_has_no_overrides(self):
+        graph = contracts.command_graph("ship", profile="standard")
+        self.assertTrue(all(step["profile_step"] == "standard" for step in graph))
 
     def test_adapter_steps_are_exposed(self):
         graph = contracts.command_graph("morning")
@@ -36,8 +40,9 @@ class TestCommandGraph(unittest.TestCase):
 
     def test_available_commands_include_major_adapters(self):
         commands = contracts.available_commands()
-        for command in ("ship", "ship-v2", "morning", "pr-loop", "review-cycle", "wrap"):
+        for command in ("ship", "morning", "pr-loop", "review-cycle", "wrap"):
             self.assertIn(command, commands)
+        self.assertNotIn("ship-v2", commands)
 
 
 class TestBuildCommandContract(unittest.TestCase):
@@ -200,14 +205,15 @@ class TestBuildCommandContract(unittest.TestCase):
             "review-verdict-2",
         ])
 
-    def test_ship_v2_contract_exposes_first_class_compound_profile(self):
+    def test_ship_compound_contract_exposes_first_class_compound_profile(self):
         config = cfg.load_config(PROJECTS / "example-android.yaml")
         loaded = {}
         plan = orchestrator.build_plan(config, loaded)
         report = runtime.CapabilityReport(())
         requirement = runtime.CapabilityRequirement()
         contract = contracts.build_command_contract(
-            command="ship-v2",
+            command="ship",
+            profile="compound",
             config=config,
             loaded=loaded,
             plan=plan,
@@ -242,6 +248,32 @@ class TestBuildCommandContract(unittest.TestCase):
         self.assertEqual(profile["step_overrides"]["s9"]["step"], "fixloop")
         self.assertEqual(profile["step_overrides"]["s11"]["step"], "capture")
         self.assertIn("review_merge_contract", contract)
+
+    def test_ship_standard_contract_has_standard_profile_and_same_side_effects(self):
+        config = cfg.load_config(PROJECTS / "example-android.yaml")
+        loaded = {}
+        plan = orchestrator.build_plan(config, loaded)
+        report = runtime.CapabilityReport(())
+        requirement = runtime.CapabilityRequirement()
+
+        def _contract(profile):
+            return contracts.build_command_contract(
+                command="ship",
+                profile=profile,
+                config=config,
+                loaded=loaded,
+                plan=plan,
+                requirement=requirement,
+                evaluation=runtime.evaluate(requirement, report),
+                transport=github_transport.resolve(report),
+            )
+
+        standard = _contract("standard")
+        compound = _contract("compound")
+        self.assertEqual(standard["workflow_profile"]["profile"], "standard")
+        # Same backbone, same safety primitives: the compound profile only swaps the
+        # four step overrides, never the declared side effects.
+        self.assertEqual(standard["side_effects"], compound["side_effects"])
 
     def test_standalone_command_profiles_are_first_class(self):
         config = cfg.load_config(PROJECTS / "example-android.yaml")

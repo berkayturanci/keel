@@ -140,8 +140,7 @@ pip install "git+https://github.com/berkayturanci/keel@v1.0.2"
 <p class="muted">17 agentic workflows ship with the package. <code>keel install-adapter claude</code> installs native Claude commands; <code>keel install-adapter skills</code> installs <em>one shared</em> skill set under <code>.agents/skills/keel-&lt;command&gt;/</code> that every non-Claude agent (Codex, Antigravity, Gemini) reads. Each is project-neutral — behaviour comes from that repo's <code>.keel/project.yaml</code>. Full reference: <a href="https://github.com/berkayturanci/keel/blob/main/docs/keel/commands.md">docs/keel/commands.md</a>.</p>
 <table>
   <tr><th scope="col">command</th><th scope="col">what</th></tr>
-  <tr><td><code>/keel:ship</code></td><td>drive an issue end-to-end (select → branch → implement → CI → review → test → merge → close) — per-round review, inline comments, delegation, jury gate, merge window + lock, attribution</td></tr>
-  <tr><td><code>/keel:ship-v2</code></td><td>first-class compound-engineering variant that reuses the ship backbone with documented step overrides</td></tr>
+  <tr><td><code>/keel:ship</code></td><td>drive an issue end-to-end (select → branch → implement → CI → review → test → merge → close) — per-round review, inline comments, delegation, jury gate, merge window + lock, attribution; <code>--compound</code> selects the compound-engineering profile that reuses the same backbone with documented s4/s7/s9/s11 step overrides</td></tr>
   <tr><td><code>/keel:implement</code></td><td>delegate one issue to the right implementer; the s4 implement step standalone</td></tr>
   <tr><td><code>/keel:review-cycle</code></td><td>multi-reviewer review→fix cycle over open PRs (parallel reviewers, capped fix rounds); does not merge</td></tr>
   <tr><td><code>/keel:pr-loop</code></td><td>iterate an open PR's review comments + CI to green, then hand off to the windowed merge</td></tr>

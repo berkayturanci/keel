@@ -1,6 +1,6 @@
 ---
 description: Drive a GitHub issue end-to-end through the keel backbone (select → branch → implement → CI → review → test → merge → close → capture), reading every project value from .keel/project.yaml via the keel CLI.
-argument-hint: "[issue numbers...] [--delegate <claude|codex|agy|ollama:MODEL>] [--review-delegate <claude|codex|agy|ollama:MODEL>] [--review-comments <inline|summary>] [--reviewers <1|2|3>] [--jury|--no-jury|--jury-advisory] [--hotfix] [--dry-run] [--wizard]"
+argument-hint: "[issue numbers...] [--compound|--profile <standard|compound>] [--delegate <claude|codex|agy|ollama:MODEL>] [--review-delegate <claude|codex|agy|ollama:MODEL>] [--review-comments <inline|summary>] [--reviewers <1|2|3>] [--jury|--no-jury|--jury-advisory] [--hotfix] [--dry-run] [--wizard]"
 allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Bash(jury:*), Read, Edit, Write, Agent
 ---
 
@@ -115,6 +115,10 @@ mode in your first user-facing line.
 ### Argument parsing
 
 - **Bare positive integers** ⇒ explicit issue number(s). Reject zero/negative.
+- `--compound` / `--profile <standard|compound>` — select the workflow profile. Default
+  `standard`; `--compound` is an alias for `--profile compound`. The compound profile swaps
+  the `s4`/`s7`/`s9`/`s11` steps to compound behavior (see the **Compound profile** section)
+  without forking the backbone. Composes with every other flag (e.g. `--compound --jury`).
 - `--delegate <claude|codex|agy|ollama:MODEL>` — the **implementer**. Per-run override
   of any issue role/delegate label. `ollama:` requires a non-empty model. Default: the
   **host agent** (the CLI driving this run).
@@ -403,6 +407,47 @@ unsanitized output. The audit may include rule ids and counts, never original se
 Close the issue (idempotent if the squash auto-closed it via `Closes #<N>`), link the PR,
 flip the status label to done **only here** (post-merge), and drop the lock.
 
+## Compound profile (`--compound`)
+
+`--compound` (or `--profile compound`) selects the **compound-engineering** workflow
+profile. It is a first-class profile of `ship`, **not** a second backbone and **not** a
+project extension: the same selection, worktree safety, guard, classification, CI, gates,
+review/jury/merge-gate contract, merge window, merge lock, closeout, and capture-marker
+discipline apply. It differs only where `workflow_profile.step_overrides` says it differs.
+
+Render the compound contract through the same deterministic CLI before mutating work:
+
+```bash
+keel plan .keel/project.yaml --root . --command ship --profile compound --live --json
+keel ship .keel/project.yaml --root . --compound --live --json
+```
+
+The JSON contract's `workflow_profile` then reports:
+
+- `profile: "compound"`
+- `inherits: "ship"`
+- `first_class_variant: true`
+- `step_overrides` for `s4 implement`, `s7 review`, `s9 fixloop`, and `s11 capture`
+
+The compound profile differs only at these four steps:
+
+| step | profile mode | compound behavior |
+|---|---|---|
+| `s4 implement` | `compound` | Use a compound implement pass that emphasizes PR quality, scope simplification, and value-first change shaping before handoff. |
+| `s7 review` | `compound` | Use compound/persona reviewer fan-out when available, while **preserving the reviewer count, posting mode, and gating semantics (including jury) from `review_merge_contract`**. |
+| `s9 fixloop` | `compound` | Resolve PR feedback through a structured compound loop, but keep the shared blocker/suggestion policy and review-fix budget. |
+| `s11 capture` | `compound` | Run durable-learning capture through the capture slot, with the shared canonical marker requirement. |
+
+Compound helpers may be supplied by the host runtime or by project extensions. If a
+compound helper is unavailable for a step, fall back to the standard behavior for that step,
+log the degraded step, and continue unless the configured extension marks the degradation as
+blocking.
+
+Under `--dry-run`, the compound profile must show the same non-mutating contract as the
+standard profile, plus the compound `workflow_profile`; it must not create branches, edit
+files, push commits, post comments, request reviews, merge, close issues, or write capture
+artifacts.
+
 ## `--dry-run`
 
 Run s0–s8 read-only and print the plan + `keel ship` assessment (tier, window, gates,
@@ -436,4 +481,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=plugin command=ship keel_version=1.0.2 source_sha256=d9566d996812b8b73c2896e01f4b074250d36d2c9622c124f61100e017966099 generated_sha256=d9566d996812b8b73c2896e01f4b074250d36d2c9622c124f61100e017966099 -->
+<!-- keel-generated: surface=plugin command=ship keel_version=1.0.2 source_sha256=a03558aabe5108a4e68687fcd4d7589bd2b3bb46711fc01b4ce120a287a88fa8 generated_sha256=a03558aabe5108a4e68687fcd4d7589bd2b3bb46711fc01b4ce120a287a88fa8 -->

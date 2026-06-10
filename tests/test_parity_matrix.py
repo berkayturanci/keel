@@ -25,7 +25,6 @@ EXPECTED_COLUMNS = (
 
 EXPECTED_LEGACY_COMMANDS = (
     "ship",
-    "ship-v2",
     "morning",
     "pr-loop",
     "review-cycle",
@@ -89,13 +88,17 @@ class TestParityMatrix(unittest.TestCase):
         self.assertIn("#69", ship["Known gaps / owner issues"])
         self.assertIn("review_merge_contract", ship["Known gaps / owner issues"])
 
-    def test_ship_v2_row_records_first_class_profile_evidence(self):
+    def test_ship_row_records_compound_profile_evidence(self):
+        # The compound-engineering variant is now the ship --compound profile,
+        # not a separate ship-v2 row.
         rows = {row["Legacy command"].strip("`"): row for row in _matrix_rows()}
-        ship_v2 = rows["ship-v2"]
-        self.assertEqual(ship_v2["Status"], "`parity-proven`")
-        self.assertIn("#61", ship_v2["Known gaps / owner issues"])
-        self.assertIn("workflow_profile", ship_v2["Known gaps / owner issues"])
-        self.assertIn("compound", ship_v2["Known gaps / owner issues"])
+        self.assertNotIn("ship-v2", rows)
+        ship = rows["ship"]
+        self.assertEqual(ship["Status"], "`parity-proven`")
+        self.assertIn("#61", ship["Known gaps / owner issues"])
+        self.assertIn("workflow_profile", ship["Keel target behavior"])
+        self.assertIn("compound", ship["Keel target behavior"])
+        self.assertIn("--compound", ship["Legacy behavior"])
 
     def test_standalone_implement_and_ci_check_rows_record_parity_evidence(self):
         rows = {row["Legacy command"].strip("`"): row for row in _matrix_rows()}

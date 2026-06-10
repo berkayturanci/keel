@@ -127,6 +127,7 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         return 1
     contract = contracts.build_command_contract(
         command=args.command_contract,
+        profile=args.profile,
         config=config,
         loaded=loaded,
         plan=plan,
@@ -238,6 +239,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         print("--dry-run and --live cannot be used together", file=sys.stderr)
         return 1
     command = getattr(args, "ship_command", "ship")
+    profile = "compound" if args.compound or args.profile == "compound" else "standard"
 
     try:
         config = cfg.load_config(args.path)
@@ -277,6 +279,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         return 1
     contract = contracts.build_command_contract(
         command=command,
+        profile=profile,
         config=config,
         loaded=loaded,
         plan=plan,
@@ -1564,13 +1567,13 @@ def _capability_requirement(
         ))
 
     command_gate_commands = {
-        "run-gates", "ship", "ship-v2", "pr-loop", "wrap", "work-block", "overnight",
+        "run-gates", "ship", "pr-loop", "wrap", "work-block", "overnight",
         "implement", "coverage", "deps-audit", "flake-audit",
     }
     if command in command_gate_commands and any(s.kind == "command" for s in specs):
         req = req.merged(runtime.CapabilityRequirement(required=("shell",)))
     worktree_commands = {
-        "ship", "ship-v2", "pr-loop", "wrap", "work-block", "overnight", "implement"
+        "ship", "pr-loop", "wrap", "work-block", "overnight", "implement"
     }
     github_read_commands = {
         "morning", "review-cycle", "triage", "stale-prs", "regression", "review-all-day",
@@ -1609,6 +1612,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_plan.add_argument("--root", default=".", help="repo root for resolving extensions")
     p_plan.add_argument("--command", dest="command_contract", default="ship",
                         help="adapter command contract to include in JSON output")
+    p_plan.add_argument("--profile", choices=("standard", "compound"), default="standard",
+                        help="workflow profile for ship command contracts")
     p_plan.add_argument("--live", action="store_true",
                         help="render a live preflight contract and fail if consent is missing")
     p_plan.add_argument("--approve-scope", action="append", default=[],
@@ -1799,13 +1804,6 @@ def build_parser() -> argparse.ArgumentParser:
     _add_ship_parser(
         sub.add_parser("ship", help="dry ship assessment (tier, window, gates, decision)"),
         command="ship",
-    )
-    _add_ship_parser(
-        sub.add_parser(
-            "ship-v2",
-            help="dry ship-v2 assessment using the compound workflow profile",
-        ),
-        command="ship-v2",
     )
 
     p_implement = sub.add_parser(
@@ -2170,6 +2168,10 @@ def _add_ship_parser(parser: argparse.ArgumentParser, *, command: str) -> None:
                         help="disable the cross-vendor jury gate")
     parser.add_argument("--jury-advisory", action="store_true",
                         help="make an enabled jury advisory instead of merge-gating")
+    parser.add_argument("--profile", choices=("standard", "compound"), default="standard",
+                        help="workflow profile: standard (default) or compound")
+    parser.add_argument("--compound", action="store_true",
+                        help="select the compound workflow profile (alias for --profile compound)")
     parser.add_argument("--json", action="store_true", help="emit structured JSON")
     parser.set_defaults(func=_cmd_ship, ship_command=command)
 

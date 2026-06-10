@@ -28,7 +28,7 @@ def ledger_contract_as_dict(config: cfg.ProjectConfig) -> dict[str, Any]:
         "path": path,
         "path_source": source,
         "missing_handling": "treat-as-empty",
-        "append_owner": ["ship", "ship-v2"],
+        "append_owner": ["ship"],
         "readers": ["morning", "wrap", "overnight", "capture-verification", "ledger"],
         "consumer_neutral": True,
         "capture_redaction": redaction.contract_as_dict(config),

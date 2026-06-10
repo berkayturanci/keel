@@ -15,8 +15,7 @@ recommended as repository defaults for an open source project.
 Codex does not have native Claude-style slash commands. When asked to run a keel command,
 load the matching skill under `.agents/skills/` and follow it exactly:
 
-- `ship` or `/keel:ship` -> `.agents/skills/keel-ship/SKILL.md`
-- `ship-v2` or `/keel:ship-v2` -> `.agents/skills/keel-ship-v2/SKILL.md`
+- `ship` or `/keel:ship` (compound profile: `ship --compound`) -> `.agents/skills/keel-ship/SKILL.md`
 - `implement` or `/keel:implement` -> `.agents/skills/keel-implement/SKILL.md`
 - `review-cycle` or `/keel:review-cycle` -> `.agents/skills/keel-review-cycle/SKILL.md`
 - `pr-loop` or `/keel:pr-loop` -> `.agents/skills/keel-pr-loop/SKILL.md`

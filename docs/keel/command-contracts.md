@@ -10,8 +10,8 @@ describe what a command would do before an adapter starts mutating work.
 - `keel plan <project.yaml> --command <adapter> --live --json`
 - `keel ship <project.yaml> --dry-run --json`
 - `keel ship <project.yaml> --live --json`
-- `keel ship-v2 <project.yaml> --dry-run --json`
-- `keel ship-v2 <project.yaml> --live --json`
+- `keel ship <project.yaml> --compound --dry-run --json`
+- `keel ship <project.yaml> --compound --live --json`
 - `keel work-block <project.yaml> --json`
 - `keel work-block <project.yaml> --live --json`
 - `keel ledger <project.yaml> --json`
@@ -42,8 +42,8 @@ Every contract includes:
 | `command` | Adapter command being planned. |
 | `mode` / `dry_run` / `no_mutations` | Whether this record represents a non-mutating rehearsal. |
 | `project` | Resolved project config summary plus stable `config_hash`. |
-| `workflow_profile` | Command profile metadata. `ship` is `standard`; `ship-v2` is a first-class `compound` variant that inherits shared ship primitives and declares step overrides. |
-| `graph` | Command step graph. `ship` and `ship-v2` use the fixed backbone steps; other adapters expose their command-local steps; project commands expose a single `project_command` graph entry. |
+| `workflow_profile` | Command profile metadata. `ship` is `standard` by default; `keel ship --compound` (`--profile compound`) selects a first-class `compound` profile that inherits the shared ship primitives and declares step overrides. |
+| `graph` | Command step graph. `ship` (both profiles) uses the fixed backbone steps; other adapters expose their command-local steps; project commands expose a single `project_command` graph entry. |
 | `backbone_plan` | Fixed keel backbone with gates, add-only extension slots, and loaded hooks slotted onto steps. |
 | `gates` | Planned gate specs, including kind, phase, failure behavior, source, and capability declarations. |
 | `project_commands` | Project-provided commands declared by policy, separate from packaged keel adapters. |
@@ -55,12 +55,12 @@ Every contract includes:
 | `run_ledger` | Structured JSONL run-ledger storage and schema contract. |
 | `checkpoint` | Resumable checkpoint storage and resume/reconcile contract for ship and work-block runs. |
 | `capture` | Post-merge capture marker, skip vocabulary, fail-soft, recursion-guard, redaction, and verifier contract. |
-| `closure_comment` | Present for `ship` and `ship-v2`; the deterministic, consumer-neutral closure-comment contract describing how the s11 ship-outcome comment is rendered from the `ship_run` ledger record. |
-| `evidence` | Present for `ship` and `ship-v2`; the fail-closed pre-merge evidence contract used by `keel evidence-verify`. |
-| `artifact_renderers` | Present for `ship` and `ship-v2`; canonical renderer contract for PR bodies, issue updates, review verdicts, jury verdicts, and extension result output. |
+| `closure_comment` | Present for `ship` (both profiles); the deterministic, consumer-neutral closure-comment contract describing how the s11 ship-outcome comment is rendered from the `ship_run` ledger record. |
+| `evidence` | Present for `ship` (both profiles); the fail-closed pre-merge evidence contract used by `keel evidence-verify`. |
+| `artifact_renderers` | Present for `ship` (both profiles); canonical renderer contract for PR bodies, issue updates, review verdicts, jury verdicts, and extension result output. |
 | `side_effects` | Declared possible live-run side effects and whether dry-run mutates. |
 | `operator_consent` | Operator consent requirement, approved mutation scopes, delegated-agent scope, and consent record metadata. |
-| `issue_intake` | Present for work-owning flows (`ship`, `ship-v2`, `implement`, `overnight`); extracted objective, deliverable, acceptance criteria, readiness, questions, and ledger metadata. |
+| `issue_intake` | Present for work-owning flows (`ship`, `implement`, `overnight`); extracted objective, deliverable, acceptance criteria, readiness, questions, and ledger metadata. |
 | `morning_contract` | Present for `morning`; project-neutral daily-brief sections, health providers, report destinations, priority sources, and deferral queue metadata. |
 | `session_contract` | Present for `wrap`, `work-block`, and `overnight`; project-neutral linked-worktree, gate, PR, merge-window, report, deferral, work-block, and ship-handoff metadata. |
 | `scan_contract` | Present for `regression` and `review-all-day`; project-neutral scan target, scope, dedupe, issue-write, reviewer-isolation, and final-report metadata. |
@@ -116,7 +116,7 @@ The block records:
 - `format: jsonl`
 - `path` and `path_source`
 - `missing_handling: treat-as-empty`
-- append owners (`ship`, `ship-v2`) and offline readers (`morning`, `wrap`,
+- append owners (`ship`) and offline readers (`morning`, `wrap`,
   `overnight`, `capture-verification`, `ledger`)
 
 `keel ship --live --append-ledger` appends exactly one structured `ship_run` record after
@@ -190,7 +190,7 @@ project capture extension.
 
 ## Closure comment block
 
-`ship` and `ship-v2` contracts include `closure_comment`, the contract for the human-readable
+`ship` contracts (both profiles) include `closure_comment`, the contract for the human-readable
 "ship outcome" comment that the s11 step posts to both the issue and the PR. The comment is a
 **mirror** of the `ship_run` ledger record, never a parser source — adapters read the ledger
 (or `keel ship --json`'s `result.run_ledger.record`) for machine state and post the rendered
@@ -227,7 +227,7 @@ always produce identical markdown.
 
 ## Canonical artifact renderers
 
-`ship` and `ship-v2` contracts include `artifact_renderers`, the deterministic artifact
+`ship` contracts (both profiles) include `artifact_renderers`, the deterministic artifact
 renderer contract for public GitHub/writeable outputs that agents previously had to compose
 from prose. The renderer contract is consumer-neutral and tells adapters to post rendered
 Markdown verbatim when available.
@@ -250,7 +250,7 @@ explicitly excluded from review/jury/closure evidence.
 
 ## Evidence block
 
-`ship` and `ship-v2` contracts include `evidence`, the deterministic pre-merge evidence
+`ship` contracts (both profiles) include `evidence`, the deterministic pre-merge evidence
 set derived from the resolved `review_merge_contract` plus the closure-comment contract.
 Adapters and CI use it to prove that a ship run completed its public review/closeout
 artifacts instead of trusting a private chat summary.
@@ -316,7 +316,7 @@ local path with `policy_pack.reports.checkpoint`. The contract records:
 - `format: json`
 - `path` and `path_source`
 - `missing_handling: no-checkpoint`
-- write owners (`ship`, `ship-v2`, `work-block`, `overnight`)
+- write owners (`ship`, `work-block`, `overnight`)
 - the `checkpoint` reader/writer command and the `resume` dry-run command
 - every backbone step id, whether it is a safe resume boundary, and the idempotent
   resume action for that boundary
@@ -388,7 +388,7 @@ clarification trail in the run ledger.
 
 ## Dry-run result records
 
-`keel ship --dry-run --json` and `keel ship-v2 --dry-run --json` add a `result` object
+`keel ship --dry-run --json` (in either profile, e.g. with `--compound`) adds a `result` object
 with deterministic data:
 
 - changed files and changed-file count
@@ -460,12 +460,12 @@ keel core:
 Workflow profiles let command variants stay directly invokable without copying an entire
 adapter body.
 
-`ship` uses:
+`ship` (default, or `--profile standard`) uses:
 
 - `workflow_profile.profile: "standard"`
 - no step overrides
 
-`ship-v2` uses:
+`ship --compound` (`--profile compound`) uses:
 
 - `workflow_profile.profile: "compound"`
 - `workflow_profile.inherits: "ship"`
@@ -565,7 +565,7 @@ agent completed the work, recorded the evidence requested by the command, or exp
 the step not applicable with a reason. Mutating commands must make required side effects
 observable through GitHub, git, or the configured report path before moving forward.
 
-For `ship` and `ship-v2`, this means a PR body is not valid when it contains only a closing
+For `ship` (in either profile), this means a PR body is not valid when it contains only a closing
 reference. It must include Context, Changes Made, Testing, Docs Impact, and the closing issue
 reference. If review or jury ran, the orchestrator must post the final reviewer verdicts and
 the single jury summary/verdict to the GitHub PR. A local transcript or chat-only note is not

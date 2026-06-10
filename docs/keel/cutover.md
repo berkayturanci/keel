@@ -87,7 +87,7 @@ genuinely project-only** ones:
 
 | Retire (keel owns these) | Keep (project-only) |
 |---|---|
-| `ship`, `ship-v2`, `implement`, `pr-loop`, `review-cycle*`, `review-all-day`, `morning`, `overnight`, `wrap`, `triage`, `stale-prs`, `ci-check`, `deps-audit`, `flake-audit`, `coverage`, `regression` | platform builds (e.g. an app build/release command), app-specific regressions, UI/device tests, anything tied to one app's stack |
+| `ship` (incl. `ship --compound`), `implement`, `pr-loop`, `review-cycle*`, `review-all-day`, `morning`, `overnight`, `wrap`, `triage`, `stale-prs`, `ci-check`, `deps-audit`, `flake-audit`, `coverage`, `regression` | platform builds (e.g. an app build/release command), app-specific regressions, UI/device tests, anything tied to one app's stack |
 
 Retire the old bodies in **both** surfaces keel now owns: `.claude/commands/` (Claude) and the
 shared `.agents/skills/<command>/` skills (every non-Claude agent). The retirement is a normal

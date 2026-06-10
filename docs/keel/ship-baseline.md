@@ -89,5 +89,5 @@ The `review_merge_contract` included by `keel plan --command ship --json` and by
 
 Unit coverage asserts these contract fields directly and CLI coverage asserts the JSON
 surface for default, no-jury, explicit-jury, advisory, reviewer-override, and posting-mode
-cases. The parity matrix can therefore mark `ship` as `parity-proven`; behavior unique to
-`ship-v2` or review-only feedback commands remains tracked by their own rows and issues.
+cases. The parity matrix can therefore mark `ship` as `parity-proven`; behavior unique to the
+`ship --compound` profile or review-only feedback commands remains tracked by their own rows and issues.

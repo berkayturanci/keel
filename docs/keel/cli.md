@@ -70,8 +70,8 @@ With `--json`, the output includes a structured command contract under `contract
 project config, command step graph, backbone plan, gates, extension hooks, capability
 requirements/evaluation, selected GitHub transport, declared side effects, and operator
 consent requirements. It also includes the `run_ledger` and `checkpoint` storage contracts
-so adapters know where structured run history and resumable run state live. For `ship` and
-`ship-v2`, it also includes `contract.evidence`: the exact posted GitHub evidence that must
+so adapters know where structured run history and resumable run state live. For `ship`
+(including the `--compound` profile), it also includes `contract.evidence`: the exact posted GitHub evidence that must
 exist before merge. See
 [`command-contracts.md`](command-contracts.md).
 
@@ -107,7 +107,7 @@ Missing ledgers are not errors: JSON output returns `status: "missing"` and
 `records: []`. Invalid JSONL or unsupported record schemas are errors because adapters
 must not build morning/wrap/capture reports from corrupted history.
 
-`ship` and `ship-v2` can append one `ship_run` record with:
+`ship` (in either profile) can append one `ship_run` record with:
 
 ```bash
 keel ship .keel/project.yaml --root . --live --append-ledger \
@@ -197,7 +197,7 @@ Missing checkpoints are not errors: JSON output returns `status: "missing"` and
 `checkpoint: null`. Invalid JSON or unsupported checkpoint schemas are errors because
 adapters must not resume from corrupted state.
 
-Adapters that own live `ship`, `ship-v2`, or `overnight` runs can write the current safe
+Adapters that own live `ship` or `overnight` runs can write the current safe
 step boundary:
 
 ```bash
@@ -456,7 +456,7 @@ keel window .keel/project.yaml
 # merge window OPEN  [Europe/Istanbul 07:00-01:30]
 ```
 
-## `keel ship <project.yaml> [--root DIR] [--pr N] [--dry-run] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--target TARGET] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--review-comments inline|summary] [--reviewers 1|2|3] [--jury|--no-jury] [--jury-advisory] [--json]`
+## `keel ship <project.yaml> [--root DIR] [--pr N] [--compound|--profile standard|compound] [--dry-run] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--target TARGET] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--review-comments inline|summary] [--reviewers 1|2|3] [--jury|--no-jury] [--jury-advisory] [--json]`
 
 Run the **deterministic slice of a ship** against the current checkout and print the
 assessment: how many files changed vs. the base branch, the **risk tier** (→ reviewer
@@ -525,22 +525,29 @@ post those rendered bodies verbatim when available instead of hand-authoring pro
 variants. `--dry-run` is accepted for adapter clarity; this CLI command is already
 non-mutating.
 
-## `keel ship-v2 <project.yaml> [same flags as keel ship]`
+### `--compound` (compound workflow profile)
 
-Run the same deterministic ship assessment through the first-class `ship-v2` workflow
-variant. `ship-v2` shares the ship backbone and safety gates, but its JSON contract carries
-`workflow_profile.profile: "compound"` and step overrides for compound `implement`,
+`--compound` (or `--profile compound`) runs the same deterministic ship assessment through
+the **compound** workflow profile. The compound profile is a first-class profile of `ship`,
+not a separate command: it shares the same backbone and safety gates, but its JSON contract
+carries `workflow_profile.profile: "compound"` and step overrides for compound `implement`,
 `review`, `fixloop`, and `capture`.
 
 ```bash
-keel ship-v2 .keel/project.yaml --root . --dry-run --json
+keel ship .keel/project.yaml --root . --compound --dry-run --json
 # contract.workflow_profile.profile == "compound"
 # contract.workflow_profile.inherits == "ship"
 ```
 
-Use `ship` for the standard delivery path and `ship-v2` when the operator wants the
-compound-engineering flavor while retaining the same CI, review, merge-window, merge-lock,
-closeout, and capture safety gates.
+The same compound contract is available from `keel plan` via `--profile compound`:
+
+```bash
+keel plan .keel/project.yaml --root . --command ship --profile compound --json
+```
+
+Omit the flag (or pass `--profile standard`) for the standard delivery path; use
+`--compound` when the operator wants the compound-engineering flavor while retaining the same
+CI, review, merge-window, merge-lock, closeout, and capture safety gates.
 
 ## `keel implement <project.yaml> <issue> [--root DIR] [--delegate AGENT] [--dry-run] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--json]`
 
@@ -637,7 +644,7 @@ The CLI (`keel ship`, `keel run-gates`, …) does the deterministic work; these 
 the **agentic** flows (per-round review, inline comments, delegation) the agent runs. The
 shipped set: `ship`, `regression`, `implement`, `review-cycle`, `pr-loop`, `morning`,
 `review-all-day`, `overnight`, `wrap`, `triage`, `stale-prs`, `ci-check`, `deps-audit`,
-`flake-audit`, `coverage`, `ship-v2`. Existing files are skipped unless `--force` (so your
+`flake-audit`, `coverage`. Existing files are skipped unless `--force` (so your
 edits are never clobbered).
 
 The generated surface is covered as a release contract: tests install into a clean temporary

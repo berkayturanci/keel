@@ -49,8 +49,8 @@ queued issue without parsing free-form logs.
 
 | command | what it does |
 |---|---|
-| **`/keel:ship`** | Drive a GitHub issue end-to-end through the keel backbone (select → branch → implement → CI → review → test → merge → close → capture). The full flow: per-round review, inline `file:line` comments, `--delegate` / `--review-delegate`, `--review-comments inline\|summary`, `--reviewers N`, the `jury` gate, the timezone-aware merge window + `mkdir` merge lock, and vendor+model attribution. |
-| `/keel:ship-v2` | First-class compound-engineering variant of the ship workflow. It reuses the shared ship backbone for selection, worktree safety, CI, review gates, merge window, merge lock, closeout, and capture markers, while its `workflow_profile` marks `implement`, `review`, `fixloop`, and `capture` as compound step overrides. |
+| **`/keel:ship`** | Drive a GitHub issue end-to-end through the keel backbone (select → branch → implement → CI → review → test → merge → close → capture). The full flow: per-round review, inline `file:line` comments, `--delegate` / `--review-delegate`, `--review-comments inline\|summary`, `--reviewers N`, the `jury` gate, the timezone-aware merge window + `mkdir` merge lock, and vendor+model attribution. `--compound` (`--profile compound`) selects the compound-engineering profile: the same backbone, gates, and safety primitives, with `workflow_profile` marking `implement`, `review`, `fixloop`, and `capture` (s4/s7/s9/s11) as compound step overrides. |
+| `keel status` | Read checkpoint + run ledger state and print a concise active/recent progress snapshot for long-running work blocks. Use `--json` for the machine-readable `keel.progress-status.v1` surface. |
 | `keel status` | Read checkpoint + run ledger state and print a concise active/recent progress snapshot for long-running work blocks. Use `--json` for the machine-readable `keel.progress-status.v1` surface. |
 
 ## Per-step (standalone slices of the backbone)

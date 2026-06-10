@@ -421,14 +421,14 @@ class TestShip(unittest.TestCase):
         self.assertIn("intake        : ready", out)
         self.assertNotIn("questions", out)
 
-    def test_ship_v2_json_dry_run_contract(self):
+    def test_ship_compound_json_dry_run_contract(self):
         import tempfile
         with tempfile.TemporaryDirectory() as d:
-            rc, out, _ = run(["ship-v2", _write_config("'true'"), "--root", d,
-                              "--dry-run", "--json"])
+            rc, out, _ = run(["ship", _write_config("'true'"), "--root", d,
+                              "--compound", "--dry-run", "--json"])
         self.assertEqual(rc, 0)
         data = json.loads(out)
-        self.assertEqual(data["contract"]["command"], "ship-v2")
+        self.assertEqual(data["contract"]["command"], "ship")
         self.assertEqual(data["contract"]["workflow_profile"]["profile"], "compound")
         self.assertEqual(data["contract"]["workflow_profile"]["inherits"], "ship")
         self.assertEqual(
@@ -437,6 +437,61 @@ class TestShip(unittest.TestCase):
         )
         self.assertIn("review_merge_contract", data["contract"])
         self.assertIn("result", data)
+        # The graph marks the four overridden backbone steps as compound.
+        compound_steps = {
+            row["step_id"]
+            for row in data["contract"]["graph"]
+            if row["profile_step"] == "compound"
+        }
+        self.assertEqual(compound_steps, {"s4", "s7", "s9", "s11"})
+
+    def test_ship_profile_compound_alias_matches_compound_flag(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["ship", _write_config("'true'"), "--root", d,
+                              "--profile", "compound", "--dry-run", "--json"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["contract"]["workflow_profile"]["profile"], "compound")
+
+    def test_ship_default_profile_is_standard(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["ship", _write_config("'true'"), "--root", d,
+                              "--dry-run", "--json"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["contract"]["workflow_profile"]["profile"], "standard")
+        self.assertTrue(all(
+            row["profile_step"] == "standard"
+            for row in data["contract"]["graph"]
+        ))
+
+    def test_ship_compound_composes_with_jury(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["ship", _write_config("'true'"), "--root", d,
+                              "--compound", "--jury", "--dry-run", "--json"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["contract"]["workflow_profile"]["profile"], "compound")
+        self.assertTrue(data["contract"]["review_merge_contract"]["jury"]["enabled"])
+
+    def test_ship_v2_is_not_a_subcommand(self):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as ctx:
+            cli.main(["ship-v2", "x.yaml", "--dry-run", "--json"])
+        self.assertEqual(ctx.exception.code, 2)
+        self.assertIn("invalid choice: 'ship-v2'", err.getvalue())
+
+    def test_plan_compound_profile_contract(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["plan", _write_config("'true'"), "--root", d,
+                              "--command", "ship", "--profile", "compound", "--json"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["contract"]["workflow_profile"]["profile"], "compound")
 
     def test_json_contract_matches_assessment_for_tier3_auto_jury(self):
         import tempfile
@@ -2898,12 +2953,14 @@ class TestParser(unittest.TestCase):
         self.assertTrue(actions)
         self.assertGreaterEqual(set(actions[0].choices),
                                 {"version", "validate", "plan", "run-gates", "window", "ship",
-                                 "ship-v2", "implement", "ci-check", "morning", "capabilities",
+                                 "implement", "ci-check", "morning", "capabilities",
                                  "wrap", "overnight", "init",
                                  "setup",
                                  "install-adapter",
                                  "adapter-status", "update-adapter", "sync", "project-commands",
                                  "install-legacy-wrappers"})
+        # ship-v2 was removed in favour of the ship --compound profile flag.
+        self.assertNotIn("ship-v2", set(actions[0].choices))
 
 
 if __name__ == "__main__":
