@@ -41,14 +41,14 @@
 
 <header>
   <img src="hero.svg" alt="keel setup installs config, Claude commands, and shared skills for the same workflow backbone" style="width:100%;height:auto;border-radius:12px;margin-bottom:8px">
-  <h1>keel ⚓</h1>
+  <h1>keel <span aria-hidden="true">⚓</span></h1>
   <p class="tag"><b>Keel turns coding agents into work owners.</b> From issue intake to implementation, review, safe merge, closure, and capture hooks.</p>
   <div class="badges">
     <span class="badge"><b>100%</b> line + branch coverage</span>
     <span class="badge">one-command setup</span>
     <span class="badge">stdlib-first · 1 runtime dep</span>
     <span class="badge">Python ≥ 3.11</span>
-    <a class="badge" href="./coverage/">📊 coverage report →</a>
+    <a class="badge" href="./coverage/"><span aria-hidden="true">📊</span> coverage report →</a>
     <a class="badge" href="https://github.com/berkayturanci/keel">GitHub →</a>
   </div>
 </header>
@@ -88,7 +88,7 @@
 </table>
 
 <h2>Install</h2>
-<pre tabindex="0">pip install keel-workflow
+<pre tabindex="0" aria-label="Code snippet">pip install keel-workflow
 # provides the `keel` command
 
 pip install "git+https://github.com/berkayturanci/keel@v1.0.2"
@@ -96,7 +96,7 @@ pip install "git+https://github.com/berkayturanci/keel@v1.0.2"
 
 <h2>Quickstart</h2>
 <h3>Set up a consumer repo in one pass</h3>
-<pre tabindex="0">keel setup --root .
+<pre tabindex="0" aria-label="Code snippet">keel setup --root .
 # writes .keel/project.yaml when missing
 # installs .claude/commands/keel/*
 # installs .agents/skills/keel-*
@@ -104,7 +104,7 @@ pip install "git+https://github.com/berkayturanci/keel@v1.0.2"
 # renders the resolved backbone plan</pre>
 
 <h3>See what ship would do, right now</h3>
-<pre tabindex="0">keel ship .keel/project.yaml --root .
+<pre tabindex="0" aria-label="Code snippet">keel ship .keel/project.yaml --root .
 # keel ship — myapp  (base main)
 #   risk tier     : TIER-3  → 3 reviewer(s)
 #   merge window  : <span class="pill">OPEN</span>
