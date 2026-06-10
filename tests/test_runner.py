@@ -135,10 +135,10 @@ class TestFirstLocation(unittest.TestCase):
         self.assertEqual(runner.first_location(out), ("src/app.py", 42))
 
     def test_windows_paths(self):
-        # the path regex excludes initial colons and stops at the first colon it finds
-        # so C:\src... actually doesn't match the regex natively without more extensive changes.
-        # the original regex `[^\s:][^:]*?` wouldn't match it either.
-        pass
+        # the path regex excludes initial colons and stops at the first colon it finds.
+        # It currently does not match paths containing drive letters (e.g. C:\)
+        # This asserts that the original legacy behavior is preserved.
+        self.assertEqual(runner.first_location("C:\\src\\app.py:42: Error"), (None, None))
 
 if __name__ == "__main__":
     unittest.main()
