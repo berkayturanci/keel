@@ -141,6 +141,7 @@ contracts, but executable project behavior remains in extension files or project
 | `sot_doc` | string | | source-of-truth doc, e.g. `AGENTS.md` |
 | `required_capabilities` | string[] | | runtime capabilities that must be present before mutating work starts |
 | `optional_capabilities` | string[] | | runtime capabilities that may degrade explicitly when unavailable |
+| `evidence_gate_label` | string | | PR label that opts a PR into the required pre-merge evidence gate (default `keel:ship`); `keel:ship` applies it at PR open |
 
 ### `knobs` field details
 
@@ -194,6 +195,14 @@ preflight evaluate these declarations.
 
 Runtime capabilities that improve behavior but can degrade explicitly. Missing optional
 capabilities are reported as degraded rather than silently treated as success.
+
+#### `evidence_gate_label`
+
+The PR label that opts a PR into the required pre-merge evidence gate enforced by
+`keel evidence-verify` (default `keel:ship`). `keel:ship` applies this label when it opens
+the PR, so ship-driven PRs are gated while hand-authored PRs that lack the label pass with
+`enforced: false` and `required: 0`. Override per run with `keel evidence-verify
+--gate-label`.
 
 ## `policy_pack`
 

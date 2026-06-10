@@ -6,6 +6,16 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **Required evidence gate is now opt-in** — `keel evidence-verify` enforces the fail-closed
+  pre-merge evidence contract only when the PR carries the `evidence_gate_label` knob
+  (default `keel:ship`), which `keel:ship` applies when it opens the PR. PRs without the
+  label report `enforced: false`, `required: 0`, status `pass`, so hand-authored PRs that
+  never went through ship are no longer blocked. New `--gate-label` and `--pr-label` flags
+  override the knob and inject labels for offline harnesses; the JSON payload now carries
+  `gate_label`, `enforced`, and `pr_labels` (additive — `keel.evidence.v1` is unchanged).
+  References #221.
+
 ### Fixed
 - **Docs correctness** — removed a dead `docs/proposals/divergence-audit-2035.md` link from
   the README; documented `keel status` and `keel work-block` in `docs/keel/cli.md`; and
