@@ -35,7 +35,6 @@ See [`docs/keel/vision.md`](docs/keel/vision.md) for the v1/v2 boundary.
 > Formerly **`ai-infra`** (a one-way file-copy sync of "portable" commands). keel replaces
 > that with a thin-consumer model: the core is installed + pinned, never copied, so the
 > drift/overwrite class of bug is structurally gone. Background:
-> [`docs/proposals/divergence-audit-2035.md`](docs/proposals/divergence-audit-2035.md),
 > [`docs/proposals/keel-architecture.md`](docs/proposals/keel-architecture.md).
 
 ## Three layers

@@ -153,7 +153,9 @@ src/keel/schema/     project.schema.json (bundled, package-data)
 projects/*.yaml      seed configs — one per consumer project (keel itself dogfoods via projects/keel.yaml)
 tests/               unit suite (mirrors src/keel modules)
 src/keel/adapters/commands/   project-neutral adapter source (e.g. ship.md), generated per host
-commands/            generated plugin command surface (.claude/commands/keel/, .agents/skills/keel-*)
+commands/            generated Claude-plugin (marketplace) command surface — `/plugin install keel`
+.claude/commands/keel/        generated Claude slash-command adapters (per-project install)
+.agents/skills/keel-*         generated shared skill adapters for non-Claude agents (per-project install)
 docs/                docs (docs/keel/*) + proposals (docs/proposals/*)
 website/             static site + live coverage report (make site)
 ```

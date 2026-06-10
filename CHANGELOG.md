@@ -6,6 +6,11 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **Docs correctness** — removed a dead `docs/proposals/divergence-audit-2035.md` link from
+  the README; documented `keel status` and `keel work-block` in `docs/keel/cli.md`; and
+  corrected the `AGENTS.md` repo-layout label for `commands/`.
+
 ## [1.0.2] — 2026-06-09
 
 ### Fixed
