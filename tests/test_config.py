@@ -33,6 +33,26 @@ class TestMergeWindowMode(unittest.TestCase):
             cfg.parse_config(data)
 
 
+class TestEvidenceGateLabel(unittest.TestCase):
+    def test_default_label(self):
+        self.assertEqual(
+            cfg.parse_config(copy.deepcopy(VALID)).knobs.evidence_gate_label, "keel:ship"
+        )
+
+    def test_custom_label_parsed(self):
+        data = copy.deepcopy(VALID)
+        data["knobs"]["evidence_gate_label"] = "ship-me"
+        self.assertEqual(cfg.parse_config(data).knobs.evidence_gate_label, "ship-me")
+
+    def test_empty_label_rejected(self):
+        # An empty gate label would silently disable the evidence gate for every
+        # PR; the schema must reject it (minLength: 1).
+        data = copy.deepcopy(VALID)
+        data["knobs"]["evidence_gate_label"] = ""
+        with self.assertRaises(cfg.ConfigError):
+            cfg.parse_config(data)
+
+
 class TestSeedConfigs(unittest.TestCase):
     """Every shipped projects/*.yaml must be valid against the schema."""
 
@@ -251,6 +271,22 @@ class TestParse(unittest.TestCase):
         config = cfg.parse_config(data)
         self.assertEqual(config.knobs.required_capabilities, ("shell",))
         self.assertEqual(config.knobs.optional_capabilities, ("gh",))
+
+    def test_evidence_gate_label_defaults_and_parses(self):
+        config = cfg.parse_config(copy.deepcopy(VALID))
+        self.assertEqual(config.knobs.evidence_gate_label, "keel:ship")
+
+        data = copy.deepcopy(VALID)
+        data["knobs"]["evidence_gate_label"] = "ship-me"
+        overridden = cfg.parse_config(data)
+        self.assertEqual(overridden.knobs.evidence_gate_label, "ship-me")
+
+    def test_evidence_gate_label_changes_config_hash(self):
+        base = cfg.parse_config(copy.deepcopy(VALID))
+        data = copy.deepcopy(VALID)
+        data["knobs"]["evidence_gate_label"] = "ship-me"
+        changed = cfg.parse_config(data)
+        self.assertNotEqual(cfg.config_hash(base), cfg.config_hash(changed))
 
     def test_unknown_capability_rejected(self):
         bad = copy.deepcopy(VALID)

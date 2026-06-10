@@ -75,6 +75,11 @@
           "type": "array",
           "items": { "type": "string" },
           "description": "Runtime capabilities that may degrade when unavailable."
+        },
+        "evidence_gate_label": {
+          "type": "string",
+          "minLength": 1,
+          "description": "PR label that opts a PR into the required pre-merge evidence gate; keel:ship applies it at PR open. Default keel:ship. Must be non-empty — an empty label would silently disable the gate for every PR."
         }
       }
     },

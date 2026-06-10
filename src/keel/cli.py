@@ -635,6 +635,8 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
         no_jury=args.no_jury,
         jury_advisory=args.jury_advisory,
     )
+    gate_label = args.gate_label or config.knobs.evidence_gate_label
+    enforced = evidence.gate_active(artifacts["pr_labels"], gate_label)
     report = evidence.verify(
         review_contract,
         pr_comments=artifacts["pr_comments"],
@@ -643,14 +645,19 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
         pr_body=artifacts["pr_body"],
         head_sha=artifacts["head_sha"],
         dry_run=args.dry_run,
+        enforced=enforced,
         deferrals=tuple(args.deferral or ()),
     )
     payload = {
         "contract": evidence.contract_as_dict(
             review_contract,
             dry_run=args.dry_run,
+            enforced=enforced,
             deferrals=tuple(args.deferral or ()),
         ),
+        "gate_label": gate_label,
+        "enforced": enforced,
+        "pr_labels": artifacts["pr_labels"],
         "pull_request": args.pr,
         "issue": artifacts["issue"],
         "head_sha": artifacts["head_sha"],
@@ -663,6 +670,9 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
         print(f"keel evidence-verify — {report['status']}  PR #{args.pr}")
         print(f"  issue         : {artifacts['issue'] or 'not resolved'}")
         print(f"  dry-run       : {str(args.dry_run).lower()}")
+        if not enforced:
+            print(f"  enforced      : false (no '{gate_label}' label — gate skipped)")
+            return 0
         print(f"  required      : {report['required_count']}")
         if report["missing"]:
             print(f"  missing       : {', '.join(report['missing'])}")
@@ -1045,6 +1055,8 @@ def _load_evidence_artifacts(
     changed_files = list(getattr(args, "changed_file", ()) or ())
     head_sha = args.head_sha
     issue_number = args.issue
+    injected_labels = list(args.pr_label or ())
+    pr_labels: list[str] = []
     using_fixtures = any(
         path is not None for path in (
             args.pr_body_file,
@@ -1062,6 +1074,7 @@ def _load_evidence_artifacts(
             "issue": issue_number,
             "head_sha": head_sha,
             "changed_files": changed_files,
+            "pr_labels": _dedupe_preserve(injected_labels),
         }
     if not using_fixtures:
         owner_repo = _owner_repo(config)
@@ -1069,6 +1082,7 @@ def _load_evidence_artifacts(
         pr_body = pr.get("body") if isinstance(pr.get("body"), str) else ""
         head = pr.get("head") if isinstance(pr.get("head"), dict) else {}
         head_sha = head.get("sha") if isinstance(head.get("sha"), str) else None
+        pr_labels = _label_names(pr.get("labels"))
         changed_files = _pr_changed_files(owner_repo, args.pr, cwd=args.root)
         pr_comments = _gh_json_list(
             ["repos", owner_repo, "issues", str(args.pr), "comments"], cwd=args.root
@@ -1092,7 +1106,22 @@ def _load_evidence_artifacts(
         "issue": issue_number,
         "head_sha": head_sha,
         "changed_files": changed_files,
+        "pr_labels": _dedupe_preserve([*pr_labels, *injected_labels]),
     }
+
+
+def _label_names(labels: object) -> list[str]:
+    if not isinstance(labels, list):
+        return []
+    return [
+        label["name"]
+        for label in labels
+        if isinstance(label, dict) and isinstance(label.get("name"), str)
+    ]
+
+
+def _dedupe_preserve(values: list[str]) -> list[str]:
+    return list(dict.fromkeys(values))
 
 
 def _owner_repo(config: cfg.ProjectConfig) -> str:
@@ -1735,6 +1764,12 @@ def build_parser() -> argparse.ArgumentParser:
                             help="offline changed file path; repeat to derive tier from fixtures")
     p_evidence.add_argument("--head-sha", default=None,
                             help="offline PR head SHA used to bind verdict evidence")
+    p_evidence.add_argument("--pr-label", action="append", default=[],
+                            help="inject a PR label name (repeatable); merged with live labels. "
+                                 "A live PR fetch still runs unless an offline fixture flag is "
+                                 "also supplied")
+    p_evidence.add_argument("--gate-label", default=None,
+                            help="override the evidence_gate_label knob that opts a PR in")
     p_evidence.add_argument("--json", action="store_true", help="emit structured JSON")
     p_evidence.set_defaults(func=_cmd_evidence_verify)
 

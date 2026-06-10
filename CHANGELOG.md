@@ -14,6 +14,14 @@ All notable changes to keel are documented here. The format follows
   command became a profile flag). `keel plan --command ship --profile compound` renders the
   same compound contract. The `ship-v2` adapter, plugin command, Claude slash command, and
   `keel-ship-v2` skill were deleted. (#223)
+- **Required evidence gate is now opt-in** — `keel evidence-verify` enforces the fail-closed
+  pre-merge evidence contract only when the PR carries the `evidence_gate_label` knob
+  (default `keel:ship`), which `keel:ship` applies when it opens the PR. PRs without the
+  label report `enforced: false`, `required: 0`, status `pass`, so hand-authored PRs that
+  never went through ship are no longer blocked. New `--gate-label` and `--pr-label` flags
+  override the knob and inject labels for offline harnesses; the JSON payload now carries
+  `gate_label`, `enforced`, and `pr_labels` (additive — `keel.evidence.v1` is unchanged).
+  References #221.
 
 ### Removed
 - **Outdated forward-looking docs** — deleted `docs/keel/vision.md` and removed its

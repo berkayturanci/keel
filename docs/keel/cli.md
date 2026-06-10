@@ -154,8 +154,13 @@ block the plan instead of guessing.
 
 ## `keel evidence-verify <project.yaml> --pr <N> [--issue <N>] [--json]`
 
-Verify that a PR has the public evidence required by the ship contract before merge. The
-verifier is fail-closed and accepts only durable GitHub artifacts:
+Verify that a PR has the public evidence required by the ship contract before merge.
+
+The gate is **opt-in**: it engages only when the PR carries the configured
+`evidence_gate_label` knob (default `keel:ship`), which `keel:ship` applies when it opens
+the PR. A PR without that label reports `enforced: false`, `required: 0`, status `pass`
+(exit 0) — so hand-authored PRs that never went through ship are not blocked. When the
+label is present the verifier is fail-closed and accepts only durable GitHub artifacts:
 
 - a `keel.closure-comment.v1` closure marker on both the PR and linked issue;
 - the required count of distinct posted s7 reviewer verdicts from PR comments or reviews
@@ -177,11 +182,24 @@ keel evidence-verify .keel/project.yaml --root . --pr 456 --reviewers 3 --jury -
 keel evidence-verify .keel/project.yaml --root . --pr 456 --no-jury
 ```
 
-Use `--deferral <id|kind|all>` only for an explicit, recorded operator deferral. `--dry-run`
-prints the contract shape without fetching live artifacts or requiring evidence. Tests and
+`--gate-label <name>` overrides the `evidence_gate_label` knob for a single run, and
+`--pr-label <name>` (repeatable) injects PR label names that are merged with the labels read
+from the live PR. Injected labels are additive — they can only make the gate *more*
+enforced, never less. A live PR fetch still runs unless an offline fixture flag (below) is
+also supplied. The JSON payload reports the resolved `gate_label`, the boolean `enforced`,
+and the observed `pr_labels`. The `evidence_gate_label` knob must be non-empty (the schema
+forbids a blank value, which would silently disable the gate for every PR).
+
+A failed live fetch (for example, `gh` cannot read the PR or its labels) is **fail-closed**:
+the command errors and exits non-zero rather than treating the gate as unenforced.
+
+Use `--deferral <id|kind|all>` only for an explicit, recorded operator deferral; it applies
+only within an enforced run and has no effect when the gate is unenforced. `--dry-run`
+prints the contract shape without fetching live artifacts or requiring evidence; pass
+`--pr-label` alongside it to preview the enforcement state a labelled PR would see. Tests and
 offline CI harnesses can provide `--pr-comments-json`, `--issue-comments-json`,
-`--pr-reviews-json`, `--pr-body-file`, `--changed-file`, and `--head-sha` fixtures; the
-same verifier path is used either way.
+`--pr-reviews-json`, `--pr-body-file`, `--changed-file`, and `--head-sha` fixtures; the same
+verifier path is used either way.
 
 ## `keel checkpoint <project.yaml> [--root DIR] [--json]`
 

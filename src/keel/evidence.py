@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -40,15 +41,28 @@ class EvidenceItem:
         }
 
 
+def gate_active(labels: Sequence[str] | None, gate_label: str) -> bool:
+    """Return whether ``gate_label`` is present in ``labels`` (None/empty -> False).
+
+    An empty ``gate_label`` is never active, so a misconfigured (blank) label can
+    never silently match — the schema also forbids an empty ``evidence_gate_label``.
+    """
+    if not gate_label:
+        return False
+    return gate_label in set(labels or ())
+
+
 def contract_as_dict(
     review_contract: dict[str, Any],
     *,
     dry_run: bool = False,
+    enforced: bool = True,
     deferrals: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """Return the required evidence set derived from review/jury flags."""
     return {
         "schema_version": SCHEMA_VERSION,
+        "enforced": enforced,
         "source": "review_merge_contract + closure_comment",
         "dry_run_disables_gating": True,
         "fail_closed": True,
@@ -63,9 +77,13 @@ def contract_as_dict(
             "keel_ship_assessment_comment",
         ],
         "deferrals": list(deferrals),
-        "required": [item.as_dict() for item in required_items(review_contract, dry_run=False)],
+        "required": [
+            item.as_dict()
+            for item in required_items(review_contract, dry_run=False, enforced=enforced)
+        ],
         "active_required": [
-            item.as_dict() for item in required_items(review_contract, dry_run=dry_run)
+            item.as_dict()
+            for item in required_items(review_contract, dry_run=dry_run, enforced=enforced)
         ],
     }
 
@@ -74,9 +92,10 @@ def required_items(
     review_contract: dict[str, Any],
     *,
     dry_run: bool = False,
+    enforced: bool = True,
 ) -> tuple[EvidenceItem, ...]:
     """Return the tier/flag-derived evidence requirements."""
-    if dry_run:
+    if dry_run or not enforced:
         return ()
     reviewers = review_contract.get("reviewers")
     reviewer_count = reviewers.get("count") if isinstance(reviewers, dict) else 0
@@ -127,11 +146,12 @@ def verify(
     pr_body: str | None = None,
     head_sha: str | None = None,
     dry_run: bool = False,
+    enforced: bool = True,
     deferrals: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """Verify required evidence artifacts and return a deterministic report."""
     del pr_body  # Explicitly not accepted as evidence.
-    items = required_items(review_contract, dry_run=dry_run)
+    items = required_items(review_contract, dry_run=dry_run, enforced=enforced)
     deferred = set(deferrals)
     counts = _evidence_counts(
         pr_comments=pr_comments or [],
@@ -158,6 +178,7 @@ def verify(
         "schema_version": SCHEMA_VERSION,
         "status": "pass" if not missing else "fail",
         "dry_run": dry_run,
+        "enforced": enforced,
         "required_count": len(items),
         "missing": missing,
         "results": results,

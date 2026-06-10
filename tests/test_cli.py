@@ -994,6 +994,7 @@ class TestShip(unittest.TestCase):
                 "evidence-verify", str(PROJECTS / "example-android.yaml"),
                 "--root", str(REPO_ROOT),
                 "--pr", "300",
+                "--pr-label", "keel:ship",
                 "--reviewers", "2",
                 "--jury",
                 "--pr-comments-json", str(pr_comments),
@@ -1006,6 +1007,7 @@ class TestShip(unittest.TestCase):
         self.assertEqual(rc, 0)
         data = json.loads(out)
         self.assertEqual(data["issue"], 212)
+        self.assertTrue(data["enforced"])
         self.assertEqual(data["verification"]["status"], "pass")
         self.assertEqual(data["verification"]["counts"]["review_verdict"], 2)
 
@@ -1030,6 +1032,7 @@ class TestShip(unittest.TestCase):
                 "evidence-verify", str(PROJECTS / "example-android.yaml"),
                 "--root", str(REPO_ROOT),
                 "--pr", "300",
+                "--pr-label", "keel:ship",
                 "--reviewers", "1",
                 "--pr-comments-json", str(pr_comments),
                 "--issue-comments-json", str(issue_comments),
@@ -1053,6 +1056,7 @@ class TestShip(unittest.TestCase):
             "evidence-verify", str(PROJECTS / "example-android.yaml"),
             "--root", str(REPO_ROOT),
             "--pr", "300",
+            "--pr-label", "keel:ship",
             "--dry-run",
             "--pr-comments-json", _write_raw("[]"),
             "--issue-comments-json", _write_raw("[]"),
@@ -1130,6 +1134,7 @@ class TestShip(unittest.TestCase):
                 "evidence-verify", str(PROJECTS / "example-android.yaml"),
                 "--root", str(REPO_ROOT),
                 "--pr", "300",
+                "--pr-label", "keel:ship",
                 "--reviewers", "1",
                 "--deferral", "review",
                 "--pr-comments-json", str(pr_comments),
@@ -1181,6 +1186,7 @@ class TestShip(unittest.TestCase):
                 return Namespace(ok=True, output=json.dumps({
                     "body": "Closes #212",
                     "head": {"sha": "abc123"},
+                    "labels": [{"name": "keel:ship"}],
                 }))
             if endpoint.endswith("/pulls/300/files"):
                 return Namespace(ok=True, output=json.dumps([
@@ -1214,6 +1220,8 @@ class TestShip(unittest.TestCase):
         self.assertEqual(rc, 0)
         data = json.loads(out)
         self.assertEqual(data["verification"]["status"], "pass")
+        self.assertTrue(data["enforced"])
+        self.assertEqual(data["pr_labels"], ["keel:ship"])
         self.assertEqual(data["head_sha"], "abc123")
         self.assertEqual(data["changed_files"], ["src/keel/evidence.py"])
         self.assertTrue(any(argv[:3] == ["gh", "api", "--paginate"] for argv in calls))
@@ -1225,6 +1233,7 @@ class TestShip(unittest.TestCase):
                 return Namespace(ok=True, output=json.dumps({
                     "body": "Closes #212",
                     "head": {"sha": "abc123"},
+                    "labels": [{"name": "keel:ship"}],
                 }))
             if endpoint.endswith("/pulls/300/files"):
                 return Namespace(ok=True, output=json.dumps([
@@ -1283,6 +1292,7 @@ class TestShip(unittest.TestCase):
                 "evidence-verify", str(PROJECTS / "example-android.yaml"),
                 "--root", str(REPO_ROOT),
                 "--pr", "300",
+                "--pr-label", "keel:ship",
                 "--changed-file", ".github/workflows/keel-ship.yml",
                 "--head-sha", "abc123",
                 "--pr-comments-json", str(pr_comments),
@@ -1304,7 +1314,10 @@ class TestShip(unittest.TestCase):
             calls.append(argv)
             endpoint = argv[-1]
             if endpoint.endswith("/pulls/300"):
-                return Namespace(ok=True, output=json.dumps({"body": "Closes #212"}))
+                return Namespace(ok=True, output=json.dumps({
+                    "body": "Closes #212",
+                    "labels": [{"name": "keel:ship"}],
+                }))
             if endpoint.endswith("/pulls/300/files"):
                 return Namespace(ok=True, output=json.dumps([
                     [{"filename": "src/keel/evidence.py"}],
@@ -1403,7 +1416,10 @@ class TestShip(unittest.TestCase):
             calls.append(argv)
             endpoint = argv[-1]
             if endpoint.endswith("/pulls/300"):
-                return Namespace(ok=True, output=json.dumps({"body": "Refs #212"}))
+                return Namespace(ok=True, output=json.dumps({
+                    "body": "Refs #212",
+                    "labels": [{"name": "keel:ship"}],
+                }))
             if endpoint.endswith("/pulls/300/files"):
                 return Namespace(ok=True, output=json.dumps([
                     [{"filename": "src/keel/evidence.py"}],
@@ -1422,6 +1438,101 @@ class TestShip(unittest.TestCase):
         data = json.loads(out)
         self.assertIsNone(data["issue"])
         self.assertFalse(any("/issues/212/comments" in argv[-1] for argv in calls))
+
+    def test_evidence_verify_without_gate_label_is_not_enforced(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            pr_comments = root / "pr-comments.json"
+            issue_comments = root / "issue-comments.json"
+            reviews = root / "reviews.json"
+            pr_comments.write_text("[]", encoding="utf-8")
+            issue_comments.write_text("[]", encoding="utf-8")
+            reviews.write_text("[]", encoding="utf-8")
+            rc, out, _ = run([
+                "evidence-verify", str(PROJECTS / "example-android.yaml"),
+                "--root", str(REPO_ROOT),
+                "--pr", "300",
+                "--reviewers", "2",
+                "--pr-comments-json", str(pr_comments),
+                "--issue-comments-json", str(issue_comments),
+                "--pr-reviews-json", str(reviews),
+                "--json",
+            ])
+
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertFalse(data["enforced"])
+        self.assertEqual(data["gate_label"], "keel:ship")
+        self.assertEqual(data["pr_labels"], [])
+        self.assertEqual(data["verification"]["status"], "pass")
+        self.assertEqual(data["verification"]["required_count"], 0)
+
+    def test_evidence_verify_without_label_human_output_reports_skip(self):
+        rc, out, _ = run([
+            "evidence-verify", str(PROJECTS / "example-android.yaml"),
+            "--root", str(REPO_ROOT),
+            "--pr", "300",
+            "--reviewers", "1",
+            "--pr-comments-json", _write_raw("[]"),
+            "--issue-comments-json", _write_raw("[]"),
+            "--pr-reviews-json", _write_raw("[]"),
+        ])
+
+        self.assertEqual(rc, 0)
+        self.assertIn("enforced      : false", out)
+        self.assertIn("gate skipped", out)
+
+    def test_evidence_verify_with_label_is_fail_closed(self):
+        rc, out, _ = run([
+            "evidence-verify", str(PROJECTS / "example-android.yaml"),
+            "--root", str(REPO_ROOT),
+            "--pr", "300",
+            "--pr-label", "keel:ship",
+            "--reviewers", "1",
+            "--pr-comments-json", _write_raw("[]"),
+            "--issue-comments-json", _write_raw("[]"),
+            "--pr-reviews-json", _write_raw("[]"),
+            "--json",
+        ])
+
+        self.assertEqual(rc, 1)
+        data = json.loads(out)
+        self.assertTrue(data["enforced"])
+        self.assertEqual(data["verification"]["status"], "fail")
+        # Fail for the right reason: the gate is enforced and reports the
+        # missing evidence, not an unrelated error.
+        self.assertGreaterEqual(data["verification"]["required_count"], 1)
+        self.assertTrue(data["verification"]["missing"])
+
+    def test_evidence_verify_gate_label_override(self):
+        rc, out, _ = run([
+            "evidence-verify", str(PROJECTS / "example-android.yaml"),
+            "--root", str(REPO_ROOT),
+            "--pr", "300",
+            "--pr-label", "ship-me",
+            "--gate-label", "ship-me",
+            "--reviewers", "1",
+            "--pr-comments-json", _write_raw("[]"),
+            "--issue-comments-json", _write_raw("[]"),
+            "--pr-reviews-json", _write_raw("[]"),
+            "--json",
+        ])
+
+        self.assertEqual(rc, 1)
+        data = json.loads(out)
+        self.assertEqual(data["gate_label"], "ship-me")
+        self.assertTrue(data["enforced"])
+        self.assertEqual(data["pr_labels"], ["ship-me"])
+
+    def test_label_names_handles_absent_and_malformed_labels(self):
+        # A live PR payload may omit `labels`, send null, or carry malformed
+        # entries; _label_names must degrade to a clean list of name strings.
+        self.assertEqual(cli._label_names(None), [])
+        self.assertEqual(cli._label_names("nope"), [])
+        self.assertEqual(
+            cli._label_names([{"name": "keel:ship"}, {"no_name": 1}, "x", {"name": 7}]),
+            ["keel:ship"],
+        )
 
     def test_capture_reconcile_plans_missing_marker_actions(self):
         import tempfile

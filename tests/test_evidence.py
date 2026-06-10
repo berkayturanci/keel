@@ -230,5 +230,75 @@ class TestEvidenceVerify(unittest.TestCase):
         self.assertFalse(evidence._is_present(item, {}))
 
 
+class TestGateActive(unittest.TestCase):
+    def test_label_present(self):
+        self.assertTrue(evidence.gate_active(["keel:ship", "other"], "keel:ship"))
+
+    def test_label_absent(self):
+        self.assertFalse(evidence.gate_active(["other"], "keel:ship"))
+
+    def test_empty_labels(self):
+        self.assertFalse(evidence.gate_active([], "keel:ship"))
+
+    def test_none_labels(self):
+        self.assertFalse(evidence.gate_active(None, "keel:ship"))
+
+    def test_empty_gate_label_never_matches(self):
+        # A blank gate label must never activate the gate, even if a PR somehow
+        # carried an empty-string label — otherwise the gate would silently
+        # disable itself. (The schema also forbids a blank evidence_gate_label.)
+        self.assertFalse(evidence.gate_active(["keel:ship", ""], ""))
+        self.assertFalse(evidence.gate_active([], ""))
+
+
+class TestEvidenceEnforcement(unittest.TestCase):
+    def test_verify_not_enforced_passes_with_no_required(self):
+        report = evidence.verify(
+            _review_contract(reviewers=3, jury=True),
+            pr_comments=[],
+            issue_comments=[],
+            enforced=False,
+        )
+
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["required_count"], 0)
+        self.assertEqual(report["missing"], [])
+        self.assertEqual(report["results"], [])
+        self.assertFalse(report["enforced"])
+
+    def test_verify_enforced_default_is_unchanged(self):
+        report = evidence.verify(
+            _review_contract(reviewers=1),
+            pr_comments=[_comment("keel.review-verdict.v1\nLGTM")],
+            issue_comments=[],
+        )
+
+        self.assertEqual(report["status"], "fail")
+        self.assertTrue(report["enforced"])
+        self.assertEqual(report["missing"], ["closure-comment-pr", "closure-comment-issue"])
+
+    def test_required_items_disabled_when_not_enforced(self):
+        self.assertEqual(
+            evidence.required_items(_review_contract(reviewers=2), enforced=False),
+            (),
+        )
+
+    def test_contract_as_dict_not_enforced_clears_required(self):
+        contract = evidence.contract_as_dict(
+            _review_contract(reviewers=2, jury=True),
+            enforced=False,
+        )
+
+        self.assertFalse(contract["enforced"])
+        self.assertEqual(contract["required"], [])
+        self.assertEqual(contract["active_required"], [])
+
+    def test_contract_as_dict_enforced_default_keeps_required(self):
+        contract = evidence.contract_as_dict(_review_contract(reviewers=1))
+
+        self.assertTrue(contract["enforced"])
+        self.assertTrue(contract["required"])
+
+
 if __name__ == "__main__":
     unittest.main()

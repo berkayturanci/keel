@@ -63,6 +63,7 @@ class Knobs:
     sot_doc: str | None = None
     required_capabilities: tuple[str, ...] = ()
     optional_capabilities: tuple[str, ...] = ()
+    evidence_gate_label: str = "keel:ship"
 
 
 @dataclass(frozen=True)
@@ -114,6 +115,7 @@ def _build(data: dict) -> ProjectConfig:
         sot_doc=k.get("sot_doc"),
         required_capabilities=tuple(k.get("required_capabilities", [])),
         optional_capabilities=tuple(k.get("optional_capabilities", [])),
+        evidence_gate_label=k.get("evidence_gate_label", "keel:ship"),
     )
     extensions = {slot: tuple(files) for slot, files in data.get("extensions", {}).items()}
     automation_data = data.get("automation", {})
@@ -226,5 +228,6 @@ def _canonical(config: ProjectConfig) -> dict:
             "sot_doc": config.knobs.sot_doc,
             "required_capabilities": list(config.knobs.required_capabilities),
             "optional_capabilities": list(config.knobs.optional_capabilities),
+            "evidence_gate_label": config.knobs.evidence_gate_label,
         },
     }
