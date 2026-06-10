@@ -519,7 +519,10 @@ CI), so it can gate a runner before it attempts a real merge.
 line is printed). It never bypasses failing gates, blocking findings, or failing CI.
 
 `--json` emits the structured command contract plus a deterministic `result` record for the
-dry assessment. `--dry-run` is accepted for adapter clarity; this CLI command is already
+dry assessment. `result.artifact_bodies` contains canonical Markdown bodies for the PR body,
+issue update, reviewer verdict, jury verdict, and extension result output; adapters should
+post those rendered bodies verbatim when available instead of hand-authoring project-specific
+variants. `--dry-run` is accepted for adapter clarity; this CLI command is already
 non-mutating.
 
 ## `keel ship-v2 <project.yaml> [same flags as keel ship]`

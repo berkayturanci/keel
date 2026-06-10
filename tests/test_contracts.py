@@ -5,7 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from keel import config as cfg
-from keel import contracts, github_transport, orchestrator, runtime
+from keel import contracts, gates, github_transport, orchestrator, runtime
 from keel.extensions import load_extensions, parse_extension
 
 PROJECTS = Path(__file__).resolve().parent.parent / "projects"
@@ -118,6 +118,11 @@ class TestBuildCommandContract(unittest.TestCase):
         )
         self.assertEqual(contract["evidence"]["schema_version"], "keel.evidence.v1")
         self.assertTrue(contract["evidence"]["fail_closed"])
+        self.assertEqual(contract["artifact_renderers"]["schema_version"], "keel.artifacts.v1")
+        self.assertEqual(
+            contract["artifact_renderers"]["adapter_rule"],
+            "post rendered markdown verbatim when available",
+        )
         self.assertEqual(contract["closure_comment"]["heading"], "Ship outcome")
         self.assertIn("issue_intake", contract)
         self.assertEqual(contract["issue_intake"]["status"], "needs-input")
@@ -1068,7 +1073,9 @@ class TestShipResultClosureComment(unittest.TestCase):
     def test_closure_comment_rendered_from_ledger_record(self):
         record = {
             "actors": {"implementer": "codex (gpt-5)", "reviewers": [], "tester": None},
+            "issue": {"number": 1},
             "pull_request": {"number": 190},
+            "head_sha": "abc123",
             "changes": {"file_count": 0, "files": []},
             "capture": {"status": "applied", "reason": None},
             "run_id": "RUN-1",
@@ -1083,6 +1090,31 @@ class TestShipResultClosureComment(unittest.TestCase):
         )
         self.assertIn("## Ship outcome", result["closure_comment"])
         self.assertIn("- **Implementer:** codex (gpt-5)", result["closure_comment"])
+        self.assertIn("## Summary", result["artifact_bodies"]["pr_body"])
+        self.assertIn("Closes #1", result["artifact_bodies"]["pr_body"])
+        self.assertIn("keel.review-verdict.v1",
+                      result["artifact_bodies"]["review_verdict_template"])
+        self.assertIn("head: abc123", result["artifact_bodies"]["review_verdict_template"])
+        self.assertIn("keel.jury-verdict.v1",
+                      result["artifact_bodies"]["jury_verdict_template"])
+        self.assertIn("<!-- keel.extension-result.v1 -->",
+                      result["artifact_bodies"]["extension_result_template"])
+
+    def test_artifact_bodies_summarize_skipped_gates_and_docs(self):
+        result = contracts.ship_result_as_dict(
+            changed_files=["docs/keel/cli.md"],
+            outcomes=[
+                gates.GateOutcome("build", True, skipped=True),
+                gates.GateOutcome("lint", False, error="lint failed"),
+            ],
+            verdict=self._verdict(),
+            assessment=self._assessment(),
+        )
+
+        pr_body = result["artifact_bodies"]["pr_body"]
+        self.assertIn("build: skipped", pr_body)
+        self.assertIn("lint: failed (lint failed)", pr_body)
+        self.assertIn("Updated docs: `docs/keel/cli.md`", pr_body)
 
     def test_closure_comment_none_without_record(self):
         result = contracts.ship_result_as_dict(
@@ -1093,6 +1125,7 @@ class TestShipResultClosureComment(unittest.TestCase):
             run_ledger={"appended": False},
         )
         self.assertIsNone(result["closure_comment"])
+        self.assertIn("Refs #<issue-number>", result["artifact_bodies"]["pr_body"])
 
     def test_closure_comment_none_without_ledger(self):
         result = contracts.ship_result_as_dict(
@@ -1102,6 +1135,7 @@ class TestShipResultClosureComment(unittest.TestCase):
             assessment=self._assessment(),
         )
         self.assertIsNone(result["closure_comment"])
+        self.assertIn("reviewer: reviewer", result["artifact_bodies"]["review_verdict_template"])
 
 
 if __name__ == "__main__":

@@ -57,6 +57,7 @@ Every contract includes:
 | `capture` | Post-merge capture marker, skip vocabulary, fail-soft, recursion-guard, redaction, and verifier contract. |
 | `closure_comment` | Present for `ship` and `ship-v2`; the deterministic, consumer-neutral closure-comment contract describing how the s11 ship-outcome comment is rendered from the `ship_run` ledger record. |
 | `evidence` | Present for `ship` and `ship-v2`; the fail-closed pre-merge evidence contract used by `keel evidence-verify`. |
+| `artifact_renderers` | Present for `ship` and `ship-v2`; canonical renderer contract for PR bodies, issue updates, review verdicts, jury verdicts, and extension result output. |
 | `side_effects` | Declared possible live-run side effects and whether dry-run mutates. |
 | `operator_consent` | Operator consent requirement, approved mutation scopes, delegated-agent scope, and consent record metadata. |
 | `issue_intake` | Present for work-owning flows (`ship`, `ship-v2`, `implement`, `overnight`); extracted objective, deliverable, acceptance criteria, readiness, questions, and ledger metadata. |
@@ -223,6 +224,29 @@ record is present (`null` otherwise). Rendering is pure and deterministic: the p
 codename comes from the record's `target`, not a baked-in literal; optional fields degrade
 gracefully (no tester line, empty reviewers, no PR, `capture_status=None`). Identical records
 always produce identical markdown.
+
+## Canonical artifact renderers
+
+`ship` and `ship-v2` contracts include `artifact_renderers`, the deterministic artifact
+renderer contract for public GitHub/writeable outputs that agents previously had to compose
+from prose. The renderer contract is consumer-neutral and tells adapters to post rendered
+Markdown verbatim when available.
+
+`keel ship --json` exposes the rendered bodies under `result.artifact_bodies`:
+
+- `pr_body`: canonical PR description with Summary, Context / Root Cause, Changes Made,
+  Testing, Docs Impact, and a closing or reference line
+- `issue_update`: stable issue progress/update comment with `keel.issue-update.v1`
+- `review_verdict_template`: marker-based reviewer verdict carrying
+  `keel.review-verdict.v1`, `reviewer: <id>`, and `head: <sha>` when available
+- `jury_verdict_template`: marker-based jury verdict carrying `keel.jury-verdict.v1` and
+  `head: <sha>` when available
+- `extension_result_template`: stable `keel.extension-result.v1` shape for slot/extension
+  status, mode, summary, artifacts, and follow-up references
+
+Project customization changes the content supplied to these renderers through config,
+policy, and extension results; it does not change the artifact shape. PR bodies remain
+explicitly excluded from review/jury/closure evidence.
 
 ## Evidence block
 

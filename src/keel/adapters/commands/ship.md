@@ -195,10 +195,12 @@ Every implementer (delegated or not) receives the same brief plus:
   outside `approved_mutation_scopes`, the orchestrator blocks or escalates instead of
   silently continuing. Secret access requires the explicit `secrets` scope for this run.
 - Worktree isolation + branch-off-`base_branch` + a detailed PR body + open as **draft**.
-  The PR body MUST NOT be only a closing reference. It must include at least:
-  `Context`, `Changes Made`, `Testing`, `Docs Impact`, and a final `Closes #<N>` reference.
-  If any section is not applicable, write `N/A — <reason>` inside that section instead of
-  omitting it.
+  When `keel ship --json` exposes `result.artifact_bodies.pr_body`, use that rendered
+  body as the PR-body shape and fill in the concrete implementation/testing details before
+  opening or updating the PR. The PR body MUST NOT be only a closing reference. It must
+  include at least: `Context / Root Cause`, `Changes Made`, `Testing`, `Docs Impact`, and
+  a final `Closes #<N>` reference. If any section is not applicable, write
+  `N/A — <reason>` inside that section instead of omitting it.
 - A pre-push scope self-check: `git diff base_branch...HEAD --name-only`, revert anything
   outside the issue's scope.
 - The vendor's `Co-Authored-By:` trailer on every commit.
@@ -285,6 +287,9 @@ reviewer still emits a posted verdict comment/review for the current PR head.
 Local/chat-only review output does not satisfy the step, a rich PR body is not a substitute
 for this s7 evidence, and the automated `keel ship` CI assessment block is not a substitute
 for the operator-posted review verdict.
+When available, use `result.artifact_bodies.review_verdict_template` as the canonical
+comment shape: keep `keel.review-verdict.v1`, `reviewer: <stable-id>`, and `head: <sha>`
+intact, then fill in the reviewer-specific verdict, scope, findings, and testing notes.
 
 - `inline` → fetch the diff once; anchor each `critical`/`major` finding as an **inline
   review comment** on its `file:line` (resolve `RIGHT`/`LEFT` side; `line` is the new-file
@@ -303,6 +308,9 @@ reviewer's **returned findings**, not the comment shape, so it is mode-independe
 `keel run-gates .keel/project.yaml --root .` runs the project gates (`build_gate_cmd`,
 `lint_cmd`, plus the `tester` Lego — the manual-test list, which may loop back to the
 implementer defensively without spending review budget unless it surfaces a blocking fix).
+When a gating or advisory jury is enabled and `result.artifact_bodies.jury_verdict_template`
+is available, use that canonical shape for the posted jury verdict and preserve
+`keel.jury-verdict.v1` plus `head: <sha>`.
 The **`jury` gate** runs the ai-jury CLI read-only on the PR diff when present (and a no-op
 fail-soft otherwise) using the committed panel; it never passes `--strict`. In **gating**
 mode the depth is the full verified run; only **verified consensus**

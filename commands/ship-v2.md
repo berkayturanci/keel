@@ -46,7 +46,7 @@ All project values still come from `.keel/project.yaml` via the keel CLI: `base_
 - risk classification and reviewer-count policy
 - CI evaluation and project gates
 - review/jury/merge-gate contract from `review_merge_contract`
-- detailed PR body and public review/jury summary posting requirements from `/keel:ship`
+- canonical PR body and public review/jury artifact renderers from `/keel:ship`
 - merge window and merge lock
 - issue/PR closeout and capture marker discipline
 
@@ -80,4 +80,4 @@ handling, and durable-learning capture, while retaining the same merge and safet
 `workflow_profile`. It must not create branches, edit files, push commits, post comments,
 request reviews, merge, close issues, or write capture artifacts.
 
-<!-- keel-generated: surface=plugin command=ship-v2 keel_version=1.0.2 source_sha256=ceea25185e3e9d59da323a776518bd836cd565220c0f6d38ea414e77179cab25 generated_sha256=ceea25185e3e9d59da323a776518bd836cd565220c0f6d38ea414e77179cab25 -->
+<!-- keel-generated: surface=plugin command=ship-v2 keel_version=1.0.2 source_sha256=0a635ca22d481ee55c0e4b6e2916c9b2fd6ac4830aee143c15a92b71d2ef7ace generated_sha256=0a635ca22d481ee55c0e4b6e2916c9b2fd6ac4830aee143c15a92b71d2ef7ace -->
