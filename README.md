@@ -26,7 +26,7 @@ command is `keel:ship`; keel is where ships are built.
 Keel is based on the work pattern of a strong teammate in a real engineering team:
 take an issue from the queue, decide whether it is ready, own the implementation,
 get it reviewed, keep the quality gates green, merge inside policy, and leave useful
-memory behind for the next session. v1 focuses on one agent owning work end to end.
+memory behind for the next session. keel focuses on one agent owning work end to end.
 
 > keel uses a thin-consumer model: the core is installed + pinned, never copied, so the
 > drift/overwrite class of bug is structurally gone. Background:

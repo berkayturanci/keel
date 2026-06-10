@@ -7,10 +7,10 @@ All notable changes to keel are documented here. The format follows
 ## [Unreleased]
 
 ### Removed
-- **Public v1/v2 vision doc** — deleted `docs/keel/vision.md` and removed the
-  forward-looking "autonomous software teams" / v1/v2-boundary content and its links from
-  `README.md`, `website/index.html`, and `docs/keel/commands.md`; dropped the file from the
-  consumer-neutrality scan surfaces. Current-product positioning is unchanged.
+- **Outdated forward-looking docs** — deleted `docs/keel/vision.md` and removed its
+  forward-looking positioning content and links from `README.md`, `website/index.html`, and
+  `docs/keel/commands.md`; dropped the file from the consumer-neutrality scan surfaces.
+  Current-product positioning is unchanged.
 
 ### Fixed
 - **Docs correctness** — removed a dead `docs/proposals/divergence-audit-2035.md` link from
@@ -155,7 +155,7 @@ All notable changes to keel are documented here. The format follows
 ### Changed
 - **Agentic work-ownership positioning** — README, website, and docs now frame keel as the
   backbone for agents that take ownership of software work from issue intake through shipped
-  outcome, including a public vision note for the future autonomous software team layer.
+  outcome.
 - **Competitive comparison module** — the website now includes a comparison view that
   distinguishes keel's issue-to-done work ownership model from adjacent agent, CI, and workflow
   automation tools.
