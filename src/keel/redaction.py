@@ -57,7 +57,7 @@ _DEFAULT_RULES: tuple[tuple[str, str, str], ...] = (
     ),
     (
         "credential-url",
-        r"([A-Za-z][A-Za-z0-9+.-]*://)([^/\s:@]+):([^/\s@]+)@",
+        r"([A-Za-z][A-Za-z0-9+.-]{0,64}://)([^/\s:@]+):([^/\s@]+)@",
         r"\1[REDACTED:credentials]@",
     ),
     (
