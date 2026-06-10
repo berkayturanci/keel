@@ -55,12 +55,6 @@ class TestRunCommand(unittest.TestCase):
         self.assertEqual(r.code, 127)
         self.assertIn("no such binary", r.output)
 
-    def test_invalid_command_string_failsoft(self):
-        r = runner.run_command("echo 'hello", _run=_ok)
-        self.assertFalse(r.ok)
-        self.assertEqual(r.code, 127)
-        self.assertIn("invalid command string", r.output)
-
 
 class TestRunArgv(unittest.TestCase):
     def test_ok(self):

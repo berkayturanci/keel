@@ -9,7 +9,6 @@ runner is fully unit-testable offline; agentic gates are dispatched elsewhere.
 from __future__ import annotations
 
 import re
-import shlex
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -47,14 +46,9 @@ class CommandResult:
 def run_command(
     cmd: str, *, cwd: str | None = None, timeout: int = 600, _run=subprocess.run
 ) -> CommandResult:
-    """Run ``cmd`` without a shell, capturing output. Fail-soft on timeout/OS error."""
+    """Run ``cmd`` in a shell, capturing output. Fail-soft on timeout/OS error."""
     try:
-        # Security: Do not use shell=True. Tokenize instead to prevent command injection.
-        args = shlex.split(cmd)
-    except ValueError as exc:
-        return CommandResult(False, 127, f"invalid command string: {exc}")
-    try:
-        proc = _run(args, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+        proc = _run(cmd, shell=True, cwd=cwd, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         return CommandResult(False, 124, f"timed out after {timeout}s")
     except OSError as exc:
