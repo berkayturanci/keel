@@ -15,6 +15,7 @@ SCHEMA_VERSION = "keel.artifacts.v1"
 EXTENSION_RESULT_MARKER = "<!-- keel.extension-result.v1 -->"
 ISSUE_UPDATE_MARKER = "<!-- keel.issue-update.v1 -->"
 STEP_HANDOFF_MARKER = "<!-- keel.step-handoff.v1 -->"
+RUN_CONTROL_HALT_MARKER = "<!-- keel.run-control-halt.v1 -->"
 
 
 def contract_as_dict() -> dict[str, Any]:
@@ -30,6 +31,7 @@ def contract_as_dict() -> dict[str, Any]:
             "jury_verdict": "keel.artifacts.render_jury_verdict",
             "extension_result": "keel.artifacts.render_extension_result",
             "step_handoff": "keel.artifacts.render_step_handoff",
+            "run_control_halt": "keel.artifacts.render_run_control_halt",
         },
         "markers": {
             "review_verdict": evidence.REVIEW_VERDICT_MARKER,
@@ -37,6 +39,7 @@ def contract_as_dict() -> dict[str, Any]:
             "issue_update": ISSUE_UPDATE_MARKER,
             "extension_result": EXTENSION_RESULT_MARKER,
             "step_handoff": STEP_HANDOFF_MARKER,
+            "run_control_halt": RUN_CONTROL_HALT_MARKER,
         },
         "adapter_rule": "post rendered markdown verbatim when available",
     }
@@ -213,6 +216,31 @@ def render_step_handoff(
     ]
     evidence_lines = _string_bullets(evidence_ids)
     lines.extend(evidence_lines if evidence_lines else ["  - none"])
+    return "\n".join(lines) + "\n"
+
+
+def render_run_control_halt(
+    *,
+    control: str,
+    reason: str,
+    scope: str | None = None,
+    observed: int | str | None = None,
+    limit: int | str | None = None,
+    action: str | None = None,
+) -> str:
+    """Render a stable hard-halt reason emitted by run controls."""
+    lines = [
+        RUN_CONTROL_HALT_MARKER,
+        "",
+        "## Run control halt",
+        "",
+        f"- **Control:** `{_value(control, 'unknown')}`",
+        f"- **Reason:** {_value(reason, 'No reason recorded.')}",
+        f"- **Scope:** {_value(scope, 'run')}",
+        f"- **Observed:** {_value(observed, 'not recorded')}",
+        f"- **Limit:** {_value(limit, 'not recorded')}",
+        f"- **Action:** {_value(action, 'halt')}",
+    ]
     return "\n".join(lines) + "\n"
 
 

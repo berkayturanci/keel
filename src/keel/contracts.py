@@ -26,6 +26,7 @@ from . import (
     ledger,
     model,
     orchestrator,
+    runcontrols,
     runtime,
     stepverifier,
     workblock,
@@ -286,6 +287,7 @@ def build_command_contract(
                 contract["review_merge_contract"],
                 dry_run=dry_run,
             )
+        contract["run_controls"] = runcontrols.contract_as_dict()
     if command == "ship":
         contract["closure_comment"] = closure.contract_as_dict()
         contract["artifact_renderers"] = artifacts.contract_as_dict()
