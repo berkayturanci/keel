@@ -10,7 +10,7 @@ from argparse import Namespace
 from pathlib import Path
 from unittest.mock import patch
 
-from keel import cli, runtime
+from keel import cli, install, runtime
 
 PROJECTS = Path(__file__).resolve().parent.parent / "projects"
 REPO_ROOT = PROJECTS.parent
@@ -2986,6 +2986,112 @@ class TestInstallAdapter(unittest.TestCase):
         self.assertIn("not upgraded by sync", out.getvalue())
         self.assertNotIn("keel validate", out.getvalue())
         self.assertIn("unknown target", err.getvalue())
+
+
+class TestAdapterStatusOrphans(unittest.TestCase):
+    def _seed_orphans(self, d):
+        root = Path(d)
+        install.install_all(root)
+        # class (a): a stale-marker skill for a removed command.
+        stale = root / ".agents/skills/keel-ship-v2"
+        stale.mkdir(parents=True)
+        ship = (install.ADAPTERS / "ship.md").read_text(encoding="utf-8")
+        (stale / "SKILL.md").write_text(
+            install._with_marker("skills", "ship-v2", ship, ship), encoding="utf-8")
+        # class (b): a marker-less plugin command body.
+        (root / "commands").mkdir(exist_ok=True)
+        (root / "commands" / "mystery.md").write_text("# mystery\n", encoding="utf-8")
+        return root
+
+    def test_reports_stale_marker_orphan_by_default(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._seed_orphans(d)
+            rc, out, _ = run(["adapter-status", "all", "--root", d])
+            self.assertEqual(rc, 0)
+            self.assertIn("orphan", out)
+            self.assertIn("ship-v2", out)
+            # marker-less surface stays silent without the opt-in flag.
+            self.assertNotIn("mystery.md", out)
+            self.assertIn("--include-unmanaged", out)
+
+    def test_include_unmanaged_flag_reports_marker_less(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._seed_orphans(d)
+            rc, out, _ = run(["adapter-status", "all", "--root", d, "--include-unmanaged"])
+            self.assertEqual(rc, 0)
+            self.assertIn("unmanaged", out)
+            self.assertIn("mystery.md", out)
+            self.assertIn("advisory only", out)
+            self.assertNotIn("pass --include-unmanaged", out)
+
+    def test_json_output_includes_orphans(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._seed_orphans(d)
+            rc, out, _ = run(["adapter-status", "all", "--root", d,
+                              "--include-unmanaged", "--json"])
+            self.assertEqual(rc, 0)
+            payload = json.loads(out)
+            self.assertIn("adapters", payload)
+            self.assertIn("orphans", payload)
+            cats = {o["category"] for o in payload["orphans"]}
+            self.assertEqual(cats, {"orphan", "unmanaged"})
+
+    def test_clean_project_reports_no_orphans(self):
+        with tempfile.TemporaryDirectory() as d:
+            install.install_all(Path(d))
+            rc, out, _ = run(["adapter-status", "all", "--root", d, "--include-unmanaged"])
+            self.assertEqual(rc, 0)
+            self.assertNotIn("orphan", out)
+            self.assertNotIn("unmanaged", out)
+
+    def test_declared_project_only_command_not_flagged(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            install.install_all(root)
+            (root / "commands").mkdir(exist_ok=True)
+            (root / "commands" / "house-rules.md").write_text("# house\n", encoding="utf-8")
+            keel_dir = root / ".keel"
+            keel_dir.mkdir()
+            (keel_dir / "project.yaml").write_text(
+                "extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
+                "repo: tmp\ngates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+                "policy_pack:\n  name: tmp\n"
+                "  project_commands:\n"
+                "    house-rules:\n      command: .keel/commands/house-rules\n",
+                encoding="utf-8",
+            )
+            rc, out, _ = run(["adapter-status", "all", "--root", d, "--include-unmanaged"])
+            self.assertEqual(rc, 0)
+            self.assertNotIn("house-rules.md", out)
+
+    def test_project_only_invalid_config_is_fail_soft(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            install.install_all(root)
+            (root / "commands").mkdir(exist_ok=True)
+            (root / "commands" / "mystery.md").write_text("# mystery\n", encoding="utf-8")
+            keel_dir = root / ".keel"
+            keel_dir.mkdir()
+            # parses as YAML but fails schema validation → ConfigError → fail-soft.
+            (keel_dir / "project.yaml").write_text("not_a_keel: config\n", encoding="utf-8")
+            rc, out, _ = run(["adapter-status", "all", "--root", d, "--include-unmanaged"])
+            self.assertEqual(rc, 0)
+            # invalid config → empty project-only set, so the marker-less file still surfaces.
+            self.assertIn("mystery.md", out)
+
+    def test_sync_prints_orphan_heads_up(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._seed_orphans(d)
+            rc, out, _ = run(["sync", "--root", d])
+            self.assertEqual(rc, 0)
+            self.assertIn("run keel adapter-status for details", out)
+
+    def test_sync_clean_project_has_no_heads_up(self):
+        with tempfile.TemporaryDirectory() as d:
+            install.install_all(Path(d))
+            rc, out, _ = run(["sync", "--root", d])
+            self.assertEqual(rc, 0)
+            self.assertNotIn("run keel adapter-status for details", out)
 
 
 class TestInstallLegacyWrappers(unittest.TestCase):

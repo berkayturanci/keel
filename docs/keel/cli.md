@@ -695,6 +695,30 @@ keel sync --root <repo>
 | `locally-modified` | generated file has a marker, but its body changed after install |
 | `unknown` | file exists without a keel generated marker |
 
+### Orphan & unmanaged surfaces
+
+`adapter-status` also scans the managed surface directories (`commands/`,
+`.claude/commands/keel/`, `.claude/commands/`, `.agents/skills/keel-*`,
+`.agents/skills/source-command-*`) for files keel no longer manages and reports them in two
+deliberately separated confidence classes. Both are **advisory and diagnostic only** — keel
+never auto-deletes a file and these findings never gate a run.
+
+| category | flag | meaning |
+|---|---|---|
+| `orphan` | always on | a file carrying a `keel-generated` marker whose `command=` is **not** in the installed keel command set — e.g. a `.agents/skills/keel-ship-v2/` left behind after the `ship-v2` command was removed. Fully decidable from the marker; reason code names the unknown command (`stale-marker: command 'ship-v2' not in installed keel`). |
+| `unmanaged` | `--include-unmanaged` | a command-like file with **zero** keel markers (e.g. a stray repo-root `commands/*.md` body). Heuristic and opt-in only, because it cannot be cleanly distinguished from a legitimate project-only command. Commands the project declares as project-only (via `policy_pack.project_commands` / `policy_pack.command_routing` in `.keel/project.yaml`) are **never** flagged. |
+
+```bash
+keel adapter-status all --root <repo>                     # freshness + orphan (stale-marker)
+keel adapter-status all --root <repo> --include-unmanaged  # also marker-less surfaces
+keel adapter-status all --root <repo> --json               # machine-readable (adapters + orphans)
+```
+
+`keel sync` (and `update-adapter`) prints a one-line heads-up when any orphan/unmanaged files
+are present — `N unmanaged keel-like file(s) found — run keel adapter-status for details` — so
+the count surfaces during routine refreshes without changing what `sync` writes. Acting on the
+findings is always a human decision; no `keel` command removes these files.
+
 `sync` is the short everyday name for the same safe adapter refresh as
 `update-adapter all`. It updates only `missing` and `outdated` generated adapter files. It
 refuses to overwrite `locally-modified` or `unknown` files; those need a human merge.

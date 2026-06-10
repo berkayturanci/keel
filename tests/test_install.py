@@ -592,5 +592,153 @@ class TestClaudeCodePlugin(unittest.TestCase):
         self.assertEqual(offenders, [])
 
 
+class TestDefaultKnownCommands(unittest.TestCase):
+    def test_includes_packaged_and_legacy_stems(self):
+        known = install.default_known_commands()
+        self.assertIn("ship", known)
+        self.assertIn("regression", known)
+        # default legacy mapping is one-to-one, so it never widens beyond packaged stems.
+        packaged = {Path(name).stem for name in install.adapter_names()}
+        self.assertEqual(known, packaged)
+
+
+class TestScanSurfaceOrphans(unittest.TestCase):
+    def _seed(self, d):
+        root = Path(d)
+        install.install_all(root)
+        return root
+
+    def _ship_marker(self, command):
+        text = (install.ADAPTERS / "ship.md").read_text(encoding="utf-8")
+        return install._with_marker("skills", command, text, text)
+
+    def test_clean_project_has_no_false_positives(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self._seed(d)
+            orphans = install.scan_surface_orphans(
+                root, known_commands=install.default_known_commands(),
+                include_unmanaged=True,
+            )
+            self.assertEqual(orphans, [])
+
+    def test_skips_directory_that_does_not_exist(self):
+        with tempfile.TemporaryDirectory() as d:
+            # nothing installed at all — every managed surface dir is absent.
+            orphans = install.scan_surface_orphans(
+                Path(d), known_commands=install.default_known_commands(),
+                include_unmanaged=True,
+            )
+            self.assertEqual(orphans, [])
+
+    def test_stale_marker_skill_is_orphan(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self._seed(d)
+            stale = root / ".agents/skills/keel-ship-v2"
+            stale.mkdir(parents=True)
+            (stale / "SKILL.md").write_text(self._ship_marker("ship-v2"), encoding="utf-8")
+            orphans = install.scan_surface_orphans(
+                root, known_commands=install.default_known_commands(),
+            )
+            self.assertEqual(len(orphans), 1)
+            row = orphans[0]
+            self.assertEqual(row.category, install.ORPHAN_STALE_MARKER)
+            self.assertEqual(row.command, "ship-v2")
+            self.assertIn("ship-v2", row.reason)
+            self.assertEqual(row.surface, "skills")
+            self.assertEqual(row.name, "keel-ship-v2/SKILL.md")
+            # JSON-stable contract dict.
+            self.assertEqual(row.as_dict()["category"], install.ORPHAN_STALE_MARKER)
+
+    def test_removed_command_legacy_wrapper_is_orphan(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self._seed(d)
+            legacy = root / ".claude/commands"
+            legacy.mkdir(parents=True, exist_ok=True)
+            (legacy / "old-cmd.md").write_text(
+                install._with_marker("legacy-claude", "removed-cmd", "x", "x"),
+                encoding="utf-8",
+            )
+            orphans = install.scan_surface_orphans(
+                root, known_commands=install.default_known_commands(),
+            )
+            self.assertEqual(len(orphans), 1)
+            self.assertEqual(orphans[0].category, install.ORPHAN_STALE_MARKER)
+            self.assertEqual(orphans[0].command, "removed-cmd")
+            self.assertEqual(orphans[0].surface, "legacy-claude")
+
+    def test_marker_less_surface_only_with_opt_in(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self._seed(d)
+            (root / "commands").mkdir(exist_ok=True)
+            (root / "commands" / "mystery.md").write_text("# mystery\nbody\n", encoding="utf-8")
+            # default: not reported.
+            self.assertEqual(
+                install.scan_surface_orphans(
+                    root, known_commands=install.default_known_commands(),
+                ),
+                [],
+            )
+            # opt-in: reported as unmanaged.
+            orphans = install.scan_surface_orphans(
+                root, known_commands=install.default_known_commands(),
+                include_unmanaged=True,
+            )
+            self.assertEqual(len(orphans), 1)
+            self.assertEqual(orphans[0].category, install.UNMANAGED_NO_MARKER)
+            self.assertEqual(orphans[0].command, "mystery")
+            self.assertEqual(orphans[0].surface, "plugin")
+
+    def test_declared_project_only_command_is_never_flagged(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self._seed(d)
+            (root / "commands").mkdir(exist_ok=True)
+            (root / "commands" / "house-rules.md").write_text("# house\n", encoding="utf-8")
+            orphans = install.scan_surface_orphans(
+                root, known_commands=install.default_known_commands(),
+                project_only={"house-rules"},
+                include_unmanaged=True,
+            )
+            self.assertEqual(orphans, [])
+
+    def test_marker_less_skill_resolves_command_from_dir(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self._seed(d)
+            # a marker-less legacy skill wrapper directory.
+            wrapper = root / ".agents/skills/source-command-deploy"
+            wrapper.mkdir(parents=True)
+            (wrapper / "SKILL.md").write_text("# deploy\n", encoding="utf-8")
+            orphans = install.scan_surface_orphans(
+                root, known_commands=install.default_known_commands(),
+                include_unmanaged=True,
+            )
+            self.assertEqual(len(orphans), 1)
+            self.assertEqual(orphans[0].command, "deploy")
+            self.assertEqual(orphans[0].category, install.UNMANAGED_NO_MARKER)
+
+    def test_marker_less_skill_without_known_prefix_uses_parent(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self._seed(d)
+            wrapper = root / ".agents/skills/freeform"
+            wrapper.mkdir(parents=True)
+            (wrapper / "SKILL.md").write_text("# freeform\n", encoding="utf-8")
+            orphans = install.scan_surface_orphans(
+                root, known_commands=install.default_known_commands(),
+                include_unmanaged=True,
+            )
+            self.assertEqual(len(orphans), 1)
+            self.assertEqual(orphans[0].command, "freeform")
+
+    def test_non_file_match_is_ignored(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self._seed(d)
+            # a directory named like a match under the plugin commands dir.
+            (root / "commands" / "weird.md").mkdir(parents=True)
+            orphans = install.scan_surface_orphans(
+                root, known_commands=install.default_known_commands(),
+                include_unmanaged=True,
+            )
+            self.assertEqual(orphans, [])
+
+
 if __name__ == "__main__":
     unittest.main()

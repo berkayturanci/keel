@@ -52,6 +52,34 @@ MARKER_RE = re.compile(r"\n?<!-- keel-generated: (?P<meta>[^>]*) -->\n?$")
 
 
 @dataclass(frozen=True)
+class OrphanFileStatus:
+    """A file under a managed surface directory that keel does not currently manage.
+
+    ``category`` is ``"orphan"`` (deterministic, class (a)) or ``"unmanaged"`` (heuristic,
+    class (b)). ``reason`` is a stable reason code; ``command`` is the marker's ``command=``
+    for a stale-marker orphan, or the file stem for a marker-less surface.
+    """
+
+    surface: str
+    name: str
+    path: str
+    category: str
+    reason: str
+    command: str = ""
+
+    def as_dict(self) -> dict[str, str]:
+        """Render as JSON-compatible contract data (sorted-stable)."""
+        return {
+            "surface": self.surface,
+            "name": self.name,
+            "path": self.path,
+            "category": self.category,
+            "reason": self.reason,
+            "command": self.command,
+        }
+
+
+@dataclass(frozen=True)
 class AdapterFileStatus:
     surface: str
     name: str
@@ -469,6 +497,103 @@ def adapter_status(
                                               expected_sha256=expected_hash,
                                               source_sha256=source_hash))
         out[surface] = rows
+    return out
+
+
+#: managed surface directories scanned for orphan / unmanaged files.
+#: each entry is ``(surface, relative-dir, file-glob, recurse)`` where ``recurse`` selects
+#: ``rglob`` (skill ``SKILL.md`` bodies live one directory deeper) over ``glob``.
+_ORPHAN_SCAN: tuple[tuple[str, str, str, bool], ...] = (
+    ("plugin", PLUGIN_COMMANDS_DIR, "*.md", False),
+    ("claude", CLAUDE_DIR, "*.md", False),
+    ("legacy-claude", LEGACY_CLAUDE_DIR, "*.md", False),
+    ("skills", SKILLS_DIR, "SKILL.md", True),
+)
+
+ORPHAN_STALE_MARKER = "orphan"
+UNMANAGED_NO_MARKER = "unmanaged"
+
+
+def default_known_commands(*, _src: Path | None = None) -> set[str]:
+    """The command stems keel currently manages: packaged adapters + default legacy targets.
+
+    A surface whose marker ``command=`` is in this set is recognised; anything else carrying a
+    keel marker is a stale-marker orphan. Pure and deterministic.
+    """
+    packaged = {Path(name).stem for name in adapter_names(_src=_src)}
+    legacy = set(default_legacy_mappings(_src=_src).values())
+    return packaged | legacy
+
+
+def _surface_command_from_name(surface: str, name: str) -> str:
+    """Best-effort command stem for a marker-less file under a managed surface."""
+    stem = Path(name).stem
+    if surface == "skills":
+        # skill dirs are ``keel-<cmd>`` / ``source-command-<cmd>``; the file is ``SKILL.md``.
+        parent = Path(name).parent.name
+        for prefix in (SKILL_PREFIX, LEGACY_SKILL_PREFIX):
+            if parent.startswith(prefix):
+                return parent[len(prefix):]
+        return parent
+    return stem
+
+
+def scan_surface_orphans(
+    root: str | Path,
+    *,
+    known_commands: set[str],
+    project_only: set[str] | None = None,
+    include_unmanaged: bool = False,
+    _src: Path | None = None,
+) -> list[OrphanFileStatus]:
+    """Scan managed surface directories for files keel no longer manages (pure, deterministic).
+
+    Class (a) — **deterministic**: a file carrying a ``keel-generated`` marker whose
+    ``command=`` is not in ``known_commands`` is reported as ``orphan (stale-marker)``.
+
+    Class (b) — **heuristic, opt-in**: a file with **zero** keel markers is reported as
+    ``unmanaged (no-marker)`` only when ``include_unmanaged`` is set, and never when its
+    command stem is declared ``project_only``.
+
+    ``known_commands`` is the installed/packaged command set (``adapter_names`` stems plus any
+    legacy-mapping target stems). The scan only reads on-disk files; it never deletes.
+    """
+    project_only = project_only or set()
+    root_path = Path(root)
+    out: list[OrphanFileStatus] = []
+    for surface, rel_dir, pattern, recurse in _ORPHAN_SCAN:
+        base = root_path / rel_dir
+        if not base.is_dir():
+            continue
+        matches = base.rglob(pattern) if recurse else base.glob(pattern)
+        for path in sorted(matches):
+            if not path.is_file():
+                continue
+            name = path.relative_to(base).as_posix()
+            _body, marker = _split_marker(path.read_text(encoding="utf-8"))
+            if marker:
+                command = marker.get("command", "")
+                if command in known_commands:
+                    continue  # a recognised, managed surface — not an orphan.
+                out.append(OrphanFileStatus(
+                    surface, name, str(path.relative_to(root_path).as_posix()),
+                    ORPHAN_STALE_MARKER,
+                    f"stale-marker: command {command!r} not in installed keel",
+                    command,
+                ))
+                continue
+            # no marker: heuristic, opt-in only.
+            if not include_unmanaged:
+                continue
+            command = _surface_command_from_name(surface, name)
+            if command in project_only:
+                continue  # declared project-only command — never flagged.
+            out.append(OrphanFileStatus(
+                surface, name, str(path.relative_to(root_path).as_posix()),
+                UNMANAGED_NO_MARKER,
+                "no-marker: command-like surface not keel-managed",
+                command,
+            ))
     return out
 
 

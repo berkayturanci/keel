@@ -6,6 +6,21 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **`keel adapter-status` surfaces orphan & unmanaged keel-like files** — the command now
+  scans the managed surface directories (`commands/`, `.claude/commands/keel/`,
+  `.claude/commands/`, `.agents/skills/keel-*`, `.agents/skills/source-command-*`) for files
+  outside the currently-expected set, in two deliberately separated confidence classes.
+  Class (a) — deterministic — reports a file carrying a `keel-generated` marker whose
+  `command=` is no longer in the installed keel command set as `orphan (stale-marker)` (e.g. a
+  `keel-ship-v2` skill left behind after the `ship-v2` command was removed in 1.1.0), with a
+  reason code naming the unknown command. Class (b) — heuristic, behind the new
+  `--include-unmanaged` flag — reports marker-less command-like surfaces as
+  `unmanaged (no-marker)`, never flagging commands the project declares as project-only via
+  `policy_pack`. `adapter-status --json` includes the new findings, and `keel sync` /
+  `update-adapter` print a one-line heads-up when orphan/unmanaged files are present. Purely
+  advisory: keel never auto-deletes and these findings never gate a run. (#198)
+
 ## [1.1.0] — 2026-06-10
 
 ### Changed

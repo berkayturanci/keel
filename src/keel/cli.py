@@ -1401,6 +1401,37 @@ def _report_adapter_rows(rows: dict[str, list[install.AdapterFileStatus]]) -> No
             print(f"  {row.status:<16} [{surface}] {row.name}  {row.path}{detail}")
 
 
+def _project_only_commands(root: str | Path) -> set[str]:
+    """Command names the project declares as project-only (never flagged as orphan).
+
+    Reads ``.keel/project.yaml`` from ``root`` if present; absent or invalid config yields an
+    empty set so the scan stays fail-soft and consumer-neutral.
+    """
+    path = Path(root) / ".keel" / "project.yaml"
+    if not path.exists():
+        return set()
+    try:
+        config = cfg.load_config(path)
+    except cfg.ConfigError:
+        return set()
+    return {cmd.name for cmd in project_commands.list_project_commands(config)}
+
+
+def _scan_orphans(root: str | Path, *, include_unmanaged: bool) -> list[install.OrphanFileStatus]:
+    """Run the pure orphan/unmanaged scan with the default known-command set."""
+    return install.scan_surface_orphans(
+        root,
+        known_commands=install.default_known_commands(),
+        project_only=_project_only_commands(root),
+        include_unmanaged=include_unmanaged,
+    )
+
+
+def _report_orphan_rows(orphans: list[install.OrphanFileStatus]) -> None:
+    for row in orphans:
+        print(f"  {row.category:<16} [{row.surface}] {row.name}  {row.path} — {row.reason}")
+
+
 def _cmd_install_adapter(args: argparse.Namespace) -> int:
     if args.agent == "plugin":
         installed, skipped = install.install_plugin(args.root, force=args.force)
@@ -1489,7 +1520,30 @@ def _cmd_adapter_status(args: argparse.Namespace) -> int:
         print(f"unknown target {args.agent!r}; valid: all, {', '.join(install.TARGETS)}",
               file=sys.stderr)
         return 1
+    orphans = _scan_orphans(args.root, include_unmanaged=args.include_unmanaged)
+    if args.json:
+        payload = {
+            "adapters": {
+                surface: [
+                    {"surface": r.surface, "name": r.name, "path": r.path,
+                     "status": r.status, "detail": r.detail}
+                    for r in statuses
+                ]
+                for surface, statuses in rows.items()
+            },
+            "orphans": [o.as_dict() for o in orphans],
+        }
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
     _report_adapter_rows(rows)
+    _report_orphan_rows(orphans)
+    if orphans:
+        stale = sum(1 for o in orphans if o.category == install.ORPHAN_STALE_MARKER)
+        unmanaged = len(orphans) - stale
+        print(f"  {len(orphans)} unmanaged keel-like file(s): "
+              f"{stale} orphan (stale-marker), {unmanaged} unmanaged (no-marker) — advisory only")
+    if not args.include_unmanaged:
+        print("  note: pass --include-unmanaged to also scan for marker-less command surfaces")
     return 0
 
 
@@ -1512,6 +1566,10 @@ def _cmd_sync(args: argparse.Namespace) -> int:
     print("  package      : not upgraded by sync; upgrade keel-workflow with pip/pipx first")
     rc = _cmd_update_adapter(args)
     if rc == 0:
+        orphans = _scan_orphans(args.root, include_unmanaged=False)
+        if orphans:
+            print(f"  orphans      : {len(orphans)} unmanaged keel-like file(s) found — "
+                  "run keel adapter-status for details")
         print("  next         : run keel validate .keel/project.yaml --root .")
         print("  next         : run keel plan .keel/project.yaml --root .")
     return rc
@@ -2102,6 +2160,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_as.add_argument("agent", nargs="?", default="all",
                       help=f"'all' or one of: {', '.join(install.TARGETS)}")
     p_as.add_argument("--root", default=".", help="project root to inspect")
+    p_as.add_argument("--include-unmanaged", action="store_true",
+                      help="also report marker-less command-like surfaces (heuristic, opt-in)")
+    p_as.add_argument("--json", action="store_true",
+                      help="emit adapter freshness + orphan/unmanaged findings as JSON")
     p_as.set_defaults(func=_cmd_adapter_status)
 
     p_ua = sub.add_parser("update-adapter", help="safely update generated adapters")
