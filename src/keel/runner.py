@@ -24,16 +24,20 @@ GateRunner = Callable[["GateSpec"], tuple[bool, list[Finding]]]
 _ON_FAIL_SEVERITY = {"block": "major", "suggest": "minor", "warn": "nit"}
 
 #: reviewdog-style errorformat: ``path:line[:col]: message`` (first hit wins).
-_LOCATION_RE = re.compile(r"^\s*(?P<path>[^\s:][^:]*?):(?P<line>\d+)(?::\d+)?[:\s]")
+#: A single multiline ``search`` replaces a per-``splitlines`` loop: ``^`` is
+#: anchored to each line by ``re.MULTILINE``, the path classes exclude ``\n`` so a
+#: match can never span lines, and the trailing ``(?:[:\s]|$)`` accepts the line
+#: number at end-of-line.
+_LOCATION_RE = re.compile(
+    r"^[ \t]*(?P<path>[^\s\n:][^:\n]*?):(?P<line>\d+)(?::\d+)?(?:[:\s]|$)",
+    re.MULTILINE,
+)
 
 
 def first_location(text: str) -> tuple[str | None, int | None]:
     """Extract the first ``path:line`` location from tool output (``(None, None)`` if none)."""
-    for raw in text.splitlines():
-        m = _LOCATION_RE.match(raw)
-        if m:
-            return m.group("path"), int(m.group("line"))
-    return None, None
+    m = _LOCATION_RE.search(text)
+    return (m.group("path"), int(m.group("line"))) if m else (None, None)
 
 
 @dataclass(frozen=True)
