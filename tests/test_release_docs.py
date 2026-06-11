@@ -60,6 +60,14 @@ class TestReleaseDocs(unittest.TestCase):
                 with self.subTest(path=str(path.relative_to(REPO_ROOT)), phrase=phrase):
                     self.assertNotIn(phrase, text)
 
+    def test_keel_ship_workflow_quotes_dispatch_arguments(self):
+        text = (REPO_ROOT / ".github/workflows/keel-ship.yml").read_text(encoding="utf-8")
+
+        self.assertIn("ARGS=(.keel/project.yaml --root .)", text)
+        self.assertIn('ARGS+=(--pr "$PR")', text)
+        self.assertIn('keel ship "${ARGS[@]}" | tee ship.txt', text)
+        self.assertNotIn("keel ship $ARGS", text)
+
 
 if __name__ == "__main__":
     unittest.main()

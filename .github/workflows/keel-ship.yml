@@ -48,9 +48,11 @@ jobs:
           PR: ${{ github.event.pull_request.number || github.event.inputs.pr }}
         run: |
           set +e
-          ARGS=".keel/project.yaml --root ."
-          if [ -n "$PR" ]; then ARGS="$ARGS --pr $PR"; fi
-          keel ship $ARGS | tee ship.txt
+          ARGS=(.keel/project.yaml --root .)
+          if [ -n "$PR" ]; then
+            ARGS+=(--pr "$PR")
+          fi
+          keel ship "${ARGS[@]}" | tee ship.txt
           echo "code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
           { echo '### 🚢 keel ship'; echo '```'; cat ship.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - name: Comment assessment on the PR
