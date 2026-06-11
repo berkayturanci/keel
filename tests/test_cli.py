@@ -325,6 +325,78 @@ class TestPlanErrors(unittest.TestCase):
         self.assertIn("invalid keel config", err)
 
 
+class TestStatePathErrors(unittest.TestCase):
+    def assertFriendlyStateError(self, argv, expected):
+        rc, out, err = run(argv)
+        self.assertEqual(rc, 1)
+        self.assertIn(expected, err)
+        self.assertNotIn("Traceback", out + err)
+
+    def test_plan_validates_configured_state_paths(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            bad_ledger = _write_config_with_state_paths(
+                "'true'",
+                ledger_path="/tmp/runs.jsonl",
+            )
+            self.assertFriendlyStateError(
+                ["plan", bad_ledger, "--root", d, "--json"],
+                "invalid ledger path: run ledger path must be relative",
+            )
+
+            bad_checkpoint = _write_config_with_state_paths(
+                "'true'",
+                checkpoint_path="/tmp/checkpoint.json",
+            )
+            self.assertFriendlyStateError(
+                ["plan", bad_checkpoint, "--root", d, "--json"],
+                "invalid checkpoint path: checkpoint path must be relative",
+            )
+
+    def test_ledger_backed_commands_report_invalid_paths_without_traceback(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_state_paths(
+                "'true'",
+                ledger_path="/tmp/runs.jsonl",
+            )
+            cases = [
+                ["ledger", config, "--root", d],
+                ["capture-verify", config, "--root", d, "--merged-pr", "1"],
+                ["capture-reconcile", config, "--root", d, "--merged-pr", "1"],
+                ["status", config, "--root", d],
+                [
+                    "ship", config, "--root", d, "--dry-run", "--json",
+                    "--capture-status", "applied",
+                ],
+            ]
+            for argv in cases:
+                with self.subTest(command=argv[0]):
+                    self.assertFriendlyStateError(
+                        argv,
+                        "invalid ledger path: run ledger path must be relative",
+                    )
+
+    def test_checkpoint_backed_commands_report_invalid_paths_without_traceback(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_state_paths(
+                "'true'",
+                checkpoint_path="/tmp/checkpoint.json",
+            )
+            cases = [
+                ["checkpoint", config, "--root", d],
+                ["resume", config, "--root", d],
+                ["status", config, "--root", d],
+            ]
+            for argv in cases:
+                with self.subTest(command=argv[0]):
+                    self.assertFriendlyStateError(
+                        argv,
+                        "invalid checkpoint path: checkpoint path must be relative",
+                    )
+
+
 class TestWindow(unittest.TestCase):
     def test_configured(self):
         rc, out, _ = run(["window", str(PROJECTS / "example-android.yaml")])

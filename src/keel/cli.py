@@ -105,6 +105,16 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
 
+    try:
+        ledger.resolve_path(args.root, config)
+        checkpoint.resolve_path(args.root, config)
+    except ledger.LedgerError as exc:
+        print(f"invalid ledger path: {exc}", file=sys.stderr)
+        return 1
+    except checkpoint.CheckpointError as exc:
+        print(f"invalid checkpoint path: {exc}", file=sys.stderr)
+        return 1
+
     loaded, problems = load_extensions(config, args.root, strict=False)
     try:
         plan = orch.build_plan(config, loaded)
@@ -3187,4 +3197,11 @@ def main(argv: list[str] | None = None) -> int:
     if func is None:
         parser.print_help()
         return 2
-    return func(args)
+    try:
+        return func(args)
+    except ledger.LedgerError as exc:
+        print(f"invalid ledger path: {exc}", file=sys.stderr)
+        return 1
+    except checkpoint.CheckpointError as exc:
+        print(f"invalid checkpoint path: {exc}", file=sys.stderr)
+        return 1
