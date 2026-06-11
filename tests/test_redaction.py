@@ -162,6 +162,20 @@ class CredentialAssignmentRedactionTest(unittest.TestCase):
         self.assertEqual(result.value, "API_KEY=[REDACTED:credential]")
         self.assertEqual(_rule_count(result.audit, "credential-assignment"), 1)
 
+    def test_unquoted_assignment_with_semicolon_is_redacted(self) -> None:
+        result = redaction.sanitize("api_key=abc;def12345", self.policy)
+
+        self.assertEqual(result.value, "api_key=[REDACTED:credential]")
+        self.assertEqual(_rule_count(result.audit, "credential-assignment"), 1)
+        self.assertNotIn("abc;def12345", result.value)
+
+    def test_unquoted_assignment_with_commas_is_redacted(self) -> None:
+        result = redaction.sanitize("API_KEY=abcd,efgh,ijkl", self.policy)
+
+        self.assertEqual(result.value, "API_KEY=[REDACTED:credential]")
+        self.assertEqual(_rule_count(result.audit, "credential-assignment"), 1)
+        self.assertNotIn("abcd,efgh,ijkl", result.value)
+
     def test_json_quoted_key_is_redacted(self) -> None:
         """A JSON-quoted key redacts cleanly, with no orphaned surrounding quote."""
         result = redaction.sanitize('{"api_key": "abcdef123456"}', self.policy)

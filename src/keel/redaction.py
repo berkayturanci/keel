@@ -80,7 +80,7 @@ _DEFAULT_RULES: tuple[tuple[str, str, str], ...] = (
         r"(?i)[\"']?\b([A-Za-z0-9_-]*(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|"
         r"secret[_-]?access[_-]?key|secret[_-]?key|token|secret|password|passwd|pwd)"
         r")\b[\"']?\s*[:=]\s*"
-        r"(?:\"[^\"\n]{8,}\"|'[^'\n]{8,}'|[\"']?[^\s\"'(){}\[\]$,;]{8,}+(?![(\[]))",
+        r"(?:\"[^\"\n]{8,}\"|'[^'\n]{8,}'|[\"']?[^\s\"'(){}\[\]$]{8,}+(?![(\[]))",
         r"\1=[REDACTED:credential]",
     ),
     (
