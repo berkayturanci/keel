@@ -1526,7 +1526,7 @@ def _merge_snapshot(pr: int, *, cwd: str) -> dict[str, object]:
 def _ci_rollup_state(rollup: list[object]) -> dict[str, object]:
     failures = {
         "ACTION_REQUIRED", "CANCELLED", "ERROR", "FAILURE",
-        "SKIPPED", "STARTUP_FAILURE", "STALE", "TIMED_OUT",
+        "STARTUP_FAILURE", "STALE", "TIMED_OUT",
     }
     pending_states = {"EXPECTED", "PENDING", "QUEUED", "REQUESTED", "WAITING", "IN_PROGRESS"}
     saw_pending = False

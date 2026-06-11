@@ -10,7 +10,7 @@ from argparse import Namespace
 from pathlib import Path
 from unittest.mock import patch
 
-from keel import cli, install, runtime, stepverifier
+from keel import cli, install, runtime, ship, stepverifier
 
 PROJECTS = Path(__file__).resolve().parent.parent / "projects"
 REPO_ROOT = PROJECTS.parent
@@ -2515,6 +2515,12 @@ class TestCoreMerge(unittest.TestCase):
 
         self.assertEqual(pending["state"], "pending")
         self.assertEqual(empty["reason"], "no-checks")
+
+    def test_merge_ci_rollup_skipped_matches_ship_assessment(self):
+        rollup = cli._ci_rollup_state([{"conclusion": "SKIPPED"}])
+
+        self.assertTrue(ship.ci_passing("SKIPPED"))
+        self.assertEqual(rollup["state"], "pass")
 
     def test_verify_merge_evidence_uses_live_artifacts_and_tier(self):
         config = cli.cfg.load_config(PROJECTS / "keel.yaml")
