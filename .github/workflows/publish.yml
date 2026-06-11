@@ -29,11 +29,13 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install build
+          python -m pip install \
+            --only-binary=:all: \
+            --require-hashes \
+            -r .github/requirements/publish-tools.txt
 
       - name: Build package distributions
-        run: python -m build --sdist --wheel --outdir dist/
+        run: python -m build --no-isolation --sdist --wheel --outdir dist/
 
       # CycloneDX software bill of materials for the built package. Written into
       # release/ (NOT dist/) so the PyPI upload sees only the wheel + sdist —
@@ -41,7 +43,6 @@ jobs:
       # ships with the GitHub Release.
       - name: Generate CycloneDX SBOM
         run: |
-          python -m pip install cyclonedx-bom
           python -m pip install dist/*.whl
           mkdir -p release
           cyclonedx-py environment --output-format JSON --output-file release/sbom.cdx.json

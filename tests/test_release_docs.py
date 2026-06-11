@@ -68,6 +68,22 @@ class TestReleaseDocs(unittest.TestCase):
         self.assertIn('keel ship "${ARGS[@]}" | tee ship.txt', text)
         self.assertNotIn("keel ship $ARGS", text)
 
+    def test_publish_workflow_uses_hash_locked_release_tools(self):
+        workflow = (REPO_ROOT / ".github/workflows/publish.yml").read_text(encoding="utf-8")
+        lockfile = (
+            REPO_ROOT / ".github/requirements/publish-tools.txt"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("--require-hashes", workflow)
+        self.assertIn("-r .github/requirements/publish-tools.txt", workflow)
+        self.assertNotIn("python -m pip install build", workflow)
+        self.assertNotIn("python -m pip install cyclonedx-bom", workflow)
+        self.assertIn("build==1.3.0 \\", lockfile)
+        self.assertIn("cyclonedx-bom==7.2.1 \\", lockfile)
+        self.assertIn("setuptools==80.9.0 \\", lockfile)
+        self.assertIn("python -m build --no-isolation", workflow)
+        self.assertGreaterEqual(lockfile.count("--hash=sha256:"), 30)
+
 
 if __name__ == "__main__":
     unittest.main()
