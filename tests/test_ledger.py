@@ -134,6 +134,7 @@ class TestLedgerRecords(unittest.TestCase):
             "assessment",
             "actors",
             "run_context",
+            "run_controls",
             "issue_intake",
             "capture",
         ])
@@ -144,6 +145,7 @@ class TestLedgerRecords(unittest.TestCase):
         self.assertEqual(record["actors"]["implementer"], "codex:gpt-5")
         self.assertEqual(record["actors"]["reviewers"], ["reviewer-a:gpt-5", "reviewer-b:claude"])
         self.assertEqual(record["actors"]["tester"], "tester:gpt-5-mini")
+        self.assertIsNone(record["run_controls"])
         self.assertEqual(record["capture"]["schema_version"], "keel.capture.v1")
         self.assertEqual(record["capture"]["marker"],
                          "compound-learning: pr=160 status=applied")

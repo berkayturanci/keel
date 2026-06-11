@@ -16,6 +16,11 @@ All notable changes to keel are documented here. The format follows
   mangling them mid-string. An 8-character floor on every value arm keeps short
   status strings (`token: "none"`, `api_key=""`) intact, and JSON keys redact
   cleanly with no orphaned quote. Compact JSON keeps its sibling fields. (#257, #261)
+- **Jury gate no longer skips oversize diffs silently.** A diff over
+  `MAX_DIFF_BYTES` (1 MB) still passes the jury gate (fail-soft), but now emits a
+  non-blocking `nit` advisory finding (`jury:skipped-oversize`) so the skip surfaces
+  in the posted jury verdict instead of letting an oversize diff dodge the jury
+  stage unobserved. (#258)
 
 ## [1.2.0] — 2026-06-11
 

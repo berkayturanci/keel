@@ -110,6 +110,7 @@ def build_ship_run_record(
     jury_mode: str | None = None,
     consent_status: str | None = None,
     consent_scopes: list[str] | tuple[str, ...] | None = None,
+    run_controls: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build one deterministic consumer-neutral ship ledger record."""
     return {
@@ -168,6 +169,7 @@ def build_ship_run_record(
             consent_status=consent_status,
             consent_scopes=consent_scopes,
         ),
+        "run_controls": run_controls,
         "issue_intake": issue_intake,
         "capture": capture.record_marker(
             pr_number=pr_number,

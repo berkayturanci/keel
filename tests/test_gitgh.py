@@ -45,6 +45,11 @@ class TestGit(unittest.TestCase):
         git.worktree_remove("worktrees/issue-42", _run=rec)
         self.assertIn("--force", rec.calls[0])
 
+    def test_worktree_list_argv(self):
+        rec = _Recorder(out="worktree /repo\n")
+        git.worktree_list(_run=rec)
+        self.assertEqual(rec.calls[0], ["git", "worktree", "list", "--porcelain"])
+
     def test_current_branch_parsed(self):
         self.assertEqual(git.current_branch(_run=_Recorder(out="feature\n")), "feature")
 
@@ -90,6 +95,17 @@ class TestGitHub(unittest.TestCase):
         rec = _Recorder()
         github.merge_pr(7, method="rebase", _run=rec)
         self.assertEqual(rec.calls[0], ["gh", "pr", "merge", "7", "--rebase"])
+
+    def test_pr_merge_snapshot_argv(self):
+        rec = _Recorder(out="{}")
+        github.pr_merge_snapshot(7, _run=rec)
+        self.assertEqual(
+            rec.calls[0],
+            [
+                "gh", "pr", "view", "7",
+                "--json", "headRefOid,mergeStateStatus,statusCheckRollup",
+            ],
+        )
 
     def test_comment_and_close(self):
         rec = _Recorder()
