@@ -6,6 +6,15 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **Capture redaction — close credential leaks and stop mangling code.** The
+  `credential-assignment` rule now redacts JSON-quoted keys (`"api_key": "…"`) and
+  values opened with an unbalanced quote (`KEY="secret` with no close), both of which
+  previously leaked. The value matcher consumes a complete quoted string or a possessive
+  unquoted run and rejects function-call / subscript expressions (`token = get_token()`,
+  `csrf_token = request.headers['X-CSRF']`) and `${…}` / `$(…)` references instead of
+  mangling them mid-string. Compact JSON keeps its sibling fields. (#257, #261)
+
 ## [1.2.0] — 2026-06-11
 
 ### Added

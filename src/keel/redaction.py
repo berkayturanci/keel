@@ -61,10 +61,21 @@ _DEFAULT_RULES: tuple[tuple[str, str, str], ...] = (
         r"\1[REDACTED:credentials]@",
     ),
     (
+        # Matches ``KEY=value`` / ``KEY: value`` / ``"key": "value"`` credential
+        # assignments. The key may carry an arbitrary prefix (``ANTHROPIC_API_KEY``)
+        # and an optional closing quote (JSON keys). The value matches, in order: a
+        # balanced double- or single-quoted string (consumed whole, spaces allowed),
+        # or an unquoted run — the leading ``["']?`` also catches an *unbalanced*
+        # opening quote (``KEY="secret`` with no close), closing that leak. The value
+        # class excludes code brackets, and the possessive run plus ``(?![(\[])``
+        # tail rejects function-call / subscript expressions (``token = get_token()``)
+        # instead of mangling them; a value cannot start with ``$``, so
+        # ``${...}``/``$(...)`` references are left intact.
         "credential-assignment",
         r"(?i)\b([A-Za-z0-9_-]*(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|"
         r"secret[_-]?access[_-]?key|secret[_-]?key|token|secret|password|passwd|pwd)"
-        r")\b\s*[:=]\s*([\"']?)[^\s\"']{8,}\2",
+        r")\b[\"']?\s*[:=]\s*"
+        r"(?:\"[^\"\n]*\"|'[^'\n]*'|[\"']?[^\s\"'(){}\[\]$,;]{8,}+(?![(\[]))",
         r"\1=[REDACTED:credential]",
     ),
     (
