@@ -17,6 +17,10 @@ def _credential_url_rules(audit: dict) -> list[dict]:
     return [rule for rule in audit["rules"] if rule["id"] == "credential-url"]
 
 
+def _rule_count(audit: dict, rule_id: str) -> int:
+    return sum(rule["count"] for rule in audit["rules"] if rule["id"] == rule_id)
+
+
 class CredentialUrlRedactionTest(unittest.TestCase):
     def setUp(self) -> None:
         self.policy = redaction.policy_from_config()
@@ -101,6 +105,62 @@ class CredentialUrlRedactionTest(unittest.TestCase):
         elapsed = time.perf_counter() - start
 
         self.assertLess(elapsed, 2.0)
+
+
+class CredentialAssignmentRedactionTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.policy = redaction.policy_from_config()
+
+    def test_unquoted_api_key_assignment_is_redacted(self) -> None:
+        result = redaction.sanitize("ANTHROPIC_API_KEY=sk-ant-api03-secretvalue123", self.policy)
+
+        self.assertEqual(result.value, "ANTHROPIC_API_KEY=[REDACTED:credential]")
+        self.assertEqual(_rule_count(result.audit, "credential-assignment"), 1)
+        self.assertNotIn("sk-ant-api03-secretvalue123", result.value)
+
+    def test_unquoted_openai_key_assignment_is_redacted(self) -> None:
+        result = redaction.sanitize("OPENAI_API_KEY=sk-proj-secretvalue1234567890", self.policy)
+
+        self.assertEqual(result.value, "OPENAI_API_KEY=[REDACTED:credential]")
+        self.assertEqual(_rule_count(result.audit, "credential-assignment"), 1)
+        self.assertNotIn("sk-proj-secretvalue1234567890", result.value)
+
+    def test_unquoted_aws_secret_access_key_assignment_is_redacted(self) -> None:
+        result = redaction.sanitize(
+            "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/example",
+            self.policy,
+        )
+
+        self.assertEqual(result.value, "AWS_SECRET_ACCESS_KEY=[REDACTED:credential]")
+        self.assertEqual(_rule_count(result.audit, "credential-assignment"), 1)
+        self.assertNotIn("wJalrXUtnFEMI", result.value)
+
+    def test_unquoted_secret_key_assignment_is_redacted(self) -> None:
+        result = redaction.sanitize("SECRET_KEY=django-insecure-examplevalue", self.policy)
+
+        self.assertEqual(result.value, "SECRET_KEY=[REDACTED:credential]")
+        self.assertEqual(_rule_count(result.audit, "credential-assignment"), 1)
+        self.assertNotIn("django-insecure", result.value)
+
+    def test_quoted_assignment_still_redacts(self) -> None:
+        result = redaction.sanitize("PASSWORD='supersecretvalue'", self.policy)
+
+        self.assertEqual(result.value, "PASSWORD=[REDACTED:credential]")
+        self.assertEqual(_rule_count(result.audit, "credential-assignment"), 1)
+
+    def test_standalone_llm_api_key_is_redacted(self) -> None:
+        result = redaction.sanitize("token sk-proj-abcdefghijklmnopqrstuvwxyz", self.policy)
+
+        self.assertEqual(result.value, "token [REDACTED:llm-api-key]")
+        self.assertEqual(_rule_count(result.audit, "llm-api-key"), 1)
+
+    def test_unquoted_assignment_redaction_handles_large_input(self) -> None:
+        value = "API_KEY=" + ("A" * 50000)
+
+        result = redaction.sanitize(value, self.policy)
+
+        self.assertEqual(result.value, "API_KEY=[REDACTED:credential]")
+        self.assertEqual(_rule_count(result.audit, "credential-assignment"), 1)
 
 
 if __name__ == "__main__":  # pragma: no cover

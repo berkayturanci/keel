@@ -62,9 +62,15 @@ _DEFAULT_RULES: tuple[tuple[str, str, str], ...] = (
     ),
     (
         "credential-assignment",
-        r"(?i)\b(api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|"
-        r"token|secret|password|passwd|pwd)\b\s*[:=]\s*([\"']?)[^\s\"']{8,}\2",
+        r"(?i)\b([A-Za-z0-9_-]*(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|"
+        r"secret[_-]?access[_-]?key|secret[_-]?key|token|secret|password|passwd|pwd)"
+        r")\b\s*[:=]\s*([\"']?)[^\s\"']{8,}\2",
         r"\1=[REDACTED:credential]",
+    ),
+    (
+        "llm-api-key",
+        r"\bsk-[A-Za-z0-9_-]{20,}\b",
+        "[REDACTED:llm-api-key]",
     ),
 )
 
