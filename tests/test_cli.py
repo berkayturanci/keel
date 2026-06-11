@@ -1110,6 +1110,72 @@ class TestShip(unittest.TestCase):
         self.assertIn("keel evidence-verify", out)
         self.assertIn("required      : 0", out)
 
+    def test_evidence_verify_enforces_from_ship_branch_without_label(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            pr_comments = root / "pr-comments.json"
+            issue_comments = root / "issue-comments.json"
+            reviews = root / "reviews.json"
+            pr_comments.write_text(json.dumps([
+                {"body": "<!-- keel.closure-comment.v1 -->"},
+                {"body": "keel.review-verdict.v1\nreviewer: a\nLGTM"},
+            ]), encoding="utf-8")
+            issue_comments.write_text(json.dumps([
+                {"body": "<!-- keel.closure-comment.v1 -->"},
+            ]), encoding="utf-8")
+            reviews.write_text("[]", encoding="utf-8")
+            rc, out, _ = run([
+                "evidence-verify", str(PROJECTS / "example-android.yaml"),
+                "--root", str(REPO_ROOT),
+                "--pr", "300",
+                "--reviewers", "1",
+                "--head-ref", "fix/issue-266-evidence-arming",
+                "--pr-comments-json", str(pr_comments),
+                "--issue-comments-json", str(issue_comments),
+                "--pr-reviews-json", str(reviews),
+                "--json",
+            ])
+
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertTrue(data["enforced"])
+        self.assertEqual(data["gate"]["reason"], "ship-branch")
+        self.assertEqual(data["verification"]["status"], "pass")
+
+    def test_evidence_verify_waiver_label_is_the_disarm_path(self):
+        rc, out, _ = run([
+            "evidence-verify", str(PROJECTS / "example-android.yaml"),
+            "--root", str(REPO_ROOT),
+            "--pr", "300",
+            "--head-ref", "fix/issue-266-evidence-arming",
+            "--pr-label", "keel:evidence-waived",
+            "--pr-comments-json", _write_raw("[]"),
+            "--issue-comments-json", _write_raw("[]"),
+            "--pr-reviews-json", _write_raw("[]"),
+            "--json",
+        ])
+
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertFalse(data["enforced"])
+        self.assertTrue(data["gate"]["waived"])
+        self.assertEqual(data["gate"]["reason"], "operator-waiver-label")
+        self.assertEqual(data["verification"]["required_count"], 0)
+
+    def test_evidence_verify_hand_authored_pr_without_provenance_is_ungated(self):
+        rc, out, _ = run([
+            "evidence-verify", str(PROJECTS / "example-android.yaml"),
+            "--root", str(REPO_ROOT),
+            "--pr", "300",
+            "--head-ref", "docs/readme-polish",
+            "--pr-comments-json", _write_raw("[]"),
+            "--issue-comments-json", _write_raw("[]"),
+            "--pr-reviews-json", _write_raw("[]"),
+        ])
+
+        self.assertEqual(rc, 0)
+        self.assertIn("enforced      : false (no-ship-provenance)", out)
+
     def test_evidence_verify_fixture_keeps_explicit_issue(self):
         rc, out, _ = run([
             "evidence-verify", str(PROJECTS / "example-android.yaml"),
@@ -1228,7 +1294,7 @@ class TestShip(unittest.TestCase):
             if endpoint.endswith("/pulls/300"):
                 return Namespace(ok=True, output=json.dumps({
                     "body": "Closes #212",
-                    "head": {"sha": "abc123"},
+                    "head": {"sha": "abc123", "ref": "fix/issue-266-evidence-arming"},
                     "labels": [{"name": "keel:ship"}],
                 }))
             if endpoint.endswith("/pulls/300/files"):
@@ -1510,7 +1576,7 @@ class TestShip(unittest.TestCase):
         self.assertEqual(data["verification"]["status"], "pass")
         self.assertEqual(data["verification"]["required_count"], 0)
 
-    def test_evidence_verify_without_label_human_output_reports_skip(self):
+    def test_evidence_verify_without_provenance_human_output_reports_reason(self):
         rc, out, _ = run([
             "evidence-verify", str(PROJECTS / "example-android.yaml"),
             "--root", str(REPO_ROOT),
@@ -1523,7 +1589,7 @@ class TestShip(unittest.TestCase):
 
         self.assertEqual(rc, 0)
         self.assertIn("enforced      : false", out)
-        self.assertIn("gate skipped", out)
+        self.assertIn("no-ship-provenance", out)
 
     def test_evidence_verify_with_label_is_fail_closed(self):
         rc, out, _ = run([

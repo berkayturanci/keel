@@ -267,10 +267,10 @@ Log the decision (`jury: enabled (reason; mode) / disabled`).
 
 ### s6 ci
 Push the branch, open the **draft** PR, and wait for the project's `ci_workflows` to go
-green. When opening the PR the orchestrator MUST apply the evidence gate label — the
-`evidence_gate_label` knob (default `keel:ship`) — to the PR, so the required
-`keel evidence (required)` check engages for ship-driven PRs (hand-authored PRs that lack
-the label are not gated). Evaluate the rollup with **failure-before-pending** precedence — a
+green. The required `keel evidence (required)` check is provenance-armed for ship-driven PRs
+(ship branch, posted review marker, ship-run ledger record, or legacy gate label); only an
+operator-applied `keel:evidence-waived` label may disarm it. Evaluate the rollup with
+**failure-before-pending** precedence — a
 mixed state with any failure is a failure, never poll past it. Three branches:
 - **all green** (`success`/`skipped`/`neutral`/`stale`) ⇒ proceed.
 - **empty check set** ⇒ allow only if every changed path is in `docs_gate_paths`, else

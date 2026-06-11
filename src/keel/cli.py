@@ -792,7 +792,16 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
         jury_advisory=args.jury_advisory,
     )
     gate_label = args.gate_label or config.knobs.evidence_gate_label
-    enforced = evidence.gate_active(artifacts["pr_labels"], gate_label)
+    waiver_label = args.waiver_label or evidence.DEFAULT_WAIVER_LABEL
+    gate = evidence.gate_decision(
+        artifacts["pr_labels"],
+        gate_label,
+        waiver_label=waiver_label,
+        head_ref=artifacts.get("head_ref"),
+        pr_comments=artifacts["pr_comments"],
+        pr_reviews=artifacts["pr_reviews"],
+    )
+    enforced = gate["enforced"]
     report = evidence.verify(
         review_contract,
         pr_comments=artifacts["pr_comments"],
@@ -812,10 +821,13 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
             deferrals=tuple(args.deferral or ()),
         ),
         "gate_label": gate_label,
+        "waiver_label": waiver_label,
+        "gate": gate,
         "enforced": enforced,
         "pr_labels": artifacts["pr_labels"],
         "pull_request": args.pr,
         "issue": artifacts["issue"],
+        "head_ref": artifacts.get("head_ref"),
         "head_sha": artifacts["head_sha"],
         "changed_files": artifacts["changed_files"],
         "verification": report,
@@ -827,8 +839,9 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
         print(f"  issue         : {artifacts['issue'] or 'not resolved'}")
         print(f"  dry-run       : {str(args.dry_run).lower()}")
         if not enforced:
-            print(f"  enforced      : false (no '{gate_label}' label — gate skipped)")
+            print(f"  enforced      : false ({gate['reason']})")
             return 0
+        print(f"  enforced      : true ({gate['reason']})")
         print(f"  required      : {report['required_count']}")
         if report["missing"]:
             print(f"  missing       : {', '.join(report['missing'])}")
@@ -1299,7 +1312,16 @@ def _verify_merge_evidence(
         jury_advisory=args.jury_advisory,
     )
     gate_label = args.gate_label or config.knobs.evidence_gate_label
-    enforced = evidence.gate_active(artifacts["pr_labels"], gate_label)
+    waiver_label = getattr(args, "waiver_label", None) or evidence.DEFAULT_WAIVER_LABEL
+    gate = evidence.gate_decision(
+        artifacts["pr_labels"],
+        gate_label,
+        waiver_label=waiver_label,
+        head_ref=artifacts.get("head_ref"),
+        pr_comments=artifacts["pr_comments"],
+        pr_reviews=artifacts["pr_reviews"],
+    )
+    enforced = gate["enforced"]
     report = evidence.verify(
         review_contract,
         pr_comments=artifacts["pr_comments"],
@@ -1311,9 +1333,12 @@ def _verify_merge_evidence(
     )
     return {
         "gate_label": gate_label,
+        "waiver_label": waiver_label,
+        "gate": gate,
         "enforced": enforced,
         "verification": report,
         "head_sha": artifacts["head_sha"],
+        "head_ref": artifacts.get("head_ref"),
         "changed_files": changed_files,
     }
 
@@ -1355,6 +1380,7 @@ def _load_evidence_artifacts(
     pr_reviews = _read_optional_json_list(args.pr_reviews_json)
     changed_files = list(getattr(args, "changed_file", ()) or ())
     head_sha = args.head_sha
+    head_ref = getattr(args, "head_ref", None)
     issue_number = args.issue
     injected_labels = list(args.pr_label or ())
     pr_labels: list[str] = []
@@ -1374,6 +1400,7 @@ def _load_evidence_artifacts(
             "pr_reviews": [],
             "issue": issue_number,
             "head_sha": head_sha,
+            "head_ref": head_ref,
             "changed_files": changed_files,
             "pr_labels": _dedupe_preserve(injected_labels),
         }
@@ -1383,6 +1410,7 @@ def _load_evidence_artifacts(
         pr_body = pr.get("body") if isinstance(pr.get("body"), str) else ""
         head = pr.get("head") if isinstance(pr.get("head"), dict) else {}
         head_sha = head.get("sha") if isinstance(head.get("sha"), str) else None
+        head_ref = head.get("ref") if isinstance(head.get("ref"), str) else None
         pr_labels = _label_names(pr.get("labels"))
         changed_files = _pr_changed_files(owner_repo, args.pr, cwd=args.root)
         pr_comments = _gh_json_list(
@@ -1406,6 +1434,7 @@ def _load_evidence_artifacts(
         "pr_reviews": pr_reviews,
         "issue": issue_number,
         "head_sha": head_sha,
+        "head_ref": head_ref,
         "changed_files": changed_files,
         "pr_labels": _dedupe_preserve([*pr_labels, *injected_labels]),
     }
@@ -2174,12 +2203,16 @@ def build_parser() -> argparse.ArgumentParser:
                             help="offline changed file path; repeat to derive tier from fixtures")
     p_evidence.add_argument("--head-sha", default=None,
                             help="offline PR head SHA used to bind verdict evidence")
+    p_evidence.add_argument("--head-ref", default=None,
+                            help="offline PR head branch used to detect ship provenance")
     p_evidence.add_argument("--pr-label", action="append", default=[],
                             help="inject a PR label name (repeatable); merged with live labels. "
                                  "A live PR fetch still runs unless an offline fixture flag is "
                                  "also supplied")
     p_evidence.add_argument("--gate-label", default=None,
-                            help="override the evidence_gate_label knob that opts a PR in")
+                            help="override the legacy evidence arming label")
+    p_evidence.add_argument("--waiver-label", default=None,
+                            help="override the operator-applied evidence waiver label")
     p_evidence.add_argument("--json", action="store_true", help="emit structured JSON")
     p_evidence.set_defaults(func=_cmd_evidence_verify)
 

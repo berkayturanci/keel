@@ -20,11 +20,13 @@ SCHEMA_VERSION = "keel.evidence.v1"
 REVIEW_VERDICT_MARKER = "keel.review-verdict.v1"
 JURY_VERDICT_MARKER = "keel.jury-verdict.v1"
 SHIP_ASSESSMENT_HEADING = "### \U0001f6a2 keel ship"
+DEFAULT_WAIVER_LABEL = "keel:evidence-waived"
 TRUSTED_AUTHOR_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 TRUSTED_AUTHOR_TYPES = frozenset({"Bot"})
 
 _FIELD_RE = re.compile(r"^\s*(?P<key>reviewer|head)\s*:\s*(?P<value>\S+)\s*$",
                        re.IGNORECASE | re.MULTILINE)
+_SHIP_BRANCH_RE = re.compile(r"^(feature|fix|chore|docs|test)/issue-\d+(?:-|$)")
 
 
 @dataclass(frozen=True)
@@ -52,6 +54,52 @@ def gate_active(labels: Sequence[str] | None, gate_label: str) -> bool:
     if not gate_label:
         return False
     return gate_label in set(labels or ())
+
+
+def gate_decision(
+    labels: Sequence[str] | None,
+    gate_label: str,
+    *,
+    waiver_label: str = DEFAULT_WAIVER_LABEL,
+    head_ref: str | None = None,
+    pr_comments: list[dict[str, Any]] | None = None,
+    pr_reviews: list[dict[str, Any]] | None = None,
+    ledger_records: Sequence[object] | None = None,
+) -> dict[str, Any]:
+    """Return the fail-closed evidence-gate arming decision.
+
+    Ship provenance arms the gate by default. The only disarm path is an explicit
+    waiver label applied by an operator; the legacy gate label remains an
+    additional arming signal for already-installed workflows.
+    """
+    label_set = set(labels or ())
+    if waiver_label and waiver_label in label_set:
+        return _gate_decision(False, "operator-waiver-label", waiver_label, waived=True)
+    if gate_active(labels, gate_label):
+        return _gate_decision(True, "gate-label", gate_label)
+    if head_ref and _SHIP_BRANCH_RE.search(head_ref):
+        return _gate_decision(True, "ship-branch", head_ref)
+    if _has_trusted_review_marker([*(pr_comments or []), *(pr_reviews or [])]):
+        return _gate_decision(True, "review-verdict-marker", REVIEW_VERDICT_MARKER)
+    if ledger_records:
+        return _gate_decision(True, "ship-run-ledger", "ship_run")
+    return _gate_decision(False, "no-ship-provenance", None)
+
+
+def _gate_decision(
+    enforced: bool,
+    reason: str,
+    source: str | None,
+    *,
+    waived: bool = False,
+) -> dict[str, Any]:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "enforced": enforced,
+        "waived": waived,
+        "reason": reason,
+        "source": source,
+    }
 
 
 def contract_as_dict(
@@ -318,6 +366,10 @@ def _is_review_verdict_body(body: str) -> bool:
     if JURY_VERDICT_MARKER in body:
         return False
     return REVIEW_VERDICT_MARKER in body
+
+
+def _has_trusted_review_marker(items: list[dict[str, Any]]) -> bool:
+    return any(_is_trusted_source(item) and REVIEW_VERDICT_MARKER in _body(item) for item in items)
 
 
 def _is_jury_verdict(item: dict[str, Any], *, head_sha: str | None = None) -> bool:

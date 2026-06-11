@@ -45,8 +45,8 @@ class TestEvidenceGateLabel(unittest.TestCase):
         self.assertEqual(cfg.parse_config(data).knobs.evidence_gate_label, "ship-me")
 
     def test_empty_label_rejected(self):
-        # An empty gate label would silently disable the evidence gate for every
-        # PR; the schema must reject it (minLength: 1).
+        # The legacy arming label is still accepted as an arming signal; keep it
+        # non-empty so its configured meaning remains deterministic.
         data = copy.deepcopy(VALID)
         data["knobs"]["evidence_gate_label"] = ""
         with self.assertRaises(cfg.ConfigError):
