@@ -69,10 +69,16 @@ def release_resource(
     resource: str,
     *,
     owner: str | None = None,
+    best_effort: bool = False,
 ) -> ClaimResult:
     """Release a named resource claim, optionally requiring the owner to match."""
     path = resource_path(root, resource)
-    return _release_path(path, resource=_clean(resource, "unknown-resource"), owner=owner)
+    return _release_path(
+        path,
+        resource=_clean(resource, "unknown-resource"),
+        owner=owner,
+        best_effort=best_effort,
+    )
 
 
 @contextmanager

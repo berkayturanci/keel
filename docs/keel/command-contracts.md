@@ -56,7 +56,7 @@ Every contract includes:
 | `checkpoint` | Resumable checkpoint storage and resume/reconcile contract for ship and work-block runs. |
 | `capture` | Post-merge capture marker, skip vocabulary, fail-soft, recursion-guard, redaction, and verifier contract. |
 | `agent_output_provenance` | Deterministic untrusted-output tagging contract for agent findings, review/jury verdict material, step handoffs, and feedback workflows. |
-| `resource_claims` | Single-host `mkdir` resource-claim primitive; denial is structured feedback, and the merge lock is one consumer. |
+| `resource_claims` | Single-host `mkdir` resource-claim primitive; denial is structured feedback, and `keel merge` is the core merge-lock consumer. |
 | `closure_comment` | Present for `ship` (both profiles); the deterministic, consumer-neutral closure-comment contract describing how the s11 ship-outcome comment is rendered from the `ship_run` ledger record. |
 | `evidence` | Present for `ship` (both profiles); the pre-merge evidence contract used by `keel evidence-verify`. The gate is opt-in via the `evidence_gate_label` knob (default `keel:ship`) applied at PR open; the contract carries an `enforced` flag and, when not enforced, an empty `required` set (a PR without the label passes). When enforced it is fail-closed. |
 | `step_verification` | Present for `ship` (both profiles); the fail-closed step completion contract that maps required public evidence onto backbone steps and defines the structured handoff object every successful step must produce. |
@@ -113,6 +113,23 @@ consumer-neutral, and enforced at the execution layer. Side-effecting or irrever
 always gates; repeated retry, conflicting sources, and large diffs gate; low-risk work can
 be sampled by a deterministic bucket; and the risk/trust matrix is based on risk tier plus
 trust signal, not model confidence alone. Unknown risk or trust values fail closed.
+
+## Core-owned merge execution
+
+Ship-style adapters must route s10 through `keel merge`; raw `gh pr merge` calls bypass
+deterministic enforcement and are a spec violation. The command performs the live merge in
+one fail-closed path:
+
+1. acquire the single-host `merge` resource claim;
+2. re-run the configured merge-window check inside the claim;
+3. read the live PR check rollup and classify failure before pending;
+4. run `evidence-verify` for the current PR artifacts;
+5. call GitHub's merge operation only when every prior gate passes.
+
+`keel claim` and `keel release` expose the same resource primitive for adapters that need
+explicit orchestration, while `keel worktree-remove` owns the destructive cleanup guard:
+the path must be nested under the repository root and registered in `git worktree list`
+before removal.
 
 ## Run ledger block
 

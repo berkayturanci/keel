@@ -31,6 +31,7 @@ from . import (
     install,
     jury,
     ledger,
+    lock,
     project_commands,
     runtime,
     scaffold,
@@ -232,6 +233,155 @@ def _cmd_window(args: argparse.Namespace) -> int:
     state = "OPEN" if is_open else "CLOSED (night no-merge)"
     print(f"merge window {state}  [{config.timezone} {config.merge_window}]")
     return 0
+
+
+def _cmd_claim(args: argparse.Namespace) -> int:
+    result = lock.claim_resource(_lock_root(args.root), args.resource, owner=args.owner)
+    if args.json:
+        print(json.dumps(result.as_dict(), indent=2, sort_keys=True))
+    else:
+        print(f"keel claim — {result.status}  {result.resource}")
+        print(f"  owner : {result.owner}")
+        print(f"  path  : {result.path}")
+        if result.holder:
+            print(f"  holder: {result.holder}")
+    return 0 if result.granted else 1
+
+
+def _cmd_release(args: argparse.Namespace) -> int:
+    result = lock.release_resource(_lock_root(args.root), args.resource, owner=args.owner)
+    if args.json:
+        print(json.dumps(result.as_dict(), indent=2, sort_keys=True))
+    else:
+        print(f"keel release — {result.status}  {result.resource}")
+        print(f"  owner : {result.owner}")
+        print(f"  path  : {result.path}")
+        if result.holder:
+            print(f"  holder: {result.holder}")
+    return 0 if result.status in {"released", "missing"} else 1
+
+
+def _cmd_worktree_remove(args: argparse.Namespace) -> int:
+    try:
+        worktree_path = _validated_worktree_path(args.root, args.worktree)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    result = git.worktree_remove(str(worktree_path), cwd=args.root)
+    if args.json:
+        print(json.dumps({
+            "worktree": str(worktree_path),
+            "removed": result.ok,
+            "code": result.code,
+            "output": result.output,
+        }, indent=2, sort_keys=True))
+    else:
+        print(f"keel worktree-remove — {'removed' if result.ok else 'failed'}  {worktree_path}")
+        if result.output.strip():
+            print(result.output.strip())
+    return 0 if result.ok else 1
+
+
+def _cmd_merge(args: argparse.Namespace) -> int:
+    args.live = True
+    try:
+        config = cfg.load_config(args.path)
+    except FileNotFoundError:
+        print(f"no such config: {args.path}", file=sys.stderr)
+        return 1
+    except cfg.ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    loaded, problems = load_extensions(config, args.root, strict=False)
+    for prob in problems:
+        print(f"  ! extension not loaded: {prob}", file=sys.stderr)
+    requirement = runtime.CapabilityRequirement(required=("git",), optional=("gh", "gh-auth"))
+    report = runtime.detect(args.root)
+    evaluation = runtime.evaluate(requirement, report)
+    transport = github_transport.resolve(report)
+    if not evaluation.ok or not transport.supports("pr_merge"):
+        print(evaluation.render(), file=sys.stderr)
+        print(transport.render(), file=sys.stderr)
+        return 1
+    try:
+        approved_scopes, approval_source, approval_operator, consent_mode = _approved_consent(
+            args, config, True
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    operator_consent = consent.build_consent_contract(
+        command="merge",
+        side_effects=("git_worktree", "merge"),
+        dry_run=False,
+        approved_scopes=approved_scopes,
+        approval_source=approval_source,
+        mode=consent_mode,
+        operator=approval_operator,
+        target=f"PR #{args.pr}",
+    )
+    consent_ok, consent_message = consent.assert_operator_consent(operator_consent)
+    if not consent_ok:
+        print(consent_message, file=sys.stderr)
+        return 1
+
+    owner = args.owner or f"keel-merge-pr-{args.pr}"
+    claim = lock.claim_resource(_lock_root(args.root), "merge", owner=owner)
+    payload: dict[str, object] = {
+        "schema_version": "keel.merge.v1",
+        "pull_request": args.pr,
+        "lock": claim.as_dict(),
+        "window": None,
+        "ci": None,
+        "evidence": None,
+        "merged": False,
+    }
+    if not claim.granted:
+        return _finish_merge(args, payload, "resource lock is already held", code=1)
+    try:
+        if not args.hotfix and config.timezone and config.merge_window:
+            open_now = window.is_merge_open(config.timezone, config.merge_window)
+            payload["window"] = {
+                "open": open_now,
+                "timezone": config.timezone,
+                "merge_window": config.merge_window,
+            }
+            if not open_now:
+                return _finish_merge(args, payload, "merge window is closed", code=1)
+        elif args.hotfix:
+            payload["window"] = {"bypassed": True, "reason": "hotfix"}
+
+        try:
+            snapshot = _merge_snapshot(args.pr, cwd=args.root)
+        except ValueError as exc:
+            return _finish_merge(args, payload, str(exc), code=1)
+        payload["ci"] = snapshot["ci"]
+        if snapshot["merge_state"] not in {"CLEAN", "HAS_HOOKS", "UNKNOWN"}:
+            return _finish_merge(
+                args, payload, f"PR merge state is {snapshot['merge_state']}", code=1
+            )
+        if snapshot["ci"]["state"] != "pass":
+            return _finish_merge(args, payload, f"CI is {snapshot['ci']['state']}", code=1)
+
+        evidence_payload = _verify_merge_evidence(args, config)
+        payload["evidence"] = evidence_payload
+        if not evidence_payload["enforced"]:
+            return _finish_merge(args, payload, "evidence gate is not enforced", code=1)
+        if evidence_payload["verification"]["status"] != "pass":
+            missing = ", ".join(evidence_payload["verification"]["missing"])
+            return _finish_merge(args, payload, f"missing evidence: {missing}", code=1)
+
+        if args.dry_run:
+            return _finish_merge(args, payload, "dry-run: merge not performed", code=0)
+        merged = github.merge_pr(args.pr, method=args.method, cwd=args.root)
+        payload["merged"] = merged.ok
+        payload["merge_output"] = merged.output
+        if not merged.ok:
+            return _finish_merge(args, payload, "gh merge failed", code=1)
+        return _finish_merge(args, payload, "merged", code=0)
+    finally:
+        lock.release_resource(_lock_root(args.root), "merge", owner=owner, best_effort=True)
 
 
 def _cmd_ship(args: argparse.Namespace) -> int:
@@ -1042,6 +1192,151 @@ def _issue_labels(args: argparse.Namespace) -> tuple[str, ...]:
     return tuple(dict.fromkeys(labels))
 
 
+def _lock_root(root: str | Path) -> Path:
+    return Path(root) / ".keel" / "state" / "locks"
+
+
+def _finish_merge(args: argparse.Namespace, payload: dict[str, object], reason: str, *,
+                  code: int) -> int:
+    payload["reason"] = reason
+    payload["status"] = "pass" if code == 0 else "fail"
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"keel merge — {payload['status']}  PR #{args.pr}")
+        print(f"  reason : {reason}")
+        lock_payload = payload.get("lock")
+        if isinstance(lock_payload, dict):
+            print(f"  lock   : {lock_payload.get('status')}")
+        ci_payload = payload.get("ci")
+        if isinstance(ci_payload, dict):
+            print(f"  ci     : {ci_payload.get('state')}")
+        evidence_payload = payload.get("evidence")
+        if isinstance(evidence_payload, dict):
+            verification = evidence_payload.get("verification")
+            if isinstance(verification, dict):
+                print(f"  evidence: {verification.get('status')}")
+    return code
+
+
+def _merge_snapshot(pr: int, *, cwd: str) -> dict[str, object]:
+    result = github.pr_merge_snapshot(pr, cwd=cwd)
+    if not result.ok:
+        raise ValueError(f"unable to read PR merge snapshot: {result.output.strip()}")
+    try:
+        payload = json.loads(result.output or "{}")
+    except json.JSONDecodeError as exc:
+        raise ValueError("PR merge snapshot was not JSON") from exc
+    rollup = payload.get("statusCheckRollup")
+    rollup = rollup if isinstance(rollup, list) else []
+    return {
+        "head_sha": payload.get("headRefOid"),
+        "merge_state": payload.get("mergeStateStatus") or "UNKNOWN",
+        "ci": _ci_rollup_state(rollup),
+    }
+
+
+def _ci_rollup_state(rollup: list[object]) -> dict[str, object]:
+    failures = {
+        "ACTION_REQUIRED", "CANCELLED", "ERROR", "FAILURE",
+        "SKIPPED", "STARTUP_FAILURE", "STALE", "TIMED_OUT",
+    }
+    pending_states = {"EXPECTED", "PENDING", "QUEUED", "REQUESTED", "WAITING", "IN_PROGRESS"}
+    saw_pending = False
+    saw_check = False
+    for item in rollup:
+        if not isinstance(item, dict):
+            continue
+        saw_check = True
+        conclusion = item.get("conclusion")
+        conclusion = conclusion.upper() if isinstance(conclusion, str) else ""
+        status_value = item.get("status")
+        status_value = status_value.upper() if isinstance(status_value, str) else ""
+        if conclusion in failures:
+            return {"state": "fail", "reason": conclusion}
+        if not conclusion and status_value in pending_states:
+            saw_pending = True
+    if saw_pending:
+        return {"state": "pending", "reason": "check-pending"}
+    return {"state": "pass", "reason": "all-checks-passing" if saw_check else "no-checks"}
+
+
+def _verify_merge_evidence(
+    args: argparse.Namespace,
+    config: cfg.ProjectConfig,
+) -> dict[str, object]:
+    evidence_args = argparse.Namespace(
+        pr=args.pr,
+        issue=args.issue,
+        pr_body_file=None,
+        pr_comments_json=None,
+        issue_comments_json=None,
+        pr_reviews_json=None,
+        changed_file=(),
+        head_sha=None,
+        pr_label=(),
+        dry_run=False,
+        root=args.root,
+    )
+    artifacts = _load_evidence_artifacts(evidence_args, config)
+    changed_files = artifacts["changed_files"]
+    tier = (
+        classify.tier_for_files(
+            changed_files,
+            tier3_globs=config.knobs.tier3_globs,
+            docs_globs=config.knobs.docs_gate_paths,
+        )
+        if changed_files else None
+    )
+    review_contract = ship.resolve_review_contract(
+        tier=tier,
+        reviewer_override=args.reviewers,
+        review_comments=args.review_comments,
+        gates=config.gates,
+        policy_pack=config.policy_pack,
+        jury=args.jury,
+        no_jury=args.no_jury,
+        jury_advisory=args.jury_advisory,
+    )
+    gate_label = args.gate_label or config.knobs.evidence_gate_label
+    enforced = evidence.gate_active(artifacts["pr_labels"], gate_label)
+    report = evidence.verify(
+        review_contract,
+        pr_comments=artifacts["pr_comments"],
+        issue_comments=artifacts["issue_comments"],
+        pr_reviews=artifacts["pr_reviews"],
+        pr_body=artifacts["pr_body"],
+        head_sha=artifacts["head_sha"],
+        enforced=enforced,
+    )
+    return {
+        "gate_label": gate_label,
+        "enforced": enforced,
+        "verification": report,
+        "head_sha": artifacts["head_sha"],
+        "changed_files": changed_files,
+    }
+
+
+def _validated_worktree_path(root: str | Path, worktree: str) -> Path:
+    root_path = Path(root).resolve()
+    raw = Path(worktree)
+    candidate = (root_path / raw if not raw.is_absolute() else raw).resolve()
+    if candidate == root_path or root_path not in candidate.parents:
+        raise ValueError("worktree path must be nested under the repository root")
+    listed = git.worktree_list(cwd=str(root_path))
+    if not listed.ok:
+        raise ValueError(f"unable to list registered worktrees: {listed.output.strip()}")
+    registered = {
+        Path(line.split(" ", 1)[1]).resolve()
+        for line in listed.output.splitlines()
+        if line.startswith("worktree ")
+    }
+    if candidate not in registered:
+        raise ValueError("worktree path is not a registered git worktree")
+    return candidate
+
+
 def _issue_context_provided(args: argparse.Namespace) -> bool:
     return bool(
         (getattr(args, "issue_title", None) or "").strip()
@@ -1744,6 +2039,57 @@ def build_parser() -> argparse.ArgumentParser:
     p_window = sub.add_parser("window", help="is the merge window open now?")
     p_window.add_argument("path", help="path to project.yaml")
     p_window.set_defaults(func=_cmd_window)
+
+    p_claim = sub.add_parser("claim", help="claim a single-host keel resource")
+    p_claim.add_argument("--root", default=".", help="repo root for the claim store")
+    p_claim.add_argument("--owner", required=True, help="claim owner id")
+    p_claim.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_claim.add_argument("resource", help="resource name, e.g. merge")
+    p_claim.set_defaults(func=_cmd_claim)
+
+    p_release = sub.add_parser("release", help="release a single-host keel resource")
+    p_release.add_argument("--root", default=".", help="repo root for the claim store")
+    p_release.add_argument("--owner", default=None, help="claim owner id; omit to release any")
+    p_release.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_release.add_argument("resource", help="resource name, e.g. merge")
+    p_release.set_defaults(func=_cmd_release)
+
+    p_merge = sub.add_parser("merge", help="perform the fail-closed core-owned PR merge")
+    p_merge.add_argument("path", help="path to project.yaml")
+    p_merge.add_argument("--root", default=".", help="repo root for git/GitHub operations")
+    p_merge.add_argument("--pr", type=_positive_int, required=True, help="pull request number")
+    p_merge.add_argument("--issue", type=_positive_int, default=None,
+                         help="linked issue number for evidence verification")
+    p_merge.add_argument("--method", choices=("squash", "merge", "rebase"), default="squash",
+                         help="GitHub merge method")
+    p_merge.add_argument("--owner", default=None, help="resource claim owner id")
+    p_merge.add_argument("--hotfix", action="store_true",
+                         help="bypass the merge window with explicit consent")
+    p_merge.add_argument("--dry-run", action="store_true", help="verify only; do not merge")
+    p_merge.add_argument("--approve-scope", action="append", default=[],
+                         help="approve a consent scope for this merge")
+    p_merge.add_argument("--operator", default=None,
+                         help="operator identifier for consent evidence")
+    p_merge.add_argument("--consent-mode", choices=consent.CONSENT_MODES, default=None,
+                         help="operator consent mode")
+    p_merge.add_argument("--review-comments", choices=("inline", "summary"), default="inline",
+                         help="review posting mode for evidence verification")
+    p_merge.add_argument("--reviewers", type=int, choices=(1, 2, 3), default=None,
+                         help="override required reviewer count")
+    p_merge.add_argument("--jury", action="store_true", help="enable jury evidence")
+    p_merge.add_argument("--no-jury", action="store_true", help="disable jury evidence")
+    p_merge.add_argument("--jury-advisory", action="store_true",
+                         help="make jury advisory for evidence verification")
+    p_merge.add_argument("--gate-label", default=None,
+                         help="override evidence gate label")
+    p_merge.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_merge.set_defaults(func=_cmd_merge)
+
+    p_wr = sub.add_parser("worktree-remove", help="safely remove a registered nested worktree")
+    p_wr.add_argument("--root", default=".", help="repo root")
+    p_wr.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_wr.add_argument("worktree", help="worktree path to remove")
+    p_wr.set_defaults(func=_cmd_worktree_remove)
 
     p_ledger = sub.add_parser("ledger", help="read the structured run ledger offline")
     p_ledger.add_argument("path", help="path to project.yaml")

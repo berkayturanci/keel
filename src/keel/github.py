@@ -31,6 +31,16 @@ def ci_conclusion(pr: int | str, *, cwd: str | None = None, _run=None) -> str | 
     return result.output.strip() or None
 
 
+def pr_merge_snapshot(pr: int | str, *, cwd: str | None = None, _run=None) -> CommandResult:
+    return run_argv(
+        [
+            "gh", "pr", "view", str(pr),
+            "--json", "headRefOid,mergeStateStatus,statusCheckRollup",
+        ],
+        cwd=cwd, **_kw(_run),
+    )
+
+
 def merge_pr(
     pr: int | str, *, method: str = "squash", cwd: str | None = None, _run=None
 ) -> CommandResult:
