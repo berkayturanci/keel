@@ -421,7 +421,7 @@ class TestClosureContract(unittest.TestCase):
         self.assertEqual(sections[-1], "run_context")
         self.assertEqual(
             contract["run_context_fields"],
-            ["host_agent", "transport", "profile", "jury", "consent"],
+            ["host_agent", "transport", "profile", "jury_mode", "consent"],
         )
 
 

@@ -58,7 +58,7 @@ def contract_as_dict() -> dict[str, Any]:
             "host_agent",
             "transport",
             "profile",
-            "jury",
+            "jury_mode",
             "consent",
         ],
         "jury_label": JURY_LABEL,
