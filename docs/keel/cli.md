@@ -261,8 +261,10 @@ is fail-closed and accepts only durable GitHub artifacts:
   when jury is enabled in gating mode, posted by a trusted GitHub actor.
 
 For live GitHub payloads, trusted means `author_association` is `OWNER`, `MEMBER`, or
-`COLLABORATOR`, or the author is a GitHub bot. PR bodies, chat summaries, untrusted public
-comments, and the automated `keel ship` assessment comment are never accepted as evidence.
+`COLLABORATOR`. Explicitly untrusted associations are rejected even when the author type is
+`Bot`, and enforced evidence rejects fixture payloads that omit `author_association`. PR
+bodies, chat summaries, untrusted public comments, and the automated `keel ship`
+assessment comment are never accepted as evidence.
 The PR body may only be used to infer `Closes #N` when `--issue` is not supplied. In live
 mode, keel reads the PR changed files and head SHA through `gh`, then derives the risk
 tier, reviewer count, and jury requirement from the same project policy used by `keel ship`.

@@ -428,7 +428,9 @@ The block records:
 - `accepted_sources`: trusted PR/issue comments with `keel.closure-comment.v1`,
   trusted PR comments or reviews with a reviewer verdict, and trusted PR comments with a
   jury verdict. Live GitHub payloads are trusted only when their `author_association` is
-  `OWNER`, `MEMBER`, or `COLLABORATOR`, or the author is a GitHub bot.
+  `OWNER`, `MEMBER`, or `COLLABORATOR`. Explicitly untrusted associations are rejected
+  even for bot authors, and enforced evidence rejects fixture payloads that omit
+  `author_association`.
 - `not_accepted`: PR body, chat summaries, untrusted public comments, and the automated
   `keel ship` assessment comment
 - `required`: stable ids such as `closure-comment-pr`, `closure-comment-issue`,

@@ -22,7 +22,6 @@ JURY_VERDICT_MARKER = "keel.jury-verdict.v1"
 SHIP_ASSESSMENT_HEADING = "### \U0001f6a2 keel ship"
 DEFAULT_WAIVER_LABEL = "keel:evidence-waived"
 TRUSTED_AUTHOR_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
-TRUSTED_AUTHOR_TYPES = frozenset({"Bot"})
 
 _FIELD_RE = re.compile(r"^\s*(?P<key>reviewer|head)\s*:\s*(?P<value>\S+)\s*$",
                        re.IGNORECASE | re.MULTILINE)
@@ -213,6 +212,7 @@ def verify(
         issue_comments=issue_comments or [],
         pr_reviews=pr_reviews or [],
         head_sha=head_sha,
+        enforced=enforced,
     )
     findings = _run_context_findings(
         pr_comments=pr_comments or [],
@@ -254,16 +254,22 @@ def _evidence_counts(
     issue_comments: list[dict[str, Any]],
     pr_reviews: list[dict[str, Any]],
     head_sha: str | None = None,
+    enforced: bool = True,
 ) -> dict[str, int]:
     review_keys = _review_evidence_keys(
         [*pr_comments, *pr_reviews],
         head_sha=head_sha,
+        enforced=enforced,
     )
     return {
-        "closure_pr": sum(_is_closure_comment(comment) for comment in pr_comments),
-        "closure_issue": sum(_is_closure_comment(comment) for comment in issue_comments),
+        "closure_pr": sum(
+            _is_closure_comment(comment, enforced=enforced) for comment in pr_comments
+        ),
+        "closure_issue": sum(
+            _is_closure_comment(comment, enforced=enforced) for comment in issue_comments
+        ),
         "review_verdict": len(review_keys),
-        "jury_verdict": sum(_is_jury_verdict(comment, head_sha=head_sha)
+        "jury_verdict": sum(_is_jury_verdict(comment, head_sha=head_sha, enforced=enforced)
                             for comment in pr_comments),
     }
 
@@ -290,8 +296,8 @@ def _has_closure_marker(body: str) -> bool:
     return closure.COMMENT_MARKER in body
 
 
-def _is_closure_comment(item: dict[str, Any]) -> bool:
-    return _is_trusted_source(item) and _has_closure_marker(_body(item))
+def _is_closure_comment(item: dict[str, Any], *, enforced: bool = True) -> bool:
+    return _is_trusted_source(item, enforced=enforced) and _has_closure_marker(_body(item))
 
 
 def _run_context_findings(
@@ -303,7 +309,7 @@ def _run_context_findings(
     comments = [*pr_comments, *issue_comments]
     findings: list[dict[str, Any]] = []
     for item in comments:
-        if not _is_closure_comment(item):
+        if not _is_closure_comment(item, enforced=enforced):
             continue
         body = _body(item)
         if _has_empty_run_context(body):
@@ -346,27 +352,20 @@ def _run_context_fields(body: str) -> dict[str, str]:
     return fields
 
 
-def _is_trusted_source(item: dict[str, Any]) -> bool:
+def _is_trusted_source(item: dict[str, Any], *, enforced: bool = True) -> bool:
     """Return whether GitHub marks this evidence source as trusted.
 
-    Live GitHub comment/review payloads include ``author_association``. Offline
-    fixtures and older adapters may omit it, so unknown provenance remains
-    accepted for backward-compatible local verification; untrusted explicit
-    associations fail closed.
+    Live GitHub comment/review payloads include ``author_association``. Enforced
+    evidence fails closed when that field is absent because offline fixtures are
+    agent-writable and must not manufacture trust. Untrusted explicit
+    associations fail closed even if the author type is ``Bot``.
     """
     association = item.get("author_association")
     if association is None:
-        return True
+        return not enforced
     if isinstance(association, str) and association.upper() in TRUSTED_AUTHOR_ASSOCIATIONS:
         return True
-    return _author_type(item) in TRUSTED_AUTHOR_TYPES
-
-
-def _author_type(item: dict[str, Any]) -> str | None:
-    user = item.get("user")
-    if isinstance(user, dict) and isinstance(user.get("type"), str):
-        return user["type"]
-    return None
+    return False
 
 
 def _is_ship_assessment(body: str) -> bool:
@@ -377,10 +376,11 @@ def _review_evidence_keys(
     items: list[dict[str, Any]],
     *,
     head_sha: str | None = None,
+    enforced: bool = True,
 ) -> set[str]:
     keys: set[str] = set()
     for item in items:
-        if not _is_trusted_source(item):
+        if not _is_trusted_source(item, enforced=enforced):
             continue
         body = _body(item)
         if not _is_review_verdict_body(body):
@@ -428,11 +428,19 @@ def _is_review_verdict_body(body: str) -> bool:
 
 
 def _has_trusted_review_marker(items: list[dict[str, Any]]) -> bool:
-    return any(_is_trusted_source(item) and REVIEW_VERDICT_MARKER in _body(item) for item in items)
+    return any(
+        _is_trusted_source(item, enforced=True) and REVIEW_VERDICT_MARKER in _body(item)
+        for item in items
+    )
 
 
-def _is_jury_verdict(item: dict[str, Any], *, head_sha: str | None = None) -> bool:
-    if not _is_trusted_source(item):
+def _is_jury_verdict(
+    item: dict[str, Any],
+    *,
+    head_sha: str | None = None,
+    enforced: bool = True,
+) -> bool:
+    if not _is_trusted_source(item, enforced=enforced):
         return False
     body = _body(item)
     if not body or _is_ship_assessment(body) or _has_closure_marker(body):

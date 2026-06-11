@@ -16,7 +16,7 @@ def _review_contract(*, reviewers=2, jury=False, no_jury=False, jury_advisory=Fa
 
 
 def _comment(body):
-    return {"body": body}
+    return {"body": body, "author_association": "MEMBER"}
 
 
 def _trusted_comment(body, *, reviewer=None):
@@ -207,6 +207,7 @@ class TestEvidenceVerify(unittest.TestCase):
                 {
                     "body": "keel.review-verdict.v1\nLGTM",
                     "user": {"login": "reviewer-one"},
+                    "author_association": "MEMBER",
                 },
             ],
             issue_comments=[_comment(closure.COMMENT_MARKER)],
@@ -230,6 +231,7 @@ class TestEvidenceVerify(unittest.TestCase):
                 {
                     "body": "keel.review-verdict.v1\nreviewer: gamma\nLGTM",
                     "commit_id": "abc123",
+                    "author_association": "MEMBER",
                 },
             ],
             head_sha="abc123",
@@ -364,7 +366,7 @@ class TestEvidenceVerify(unittest.TestCase):
         self.assertEqual(report["status"], "pass")
         self.assertEqual(report["findings"][0]["severity"], "minor")
 
-    def test_bot_comment_markers_are_evidence_even_without_member_association(self):
+    def test_explicit_untrusted_bot_comment_markers_are_not_evidence(self):
         bot_comment = {
             "body": "keel.review-verdict.v1\nhead: abc123\nLGTM",
             "author_association": "NONE",
@@ -378,7 +380,39 @@ class TestEvidenceVerify(unittest.TestCase):
             head_sha="abc123",
         )
 
+        self.assertEqual(report["status"], "fail")
+        self.assertEqual(report["counts"]["review_verdict"], 0)
+        self.assertEqual(report["missing"], ["review-verdict-1"])
+
+    def test_missing_author_association_fails_closed_when_enforced(self):
+        missing_association = {
+            "body": "keel.review-verdict.v1\nreviewer: fixture\nhead: abc123\nLGTM",
+            "user": {"login": "fixture-agent"},
+        }
+        report = evidence.verify(
+            _review_contract(reviewers=1),
+            pr_comments=[_trusted_comment(closure.COMMENT_MARKER), missing_association],
+            issue_comments=[_trusted_comment(closure.COMMENT_MARKER)],
+            head_sha="abc123",
+        )
+
+        self.assertEqual(report["status"], "fail")
+        self.assertEqual(report["counts"]["review_verdict"], 0)
+        self.assertEqual(report["missing"], ["review-verdict-1"])
+
+    def test_missing_author_association_is_accepted_only_when_not_enforced(self):
+        report = evidence.verify(
+            _review_contract(reviewers=1),
+            pr_comments=[
+                {"body": closure.COMMENT_MARKER},
+                {"body": "keel.review-verdict.v1\nreviewer: fixture\nLGTM"},
+            ],
+            issue_comments=[{"body": closure.COMMENT_MARKER}],
+            enforced=False,
+        )
+
         self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["counts"]["closure_pr"], 1)
         self.assertEqual(report["counts"]["review_verdict"], 1)
 
     def test_unknown_item_is_not_present(self):
