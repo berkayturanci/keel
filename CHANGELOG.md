@@ -6,6 +6,14 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **`adapter-status` no longer flags opt-in legacy wrappers as `missing`.** Legacy
+  claude wrappers (`legacy-claude`) are installed only by `install-legacy-wrappers`,
+  so `adapter-status all` previously reported a spurious `missing` row for every
+  never-installed wrapper on a clean install. Uninstalled legacy wrappers are now
+  omitted (treated as *not installed*); installed ones are still freshness-checked.
+  Documented the `legacy-claude` target in the CLI reference. (#260)
+
 ## [1.2.0] — 2026-06-11
 
 ### Added

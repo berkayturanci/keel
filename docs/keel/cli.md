@@ -701,6 +701,7 @@ keel sync --root <repo> --dry-run
 keel sync --root <repo>
 ```
 
+The target is `all` or one of the surfaces `claude`, `skills`, `legacy-claude`.
 `adapter-status` reports:
 
 | status | meaning |
@@ -710,6 +711,12 @@ keel sync --root <repo>
 | `missing` | expected generated file is absent |
 | `locally-modified` | generated file has a marker, but its body changed after install |
 | `unknown` | file exists without a keel generated marker |
+
+Legacy claude wrappers (`legacy-claude`, installed by `install-legacy-wrappers`) are
+**opt-in**: a wrapper that was never installed is reported as *not installed* — it is
+omitted, not flagged `missing` — so a project that never opted in shows no
+`legacy-claude` rows. Installed legacy wrappers are still freshness-checked like any
+other surface.
 
 ### Orphan & unmanaged surfaces
 
