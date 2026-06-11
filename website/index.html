@@ -41,15 +41,15 @@
 
 <header>
   <img src="hero.svg" alt="keel setup installs config, Claude commands, and shared skills for the same workflow backbone" style="width:100%;height:auto;border-radius:12px;margin-bottom:8px">
-  <h1>keel ⚓</h1>
+  <h1>keel <span aria-hidden="true">⚓</span></h1>
   <p class="tag"><b>Keel turns coding agents into work owners.</b> From issue intake to implementation, review, safe merge, closure, and capture hooks.</p>
   <div class="badges">
     <span class="badge"><b>100%</b> line + branch coverage</span>
     <span class="badge">one-command setup</span>
     <span class="badge">stdlib-first · 1 runtime dep</span>
     <span class="badge">Python ≥ 3.11</span>
-    <a class="badge" href="./coverage/">📊 coverage report →</a>
-    <a class="badge" href="https://github.com/berkayturanci/keel">GitHub →</a>
+    <a class="badge" href="./coverage/"><span aria-hidden="true">📊</span> coverage report <span aria-hidden="true">→</span></a>
+    <a class="badge" href="https://github.com/berkayturanci/keel">GitHub <span aria-hidden="true">→</span></a>
   </div>
 </header>
 
@@ -80,15 +80,15 @@
 <h2>The backbone</h2>
 <table>
   <tr><th scope="col">step</th><th scope="col">does</th><th scope="col">primary hooks</th></tr>
-  <tr><td>config → guard</td><td>validate config, select work, branch, and enforce preflight rules</td><td><code>after:config</code>, <code>select</code>, <code>guard</code></td></tr>
-  <tr><td>implement → ci</td><td>agent writes code, classify risk, wait on CI</td><td><code>before:implement</code>, <code>after-implement</code>, <code>classify</code></td></tr>
-  <tr><td>review → test</td><td>parallel reviewers, optional jury, build/lint/test gates</td><td><code>reviewers</code>, <code>tester</code>, <code>test</code></td></tr>
-  <tr><td>fixloop → merge</td><td>bounded fixes, merge-window + lock, pre-merge project gates</td><td><code>fixloop</code>, <code>pre-merge</code>, <code>after:merge</code></td></tr>
-  <tr><td>capture → close</td><td>write reports, post closeout, retire the issue</td><td><code>capture</code>, <code>post-merge</code>, <code>on-close</code></td></tr>
+  <tr><td>config <span aria-hidden="true">→</span> guard</td><td>validate config, select work, branch, and enforce preflight rules</td><td><code>after:config</code>, <code>select</code>, <code>guard</code></td></tr>
+  <tr><td>implement <span aria-hidden="true">→</span> ci</td><td>agent writes code, classify risk, wait on CI</td><td><code>before:implement</code>, <code>after-implement</code>, <code>classify</code></td></tr>
+  <tr><td>review <span aria-hidden="true">→</span> test</td><td>parallel reviewers, optional jury, build/lint/test gates</td><td><code>reviewers</code>, <code>tester</code>, <code>test</code></td></tr>
+  <tr><td>fixloop <span aria-hidden="true">→</span> merge</td><td>bounded fixes, merge-window + lock, pre-merge project gates</td><td><code>fixloop</code>, <code>pre-merge</code>, <code>after:merge</code></td></tr>
+  <tr><td>capture <span aria-hidden="true">→</span> close</td><td>write reports, post closeout, retire the issue</td><td><code>capture</code>, <code>post-merge</code>, <code>on-close</code></td></tr>
 </table>
 
 <h2>Install</h2>
-<pre tabindex="0">pip install keel-workflow
+<pre tabindex="0" role="region" aria-label="Code snippet">pip install keel-workflow
 # provides the `keel` command
 
 pip install "git+https://github.com/berkayturanci/keel@v1.2.2"
@@ -96,7 +96,7 @@ pip install "git+https://github.com/berkayturanci/keel@v1.2.2"
 
 <h2>Quickstart</h2>
 <h3>Set up a consumer repo in one pass</h3>
-<pre tabindex="0">keel setup --root .
+<pre tabindex="0" role="region" aria-label="Code snippet">keel setup --root .
 # writes .keel/project.yaml when missing
 # installs .claude/commands/keel/*
 # installs .agents/skills/keel-*
@@ -104,9 +104,9 @@ pip install "git+https://github.com/berkayturanci/keel@v1.2.2"
 # renders the resolved backbone plan</pre>
 
 <h3>See what ship would do, right now</h3>
-<pre tabindex="0">keel ship .keel/project.yaml --root .
+<pre tabindex="0" role="region" aria-label="Code snippet">keel ship .keel/project.yaml --root .
 # keel ship — myapp  (base main)
-#   risk tier     : TIER-3  → 3 reviewer(s)
+#   risk tier     : TIER-3  <span aria-hidden="true">→</span> 3 reviewer(s)
 #   merge window  : <span class="pill">OPEN</span>
 #   gate build          ok
 #   gate lint           ok
@@ -140,9 +140,9 @@ pip install "git+https://github.com/berkayturanci/keel@v1.2.2"
 <p class="muted">17 agentic workflows ship with the package. <code>keel install-adapter claude</code> installs native Claude commands; <code>keel install-adapter skills</code> installs <em>one shared</em> skill set under <code>.agents/skills/keel-&lt;command&gt;/</code> that every non-Claude agent (Codex, Antigravity, Gemini) reads. Each is project-neutral — behaviour comes from that repo's <code>.keel/project.yaml</code>. Full reference: <a href="https://github.com/berkayturanci/keel/blob/main/docs/keel/commands.md">docs/keel/commands.md</a>.</p>
 <table>
   <tr><th scope="col">command</th><th scope="col">what</th></tr>
-  <tr><td><code>/keel:ship</code></td><td>drive an issue end-to-end (select → branch → implement → CI → review → test → merge → close) — per-round review, inline comments, delegation, jury gate, merge window + lock, attribution; <code>--compound</code> selects the compound-engineering profile that reuses the same backbone with documented s4/s7/s9/s11 step overrides</td></tr>
+  <tr><td><code>/keel:ship</code></td><td>drive an issue end-to-end (select <span aria-hidden="true">→</span> branch <span aria-hidden="true">→</span> implement <span aria-hidden="true">→</span> CI <span aria-hidden="true">→</span> review <span aria-hidden="true">→</span> test <span aria-hidden="true">→</span> merge <span aria-hidden="true">→</span> close) — per-round review, inline comments, delegation, jury gate, merge window + lock, attribution; <code>--compound</code> selects the compound-engineering profile that reuses the same backbone with documented s4/s7/s9/s11 step overrides</td></tr>
   <tr><td><code>/keel:implement</code></td><td>delegate one issue to the right implementer; the s4 implement step standalone</td></tr>
-  <tr><td><code>/keel:review-cycle</code></td><td>multi-reviewer review→fix cycle over open PRs (parallel reviewers, capped fix rounds); does not merge</td></tr>
+  <tr><td><code>/keel:review-cycle</code></td><td>multi-reviewer review<span aria-hidden="true">→</span>fix cycle over open PRs (parallel reviewers, capped fix rounds); does not merge</td></tr>
   <tr><td><code>/keel:pr-loop</code></td><td>iterate an open PR's review comments + CI to green, then hand off to the windowed merge</td></tr>
   <tr><td><code>/keel:review-all-day</code></td><td>time-window diff-review sweep; open one issue per serious finding (read-only otherwise)</td></tr>
   <tr><td><code>/keel:regression</code></td><td>codebase-wide regression scan via parallel per-area subagents; open fix issues, route to ship</td></tr>
@@ -151,7 +151,7 @@ pip install "git+https://github.com/berkayturanci/keel@v1.2.2"
   <tr><td><code>/keel:overnight</code></td><td>unattended overnight block — run ship over the queue until the merge window closes</td></tr>
   <tr><td><code>/keel:wrap</code></td><td>finish a session — run gates, commit, push, open a PR, record a recap</td></tr>
   <tr><td><code>/keel:ci-check</code></td><td>check the latest CI run; on failure diagnose root cause + propose one fix (no auto-apply)</td></tr>
-  <tr><td><code>/keel:coverage</code></td><td>per-PR coverage delta (base→head); flag low-coverage × high-risk hot spots</td></tr>
+  <tr><td><code>/keel:coverage</code></td><td>per-PR coverage delta (base<span aria-hidden="true">→</span>head); flag low-coverage × high-risk hot spots</td></tr>
   <tr><td><code>/keel:deps-audit</code></td><td>dependency security + licence audit; classify and route fixes to ship</td></tr>
   <tr><td><code>/keel:flake-audit</code></td><td>detect intermittently-failing tests from CI history; open one issue per new flake</td></tr>
   <tr><td><code>/keel:stale-prs</code></td><td>find quiet/drifted PRs; triage, comment, optionally rebase (respecting the window)</td></tr>
