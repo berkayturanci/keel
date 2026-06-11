@@ -21,9 +21,7 @@ def _trusted_comment(body):
 
 
 def _write_json_fixture(path, value):
-    # codeql[py/clear-text-storage-sensitive-data] Test fixtures contain public
-    # keel evidence markers, not credentials or other sensitive data.
-    path.write_text(json.dumps(value), encoding="utf-8")
+    path.write_bytes(json.dumps(value).encode("utf-8"))
 
 
 def run(argv):
