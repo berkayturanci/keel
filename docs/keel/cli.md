@@ -122,6 +122,35 @@ keel merge .keel/project.yaml --root . --pr 123 --dry-run \
 
 `--hotfix` is the audited merge-window bypass and still requires explicit consent.
 
+## `keel post-comment <project.yaml> --target issue:N|pr:N --artifact ARTIFACT --body-file FILE [--run-id ID] [--dry-run] [--json]`
+
+Post or update a deterministic GitHub issue/PR artifact comment. `post-comment` reads the
+rendered Markdown from `--body-file`, validates that it contains the marker required by
+`--artifact`, resolves the selected GitHub transport, and then posts through the GitHub
+issue-comments API. PR conversation comments use the same endpoint as issue comments, so
+`--target pr:N` still lands in the PR timeline.
+
+```bash
+keel post-comment .keel/project.yaml --root . \
+  --target pr:456 --artifact review-verdict \
+  --body-file /tmp/review-verdict.md --run-id "$RUN_ID"
+keel post-comment .keel/project.yaml --root . \
+  --target issue:123 --artifact closure-comment \
+  --body-file /tmp/closure-comment.md --run-id "$RUN_ID" --json
+```
+
+Supported artifacts are `closure-comment`, `issue-update`, `review-verdict`,
+`jury-verdict`, `extension-result`, `step-handoff`, and `run-control-halt`. When
+`--run-id` is supplied, the command edits the latest existing comment that has the same
+marker and run id; otherwise it posts a new comment. Bodies that are missing the expected
+marker, or that look like a literal `@/tmp/...` placeholder, are rejected before any
+public write.
+
+Raw adapter `gh issue comment`, `gh pr comment`, and hand-rolled comment API calls are a
+spec violation for ship evidence artifacts: adapters should delegate closure comments,
+issue updates, review verdicts, and jury verdicts to this command so marker validation,
+transport selection, and same-run idempotency are enforced in core.
+
 ## `keel worktree-remove WORKTREE [--root DIR] [--json]`
 
 Safely remove a worktree after validating that the path is nested under the repository root

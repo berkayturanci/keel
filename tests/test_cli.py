@@ -4062,9 +4062,324 @@ class TestParser(unittest.TestCase):
                                  "setup",
                                  "install-adapter",
                                  "adapter-status", "update-adapter", "sync", "project-commands",
-                                 "install-legacy-wrappers"})
+                                 "install-legacy-wrappers", "post-comment"})
         # ship-v2 was removed in favour of the ship --compound profile flag.
         self.assertNotIn("ship-v2", set(actions[0].choices))
+
+
+class TestPostComment(unittest.TestCase):
+    def test_post_comment_reports_missing_and_invalid_config(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+            f.write("extends: keel\n")
+            bad_config = f.name
+        body = _body_file("<!-- keel.issue-update.v1 -->\n")
+
+        rc_missing, _, err_missing = run([
+            "post-comment", "missing.yaml",
+            "--target", "issue:1",
+            "--artifact", "issue-update",
+            "--body-file", body,
+        ])
+        rc_bad, _, err_bad = run([
+            "post-comment", bad_config,
+            "--target", "issue:1",
+            "--artifact", "issue-update",
+            "--body-file", body,
+        ])
+
+        self.assertEqual(rc_missing, 1)
+        self.assertIn("no such config", err_missing)
+        self.assertEqual(rc_bad, 1)
+        self.assertIn("missing required", err_bad)
+
+    def test_post_comment_rejects_invalid_target_and_unreadable_body(self):
+        body = _body_file("<!-- keel.issue-update.v1 -->\n")
+        rc_target, _, err_target = run([
+            "post-comment", str(PROJECTS / "keel.yaml"),
+            "--target", "comment:1",
+            "--artifact", "issue-update",
+            "--body-file", body,
+        ])
+        rc_body, _, err_body = run([
+            "post-comment", str(PROJECTS / "keel.yaml"),
+            "--target", "issue:1",
+            "--artifact", "issue-update",
+            "--body-file", "/tmp/keel-missing-body.md",
+        ])
+
+        self.assertEqual(rc_target, 1)
+        self.assertIn("issue:<number> or pr:<number>", err_target)
+        self.assertEqual(rc_body, 1)
+        self.assertIn("cannot read --body-file", err_body)
+
+    def test_post_comment_rejects_missing_marker(self):
+        body = _body_file("## Missing marker\n")
+        rc, _, err = run([
+            "post-comment", str(PROJECTS / "keel.yaml"),
+            "--target", "issue:247",
+            "--artifact", "issue-update",
+            "--body-file", body,
+        ])
+        self.assertEqual(rc, 1)
+        self.assertIn("must contain marker", err)
+        self.assertIn("keel.issue-update.v1", err)
+
+    def test_post_comment_rejects_literal_body_file_placeholder(self):
+        body = _body_file("@/tmp/report.md <!-- keel.issue-update.v1 -->")
+        rc, _, err = run([
+            "post-comment", str(PROJECTS / "keel.yaml"),
+            "--target", "issue:247",
+            "--artifact", "issue-update",
+            "--body-file", body,
+        ])
+        self.assertEqual(rc, 1)
+        self.assertIn("literal @/path", err)
+
+    def test_post_comment_blocks_missing_capability_and_missing_owner_repo(self):
+        body = _body_file("<!-- keel.issue-update.v1 -->\n")
+        missing_report = runtime.CapabilityReport((
+            runtime.Capability("gh", False, "missing", "test"),
+            runtime.Capability("gh-auth", False, "missing", "test"),
+        ))
+        with patch("keel.cli.runtime.detect", return_value=missing_report):
+            rc_cap, _, err_cap = run([
+                "post-comment", str(PROJECTS / "keel.yaml"),
+                "--target", "issue:1",
+                "--artifact", "issue-update",
+                "--body-file", body,
+            ])
+
+        config = _write_raw(
+            "extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
+            "repo: tmp\ngates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+        )
+        with patch("keel.cli.runtime.detect", return_value=_merge_capability_report()):
+            rc_owner, _, err_owner = run([
+                "post-comment", config,
+                "--target", "issue:1",
+                "--artifact", "issue-update",
+                "--body-file", body,
+            ])
+
+        self.assertEqual(rc_cap, 1)
+        self.assertIn("missing required", err_cap)
+        self.assertEqual(rc_owner, 1)
+        self.assertIn("must define owner and repo", err_owner)
+
+    def test_post_comment_reports_comment_list_failure(self):
+        body = _body_file("<!-- keel.issue-update.v1 -->\n")
+
+        def failing_list(argv, **_kwargs):
+            if argv[:4] == ["gh", "api", "--paginate", "--slurp"]:
+                return Namespace(ok=False, output="rate limited")
+            return Namespace(ok=False, output=f"unexpected {argv}")
+
+        with (
+            patch("keel.cli.runtime.detect", return_value=_merge_capability_report()),
+            patch("keel.cli.run_argv", side_effect=failing_list),
+        ):
+            rc, _, err = run([
+                "post-comment", str(PROJECTS / "keel.yaml"),
+                "--target", "issue:247",
+                "--artifact", "issue-update",
+                "--body-file", body,
+            ])
+        self.assertEqual(rc, 1)
+        self.assertIn("rate limited", err)
+
+    def test_post_comment_posts_marked_body_via_selected_transport(self):
+        calls: list[list[str]] = []
+
+        def fake_run(argv, **_kwargs):
+            calls.append(argv)
+            if argv[:4] == ["gh", "api", "--paginate", "--slurp"]:
+                return Namespace(ok=True, output="[]")
+            if argv[:3] == ["gh", "api", "repos/berkayturanci/keel/issues/247/comments"]:
+                self.assertIn("-f", argv)
+                body_arg = next(item for item in argv if item.startswith("body="))
+                self.assertIn("keel.issue-update.v1", body_arg)
+                self.assertNotIn("--body", argv)
+                return Namespace(ok=True, output=json.dumps({
+                    "id": 42,
+                    "html_url": "https://github.example/comment/42",
+                }))
+            return Namespace(ok=False, output=f"unexpected {argv}")
+
+        body = _body_file("<!-- keel.issue-update.v1 -->\n\nrun-id: abc\n")
+        with (
+            patch("keel.cli.runtime.detect", return_value=_merge_capability_report()),
+            patch("keel.cli.run_argv", side_effect=fake_run),
+            patch("keel.github.run_argv", side_effect=fake_run),
+        ):
+            rc, out, err = run([
+                "post-comment", str(PROJECTS / "keel.yaml"),
+                "--target", "issue:247",
+                "--artifact", "issue-update",
+                "--body-file", body,
+                "--json",
+            ])
+
+        self.assertEqual((rc, err), (0, ""))
+        data = json.loads(out)
+        self.assertEqual(data["action"], "posted")
+        self.assertEqual(data["transport"], "gh")
+        self.assertEqual(data["comment_id"], 42)
+        self.assertTrue(calls)
+
+    def test_post_comment_reports_mutation_failure_and_non_json_success(self):
+        body = _body_file("<!-- keel.issue-update.v1 -->\n")
+
+        def failing_post(argv, **_kwargs):
+            if argv[:4] == ["gh", "api", "--paginate", "--slurp"]:
+                return Namespace(ok=True, output="[]")
+            return Namespace(ok=False, output="")
+
+        with (
+            patch("keel.cli.runtime.detect", return_value=_merge_capability_report()),
+            patch("keel.cli.run_argv", side_effect=failing_post),
+            patch("keel.github.run_argv", side_effect=failing_post),
+        ):
+            rc_fail, _, err_fail = run([
+                "post-comment", str(PROJECTS / "keel.yaml"),
+                "--target", "issue:247",
+                "--artifact", "issue-update",
+                "--body-file", body,
+            ])
+
+        def text_post(argv, **_kwargs):
+            if argv[:4] == ["gh", "api", "--paginate", "--slurp"]:
+                return Namespace(ok=True, output="[]")
+            return Namespace(ok=True, output="created")
+
+        with (
+            patch("keel.cli.runtime.detect", return_value=_merge_capability_report()),
+            patch("keel.cli.run_argv", side_effect=text_post),
+            patch("keel.github.run_argv", side_effect=text_post),
+        ):
+            rc_text, out_text, err_text = run([
+                "post-comment", str(PROJECTS / "keel.yaml"),
+                "--target", "issue:247",
+                "--artifact", "issue-update",
+                "--body-file", body,
+                "--json",
+            ])
+
+        def list_response_post(argv, **_kwargs):
+            if argv[:4] == ["gh", "api", "--paginate", "--slurp"]:
+                return Namespace(ok=True, output="[]")
+            return Namespace(ok=True, output="[]")
+
+        with (
+            patch("keel.cli.runtime.detect", return_value=_merge_capability_report()),
+            patch("keel.cli.run_argv", side_effect=list_response_post),
+            patch("keel.github.run_argv", side_effect=list_response_post),
+        ):
+            rc_list, out_list, err_list = run([
+                "post-comment", str(PROJECTS / "keel.yaml"),
+                "--target", "issue:247",
+                "--artifact", "issue-update",
+                "--body-file", body,
+                "--json",
+            ])
+
+        self.assertEqual(rc_fail, 1)
+        self.assertIn("gh comment mutation failed", err_fail)
+        self.assertEqual((rc_text, err_text), (0, ""))
+        self.assertEqual(json.loads(out_text)["action"], "posted")
+        self.assertEqual((rc_list, err_list), (0, ""))
+        self.assertEqual(json.loads(out_list)["action"], "posted")
+
+    def test_post_comment_edits_existing_same_run_comment(self):
+        existing = [{
+            "id": 99,
+            "body": "<!-- keel.closure-comment.v1 -->\nrun-id: run-1\nold",
+        }]
+        calls: list[list[str]] = []
+
+        def fake_run(argv, **_kwargs):
+            calls.append(argv)
+            if argv[:4] == ["gh", "api", "--paginate", "--slurp"]:
+                return Namespace(ok=True, output=json.dumps([existing]))
+            if argv[:3] == ["gh", "api", "repos/berkayturanci/keel/issues/comments/99"]:
+                self.assertIn("PATCH", argv)
+                return Namespace(ok=True, output=json.dumps({"id": 99}))
+            return Namespace(ok=False, output=f"unexpected {argv}")
+
+        body = _body_file("<!-- keel.closure-comment.v1 -->\n\nrun-id: run-1\nnew\n")
+        with (
+            patch("keel.cli.runtime.detect", return_value=_merge_capability_report()),
+            patch("keel.cli.run_argv", side_effect=fake_run),
+            patch("keel.github.run_argv", side_effect=fake_run),
+        ):
+            rc, out, err = run([
+                "post-comment", str(PROJECTS / "keel.yaml"),
+                "--target", "pr:123",
+                "--artifact", "closure-comment",
+                "--body-file", body,
+                "--run-id", "run-1",
+                "--json",
+            ])
+
+        self.assertEqual((rc, err), (0, ""))
+        data = json.loads(out)
+        self.assertEqual(data["action"], "edited")
+        self.assertEqual(data["comment_id"], 99)
+
+    def test_post_comment_dry_run_and_bad_existing_comment_id(self):
+        body = _body_file("<!-- keel.closure-comment.v1 -->\n\nrun-id: run-1\n")
+        existing = [{"id": "bad", "body": "<!-- keel.closure-comment.v1 -->\nrun-id: run-1"}]
+
+        def fake_list(argv, **_kwargs):
+            self.assertEqual(argv[:4], ["gh", "api", "--paginate", "--slurp"])
+            return Namespace(ok=True, output=json.dumps([existing]))
+
+        with (
+            patch("keel.cli.runtime.detect", return_value=_merge_capability_report()),
+            patch("keel.cli.run_argv", side_effect=fake_list),
+        ):
+            rc_dry, out_dry, err_dry = run([
+                "post-comment", str(PROJECTS / "keel.yaml"),
+                "--target", "pr:123",
+                "--artifact", "closure-comment",
+                "--body-file", body,
+                "--run-id", "run-1",
+                "--dry-run",
+            ])
+            rc_bad, _, err_bad = run([
+                "post-comment", str(PROJECTS / "keel.yaml"),
+                "--target", "pr:123",
+                "--artifact", "closure-comment",
+                "--body-file", body,
+                "--run-id", "run-1",
+            ])
+
+        self.assertEqual((rc_dry, err_dry), (0, ""))
+        self.assertIn("keel post-comment", out_dry)
+        self.assertIn("comment       : bad", out_dry)
+        self.assertEqual(rc_bad, 1)
+        self.assertIn("missing an integer id", err_bad)
+
+    def test_post_comment_match_helpers_cover_skip_paths(self):
+        comments = [
+            {"id": 1, "body": ""},
+            {"id": 2, "body": "<!-- keel.issue-update.v1 -->\nrun-id: other"},
+            {"id": 3, "body": "<!-- keel.issue-update.v1 -->\n<!-- keel.run-id: abc -->"},
+        ]
+        self.assertIsNone(cli._find_comment_match(
+            comments, marker="<!-- keel.issue-update.v1 -->", run_id=None
+        ))
+        match = cli._find_comment_match(
+            comments, marker="<!-- keel.issue-update.v1 -->", run_id="abc"
+        )
+        self.assertEqual(match["id"], 3)
+        payload = {"target": "raw", "artifact": "issue-update", "transport": "gh"}
+        out, err = io.StringIO(), io.StringIO()
+        args = Namespace(json=False)
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = cli._finish_post_comment(args, payload, code=0)
+        self.assertEqual(rc, 0)
+        self.assertEqual(err.getvalue(), "")
+        self.assertIn("raw", out.getvalue())
 
 
 def _merge_capability_report():
@@ -4075,6 +4390,12 @@ def _merge_capability_report():
         runtime.Capability("gh", True, "ok", "test"),
         runtime.Capability("gh-auth", True, "ok", "test"),
     ))
+
+
+def _body_file(text: str) -> str:
+    with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:
+        f.write(text)
+        return f.name
 
 
 def _merge_args(*, root: str | None = None, json_out: bool = False, dry_run: bool = False):

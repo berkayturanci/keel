@@ -344,10 +344,13 @@ panel is downgraded to advisory (count distinct participating vendors before ass
 verdict so the posted comment matches what is enforced), and any jury run that did not
 complete cleanly **never gates**. Honour `--review-comments` (pass the jury's native inline
 flag through in inline mode, never under `--dry-run`). The orchestrator MUST POST the
-single jury summary/verdict comment to the GitHub PR via a body-file (for example,
-`gh pr comment <PR_ID> --body-file <file>` when `gh` is the selected transport). Never
-interpolate report text into a shell argument. Re-runs use the jury's incremental/cache
-flags to stay cheap.
+single jury summary/verdict comment to the GitHub PR through `keel post-comment`:
+`keel post-comment .keel/project.yaml --root . --target pr:<PR> --artifact jury-verdict
+--body-file <file> --run-id "$RUN_ID"`. Raw `gh pr comment`, `gh issue comment`, or
+hand-rolled comment API calls are spec violations for jury/review/closure/issue-update
+artifacts because they bypass marker validation, transport selection, and same-run
+idempotency. Never interpolate report text into a shell argument. Re-runs use the jury's
+incremental/cache flags to stay cheap.
 
 ### s9 fixloop
 While there are blocking findings and the budget (**≤3 review-fix rounds**) is not spent:
@@ -400,14 +403,18 @@ queue. The merge lock and "never `gh pr merge` outside s10" are non-negotiable i
 ### s11 capture
 Record the run for `/keel:wrap`: the **effective** implementer + reviewer vendors/models,
 tier, rounds, window decision, and outcome. Post the **closure comment** to **both** the
-issue and the PR as distinct comments. The PR closure comment MUST be a PR conversation
-comment, not appended to or folded into the PR body, and not represented by the automated
-`keel ship` CI assessment block. Render it deterministically from the `ship_run` ledger
-record via the `result.closure_comment` field of `keel ship --json` (the
+issue and the PR as distinct comments through `keel post-comment` with
+`--artifact closure-comment` and the same `--run-id`. The PR closure comment MUST be a PR
+conversation comment, not appended to or folded into the PR body, and not represented by
+the automated `keel ship` CI assessment block. Render it deterministically from the
+`ship_run` ledger record via the `result.closure_comment` field of `keel ship --json` (the
 `contract.closure_comment` contract describes its stable marker plus sections: heading,
 Implementer `vendor (model)`, Reviewers — noting AI Jury when present, Tester, PR number,
 changed files, capture outcome, run id). Do **not** hand-write closure prose: post the
 rendered markdown verbatim so the issue and PR comments mirror the ledger byte-for-byte.
+Use `keel post-comment` for issue-update, review-verdict, jury-verdict, and
+closure-comment artifacts; a malformed body missing its marker must stop the step before
+any public comment is posted.
 Run any post-merge
 `capture` Lego (e.g. durable-learning capture: classify the merged PR's signal, optionally
 file a follow-up issue or hand off to a project-owned destination) fail-soft, emit its

@@ -334,10 +334,10 @@ class TestInstallAll(unittest.TestCase):
                         "automated `keel ship` CI assessment block is not a substitute",
                         text,
                     )
-                    self.assertIn("PR closure comment MUST be a PR conversation", text)
+                    self.assertIn("PR closure comment MUST be a PR\nconversation", text)
                     self.assertIn("not appended to or folded into the PR body", text)
                     self.assertIn("single jury summary/verdict comment", text)
-                    self.assertIn("GitHub PR via a body-file", text)
+                    self.assertIn("through `keel post-comment`", text)
 
     def test_generated_surfaces_are_idempotent_and_force_overwrites(self):
         with tempfile.TemporaryDirectory() as d:
@@ -514,10 +514,10 @@ class TestClaudeCodePlugin(unittest.TestCase):
         self.assertIn("TIER-1 single-reviewer path", body)
         self.assertIn("rich PR body is not a substitute", body)
         self.assertIn("automated `keel ship` CI assessment block is not a substitute", body)
-        self.assertIn("PR closure comment MUST be a PR conversation", body)
+        self.assertIn("PR closure comment MUST be a PR\nconversation", body)
         self.assertIn("not appended to or folded into the PR body", body)
         self.assertIn("single jury summary/verdict comment", body)
-        self.assertIn("GitHub PR via a body-file", body)
+        self.assertIn("through `keel post-comment`", body)
 
     def test_committed_plugin_files_match_generator(self):
         """Drift guard: the committed commands/*.md must equal the generator output."""

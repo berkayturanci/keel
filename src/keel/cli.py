@@ -18,9 +18,11 @@ from pathlib import Path
 
 from . import (
     __version__,
+    artifacts,
     capture,
     checkpoint,
     classify,
+    closure,
     consent,
     contracts,
     evidence,
@@ -893,6 +895,102 @@ def _cmd_runcontrols(args: argparse.Namespace) -> int:
     return 0 if report["status"] == "pass" else 1
 
 
+def _cmd_post_comment(args: argparse.Namespace) -> int:
+    try:
+        config = cfg.load_config(args.path)
+    except FileNotFoundError:
+        print(f"no such config: {args.path}", file=sys.stderr)
+        return 1
+    except cfg.ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    marker = _comment_artifact_marker(args.artifact)
+    try:
+        target_kind, target_number = _parse_comment_target(args.target)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    try:
+        body = Path(args.body_file).read_text(encoding="utf-8")
+    except OSError as exc:
+        print(f"cannot read --body-file {args.body_file}: {exc}", file=sys.stderr)
+        return 1
+    if marker not in body:
+        print(
+            f"body for artifact {args.artifact} must contain marker {marker}",
+            file=sys.stderr,
+        )
+        return 1
+    if _looks_like_body_file_literal(body):
+        print(
+            "body appears to be a literal @/path reference; pass rendered markdown, "
+            "not a shell-expanded placeholder",
+            file=sys.stderr,
+        )
+        return 1
+
+    report = runtime.detect(args.root)
+    evaluation = runtime.evaluate(
+        runtime.CapabilityRequirement(required=("gh", "gh-auth")), report
+    )
+    transport = github_transport.resolve(report)
+    if not evaluation.ok or not transport.supports("comments"):
+        print(evaluation.render(), file=sys.stderr)
+        print(transport.render(), file=sys.stderr)
+        return 1
+    try:
+        owner_repo = _owner_repo(config)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    try:
+        existing = _gh_json_list(
+            ["repos", owner_repo, "issues", str(target_number), "comments"], cwd=args.root
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    match = _find_comment_match(existing, marker=marker, run_id=args.run_id)
+    payload: dict[str, object] = {
+        "schema_version": "keel.post-comment.v1",
+        "target": {"kind": target_kind, "number": target_number},
+        "artifact": args.artifact,
+        "marker": marker,
+        "transport": transport.name,
+        "run_id": args.run_id,
+        "dry_run": args.dry_run,
+    }
+    if args.dry_run:
+        payload["action"] = "edit" if match else "post"
+        payload["comment_id"] = match.get("id") if match else None
+        return _finish_post_comment(args, payload, code=0)
+
+    if match:
+        comment_id = match.get("id")
+        if not isinstance(comment_id, int):
+            print("matching comment is missing an integer id", file=sys.stderr)
+            return 1
+        result = github.edit_issue_comment(owner_repo, comment_id, body, cwd=args.root)
+        payload["action"] = "edited"
+        payload["comment_id"] = comment_id
+    else:
+        result = github.post_issue_comment(owner_repo, target_number, body, cwd=args.root)
+        payload["action"] = "posted"
+    if not result.ok:
+        print(result.output.strip() or "gh comment mutation failed", file=sys.stderr)
+        return 1
+    try:
+        response = json.loads(result.output or "{}")
+    except json.JSONDecodeError:
+        response = {}
+    if isinstance(response, dict):
+        payload["comment_id"] = response.get("id", payload.get("comment_id"))
+        payload["html_url"] = response.get("html_url")
+    return _finish_post_comment(args, payload, code=0)
+
+
 def _cmd_evidence_verify(args: argparse.Namespace) -> int:
     try:
         config = cfg.load_config(args.path)
@@ -1594,6 +1692,75 @@ def _owner_repo(config: cfg.ProjectConfig) -> str:
     if not config.owner or not config.repo:
         raise ValueError("project config must define owner and repo for live evidence fetch")
     return f"{config.owner}/{config.repo}"
+
+
+def _comment_artifact_marker(artifact: str) -> str:
+    markers = {
+        "closure-comment": closure.COMMENT_MARKER,
+        "issue-update": artifacts.ISSUE_UPDATE_MARKER,
+        "review-verdict": evidence.REVIEW_VERDICT_MARKER,
+        "jury-verdict": evidence.JURY_VERDICT_MARKER,
+        "extension-result": artifacts.EXTENSION_RESULT_MARKER,
+        "step-handoff": artifacts.STEP_HANDOFF_MARKER,
+        "run-control-halt": artifacts.RUN_CONTROL_HALT_MARKER,
+    }
+    return markers[artifact]
+
+
+def _parse_comment_target(raw: str) -> tuple[str, int]:
+    match = re.fullmatch(r"(?P<kind>issue|pr):(?P<number>[1-9]\d*)", raw.strip())
+    if not match:
+        raise ValueError("--target must use issue:<number> or pr:<number>")
+    return match.group("kind"), int(match.group("number"))
+
+
+def _looks_like_body_file_literal(body: str) -> bool:
+    stripped = body.strip()
+    return bool(re.fullmatch(r"@(?:/|~|\.\.?/).+", stripped))
+
+
+def _find_comment_match(
+    comments: list[dict[str, object]],
+    *,
+    marker: str,
+    run_id: str | None,
+) -> dict[str, object] | None:
+    if run_id is None:
+        return None
+    matches: list[dict[str, object]] = []
+    for comment in comments:
+        body = comment.get("body")
+        if not isinstance(body, str) or marker not in body:
+            continue
+        if not _comment_has_run_id(body, run_id):
+            continue
+        matches.append(comment)
+    return matches[-1] if matches else None
+
+
+def _comment_has_run_id(body: str, run_id: str) -> bool:
+    patterns = (
+        rf"^\s*(?:run[-_ ]?id)\s*:\s*{re.escape(run_id)}\s*$",
+        rf"<!--\s*keel\.run-id:\s*{re.escape(run_id)}\s*-->",
+    )
+    return any(re.search(pattern, body, re.IGNORECASE | re.MULTILINE) for pattern in patterns)
+
+
+def _finish_post_comment(args: argparse.Namespace, payload: dict[str, object], *, code: int) -> int:
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        target = payload["target"]
+        if isinstance(target, dict):
+            rendered_target = f"{target.get('kind')}:{target.get('number')}"
+        else:
+            rendered_target = str(target)
+        print(f"keel post-comment — {payload.get('action')}  {rendered_target}")
+        print(f"  artifact      : {payload.get('artifact')}")
+        print(f"  transport     : {payload.get('transport')}")
+        if payload.get("comment_id") is not None:
+            print(f"  comment       : {payload.get('comment_id')}")
+    return code
 
 
 def _read_optional_text(path: str | None) -> str:
@@ -2424,6 +2591,37 @@ def build_parser() -> argparse.ArgumentParser:
                       help="evaluate without appending the event")
     p_rc.add_argument("--json", action="store_true", help="emit structured JSON")
     p_rc.set_defaults(func=_cmd_runcontrols)
+
+    p_post = sub.add_parser(
+        "post-comment",
+        help="post or update a deterministic GitHub issue/PR artifact comment",
+    )
+    p_post.add_argument("path", help="path to project.yaml")
+    p_post.add_argument("--root", default=".", help="repo root for GitHub operations")
+    p_post.add_argument("--target", required=True, help="comment target as issue:N or pr:N")
+    p_post.add_argument(
+        "--artifact",
+        required=True,
+        choices=(
+            "closure-comment",
+            "issue-update",
+            "review-verdict",
+            "jury-verdict",
+            "extension-result",
+            "step-handoff",
+            "run-control-halt",
+        ),
+        help="artifact contract expected in --body-file",
+    )
+    p_post.add_argument("--body-file", required=True, help="rendered markdown body to post")
+    p_post.add_argument(
+        "--run-id",
+        default=None,
+        help="update the existing same-marker comment for this run id when present",
+    )
+    p_post.add_argument("--dry-run", action="store_true", help="plan only; do not mutate GitHub")
+    p_post.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_post.set_defaults(func=_cmd_post_comment)
 
     p_evidence = sub.add_parser(
         "evidence-verify",
