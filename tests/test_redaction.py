@@ -162,6 +162,86 @@ class CredentialAssignmentRedactionTest(unittest.TestCase):
         self.assertEqual(result.value, "API_KEY=[REDACTED:credential]")
         self.assertEqual(_rule_count(result.audit, "credential-assignment"), 1)
 
+    def test_json_quoted_key_is_redacted(self) -> None:
+        """A JSON-quoted key redacts cleanly, with no orphaned surrounding quote."""
+        result = redaction.sanitize('{"api_key": "abcdef123456"}', self.policy)
+
+        self.assertEqual(result.value, "{api_key=[REDACTED:credential]}")
+        self.assertEqual(_rule_count(result.audit, "credential-assignment"), 1)
+
+    def test_compact_json_redacts_only_the_secret_field(self) -> None:
+        """A compact JSON object keeps sibling fields; only the secret is removed."""
+        result = redaction.sanitize('{"api_key":"secret1234","x":"y"}', self.policy)
+
+        self.assertEqual(result.value, '{api_key=[REDACTED:credential],"x":"y"}')
+        self.assertNotIn("secret1234", result.value)
+        self.assertIn('"x":"y"', result.value)
+
+    def test_short_quoted_status_values_are_not_redacted(self) -> None:
+        """Short quoted values (status strings, not secrets) keep the 8-char floor."""
+        for line in ('token="none"', 'token=""', 'api_key="n/a"',
+                     'password="test"', 'token: "ok"'):
+            result = redaction.sanitize(line, self.policy)
+            self.assertEqual(result.value, line)
+            self.assertEqual(_rule_count(result.audit, "credential-assignment"), 0)
+
+    def test_unbalanced_double_quote_value_is_redacted(self) -> None:
+        """An unbalanced opening quote no longer defeats redaction (leak fix)."""
+        result = redaction.sanitize('password="hunter2secretvalue', self.policy)
+
+        self.assertEqual(result.value, "password=[REDACTED:credential]")
+        self.assertNotIn("hunter2secretvalue", result.value)
+
+    def test_unbalanced_single_quote_value_is_redacted(self) -> None:
+        result = redaction.sanitize("token='abcdefghij", self.policy)
+
+        self.assertEqual(result.value, "token=[REDACTED:credential]")
+        self.assertNotIn("abcdefghij", result.value)
+
+    def test_yaml_style_colon_assignment_is_redacted(self) -> None:
+        result = redaction.sanitize("password: longsecretvalue", self.policy)
+
+        self.assertEqual(result.value, "password=[REDACTED:credential]")
+
+    def test_secret_value_under_token_suffixed_key_is_redacted(self) -> None:
+        """A genuine opaque value keeps matching even with a prefixed key."""
+        result = redaction.sanitize("my_access_token=ya29.A0ARrdaMexamplevalue", self.policy)
+
+        self.assertEqual(result.value, "my_access_token=[REDACTED:credential]")
+
+    def test_function_call_value_is_left_intact(self) -> None:
+        """A call expression assigned to a credential-named var is not mangled."""
+        for code in (
+            "token = get_token()",
+            "access_token = response.json()",
+            "pwd = os.getcwd()",
+        ):
+            result = redaction.sanitize(code, self.policy)
+            self.assertEqual(result.value, code)
+            self.assertEqual(_rule_count(result.audit, "credential-assignment"), 0)
+
+    def test_subscript_expression_value_is_left_intact(self) -> None:
+        """A subscript expression is not redacted or mangled mid-string."""
+        code = "csrf_token = request.headers['X-CSRF']"
+        result = redaction.sanitize(code, self.policy)
+
+        self.assertEqual(result.value, code)
+
+    def test_env_and_command_references_are_left_intact(self) -> None:
+        """``${...}`` / ``$(...)`` references are not literal secrets — keep them."""
+        for ref in ("password: ${DB_PASSWORD}", "token=$(cat secret)"):
+            result = redaction.sanitize(ref, self.policy)
+            self.assertEqual(result.value, ref)
+
+    def test_unbalanced_quote_value_completes_quickly(self) -> None:
+        """The possessive value run cannot backtrack catastrophically."""
+        import time
+
+        value = 'password="' + ("a" * 500000)
+        start = time.perf_counter()
+        redaction.sanitize(value, self.policy)
+        self.assertLess(time.perf_counter() - start, 2.0)
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

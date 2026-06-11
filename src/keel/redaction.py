@@ -61,10 +61,26 @@ _DEFAULT_RULES: tuple[tuple[str, str, str], ...] = (
         r"\1[REDACTED:credentials]@",
     ),
     (
+        # Matches ``KEY=value`` / ``KEY: value`` / ``"key": "value"`` credential
+        # assignments. The optional quote on each side of the key consumes a JSON
+        # key's surrounding quotes (so ``{"api_key": …}`` redacts cleanly without an
+        # orphaned quote); the key itself may carry an arbitrary prefix
+        # (``ANTHROPIC_API_KEY``). The value matches, in order: a balanced double- or
+        # single-quoted string of 8+ chars (spaces allowed), or an unquoted run of
+        # 8+ chars whose leading ``["']?`` also catches an *unbalanced* opening quote
+        # (``KEY="secret`` with no close), closing that leak. The 8-char floor on
+        # every arm keeps short status strings (``token: "none"``, ``api_key=""``)
+        # from being redacted. The value class excludes code brackets, and the
+        # possessive run plus ``(?![(\[])`` tail rejects call / subscript expressions
+        # (``token = get_token()``) instead of mangling them; a value cannot start
+        # with ``$``, so ``${...}`` / ``$(...)`` references are left intact. The
+        # replacement normalises the separator to ``=`` (a ``KEY: secret`` colon form
+        # renders as ``KEY=[REDACTED:credential]``).
         "credential-assignment",
-        r"(?i)\b([A-Za-z0-9_-]*(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|"
+        r"(?i)[\"']?\b([A-Za-z0-9_-]*(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|"
         r"secret[_-]?access[_-]?key|secret[_-]?key|token|secret|password|passwd|pwd)"
-        r")\b\s*[:=]\s*([\"']?)[^\s\"']{8,}\2",
+        r")\b[\"']?\s*[:=]\s*"
+        r"(?:\"[^\"\n]{8,}\"|'[^'\n]{8,}'|[\"']?[^\s\"'(){}\[\]$,;]{8,}+(?![(\[]))",
         r"\1=[REDACTED:credential]",
     ),
     (

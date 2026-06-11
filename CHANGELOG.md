@@ -13,6 +13,15 @@ All notable changes to keel are documented here. The format follows
   never-installed wrapper on a clean install. Uninstalled legacy wrappers are now
   omitted (treated as *not installed*); installed ones are still freshness-checked.
   Documented the `legacy-claude` target in the CLI reference. (#260)
+- **Capture redaction — close credential leaks and stop mangling code.** The
+  `credential-assignment` rule now redacts JSON-quoted keys (`"api_key": "…"`) and
+  values opened with an unbalanced quote (`KEY="secret` with no close), both of which
+  previously leaked. The value matcher consumes a complete quoted string or a possessive
+  unquoted run and rejects function-call / subscript expressions (`token = get_token()`,
+  `csrf_token = request.headers['X-CSRF']`) and `${…}` / `$(…)` references instead of
+  mangling them mid-string. An 8-character floor on every value arm keeps short
+  status strings (`token: "none"`, `api_key=""`) intact, and JSON keys redact
+  cleanly with no orphaned quote. Compact JSON keeps its sibling fields. (#257, #261)
 - **Jury gate no longer skips oversize diffs silently.** A diff over
   `MAX_DIFF_BYTES` (1 MB) still passes the jury gate (fail-soft), but now emits a
   non-blocking `nit` advisory finding (`jury:skipped-oversize`) so the skip surfaces
