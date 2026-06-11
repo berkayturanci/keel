@@ -65,14 +65,15 @@ def available(*, cwd: str | None = None, _run=None) -> bool:
     return run_argv(["jury", "--version"], cwd=cwd, timeout=30, **_kw(_run)).ok
 
 
-def _oversize_finding(size: int) -> Finding:
-    """An advisory finding recording that the jury gate skipped an oversize diff.
+def _oversize_finding(size: int, *, severity: str = "nit") -> Finding:
+    """Record that the jury gate skipped an oversize diff.
 
-    The skip is non-blocking (``nit``) but no longer silent: it surfaces in the
-    posted jury verdict so an oversize diff cannot dodge the jury stage unobserved.
+    Advisory jury mode keeps the finding non-blocking (``nit``). Gating jury mode
+    escalates it to ``major`` so an oversize diff cannot bypass the blocking
+    cross-vendor review gate.
     """
     return Finding(
-        severity="nit",
+        severity=severity,
         message=(f"jury skipped: diff is {size} bytes, over the {MAX_DIFF_BYTES}-byte "
                  "limit (ai-jury large-diff chunking not applied)"),
         source="jury:skipped-oversize",
@@ -82,18 +83,27 @@ def _oversize_finding(size: int) -> Finding:
     )
 
 
-def run_gate(diff_text: str, *, cwd: str | None = None, _run=None) -> tuple[bool, list[Finding]]:
+def run_gate(
+    diff_text: str,
+    *,
+    cwd: str | None = None,
+    mode: str = "advisory",
+    _run=None,
+) -> tuple[bool, list[Finding]]:
     """Run ``jury`` on ``diff_text`` and map its findings.
 
     Returns ``(ok, findings)``; ``ok`` is False only when a finding blocks
     (critical/major). Fail-soft no-op (``(True, [])``) when there is no diff or the
-    ``jury`` CLI is not installed. An oversize diff also passes (``ok`` True) but
-    emits a non-blocking advisory finding so the skip is observable, not silent.
+    ``jury`` CLI is not installed. In advisory mode, an oversize diff passes but
+    emits a non-blocking advisory finding. In gating mode, an oversize diff fails
+    closed with a blocking finding.
     """
     if not diff_text:
         return True, []
     size = len(diff_text.encode("utf-8"))
     if size > MAX_DIFF_BYTES:
+        if mode == "gating":
+            return False, [_oversize_finding(size, severity="major")]
         return True, [_oversize_finding(size)]
     if not available(cwd=cwd, _run=_run):
         return True, []

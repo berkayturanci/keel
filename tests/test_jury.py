@@ -101,6 +101,19 @@ class TestRunGate(unittest.TestCase):
         self.assertEqual(findings[0].source, "jury:skipped-oversize")
         self.assertIn("over the", findings[0].message)
 
+    def test_oversized_diff_blocks_in_gating_mode(self):
+        def fail_if_called(argv, **kw):
+            raise AssertionError(f"unexpected jury call: {argv}")
+
+        ok, findings = jury.run_gate(
+            "x" * (jury.MAX_DIFF_BYTES + 1), mode="gating", _run=fail_if_called
+        )
+
+        self.assertFalse(ok)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].severity, "major")
+        self.assertEqual(findings[0].source, "jury:skipped-oversize")
+
     def test_present_blocks_on_major(self):
         ok, fs = jury.run_gate("some diff", _run=_jury_ok)
         self.assertFalse(ok)

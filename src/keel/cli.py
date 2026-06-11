@@ -51,13 +51,13 @@ from .gates import GateSpec
 from .runner import command_gate_runner, run_argv
 
 
-def _gate_runner(root: str, diff_text: str):
+def _gate_runner(root: str, diff_text: str, *, jury_mode: str = "gating"):
     """A gate runner that handles command gates plus the ``jury`` built-in (on the diff)."""
     commands = command_gate_runner(root)
 
     def run(spec: GateSpec):
         if spec.kind == "builtin" and spec.id == "jury":
-            return jury.run_gate(diff_text, cwd=root)
+            return jury.run_gate(diff_text, cwd=root, mode=jury_mode)
         return commands(spec)
 
     return run
@@ -216,7 +216,7 @@ def _cmd_run_gates(args: argparse.Namespace) -> int:
         print(evaluation.render(), file=sys.stderr)
 
     diff_text = git.diff(config.base_branch, "HEAD", cwd=args.root)
-    outcomes = gates.run_gates(specs, _gate_runner(args.root, diff_text))
+    outcomes = gates.run_gates(specs, _gate_runner(args.root, diff_text, jury_mode="gating"))
     for o in outcomes:
         status = "ok" if o.ok else "FAIL"
         print(f"  {status:>4}  {o.gate}")
@@ -533,6 +533,21 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         return 1
 
     changed = git.changed_files(config.base_branch, "HEAD", cwd=args.root)
+    tier = classify.tier_for_files(
+        changed,
+        tier3_globs=config.knobs.tier3_globs,
+        docs_globs=config.knobs.docs_gate_paths,
+    )
+    review_contract = ship.resolve_review_contract(
+        tier=tier,
+        reviewer_override=args.reviewers,
+        review_comments=args.review_comments,
+        gates=config.gates,
+        policy_pack=config.policy_pack,
+        jury=args.jury,
+        no_jury=args.no_jury,
+        jury_advisory=args.jury_advisory,
+    )
     # unreachable: orch.build_plan() above already calls plan_gates and surfaces GateError.
     try:
         specs = gates.plan_gates(config, loaded)
@@ -540,7 +555,10 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
     diff_text = git.diff(config.base_branch, "HEAD", cwd=args.root)
-    outcomes = gates.run_gates(specs, _gate_runner(args.root, diff_text))
+    outcomes = gates.run_gates(
+        specs,
+        _gate_runner(args.root, diff_text, jury_mode=review_contract["jury"]["mode"]),
+    )
     verdict = fnd.summarize(gates.collect_findings(outcomes))
     ci_conclusion = (
         github.ci_conclusion(args.pr, cwd=args.root)
