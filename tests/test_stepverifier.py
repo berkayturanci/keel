@@ -74,7 +74,33 @@ class TestHandoffBuilder(unittest.TestCase):
         self.assertEqual(handoff["step_name"], "review")
         self.assertEqual(handoff["status"], "complete")
         self.assertEqual(handoff["producer"], "codex-reviewer")
+        self.assertEqual(
+            handoff["provenance"]["schema_version"],
+            "keel.agent-output-provenance.v1",
+        )
+        self.assertFalse(handoff["provenance"]["trusted_as_instructions"])
+        self.assertEqual(handoff["provenance"]["source"]["agent_id"], "codex-reviewer")
+        self.assertEqual(handoff["provenance"]["source"]["step_id"], "s7")
         self.assertIn("<!-- keel.step-handoff.v1 -->", handoff["rendered"])
+
+    def test_build_handoff_records_vendor_model_and_capability_scope(self):
+        handoff = stepverifier.build_handoff(
+            step_id="s7",
+            producer="reviewer-a",
+            vendor="openai",
+            model_name="gpt-5",
+            allowed_capabilities=("github-read", "", "filesystem-read", "github-read"),
+        )
+
+        self.assertEqual(handoff["provenance"]["source"]["vendor"], "openai")
+        self.assertEqual(handoff["provenance"]["source"]["model"], "gpt-5")
+        self.assertEqual(
+            handoff["provenance"]["capability_scope"]["allowed_capabilities"],
+            ["filesystem-read", "github-read"],
+        )
+        self.assertFalse(
+            handoff["provenance"]["capability_scope"]["can_expand_capabilities"]
+        )
 
     def test_unknown_step_fails_closed_by_raising(self):
         with self.assertRaises(KeyError):

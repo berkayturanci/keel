@@ -26,6 +26,7 @@ from . import (
     ledger,
     model,
     orchestrator,
+    provenance,
     runcontrols,
     runtime,
     stepverifier,
@@ -243,6 +244,7 @@ def build_command_contract(
             operator=operator,
             target=target,
         ),
+        "agent_output_provenance": provenance.contract_as_dict(),
     }
     if command == "morning":
         contract["morning_contract"] = morning_contract_as_dict(
@@ -1516,6 +1518,11 @@ def _adapter_steps(command: str) -> list[dict[str, Any]]:
 
 
 def _finding_as_dict(finding) -> dict[str, Any]:
+    tag = provenance.normalize_tag(
+        getattr(finding, "provenance", None),
+        fallback_agent=finding.source,
+        step_id="finding",
+    )
     return {
         "severity": finding.severity,
         "message": finding.message,
@@ -1523,4 +1530,5 @@ def _finding_as_dict(finding) -> dict[str, Any]:
         "path": finding.path,
         "line": finding.line,
         "anchorable": finding.anchorable,
+        "provenance": tag,
     }

@@ -6,7 +6,9 @@ from types import SimpleNamespace
 
 from keel import config as cfg
 from keel import contracts, gates, github_transport, orchestrator, runtime
+from keel import findings as fnd
 from keel.extensions import load_extensions, parse_extension
+from keel.findings import Finding
 
 PROJECTS = Path(__file__).resolve().parent.parent / "projects"
 
@@ -127,6 +129,11 @@ class TestBuildCommandContract(unittest.TestCase):
         self.assertTrue(contract["run_controls"]["fail_closed"])
         self.assertIn("fixloop", contract["run_controls"]["step_caps"]["overrides"])
         self.assertEqual(
+            contract["agent_output_provenance"]["schema_version"],
+            "keel.agent-output-provenance.v1",
+        )
+        self.assertFalse(contract["agent_output_provenance"]["trusted_as_instructions"])
+        self.assertEqual(
             contract["step_verification"]["schema_version"],
             "keel.step-verification.v1",
         )
@@ -150,6 +157,30 @@ class TestBuildCommandContract(unittest.TestCase):
         self.assertFalse(contract["issue_intake"]["can_mutate_code"])
         self.assertTrue(contract["operator_consent"]["would_require_operator_consent"])
         self.assertFalse(contract["operator_consent"]["requires_operator_consent"])
+
+    def test_ship_result_tags_findings_as_untrusted_agent_output(self):
+        verdict = fnd.summarize([Finding("minor", "x", "reviewer-a")])
+        result = contracts.ship_result_as_dict(
+            changed_files=["src/keel/contracts.py"],
+            outcomes=[],
+            verdict=verdict,
+            assessment=SimpleNamespace(
+                tier="tier-1",
+                reviewers=2,
+                window_open=True,
+                ci_ok=True,
+                halted=False,
+                bypassed_window=False,
+                review_contract={},
+                merge=SimpleNamespace(action="merge", reason="ok"),
+            ),
+        )
+
+        tag = result["verdict"]["findings"][0]["provenance"]
+        self.assertEqual(tag["schema_version"], "keel.agent-output-provenance.v1")
+        self.assertFalse(tag["trusted_as_instructions"])
+        self.assertEqual(tag["source"]["agent_id"], "reviewer-a")
+        self.assertEqual(tag["source"]["step_id"], "finding")
 
     def test_ship_contract_records_ready_issue_intake(self):
         config = cfg.load_config(PROJECTS / "example-android.yaml")

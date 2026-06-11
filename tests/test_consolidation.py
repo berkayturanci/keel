@@ -452,6 +452,11 @@ class TestCliShipJsonFindings(unittest.TestCase):
         finding = verdict["findings"][0]
         for key in ("severity", "message", "source", "path", "line", "anchorable"):
             self.assertIn(key, finding)
+        self.assertEqual(
+            finding["provenance"]["schema_version"],
+            "keel.agent-output-provenance.v1",
+        )
+        self.assertFalse(finding["provenance"]["trusted_as_instructions"])
 
 
 class TestCliCapabilities(unittest.TestCase):

@@ -55,6 +55,7 @@ Every contract includes:
 | `run_ledger` | Structured JSONL run-ledger storage and schema contract. |
 | `checkpoint` | Resumable checkpoint storage and resume/reconcile contract for ship and work-block runs. |
 | `capture` | Post-merge capture marker, skip vocabulary, fail-soft, recursion-guard, redaction, and verifier contract. |
+| `agent_output_provenance` | Deterministic untrusted-output tagging contract for agent findings, review/jury verdict material, step handoffs, and feedback workflows. |
 | `closure_comment` | Present for `ship` (both profiles); the deterministic, consumer-neutral closure-comment contract describing how the s11 ship-outcome comment is rendered from the `ship_run` ledger record. |
 | `evidence` | Present for `ship` (both profiles); the pre-merge evidence contract used by `keel evidence-verify`. The gate is opt-in via the `evidence_gate_label` knob (default `keel:ship`) applied at PR open; the contract carries an `enforced` flag and, when not enforced, an empty `required` set (a PR without the label passes). When enforced it is fail-closed. |
 | `step_verification` | Present for `ship` (both profiles); the fail-closed step completion contract that maps required public evidence onto backbone steps and defines the structured handoff object every successful step must produce. |
@@ -301,6 +302,29 @@ write, duplicates are checked against open work, and once the per-cycle creation
 reached later eligible candidates receive `limit-reached` instead of creating more issues.
 The core policy is consumer-neutral; command-specific issue titles, labels, and body
 templates remain owned by the command contract and project policy.
+
+## Agent output provenance block
+
+Every command contract includes `agent_output_provenance`, the deterministic structural
+containment contract for text or findings produced by another agent. Keel treats prior
+agent output as data, not instructions. Adapters that pass reviewer, jury, handoff, or
+feedback material downstream should carry the provenance tag with that material instead
+of allowing the block to expand the next agent's authority.
+
+The block records:
+
+- `schema_version: keel.agent-output-provenance.v1`
+- `trusted_as_instructions: false`
+- `default_role: untrusted-agent-output`
+- source fields: `agent_id`, `step_id`, `vendor`, and `model`
+- capability-scope rule: tagged content cannot expand downstream capabilities
+- consumers: findings, step handoffs, review verdicts, jury verdicts, and feedback
+  workflows
+
+Findings emitted through structured command results and handoffs built by the step
+verification helper carry this tag by construction. The tag is not a jailbreak detector or
+content filter; it is a consumer-neutral boundary that preserves provenance and keeps
+capability scope explicit.
 
 ## Step verification block
 

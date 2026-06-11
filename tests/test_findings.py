@@ -3,6 +3,7 @@
 import unittest
 
 from keel import findings as fnd
+from keel import provenance
 from keel.findings import Finding
 
 
@@ -10,6 +11,12 @@ class TestFinding(unittest.TestCase):
     def test_valid(self):
         f = Finding("major", "boom", "reviewer-A")
         self.assertEqual(f.severity, "major")
+
+    def test_provenance_is_optional_structured_metadata(self):
+        tag = provenance.source_tag(source_agent="reviewer-A", step_id="s7")
+        f = Finding("minor", "x", "reviewer-A", provenance=tag)
+
+        self.assertEqual(f.provenance, tag)
 
     def test_invalid_severity(self):
         with self.assertRaises(fnd.FindingError):

@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from . import artifacts, evidence, model
+from . import artifacts, evidence, model, provenance
 
 SCHEMA_VERSION = "keel.step-verification.v1"
 HANDOFF_SCHEMA_VERSION = "keel.step-handoff.v1"
@@ -63,6 +63,7 @@ def contract_as_dict(
                 "status",
                 "summary",
                 "evidence_ids",
+                "provenance",
                 "rendered",
             ],
             "renderer": "keel.artifacts.render_step_handoff",
@@ -114,6 +115,9 @@ def build_handoff(
     evidence_ids: tuple[str, ...] | list[str] = (),
     next_step: str | None = None,
     producer: str | None = None,
+    vendor: str | None = None,
+    model_name: str | None = None,
+    allowed_capabilities: tuple[str, ...] | list[str] = (),
 ) -> dict[str, Any]:
     """Build a structured handoff object rendered through canonical artifacts."""
     step = model.get_step(step_id)
@@ -137,6 +141,13 @@ def build_handoff(
         "evidence_ids": list(clean_evidence),
         "next_step": next_step,
         "producer": producer,
+        "provenance": provenance.source_tag(
+            source_agent=producer,
+            step_id=step.id,
+            vendor=vendor,
+            model=model_name,
+            allowed_capabilities=allowed_capabilities,
+        ),
         "rendered": rendered,
     }
 

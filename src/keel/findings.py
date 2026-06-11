@@ -12,6 +12,7 @@ pure function of the findings, mirroring ``ship``'s gating rules:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 #: Severities, most to least serious.
 SEVERITIES: tuple[str, ...] = ("critical", "major", "minor", "nit")
@@ -40,6 +41,7 @@ class Finding:
     path: str | None = None
     line: int | None = None
     anchorable: bool = False
+    provenance: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if self.severity not in _RANK:
