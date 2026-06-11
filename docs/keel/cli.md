@@ -146,6 +146,10 @@ marker and run id; otherwise it posts a new comment. Bodies that are missing the
 marker, or that look like a literal `@/tmp/...` placeholder, are rejected before any
 public write.
 
+When a run intentionally posts multiple comments for the same artifact type, use a stable
+sub-key in the run id, for example `"$RUN_ID:reviewer-a"` and `"$RUN_ID:reviewer-b"` for
+two review verdicts. Reusing the exact same marker and run id is an update request.
+
 Raw adapter `gh issue comment`, `gh pr comment`, and hand-rolled comment API calls are a
 spec violation for ship evidence artifacts: adapters should delegate closure comments,
 issue updates, review verdicts, and jury verdicts to this command so marker validation,

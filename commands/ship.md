@@ -314,6 +314,9 @@ for the operator-posted review verdict.
 When available, use `result.artifact_bodies.review_verdict_template` as the canonical
 comment shape: keep `keel.review-verdict.v1`, `reviewer: <stable-id>`, and `head: <sha>`
 intact, then fill in the reviewer-specific verdict, scope, findings, and testing notes.
+Post each review verdict through `keel post-comment` with a reviewer-scoped run id
+(`--run-id "$RUN_ID:<reviewer-id>"`) so same-run idempotency updates that reviewer only and
+does not collapse multiple reviewer verdicts into one comment.
 
 - `inline` → fetch the diff once; anchor each `critical`/`major` finding as an **inline
   review comment** on its `file:line` (resolve `RIGHT`/`LEFT` side; `line` is the new-file
@@ -515,4 +518,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=plugin command=ship keel_version=1.2.0 source_sha256=51296a6b9326b3d8116d7dfbee3c97b5335e37c21d80ab4bc4faa08a88d3dd2f generated_sha256=51296a6b9326b3d8116d7dfbee3c97b5335e37c21d80ab4bc4faa08a88d3dd2f -->
+<!-- keel-generated: surface=plugin command=ship keel_version=1.2.0 source_sha256=1ce7c46a114dd3dd561994eff8459aba9c391921fe4a39eacefd0f421ac10ba5 generated_sha256=1ce7c46a114dd3dd561994eff8459aba9c391921fe4a39eacefd0f421ac10ba5 -->

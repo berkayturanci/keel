@@ -314,6 +314,9 @@ for the operator-posted review verdict.
 When available, use `result.artifact_bodies.review_verdict_template` as the canonical
 comment shape: keep `keel.review-verdict.v1`, `reviewer: <stable-id>`, and `head: <sha>`
 intact, then fill in the reviewer-specific verdict, scope, findings, and testing notes.
+Post each review verdict through `keel post-comment` with a reviewer-scoped run id
+(`--run-id "$RUN_ID:<reviewer-id>"`) so same-run idempotency updates that reviewer only and
+does not collapse multiple reviewer verdicts into one comment.
 
 - `inline` → fetch the diff once; anchor each `critical`/`major` finding as an **inline
   review comment** on its `file:line` (resolve `RIGHT`/`LEFT` side; `line` is the new-file
