@@ -8,7 +8,38 @@ All notable changes to keel are documented here. The format follows
 
 ## [1.2.1] — 2026-06-11
 
+### Added
+- **`keel merge` — core-owned, fail-closed merge execution.** The sanctioned s10 merge
+  path: acquires the merge resource claim, re-checks the merge window inside the claim,
+  reads the live PR check rollup with failure-before-pending precedence, runs
+  `evidence-verify` against the current PR artifacts, and only then performs the merge.
+  `--hotfix` is the audited window bypass and still requires explicit consent scopes.
+  Companion commands: `keel claim` / `keel release` (single-host `mkdir` resource claims)
+  and `keel worktree-remove` (validates nesting + registration before removal). Raw
+  adapter `gh pr merge` calls are now a spec violation for ship-style flows. (#265, #269)
+- **`keel post-comment` — deterministic issue/PR artifact comments.** Validates the
+  rendered body contains the marker required by `--artifact`, rejects literal `@/tmp/...`
+  placeholder bodies before any public write, resolves the GitHub transport in core, and
+  edits the latest same-marker/same-run-id comment instead of duplicating. Raw
+  `gh issue comment` / `gh pr comment` calls are now a spec violation for ship evidence
+  artifacts. (#263, #275)
+- **`keel step-verify` and `keel runcontrols` — the shipped enforcement modules are now
+  wired into the CLI.** `step-verify` consumes a persisted step handoff plus the evidence
+  report and fail-closed checks each backbone transition; `runcontrols` appends/evaluates
+  run events with hard halts on budget, step-cap, and oscillation violations, and run-control
+  summaries are stamped into `ship_run` ledger records via `keel ship --run-events-file`.
+  Risk/trust escalation evaluation is wired into the same fail-closed path. (#267, #271)
+
 ### Changed
+- **Evidence gate now arms from ship provenance by default.** The gate previously required
+  an agent-applied opt-in label — forgetting it silently disarmed the only required check.
+  The arming signal is now deterministic ship provenance, and the explicit disarm path is
+  the operator-applied `keel:evidence-waived` label; CLI output reports the gate reason and
+  waiver state. (#266, #270)
+- **Empty ship run context is now an evidence finding.** A closure comment whose Run
+  context block is fully degraded (all fields unknown/default) is flagged instead of
+  passing silently, so adapters that skip the `--host-agent`/`--transport` ledger flags
+  degrade loudly. (#264, #276)
 - **BREAKING:** configured state file paths are now constrained to the project root.
   `policy_pack.reports.run_ledger` and `policy_pack.reports.checkpoint` must be relative
   paths that resolve inside the project root; absolute paths and `..` escapes are rejected
