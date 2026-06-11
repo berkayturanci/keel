@@ -43,7 +43,7 @@ jobs:
       # ships with the GitHub Release.
       - name: Generate CycloneDX SBOM
         run: |
-          python -m pip install dist/*.whl
+          python -m pip install --no-deps dist/*.whl
           mkdir -p release
           cyclonedx-py environment --output-format JSON --output-file release/sbom.cdx.json
 

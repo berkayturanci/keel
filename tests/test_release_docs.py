@@ -80,9 +80,12 @@ class TestReleaseDocs(unittest.TestCase):
         self.assertNotIn("python -m pip install cyclonedx-bom", workflow)
         self.assertIn("build==1.3.0 \\", lockfile)
         self.assertIn("cyclonedx-bom==7.2.1 \\", lockfile)
+        self.assertIn("PyYAML==6.0.3 \\", lockfile)
         self.assertIn("setuptools==80.9.0 \\", lockfile)
         self.assertIn("python -m build --no-isolation", workflow)
-        self.assertGreaterEqual(lockfile.count("--hash=sha256:"), 30)
+        self.assertIn("python -m pip install --no-deps dist/*.whl", workflow)
+        self.assertNotIn("python -m pip install dist/*.whl", workflow)
+        self.assertGreaterEqual(lockfile.count("--hash=sha256:"), 31)
 
 
 if __name__ == "__main__":
