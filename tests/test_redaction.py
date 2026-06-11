@@ -163,18 +163,27 @@ class CredentialAssignmentRedactionTest(unittest.TestCase):
         self.assertEqual(_rule_count(result.audit, "credential-assignment"), 1)
 
     def test_json_quoted_key_is_redacted(self) -> None:
-        """A JSON-quoted key (quote between key and colon) is still matched."""
+        """A JSON-quoted key redacts cleanly, with no orphaned surrounding quote."""
         result = redaction.sanitize('{"api_key": "abcdef123456"}', self.policy)
 
-        self.assertNotIn("abcdef123456", result.value)
+        self.assertEqual(result.value, "{api_key=[REDACTED:credential]}")
         self.assertEqual(_rule_count(result.audit, "credential-assignment"), 1)
 
     def test_compact_json_redacts_only_the_secret_field(self) -> None:
         """A compact JSON object keeps sibling fields; only the secret is removed."""
         result = redaction.sanitize('{"api_key":"secret1234","x":"y"}', self.policy)
 
+        self.assertEqual(result.value, '{api_key=[REDACTED:credential],"x":"y"}')
         self.assertNotIn("secret1234", result.value)
         self.assertIn('"x":"y"', result.value)
+
+    def test_short_quoted_status_values_are_not_redacted(self) -> None:
+        """Short quoted values (status strings, not secrets) keep the 8-char floor."""
+        for line in ('token="none"', 'token=""', 'api_key="n/a"',
+                     'password="test"', 'token: "ok"'):
+            result = redaction.sanitize(line, self.policy)
+            self.assertEqual(result.value, line)
+            self.assertEqual(_rule_count(result.audit, "credential-assignment"), 0)
 
     def test_unbalanced_double_quote_value_is_redacted(self) -> None:
         """An unbalanced opening quote no longer defeats redaction (leak fix)."""

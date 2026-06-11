@@ -13,7 +13,9 @@ All notable changes to keel are documented here. The format follows
   previously leaked. The value matcher consumes a complete quoted string or a possessive
   unquoted run and rejects function-call / subscript expressions (`token = get_token()`,
   `csrf_token = request.headers['X-CSRF']`) and `${…}` / `$(…)` references instead of
-  mangling them mid-string. Compact JSON keeps its sibling fields. (#257, #261)
+  mangling them mid-string. An 8-character floor on every value arm keeps short
+  status strings (`token: "none"`, `api_key=""`) intact, and JSON keys redact
+  cleanly with no orphaned quote. Compact JSON keeps its sibling fields. (#257, #261)
 
 ## [1.2.0] — 2026-06-11
 
