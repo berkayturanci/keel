@@ -176,6 +176,33 @@ class CredentialAssignmentRedactionTest(unittest.TestCase):
         self.assertEqual(_rule_count(result.audit, "credential-assignment"), 1)
         self.assertNotIn("abcd,efgh,ijkl", result.value)
 
+    def test_comma_joined_credential_assignments_are_counted_separately(self) -> None:
+        result = redaction.sanitize(
+            "password=s3cr3t_value,api_key=my_real_api_key_here",
+            self.policy,
+        )
+
+        self.assertEqual(
+            result.value,
+            "password=[REDACTED:credential],api_key=[REDACTED:credential]",
+        )
+        self.assertEqual(_rule_count(result.audit, "credential-assignment"), 2)
+        self.assertEqual(result.audit["redaction_count"], 2)
+        self.assertNotIn("s3cr3t_value", result.value)
+        self.assertNotIn("my_real_api_key_here", result.value)
+
+    def test_semicolon_joined_credential_assignments_are_counted_separately(self) -> None:
+        result = redaction.sanitize(
+            "token=firstsecret123;refresh_token=secondsecret456",
+            self.policy,
+        )
+
+        self.assertEqual(
+            result.value,
+            "token=[REDACTED:credential];refresh_token=[REDACTED:credential]",
+        )
+        self.assertEqual(_rule_count(result.audit, "credential-assignment"), 2)
+
     def test_json_quoted_key_is_redacted(self) -> None:
         """A JSON-quoted key redacts cleanly, with no orphaned surrounding quote."""
         result = redaction.sanitize('{"api_key": "abcdef123456"}', self.policy)
@@ -190,6 +217,12 @@ class CredentialAssignmentRedactionTest(unittest.TestCase):
         self.assertEqual(result.value, '{api_key=[REDACTED:credential],"x":"y"}')
         self.assertNotIn("secret1234", result.value)
         self.assertIn('"x":"y"', result.value)
+
+    def test_compact_object_sibling_is_not_swallowed_by_unquoted_secret(self) -> None:
+        result = redaction.sanitize("{api_key:secretvalue1234,x:y}", self.policy)
+
+        self.assertEqual(result.value, "{api_key=[REDACTED:credential],x:y}")
+        self.assertEqual(_rule_count(result.audit, "credential-assignment"), 1)
 
     def test_short_quoted_status_values_are_not_redacted(self) -> None:
         """Short quoted values (status strings, not secrets) keep the 8-char floor."""

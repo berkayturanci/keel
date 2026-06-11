@@ -13,6 +13,7 @@ from typing import Any
 from . import config as cfg
 
 REDACTION_SCHEMA_VERSION = "keel.capture-redaction.v1"
+_ASSIGNMENT_SEGMENT_BOUNDARY = r"[,;][\"']?\b[A-Za-z0-9_-]{1,128}\b[\"']?\s*[:=]"
 
 
 class RedactionError(ValueError):
@@ -70,7 +71,9 @@ _DEFAULT_RULES: tuple[tuple[str, str, str], ...] = (
         # 8+ chars whose leading ``["']?`` also catches an *unbalanced* opening quote
         # (``KEY="secret`` with no close), closing that leak. The 8-char floor on
         # every arm keeps short status strings (``token: "none"``, ``api_key=""``)
-        # from being redacted. The value class excludes code brackets, and the
+        # from being redacted. The value class excludes code brackets and stops before
+        # comma/semicolon-delimited sibling assignments (``a=secret,b=value``), so
+        # adjacent credential keys are redacted and audited independently. The
         # possessive run plus ``(?![(\[])`` tail rejects call / subscript expressions
         # (``token = get_token()``) instead of mangling them; a value cannot start
         # with ``$``, so ``${...}`` / ``$(...)`` references are left intact. The
@@ -80,7 +83,8 @@ _DEFAULT_RULES: tuple[tuple[str, str, str], ...] = (
         r"(?i)[\"']?\b([A-Za-z0-9_-]*(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|"
         r"secret[_-]?access[_-]?key|secret[_-]?key|token|secret|password|passwd|pwd)"
         r")\b[\"']?\s*[:=]\s*"
-        r"(?:\"[^\"\n]{8,}\"|'[^'\n]{8,}'|[\"']?[^\s\"'(){}\[\]$]{8,}+(?![(\[]))",
+        r"(?:\"[^\"\n]{8,}\"|'[^'\n]{8,}'|[\"']?"
+        rf"(?:(?!{_ASSIGNMENT_SEGMENT_BOUNDARY})[^\s\"'(){{}}\[\]$]){{8,}}+(?![(\[]))",
         r"\1=[REDACTED:credential]",
     ),
     (
