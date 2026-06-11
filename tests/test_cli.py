@@ -3734,9 +3734,12 @@ class TestInit(unittest.TestCase):
                 rc, out, _ = run(["init", "--root", d, "--wizard"])
             self.assertEqual(rc, 0)
             written = (Path(d) / ".keel" / "project.yaml").read_text()
-            self.assertIn("base_branch: develop", written)
-            self.assertIn('merge_window: "09:00-18:00"', written)
-            self.assertIn("consent_mode: explicit", written)
+            import yaml
+
+            config = yaml.safe_load(written)
+            self.assertEqual(config["base_branch"], "develop")
+            self.assertEqual(config["merge_window"], "09:00-18:00")
+            self.assertEqual(config["consent_mode"], "explicit")
             # validates
             vrc, _, _ = run(["validate", str(Path(d) / ".keel" / "project.yaml")])
             self.assertEqual(vrc, 0)
@@ -3818,9 +3821,12 @@ class TestSetup(unittest.TestCase):
             self.assertEqual(rc, 0, err)
             self.assertIn("keel setup wizard", out)
             written = (Path(d) / ".keel/project.yaml").read_text()
-            self.assertIn("base_branch: develop", written)
-            self.assertIn('merge_window: "09:00-18:00"', written)
-            self.assertIn("consent_mode: explicit", written)
+            import yaml
+
+            config = yaml.safe_load(written)
+            self.assertEqual(config["base_branch"], "develop")
+            self.assertEqual(config["merge_window"], "09:00-18:00")
+            self.assertEqual(config["consent_mode"], "explicit")
 
     def test_wizard_rejects_invalid_consent_mode_before_setup_write(self):
         import tempfile
