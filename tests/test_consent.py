@@ -164,6 +164,34 @@ class TestConsentContract(unittest.TestCase):
         self.assertEqual(contract["status"], "not-required-read-only")
         self.assertFalse(contract["risk_trust_escalation"]["operator_required"])
 
+    def test_generator_side_effects_match_tuple_path(self):
+        def generated_effects():
+            yield "git_branch"
+            yield "pull_request"
+
+        generated = consent.build_consent_contract(
+            command="ship",
+            side_effects=generated_effects(),
+            dry_run=False,
+        )
+        tupled = consent.build_consent_contract(
+            command="ship",
+            side_effects=("git_branch", "pull_request"),
+            dry_run=False,
+        )
+
+        self.assertEqual(generated["consent_scope"], ["git", "github"])
+        self.assertEqual(generated["consent_scope"], tupled["consent_scope"])
+        self.assertEqual(
+            generated["risk_trust_escalation"]["consent_scope"],
+            tupled["risk_trust_escalation"]["consent_scope"],
+        )
+        self.assertTrue(generated["risk_trust_escalation"]["operator_required"])
+        self.assertEqual(
+            generated["risk_trust_escalation"]["reason"],
+            "irreversible-or-side-effecting",
+        )
+
 
 class TestRiskTrustEscalation(unittest.TestCase):
     def test_contract_declares_two_signal_escalation(self):

@@ -208,6 +208,7 @@ def build_consent_contract(
     sample_bucket: int = 0,
 ) -> dict[str, Any]:
     """Build a JSON-compatible consent block for a command contract."""
+    side_effects = tuple(side_effects)
     consent_scope = side_effect_scopes(side_effects)
     approved_scope = normalize_scopes(approved_scopes)
     if approval_source not in APPROVAL_SOURCES:
