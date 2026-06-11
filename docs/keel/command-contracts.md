@@ -401,21 +401,25 @@ artifacts instead of trusting a private chat summary.
 The block records:
 
 - `schema_version: keel.evidence.v1`
-- `accepted_sources`: PR/issue comments with `keel.closure-comment.v1`, PR comments or
-  reviews with a reviewer verdict, and PR comments with a jury verdict
-- `not_accepted`: PR body, chat summaries, and the automated `keel ship` assessment comment
+- `accepted_sources`: trusted PR/issue comments with `keel.closure-comment.v1`,
+  trusted PR comments or reviews with a reviewer verdict, and trusted PR comments with a
+  jury verdict. Live GitHub payloads are trusted only when their `author_association` is
+  `OWNER`, `MEMBER`, or `COLLABORATOR`, or the author is a GitHub bot.
+- `not_accepted`: PR body, chat summaries, untrusted public comments, and the automated
+  `keel ship` assessment comment
 - `required`: stable ids such as `closure-comment-pr`, `closure-comment-issue`,
   `review-verdict-1`, `review-verdict-2`, and `jury-verdict` when jury is gating
 - `dry_run_disables_gating: true` and `fail_closed: true`
 
 `keel evidence-verify <project.yaml> --pr <N>` reads those public artifacts through `gh`,
 derives the current PR tier from the live changed-file list, binds verdict evidence to the
-current PR head, and exits non-zero when required evidence is missing. Reviewer evidence
-must carry `keel.review-verdict.v1` plus a stable `reviewer: <id>` field; jury evidence
-must carry `keel.jury-verdict.v1`. When the PR head SHA is known, those comments must also
-carry `head: <sha>` unless the source is a formal PR review whose `commit_id` matches the
-head. The verifier may use the PR body only to infer a linked `Closes #N` issue; the body
-itself never satisfies evidence. Explicit operator deferrals must be passed as
+current PR head, rejects explicitly untrusted comment authors, and exits non-zero when
+required evidence is missing. Reviewer evidence must carry `keel.review-verdict.v1` plus
+a stable `reviewer: <id>` field; jury evidence must carry `keel.jury-verdict.v1`. When
+the PR head SHA is known, those comments must also carry `head: <sha>` unless the source
+is a formal PR review whose `commit_id` matches the head. The verifier may use the PR body
+only to infer a linked `Closes #N` issue; the body itself never satisfies evidence.
+Explicit operator deferrals must be passed as
 `--deferral <id|kind|all>` and should be recorded in the PR/issue conversation before
 branch protection is bypassed.
 

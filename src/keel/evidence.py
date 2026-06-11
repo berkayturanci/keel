@@ -20,6 +20,8 @@ SCHEMA_VERSION = "keel.evidence.v1"
 REVIEW_VERDICT_MARKER = "keel.review-verdict.v1"
 JURY_VERDICT_MARKER = "keel.jury-verdict.v1"
 SHIP_ASSESSMENT_HEADING = "### \U0001f6a2 keel ship"
+TRUSTED_AUTHOR_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
+TRUSTED_AUTHOR_TYPES = frozenset({"Bot"})
 
 _FIELD_RE = re.compile(r"^\s*(?P<key>reviewer|head)\s*:\s*(?P<value>\S+)\s*$",
                        re.IGNORECASE | re.MULTILINE)
@@ -67,13 +69,18 @@ def contract_as_dict(
         "dry_run_disables_gating": True,
         "fail_closed": True,
         "accepted_sources": {
-            "closure": "issue/PR comments carrying keel.closure-comment.v1",
-            "review": "PR review/comment carrying keel.review-verdict.v1 and current head",
-            "jury": "PR comment carrying keel.jury-verdict.v1 and current head",
+            "closure": (
+                "trusted issue/PR comments carrying keel.closure-comment.v1"
+            ),
+            "review": (
+                "trusted PR review/comment carrying keel.review-verdict.v1 and current head"
+            ),
+            "jury": "trusted PR comment carrying keel.jury-verdict.v1 and current head",
         },
         "not_accepted": [
             "pull_request_body",
             "chat_summary",
+            "untrusted_public_comment",
             "keel_ship_assessment_comment",
         ],
         "deferrals": list(deferrals),
@@ -193,15 +200,13 @@ def _evidence_counts(
     pr_reviews: list[dict[str, Any]],
     head_sha: str | None = None,
 ) -> dict[str, int]:
-    pr_comment_bodies = [_body(comment) for comment in pr_comments]
-    issue_comment_bodies = [_body(comment) for comment in issue_comments]
     review_keys = _review_evidence_keys(
         [*pr_comments, *pr_reviews],
         head_sha=head_sha,
     )
     return {
-        "closure_pr": sum(_has_closure_marker(body) for body in pr_comment_bodies),
-        "closure_issue": sum(_has_closure_marker(body) for body in issue_comment_bodies),
+        "closure_pr": sum(_is_closure_comment(comment) for comment in pr_comments),
+        "closure_issue": sum(_is_closure_comment(comment) for comment in issue_comments),
         "review_verdict": len(review_keys),
         "jury_verdict": sum(_is_jury_verdict(comment, head_sha=head_sha)
                             for comment in pr_comments),
@@ -230,6 +235,33 @@ def _has_closure_marker(body: str) -> bool:
     return closure.COMMENT_MARKER in body
 
 
+def _is_closure_comment(item: dict[str, Any]) -> bool:
+    return _is_trusted_source(item) and _has_closure_marker(_body(item))
+
+
+def _is_trusted_source(item: dict[str, Any]) -> bool:
+    """Return whether GitHub marks this evidence source as trusted.
+
+    Live GitHub comment/review payloads include ``author_association``. Offline
+    fixtures and older adapters may omit it, so unknown provenance remains
+    accepted for backward-compatible local verification; untrusted explicit
+    associations fail closed.
+    """
+    association = item.get("author_association")
+    if association is None:
+        return True
+    if isinstance(association, str) and association.upper() in TRUSTED_AUTHOR_ASSOCIATIONS:
+        return True
+    return _author_type(item) in TRUSTED_AUTHOR_TYPES
+
+
+def _author_type(item: dict[str, Any]) -> str | None:
+    user = item.get("user")
+    if isinstance(user, dict) and isinstance(user.get("type"), str):
+        return user["type"]
+    return None
+
+
 def _is_ship_assessment(body: str) -> bool:
     return SHIP_ASSESSMENT_HEADING in body or "keel ship \u2014" in body
 
@@ -241,6 +273,8 @@ def _review_evidence_keys(
 ) -> set[str]:
     keys: set[str] = set()
     for item in items:
+        if not _is_trusted_source(item):
+            continue
         body = _body(item)
         if not _is_review_verdict_body(body):
             continue
@@ -287,6 +321,8 @@ def _is_review_verdict_body(body: str) -> bool:
 
 
 def _is_jury_verdict(item: dict[str, Any], *, head_sha: str | None = None) -> bool:
+    if not _is_trusted_source(item):
+        return False
     body = _body(item)
     if not body or _is_ship_assessment(body) or _has_closure_marker(body):
         return False
