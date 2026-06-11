@@ -59,7 +59,26 @@ class TestCheckpointContract(unittest.TestCase):
         config = _config(checkpoint_path="state/resume.json")
         override = checkpoint.checkpoint_contract_as_dict(config)
         self.assertEqual(override["path_source"], "policy_pack.reports.checkpoint")
-        self.assertEqual(str(checkpoint.resolve_path("/repo", config)), "/repo/state/resume.json")
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertEqual(
+                checkpoint.resolve_path(directory, config),
+                Path(directory).resolve() / "state" / "resume.json",
+            )
+
+    def test_resolve_path_rejects_absolute_and_escaping_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(checkpoint.CheckpointError, "must be relative"):
+                checkpoint.resolve_path(directory, _config(checkpoint_path="/tmp/resume.json"))
+
+            with self.assertRaisesRegex(checkpoint.CheckpointError, "escapes"):
+                checkpoint.resolve_path(directory, _config(checkpoint_path="../resume.json"))
+
+    def test_resolve_path_allows_normalized_path_inside_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertEqual(
+                checkpoint.resolve_path(directory, _config(checkpoint_path="state/../resume.json")),
+                Path(directory).resolve() / "resume.json",
+            )
 
 
 class TestCheckpointRecords(unittest.TestCase):

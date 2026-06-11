@@ -93,7 +93,26 @@ class TestLedgerContract(unittest.TestCase):
             ledger.ledger_contract_as_dict(config)["path_source"],
             "policy_pack.reports.run_ledger",
         )
-        self.assertEqual(str(ledger.resolve_path("/repo", config)), "/repo/state/runs.jsonl")
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertEqual(
+                ledger.resolve_path(directory, config),
+                Path(directory).resolve() / "state" / "runs.jsonl",
+            )
+
+    def test_resolve_path_rejects_absolute_and_escaping_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ledger.LedgerError, "must be relative"):
+                ledger.resolve_path(directory, _config(run_ledger="/tmp/runs.jsonl"))
+
+            with self.assertRaisesRegex(ledger.LedgerError, "escapes"):
+                ledger.resolve_path(directory, _config(run_ledger="../runs.jsonl"))
+
+    def test_resolve_path_allows_normalized_path_inside_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertEqual(
+                ledger.resolve_path(directory, _config(run_ledger="state/../runs.jsonl")),
+                Path(directory).resolve() / "runs.jsonl",
+            )
 
 
 class TestLedgerRecords(unittest.TestCase):

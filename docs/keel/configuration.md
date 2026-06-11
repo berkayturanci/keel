@@ -476,12 +476,16 @@ output; core does not invent project-specific paths.
 `keel ledger`, `morning`, `wrap`, and overnight contracts all resolve the same path.
 The file is JSONL with schema `keel.run-ledger.v1`; missing files are treated as empty
 history, while malformed records are errors.
+The configured path must be relative and must resolve inside the project root; absolute
+paths and `..` escapes are rejected before any parent directory is created.
 
 `checkpoint` is the optional resumable-run state path. When absent, keel uses
 `.keel/state/checkpoint.json`. When present, `keel plan --json`, `keel checkpoint`,
 `keel resume`, and work-owning adapter contracts all resolve the same path. The file is
 a single JSON record with schema `keel.checkpoint.v1`; missing files mean there is no
 active resumable run, while malformed records are errors.
+The configured path follows the same safety rule as `run_ledger`: it must be relative and
+resolve inside the project root.
 
 `scan` is used by `keel regression` and `keel review-all-day`. Core owns the generic
 scan-and-file contract, while projects own the module list, active work branch patterns,

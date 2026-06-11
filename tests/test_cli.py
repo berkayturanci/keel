@@ -581,7 +581,7 @@ class TestShip(unittest.TestCase):
         self.assertEqual(rc, 0)
         data = json.loads(out)
         self.assertTrue(data["result"]["run_ledger"]["appended"])
-        self.assertEqual(data["result"]["run_ledger"]["path"], str(ledger_path))
+        self.assertEqual(data["result"]["run_ledger"]["path"], str(ledger_path.resolve()))
         self.assertEqual(data["result"]["run_ledger"]["record"]["issue"]["number"], 140)
         self.assertEqual(rc_read, 0)
         read = json.loads(out_read)
@@ -1797,7 +1797,7 @@ class TestShip(unittest.TestCase):
 
         self.assertEqual(rc, 0)
         data = json.loads(out)
-        self.assertEqual(data["path"], str(checkpoint_path))
+        self.assertEqual(data["path"], str(checkpoint_path.resolve()))
         self.assertEqual(data["checkpoint"]["position"]["current_step"], "s6")
         self.assertEqual(data["checkpoint"]["resume"]["action"], "recheck-ci")
         self.assertEqual(rc_read, 0)

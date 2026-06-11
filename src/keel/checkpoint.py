@@ -78,10 +78,18 @@ def configured_checkpoint_path(config: cfg.ProjectConfig) -> tuple[str, str]:
 
 
 def resolve_path(root: str | Path, config: cfg.ProjectConfig) -> Path:
-    """Resolve the checkpoint path under ``root`` unless it is absolute."""
+    """Resolve the checkpoint path under ``root`` and reject escapes."""
     raw, _ = configured_checkpoint_path(config)
     path = Path(raw)
-    return path if path.is_absolute() else Path(root) / path
+    if path.is_absolute():
+        raise CheckpointError("checkpoint path must be relative to the project root")
+    root_path = Path(root).resolve()
+    resolved = (root_path / path).resolve()
+    try:
+        resolved.relative_to(root_path)
+    except ValueError as exc:
+        raise CheckpointError("checkpoint path escapes the project root") from exc
+    return resolved
 
 
 def build_checkpoint_record(

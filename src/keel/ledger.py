@@ -66,10 +66,18 @@ def configured_ledger_path(config: cfg.ProjectConfig) -> tuple[str, str]:
 
 
 def resolve_path(root: str | Path, config: cfg.ProjectConfig) -> Path:
-    """Resolve the configured ledger path under ``root`` unless it is absolute."""
+    """Resolve the configured ledger path under ``root`` and reject escapes."""
     raw, _ = configured_ledger_path(config)
     path = Path(raw)
-    return path if path.is_absolute() else Path(root) / path
+    if path.is_absolute():
+        raise LedgerError("run ledger path must be relative to the project root")
+    root_path = Path(root).resolve()
+    resolved = (root_path / path).resolve()
+    try:
+        resolved.relative_to(root_path)
+    except ValueError as exc:
+        raise LedgerError("run ledger path escapes the project root") from exc
+    return resolved
 
 
 def build_ship_run_record(
