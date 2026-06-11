@@ -475,6 +475,12 @@ def adapter_status(
             expected_hash = _sha256(generated_text)
             source_hash = _sha256(source_text)
             if not path.exists():
+                # Legacy claude wrappers are opt-in (``install-legacy-wrappers``).
+                # An absent wrapper means "not installed", not a defect, so it is
+                # not reported as ``missing`` — that would flag every project that
+                # never opted in. Installed legacy wrappers are still freshness-checked.
+                if surface == "legacy-claude":
+                    continue
                 rows.append(AdapterFileStatus(surface, name, str(rel), "missing",
                                               expected_sha256=expected_hash,
                                               source_sha256=source_hash))

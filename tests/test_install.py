@@ -407,6 +407,29 @@ class TestInstallAll(unittest.TestCase):
             self.assertEqual(by_key[("claude", "triage.md")].status, "locally-modified")
             self.assertEqual(by_key[("legacy-claude", "ship.md")].status, "current")
 
+    def test_adapter_status_omits_uninstalled_legacy_wrappers(self):
+        """Legacy wrappers are opt-in: a clean install reports no legacy rows.
+
+        Without ``install-legacy-wrappers``, ``adapter-status all`` must not emit a
+        ``missing`` row for every never-installed wrapper (that flagged every project
+        that never opted in). The ``legacy-claude`` surface is present but empty.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            install.install_all(root)  # core adapters only; no legacy wrappers
+
+            rows = install.adapter_status("all", root)
+
+            self.assertIn("legacy-claude", rows)
+            self.assertEqual(rows["legacy-claude"], [])
+            self.assertFalse(any(row.status == "missing"
+                                 for rs in rows.values() for row in rs))
+            # guard the "all current" assertion against a vacuously-empty surface
+            self.assertTrue(rows["claude"] and rows["skills"])
+            self.assertTrue(all(row.status == "current"
+                                for surface in ("claude", "skills")
+                                for row in rows[surface]))
+
     def test_update_adapter_dry_run_and_write_preserve_local_files(self):
         with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as src_dir:
             root = Path(d)
