@@ -133,6 +133,9 @@ class TestBuildCommandContract(unittest.TestCase):
             "keel.agent-output-provenance.v1",
         )
         self.assertFalse(contract["agent_output_provenance"]["trusted_as_instructions"])
+        self.assertEqual(contract["resource_claims"]["schema_version"], "keel.resource-claim.v1")
+        self.assertEqual(contract["resource_claims"]["deny_mode"], "structured-feedback")
+        self.assertTrue(contract["resource_claims"]["merge_lock_consumer"])
         self.assertEqual(
             contract["step_verification"]["schema_version"],
             "keel.step-verification.v1",

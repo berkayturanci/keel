@@ -56,6 +56,7 @@ Every contract includes:
 | `checkpoint` | Resumable checkpoint storage and resume/reconcile contract for ship and work-block runs. |
 | `capture` | Post-merge capture marker, skip vocabulary, fail-soft, recursion-guard, redaction, and verifier contract. |
 | `agent_output_provenance` | Deterministic untrusted-output tagging contract for agent findings, review/jury verdict material, step handoffs, and feedback workflows. |
+| `resource_claims` | Single-host `mkdir` resource-claim primitive; denial is structured feedback, and the merge lock is one consumer. |
 | `closure_comment` | Present for `ship` (both profiles); the deterministic, consumer-neutral closure-comment contract describing how the s11 ship-outcome comment is rendered from the `ship_run` ledger record. |
 | `evidence` | Present for `ship` (both profiles); the pre-merge evidence contract used by `keel evidence-verify`. The gate is opt-in via the `evidence_gate_label` knob (default `keel:ship`) applied at PR open; the contract carries an `enforced` flag and, when not enforced, an empty `required` set (a PR without the label passes). When enforced it is fail-closed. |
 | `step_verification` | Present for `ship` (both profiles); the fail-closed step completion contract that maps required public evidence onto backbone steps and defines the structured handoff object every successful step must produce. |
@@ -325,6 +326,28 @@ Findings emitted through structured command results and handoffs built by the st
 verification helper carry this tag by construction. The tag is not a jailbreak detector or
 content filter; it is a consumer-neutral boundary that preserves provenance and keeps
 capability scope explicit.
+
+## Resource claims block
+
+Every command contract includes `resource_claims`, the deterministic single-host mutual
+exclusion primitive for work that must have one owner at a time. A resource claim uses an
+atomic `mkdir` directory creation under the caller's chosen lock root. If the resource is
+already held, the primitive returns structured feedback instead of aborting the process, so
+callers can back off, retry, or continue with other work.
+
+The block records:
+
+- `schema_version: keel.resource-claim.v1`
+- `scope: single-host`
+- `primitive: mkdir`
+- `deny_mode: structured-feedback`
+- statuses: `granted`, `denied`, `released`, `missing`, and `not-owner`
+- `merge_lock_consumer: true`
+
+The existing merge lock keeps its previous public behavior: it still raises `LockError`
+when the merge resource is already held, while internally using the same claim/release
+primitive. Stale recovery remains caller-owned because keel does not assume a distributed
+lock manager or multi-host coordination layer.
 
 ## Step verification block
 

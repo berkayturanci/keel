@@ -24,6 +24,7 @@ from . import (
     install,
     intake,
     ledger,
+    lock,
     model,
     orchestrator,
     provenance,
@@ -230,6 +231,7 @@ def build_command_contract(
         "checkpoint": checkpoint.checkpoint_contract_as_dict(config),
         "capture": capture.contract_as_dict(config),
         "run_ledger": ledger.ledger_contract_as_dict(config),
+        "resource_claims": lock.contract_as_dict(),
         "side_effects": {
             "declared": list(declared_side_effects),
             "mutates_in_dry_run": False,
