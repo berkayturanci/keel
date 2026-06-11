@@ -43,6 +43,7 @@ PLUGIN_MARKETPLACE = ".claude-plugin/marketplace.json"
 
 #: the logical install surfaces (``all`` fans over these).
 TARGETS: tuple[str, ...] = ("claude", "skills")
+STATUS_TARGETS: tuple[str, ...] = ("claude", "skills", "legacy-claude")
 LEGACY_TARGETS: tuple[str, ...] = ("claude", "skills")
 LEGACY_CLAUDE_DIR = ".claude/commands"
 LEGACY_SKILL_PREFIX = "source-command-"
@@ -124,7 +125,11 @@ def _split_marker(text: str) -> tuple[str, dict[str, str]]:
 
 def _expected_files(_src: Path | None = None) -> dict[str, dict[str, tuple[Path, str, str, str]]]:
     src = _src or ADAPTERS
-    expected: dict[str, dict[str, tuple[Path, str, str, str]]] = {"claude": {}, "skills": {}}
+    expected: dict[str, dict[str, tuple[Path, str, str, str]]] = {
+        "claude": {},
+        "skills": {},
+        "legacy-claude": {},
+    }
     for f in sorted(src.glob("*.md")):
         source_text = f.read_text(encoding="utf-8")
         command = f.stem
@@ -140,6 +145,9 @@ def _expected_files(_src: Path | None = None) -> dict[str, dict[str, tuple[Path,
             source_text,
             render_skill(source_text, command),
         )
+    expected["legacy-claude"] = _legacy_expected_files(
+        default_legacy_mappings(_src=_src), _src=_src
+    )["claude"]
     return expected
 
 
@@ -454,8 +462,8 @@ def adapter_status(
     agent: str, root: str | Path, *, _src: Path | None = None
 ) -> dict[str, list[AdapterFileStatus]]:
     """Report installed adapter freshness for one surface or ``all`` surfaces."""
-    targets = TARGETS if agent == "all" else (agent,)
-    if any(t not in TARGETS for t in targets):
+    targets = STATUS_TARGETS if agent == "all" else (agent,)
+    if any(t not in STATUS_TARGETS for t in targets):
         raise KeyError(agent)
     root_path = Path(root)
     expected = _expected_files(_src)

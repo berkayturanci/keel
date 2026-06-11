@@ -426,6 +426,9 @@ parity) are not run here — this is the deterministic, runnable slice of the te
 
 Each gate runs its configured shell command; a non-zero exit becomes a blocking finding
 (`gate:<name>`), a zero exit a pass. The command's output tail is captured for context.
+Reviewer checklist for changes touching command-gate execution: `spec.run` values must
+remain sourced only from operator-controlled project config or extension YAML, never from
+PR content, issue text, or prior agent output.
 
 If `gates:` includes **`jury`** and the [ai-jury](https://github.com/berkayturanci/ai-jury)
 `jury` CLI is installed, the jury gate runs it on the diff (`git diff base...HEAD`) and maps

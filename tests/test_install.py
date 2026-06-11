@@ -385,9 +385,11 @@ class TestInstallAll(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             install.install_all(root)
+            install.install_all_legacy_wrappers(root)
             current = install.adapter_status("all", root)
             self.assertTrue(all(row.status == "current"
                                 for rows in current.values() for row in rows))
+            self.assertIn("legacy-claude", current)
 
             (root / install.CLAUDE_DIR / "ship.md").unlink()
             (root / install.SKILLS_DIR / "keel-wrap" / "SKILL.md").write_text(
@@ -403,6 +405,7 @@ class TestInstallAll(unittest.TestCase):
             self.assertEqual(by_key[("claude", "ship.md")].status, "missing")
             self.assertEqual(by_key[("skills", "keel-wrap")].status, "unknown")
             self.assertEqual(by_key[("claude", "triage.md")].status, "locally-modified")
+            self.assertEqual(by_key[("legacy-claude", "ship.md")].status, "current")
 
     def test_update_adapter_dry_run_and_write_preserve_local_files(self):
         with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as src_dir:

@@ -1523,7 +1523,7 @@ def _cmd_adapter_status(args: argparse.Namespace) -> int:
     try:
         rows = install.adapter_status(args.agent, args.root)
     except KeyError:
-        print(f"unknown target {args.agent!r}; valid: all, {', '.join(install.TARGETS)}",
+        print(f"unknown target {args.agent!r}; valid: all, {', '.join(install.STATUS_TARGETS)}",
               file=sys.stderr)
         return 1
     orphans = _scan_orphans(args.root, include_unmanaged=args.include_unmanaged)
@@ -2164,7 +2164,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_as = sub.add_parser("adapter-status", help="report generated adapter freshness")
     p_as.add_argument("agent", nargs="?", default="all",
-                      help=f"'all' or one of: {', '.join(install.TARGETS)}")
+                      help=f"'all' or one of: {', '.join(install.STATUS_TARGETS)}")
     p_as.add_argument("--root", default=".", help="project root to inspect")
     p_as.add_argument("--include-unmanaged", action="store_true",
                       help="also report marker-less command-like surfaces (heuristic, opt-in)")

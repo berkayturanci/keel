@@ -23,6 +23,8 @@ _SEVERITY = {
     "nit": "nit", "info": "nit", "note": "nit",
 }
 
+MAX_DIFF_BYTES = 1_000_000
+
 
 def map_severity(severity: str) -> str:
     """Map an ai-jury severity onto a keel severity (default ``minor``)."""
@@ -70,7 +72,9 @@ def run_gate(diff_text: str, *, cwd: str | None = None, _run=None) -> tuple[bool
     (critical/major). Fail-soft no-op (``(True, [])``) when there is no diff or the
     ``jury`` CLI is not installed.
     """
-    if not diff_text or not available(cwd=cwd, _run=_run):
+    if not diff_text or len(diff_text.encode("utf-8")) > MAX_DIFF_BYTES:
+        return True, []
+    if not available(cwd=cwd, _run=_run):
         return True, []
     fd, path = tempfile.mkstemp(suffix=".diff")
     try:

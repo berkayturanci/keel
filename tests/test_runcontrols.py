@@ -163,6 +163,24 @@ class TestRunControlEvaluation(unittest.TestCase):
 
         self.assertEqual(report["status"], "pass")
 
+    def test_repeating_three_cycle_is_intentional_non_convergence(self):
+        report = runcontrols.evaluate_run_controls(
+            [
+                {"slot": "fixloop", "action": "patch-a", "diff_fingerprint": "a"},
+                {"slot": "fixloop", "action": "patch-b", "diff_fingerprint": "b"},
+                {"slot": "fixloop", "action": "patch-c", "diff_fingerprint": "c"},
+                {"slot": "fixloop", "action": "patch-a2", "diff_fingerprint": "a"},
+                {"slot": "fixloop", "action": "patch-b2", "diff_fingerprint": "b"},
+                {"slot": "fixloop", "action": "patch-c2", "diff_fingerprint": "c"},
+            ],
+            step_caps={"fixloop": 10},
+            alternating_diff_window=6,
+        )
+
+        self.assertEqual(report["status"], "halt")
+        self.assertEqual(report["reason"]["reason"], "alternating-diff-fingerprint")
+        self.assertEqual(report["reason"]["observed"], "a,b,c,a,b,c")
+
     def test_soft_failures_do_not_halt_without_a_hard_breach(self):
         report = runcontrols.evaluate_run_controls(
             [

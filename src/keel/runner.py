@@ -52,6 +52,8 @@ def run_command(
 ) -> CommandResult:
     """Run ``cmd`` in a shell, capturing output. Fail-soft on timeout/OS error."""
     try:
+        # Intentional shell boundary: cmd must come only from operator-controlled
+        # project config or extension YAML, never from PR content or agent output.
         proc = _run(cmd, shell=True, cwd=cwd, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         return CommandResult(False, 124, f"timed out after {timeout}s")

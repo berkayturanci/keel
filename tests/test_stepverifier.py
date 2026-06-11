@@ -89,14 +89,18 @@ class TestHandoffBuilder(unittest.TestCase):
             producer="reviewer-a",
             vendor="openai",
             model_name="gpt-5",
-            allowed_capabilities=("github-read", "", "filesystem-read", "github-read"),
+            allowed_capabilities=("gh", "", "shell", "gh", "future-capability"),
         )
 
         self.assertEqual(handoff["provenance"]["source"]["vendor"], "openai")
         self.assertEqual(handoff["provenance"]["source"]["model"], "gpt-5")
         self.assertEqual(
             handoff["provenance"]["capability_scope"]["allowed_capabilities"],
-            ["filesystem-read", "github-read"],
+            ["gh", "shell"],
+        )
+        self.assertEqual(
+            handoff["provenance"]["capability_scope"]["unknown_capabilities"],
+            ["future-capability"],
         )
         self.assertFalse(
             handoff["provenance"]["capability_scope"]["can_expand_capabilities"]

@@ -31,7 +31,7 @@ class TestSourceTag(unittest.TestCase):
             step_id=" s7 ",
             vendor=" openai ",
             model=" gpt-5 ",
-            allowed_capabilities=("github-read", "", "shell", "github-read"),
+            allowed_capabilities=("gh", "", "shell", "gh", "future-capability"),
         )
 
         self.assertEqual(tag["role"], "untrusted-agent-output")
@@ -44,7 +44,11 @@ class TestSourceTag(unittest.TestCase):
         })
         self.assertEqual(
             tag["capability_scope"]["allowed_capabilities"],
-            ["github-read", "shell"],
+            ["gh", "shell"],
+        )
+        self.assertEqual(
+            tag["capability_scope"]["unknown_capabilities"],
+            ["future-capability"],
         )
         self.assertFalse(tag["capability_scope"]["can_expand_capabilities"])
 
@@ -102,7 +106,7 @@ class TestNormalizeTag(unittest.TestCase):
                 "model": " sonnet ",
             },
             "capability_scope": {
-                "allowed_capabilities": ["github-read", " ", "filesystem-read"],
+                "allowed_capabilities": ["gh", " ", "shell", "future-capability"],
             },
         }
 
@@ -118,7 +122,11 @@ class TestNormalizeTag(unittest.TestCase):
         self.assertEqual(tag["source"]["model"], "sonnet")
         self.assertEqual(
             tag["capability_scope"]["allowed_capabilities"],
-            ["filesystem-read", "github-read"],
+            ["gh", "shell"],
+        )
+        self.assertEqual(
+            tag["capability_scope"]["unknown_capabilities"],
+            ["future-capability"],
         )
 
     def test_normalize_tag_rejects_malformed_source_and_scope(self):

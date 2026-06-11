@@ -229,6 +229,8 @@ def _same_title(candidate: dict[str, Any], existing: dict[str, Any]) -> bool:
 
 def _is_open(raw: dict[str, Any]) -> bool:
     state = _string(raw.get("state")).lower()
+    # Missing state is treated as open so incomplete GitHub/search fixtures
+    # suppress duplicates conservatively instead of creating duplicate work.
     return state in {"", "open"}
 
 

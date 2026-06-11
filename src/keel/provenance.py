@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .capabilities import KNOWN_CAPABILITIES
+
 SCHEMA_VERSION = "keel.agent-output-provenance.v1"
 UNTRUSTED_ROLE = "untrusted-agent-output"
 
@@ -42,11 +44,7 @@ def source_tag(
     allowed_capabilities: tuple[str, ...] | list[str] = (),
 ) -> dict[str, Any]:
     """Build a source-only provenance tag for structured records."""
-    capabilities = sorted({
-        item.strip()
-        for item in allowed_capabilities
-        if isinstance(item, str) and item.strip()
-    })
+    capabilities, unknown = _capabilities(allowed_capabilities)
     return {
         "schema_version": SCHEMA_VERSION,
         "role": UNTRUSTED_ROLE,
@@ -59,6 +57,7 @@ def source_tag(
         },
         "capability_scope": {
             "allowed_capabilities": capabilities,
+            "unknown_capabilities": unknown,
             "can_expand_capabilities": False,
         },
     }
@@ -113,3 +112,16 @@ def _value(value: Any, fallback: str) -> str:
 
 def _optional(value: Any) -> str | None:
     return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _capabilities(values: tuple[str, ...] | list[str]) -> tuple[list[str], list[str]]:
+    known = set(KNOWN_CAPABILITIES)
+    clean = {
+        item.strip()
+        for item in values
+        if isinstance(item, str) and item.strip()
+    }
+    return (
+        sorted(item for item in clean if item in known),
+        sorted(item for item in clean if item not in known),
+    )

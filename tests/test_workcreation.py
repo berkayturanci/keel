@@ -149,6 +149,26 @@ class TestWorkCreationEvaluation(unittest.TestCase):
 
         self.assertEqual(report["decisions"][0]["decision"], "create")
 
+    def test_missing_existing_state_suppresses_duplicates_conservatively(self):
+        for existing in (
+            {"number": 14, "title": "Fix duplicate signal"},
+            {"number": 15, "state": None, "title": "Fix duplicate signal"},
+        ):
+            with self.subTest(existing=existing):
+                report = workcreation.evaluate_candidates(
+                    [
+                        {
+                            "title": "Fix duplicate signal",
+                            "occurrences": 2,
+                            "confidence": 1.0,
+                        }
+                    ],
+                    existing_work=[existing],
+                )
+
+                self.assertEqual(report["decisions"][0]["decision"], "suppress-duplicate")
+                self.assertEqual(report["decisions"][0]["duplicate_of"], existing["number"])
+
     def test_per_cycle_limit_is_enforced(self):
         report = workcreation.evaluate_candidates(
             [
