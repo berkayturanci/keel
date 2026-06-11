@@ -214,6 +214,11 @@ def verify(
         pr_reviews=pr_reviews or [],
         head_sha=head_sha,
     )
+    findings = _run_context_findings(
+        pr_comments=pr_comments or [],
+        issue_comments=issue_comments or [],
+        enforced=enforced,
+    )
     results = []
     for item in items:
         present = _is_present(item, counts)
@@ -229,15 +234,17 @@ def verify(
             "reason": None if ok else f"missing required evidence: {item.id}",
         })
     missing = [result["id"] for result in results if not result["ok"]]
+    blocking_findings = [finding for finding in findings if finding["severity"] == "major"]
     return {
         "schema_version": SCHEMA_VERSION,
-        "status": "pass" if not missing else "fail",
+        "status": "pass" if not missing and not blocking_findings else "fail",
         "dry_run": dry_run,
         "enforced": enforced,
         "required_count": len(items),
         "missing": missing,
         "results": results,
         "counts": counts,
+        "findings": findings,
     }
 
 
@@ -285,6 +292,58 @@ def _has_closure_marker(body: str) -> bool:
 
 def _is_closure_comment(item: dict[str, Any]) -> bool:
     return _is_trusted_source(item) and _has_closure_marker(_body(item))
+
+
+def _run_context_findings(
+    *,
+    pr_comments: list[dict[str, Any]],
+    issue_comments: list[dict[str, Any]],
+    enforced: bool,
+) -> list[dict[str, Any]]:
+    comments = [*pr_comments, *issue_comments]
+    findings: list[dict[str, Any]] = []
+    for item in comments:
+        if not _is_closure_comment(item):
+            continue
+        body = _body(item)
+        if _has_empty_run_context(body):
+            findings.append({
+                "id": "run-context-empty",
+                "severity": "major" if enforced else "minor",
+                "kind": "closure",
+                "message": "Closure comment Run context is fully degraded.",
+            })
+    return findings
+
+
+def _has_empty_run_context(body: str) -> bool:
+    if "### Run context" not in body:
+        return False
+    fields = _run_context_fields(body)
+    return fields == {
+        "host agent": "unknown",
+        "transport": "unknown",
+        "profile": "unknown",
+        "jury": "off",
+        "consent": "unknown (scopes: none)",
+    }
+
+
+def _run_context_fields(body: str) -> dict[str, str]:
+    fields: dict[str, str] = {}
+    in_block = False
+    for line in body.splitlines():
+        if line.strip() == "### Run context":
+            in_block = True
+            continue
+        if in_block and line.startswith("### "):
+            break
+        if not in_block:
+            continue
+        match = re.match(r"^-\s+\*\*(?P<key>[^*]+):\*\*\s+(?P<value>.+?)\s*$", line)
+        if match:
+            fields[match.group("key").strip().lower()] = match.group("value").strip().lower()
+    return fields
 
 
 def _is_trusted_source(item: dict[str, Any]) -> bool:

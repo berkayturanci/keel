@@ -30,6 +30,26 @@ def _untrusted_comment(body):
     return {"body": body, "author_association": "NONE", "user": {"login": "drive-by"}}
 
 
+def _closure_with_run_context(
+    *,
+    host="codex",
+    transport="gh",
+    profile="standard",
+    jury="off",
+    consent="approved (scopes: filesystem, git, github)",
+):
+    return (
+        f"{closure.COMMENT_MARKER}\n\n"
+        "## Ship outcome\n\n"
+        "### Run context\n\n"
+        f"- **Host agent:** {host}\n"
+        f"- **Transport:** {transport}\n"
+        f"- **Profile:** {profile}\n"
+        f"- **Jury:** {jury}\n"
+        f"- **Consent:** {consent}\n"
+    )
+
+
 class TestEvidenceContract(unittest.TestCase):
     def test_required_items_include_closure_review_and_gating_jury(self):
         contract = evidence.contract_as_dict(_review_contract(reviewers=2, jury=True))
@@ -277,6 +297,72 @@ class TestEvidenceVerify(unittest.TestCase):
         self.assertEqual(report["counts"]["closure_issue"], 1)
         self.assertEqual(report["counts"]["review_verdict"], 1)
         self.assertEqual(report["counts"]["jury_verdict"], 1)
+
+    def test_fully_populated_run_context_has_no_finding(self):
+        report = evidence.verify(
+            _review_contract(reviewers=1),
+            pr_comments=[
+                _trusted_comment(_closure_with_run_context()),
+                _trusted_comment("keel.review-verdict.v1\nreviewer: alpha\nLGTM"),
+            ],
+            issue_comments=[_trusted_comment(_closure_with_run_context())],
+        )
+
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["findings"], [])
+
+    def test_partially_degraded_run_context_has_no_empty_context_finding(self):
+        report = evidence.verify(
+            _review_contract(reviewers=1),
+            pr_comments=[
+                _trusted_comment(_closure_with_run_context(host="unknown") + "\n### Capture\n"),
+                _trusted_comment("keel.review-verdict.v1\nreviewer: alpha\nLGTM"),
+            ],
+            issue_comments=[_trusted_comment(_closure_with_run_context(transport="unknown"))],
+        )
+
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["findings"], [])
+
+    def test_fully_degraded_run_context_emits_major_finding(self):
+        empty = _closure_with_run_context(
+            host="unknown",
+            transport="unknown",
+            profile="unknown",
+            jury="off",
+            consent="unknown (scopes: none)",
+        )
+        report = evidence.verify(
+            _review_contract(reviewers=1),
+            pr_comments=[
+                _trusted_comment(empty),
+                _trusted_comment("keel.review-verdict.v1\nreviewer: alpha\nLGTM"),
+            ],
+            issue_comments=[_trusted_comment(_closure_with_run_context())],
+        )
+
+        self.assertEqual(report["status"], "fail")
+        self.assertEqual(report["missing"], [])
+        self.assertEqual(report["findings"][0]["id"], "run-context-empty")
+        self.assertEqual(report["findings"][0]["severity"], "major")
+
+    def test_fully_degraded_run_context_is_minor_when_not_enforced(self):
+        empty = _closure_with_run_context(
+            host="unknown",
+            transport="unknown",
+            profile="unknown",
+            jury="off",
+            consent="unknown (scopes: none)",
+        )
+        report = evidence.verify(
+            _review_contract(reviewers=1),
+            pr_comments=[_trusted_comment(empty)],
+            issue_comments=[],
+            enforced=False,
+        )
+
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["findings"][0]["severity"], "minor")
 
     def test_bot_comment_markers_are_evidence_even_without_member_association(self):
         bot_comment = {

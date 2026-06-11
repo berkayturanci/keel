@@ -80,7 +80,9 @@ Pass the s0 preflight **run context** through: `--host-agent` (the resolved `HOS
 and `--transport` (the detected `gh`|`mcp` transport from s0); `--profile`, the jury mode,
 and the consent summary are already available from the run and are stamped onto the
 `ship_run` record so the s11 closure comment renders a durable **Run context** block.
-`--transport` defaults to the transport keel resolved for the run when omitted.
+`--transport` defaults to the transport keel resolved for the run when omitted. A missing
+`--host-agent` emits a warning on live append; pass `--strict-run-context` when the run
+should fail instead of producing a degraded closure audit trail.
 If the configured ledger path is missing, treat it as empty history; if a ledger record is
 malformed, stop capture/reporting and ask for operator help instead of silently falling
 back to comment scraping.
@@ -120,7 +122,9 @@ locally; if it cannot, mark blocked and quote the details URL. State the detecte
 mode in your first user-facing line, **and record it** (alongside the resolved host agent)
 for the s11 closure comment: carry the transport (`gh`|`mcp`) and `HOST_AGENT` forward so
 the `--append-ledger` call at s11 stamps them onto the `ship_run` record as durable PR
-evidence (see s11).
+evidence (see s11). Evidence verification flags a closure Run context where every field
+degraded as `run-context-empty`; do not treat an all-unknown Run context as acceptable
+capture.
 
 ### Argument parsing
 
@@ -518,4 +522,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=plugin command=ship keel_version=1.2.0 source_sha256=1ce7c46a114dd3dd561994eff8459aba9c391921fe4a39eacefd0f421ac10ba5 generated_sha256=1ce7c46a114dd3dd561994eff8459aba9c391921fe4a39eacefd0f421ac10ba5 -->
+<!-- keel-generated: surface=plugin command=ship keel_version=1.2.0 source_sha256=75f70dcc13cca70a785ab190c55598a309a639c8bca1cf3dff88d188d3e9a068 generated_sha256=75f70dcc13cca70a785ab190c55598a309a639c8bca1cf3dff88d188d3e9a068 -->

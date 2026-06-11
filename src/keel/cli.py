@@ -512,6 +512,15 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         else:
             print(message, file=sys.stderr)
         return 1
+    run_context_warnings = _run_context_warnings(args)
+    if args.live and args.append_ledger and args.strict_run_context and run_context_warnings:
+        message = "; ".join(run_context_warnings)
+        if args.json:
+            print(json.dumps({"contract": contract, "error": message}, indent=2,
+                             sort_keys=True))
+        else:
+            print(message, file=sys.stderr)
+        return 1
 
     changed = git.changed_files(config.base_branch, "HEAD", cwd=args.root)
     # unreachable: orch.build_plan() above already calls plan_gates and surfaces GateError.
@@ -625,6 +634,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         "path": str(ledger_path),
         "appended": False,
         "record": ledger_record,
+        "warnings": run_context_warnings,
     }
     if args.append_ledger and args.live:
         ledger.append_record(ledger_path, ledger_record)
@@ -665,6 +675,8 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     print(f"  run controls  : {run_control_report['status']}")
     if args.append_ledger:
         print(f"  ledger append : {'yes' if ledger_result['appended'] else 'dry-run/no-live'}")
+    for warning in run_context_warnings:
+        print(f"  run context   : warning: {warning}")
     if intake_record["questions"]:
         print(f"  questions     : {len(intake_record['questions'])}")
     if transport.degraded:
@@ -1692,6 +1704,19 @@ def _owner_repo(config: cfg.ProjectConfig) -> str:
     if not config.owner or not config.repo:
         raise ValueError("project config must define owner and repo for live evidence fetch")
     return f"{config.owner}/{config.repo}"
+
+
+def _run_context_warnings(args: argparse.Namespace) -> list[str]:
+    if not getattr(args, "live", False) or not getattr(args, "append_ledger", False):
+        return []
+    warnings = []
+    if not _nonblank(getattr(args, "host_agent", None)):
+        warnings.append("missing host_agent in live run context")
+    return warnings
+
+
+def _nonblank(value: object) -> bool:
+    return isinstance(value, str) and bool(value.strip())
 
 
 def _comment_artifact_marker(artifact: str) -> str:
@@ -3099,6 +3124,9 @@ def _add_ship_parser(parser: argparse.ArgumentParser, *, command: str) -> None:
     parser.add_argument("--transport", choices=("gh", "mcp"), default=None,
                         help="detected GitHub transport for the run context; "
                              "defaults to the resolved transport when omitted")
+    parser.add_argument("--strict-run-context", action="store_true",
+                        help="block live ledger append when required run-context fields "
+                             "would degrade")
     parser.add_argument("--issue-title", default=None,
                         help="issue title to include in the intake/readiness contract")
     parser.add_argument("--issue-body", default=None,

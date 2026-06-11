@@ -204,6 +204,11 @@ from the existing `--operator`/`--approve-scope` inputs. The s11 closure comment
 all of this as a deterministic **Run context** block (host agent / transport / profile /
 jury / consent); missing fields degrade gracefully (`unknown`/`off`/`none`).
 
+On a live append, a missing `--host-agent` emits a run-context warning by default. Add
+`--strict-run-context` to fail instead of writing a ledger record when required run-context
+fields would degrade. `--transport` is auto-filled from the resolved GitHub transport when
+omitted, so adapters should not echo a stale transport value.
+
 ## `keel capture-verify <project.yaml> --merged-pr <N> [--json]`
 
 Verify that merged PRs have exactly one valid capture marker in the configured run ledger.
@@ -278,6 +283,11 @@ silently disabled by an empty configured label.
 
 A failed live fetch (for example, `gh` cannot read the PR or its labels) is **fail-closed**:
 the command errors and exits non-zero rather than treating the gate as unenforced.
+When a closure comment has a `### Run context` block whose host agent, transport, profile,
+jury, and consent fields are all degraded (`unknown`/`off`/`none`), the verifier emits a
+`run-context-empty` finding. Under enforced live evidence this is a major finding and the
+verification fails; partially populated context remains accepted but visible in the closure
+comment.
 
 Use `--deferral <id|kind|all>` only for an explicit, recorded operator deferral; it applies
 only within an enforced run and has no effect when the gate is unenforced. `--dry-run`

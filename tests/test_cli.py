@@ -635,6 +635,60 @@ class TestShip(unittest.TestCase):
         self.assertEqual(run_context["transport"], "gh")
         self.assertIsNone(run_context["host_agent"])
         self.assertEqual(run_context["profile"], "standard")
+        self.assertEqual(
+            data["result"]["run_ledger"]["warnings"],
+            ["missing host_agent in live run context"],
+        )
+
+    def test_ship_live_append_strict_run_context_blocks_missing_host_agent(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger("'true'")
+            rc, out, _ = run(["ship", config, "--root", d, "--live", "--json",
+                              "--append-ledger", "--run-id", "RUN-264",
+                              "--issue", "264", "--pull-request", "275",
+                              "--capture-status", "skipped",
+                              "--capture-reason", "no capture hook configured",
+                              "--strict-run-context",
+                              "--approve-scope", "filesystem,git,github",
+                              "--operator", "tester"])
+            ledger_path = Path(d) / "state" / "runs.jsonl"
+
+        self.assertEqual(rc, 1)
+        data = json.loads(out)
+        self.assertIn("missing host_agent", data["error"])
+        self.assertFalse(ledger_path.exists())
+
+    def test_ship_live_append_strict_run_context_human_output(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, _, err = run(["ship", _write_config_with_ledger("'true'"),
+                              "--root", d, "--live",
+                              "--append-ledger", "--run-id", "RUN-264-H",
+                              "--issue", "264", "--pull-request", "275",
+                              "--capture-status", "skipped",
+                              "--capture-reason", "no capture hook configured",
+                              "--strict-run-context",
+                              "--approve-scope", "filesystem,git,github",
+                              "--operator", "tester"])
+
+        self.assertEqual(rc, 1)
+        self.assertIn("missing host_agent", err)
+
+    def test_ship_human_append_warns_on_missing_host_agent(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["ship", _write_config_with_ledger("'true'"),
+                              "--root", d, "--live",
+                              "--append-ledger", "--run-id", "RUN-265",
+                              "--issue", "265", "--pull-request", "276",
+                              "--capture-status", "skipped",
+                              "--capture-reason", "no capture hook configured",
+                              "--approve-scope", "filesystem,git,github",
+                              "--operator", "tester"])
+
+        self.assertEqual(rc, 0)
+        self.assertIn("run context   : warning: missing host_agent", out)
 
     def test_ship_json_uses_learning_policy_in_ledger_record(self):
         import tempfile

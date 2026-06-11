@@ -80,7 +80,9 @@ Pass the s0 preflight **run context** through: `--host-agent` (the resolved `HOS
 and `--transport` (the detected `gh`|`mcp` transport from s0); `--profile`, the jury mode,
 and the consent summary are already available from the run and are stamped onto the
 `ship_run` record so the s11 closure comment renders a durable **Run context** block.
-`--transport` defaults to the transport keel resolved for the run when omitted.
+`--transport` defaults to the transport keel resolved for the run when omitted. A missing
+`--host-agent` emits a warning on live append; pass `--strict-run-context` when the run
+should fail instead of producing a degraded closure audit trail.
 If the configured ledger path is missing, treat it as empty history; if a ledger record is
 malformed, stop capture/reporting and ask for operator help instead of silently falling
 back to comment scraping.
@@ -120,7 +122,9 @@ locally; if it cannot, mark blocked and quote the details URL. State the detecte
 mode in your first user-facing line, **and record it** (alongside the resolved host agent)
 for the s11 closure comment: carry the transport (`gh`|`mcp`) and `HOST_AGENT` forward so
 the `--append-ledger` call at s11 stamps them onto the `ship_run` record as durable PR
-evidence (see s11).
+evidence (see s11). Evidence verification flags a closure Run context where every field
+degraded as `run-context-empty`; do not treat an all-unknown Run context as acceptable
+capture.
 
 ### Argument parsing
 
