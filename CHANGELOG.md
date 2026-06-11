@@ -6,19 +6,15 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-06-11
+
 ### Added
-- **Ship run-context as durable PR evidence** — the s0 preflight run context (resolved
-  GitHub transport `gh`|`mcp`, host agent, workflow profile, jury mode, and operator-consent
-  summary) is now persisted on the `ship_run` ledger record and rendered as a deterministic
-  **Run context** block in the s11 closure comment, so it is durable PR evidence rather than
-  an ephemeral chat line. `keel ship --append-ledger` gains `--host-agent` and `--transport`
-  (`gh`|`mcp`) inputs; `--transport` defaults to the transport keel resolved for the run, the
-  profile is threaded from `--profile`, the jury mode is derived from the resolved review
-  contract, and the consent summary is derived from the existing `--operator`/`--approve-scope`
-  inputs. The block is additive — the `keel.closure-comment.v1` marker and every existing
-  closure line stay byte-identical, so the evidence verifier is unaffected — and missing
-  fields degrade gracefully (`unknown`/`off`/`none`). The `closure_comment` contract, the ship
-  adapter (s0/s11), and the CLI/command-contract docs are updated to match. (#241)
+- **Step verification contract** — keel core now exposes a deterministic
+  `keel.step-verification.v1` contract that fail-closed checks each fixed-backbone step's
+  completion and proves the structured handoff between steps via `keel.step-handoff.v1`, so a
+  step can no longer be marked done by adapter prose without the required evidence. A canonical
+  step-handoff renderer is added to `keel.artifacts`, and `contract.step_verification` is
+  exposed in the ship command contracts. (#233)
 - **`keel adapter-status` surfaces orphan & unmanaged keel-like files** — the command now
   scans the managed surface directories (`commands/`, `.claude/commands/keel/`,
   `.claude/commands/`, `.agents/skills/keel-*`, `.agents/skills/source-command-*`) for files
@@ -31,7 +27,44 @@ All notable changes to keel are documented here. The format follows
   `unmanaged (no-marker)`, never flagging commands the project declares as project-only via
   `policy_pack`. `adapter-status --json` includes the new findings, and `keel sync` /
   `update-adapter` print a one-line heads-up when orphan/unmanaged files are present. Purely
-  advisory: keel never auto-deletes and these findings never gate a run. (#198)
+  advisory: keel never auto-deletes and these findings never gate a run. (#234)
+- **Deterministic run controls** — a pure-core `keel.run-controls.v1` guardrail bounds agentic
+  loops (fixloop, reviewer/tester dispatch) with per-run work-unit budgets, per-slot step caps,
+  and deterministic oscillation detection, emitting structured fail-closed halt reasons rendered
+  through `keel.artifacts.render_run_control_halt`. `contract.run_controls` is exposed for ship,
+  pr-loop, review-cycle, work-block, and overnight; invalid limits fall back safely and soft
+  failures are preserved. (#236)
+- **Work creation policy** — a shared deterministic `keel.work-creation.v1` policy governs
+  signal-driven issue creation across regression, review-all-day, coverage, deps-audit, and
+  flake-audit, replacing command-local logic. It yields `create`, `suppress-transient`,
+  `suppress-duplicate`, and `limit-reached` decisions via occurrence/confidence transient
+  filtering, open-work dedupe (explicit key, normalized title, near-text similarity), per-cycle
+  creation limits, and same-cycle duplicate suppression, exposed through the scan and reporting
+  contracts as `work_creation_policy`. (#237)
+- **Agent-output provenance** — a pure-core agent-output provenance contract tags structured
+  findings and step handoffs with source, vendor/model, and capability-scope metadata so
+  untrusted agent output can be attributed and scoped downstream. The
+  `contract.agent_output_provenance` block is exposed in the ship command contracts. (#238)
+- **Resource claim primitive** — the existing `mkdir` merge lock is generalized into a pure-core
+  single-host resource-claim primitive. Merge-lock behavior is preserved (`LockError` still
+  raised for a held merge lock) while general resource claims get structured deny/release
+  feedback, and the `contract.resource_claims` block is exposed in the ship command contracts. (#239)
+- **Risk × trust consent escalation** — operator consent gains a deterministic risk × trust
+  escalation contract that gates side-effecting actions in the escalation decision, adds
+  repeated-retry, conflicting-source, and large-diff triggers, and supports deterministic
+  low-risk sampling, surfaced under `contract.operator_consent.risk_trust_escalation`. (#240)
+- **Ship run-context as durable PR evidence** — the s0 preflight run context (resolved
+  GitHub transport `gh`|`mcp`, host agent, workflow profile, jury mode, and operator-consent
+  summary) is now persisted on the `ship_run` ledger record and rendered as a deterministic
+  **Run context** block in the s11 closure comment, so it is durable PR evidence rather than
+  an ephemeral chat line. `keel ship --append-ledger` gains `--host-agent` and `--transport`
+  (`gh`|`mcp`) inputs; `--transport` defaults to the transport keel resolved for the run, the
+  profile is threaded from `--profile`, the jury mode is derived from the resolved review
+  contract, and the consent summary is derived from the existing `--operator`/`--approve-scope`
+  inputs. The block is additive — the `keel.closure-comment.v1` marker and every existing
+  closure line stay byte-identical, so the evidence verifier is unaffected — and missing
+  fields degrade gracefully (`unknown`/`off`/`none`). The `closure_comment` contract, the ship
+  adapter (s0/s11), and the CLI/command-contract docs are updated to match. (#242)
 
 ## [1.1.0] — 2026-06-10
 
