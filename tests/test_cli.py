@@ -21,7 +21,7 @@ def _trusted_comment(body):
 
 
 def _write_json_fixture(path, value):
-    path.write_bytes(json.dumps(value).encode("utf-8"))
+    Path(_write_raw(json.dumps(value))).replace(path)
 
 
 def run(argv):
