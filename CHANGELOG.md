@@ -6,6 +6,21 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **BREAKING:** configured state file paths are now constrained to the project root.
+  `policy_pack.reports.run_ledger` and `policy_pack.reports.checkpoint` must be relative
+  paths that resolve inside the project root; absolute paths and `..` escapes are rejected
+  before keel reads or writes ledger/checkpoint state. Ledger, checkpoint, status, resume,
+  capture verification/reconcile, ship, and plan now report a friendly exit 1 instead of a
+  raw traceback when these paths are invalid. (#251, #259)
+- **BREAKING:** evidence markers now require trusted GitHub provenance. Closure, review, and
+  jury evidence must come from `OWNER`, `MEMBER`, or `COLLABORATOR` actors; explicit
+  untrusted `author_association` values are rejected even for bot-authored comments, and
+  enforced evidence rejects fixture payloads that omit `author_association`. (#252, #256)
+- **Ship run context now uses `jury_mode` consistently.** Closure/run-context contracts and
+  rendered closure comments advertise the `jury_mode` field (not `jury`) for the resolved
+  `off` / `advisory` / `gating` value. (#254)
+
 ### Fixed
 - **`adapter-status` no longer flags opt-in legacy wrappers as `missing`.** Legacy
   claude wrappers (`legacy-claude`) are installed only by `install-legacy-wrappers`,
@@ -27,6 +42,9 @@ All notable changes to keel are documented here. The format follows
   non-blocking `nit` advisory finding (`jury:skipped-oversize`) so the skip surfaces
   in the posted jury verdict instead of letting an oversize diff dodge the jury
   stage unobserved. (#258)
+- **Risk escalation keeps its side-effect context.** Operator consent escalation now
+  preserves the side-effect list passed by callers instead of collapsing it during
+  risk/trust evaluation. (#253)
 
 ## [1.2.0] — 2026-06-11
 

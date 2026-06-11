@@ -234,12 +234,13 @@ The block records:
   pull_request, changed_files, docs_touched, capture, run_id, run_context
 - the `run_context` section renders a deterministic **Run context** block appended after
   the `run_id` line, surfacing the s0 preflight as durable PR evidence: host agent,
-  transport (`gh`|`mcp`), profile (`standard`|`compound`), jury (`off`|`advisory`|`gating`),
-  and a consent summary (status + approved scopes). Its fields are listed under
-  `run_context_fields` (`host_agent`, `transport`, `profile`, `jury`, `consent`). The block
+  transport (`gh`|`mcp`), profile (`standard`|`compound`), jury mode
+  (`off`|`advisory`|`gating`), and a consent summary (status + approved scopes). Its fields
+  are listed under `run_context_fields` (`host_agent`, `transport`, `profile`,
+  `jury_mode`, `consent`). The block
   is **additive** — the `comment_marker` and every existing line stay byte-identical, so the
   evidence verifier is unaffected. Missing fields degrade gracefully: host agent / transport /
-  profile / consent status render `unknown`, jury renders `off`, an empty scope list renders
+  profile / consent status render `unknown`, jury mode renders `off`, an empty scope list renders
   `none`. The values come from the ledger record's `run_context` block, which `keel ship`
   populates from the resolved transport, the `--host-agent`/`--transport`/`--profile` inputs,
   the resolved jury mode, and the existing `--operator`/`--approve-scope` consent inputs

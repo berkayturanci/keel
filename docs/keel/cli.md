@@ -547,6 +547,9 @@ If `gates:` includes **`jury`** and the [ai-jury](https://github.com/berkayturan
 `jury` CLI is installed, the jury gate runs it on the diff (`git diff base...HEAD`) and maps
 its findings (file/line/severity) into keel findings (critical/major block). If `jury` is
 not installed the gate is a **fail-soft no-op** — the flow runs with or without jury.
+Diffs larger than 1 MB (`MAX_DIFF_BYTES`) also fail soft: keel skips the external jury run
+and emits a non-blocking `nit` finding (`jury:skipped-oversize`) so the skip is visible in
+the verdict instead of being silent.
 
 ```bash
 keel run-gates .keel/project.yaml --root .
