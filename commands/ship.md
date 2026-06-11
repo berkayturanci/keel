@@ -265,12 +265,19 @@ passed the tier is not computed, so the tier-3 jury auto-trigger does not apply.
 default (`--jury-advisory` ⇒ advisory-only). The jury never changes the reviewer count.
 Log the decision (`jury: enabled (reason; mode) / disabled`).
 
+### Step boundary verification
+At every successful backbone transition, persist the canonical JSON handoff produced from
+`keel.stepverifier.build_handoff`, write/update the checkpoint for the next safe boundary,
+and run `keel step-verify --step sN --handoff-file <file> --evidence-report <file>` before
+advancing. A failed step verification is a BLOCKER: do not continue, merge, or mark the
+step complete from chat prose alone.
+
 ### s6 ci
 Push the branch, open the **draft** PR, and wait for the project's `ci_workflows` to go
-green. When opening the PR the orchestrator MUST apply the evidence gate label — the
-`evidence_gate_label` knob (default `keel:ship`) — to the PR, so the required
-`keel evidence (required)` check engages for ship-driven PRs (hand-authored PRs that lack
-the label are not gated). Evaluate the rollup with **failure-before-pending** precedence — a
+green. The required `keel evidence (required)` check is provenance-armed for ship-driven PRs
+(ship branch, posted review marker, ship-run ledger record, or legacy gate label); only an
+operator-applied `keel:evidence-waived` label may disarm it. Evaluate the rollup with
+**failure-before-pending** precedence — a
 mixed state with any failure is a failure, never poll past it. Three branches:
 - **all green** (`success`/`skipped`/`neutral`/`stale`) ⇒ proceed.
 - **empty check set** ⇒ allow only if every changed path is in `docs_gate_paths`, else
@@ -307,6 +314,9 @@ for the operator-posted review verdict.
 When available, use `result.artifact_bodies.review_verdict_template` as the canonical
 comment shape: keep `keel.review-verdict.v1`, `reviewer: <stable-id>`, and `head: <sha>`
 intact, then fill in the reviewer-specific verdict, scope, findings, and testing notes.
+Post each review verdict through `keel post-comment` with a reviewer-scoped run id
+(`--run-id "$RUN_ID:<reviewer-id>"`) so same-run idempotency updates that reviewer only and
+does not collapse multiple reviewer verdicts into one comment.
 
 - `inline` → fetch the diff once; anchor each `critical`/`major` finding as an **inline
   review comment** on its `file:line` (resolve `RIGHT`/`LEFT` side; `line` is the new-file
@@ -337,10 +347,13 @@ panel is downgraded to advisory (count distinct participating vendors before ass
 verdict so the posted comment matches what is enforced), and any jury run that did not
 complete cleanly **never gates**. Honour `--review-comments` (pass the jury's native inline
 flag through in inline mode, never under `--dry-run`). The orchestrator MUST POST the
-single jury summary/verdict comment to the GitHub PR via a body-file (for example,
-`gh pr comment <PR_ID> --body-file <file>` when `gh` is the selected transport). Never
-interpolate report text into a shell argument. Re-runs use the jury's incremental/cache
-flags to stay cheap.
+single jury summary/verdict comment to the GitHub PR through `keel post-comment`:
+`keel post-comment .keel/project.yaml --root . --target pr:<PR> --artifact jury-verdict
+--body-file <file> --run-id "$RUN_ID"`. Raw `gh pr comment`, `gh issue comment`, or
+hand-rolled comment API calls are spec violations for jury/review/closure/issue-update
+artifacts because they bypass marker validation, transport selection, and same-run
+idempotency. Never interpolate report text into a shell argument. Re-runs use the jury's
+incremental/cache flags to stay cheap.
 
 ### s9 fixloop
 While there are blocking findings and the budget (**≤3 review-fix rounds**) is not spent:
@@ -350,12 +363,19 @@ just the originating focus(es) (carry the original reviewer codename forward, fr
 per narrowed reviewer, "verify only the applied fix in commit `<sha>`; do not re-review what
 you already approved" prompt; spawn multiple narrowed focuses in one Agent message). A
 suggestion is gated like a blocker — apply it, or obtain an explicit, tracked user deferral;
-never silently relabel one "advisory/flake". A narrowed reviewer that surfaces a NEW blocker
+never silently relabel one "advisory/flake". Recorded suggestion deferrals must be public
+and checkable: post a `keel.deferral.v1` PR/issue comment marker that names the finding,
+authorising operator, and reason before treating the suggestion as deferred. A narrowed
+reviewer that surfaces a NEW blocker
 escalates back to the full loop. Each round posts its own review (per `--review-comments`)
 and increments the counter; exceeding the budget marks the issue blocked with the
 outstanding findings quoted. Defensive loop-backs (tester, merge-conflict prep) don't spend
 budget unless they require a fix. Before exiting, surface any deferred suggestion/nit with
 its authorising decision/issue — a silent skip is a process violation.
+
+Append each fix/review/test round to the run-events file with `keel runcontrols`. A hard
+halt from `keel runcontrols` is fail-closed and must stop the ship run until an operator
+chooses an explicit `--max-rounds` override.
 
 ### s10 merge
 Only inside the **merge window** (unless the issue is a blocker / `--hotfix`), holding the
@@ -386,14 +406,18 @@ queue. The merge lock and "never `gh pr merge` outside s10" are non-negotiable i
 ### s11 capture
 Record the run for `/keel:wrap`: the **effective** implementer + reviewer vendors/models,
 tier, rounds, window decision, and outcome. Post the **closure comment** to **both** the
-issue and the PR as distinct comments. The PR closure comment MUST be a PR conversation
-comment, not appended to or folded into the PR body, and not represented by the automated
-`keel ship` CI assessment block. Render it deterministically from the `ship_run` ledger
-record via the `result.closure_comment` field of `keel ship --json` (the
+issue and the PR as distinct comments through `keel post-comment` with
+`--artifact closure-comment` and the same `--run-id`. The PR closure comment MUST be a PR
+conversation comment, not appended to or folded into the PR body, and not represented by
+the automated `keel ship` CI assessment block. Render it deterministically from the
+`ship_run` ledger record via the `result.closure_comment` field of `keel ship --json` (the
 `contract.closure_comment` contract describes its stable marker plus sections: heading,
 Implementer `vendor (model)`, Reviewers — noting AI Jury when present, Tester, PR number,
 changed files, capture outcome, run id). Do **not** hand-write closure prose: post the
 rendered markdown verbatim so the issue and PR comments mirror the ledger byte-for-byte.
+Use `keel post-comment` for issue-update, review-verdict, jury-verdict, and
+closure-comment artifacts; a malformed body missing its marker must stop the step before
+any public comment is posted.
 Run any post-merge
 `capture` Lego (e.g. durable-learning capture: classify the merged PR's signal, optionally
 file a follow-up issue or hand off to a project-owned destination) fail-soft, emit its
@@ -494,4 +518,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=plugin command=ship keel_version=1.2.0 source_sha256=7fcef40b0819a2aa72a01dc47d4f3a564046f0603f2d5f57e1c1470576137ab2 generated_sha256=7fcef40b0819a2aa72a01dc47d4f3a564046f0603f2d5f57e1c1470576137ab2 -->
+<!-- keel-generated: surface=plugin command=ship keel_version=1.2.0 source_sha256=1ce7c46a114dd3dd561994eff8459aba9c391921fe4a39eacefd0f421ac10ba5 generated_sha256=1ce7c46a114dd3dd561994eff8459aba9c391921fe4a39eacefd0f421ac10ba5 -->

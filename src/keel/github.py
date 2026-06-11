@@ -31,6 +31,16 @@ def ci_conclusion(pr: int | str, *, cwd: str | None = None, _run=None) -> str | 
     return result.output.strip() or None
 
 
+def pr_merge_snapshot(pr: int | str, *, cwd: str | None = None, _run=None) -> CommandResult:
+    return run_argv(
+        [
+            "gh", "pr", "view", str(pr),
+            "--json", "headRefOid,mergeStateStatus,statusCheckRollup",
+        ],
+        cwd=cwd, **_kw(_run),
+    )
+
+
 def merge_pr(
     pr: int | str, *, method: str = "squash", cwd: str | None = None, _run=None
 ) -> CommandResult:
@@ -39,6 +49,52 @@ def merge_pr(
 
 def comment(pr: int | str, body: str, *, cwd: str | None = None, _run=None) -> CommandResult:
     return run_argv(["gh", "pr", "comment", str(pr), "--body", body], cwd=cwd, **_kw(_run))
+
+
+def post_issue_comment(
+    owner_repo: str,
+    issue_or_pr: int | str,
+    body: str,
+    *,
+    cwd: str | None = None,
+    _run=None,
+) -> CommandResult:
+    return run_argv(
+        [
+            "gh",
+            "api",
+            f"repos/{owner_repo}/issues/{issue_or_pr}/comments",
+            "-X",
+            "POST",
+            "-f",
+            f"body={body}",
+        ],
+        cwd=cwd,
+        **_kw(_run),
+    )
+
+
+def edit_issue_comment(
+    owner_repo: str,
+    comment_id: int | str,
+    body: str,
+    *,
+    cwd: str | None = None,
+    _run=None,
+) -> CommandResult:
+    return run_argv(
+        [
+            "gh",
+            "api",
+            f"repos/{owner_repo}/issues/comments/{comment_id}",
+            "-X",
+            "PATCH",
+            "-f",
+            f"body={body}",
+        ],
+        cwd=cwd,
+        **_kw(_run),
+    )
 
 
 def close_issue(issue: int | str, *, cwd: str | None = None, _run=None) -> CommandResult:

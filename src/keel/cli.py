@@ -18,9 +18,11 @@ from pathlib import Path
 
 from . import (
     __version__,
+    artifacts,
     capture,
     checkpoint,
     classify,
+    closure,
     consent,
     contracts,
     evidence,
@@ -31,11 +33,14 @@ from . import (
     install,
     jury,
     ledger,
+    lock,
     project_commands,
+    runcontrols,
     runtime,
     scaffold,
     ship,
     status,
+    stepverifier,
     window,
 )
 from . import config as cfg
@@ -234,6 +239,185 @@ def _cmd_window(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_claim(args: argparse.Namespace) -> int:
+    result = lock.claim_resource(_lock_root(args.root), args.resource, owner=args.owner)
+    if args.json:
+        print(json.dumps(result.as_dict(), indent=2, sort_keys=True))
+    else:
+        print(f"keel claim — {result.status}  {result.resource}")
+        print(f"  owner : {result.owner}")
+        print(f"  path  : {result.path}")
+        if result.holder:
+            print(f"  holder: {result.holder}")
+    return 0 if result.granted else 1
+
+
+def _cmd_release(args: argparse.Namespace) -> int:
+    result = lock.release_resource(_lock_root(args.root), args.resource, owner=args.owner)
+    if args.json:
+        print(json.dumps(result.as_dict(), indent=2, sort_keys=True))
+    else:
+        print(f"keel release — {result.status}  {result.resource}")
+        print(f"  owner : {result.owner}")
+        print(f"  path  : {result.path}")
+        if result.holder:
+            print(f"  holder: {result.holder}")
+    return 0 if result.status in {"released", "missing"} else 1
+
+
+def _cmd_worktree_remove(args: argparse.Namespace) -> int:
+    try:
+        worktree_path = _validated_worktree_path(args.root, args.worktree)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    result = git.worktree_remove(str(worktree_path), cwd=args.root)
+    if args.json:
+        print(json.dumps({
+            "worktree": str(worktree_path),
+            "removed": result.ok,
+            "code": result.code,
+            "output": result.output,
+        }, indent=2, sort_keys=True))
+    else:
+        print(f"keel worktree-remove — {'removed' if result.ok else 'failed'}  {worktree_path}")
+        if result.output.strip():
+            print(result.output.strip())
+    return 0 if result.ok else 1
+
+
+def _cmd_merge(args: argparse.Namespace) -> int:
+    args.live = True
+    try:
+        config = cfg.load_config(args.path)
+    except FileNotFoundError:
+        print(f"no such config: {args.path}", file=sys.stderr)
+        return 1
+    except cfg.ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    loaded, problems = load_extensions(config, args.root, strict=False)
+    for prob in problems:
+        print(f"  ! extension not loaded: {prob}", file=sys.stderr)
+    requirement = runtime.CapabilityRequirement(required=("git",), optional=("gh", "gh-auth"))
+    report = runtime.detect(args.root)
+    evaluation = runtime.evaluate(requirement, report)
+    transport = github_transport.resolve(report)
+    if not evaluation.ok or not transport.supports("pr_merge"):
+        print(evaluation.render(), file=sys.stderr)
+        print(transport.render(), file=sys.stderr)
+        return 1
+    try:
+        approved_scopes, approval_source, approval_operator, consent_mode = _approved_consent(
+            args, config, True
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    operator_consent = consent.build_consent_contract(
+        command="merge",
+        side_effects=("git_worktree", "merge"),
+        dry_run=False,
+        approved_scopes=approved_scopes,
+        approval_source=approval_source,
+        mode=consent_mode,
+        operator=approval_operator,
+        target=f"PR #{args.pr}",
+    )
+    consent_ok, consent_message = consent.assert_operator_consent(operator_consent)
+    if not consent_ok:
+        print(consent_message, file=sys.stderr)
+        return 1
+    escalation = consent.evaluate_escalation(
+        risk_tier=args.risk_tier,
+        trust_signal=args.trust_signal,
+        side_effects=("git_worktree", "merge", *args.escalation_side_effect),
+        retry_count=args.retry_count,
+        conflicting_sources=args.conflicting_sources,
+        changed_lines=args.changed_lines,
+    )
+    missing_escalation_scope = [
+        scope for scope in escalation["consent_scope"] if scope not in approved_scopes
+    ]
+    if escalation["operator_required"] and missing_escalation_scope:
+        payload = {
+            "schema_version": "keel.merge.v1",
+            "pull_request": args.pr,
+            "status": "fail",
+            "reason": "operator escalation required",
+            "escalation": escalation,
+            "missing_scope": missing_escalation_scope,
+        }
+        if args.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print(
+                "operator escalation required: missing approved scope "
+                f"{', '.join(missing_escalation_scope)}",
+                file=sys.stderr,
+            )
+        return 1
+
+    owner = args.owner or f"keel-merge-pr-{args.pr}"
+    claim = lock.claim_resource(_lock_root(args.root), "merge", owner=owner)
+    payload: dict[str, object] = {
+        "schema_version": "keel.merge.v1",
+        "pull_request": args.pr,
+        "lock": claim.as_dict(),
+        "window": None,
+        "ci": None,
+        "evidence": None,
+        "escalation": escalation,
+        "merged": False,
+    }
+    if not claim.granted:
+        return _finish_merge(args, payload, "resource lock is already held", code=1)
+    try:
+        if not args.hotfix and config.timezone and config.merge_window:
+            open_now = window.is_merge_open(config.timezone, config.merge_window)
+            payload["window"] = {
+                "open": open_now,
+                "timezone": config.timezone,
+                "merge_window": config.merge_window,
+            }
+            if not open_now:
+                return _finish_merge(args, payload, "merge window is closed", code=1)
+        elif args.hotfix:
+            payload["window"] = {"bypassed": True, "reason": "hotfix"}
+
+        try:
+            snapshot = _merge_snapshot(args.pr, cwd=args.root)
+        except ValueError as exc:
+            return _finish_merge(args, payload, str(exc), code=1)
+        payload["ci"] = snapshot["ci"]
+        if snapshot["merge_state"] not in {"CLEAN", "HAS_HOOKS", "UNKNOWN"}:
+            return _finish_merge(
+                args, payload, f"PR merge state is {snapshot['merge_state']}", code=1
+            )
+        if snapshot["ci"]["state"] != "pass":
+            return _finish_merge(args, payload, f"CI is {snapshot['ci']['state']}", code=1)
+
+        evidence_payload = _verify_merge_evidence(args, config)
+        payload["evidence"] = evidence_payload
+        if not evidence_payload["enforced"]:
+            return _finish_merge(args, payload, "evidence gate is not enforced", code=1)
+        if evidence_payload["verification"]["status"] != "pass":
+            missing = ", ".join(evidence_payload["verification"]["missing"])
+            return _finish_merge(args, payload, f"missing evidence: {missing}", code=1)
+
+        if args.dry_run:
+            return _finish_merge(args, payload, "dry-run: merge not performed", code=0)
+        merged = github.merge_pr(args.pr, method=args.method, cwd=args.root)
+        payload["merged"] = merged.ok
+        payload["merge_output"] = merged.output
+        if not merged.ok:
+            return _finish_merge(args, payload, "gh merge failed", code=1)
+        return _finish_merge(args, payload, "merged", code=0)
+    finally:
+        lock.release_resource(_lock_root(args.root), "merge", owner=owner, best_effort=True)
+
+
 def _cmd_ship(args: argparse.Namespace) -> int:
     if args.dry_run and args.live:
         print("--dry-run and --live cannot be used together", file=sys.stderr)
@@ -370,6 +554,18 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     except ledger.LedgerError as exc:
         print(f"invalid ledger {ledger_path}: {exc}", file=sys.stderr)
         return 1
+    try:
+        run_control_events = (
+            _read_json_list(args.run_events_file, missing_ok=True)
+            if args.run_events_file else []
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    run_control_report = runcontrols.evaluate_run_controls(
+        run_control_events,
+        max_work_units=args.max_rounds or runcontrols.DEFAULT_RUN_BUDGET,
+    )
     ledger_record = ledger.build_ship_run_record(
         command=command,
         base_branch=config.base_branch,
@@ -399,6 +595,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         jury_mode=a.review_contract["jury"]["mode"],
         consent_status=contract["operator_consent"]["status"],
         consent_scopes=contract["operator_consent"]["effective_approved_scope"],
+        run_controls=run_control_report,
     )
     try:
         ledger_record = ledger.sanitize_record(ledger_record, config)
@@ -445,6 +642,8 @@ def _cmd_ship(args: argparse.Namespace) -> int:
                 run_ledger=ledger_result,
             ),
         }, indent=2, sort_keys=True))
+        if run_control_report["hard_halt"]:
+            return 1
         return 0 if a.merge.action != "block" else 1
 
     name = config.repo or config.extends
@@ -463,6 +662,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     print(f"  consent       : {contract['operator_consent']['status']}")
     print(f"  intake        : {intake_record['status']}")
     print(f"  run ledger    : {ledger_result['path']}")
+    print(f"  run controls  : {run_control_report['status']}")
     if args.append_ledger:
         print(f"  ledger append : {'yes' if ledger_result['appended'] else 'dry-run/no-live'}")
     if intake_record["questions"]:
@@ -479,6 +679,8 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         print("  audit         : hotfix bypassed the merge window")
     print(f"  decision      : {a.merge.action.upper()} — {a.merge.reason}")
     print("  note: dry assessment; live merge (s10) needs a configured runner (git + gh auth).")
+    if run_control_report["hard_halt"]:
+        return 1
     return 0 if a.merge.action != "block" else 1
 
 
@@ -607,6 +809,188 @@ def _cmd_capture_reconcile(args: argparse.Namespace) -> int:
     return 0 if plan["status"] != "blocked" else 1
 
 
+def _cmd_step_verify(args: argparse.Namespace) -> int:
+    try:
+        handoff = _read_json_object(args.handoff_file)
+        evidence_report = _read_json_object(args.evidence_report)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    review_contract = ship.resolve_review_contract(
+        tier=None,
+        reviewer_override=args.reviewers,
+        review_comments=args.review_comments,
+        gates=(),
+        policy_pack={},
+        jury=args.jury,
+        no_jury=args.no_jury,
+        jury_advisory=args.jury_advisory,
+    )
+    try:
+        report = stepverifier.verify_step_completion(
+            step_id=args.step,
+            handoff=handoff,
+            evidence_report=evidence_report,
+            review_contract=review_contract,
+            dry_run=args.dry_run,
+            enforced=not args.not_enforced,
+        )
+    except KeyError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    payload = {
+        "contract": stepverifier.contract_as_dict(
+            review_contract,
+            dry_run=args.dry_run,
+            enforced=not args.not_enforced,
+        ),
+        "verification": report,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"keel step-verify — {report['status']}  {args.step}")
+        if report["missing"]:
+            print(f"  missing       : {', '.join(report['missing'])}")
+        print(f"  required      : {len(report['required_evidence'])}")
+    return 0 if report["status"] == "pass" else 1
+
+
+def _cmd_runcontrols(args: argparse.Namespace) -> int:
+    try:
+        events = _read_json_list(args.events_file, missing_ok=True)
+        event = _event_from_args(args)
+        step_caps = _step_caps_from_args(args.step_cap)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if event:
+        events.append(event)
+        if not args.dry_run:
+            _write_json_list(args.events_file, events)
+    report = runcontrols.evaluate_run_controls(
+        events,
+        max_work_units=args.max_work_units,
+        default_step_cap=args.default_step_cap,
+        step_caps=step_caps,
+        identical_action_threshold=args.identical_action_threshold,
+        alternating_diff_window=args.alternating_diff_window,
+    )
+    payload = {
+        "contract": runcontrols.contract_as_dict(),
+        "path": args.events_file,
+        "appended": bool(event) and not args.dry_run,
+        "event": event,
+        "run_controls": report,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"keel runcontrols — {report['status']}  {args.events_file}")
+        print(f"  events        : {report['summary']['event_count']}")
+        print(f"  work units    : {report['summary']['work_units']}")
+        if report["reason"]:
+            reason = report["reason"]
+            print(f"  halt          : {reason['reason']} ({reason['scope']})")
+    return 0 if report["status"] == "pass" else 1
+
+
+def _cmd_post_comment(args: argparse.Namespace) -> int:
+    try:
+        config = cfg.load_config(args.path)
+    except FileNotFoundError:
+        print(f"no such config: {args.path}", file=sys.stderr)
+        return 1
+    except cfg.ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    marker = _comment_artifact_marker(args.artifact)
+    try:
+        target_kind, target_number = _parse_comment_target(args.target)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    try:
+        body = Path(args.body_file).read_text(encoding="utf-8")
+    except OSError as exc:
+        print(f"cannot read --body-file {args.body_file}: {exc}", file=sys.stderr)
+        return 1
+    if marker not in body:
+        print(
+            f"body for artifact {args.artifact} must contain marker {marker}",
+            file=sys.stderr,
+        )
+        return 1
+    if _looks_like_body_file_literal(body):
+        print(
+            "body appears to be a literal @/path reference; pass rendered markdown, "
+            "not a shell-expanded placeholder",
+            file=sys.stderr,
+        )
+        return 1
+
+    report = runtime.detect(args.root)
+    evaluation = runtime.evaluate(
+        runtime.CapabilityRequirement(required=("gh", "gh-auth")), report
+    )
+    transport = github_transport.resolve(report)
+    if not evaluation.ok or not transport.supports("comments"):
+        print(evaluation.render(), file=sys.stderr)
+        print(transport.render(), file=sys.stderr)
+        return 1
+    try:
+        owner_repo = _owner_repo(config)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    try:
+        existing = _gh_json_list(
+            ["repos", owner_repo, "issues", str(target_number), "comments"], cwd=args.root
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    match = _find_comment_match(existing, marker=marker, run_id=args.run_id)
+    payload: dict[str, object] = {
+        "schema_version": "keel.post-comment.v1",
+        "target": {"kind": target_kind, "number": target_number},
+        "artifact": args.artifact,
+        "marker": marker,
+        "transport": transport.name,
+        "run_id": args.run_id,
+        "dry_run": args.dry_run,
+    }
+    if args.dry_run:
+        payload["action"] = "edit" if match else "post"
+        payload["comment_id"] = match.get("id") if match else None
+        return _finish_post_comment(args, payload, code=0)
+
+    if match:
+        comment_id = match.get("id")
+        if not isinstance(comment_id, int):
+            print("matching comment is missing an integer id", file=sys.stderr)
+            return 1
+        result = github.edit_issue_comment(owner_repo, comment_id, body, cwd=args.root)
+        payload["action"] = "edited"
+        payload["comment_id"] = comment_id
+    else:
+        result = github.post_issue_comment(owner_repo, target_number, body, cwd=args.root)
+        payload["action"] = "posted"
+    if not result.ok:
+        print(result.output.strip() or "gh comment mutation failed", file=sys.stderr)
+        return 1
+    try:
+        response = json.loads(result.output or "{}")
+    except json.JSONDecodeError:
+        response = {}
+    if isinstance(response, dict):
+        payload["comment_id"] = response.get("id", payload.get("comment_id"))
+        payload["html_url"] = response.get("html_url")
+    return _finish_post_comment(args, payload, code=0)
+
+
 def _cmd_evidence_verify(args: argparse.Namespace) -> int:
     try:
         config = cfg.load_config(args.path)
@@ -642,7 +1026,16 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
         jury_advisory=args.jury_advisory,
     )
     gate_label = args.gate_label or config.knobs.evidence_gate_label
-    enforced = evidence.gate_active(artifacts["pr_labels"], gate_label)
+    waiver_label = args.waiver_label or evidence.DEFAULT_WAIVER_LABEL
+    gate = evidence.gate_decision(
+        artifacts["pr_labels"],
+        gate_label,
+        waiver_label=waiver_label,
+        head_ref=artifacts.get("head_ref"),
+        pr_comments=artifacts["pr_comments"],
+        pr_reviews=artifacts["pr_reviews"],
+    )
+    enforced = gate["enforced"]
     report = evidence.verify(
         review_contract,
         pr_comments=artifacts["pr_comments"],
@@ -662,10 +1055,13 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
             deferrals=tuple(args.deferral or ()),
         ),
         "gate_label": gate_label,
+        "waiver_label": waiver_label,
+        "gate": gate,
         "enforced": enforced,
         "pr_labels": artifacts["pr_labels"],
         "pull_request": args.pr,
         "issue": artifacts["issue"],
+        "head_ref": artifacts.get("head_ref"),
         "head_sha": artifacts["head_sha"],
         "changed_files": artifacts["changed_files"],
         "verification": report,
@@ -677,8 +1073,9 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
         print(f"  issue         : {artifacts['issue'] or 'not resolved'}")
         print(f"  dry-run       : {str(args.dry_run).lower()}")
         if not enforced:
-            print(f"  enforced      : false (no '{gate_label}' label — gate skipped)")
+            print(f"  enforced      : false ({gate['reason']})")
             return 0
+        print(f"  enforced      : true ({gate['reason']})")
         print(f"  required      : {report['required_count']}")
         if report["missing"]:
             print(f"  missing       : {', '.join(report['missing'])}")
@@ -1042,6 +1439,163 @@ def _issue_labels(args: argparse.Namespace) -> tuple[str, ...]:
     return tuple(dict.fromkeys(labels))
 
 
+def _lock_root(root: str | Path) -> Path:
+    return Path(root) / ".keel" / "state" / "locks"
+
+
+def _finish_merge(args: argparse.Namespace, payload: dict[str, object], reason: str, *,
+                  code: int) -> int:
+    payload["reason"] = reason
+    payload["status"] = "pass" if code == 0 else "fail"
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"keel merge — {payload['status']}  PR #{args.pr}")
+        print(f"  reason : {reason}")
+        lock_payload = payload.get("lock")
+        if isinstance(lock_payload, dict):
+            print(f"  lock   : {lock_payload.get('status')}")
+        ci_payload = payload.get("ci")
+        if isinstance(ci_payload, dict):
+            print(f"  ci     : {ci_payload.get('state')}")
+        evidence_payload = payload.get("evidence")
+        if isinstance(evidence_payload, dict):
+            verification = evidence_payload.get("verification")
+            if isinstance(verification, dict):
+                print(f"  evidence: {verification.get('status')}")
+    return code
+
+
+def _merge_snapshot(pr: int, *, cwd: str) -> dict[str, object]:
+    result = github.pr_merge_snapshot(pr, cwd=cwd)
+    if not result.ok:
+        raise ValueError(f"unable to read PR merge snapshot: {result.output.strip()}")
+    try:
+        payload = json.loads(result.output or "{}")
+    except json.JSONDecodeError as exc:
+        raise ValueError("PR merge snapshot was not JSON") from exc
+    rollup = payload.get("statusCheckRollup")
+    rollup = rollup if isinstance(rollup, list) else []
+    return {
+        "head_sha": payload.get("headRefOid"),
+        "merge_state": payload.get("mergeStateStatus") or "UNKNOWN",
+        "ci": _ci_rollup_state(rollup),
+    }
+
+
+def _ci_rollup_state(rollup: list[object]) -> dict[str, object]:
+    failures = {
+        "ACTION_REQUIRED", "CANCELLED", "ERROR", "FAILURE",
+        "SKIPPED", "STARTUP_FAILURE", "STALE", "TIMED_OUT",
+    }
+    pending_states = {"EXPECTED", "PENDING", "QUEUED", "REQUESTED", "WAITING", "IN_PROGRESS"}
+    saw_pending = False
+    saw_check = False
+    for item in rollup:
+        if not isinstance(item, dict):
+            continue
+        saw_check = True
+        conclusion = item.get("conclusion")
+        conclusion = conclusion.upper() if isinstance(conclusion, str) else ""
+        status_value = item.get("status")
+        status_value = status_value.upper() if isinstance(status_value, str) else ""
+        if conclusion in failures:
+            return {"state": "fail", "reason": conclusion}
+        if not conclusion and status_value in pending_states:
+            saw_pending = True
+    if saw_pending:
+        return {"state": "pending", "reason": "check-pending"}
+    return {"state": "pass", "reason": "all-checks-passing" if saw_check else "no-checks"}
+
+
+def _verify_merge_evidence(
+    args: argparse.Namespace,
+    config: cfg.ProjectConfig,
+) -> dict[str, object]:
+    evidence_args = argparse.Namespace(
+        pr=args.pr,
+        issue=args.issue,
+        pr_body_file=None,
+        pr_comments_json=None,
+        issue_comments_json=None,
+        pr_reviews_json=None,
+        changed_file=(),
+        head_sha=None,
+        pr_label=(),
+        dry_run=False,
+        root=args.root,
+    )
+    artifacts = _load_evidence_artifacts(evidence_args, config)
+    changed_files = artifacts["changed_files"]
+    tier = (
+        classify.tier_for_files(
+            changed_files,
+            tier3_globs=config.knobs.tier3_globs,
+            docs_globs=config.knobs.docs_gate_paths,
+        )
+        if changed_files else None
+    )
+    review_contract = ship.resolve_review_contract(
+        tier=tier,
+        reviewer_override=args.reviewers,
+        review_comments=args.review_comments,
+        gates=config.gates,
+        policy_pack=config.policy_pack,
+        jury=args.jury,
+        no_jury=args.no_jury,
+        jury_advisory=args.jury_advisory,
+    )
+    gate_label = args.gate_label or config.knobs.evidence_gate_label
+    waiver_label = getattr(args, "waiver_label", None) or evidence.DEFAULT_WAIVER_LABEL
+    gate = evidence.gate_decision(
+        artifacts["pr_labels"],
+        gate_label,
+        waiver_label=waiver_label,
+        head_ref=artifacts.get("head_ref"),
+        pr_comments=artifacts["pr_comments"],
+        pr_reviews=artifacts["pr_reviews"],
+    )
+    enforced = gate["enforced"]
+    report = evidence.verify(
+        review_contract,
+        pr_comments=artifacts["pr_comments"],
+        issue_comments=artifacts["issue_comments"],
+        pr_reviews=artifacts["pr_reviews"],
+        pr_body=artifacts["pr_body"],
+        head_sha=artifacts["head_sha"],
+        enforced=enforced,
+    )
+    return {
+        "gate_label": gate_label,
+        "waiver_label": waiver_label,
+        "gate": gate,
+        "enforced": enforced,
+        "verification": report,
+        "head_sha": artifacts["head_sha"],
+        "head_ref": artifacts.get("head_ref"),
+        "changed_files": changed_files,
+    }
+
+
+def _validated_worktree_path(root: str | Path, worktree: str) -> Path:
+    root_path = Path(root).resolve()
+    raw = Path(worktree)
+    candidate = (root_path / raw if not raw.is_absolute() else raw).resolve()
+    if candidate == root_path or root_path not in candidate.parents:
+        raise ValueError("worktree path must be nested under the repository root")
+    listed = git.worktree_list(cwd=str(root_path))
+    if not listed.ok:
+        raise ValueError(f"unable to list registered worktrees: {listed.output.strip()}")
+    registered = {
+        Path(line.split(" ", 1)[1]).resolve()
+        for line in listed.output.splitlines()
+        if line.startswith("worktree ")
+    }
+    if candidate not in registered:
+        raise ValueError("worktree path is not a registered git worktree")
+    return candidate
+
+
 def _issue_context_provided(args: argparse.Namespace) -> bool:
     return bool(
         (getattr(args, "issue_title", None) or "").strip()
@@ -1060,6 +1614,7 @@ def _load_evidence_artifacts(
     pr_reviews = _read_optional_json_list(args.pr_reviews_json)
     changed_files = list(getattr(args, "changed_file", ()) or ())
     head_sha = args.head_sha
+    head_ref = getattr(args, "head_ref", None)
     issue_number = args.issue
     injected_labels = list(args.pr_label or ())
     pr_labels: list[str] = []
@@ -1079,6 +1634,7 @@ def _load_evidence_artifacts(
             "pr_reviews": [],
             "issue": issue_number,
             "head_sha": head_sha,
+            "head_ref": head_ref,
             "changed_files": changed_files,
             "pr_labels": _dedupe_preserve(injected_labels),
         }
@@ -1088,6 +1644,7 @@ def _load_evidence_artifacts(
         pr_body = pr.get("body") if isinstance(pr.get("body"), str) else ""
         head = pr.get("head") if isinstance(pr.get("head"), dict) else {}
         head_sha = head.get("sha") if isinstance(head.get("sha"), str) else None
+        head_ref = head.get("ref") if isinstance(head.get("ref"), str) else None
         pr_labels = _label_names(pr.get("labels"))
         changed_files = _pr_changed_files(owner_repo, args.pr, cwd=args.root)
         pr_comments = _gh_json_list(
@@ -1111,6 +1668,7 @@ def _load_evidence_artifacts(
         "pr_reviews": pr_reviews,
         "issue": issue_number,
         "head_sha": head_sha,
+        "head_ref": head_ref,
         "changed_files": changed_files,
         "pr_labels": _dedupe_preserve([*pr_labels, *injected_labels]),
     }
@@ -1136,17 +1694,141 @@ def _owner_repo(config: cfg.ProjectConfig) -> str:
     return f"{config.owner}/{config.repo}"
 
 
+def _comment_artifact_marker(artifact: str) -> str:
+    markers = {
+        "closure-comment": closure.COMMENT_MARKER,
+        "issue-update": artifacts.ISSUE_UPDATE_MARKER,
+        "review-verdict": evidence.REVIEW_VERDICT_MARKER,
+        "jury-verdict": evidence.JURY_VERDICT_MARKER,
+        "extension-result": artifacts.EXTENSION_RESULT_MARKER,
+        "step-handoff": artifacts.STEP_HANDOFF_MARKER,
+        "run-control-halt": artifacts.RUN_CONTROL_HALT_MARKER,
+    }
+    return markers[artifact]
+
+
+def _parse_comment_target(raw: str) -> tuple[str, int]:
+    match = re.fullmatch(r"(?P<kind>issue|pr):(?P<number>[1-9]\d*)", raw.strip())
+    if not match:
+        raise ValueError("--target must use issue:<number> or pr:<number>")
+    return match.group("kind"), int(match.group("number"))
+
+
+def _looks_like_body_file_literal(body: str) -> bool:
+    stripped = body.strip()
+    return bool(re.fullmatch(r"@(?:/|~|\.\.?/).+", stripped))
+
+
+def _find_comment_match(
+    comments: list[dict[str, object]],
+    *,
+    marker: str,
+    run_id: str | None,
+) -> dict[str, object] | None:
+    if run_id is None:
+        return None
+    matches: list[dict[str, object]] = []
+    for comment in comments:
+        body = comment.get("body")
+        if not isinstance(body, str) or marker not in body:
+            continue
+        if not _comment_has_run_id(body, run_id):
+            continue
+        matches.append(comment)
+    return matches[-1] if matches else None
+
+
+def _comment_has_run_id(body: str, run_id: str) -> bool:
+    patterns = (
+        rf"^\s*(?:run[-_ ]?id)\s*:\s*{re.escape(run_id)}\s*$",
+        rf"<!--\s*keel\.run-id:\s*{re.escape(run_id)}\s*-->",
+    )
+    return any(re.search(pattern, body, re.IGNORECASE | re.MULTILINE) for pattern in patterns)
+
+
+def _finish_post_comment(args: argparse.Namespace, payload: dict[str, object], *, code: int) -> int:
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        target = payload["target"]
+        if isinstance(target, dict):
+            rendered_target = f"{target.get('kind')}:{target.get('number')}"
+        else:
+            rendered_target = str(target)
+        print(f"keel post-comment — {payload.get('action')}  {rendered_target}")
+        print(f"  artifact      : {payload.get('artifact')}")
+        print(f"  transport     : {payload.get('transport')}")
+        if payload.get("comment_id") is not None:
+            print(f"  comment       : {payload.get('comment_id')}")
+    return code
+
+
 def _read_optional_text(path: str | None) -> str:
     return Path(path).read_text(encoding="utf-8") if path else ""
+
+
+def _read_json_object(path: str) -> dict[str, object]:
+    value = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError(f"{path} must contain a JSON object")
+    return value
+
+
+def _read_json_list(path: str, *, missing_ok: bool = False) -> list[dict[str, object]]:
+    p = Path(path)
+    if missing_ok and not p.exists():
+        return []
+    value = json.loads(p.read_text(encoding="utf-8"))
+    if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
+        raise ValueError(f"{path} must contain a JSON array of objects")
+    return value
+
+
+def _write_json_list(path: str, value: list[dict[str, object]]) -> None:
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def _read_optional_json_list(path: str | None) -> list[dict[str, object]]:
     if path is None:
         return []
-    value = json.loads(Path(path).read_text(encoding="utf-8"))
-    if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
-        raise ValueError(f"{path} must contain a JSON array of objects")
-    return value
+    return _read_json_list(path)
+
+
+def _event_from_args(args: argparse.Namespace) -> dict[str, object] | None:
+    if args.event_json:
+        event = _read_json_object(args.event_json)
+    else:
+        fields = {
+            "step_id": args.step,
+            "slot": args.slot,
+            "action": args.action,
+            "output_fingerprint": args.output_fingerprint,
+            "diff_fingerprint": args.diff_fingerprint,
+            "work_units": args.work_units,
+        }
+        event = {key: value for key, value in fields.items() if value not in (None, "")}
+        if args.soft_failure:
+            event["soft_failure"] = True
+    return event or None
+
+
+def _step_caps_from_args(values: list[str]) -> dict[str, int]:
+    caps: dict[str, int] = {}
+    for raw in values:
+        if "=" not in raw:
+            raise ValueError("--step-cap must use SLOT=N")
+        slot, value = raw.split("=", 1)
+        slot = slot.strip()
+        try:
+            parsed = int(value)
+        except ValueError as exc:
+            raise ValueError("--step-cap value must be a positive integer") from exc
+        if not slot or parsed <= 0:
+            raise ValueError("--step-cap must use SLOT=N with N > 0")
+        caps[slot] = parsed
+    return caps
 
 
 def _gh_json(args: list[str], *, cwd: str) -> dict[str, object]:
@@ -1745,6 +2427,69 @@ def build_parser() -> argparse.ArgumentParser:
     p_window.add_argument("path", help="path to project.yaml")
     p_window.set_defaults(func=_cmd_window)
 
+    p_claim = sub.add_parser("claim", help="claim a single-host keel resource")
+    p_claim.add_argument("--root", default=".", help="repo root for the claim store")
+    p_claim.add_argument("--owner", required=True, help="claim owner id")
+    p_claim.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_claim.add_argument("resource", help="resource name, e.g. merge")
+    p_claim.set_defaults(func=_cmd_claim)
+
+    p_release = sub.add_parser("release", help="release a single-host keel resource")
+    p_release.add_argument("--root", default=".", help="repo root for the claim store")
+    p_release.add_argument("--owner", default=None, help="claim owner id; omit to release any")
+    p_release.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_release.add_argument("resource", help="resource name, e.g. merge")
+    p_release.set_defaults(func=_cmd_release)
+
+    p_merge = sub.add_parser("merge", help="perform the fail-closed core-owned PR merge")
+    p_merge.add_argument("path", help="path to project.yaml")
+    p_merge.add_argument("--root", default=".", help="repo root for git/GitHub operations")
+    p_merge.add_argument("--pr", type=_positive_int, required=True, help="pull request number")
+    p_merge.add_argument("--issue", type=_positive_int, default=None,
+                         help="linked issue number for evidence verification")
+    p_merge.add_argument("--method", choices=("squash", "merge", "rebase"), default="squash",
+                         help="GitHub merge method")
+    p_merge.add_argument("--owner", default=None, help="resource claim owner id")
+    p_merge.add_argument("--hotfix", action="store_true",
+                         help="bypass the merge window with explicit consent")
+    p_merge.add_argument("--dry-run", action="store_true", help="verify only; do not merge")
+    p_merge.add_argument("--approve-scope", action="append", default=[],
+                         help="approve a consent scope for this merge")
+    p_merge.add_argument("--operator", default=None,
+                         help="operator identifier for consent evidence")
+    p_merge.add_argument("--consent-mode", choices=consent.CONSENT_MODES, default=None,
+                         help="operator consent mode")
+    p_merge.add_argument("--risk-tier", choices=consent.RISK_TIERS, default="tier-1",
+                         help="risk tier for deterministic escalation evaluation")
+    p_merge.add_argument("--trust-signal", choices=consent.TRUST_SIGNALS, default="medium",
+                         help="trust signal for deterministic escalation evaluation")
+    p_merge.add_argument("--retry-count", type=int, default=0,
+                         help="retry count for deterministic escalation evaluation")
+    p_merge.add_argument("--conflicting-sources", action="store_true",
+                         help="mark conflicting sources for escalation evaluation")
+    p_merge.add_argument("--changed-lines", type=int, default=0,
+                         help="changed-line count for escalation evaluation")
+    p_merge.add_argument("--escalation-side-effect", action="append", default=[],
+                         help="additional side-effect signal for escalation evaluation")
+    p_merge.add_argument("--review-comments", choices=("inline", "summary"), default="inline",
+                         help="review posting mode for evidence verification")
+    p_merge.add_argument("--reviewers", type=int, choices=(1, 2, 3), default=None,
+                         help="override required reviewer count")
+    p_merge.add_argument("--jury", action="store_true", help="enable jury evidence")
+    p_merge.add_argument("--no-jury", action="store_true", help="disable jury evidence")
+    p_merge.add_argument("--jury-advisory", action="store_true",
+                         help="make jury advisory for evidence verification")
+    p_merge.add_argument("--gate-label", default=None,
+                         help="override evidence gate label")
+    p_merge.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_merge.set_defaults(func=_cmd_merge)
+
+    p_wr = sub.add_parser("worktree-remove", help="safely remove a registered nested worktree")
+    p_wr.add_argument("--root", default=".", help="repo root")
+    p_wr.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_wr.add_argument("worktree", help="worktree path to remove")
+    p_wr.set_defaults(func=_cmd_worktree_remove)
+
     p_ledger = sub.add_parser("ledger", help="read the structured run ledger offline")
     p_ledger.add_argument("path", help="path to project.yaml")
     p_ledger.add_argument("--root", default=".", help="repo root for resolving the ledger path")
@@ -1792,6 +2537,92 @@ def build_parser() -> argparse.ArgumentParser:
     p_reconcile.add_argument("--json", action="store_true", help="emit structured JSON")
     p_reconcile.set_defaults(func=_cmd_capture_reconcile)
 
+    p_step = sub.add_parser(
+        "step-verify",
+        help="verify a persisted step handoff against the evidence report",
+    )
+    p_step.add_argument("--step", required=True, help="backbone step id, e.g. s7")
+    p_step.add_argument("--handoff-file", required=True, help="JSON step handoff file")
+    p_step.add_argument("--evidence-report", required=True,
+                        help="JSON evidence verification report or verification block")
+    p_step.add_argument("--review-comments", choices=("inline", "summary"),
+                        default="inline", help="review posting mode in the ship contract")
+    p_step.add_argument("--reviewers", type=int, choices=(1, 2, 3), default=None,
+                        help="override the required reviewer verdict count")
+    p_step.add_argument("--jury", action="store_true",
+                        help="enable the cross-vendor jury requirement")
+    p_step.add_argument("--no-jury", action="store_true",
+                        help="disable the cross-vendor jury requirement")
+    p_step.add_argument("--jury-advisory", action="store_true",
+                        help="make an enabled jury advisory instead of required")
+    p_step.add_argument("--dry-run", action="store_true",
+                        help="verify with dry-run evidence requirements")
+    p_step.add_argument("--not-enforced", action="store_true",
+                        help="verify with evidence requirements disabled")
+    p_step.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_step.set_defaults(func=_cmd_step_verify)
+
+    p_rc = sub.add_parser(
+        "runcontrols",
+        help="append/evaluate deterministic run-control events",
+    )
+    p_rc.add_argument("events_file", help="JSON array run-events file")
+    p_rc.add_argument("--event-json", default=None, help="single event JSON object to append")
+    p_rc.add_argument("--step", default=None, help="event step id")
+    p_rc.add_argument("--slot", default=None, help="event slot name")
+    p_rc.add_argument("--action", default=None, help="event action")
+    p_rc.add_argument("--output-fingerprint", default=None, help="event output fingerprint")
+    p_rc.add_argument("--diff-fingerprint", default=None, help="event diff fingerprint")
+    p_rc.add_argument("--work-units", type=int, default=None, help="event work-unit count")
+    p_rc.add_argument("--soft-failure", action="store_true", help="mark event as soft failure")
+    p_rc.add_argument("--max-work-units", type=int, default=runcontrols.DEFAULT_RUN_BUDGET,
+                      help="run budget hard cap")
+    p_rc.add_argument("--default-step-cap", type=int, default=runcontrols.DEFAULT_STEP_CAP,
+                      help="default per-step/slot iteration cap")
+    p_rc.add_argument("--step-cap", action="append", default=[],
+                      help="override per-slot cap as SLOT=N; repeatable")
+    p_rc.add_argument("--identical-action-threshold", type=int,
+                      default=runcontrols.DEFAULT_IDENTICAL_THRESHOLD,
+                      help="oscillation threshold for repeated identical actions")
+    p_rc.add_argument("--alternating-diff-window", type=int,
+                      default=runcontrols.DEFAULT_ALTERNATION_WINDOW,
+                      help="oscillation window for alternating diff fingerprints")
+    p_rc.add_argument("--dry-run", action="store_true",
+                      help="evaluate without appending the event")
+    p_rc.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_rc.set_defaults(func=_cmd_runcontrols)
+
+    p_post = sub.add_parser(
+        "post-comment",
+        help="post or update a deterministic GitHub issue/PR artifact comment",
+    )
+    p_post.add_argument("path", help="path to project.yaml")
+    p_post.add_argument("--root", default=".", help="repo root for GitHub operations")
+    p_post.add_argument("--target", required=True, help="comment target as issue:N or pr:N")
+    p_post.add_argument(
+        "--artifact",
+        required=True,
+        choices=(
+            "closure-comment",
+            "issue-update",
+            "review-verdict",
+            "jury-verdict",
+            "extension-result",
+            "step-handoff",
+            "run-control-halt",
+        ),
+        help="artifact contract expected in --body-file",
+    )
+    p_post.add_argument("--body-file", required=True, help="rendered markdown body to post")
+    p_post.add_argument(
+        "--run-id",
+        default=None,
+        help="update the existing same-marker comment for this run id when present",
+    )
+    p_post.add_argument("--dry-run", action="store_true", help="plan only; do not mutate GitHub")
+    p_post.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_post.set_defaults(func=_cmd_post_comment)
+
     p_evidence = sub.add_parser(
         "evidence-verify",
         help="verify required pre-merge ship evidence artifacts",
@@ -1828,12 +2659,16 @@ def build_parser() -> argparse.ArgumentParser:
                             help="offline changed file path; repeat to derive tier from fixtures")
     p_evidence.add_argument("--head-sha", default=None,
                             help="offline PR head SHA used to bind verdict evidence")
+    p_evidence.add_argument("--head-ref", default=None,
+                            help="offline PR head branch used to detect ship provenance")
     p_evidence.add_argument("--pr-label", action="append", default=[],
                             help="inject a PR label name (repeatable); merged with live labels. "
                                  "A live PR fetch still runs unless an offline fixture flag is "
                                  "also supplied")
     p_evidence.add_argument("--gate-label", default=None,
-                            help="override the evidence_gate_label knob that opts a PR in")
+                            help="override the legacy evidence arming label")
+    p_evidence.add_argument("--waiver-label", default=None,
+                            help="override the operator-applied evidence waiver label")
     p_evidence.add_argument("--json", action="store_true", help="emit structured JSON")
     p_evidence.set_defaults(func=_cmd_evidence_verify)
 
@@ -2237,6 +3072,10 @@ def _add_ship_parser(parser: argparse.ArgumentParser, *, command: str) -> None:
                         help="append the structured ship run record when --live succeeds")
     parser.add_argument("--run-id", default=None,
                         help="operator/session run id to store in the run ledger record")
+    parser.add_argument("--run-events-file", default=None,
+                        help="JSON run-events file to evaluate and stamp into the ledger record")
+    parser.add_argument("--max-rounds", type=_positive_int, default=None,
+                        help="explicit run-control work-unit budget override")
     parser.add_argument("--issue", type=_positive_int, default=None,
                         help="issue number to store in the run ledger record")
     parser.add_argument("--pull-request", dest="ledger_pr", type=_positive_int, default=None,

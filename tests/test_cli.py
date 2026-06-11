@@ -10,7 +10,7 @@ from argparse import Namespace
 from pathlib import Path
 from unittest.mock import patch
 
-from keel import cli, install, runtime
+from keel import cli, install, runtime, stepverifier
 
 PROJECTS = Path(__file__).resolve().parent.parent / "projects"
 REPO_ROOT = PROJECTS.parent
@@ -1110,6 +1110,72 @@ class TestShip(unittest.TestCase):
         self.assertIn("keel evidence-verify", out)
         self.assertIn("required      : 0", out)
 
+    def test_evidence_verify_enforces_from_ship_branch_without_label(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            pr_comments = root / "pr-comments.json"
+            issue_comments = root / "issue-comments.json"
+            reviews = root / "reviews.json"
+            pr_comments.write_text(json.dumps([
+                {"body": "<!-- keel.closure-comment.v1 -->"},
+                {"body": "keel.review-verdict.v1\nreviewer: a\nLGTM"},
+            ]), encoding="utf-8")
+            issue_comments.write_text(json.dumps([
+                {"body": "<!-- keel.closure-comment.v1 -->"},
+            ]), encoding="utf-8")
+            reviews.write_text("[]", encoding="utf-8")
+            rc, out, _ = run([
+                "evidence-verify", str(PROJECTS / "example-android.yaml"),
+                "--root", str(REPO_ROOT),
+                "--pr", "300",
+                "--reviewers", "1",
+                "--head-ref", "fix/issue-266-evidence-arming",
+                "--pr-comments-json", str(pr_comments),
+                "--issue-comments-json", str(issue_comments),
+                "--pr-reviews-json", str(reviews),
+                "--json",
+            ])
+
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertTrue(data["enforced"])
+        self.assertEqual(data["gate"]["reason"], "ship-branch")
+        self.assertEqual(data["verification"]["status"], "pass")
+
+    def test_evidence_verify_waiver_label_is_the_disarm_path(self):
+        rc, out, _ = run([
+            "evidence-verify", str(PROJECTS / "example-android.yaml"),
+            "--root", str(REPO_ROOT),
+            "--pr", "300",
+            "--head-ref", "fix/issue-266-evidence-arming",
+            "--pr-label", "keel:evidence-waived",
+            "--pr-comments-json", _write_raw("[]"),
+            "--issue-comments-json", _write_raw("[]"),
+            "--pr-reviews-json", _write_raw("[]"),
+            "--json",
+        ])
+
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertFalse(data["enforced"])
+        self.assertTrue(data["gate"]["waived"])
+        self.assertEqual(data["gate"]["reason"], "operator-waiver-label")
+        self.assertEqual(data["verification"]["required_count"], 0)
+
+    def test_evidence_verify_hand_authored_pr_without_provenance_is_ungated(self):
+        rc, out, _ = run([
+            "evidence-verify", str(PROJECTS / "example-android.yaml"),
+            "--root", str(REPO_ROOT),
+            "--pr", "300",
+            "--head-ref", "docs/readme-polish",
+            "--pr-comments-json", _write_raw("[]"),
+            "--issue-comments-json", _write_raw("[]"),
+            "--pr-reviews-json", _write_raw("[]"),
+        ])
+
+        self.assertEqual(rc, 0)
+        self.assertIn("enforced      : false (no-ship-provenance)", out)
+
     def test_evidence_verify_fixture_keeps_explicit_issue(self):
         rc, out, _ = run([
             "evidence-verify", str(PROJECTS / "example-android.yaml"),
@@ -1228,7 +1294,7 @@ class TestShip(unittest.TestCase):
             if endpoint.endswith("/pulls/300"):
                 return Namespace(ok=True, output=json.dumps({
                     "body": "Closes #212",
-                    "head": {"sha": "abc123"},
+                    "head": {"sha": "abc123", "ref": "fix/issue-266-evidence-arming"},
                     "labels": [{"name": "keel:ship"}],
                 }))
             if endpoint.endswith("/pulls/300/files"):
@@ -1510,7 +1576,7 @@ class TestShip(unittest.TestCase):
         self.assertEqual(data["verification"]["status"], "pass")
         self.assertEqual(data["verification"]["required_count"], 0)
 
-    def test_evidence_verify_without_label_human_output_reports_skip(self):
+    def test_evidence_verify_without_provenance_human_output_reports_reason(self):
         rc, out, _ = run([
             "evidence-verify", str(PROJECTS / "example-android.yaml"),
             "--root", str(REPO_ROOT),
@@ -1523,7 +1589,7 @@ class TestShip(unittest.TestCase):
 
         self.assertEqual(rc, 0)
         self.assertIn("enforced      : false", out)
-        self.assertIn("gate skipped", out)
+        self.assertIn("no-ship-provenance", out)
 
     def test_evidence_verify_with_label_is_fail_closed(self):
         rc, out, _ = run([
@@ -1576,6 +1642,783 @@ class TestShip(unittest.TestCase):
             cli._label_names([{"name": "keel:ship"}, {"no_name": 1}, "x", {"name": 7}]),
             ["keel:ship"],
         )
+
+
+class TestStepVerifyAndRunControls(unittest.TestCase):
+    def test_step_verify_passes_with_handoff_and_evidence(self):
+        handoff = stepverifier.build_handoff(
+            step_id="s7",
+            evidence_ids=["review-verdict-1"],
+        )
+        evidence_report = {
+            "results": [{"id": "review-verdict-1", "ok": True}],
+        }
+        rc, out, _ = run([
+            "step-verify",
+            "--step", "s7",
+            "--handoff-file", _write_raw(json.dumps(handoff)),
+            "--evidence-report", _write_raw(json.dumps(evidence_report)),
+            "--reviewers", "1",
+            "--json",
+        ])
+
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["verification"]["status"], "pass")
+        self.assertEqual(data["verification"]["required_evidence"], ["review-verdict-1"])
+
+    def test_step_verify_human_pass_without_missing(self):
+        handoff = stepverifier.build_handoff(step_id="s4")
+        evidence_report = {"results": []}
+        rc, out, _ = run([
+            "step-verify",
+            "--step", "s4",
+            "--handoff-file", _write_raw(json.dumps(handoff)),
+            "--evidence-report", _write_raw(json.dumps(evidence_report)),
+        ])
+
+        self.assertEqual(rc, 0)
+        self.assertIn("keel step-verify", out)
+        self.assertIn("required      : 0", out)
+
+    def test_step_verify_fails_closed_for_bad_handoff_and_bad_json_shape(self):
+        rc_bad, out_bad, _ = run([
+            "step-verify",
+            "--step", "s7",
+            "--handoff-file", _write_raw(json.dumps({"step_id": "s7"})),
+            "--evidence-report", _write_raw(json.dumps({"results": []})),
+            "--reviewers", "1",
+            "--json",
+        ])
+        rc_shape, _, err_shape = run([
+            "step-verify",
+            "--step", "s7",
+            "--handoff-file", _write_raw("[]"),
+            "--evidence-report", _write_raw(json.dumps({"results": []})),
+            "--reviewers", "1",
+        ])
+
+        self.assertEqual(rc_bad, 1)
+        self.assertEqual(json.loads(out_bad)["verification"]["status"], "fail")
+        self.assertEqual(rc_shape, 1)
+        self.assertIn("must contain a JSON object", err_shape)
+
+    def test_runcontrols_appends_event_and_halts_on_cap(self):
+        with tempfile.TemporaryDirectory() as d:
+            events = Path(d) / "events.json"
+            rc_first, out_first, _ = run([
+                "runcontrols", str(events),
+                "--slot", "fixloop",
+                "--action", "fix",
+                "--json",
+            ])
+            rc_halt, out_halt, _ = run([
+                "runcontrols", str(events),
+                "--slot", "fixloop",
+                "--action", "fix",
+                "--step-cap", "fixloop=1",
+                "--json",
+            ])
+
+            stored = json.loads(events.read_text(encoding="utf-8"))
+
+        self.assertEqual(rc_first, 0)
+        self.assertEqual(json.loads(out_first)["run_controls"]["status"], "pass")
+        self.assertEqual(rc_halt, 1)
+        self.assertEqual(json.loads(out_halt)["run_controls"]["status"], "halt")
+        self.assertEqual(len(stored), 2)
+
+    def test_runcontrols_dry_run_and_invalid_step_cap(self):
+        with tempfile.TemporaryDirectory() as d:
+            events = Path(d) / "events.json"
+            rc_dry, out_dry, _ = run([
+                "runcontrols", str(events),
+                "--slot", "tester",
+                "--dry-run",
+                "--json",
+            ])
+            rc_bad, _, err_bad = run([
+                "runcontrols", str(events),
+                "--step-cap", "bad",
+            ])
+
+            exists = events.exists()
+
+        self.assertEqual(rc_dry, 0)
+        self.assertFalse(json.loads(out_dry)["appended"])
+        self.assertFalse(exists)
+        self.assertEqual(rc_bad, 1)
+        self.assertIn("--step-cap must use SLOT=N", err_bad)
+
+    def test_runcontrols_human_halt_event_json_and_step_cap_errors(self):
+        with tempfile.TemporaryDirectory() as d:
+            events = Path(d) / "events.json"
+            event = Path(d) / "event.json"
+            events.write_text(json.dumps([
+                {"slot": "fixloop", "action": "fix"},
+            ]), encoding="utf-8")
+            event.write_text(json.dumps({"slot": "fixloop", "action": "fix"}), encoding="utf-8")
+            rc_human, out_human, _ = run([
+                "runcontrols", str(events),
+                "--event-json", str(event),
+                "--step-cap", "fixloop=1",
+            ])
+            rc_bad_int, _, err_bad_int = run([
+                "runcontrols", str(events),
+                "--step-cap", "fixloop=nope",
+            ])
+            rc_bad_empty, _, err_bad_empty = run([
+                "runcontrols", str(events),
+                "--step-cap", "=0",
+            ])
+
+        self.assertEqual(rc_human, 1)
+        self.assertIn("halt", out_human)
+        self.assertEqual(rc_bad_int, 1)
+        self.assertIn("positive integer", err_bad_int)
+        self.assertEqual(rc_bad_empty, 1)
+        self.assertIn("N > 0", err_bad_empty)
+
+    def test_runcontrols_records_soft_failure_event(self):
+        with tempfile.TemporaryDirectory() as d:
+            events = Path(d) / "events.json"
+            rc, out, _ = run([
+                "runcontrols", str(events),
+                "--slot", "tester",
+                "--soft-failure",
+                "--json",
+            ])
+
+        self.assertEqual(rc, 0)
+        self.assertTrue(json.loads(out)["event"]["soft_failure"])
+
+    def test_runcontrols_human_pass_without_event(self):
+        with tempfile.TemporaryDirectory() as d:
+            events = Path(d) / "events.json"
+            events.write_text("[]", encoding="utf-8")
+            rc, out, _ = run(["runcontrols", str(events)])
+
+        self.assertEqual(rc, 0)
+        self.assertIn("keel runcontrols", out)
+        self.assertIn("events        : 0", out)
+
+    def test_ship_ledger_stamps_run_controls_and_blocks_on_halt(self):
+        with tempfile.TemporaryDirectory() as d:
+            events = Path(d) / "events.json"
+            events.write_text(json.dumps([
+                {"slot": "fixloop", "action": "fix"},
+                {"slot": "fixloop", "action": "fix"},
+            ]), encoding="utf-8")
+            rc, out, _ = run([
+                "ship", _write_config("'true'"),
+                "--root", d,
+                "--run-events-file", str(events),
+                "--max-rounds", "1",
+                "--json",
+            ])
+
+        self.assertEqual(rc, 1)
+        record = json.loads(out)["result"]["run_ledger"]["record"]
+        self.assertEqual(record["run_controls"]["status"], "halt")
+        self.assertEqual(record["run_controls"]["summary"]["event_count"], 2)
+
+    def test_ship_invalid_run_events_file_and_human_halt(self):
+        with tempfile.TemporaryDirectory() as d:
+            events = Path(d) / "events.json"
+            events.write_text("{}", encoding="utf-8")
+            rc_bad, _, err_bad = run([
+                "ship", _write_config("'true'"),
+                "--root", d,
+                "--run-events-file", str(events),
+            ])
+            events.write_text(json.dumps([
+                {"slot": "fixloop", "action": "fix"},
+                {"slot": "fixloop", "action": "fix"},
+            ]), encoding="utf-8")
+            rc_halt, out_halt, _ = run([
+                "ship", _write_config("'true'"),
+                "--root", d,
+                "--run-events-file", str(events),
+                "--max-rounds", "1",
+            ])
+
+        self.assertEqual(rc_bad, 1)
+        self.assertIn("must contain a JSON array", err_bad)
+        self.assertEqual(rc_halt, 1)
+        self.assertIn("run controls  : halt", out_halt)
+
+    def test_step_verify_human_missing_and_unknown_step(self):
+        handoff = stepverifier.build_handoff(step_id="s7")
+        evidence_report = {"results": []}
+        rc_missing, out_missing, _ = run([
+            "step-verify",
+            "--step", "s7",
+            "--handoff-file", _write_raw(json.dumps(handoff)),
+            "--evidence-report", _write_raw(json.dumps(evidence_report)),
+            "--reviewers", "1",
+        ])
+        rc_unknown, _, err_unknown = run([
+            "step-verify",
+            "--step", "s404",
+            "--handoff-file", _write_raw(json.dumps(handoff)),
+            "--evidence-report", _write_raw(json.dumps(evidence_report)),
+        ])
+
+        self.assertEqual(rc_missing, 1)
+        self.assertIn("missing", out_missing)
+        self.assertIn("required      : 1", out_missing)
+        self.assertEqual(rc_unknown, 1)
+        self.assertIn("unknown backbone step", err_unknown)
+
+
+class TestCoreMerge(unittest.TestCase):
+    def test_claim_and_release_cli(self):
+        with tempfile.TemporaryDirectory() as d:
+            rc_claim, out_claim, _ = run([
+                "claim", "--root", d, "--owner", "agent-a", "--json", "merge",
+            ])
+            rc_release, out_release, _ = run([
+                "release", "--root", d, "--owner", "agent-a", "--json", "merge",
+            ])
+
+        self.assertEqual(rc_claim, 0)
+        self.assertEqual(json.loads(out_claim)["status"], "granted")
+        self.assertEqual(rc_release, 0)
+        self.assertEqual(json.loads(out_release)["status"], "released")
+
+    def test_claim_denial_human_output_reports_holder(self):
+        with tempfile.TemporaryDirectory() as d:
+            rc_success, out_success, _ = run(["claim", "--root", d, "--owner", "agent-a", "ci"])
+            run(["claim", "--root", d, "--owner", "agent-a", "merge"])
+            rc, out, _ = run(["claim", "--root", d, "--owner", "agent-b", "merge"])
+
+        self.assertEqual(rc_success, 0)
+        self.assertIn("granted", out_success)
+        self.assertEqual(rc, 1)
+        self.assertIn("denied", out)
+        self.assertIn("holder: agent-a", out)
+
+    def test_release_non_owner_human_output_reports_holder(self):
+        with tempfile.TemporaryDirectory() as d:
+            run(["claim", "--root", d, "--owner", "agent-a", "ci"])
+            rc_success, out_success, _ = run(["release", "--root", d, "--owner", "agent-a", "ci"])
+            run(["claim", "--root", d, "--owner", "agent-a", "merge"])
+            rc, out, _ = run(["release", "--root", d, "--owner", "agent-b", "merge"])
+
+        self.assertEqual(rc_success, 0)
+        self.assertIn("released", out_success)
+        self.assertEqual(rc, 1)
+        self.assertIn("not-owner", out)
+        self.assertIn("holder: agent-a", out)
+
+    def test_claim_and_release_human_output_omit_empty_holder(self):
+        claim_result = Namespace(
+            status="granted",
+            resource="merge",
+            owner="agent-a",
+            holder=None,
+            path="/tmp/merge.lock",
+            granted=True,
+            as_dict=lambda: {},
+        )
+        release_result = Namespace(
+            status="missing",
+            resource="merge",
+            owner="agent-a",
+            holder=None,
+            path="/tmp/merge.lock",
+            granted=False,
+            as_dict=lambda: {},
+        )
+        with patch("keel.cli.lock.claim_resource", return_value=claim_result):
+            rc_claim, out_claim, _ = run(["claim", "--owner", "agent-a", "merge"])
+        with patch("keel.cli.lock.release_resource", return_value=release_result):
+            rc_release, out_release, _ = run(["release", "--owner", "agent-a", "merge"])
+
+        self.assertEqual(rc_claim, 0)
+        self.assertNotIn("holder:", out_claim)
+        self.assertEqual(rc_release, 0)
+        self.assertNotIn("holder:", out_release)
+
+    def test_worktree_remove_rejects_unregistered_path(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            worktree = root / "worktrees" / "issue-1"
+            worktree.mkdir(parents=True)
+            with patch("keel.cli.git.worktree_list",
+                       return_value=Namespace(ok=True, output=f"worktree {root}\n")):
+                rc, _, err = run(["worktree-remove", "--root", d, str(worktree)])
+
+        self.assertEqual(rc, 1)
+        self.assertIn("not a registered git worktree", err)
+
+    def test_worktree_remove_reports_list_failure(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            worktree = root / "worktrees" / "issue-1"
+            worktree.mkdir(parents=True)
+            with patch("keel.cli.git.worktree_list",
+                       return_value=Namespace(ok=False, output="bad list")):
+                rc, _, err = run(["worktree-remove", "--root", d, str(worktree)])
+
+        self.assertEqual(rc, 1)
+        self.assertIn("bad list", err)
+
+    def test_worktree_remove_rejects_repo_root(self):
+        with tempfile.TemporaryDirectory() as d:
+            rc, _, err = run(["worktree-remove", "--root", d, d])
+
+        self.assertEqual(rc, 1)
+        self.assertIn("nested under the repository root", err)
+
+    def test_worktree_remove_calls_git_after_validation(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            worktree = root / "worktrees" / "issue-1"
+            worktree.mkdir(parents=True)
+            with (
+                patch("keel.cli.git.worktree_list",
+                      return_value=Namespace(ok=True, output=f"worktree {worktree}\n")),
+                patch("keel.cli.git.worktree_remove",
+                      return_value=Namespace(ok=True, code=0, output="")),
+            ):
+                rc, out, _ = run(["worktree-remove", "--root", d, str(worktree)])
+
+        self.assertEqual(rc, 0)
+        self.assertIn("removed", out)
+
+    def test_worktree_remove_json_and_failed_git_output(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            worktree = root / "worktrees" / "issue-1"
+            worktree.mkdir(parents=True)
+            with (
+                patch("keel.cli.git.worktree_list",
+                      return_value=Namespace(ok=True, output=f"worktree {worktree}\n")),
+                patch("keel.cli.git.worktree_remove",
+                      return_value=Namespace(ok=False, code=1, output="remove failed")),
+            ):
+                rc_json, out_json, _ = run([
+                    "worktree-remove", "--root", d, "--json", str(worktree),
+                ])
+                rc_human, out_human, _ = run(["worktree-remove", "--root", d, str(worktree)])
+
+        self.assertEqual(rc_json, 1)
+        self.assertFalse(json.loads(out_json)["removed"])
+        self.assertEqual(rc_human, 1)
+        self.assertIn("remove failed", out_human)
+
+    def test_merge_reports_missing_and_invalid_config(self):
+        rc_missing, _, err_missing = run([
+            "merge", str(Path("missing.yaml")), "--pr", "1",
+            "--approve-scope", "filesystem,git,github",
+        ])
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+            f.write("extends: keel\n")
+            bad = f.name
+        rc_bad, _, err_bad = run([
+            "merge", bad, "--pr", "1", "--approve-scope", "filesystem,git,github",
+        ])
+
+        self.assertEqual(rc_missing, 1)
+        self.assertIn("no such config", err_missing)
+        self.assertEqual(rc_bad, 1)
+        self.assertIn("missing required", err_bad)
+
+    def test_merge_blocks_missing_capability_and_missing_consent(self):
+        missing_report = runtime.CapabilityReport((
+            runtime.Capability("git", False, "missing", "test"),
+            runtime.Capability("gh", False, "missing", "test"),
+            runtime.Capability("gh-auth", False, "missing", "test"),
+        ))
+        with patch("keel.cli.runtime.detect", return_value=missing_report):
+            rc_cap, _, err_cap = run([
+                "merge", str(PROJECTS / "keel.yaml"), "--pr", "123",
+            ])
+        with patch("keel.cli.runtime.detect", return_value=_merge_capability_report()):
+            rc_consent, _, err_consent = run([
+                "merge", str(PROJECTS / "keel.yaml"), "--pr", "123",
+            ])
+
+        self.assertEqual(rc_cap, 1)
+        self.assertIn("missing required", err_cap)
+        self.assertEqual(rc_consent, 1)
+        self.assertIn("operator consent required", err_consent)
+
+    def test_merge_blocks_when_escalation_scope_is_not_approved(self):
+        fake_report = _merge_capability_report()
+        argv = _merge_args(json_out=True)
+        argv.extend([
+            "--risk-tier", "tier-3",
+            "--trust-signal", "low",
+            "--escalation-side-effect", "secret_access",
+        ])
+        with (
+            patch("keel.cli.runtime.detect", return_value=fake_report),
+            patch("keel.cli.lock.claim_resource") as claim_mock,
+        ):
+            rc, out, _ = run(argv)
+
+        data = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertEqual(data["reason"], "operator escalation required")
+        self.assertEqual(data["missing_scope"], ["secrets"])
+        self.assertTrue(data["escalation"]["operator_required"])
+        claim_mock.assert_not_called()
+
+    def test_merge_human_blocks_when_escalation_scope_is_not_approved(self):
+        fake_report = _merge_capability_report()
+        argv = _merge_args()
+        argv.extend(["--escalation-side-effect", "secret_access"])
+        with patch("keel.cli.runtime.detect", return_value=fake_report):
+            rc, _, err = run(argv)
+
+        self.assertEqual(rc, 1)
+        self.assertIn("operator escalation required", err)
+        self.assertIn("secrets", err)
+
+    def test_merge_reports_extension_problem_and_consent_env_error(self):
+        fake_report = _merge_capability_report()
+        with (
+            patch("keel.cli.runtime.detect", return_value=fake_report),
+            patch("keel.cli.load_extensions", return_value=({}, ["broken-extension"])),
+            patch("keel.cli.window.is_merge_open", return_value=True),
+            patch("keel.cli.github.pr_merge_snapshot",
+                  return_value=_json_result({
+                      "mergeStateStatus": "CLEAN",
+                      "statusCheckRollup": [{"conclusion": "FAILURE"}],
+                  })),
+        ):
+            rc_ext, _, err_ext = run(_merge_args())
+        with (
+            patch("keel.cli.runtime.detect", return_value=fake_report),
+            patch.dict("os.environ", {"KEEL_APPROVE_SCOPE": "filesystem,git,github"}, clear=True),
+        ):
+            rc_env, _, err_env = run([
+                "merge", str(PROJECTS / "keel.yaml"), "--pr", "123",
+                "--consent-mode", "standing",
+            ])
+
+        self.assertEqual(rc_ext, 1)
+        self.assertIn("extension not loaded", err_ext)
+        self.assertEqual(rc_env, 1)
+        self.assertIn("KEEL_OPERATOR", err_env)
+
+    def test_merge_blocks_red_ci_before_evidence(self):
+        fake_report = _merge_capability_report()
+        with (
+            patch("keel.cli.runtime.detect", return_value=fake_report),
+            patch("keel.cli.window.is_merge_open", return_value=True),
+            patch("keel.cli.github.pr_merge_snapshot",
+                  return_value=_json_result({
+                      "headRefOid": "abc",
+                      "mergeStateStatus": "CLEAN",
+                      "statusCheckRollup": [{"conclusion": "FAILURE"}],
+                  })),
+            patch("keel.cli._verify_merge_evidence") as evidence_mock,
+        ):
+            rc, out, _ = run(_merge_args(json_out=True))
+
+        self.assertEqual(rc, 1)
+        self.assertEqual(json.loads(out)["ci"]["state"], "fail")
+        evidence_mock.assert_not_called()
+
+    def test_merge_blocks_closed_window_snapshot_error_and_dirty_state(self):
+        fake_report = _merge_capability_report()
+        with (
+            patch("keel.cli.runtime.detect", return_value=fake_report),
+            patch("keel.cli.window.is_merge_open", return_value=False),
+        ):
+            rc_window, out_window, _ = run(_merge_args(json_out=True))
+        with (
+            patch("keel.cli.runtime.detect", return_value=fake_report),
+            patch("keel.cli.window.is_merge_open", return_value=True),
+            patch("keel.cli.github.pr_merge_snapshot",
+                  return_value=Namespace(ok=False, output="gh failed")),
+        ):
+            rc_snapshot, out_snapshot, _ = run(_merge_args(json_out=True))
+        with (
+            patch("keel.cli.runtime.detect", return_value=fake_report),
+            patch("keel.cli.window.is_merge_open", return_value=True),
+            patch("keel.cli.github.pr_merge_snapshot",
+                  return_value=_json_result({
+                      "mergeStateStatus": "DIRTY",
+                      "statusCheckRollup": [{"conclusion": "SUCCESS"}],
+                  })),
+        ):
+            rc_dirty, out_dirty, _ = run(_merge_args(json_out=True))
+
+        self.assertEqual(rc_window, 1)
+        self.assertIn("merge window is closed", json.loads(out_window)["reason"])
+        self.assertEqual(rc_snapshot, 1)
+        self.assertIn("unable to read", json.loads(out_snapshot)["reason"])
+        self.assertEqual(rc_dirty, 1)
+        self.assertIn("DIRTY", json.loads(out_dirty)["reason"])
+
+    def test_merge_hotfix_records_window_bypass(self):
+        fake_report = _merge_capability_report()
+        with (
+            patch("keel.cli.runtime.detect", return_value=fake_report),
+            patch("keel.cli.github.pr_merge_snapshot",
+                  return_value=_json_result({
+                      "mergeStateStatus": "CLEAN",
+                      "statusCheckRollup": [{"conclusion": "SUCCESS"}],
+                  })),
+            patch("keel.cli._verify_merge_evidence", return_value={
+                "enforced": True,
+                "verification": {"status": "pass", "missing": []},
+            }),
+        ):
+            argv = _merge_args(json_out=True, dry_run=True)
+            argv.append("--hotfix")
+            rc, out, _ = run(argv)
+
+        self.assertEqual(rc, 0)
+        self.assertTrue(json.loads(out)["window"]["bypassed"])
+
+    def test_merge_blocks_pending_ci_and_non_enforced_evidence(self):
+        fake_report = _merge_capability_report()
+        with (
+            patch("keel.cli.runtime.detect", return_value=fake_report),
+            patch("keel.cli.window.is_merge_open", return_value=True),
+            patch("keel.cli.github.pr_merge_snapshot",
+                  return_value=_json_result({
+                      "mergeStateStatus": "CLEAN",
+                      "statusCheckRollup": [{"status": "IN_PROGRESS"}],
+                  })),
+        ):
+            rc_pending, out_pending, _ = run(_merge_args(json_out=True))
+        with (
+            patch("keel.cli.runtime.detect", return_value=fake_report),
+            patch("keel.cli.window.is_merge_open", return_value=True),
+            patch("keel.cli.github.pr_merge_snapshot",
+                  return_value=_json_result({
+                      "mergeStateStatus": "CLEAN",
+                      "statusCheckRollup": [{"conclusion": "SUCCESS"}],
+                  })),
+            patch("keel.cli._verify_merge_evidence", return_value={
+                "enforced": False,
+                "verification": {"status": "pass", "missing": []},
+            }),
+        ):
+            rc_evidence, out_evidence, _ = run(_merge_args(json_out=True))
+
+        self.assertEqual(rc_pending, 1)
+        self.assertEqual(json.loads(out_pending)["ci"]["state"], "pending")
+        self.assertEqual(rc_evidence, 1)
+        self.assertIn("not enforced", json.loads(out_evidence)["reason"])
+
+    def test_merge_blocks_missing_evidence(self):
+        fake_report = _merge_capability_report()
+        with (
+            patch("keel.cli.runtime.detect", return_value=fake_report),
+            patch("keel.cli.window.is_merge_open", return_value=True),
+            patch("keel.cli.github.pr_merge_snapshot",
+                  return_value=_json_result({
+                      "headRefOid": "abc",
+                      "mergeStateStatus": "CLEAN",
+                      "statusCheckRollup": [{"conclusion": "SUCCESS"}],
+                  })),
+            patch("keel.cli._verify_merge_evidence", return_value={
+                "enforced": True,
+                "verification": {"status": "fail", "missing": ["review-verdict-1"]},
+            }),
+        ):
+            rc, out, _ = run(_merge_args(json_out=True))
+
+        self.assertEqual(rc, 1)
+        self.assertIn("missing evidence", json.loads(out)["reason"])
+
+    def test_merge_allows_projects_without_configured_window(self):
+        fake_report = _merge_capability_report()
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+            f.write(
+                "extends: keel\n"
+                "core_version: '^1.0'\n"
+                "base_branch: main\n"
+                "knobs:\n"
+                "  build_gate_cmd: make test\n"
+            )
+            path = f.name
+        with (
+            patch("keel.cli.runtime.detect", return_value=fake_report),
+            patch("keel.cli.github.pr_merge_snapshot",
+                  return_value=_json_result({
+                      "headRefOid": "abc",
+                      "mergeStateStatus": "CLEAN",
+                      "statusCheckRollup": [{"conclusion": "SUCCESS"}],
+                  })),
+            patch("keel.cli._verify_merge_evidence", return_value={
+                "enforced": True,
+                "verification": {"status": "pass", "missing": []},
+            }),
+        ):
+            rc, out, _ = run([
+                "merge", path,
+                "--root", str(REPO_ROOT),
+                "--pr", "123",
+                "--approve-scope", "filesystem,git,github",
+                "--operator", "tester",
+                "--dry-run",
+                "--json",
+            ])
+
+        self.assertEqual(rc, 0)
+        self.assertIsNone(json.loads(out)["window"])
+
+    def test_merge_blocks_when_lock_is_already_claimed(self):
+        fake_report = _merge_capability_report()
+        with tempfile.TemporaryDirectory() as d:
+            cli.lock.claim_resource(cli._lock_root(d), "merge", owner="other")
+            with patch("keel.cli.runtime.detect", return_value=fake_report):
+                rc, out, _ = run(_merge_args(root=d, json_out=True))
+
+        data = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertEqual(data["lock"]["status"], "denied")
+
+    def test_merge_dry_run_passes_after_lock_window_ci_and_evidence(self):
+        fake_report = _merge_capability_report()
+        with (
+            patch("keel.cli.runtime.detect", return_value=fake_report),
+            patch("keel.cli.window.is_merge_open", return_value=True),
+            patch("keel.cli.github.pr_merge_snapshot",
+                  return_value=_json_result({
+                      "headRefOid": "abc",
+                      "mergeStateStatus": "CLEAN",
+                      "statusCheckRollup": [{"conclusion": "SUCCESS"}],
+                  })),
+            patch("keel.cli._verify_merge_evidence", return_value={
+                "enforced": True,
+                "verification": {"status": "pass", "missing": []},
+            }),
+            patch("keel.cli.github.merge_pr") as merge_mock,
+        ):
+            rc, out, _ = run(_merge_args(json_out=True, dry_run=True))
+
+        self.assertEqual(rc, 0)
+        self.assertFalse(json.loads(out)["merged"])
+        merge_mock.assert_not_called()
+
+    def test_merge_executes_and_reports_gh_merge_failure(self):
+        fake_report = _merge_capability_report()
+        with (
+            patch("keel.cli.runtime.detect", return_value=fake_report),
+            patch("keel.cli.window.is_merge_open", return_value=True),
+            patch("keel.cli.github.pr_merge_snapshot",
+                  return_value=_json_result({
+                      "headRefOid": "abc",
+                      "mergeStateStatus": "CLEAN",
+                      "statusCheckRollup": [{"conclusion": "SUCCESS"}],
+                  })),
+            patch("keel.cli._verify_merge_evidence", return_value={
+                "enforced": True,
+                "verification": {"status": "pass", "missing": []},
+            }),
+            patch("keel.cli.github.merge_pr",
+                  return_value=Namespace(ok=False, output="merge failed")),
+        ):
+            rc_fail, out_fail, _ = run(_merge_args(json_out=True))
+        with (
+            patch("keel.cli.runtime.detect", return_value=fake_report),
+            patch("keel.cli.window.is_merge_open", return_value=True),
+            patch("keel.cli.github.pr_merge_snapshot",
+                  return_value=_json_result({
+                      "headRefOid": "abc",
+                      "mergeStateStatus": "CLEAN",
+                      "statusCheckRollup": [{"conclusion": "SUCCESS"}],
+                  })),
+            patch("keel.cli._verify_merge_evidence", return_value={
+                "enforced": True,
+                "verification": {"status": "pass", "missing": []},
+            }),
+            patch("keel.cli.github.merge_pr",
+                  return_value=Namespace(ok=True, output="merged")),
+        ):
+            rc_ok, out_ok, _ = run(_merge_args(json_out=True))
+
+        self.assertEqual(rc_fail, 1)
+        self.assertEqual(json.loads(out_fail)["reason"], "gh merge failed")
+        self.assertEqual(rc_ok, 0)
+        self.assertTrue(json.loads(out_ok)["merged"])
+
+    def test_merge_human_output_prints_ci_and_evidence(self):
+        args = Namespace(json=False, pr=7)
+        payload = {
+            "lock": {"status": "granted"},
+            "ci": {"state": "pass"},
+            "evidence": {"verification": {"status": "pass"}},
+        }
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = cli._finish_merge(args, payload, "ok", code=0)
+
+        self.assertEqual(rc, 0)
+        self.assertIn("evidence: pass", out.getvalue())
+
+    def test_merge_human_output_handles_sparse_payload(self):
+        args = Namespace(json=False, pr=7)
+        payload = {"lock": None, "ci": None, "evidence": {"verification": "bad"}}
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = cli._finish_merge(args, payload, "blocked", code=1)
+
+        self.assertEqual(rc, 1)
+        self.assertIn("blocked", out.getvalue())
+
+    def test_merge_snapshot_and_ci_rollup_edges(self):
+        with patch(
+            "keel.cli.github.pr_merge_snapshot",
+            return_value=Namespace(ok=True, output="{"),
+        ):
+            with self.assertRaisesRegex(ValueError, "not JSON"):
+                cli._merge_snapshot(1, cwd=".")
+        pending = cli._ci_rollup_state(["bad", {"status": "PENDING"}])
+        empty = cli._ci_rollup_state([])
+
+        self.assertEqual(pending["state"], "pending")
+        self.assertEqual(empty["reason"], "no-checks")
+
+    def test_verify_merge_evidence_uses_live_artifacts_and_tier(self):
+        config = cli.cfg.load_config(PROJECTS / "keel.yaml")
+        args = Namespace(
+            pr=123,
+            issue=265,
+            root=str(REPO_ROOT),
+            reviewers=1,
+            review_comments="summary",
+            jury=False,
+            no_jury=True,
+            jury_advisory=False,
+            gate_label=None,
+        )
+        artifact = {
+            "pr_body": "Closes #265",
+            "pr_comments": [
+                {
+                    "body": "<!-- keel.review-verdict.v1 -->\nreviewer: a\nhead: abc\nLGTM",
+                    "author_association": "OWNER",
+                },
+                {
+                    "body": "<!-- keel.closure-comment.v1 -->",
+                    "author_association": "OWNER",
+                },
+            ],
+            "issue_comments": [
+                {"body": "<!-- keel.closure-comment.v1 -->", "author_association": "OWNER"},
+            ],
+            "pr_reviews": [],
+            "issue": 265,
+            "head_sha": "abc",
+            "changed_files": ["src/keel/cli.py"],
+            "pr_labels": ["keel:ship"],
+        }
+        with patch("keel.cli._load_evidence_artifacts", return_value=artifact):
+            report = cli._verify_merge_evidence(args, config)
+
+        self.assertTrue(report["enforced"])
+        self.assertEqual(report["verification"]["status"], "pass")
+
 
     def test_capture_reconcile_plans_missing_marker_actions(self):
         import tempfile
@@ -3213,14 +4056,365 @@ class TestParser(unittest.TestCase):
         self.assertTrue(actions)
         self.assertGreaterEqual(set(actions[0].choices),
                                 {"version", "validate", "plan", "run-gates", "window", "ship",
+                                 "claim", "release", "merge", "worktree-remove",
                                  "implement", "ci-check", "morning", "capabilities",
                                  "wrap", "overnight", "init",
                                  "setup",
                                  "install-adapter",
                                  "adapter-status", "update-adapter", "sync", "project-commands",
-                                 "install-legacy-wrappers"})
+                                 "install-legacy-wrappers", "post-comment"})
         # ship-v2 was removed in favour of the ship --compound profile flag.
         self.assertNotIn("ship-v2", set(actions[0].choices))
+
+
+class TestPostComment(unittest.TestCase):
+    def test_post_comment_reports_missing_and_invalid_config(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+            f.write("extends: keel\n")
+            bad_config = f.name
+        body = _body_file("<!-- keel.issue-update.v1 -->\n")
+
+        rc_missing, _, err_missing = run([
+            "post-comment", "missing.yaml",
+            "--target", "issue:1",
+            "--artifact", "issue-update",
+            "--body-file", body,
+        ])
+        rc_bad, _, err_bad = run([
+            "post-comment", bad_config,
+            "--target", "issue:1",
+            "--artifact", "issue-update",
+            "--body-file", body,
+        ])
+
+        self.assertEqual(rc_missing, 1)
+        self.assertIn("no such config", err_missing)
+        self.assertEqual(rc_bad, 1)
+        self.assertIn("missing required", err_bad)
+
+    def test_post_comment_rejects_invalid_target_and_unreadable_body(self):
+        body = _body_file("<!-- keel.issue-update.v1 -->\n")
+        rc_target, _, err_target = run([
+            "post-comment", str(PROJECTS / "keel.yaml"),
+            "--target", "comment:1",
+            "--artifact", "issue-update",
+            "--body-file", body,
+        ])
+        rc_body, _, err_body = run([
+            "post-comment", str(PROJECTS / "keel.yaml"),
+            "--target", "issue:1",
+            "--artifact", "issue-update",
+            "--body-file", "/tmp/keel-missing-body.md",
+        ])
+
+        self.assertEqual(rc_target, 1)
+        self.assertIn("issue:<number> or pr:<number>", err_target)
+        self.assertEqual(rc_body, 1)
+        self.assertIn("cannot read --body-file", err_body)
+
+    def test_post_comment_rejects_missing_marker(self):
+        body = _body_file("## Missing marker\n")
+        rc, _, err = run([
+            "post-comment", str(PROJECTS / "keel.yaml"),
+            "--target", "issue:247",
+            "--artifact", "issue-update",
+            "--body-file", body,
+        ])
+        self.assertEqual(rc, 1)
+        self.assertIn("must contain marker", err)
+        self.assertIn("keel.issue-update.v1", err)
+
+    def test_post_comment_rejects_literal_body_file_placeholder(self):
+        body = _body_file("@/tmp/report.md <!-- keel.issue-update.v1 -->")
+        rc, _, err = run([
+            "post-comment", str(PROJECTS / "keel.yaml"),
+            "--target", "issue:247",
+            "--artifact", "issue-update",
+            "--body-file", body,
+        ])
+        self.assertEqual(rc, 1)
+        self.assertIn("literal @/path", err)
+
+    def test_post_comment_blocks_missing_capability_and_missing_owner_repo(self):
+        body = _body_file("<!-- keel.issue-update.v1 -->\n")
+        missing_report = runtime.CapabilityReport((
+            runtime.Capability("gh", False, "missing", "test"),
+            runtime.Capability("gh-auth", False, "missing", "test"),
+        ))
+        with patch("keel.cli.runtime.detect", return_value=missing_report):
+            rc_cap, _, err_cap = run([
+                "post-comment", str(PROJECTS / "keel.yaml"),
+                "--target", "issue:1",
+                "--artifact", "issue-update",
+                "--body-file", body,
+            ])
+
+        config = _write_raw(
+            "extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
+            "repo: tmp\ngates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+        )
+        with patch("keel.cli.runtime.detect", return_value=_merge_capability_report()):
+            rc_owner, _, err_owner = run([
+                "post-comment", config,
+                "--target", "issue:1",
+                "--artifact", "issue-update",
+                "--body-file", body,
+            ])
+
+        self.assertEqual(rc_cap, 1)
+        self.assertIn("missing required", err_cap)
+        self.assertEqual(rc_owner, 1)
+        self.assertIn("must define owner and repo", err_owner)
+
+    def test_post_comment_reports_comment_list_failure(self):
+        body = _body_file("<!-- keel.issue-update.v1 -->\n")
+
+        def failing_list(argv, **_kwargs):
+            if argv[:4] == ["gh", "api", "--paginate", "--slurp"]:
+                return Namespace(ok=False, output="rate limited")
+            return Namespace(ok=False, output=f"unexpected {argv}")
+
+        with (
+            patch("keel.cli.runtime.detect", return_value=_merge_capability_report()),
+            patch("keel.cli.run_argv", side_effect=failing_list),
+        ):
+            rc, _, err = run([
+                "post-comment", str(PROJECTS / "keel.yaml"),
+                "--target", "issue:247",
+                "--artifact", "issue-update",
+                "--body-file", body,
+            ])
+        self.assertEqual(rc, 1)
+        self.assertIn("rate limited", err)
+
+    def test_post_comment_posts_marked_body_via_selected_transport(self):
+        calls: list[list[str]] = []
+
+        def fake_run(argv, **_kwargs):
+            calls.append(argv)
+            if argv[:4] == ["gh", "api", "--paginate", "--slurp"]:
+                return Namespace(ok=True, output="[]")
+            if argv[:3] == ["gh", "api", "repos/berkayturanci/keel/issues/247/comments"]:
+                self.assertIn("-f", argv)
+                body_arg = next(item for item in argv if item.startswith("body="))
+                self.assertIn("keel.issue-update.v1", body_arg)
+                self.assertNotIn("--body", argv)
+                return Namespace(ok=True, output=json.dumps({
+                    "id": 42,
+                    "html_url": "https://github.example/comment/42",
+                }))
+            return Namespace(ok=False, output=f"unexpected {argv}")
+
+        body = _body_file("<!-- keel.issue-update.v1 -->\n\nrun-id: abc\n")
+        with (
+            patch("keel.cli.runtime.detect", return_value=_merge_capability_report()),
+            patch("keel.cli.run_argv", side_effect=fake_run),
+            patch("keel.github.run_argv", side_effect=fake_run),
+        ):
+            rc, out, err = run([
+                "post-comment", str(PROJECTS / "keel.yaml"),
+                "--target", "issue:247",
+                "--artifact", "issue-update",
+                "--body-file", body,
+                "--json",
+            ])
+
+        self.assertEqual((rc, err), (0, ""))
+        data = json.loads(out)
+        self.assertEqual(data["action"], "posted")
+        self.assertEqual(data["transport"], "gh")
+        self.assertEqual(data["comment_id"], 42)
+        self.assertTrue(calls)
+
+    def test_post_comment_reports_mutation_failure_and_non_json_success(self):
+        body = _body_file("<!-- keel.issue-update.v1 -->\n")
+
+        def failing_post(argv, **_kwargs):
+            if argv[:4] == ["gh", "api", "--paginate", "--slurp"]:
+                return Namespace(ok=True, output="[]")
+            return Namespace(ok=False, output="")
+
+        with (
+            patch("keel.cli.runtime.detect", return_value=_merge_capability_report()),
+            patch("keel.cli.run_argv", side_effect=failing_post),
+            patch("keel.github.run_argv", side_effect=failing_post),
+        ):
+            rc_fail, _, err_fail = run([
+                "post-comment", str(PROJECTS / "keel.yaml"),
+                "--target", "issue:247",
+                "--artifact", "issue-update",
+                "--body-file", body,
+            ])
+
+        def text_post(argv, **_kwargs):
+            if argv[:4] == ["gh", "api", "--paginate", "--slurp"]:
+                return Namespace(ok=True, output="[]")
+            return Namespace(ok=True, output="created")
+
+        with (
+            patch("keel.cli.runtime.detect", return_value=_merge_capability_report()),
+            patch("keel.cli.run_argv", side_effect=text_post),
+            patch("keel.github.run_argv", side_effect=text_post),
+        ):
+            rc_text, out_text, err_text = run([
+                "post-comment", str(PROJECTS / "keel.yaml"),
+                "--target", "issue:247",
+                "--artifact", "issue-update",
+                "--body-file", body,
+                "--json",
+            ])
+
+        def list_response_post(argv, **_kwargs):
+            if argv[:4] == ["gh", "api", "--paginate", "--slurp"]:
+                return Namespace(ok=True, output="[]")
+            return Namespace(ok=True, output="[]")
+
+        with (
+            patch("keel.cli.runtime.detect", return_value=_merge_capability_report()),
+            patch("keel.cli.run_argv", side_effect=list_response_post),
+            patch("keel.github.run_argv", side_effect=list_response_post),
+        ):
+            rc_list, out_list, err_list = run([
+                "post-comment", str(PROJECTS / "keel.yaml"),
+                "--target", "issue:247",
+                "--artifact", "issue-update",
+                "--body-file", body,
+                "--json",
+            ])
+
+        self.assertEqual(rc_fail, 1)
+        self.assertIn("gh comment mutation failed", err_fail)
+        self.assertEqual((rc_text, err_text), (0, ""))
+        self.assertEqual(json.loads(out_text)["action"], "posted")
+        self.assertEqual((rc_list, err_list), (0, ""))
+        self.assertEqual(json.loads(out_list)["action"], "posted")
+
+    def test_post_comment_edits_existing_same_run_comment(self):
+        existing = [{
+            "id": 99,
+            "body": "<!-- keel.closure-comment.v1 -->\nrun-id: run-1\nold",
+        }]
+        calls: list[list[str]] = []
+
+        def fake_run(argv, **_kwargs):
+            calls.append(argv)
+            if argv[:4] == ["gh", "api", "--paginate", "--slurp"]:
+                return Namespace(ok=True, output=json.dumps([existing]))
+            if argv[:3] == ["gh", "api", "repos/berkayturanci/keel/issues/comments/99"]:
+                self.assertIn("PATCH", argv)
+                return Namespace(ok=True, output=json.dumps({"id": 99}))
+            return Namespace(ok=False, output=f"unexpected {argv}")
+
+        body = _body_file("<!-- keel.closure-comment.v1 -->\n\nrun-id: run-1\nnew\n")
+        with (
+            patch("keel.cli.runtime.detect", return_value=_merge_capability_report()),
+            patch("keel.cli.run_argv", side_effect=fake_run),
+            patch("keel.github.run_argv", side_effect=fake_run),
+        ):
+            rc, out, err = run([
+                "post-comment", str(PROJECTS / "keel.yaml"),
+                "--target", "pr:123",
+                "--artifact", "closure-comment",
+                "--body-file", body,
+                "--run-id", "run-1",
+                "--json",
+            ])
+
+        self.assertEqual((rc, err), (0, ""))
+        data = json.loads(out)
+        self.assertEqual(data["action"], "edited")
+        self.assertEqual(data["comment_id"], 99)
+
+    def test_post_comment_dry_run_and_bad_existing_comment_id(self):
+        body = _body_file("<!-- keel.closure-comment.v1 -->\n\nrun-id: run-1\n")
+        existing = [{"id": "bad", "body": "<!-- keel.closure-comment.v1 -->\nrun-id: run-1"}]
+
+        def fake_list(argv, **_kwargs):
+            self.assertEqual(argv[:4], ["gh", "api", "--paginate", "--slurp"])
+            return Namespace(ok=True, output=json.dumps([existing]))
+
+        with (
+            patch("keel.cli.runtime.detect", return_value=_merge_capability_report()),
+            patch("keel.cli.run_argv", side_effect=fake_list),
+        ):
+            rc_dry, out_dry, err_dry = run([
+                "post-comment", str(PROJECTS / "keel.yaml"),
+                "--target", "pr:123",
+                "--artifact", "closure-comment",
+                "--body-file", body,
+                "--run-id", "run-1",
+                "--dry-run",
+            ])
+            rc_bad, _, err_bad = run([
+                "post-comment", str(PROJECTS / "keel.yaml"),
+                "--target", "pr:123",
+                "--artifact", "closure-comment",
+                "--body-file", body,
+                "--run-id", "run-1",
+            ])
+
+        self.assertEqual((rc_dry, err_dry), (0, ""))
+        self.assertIn("keel post-comment", out_dry)
+        self.assertIn("comment       : bad", out_dry)
+        self.assertEqual(rc_bad, 1)
+        self.assertIn("missing an integer id", err_bad)
+
+    def test_post_comment_match_helpers_cover_skip_paths(self):
+        comments = [
+            {"id": 1, "body": ""},
+            {"id": 2, "body": "<!-- keel.issue-update.v1 -->\nrun-id: other"},
+            {"id": 3, "body": "<!-- keel.issue-update.v1 -->\n<!-- keel.run-id: abc -->"},
+        ]
+        self.assertIsNone(cli._find_comment_match(
+            comments, marker="<!-- keel.issue-update.v1 -->", run_id=None
+        ))
+        match = cli._find_comment_match(
+            comments, marker="<!-- keel.issue-update.v1 -->", run_id="abc"
+        )
+        self.assertEqual(match["id"], 3)
+        payload = {"target": "raw", "artifact": "issue-update", "transport": "gh"}
+        out, err = io.StringIO(), io.StringIO()
+        args = Namespace(json=False)
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = cli._finish_post_comment(args, payload, code=0)
+        self.assertEqual(rc, 0)
+        self.assertEqual(err.getvalue(), "")
+        self.assertIn("raw", out.getvalue())
+
+
+def _merge_capability_report():
+    return runtime.CapabilityReport((
+        runtime.Capability("shell", True, "ok", "test"),
+        runtime.Capability("git", True, "ok", "test"),
+        runtime.Capability("worktree", True, "ok", "test"),
+        runtime.Capability("gh", True, "ok", "test"),
+        runtime.Capability("gh-auth", True, "ok", "test"),
+    ))
+
+
+def _body_file(text: str) -> str:
+    with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:
+        f.write(text)
+        return f.name
+
+
+def _merge_args(*, root: str | None = None, json_out: bool = False, dry_run: bool = False):
+    argv = [
+        "merge", str(PROJECTS / "keel.yaml"),
+        "--root", root or str(REPO_ROOT),
+        "--pr", "123",
+        "--approve-scope", "filesystem,git,github",
+        "--operator", "tester",
+    ]
+    if json_out:
+        argv.append("--json")
+    if dry_run:
+        argv.append("--dry-run")
+    return argv
+
+
+def _json_result(payload: dict):
+    return Namespace(ok=True, output=json.dumps(payload))
 
 
 if __name__ == "__main__":

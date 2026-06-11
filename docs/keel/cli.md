@@ -92,6 +92,76 @@ as `ready`, `needs-input`, `blocked`, or `out-of-scope`, extracts acceptance cri
 docs/test expectations, and emits concrete clarification questions. Live work must stop
 before mutation when an explicitly supplied issue is not `ready`.
 
+## `keel claim RESOURCE --owner ID [--root DIR] [--json]`
+
+Acquire a single-host resource claim backed by the same atomic `mkdir` primitive used by
+core merge execution. A denied claim exits non-zero and reports the current holder when it
+is known.
+
+```bash
+keel claim merge --owner "ship-pr-123" --root . --json
+keel release merge --owner "ship-pr-123" --root .
+```
+
+## `keel merge <project.yaml> --pr N [--root DIR] [--method squash|merge|rebase] [--dry-run]`
+
+Perform the sanctioned core-owned PR merge path. `keel merge` acquires the merge resource
+claim, re-checks the merge window inside that claim, reads the live PR check rollup with
+failure-before-pending precedence, runs `evidence-verify` against the current PR artifacts,
+and only then calls `gh pr merge`.
+
+Raw adapter `gh pr merge` calls are a spec violation for ship-style flows: adapters should
+delegate s10 to this command so lock, window, CI, and evidence checks are deterministic.
+
+```bash
+keel merge .keel/project.yaml --root . --pr 123 \
+  --approve-scope filesystem,git,github --operator "$USER"
+keel merge .keel/project.yaml --root . --pr 123 --dry-run \
+  --approve-scope filesystem,git,github --operator "$USER" --json
+```
+
+`--hotfix` is the audited merge-window bypass and still requires explicit consent.
+
+## `keel post-comment <project.yaml> --target issue:N|pr:N --artifact ARTIFACT --body-file FILE [--run-id ID] [--dry-run] [--json]`
+
+Post or update a deterministic GitHub issue/PR artifact comment. `post-comment` reads the
+rendered Markdown from `--body-file`, validates that it contains the marker required by
+`--artifact`, resolves the selected GitHub transport, and then posts through the GitHub
+issue-comments API. PR conversation comments use the same endpoint as issue comments, so
+`--target pr:N` still lands in the PR timeline.
+
+```bash
+keel post-comment .keel/project.yaml --root . \
+  --target pr:456 --artifact review-verdict \
+  --body-file /tmp/review-verdict.md --run-id "$RUN_ID"
+keel post-comment .keel/project.yaml --root . \
+  --target issue:123 --artifact closure-comment \
+  --body-file /tmp/closure-comment.md --run-id "$RUN_ID" --json
+```
+
+Supported artifacts are `closure-comment`, `issue-update`, `review-verdict`,
+`jury-verdict`, `extension-result`, `step-handoff`, and `run-control-halt`. When
+`--run-id` is supplied, the command edits the latest existing comment that has the same
+marker and run id; otherwise it posts a new comment. Bodies that are missing the expected
+marker, or that look like a literal `@/tmp/...` placeholder, are rejected before any
+public write.
+
+When a run intentionally posts multiple comments for the same artifact type, use a stable
+sub-key in the run id, for example `"$RUN_ID:reviewer-a"` and `"$RUN_ID:reviewer-b"` for
+two review verdicts. Reusing the exact same marker and run id is an update request.
+
+Raw adapter `gh issue comment`, `gh pr comment`, and hand-rolled comment API calls are a
+spec violation for ship evidence artifacts: adapters should delegate closure comments,
+issue updates, review verdicts, and jury verdicts to this command so marker validation,
+transport selection, and same-run idempotency are enforced in core.
+
+## `keel worktree-remove WORKTREE [--root DIR] [--json]`
+
+Safely remove a worktree after validating that the path is nested under the repository root
+and appears in `git worktree list --porcelain`. The command refuses the repository root,
+filesystem roots, paths outside the repository, and fabricated unregistered paths before
+delegating to `git worktree remove --force`.
+
 ## `keel ledger <project.yaml> [--root DIR] [--limit N] [--json]`
 
 Read the structured run ledger offline. The default path is
@@ -167,11 +237,14 @@ block the plan instead of guessing.
 
 Verify that a PR has the public evidence required by the ship contract before merge.
 
-The gate is **opt-in**: it engages only when the PR carries the configured
-`evidence_gate_label` knob (default `keel:ship`), which `keel:ship` applies when it opens
-the PR. A PR without that label reports `enforced: false`, `required: 0`, status `pass`
-(exit 0) — so hand-authored PRs that never went through ship are not blocked. When the
-label is present the verifier is fail-closed and accepts only durable GitHub artifacts:
+The gate is **provenance-armed** by default: it engages when deterministic ship provenance
+is present, including a ship-style issue branch (`feature/issue-*`, `fix/issue-*`, etc.),
+an existing `keel.review-verdict.v1` marker, a ship-run ledger record, or the legacy
+`evidence_gate_label` knob (default `keel:ship`). A hand-authored PR without ship
+provenance reports `enforced: false`, `required: 0`, status `pass` (exit 0). The only
+disarm path for ship provenance is the operator-applied waiver label
+`keel:evidence-waived`, which is reported in the check output. When enforced, the verifier
+is fail-closed and accepts only durable GitHub artifacts:
 
 - a `keel.closure-comment.v1` closure marker on both the PR and linked issue, posted by a
   trusted GitHub actor;
@@ -195,13 +268,13 @@ keel evidence-verify .keel/project.yaml --root . --pr 456 --reviewers 3 --jury -
 keel evidence-verify .keel/project.yaml --root . --pr 456 --no-jury
 ```
 
-`--gate-label <name>` overrides the `evidence_gate_label` knob for a single run, and
-`--pr-label <name>` (repeatable) injects PR label names that are merged with the labels read
-from the live PR. Injected labels are additive — they can only make the gate *more*
-enforced, never less. A live PR fetch still runs unless an offline fixture flag (below) is
-also supplied. The JSON payload reports the resolved `gate_label`, the boolean `enforced`,
-and the observed `pr_labels`. The `evidence_gate_label` knob must be non-empty (the schema
-forbids a blank value, which would silently disable the gate for every PR).
+`--gate-label <name>` overrides the legacy arming label for a single run,
+`--waiver-label <name>` overrides the operator waiver label, and `--pr-label <name>`
+(repeatable) injects PR label names that are merged with the labels read from the live PR.
+A live PR fetch still runs unless an offline fixture flag (below) is also supplied. The JSON
+payload reports the resolved `gate`, `gate_label`, `waiver_label`, `enforced`, and observed
+`pr_labels`. The `evidence_gate_label` knob must be non-empty so legacy arming cannot be
+silently disabled by an empty configured label.
 
 A failed live fetch (for example, `gh` cannot read the PR or its labels) is **fail-closed**:
 the command errors and exits non-zero rather than treating the gate as unenforced.
@@ -213,6 +286,34 @@ prints the contract shape without fetching live artifacts or requiring evidence;
 offline CI harnesses can provide `--pr-comments-json`, `--issue-comments-json`,
 `--pr-reviews-json`, `--pr-body-file`, `--changed-file`, and `--head-sha` fixtures; the same
 verifier path is used either way.
+
+## `keel step-verify --step sN --handoff-file handoff.json --evidence-report evidence.json`
+
+Verify a persisted step handoff before an adapter advances the ship backbone. The handoff
+must be the JSON object produced by `keel.stepverifier.build_handoff`; the evidence report
+must be the JSON verification block from `keel evidence-verify` (or an equivalent report
+with `results`). The command exits non-zero when the handoff schema/status/renderer marker
+is missing or when the step's required evidence ids are not ok.
+
+```bash
+keel step-verify --step s7 \
+  --handoff-file .keel/run/handoffs/s7.json \
+  --evidence-report .keel/run/evidence.json \
+  --reviewers 2 --json
+```
+
+## `keel runcontrols EVENTS.json [--slot fixloop --action fix] [--json]`
+
+Append one run-control event to a JSON array file and evaluate deterministic work caps:
+run budget, per-step/slot caps, repeated identical actions, and alternating diff
+fingerprints. `--dry-run` evaluates without writing. A hard halt exits non-zero and returns
+the structured halt reason; `keel ship --run-events-file EVENTS.json` stamps the same
+summary into the ship ledger record and also exits non-zero on a hard halt.
+
+```bash
+keel runcontrols .keel/run/events.json --slot fixloop --action fix
+keel runcontrols .keel/run/events.json --step-cap fixloop=3 --json
+```
 
 ## `keel checkpoint <project.yaml> [--root DIR] [--json]`
 

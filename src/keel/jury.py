@@ -65,15 +65,36 @@ def available(*, cwd: str | None = None, _run=None) -> bool:
     return run_argv(["jury", "--version"], cwd=cwd, timeout=30, **_kw(_run)).ok
 
 
+def _oversize_finding(size: int) -> Finding:
+    """An advisory finding recording that the jury gate skipped an oversize diff.
+
+    The skip is non-blocking (``nit``) but no longer silent: it surfaces in the
+    posted jury verdict so an oversize diff cannot dodge the jury stage unobserved.
+    """
+    return Finding(
+        severity="nit",
+        message=(f"jury skipped: diff is {size} bytes, over the {MAX_DIFF_BYTES}-byte "
+                 "limit (ai-jury large-diff chunking not applied)"),
+        source="jury:skipped-oversize",
+        path=None,
+        line=None,
+        anchorable=False,
+    )
+
+
 def run_gate(diff_text: str, *, cwd: str | None = None, _run=None) -> tuple[bool, list[Finding]]:
     """Run ``jury`` on ``diff_text`` and map its findings.
 
     Returns ``(ok, findings)``; ``ok`` is False only when a finding blocks
     (critical/major). Fail-soft no-op (``(True, [])``) when there is no diff or the
-    ``jury`` CLI is not installed.
+    ``jury`` CLI is not installed. An oversize diff also passes (``ok`` True) but
+    emits a non-blocking advisory finding so the skip is observable, not silent.
     """
-    if not diff_text or len(diff_text.encode("utf-8")) > MAX_DIFF_BYTES:
+    if not diff_text:
         return True, []
+    size = len(diff_text.encode("utf-8"))
+    if size > MAX_DIFF_BYTES:
+        return True, [_oversize_finding(size)]
     if not available(cwd=cwd, _run=_run):
         return True, []
     fd, path = tempfile.mkstemp(suffix=".diff")

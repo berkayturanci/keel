@@ -302,10 +302,10 @@ class TestEvidenceVerify(unittest.TestCase):
 
 
 class TestGateActive(unittest.TestCase):
-    def test_label_present(self):
+    def test_legacy_label_present(self):
         self.assertTrue(evidence.gate_active(["keel:ship", "other"], "keel:ship"))
 
-    def test_label_absent(self):
+    def test_legacy_label_absent(self):
         self.assertFalse(evidence.gate_active(["other"], "keel:ship"))
 
     def test_empty_labels(self):
@@ -320,6 +320,57 @@ class TestGateActive(unittest.TestCase):
         # disable itself. (The schema also forbids a blank evidence_gate_label.)
         self.assertFalse(evidence.gate_active(["keel:ship", ""], ""))
         self.assertFalse(evidence.gate_active([], ""))
+
+    def test_ship_branch_arms_gate_without_label(self):
+        decision = evidence.gate_decision([], "keel:ship", head_ref="fix/issue-266-hardening")
+
+        self.assertTrue(decision["enforced"])
+        self.assertEqual(decision["reason"], "ship-branch")
+
+    def test_review_marker_arms_gate_without_label(self):
+        decision = evidence.gate_decision(
+            [],
+            "keel:ship",
+            pr_comments=[_trusted_comment("keel.review-verdict.v1\nLGTM")],
+        )
+
+        self.assertTrue(decision["enforced"])
+        self.assertEqual(decision["reason"], "review-verdict-marker")
+
+    def test_operator_waiver_disarms_even_with_ship_provenance(self):
+        decision = evidence.gate_decision(
+            ["keel:evidence-waived"],
+            "keel:ship",
+            head_ref="fix/issue-266-hardening",
+        )
+
+        self.assertFalse(decision["enforced"])
+        self.assertTrue(decision["waived"])
+        self.assertEqual(decision["reason"], "operator-waiver-label")
+
+    def test_hand_authored_pr_without_ship_provenance_is_ungated(self):
+        decision = evidence.gate_decision([], "keel:ship", head_ref="docs/readme-polish")
+
+        self.assertFalse(decision["enforced"])
+        self.assertEqual(decision["reason"], "no-ship-provenance")
+
+    def test_legacy_gate_label_still_arms_existing_workflows(self):
+        decision = evidence.gate_decision(["keel:ship"], "keel:ship")
+
+        self.assertTrue(decision["enforced"])
+        self.assertEqual(decision["reason"], "gate-label")
+
+    def test_ledger_record_arms_gate(self):
+        decision = evidence.gate_decision([], "keel:ship", ledger_records=[{"run": "ship"}])
+
+        self.assertTrue(decision["enforced"])
+        self.assertEqual(decision["reason"], "ship-run-ledger")
+
+    def test_blank_waiver_label_cannot_disarm(self):
+        decision = evidence.gate_decision([""], "keel:ship", waiver_label="")
+
+        self.assertFalse(decision["waived"])
+        self.assertEqual(decision["reason"], "no-ship-provenance")
 
 
 class TestEvidenceEnforcement(unittest.TestCase):

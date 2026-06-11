@@ -13,6 +13,11 @@ All notable changes to keel are documented here. The format follows
   never-installed wrapper on a clean install. Uninstalled legacy wrappers are now
   omitted (treated as *not installed*); installed ones are still freshness-checked.
   Documented the `legacy-claude` target in the CLI reference. (#260)
+- **Jury gate no longer skips oversize diffs silently.** A diff over
+  `MAX_DIFF_BYTES` (1 MB) still passes the jury gate (fail-soft), but now emits a
+  non-blocking `nit` advisory finding (`jury:skipped-oversize`) so the skip surfaces
+  in the posted jury verdict instead of letting an oversize diff dodge the jury
+  stage unobserved. (#258)
 
 ## [1.2.0] — 2026-06-11
 

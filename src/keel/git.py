@@ -25,6 +25,10 @@ def worktree_remove(path: str, *, cwd: str | None = None, _run=None) -> CommandR
     return run_argv(["git", "worktree", "remove", path, "--force"], cwd=cwd, **_kw(_run))
 
 
+def worktree_list(*, cwd: str | None = None, _run=None) -> CommandResult:
+    return run_argv(["git", "worktree", "list", "--porcelain"], cwd=cwd, **_kw(_run))
+
+
 def current_branch(*, cwd: str | None = None, _run=None) -> str | None:
     result = run_argv(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=cwd, **_kw(_run))
     return result.output.strip() if result.ok else None
