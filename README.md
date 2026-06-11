@@ -51,8 +51,11 @@ Changing the backbone is a keel-core change. Projects only ever touch layers 2�
   workflow preferences in `policy_pack` data instead of packaged command prose.
 - **Opt-in `jury` gate** — runs the [ai-jury](https://github.com/berkayturanci/ai-jury) multi-agent
   reviewer on the diff when installed; a fail-soft no-op otherwise.
-- **Safe merges by construction** — timezone-aware night no-merge window, `mkdir` merge lock,
-  risk-tier → reviewer count, hotfix bypass with an audit line, vendor+model attribution.
+- **Safe merges by construction** — the core-owned `keel merge` path (resource claim,
+  window re-check, live CI rollup, and evidence verification before the merge), timezone-aware
+  night no-merge window, risk-tier → reviewer count, hotfix bypass with an audit line,
+  vendor+model attribution. The PR evidence gate arms from ship provenance by default —
+  only the operator-applied `keel:evidence-waived` label disarms it.
 
 ### How Keel compares
 

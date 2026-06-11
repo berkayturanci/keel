@@ -46,8 +46,8 @@ for every later delegated-agent brief.
 `lint_cmd`), `implementer_agents`, `tier3_globs`, `ci_workflows`, `docs_gate_paths`,
 and the `tester` / `pre-merge` / `reviewers` / `capture` extensions. `keel window`
 evaluates `merge_window` in the project `timezone` and reports `merge_window_mode`
-(`pause` = halt outside the window; `freeze` = defer to the morning queue). Hold the
-**merge lock** for the merge step (s10) only.
+(`pause` = halt outside the window; `freeze` = defer to the morning queue). The merge
+resource claim is acquired and released by `keel merge` at the merge step (s10) only.
 
 After s1 selects an issue, rerun the live preflight with the selected issue title/body/labels:
 
@@ -382,30 +382,36 @@ halt from `keel runcontrols` is fail-closed and must stop the ship run until an 
 chooses an explicit `--max-rounds` override.
 
 ### s10 merge
-Only inside the **merge window** (unless the issue is a blocker / `--hotfix`), holding the
-**merge lock**:
-- **Pre-merge prep (outside the lock):** re-assert mergeability; if behind/dirty, integrate
-  `base_branch` (merge, not rebase), re-green CI, run a single focused merge-conflict review
-  (max 2 integration iterations, then blocked + morning queue). Run any `pre-merge` Lego.
-  Then pre-clean the worktree so `--delete-branch` won't be held by a local ref
-  (hard-validate `worktree_path` is nested under the repo root — reject the repo root, the
-  filesystem root, or any path outside the nested worktrees dir, and assert it is a
-  registered worktree — before removing). This sub-step may span multiple tool calls; the
-  literal merge (below) must not.
-- **Lock + literal merge (single shell block):** acquire an atomic `mkdir`-based mutex with
-  stale-PID recovery and a ~10-min acquisition budget (on timeout: mark the issue blocked,
-  comment, continue with the next); a trap releases it on exit. (Local POSIX filesystems
-  only — not NFS-safe.) Inside: re-assert `base == base_branch`, not behind/dirty (if it is,
-  abort and block — never resolve inside the lock), flip draft→ready; **re-check the window**
-  (`keel window`) — if closed and not a blocker, abort the merge, append to the morning
-  queue, post the deferral comment, leave the PR ready, release the lock, continue. Otherwise
-  **squash-merge** with a conventional-commit subject and `--delete-branch`. Treat the **PR
-  state (`MERGED`)** as authoritative, not `gh pr merge`'s exit code (a non-zero exit on a
-  successful server-side squash is just a local-cleanup failure — proceed to capture/close;
-  a real non-MERGED state aborts the closure block and blocks the issue).
+The literal merge is **core-owned**: route it through `keel merge`. Raw `gh pr merge`
+calls and hand-rolled lock shells are **spec violations** for ship-style flows — the
+lock, window re-check, CI rollup read, and evidence verification must run deterministically
+inside core, not as adapter prose.
+
+- **Pre-merge prep:** re-assert mergeability; if behind/dirty, integrate `base_branch`
+  (merge, not rebase), re-green CI, run a single focused merge-conflict review (max 2
+  integration iterations, then blocked + morning queue). Run any `pre-merge` Lego. Then
+  pre-clean the worktree so `--delete-branch` won't be held by a local ref — remove it
+  with `keel worktree-remove <worktree_path> --root .`, which validates the path is nested
+  under the repo root and registered in `git worktree list` before removing (never call
+  `git worktree remove --force` directly on an implementer-supplied path).
+- **Core-owned merge:** run
+  `keel merge .keel/project.yaml --root . --pr <PR> --approve-scope <scopes> --operator <operator>`.
+  The command acquires the merge resource claim (atomic `mkdir`, single-host), re-checks
+  the **merge window inside the claim**, reads the live PR check rollup with
+  failure-before-pending precedence, runs `evidence-verify` against the current PR
+  artifacts, and only then performs the squash-merge. Any failed stage exits non-zero
+  **without merging** — on a closed window, append to the morning queue, post the deferral
+  comment via `keel post-comment`, leave the PR ready, and continue with the next issue;
+  on a denied claim, treat it as lock contention (mark the issue blocked, comment,
+  continue). For a blocker issue, pass `--hotfix` — the audited window bypass; it still
+  requires the approved consent scopes and is recorded in the ledger.
+- **Outcome:** treat the **PR state (`MERGED`)** as authoritative. A non-zero exit after a
+  successful server-side squash is a local-cleanup failure — proceed to capture/close; a
+  real non-MERGED state aborts the closure block and blocks the issue.
 
 `merge_window_mode`: `pause` halts here outside the window; `freeze` defers to the morning
-queue. The merge lock and "never `gh pr merge` outside s10" are non-negotiable invariants.
+queue. The merge claim and "the only merge path is `keel merge` at s10" are non-negotiable
+invariants.
 
 ### s11 capture
 Record the run for `/keel:wrap`: the **effective** implementer + reviewer vendors/models,
@@ -495,8 +501,9 @@ Run s0–s8 read-only and print the plan + `keel ship` assessment (tier, window,
 decision). Do **not** push, open a PR, post comments/labels, or merge — log every would-be
 write as `DRY-RUN: …` (every label edit, comment, ready-flip, merge, close, and any review-
 API or jury-inline write). The implementer is told not to push or open a PR; reviewers still
-run for real (read-only) so findings stay meaningful. The merge lock may still be
-acquired/released to exercise the path. The capture step is a logged no-op (`dry-run` marker).
+run for real (read-only) so findings stay meaningful. `keel merge --dry-run` may still be
+run to exercise the claim/window/rollup path without merging. The capture step is a logged
+no-op (`dry-run` marker).
 
 ## `--wizard` (interactive opt-in only)
 
@@ -513,7 +520,8 @@ collecting, echo the resolved config in the worked-example shape, then proceed t
 
 ## Invariants (always)
 
-Merge lock around the merge only (search marker for the literal-merge block) · never merge
+The only merge path is `keel merge` at s10 (claim, window, CI rollup, and evidence checks
+run in core) · never merge
 in the night no-merge window except a blocker / audited `--hotfix` · fail-soft (a missing
 CLI/gate/jury/capture-path degrades, never crashes the run; an absent/erroring jury can
 never manufacture a block) · the **orchestrator owns all writes** (reviewers are
@@ -522,4 +530,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=plugin command=ship keel_version=1.2.1 source_sha256=75f70dcc13cca70a785ab190c55598a309a639c8bca1cf3dff88d188d3e9a068 generated_sha256=75f70dcc13cca70a785ab190c55598a309a639c8bca1cf3dff88d188d3e9a068 -->
+<!-- keel-generated: surface=plugin command=ship keel_version=1.2.1 source_sha256=df387b5031c2b143f324227d9792063041fc76aa3fc01ca6a134dca5368443b0 generated_sha256=df387b5031c2b143f324227d9792063041fc76aa3fc01ca6a134dca5368443b0 -->

@@ -37,6 +37,18 @@ Manual `workflow_dispatch` runs also accept an optional `deferral` input. Use it
 an explicitly recorded evidence deferral (`review`, `jury`, a concrete evidence id, or
 `all`); normal PR runs remain fail-closed.
 
+## Gate arming and the operator waiver
+
+The evidence gate **arms from deterministic ship provenance by default** — when the PR
+carries ship-run signals (a ship-style head branch name, a trusted review-verdict marker,
+or a `ship_run` ledger record), the gate is active without any label. The legacy gate
+label remains an additional arming signal for already-installed workflows. The only disarm
+path is the **operator-applied** `keel:evidence-waived` label; agents must never apply it.
+Hand-authored PRs with no ship provenance are legitimately ungated. `keel evidence-verify`
+reports which arming rule fired (or which waiver applied) in its human and `--json` output,
+so a skipped gate is always attributable to an explicit operator decision rather than a
+forgotten label.
+
 ## Adopting it in a consumer repo
 
 Copy the workflow and change two things:
