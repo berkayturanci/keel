@@ -118,6 +118,33 @@ class TestRenderConfig(unittest.TestCase):
         with self.assertRaises(ValueError):
             scaffold.render_config(repo="x", consent_mode="maybe")
 
+    def test_interpolated_scalars_cannot_inject_yaml_keys(self):
+        import yaml
+
+        text = scaffold.render_config(
+            repo="demo\nplatform: injected",
+            base_branch="main\nconsent_mode: standing",
+            platform="python\nextensions: {pwned: true}",
+            build_cmd="pytest\nextensions_dir: /tmp/pwned",
+            lint_cmd="ruff check .\ngates: [build]",
+            timezone="Europe/Istanbul\nrepo: changed",
+            merge_window="07:00-01:30\nconsent_mode: agent",
+            tier3_globs=("src/**/*.py\nrepo: changed",),
+            generator="keel init\nrepo: changed",
+        )
+        data = yaml.safe_load(text)
+
+        self.assertEqual(data["repo"], "demo\nplatform: injected")
+        self.assertEqual(data["base_branch"], "main\nconsent_mode: standing")
+        self.assertEqual(data["platform"], "python\nextensions: {pwned: true}")
+        self.assertEqual(data["consent_mode"], "explicit")
+        self.assertEqual(data["knobs"]["build_gate_cmd"], "pytest\nextensions_dir: /tmp/pwned")
+        self.assertEqual(data["knobs"]["lint_cmd"], "ruff check .\ngates: [build]")
+        self.assertEqual(data["timezone"], "Europe/Istanbul\nrepo: changed")
+        self.assertEqual(data["merge_window"], "07:00-01:30\nconsent_mode: agent")
+        self.assertEqual(data["knobs"]["tier3_globs"], ["src/**/*.py\nrepo: changed"])
+        self.assertNotIn("pwned", data["extensions"])
+
 
 if __name__ == "__main__":
     unittest.main()
