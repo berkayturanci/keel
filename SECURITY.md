@@ -39,6 +39,19 @@ Be aware that:
   installed and listed in `gates:`. keel passes only the diff to that tool and takes no
   runtime dependency on it; when `jury` is absent the gate is a fail-soft no-op.
 
+## Security Audits
+
+Periodic security audit reports are published under
+[`docs/security/`](docs/security/). Each report covers source-level trust
+boundaries, static analysis (`bandit`), dependency scanning (`pip-audit`),
+workflow/permission review, and the repository's GitHub security settings:
+
+- [2026-06-11](docs/security/2026-06-11-security-audit.md) — v1.2.1 line; no findings,
+  prior follow-ups verified resolved.
+- [2026-06-09](docs/security/2026-06-09-security-audit.md) — v1.0.1 line; secret
+  scanning and consumer-neutrality follow-ups (resolved).
+- [2026-06-08](docs/security/2026-06-08-security-audit.md)
+
 ## Telemetry
 
 keel collects and transmits **no telemetry** of any kind — no analytics, no usage
