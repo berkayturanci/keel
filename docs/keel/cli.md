@@ -713,10 +713,10 @@ The target is `all` or one of the surfaces `claude`, `skills`, `legacy-claude`.
 | `unknown` | file exists without a keel generated marker |
 
 Legacy claude wrappers (`legacy-claude`, installed by `install-legacy-wrappers`) are
-**opt-in**: a wrapper that was never installed is reported as *not installed* — it is
-omitted, not flagged `missing` — so a project that never opted in shows no
-`legacy-claude` rows. Installed legacy wrappers are still freshness-checked like any
-other surface.
+**opt-in**: any *absent* wrapper — whether never installed or installed and later
+removed — is reported as *not installed* (omitted, not flagged `missing`), so a
+project that never opted in shows no `legacy-claude` rows. Installed legacy wrappers
+that are present are still freshness-checked like any other surface.
 
 ### Orphan & unmanaged surfaces
 

@@ -424,6 +424,8 @@ class TestInstallAll(unittest.TestCase):
             self.assertEqual(rows["legacy-claude"], [])
             self.assertFalse(any(row.status == "missing"
                                  for rs in rows.values() for row in rs))
+            # guard the "all current" assertion against a vacuously-empty surface
+            self.assertTrue(rows["claude"] and rows["skills"])
             self.assertTrue(all(row.status == "current"
                                 for surface in ("claude", "skills")
                                 for row in rows[surface]))
