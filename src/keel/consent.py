@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 SCHEMA_VERSION = "keel.operator-consent.v1"
+ESCALATION_SCHEMA_VERSION = "keel.risk-trust-escalation.v1"
 
 CONSENT_SCOPES = (
     "filesystem",
@@ -19,6 +20,8 @@ CONSENT_SCOPES = (
 
 APPROVAL_SOURCES = ("none", "flag", "env", "config")
 CONSENT_MODES = ("explicit", "standing", "agent")
+RISK_TIERS = ("tier-1", "tier-2", "tier-3")
+TRUST_SIGNALS = ("high", "medium", "low")
 
 _SIDE_EFFECT_SCOPES: dict[str, tuple[str, ...]] = {
     "capture": ("filesystem",),
@@ -92,6 +95,78 @@ def capability_side_effects(capabilities: Iterable[str]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(effects))
 
 
+def escalation_contract_as_dict() -> dict[str, Any]:
+    """Return the deterministic risk x trust escalation contract."""
+    return {
+        "schema_version": ESCALATION_SCHEMA_VERSION,
+        "consumer_neutral": True,
+        "deterministic": True,
+        "stdlib_only": True,
+        "signals": {
+            "risk": {
+                "source": "s5 classify",
+                "tiers": list(RISK_TIERS),
+            },
+            "trust": {
+                "source": "adapter/runtime trust signal",
+                "values": list(TRUST_SIGNALS),
+                "not_confidence_alone": True,
+            },
+        },
+        "triggers": {
+            "irreversible_or_side_effecting": "always gate",
+            "repeated_retry": "retry_count >= 2",
+            "conflicting_sources": "true",
+            "large_diff": "changed_lines >= large_diff_threshold",
+        },
+        "low_risk_sampling": {
+            "deterministic": True,
+            "sample_bucket_range": "0..99",
+        },
+        "enforcement_boundary": "execution-layer",
+        "agent_self_approval": False,
+    }
+
+
+def evaluate_escalation(
+    *,
+    risk_tier: str = "tier-1",
+    trust_signal: str = "medium",
+    side_effects: Iterable[str] = (),
+    retry_count: int = 0,
+    conflicting_sources: bool = False,
+    changed_lines: int = 0,
+    large_diff_threshold: int = 500,
+    low_risk_sample_rate: int = 0,
+    sample_bucket: int = 0,
+) -> dict[str, Any]:
+    """Evaluate whether operator escalation is required from risk x trust signals."""
+    risk = _risk_tier(risk_tier)
+    trust = _trust_signal(trust_signal)
+    consent_scope = side_effect_scopes(side_effects)
+    triggers = {
+        "irreversible_or_side_effecting": bool(consent_scope),
+        "repeated_retry": retry_count >= 2,
+        "conflicting_sources": bool(conflicting_sources),
+        "large_diff": large_diff_threshold > 0 and changed_lines >= large_diff_threshold,
+    }
+    sample = _sample(low_risk_sample_rate, sample_bucket)
+    operator_required, reason = _escalation_reason(risk, trust, triggers, sample)
+    return {
+        "schema_version": ESCALATION_SCHEMA_VERSION,
+        "risk_tier": risk,
+        "trust_signal": trust,
+        "operator_required": operator_required,
+        "decision": "operator-gate" if operator_required else "no-escalation",
+        "reason": reason,
+        "triggers": triggers,
+        "consent_scope": list(consent_scope),
+        "sample": sample,
+        "enforcement_boundary": "execution-layer",
+        "agent_can_self_approve": False,
+    }
+
+
 def normalize_scopes(scopes: Iterable[str]) -> tuple[str, ...]:
     """Normalize user-supplied consent scopes and reject unknown scope names."""
     normalized = []
@@ -123,6 +198,14 @@ def build_consent_contract(
     operator: str | None = None,
     target: str | None = None,
     now: datetime | None = None,
+    risk_tier: str = "tier-1",
+    trust_signal: str = "medium",
+    retry_count: int = 0,
+    conflicting_sources: bool = False,
+    changed_lines: int = 0,
+    large_diff_threshold: int = 500,
+    low_risk_sample_rate: int = 0,
+    sample_bucket: int = 0,
 ) -> dict[str, Any]:
     """Build a JSON-compatible consent block for a command contract."""
     consent_scope = side_effect_scopes(side_effects)
@@ -157,6 +240,17 @@ def build_consent_contract(
         "effective_approved_scope": list(effective_approved_scope),
         "missing_scope": list(missing_scope if not dry_run else ()),
         "consent_prompt": _prompt(command, target, dry_run, consent_scope, missing_scope),
+        "risk_trust_escalation": evaluate_escalation(
+            risk_tier=risk_tier,
+            trust_signal=trust_signal,
+            side_effects=side_effects,
+            retry_count=retry_count,
+            conflicting_sources=conflicting_sources,
+            changed_lines=changed_lines,
+            large_diff_threshold=large_diff_threshold,
+            low_risk_sample_rate=low_risk_sample_rate,
+            sample_bucket=sample_bucket,
+        ),
         "delegated_agent_scope": {
             "approved_mutation_scopes": list(effective_approved_scope if approved_live else ()),
             "scope_expansion_policy": "block-or-escalate",
@@ -235,3 +329,44 @@ def _record(
 
 def _sort_scopes(scopes: Iterable[str]) -> tuple[str, ...]:
     return tuple(sorted(set(scopes), key=lambda s: (_SCOPE_ORDER.get(s, 999), s)))
+
+
+def _risk_tier(value: str) -> str:
+    return value if value in RISK_TIERS else "tier-3"
+
+
+def _trust_signal(value: str) -> str:
+    return value if value in TRUST_SIGNALS else "low"
+
+
+def _sample(rate: int, bucket: int) -> dict[str, Any]:
+    sample_rate = min(100, max(0, int(rate)))
+    sample_bucket = min(99, max(0, int(bucket)))
+    return {
+        "rate": sample_rate,
+        "bucket": sample_bucket,
+        "selected": sample_bucket < sample_rate,
+    }
+
+
+def _escalation_reason(
+    risk: str,
+    trust: str,
+    triggers: dict[str, bool],
+    sample: dict[str, Any],
+) -> tuple[bool, str]:
+    if triggers["irreversible_or_side_effecting"]:
+        return True, "irreversible-or-side-effecting"
+    if triggers["repeated_retry"]:
+        return True, "repeated-retry"
+    if triggers["conflicting_sources"]:
+        return True, "conflicting-sources"
+    if triggers["large_diff"]:
+        return True, "large-diff"
+    if risk == "tier-3" and trust != "high":
+        return True, "risk-trust"
+    if risk == "tier-2" and trust == "low":
+        return True, "risk-trust"
+    if sample["selected"]:
+        return True, "low-risk-sample"
+    return False, "below-escalation-threshold"

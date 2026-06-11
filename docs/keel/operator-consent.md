@@ -45,6 +45,22 @@ Live mode:
 - passes only the approved scopes that match the resolved plan to delegated agents
 - never records secret values
 
+## Risk x trust escalation
+
+The consent block also includes `risk_trust_escalation`, a pure-core decision record for
+operator escalation. It does not weaken `requires_operator_consent`; it explains when an
+adapter should escalate based on two signals and standard triggers:
+
+- risk tier from `s5 classify`: `tier-1`, `tier-2`, or `tier-3`
+- trust signal from the adapter/runtime: `high`, `medium`, or `low`
+- triggers: side-effecting action, repeated retry, conflicting sources, and large diff
+- deterministic low-risk sampling with a `0..99` sample bucket
+
+Side-effecting or irreversible work is always an operator gate. Tier-3 work gates unless the
+trust signal is high; tier-2 work gates on low trust. Unknown risk or trust values fail
+closed to tier-3 / low trust. The decision remains emit-only in core: enforcement stays at
+the execution layer, and an agent cannot self-approve the escalation.
+
 Consent mode is selected for every run in this order:
 
 1. `--consent-mode explicit|standing|agent`

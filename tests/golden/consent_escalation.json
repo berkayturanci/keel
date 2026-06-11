@@ -1,0 +1,22 @@
+{
+  "agent_can_self_approve": false,
+  "consent_scope": [],
+  "decision": "operator-gate",
+  "enforcement_boundary": "execution-layer",
+  "operator_required": true,
+  "reason": "risk-trust",
+  "risk_tier": "tier-2",
+  "sample": {
+    "bucket": 42,
+    "rate": 10,
+    "selected": false
+  },
+  "schema_version": "keel.risk-trust-escalation.v1",
+  "triggers": {
+    "conflicting_sources": false,
+    "irreversible_or_side_effecting": false,
+    "large_diff": false,
+    "repeated_retry": false
+  },
+  "trust_signal": "low"
+}

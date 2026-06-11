@@ -97,6 +97,7 @@ Every command contract includes `operator_consent`:
 | `approved_scope` / `effective_approved_scope` / `missing_scope` | Scope approved by the operator or standing approval, the subset that matches the resolved plan, and any live-run gap. |
 | `approval_source` | `none`, `flag`, `env`, or `config`, showing where approval came from. In `standing` mode, precedence is flag, then `KEEL_APPROVE_SCOPE`, then `automation.approved_scopes`. |
 | `consent_prompt` | Consumer-neutral prompt generated from the resolved command, target, mode, and scopes. |
+| `risk_trust_escalation` | Two-signal escalation decision from risk tier and trust signal plus repeated-retry, conflicting-source, large-diff, and side-effecting-action triggers. |
 | `delegated_agent_scope` | Scope adapters must pass to delegated agents; scope expansion must block or escalate. |
 | `consent_record` | Local metadata for approved live runs: timestamp, operator, workflow, target, scopes, approval `source`, and `secret_values_recorded: false`. |
 
@@ -106,6 +107,12 @@ files, git state, GitHub state, releases, secrets, or production-adjacent system
 In `agent` mode, keel emits `status: agent-delegated`; adapters must rely on the host
 agent permission model for the actual approval prompt while still respecting the emitted
 scope and every non-consent gate.
+
+`risk_trust_escalation` uses schema `keel.risk-trust-escalation.v1`. It is deterministic,
+consumer-neutral, and enforced at the execution layer. Side-effecting or irreversible work
+always gates; repeated retry, conflicting sources, and large diffs gate; low-risk work can
+be sampled by a deterministic bucket; and the risk/trust matrix is based on risk tier plus
+trust signal, not model confidence alone. Unknown risk or trust values fail closed.
 
 ## Run ledger block
 

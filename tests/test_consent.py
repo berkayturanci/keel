@@ -1,9 +1,14 @@
 """Tests for operator consent contracts."""
 
+import json
+import os
 import unittest
 from datetime import UTC, datetime
+from pathlib import Path
 
 from keel import consent
+
+GOLDEN = Path(__file__).resolve().parent / "golden" / "consent_escalation.json"
 
 
 class TestConsentScopes(unittest.TestCase):
@@ -43,6 +48,11 @@ class TestConsentContract(unittest.TestCase):
         self.assertTrue(contract["would_require_operator_consent"])
         self.assertEqual(contract["status"], "not-required-dry-run")
         self.assertEqual(contract["consent_scope"], ["filesystem", "git", "github"])
+        self.assertTrue(contract["risk_trust_escalation"]["operator_required"])
+        self.assertEqual(
+            contract["risk_trust_escalation"]["reason"],
+            "irreversible-or-side-effecting",
+        )
         self.assertIsNone(contract["consent_record"])
         self.assertIn("live run would require", contract["consent_prompt"])
 
@@ -152,6 +162,109 @@ class TestConsentContract(unittest.TestCase):
         self.assertFalse(contract["requires_operator_consent"])
         self.assertFalse(contract["would_require_operator_consent"])
         self.assertEqual(contract["status"], "not-required-read-only")
+        self.assertFalse(contract["risk_trust_escalation"]["operator_required"])
+
+
+class TestRiskTrustEscalation(unittest.TestCase):
+    def test_contract_declares_two_signal_escalation(self):
+        contract = consent.escalation_contract_as_dict()
+
+        self.assertEqual(contract["schema_version"], "keel.risk-trust-escalation.v1")
+        self.assertEqual(contract["signals"]["risk"]["source"], "s5 classify")
+        self.assertTrue(contract["signals"]["trust"]["not_confidence_alone"])
+        self.assertEqual(contract["triggers"]["irreversible_or_side_effecting"], "always gate")
+        self.assertEqual(contract["enforcement_boundary"], "execution-layer")
+        self.assertFalse(contract["agent_self_approval"])
+
+    def test_irreversible_side_effecting_actions_always_gate(self):
+        decision = consent.evaluate_escalation(
+            risk_tier="tier-1",
+            trust_signal="high",
+            side_effects=("comments",),
+        )
+
+        self.assertTrue(decision["operator_required"])
+        self.assertEqual(decision["reason"], "irreversible-or-side-effecting")
+        self.assertEqual(decision["consent_scope"], ["github"])
+
+    def test_repeated_retry_conflict_and_large_diff_triggers_gate(self):
+        self.assertEqual(
+            consent.evaluate_escalation(retry_count=2)["reason"],
+            "repeated-retry",
+        )
+        self.assertEqual(
+            consent.evaluate_escalation(conflicting_sources=True)["reason"],
+            "conflicting-sources",
+        )
+        self.assertEqual(
+            consent.evaluate_escalation(changed_lines=500, large_diff_threshold=500)["reason"],
+            "large-diff",
+        )
+
+    def test_risk_trust_matrix_gates_risky_low_trust_work(self):
+        tier3 = consent.evaluate_escalation(risk_tier="tier-3", trust_signal="medium")
+        tier2 = consent.evaluate_escalation(risk_tier="tier-2", trust_signal="low")
+        tier1 = consent.evaluate_escalation(risk_tier="tier-1", trust_signal="medium")
+
+        self.assertTrue(tier3["operator_required"])
+        self.assertEqual(tier3["reason"], "risk-trust")
+        self.assertTrue(tier2["operator_required"])
+        self.assertEqual(tier2["reason"], "risk-trust")
+        self.assertFalse(tier1["operator_required"])
+        self.assertEqual(tier1["reason"], "below-escalation-threshold")
+
+    def test_unknown_signals_fail_closed_to_high_risk_low_trust(self):
+        decision = consent.evaluate_escalation(risk_tier="mystery", trust_signal="unknown")
+
+        self.assertEqual(decision["risk_tier"], "tier-3")
+        self.assertEqual(decision["trust_signal"], "low")
+        self.assertTrue(decision["operator_required"])
+        self.assertEqual(decision["reason"], "risk-trust")
+
+    def test_low_risk_sampling_is_deterministic(self):
+        selected = consent.evaluate_escalation(
+            risk_tier="tier-1",
+            trust_signal="high",
+            low_risk_sample_rate=10,
+            sample_bucket=9,
+        )
+        skipped = consent.evaluate_escalation(
+            risk_tier="tier-1",
+            trust_signal="high",
+            low_risk_sample_rate=10,
+            sample_bucket=10,
+        )
+        clamped = consent.evaluate_escalation(
+            risk_tier="tier-1",
+            trust_signal="high",
+            low_risk_sample_rate=101,
+            sample_bucket=-1,
+        )
+
+        self.assertTrue(selected["operator_required"])
+        self.assertEqual(selected["reason"], "low-risk-sample")
+        self.assertFalse(skipped["operator_required"])
+        self.assertEqual(clamped["sample"], {"rate": 100, "bucket": 0, "selected": True})
+
+    def test_golden_risk_trust_decision(self):
+        rendered = json.dumps(
+            consent.evaluate_escalation(
+                risk_tier="tier-2",
+                trust_signal="low",
+                retry_count=1,
+                conflicting_sources=False,
+                changed_lines=120,
+                large_diff_threshold=500,
+                low_risk_sample_rate=10,
+                sample_bucket=42,
+            ),
+            indent=2,
+            sort_keys=True,
+        ) + "\n"
+        if os.environ.get("UPDATE_GOLDEN"):  # pragma: no cover - dev-only refresh
+            GOLDEN.parent.mkdir(parents=True, exist_ok=True)
+            GOLDEN.write_text(rendered, encoding="utf-8")
+        self.assertEqual(rendered, GOLDEN.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":
