@@ -393,6 +393,12 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         implementer=args.implementer,
         reviewer_agents=args.reviewer_agent,
         tester=args.tester,
+        host_agent=args.host_agent,
+        transport=args.transport or transport.name,
+        profile=profile,
+        jury_mode=a.review_contract["jury"]["mode"],
+        consent_status=contract["operator_consent"]["status"],
+        consent_scopes=contract["operator_consent"]["effective_approved_scope"],
     )
     try:
         ledger_record = ledger.sanitize_record(ledger_record, config)
@@ -2249,6 +2255,11 @@ def _add_ship_parser(parser: argparse.ArgumentParser, *, command: str) -> None:
                         help="effective reviewer codename or vendor/model label; repeatable")
     parser.add_argument("--tester", default=None,
                         help="effective tester codename or vendor/model label")
+    parser.add_argument("--host-agent", default=None,
+                        help="host agent codename (e.g. claude/codex/agy) for the run context")
+    parser.add_argument("--transport", choices=("gh", "mcp"), default=None,
+                        help="detected GitHub transport for the run context; "
+                             "defaults to the resolved transport when omitted")
     parser.add_argument("--issue-title", default=None,
                         help="issue title to include in the intake/readiness contract")
     parser.add_argument("--issue-body", default=None,

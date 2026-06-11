@@ -570,6 +570,9 @@ class TestShip(unittest.TestCase):
                               "--reviewer-agent", "reviewer-a:gpt-5",
                               "--reviewer-agent", "reviewer-b:claude",
                               "--tester", "tester:gpt-5-mini",
+                              "--host-agent", "claude",
+                              "--transport", "mcp",
+                              "--profile", "compound",
                               "--approve-scope", "filesystem,git,github",
                               "--operator", "tester"])
             ledger_path = Path(d) / "state" / "runs.jsonl"
@@ -591,7 +594,47 @@ class TestShip(unittest.TestCase):
         self.assertEqual(read["records"][0]["actors"]["implementer"], "codex:gpt-5")
         self.assertEqual(read["records"][0]["actors"]["reviewers"],
                          ["reviewer-a:gpt-5", "reviewer-b:claude"])
+        run_context = read["records"][0]["run_context"]
+        self.assertEqual(run_context["host_agent"], "claude")
+        self.assertEqual(run_context["transport"], "mcp")
+        self.assertEqual(run_context["profile"], "compound")
+        # jury_mode is derived from the resolved review contract.
+        self.assertIn(run_context["jury_mode"], ("off", "advisory", "gating"))
+        # consent is derived from the resolved operator-consent contract.
+        self.assertEqual(run_context["consent"]["status"], "approved")
         self.assertEqual(read["records"][0]["redaction"]["status"], "applied")
+
+    def test_ship_ledger_transport_defaults_to_resolved_transport(self):
+        # With no --transport flag, the record carries the resolved transport.
+        # Patch capability detection so `gh` resolves deterministically offline.
+        import tempfile
+        fake_report = runtime.CapabilityReport((
+            runtime.Capability("shell", True, "ok", "test"),
+            runtime.Capability("git", True, "ok", "test"),
+            runtime.Capability("worktree", True, "ok", "test"),
+            runtime.Capability("gh", True, "ok", "test"),
+            runtime.Capability("gh-auth", True, "ok", "test"),
+            runtime.Capability("github-mcp", False, "missing", "test"),
+        ))
+        with tempfile.TemporaryDirectory() as d, patch("keel.cli.runtime.detect",
+                                                       return_value=fake_report):
+            config = _write_config_with_ledger("'true'")
+            rc, out, _ = run(["ship", config, "--root", d, "--live", "--json",
+                              "--append-ledger", "--run-id", "RUN-141",
+                              "--issue", "141", "--pull-request", "161",
+                              "--capture-status", "skipped",
+                              "--capture-reason", "no capture hook configured",
+                              "--approve-scope", "filesystem,git,github",
+                              "--operator", "tester"])
+            rc_read, out_read, _ = run(["ledger", config, "--root", d, "--json"])
+
+        data = json.loads(out)
+        self.assertTrue(data["result"]["run_ledger"]["appended"])
+        self.assertEqual(rc_read, 0)
+        run_context = json.loads(out_read)["records"][0]["run_context"]
+        self.assertEqual(run_context["transport"], "gh")
+        self.assertIsNone(run_context["host_agent"])
+        self.assertEqual(run_context["profile"], "standard")
 
     def test_ship_json_uses_learning_policy_in_ledger_record(self):
         import tempfile

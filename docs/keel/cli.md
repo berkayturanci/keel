@@ -114,6 +114,7 @@ keel ship .keel/project.yaml --root . --live --append-ledger \
   --run-id "$RUN_ID" --issue 123 --pull-request 456 \
   --capture-status applied --implementer "codex:gpt-5" \
   --reviewer-agent "reviewer-a:gpt-5" --tester "tester:gpt-5-mini" \
+  --host-agent claude --transport gh --profile standard \
   --approve-scope filesystem,git,github --operator "$USER" --json
 ```
 
@@ -122,6 +123,16 @@ keel ship .keel/project.yaml --root . --live --append-ledger \
 check runs. Dry-run output includes the same would-be record but never writes the file.
 `--capture-status` is required for live appends so offline capture verification never has
 to infer status from closure comments.
+
+`--host-agent` and `--transport` (`gh`|`mcp`) record the s0 preflight **run context** on
+the `ship_run` record so it becomes durable PR evidence. `--transport` defaults to the
+transport keel resolved for the run when the flag is omitted (e.g. `gh` when an
+authenticated `gh` CLI is present, otherwise the host GitHub MCP/API). `--profile`
+(`standard`|`compound`) is threaded into the record, the jury mode is derived from the
+resolved review contract, and the consent summary (status + approved scopes) is derived
+from the existing `--operator`/`--approve-scope` inputs. The s11 closure comment renders
+all of this as a deterministic **Run context** block (host agent / transport / profile /
+jury / consent); missing fields degrade gracefully (`unknown`/`off`/`none`).
 
 ## `keel capture-verify <project.yaml> --merged-pr <N> [--json]`
 

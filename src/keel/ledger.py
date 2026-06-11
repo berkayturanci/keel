@@ -96,6 +96,12 @@ def build_ship_run_record(
     implementer: str | None = None,
     reviewer_agents: list[str] | None = None,
     tester: str | None = None,
+    host_agent: str | None = None,
+    transport: str | None = None,
+    profile: str | None = None,
+    jury_mode: str | None = None,
+    consent_status: str | None = None,
+    consent_scopes: list[str] | tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     """Build one deterministic consumer-neutral ship ledger record."""
     return {
@@ -146,6 +152,14 @@ def build_ship_run_record(
             "reviewers": list(reviewer_agents or ()),
             "tester": tester,
         },
+        "run_context": _run_context(
+            host_agent=host_agent,
+            transport=transport,
+            profile=profile,
+            jury_mode=jury_mode,
+            consent_status=consent_status,
+            consent_scopes=consent_scopes,
+        ),
         "issue_intake": issue_intake,
         "capture": capture.record_marker(
             pr_number=pr_number,
@@ -158,6 +172,39 @@ def build_ship_run_record(
             config=config,
         ),
     }
+
+
+def _run_context(
+    *,
+    host_agent: str | None,
+    transport: str | None,
+    profile: str | None,
+    jury_mode: str | None,
+    consent_status: str | None,
+    consent_scopes: list[str] | tuple[str, ...] | None,
+) -> dict[str, Any]:
+    """Build the deterministic consumer-neutral preflight run-context block.
+
+    Every field is optional; a missing scalar degrades to ``None`` so the
+    closure renderer can present ``unknown``/``none`` without a schema change.
+    Consent is a small summary: a status and the approved mutation scopes,
+    reusing the operator/approve-scope inputs already resolved by the caller.
+    """
+    scopes = [str(scope) for scope in (consent_scopes or ()) if str(scope).strip()]
+    return {
+        "host_agent": host_agent if _nonblank(host_agent) else None,
+        "transport": transport if _nonblank(transport) else None,
+        "profile": profile if _nonblank(profile) else None,
+        "jury_mode": jury_mode if _nonblank(jury_mode) else None,
+        "consent": {
+            "status": consent_status if _nonblank(consent_status) else None,
+            "scopes": scopes,
+        },
+    }
+
+
+def _nonblank(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())
 
 
 def encode_record(record: dict[str, Any]) -> str:

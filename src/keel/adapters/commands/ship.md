@@ -72,8 +72,15 @@ in the run ledger.
 free-form PR or issue comments. For live runs, append exactly one structured record with
 `keel ship .keel/project.yaml --root . --live --append-ledger --run-id <id> --issue <N>
 --pull-request <PR> --capture-status <applied|deferred|skipped[:reason]> --capture-reason <reason>
---implementer <agent> --reviewer-agent <agent> --tester <agent> --approve-scope <scopes>
+--implementer <agent> --reviewer-agent <agent> --tester <agent>
+--host-agent <HOST_AGENT> --transport <gh|mcp> --profile <standard|compound>
+--approve-scope <scopes>
 --operator <operator> --json` after the ship assessment and capture status are known.
+Pass the s0 preflight **run context** through: `--host-agent` (the resolved `HOST_AGENT`)
+and `--transport` (the detected `gh`|`mcp` transport from s0); `--profile`, the jury mode,
+and the consent summary are already available from the run and are stamped onto the
+`ship_run` record so the s11 closure comment renders a durable **Run context** block.
+`--transport` defaults to the transport keel resolved for the run when omitted.
 If the configured ledger path is missing, treat it as empty history; if a ledger record is
 malformed, stop capture/reporting and ask for operator help instead of silently falling
 back to comment scraping.
@@ -110,7 +117,10 @@ transport mode to the implementer so it uses the same one (push via `git push` f
 fall back to an API push on an HTTP 403). Raw failed-CI-log access may be unavailable on
 the fallback transport — there the fixer gets the check name + details URL and reproduces
 locally; if it cannot, mark blocked and quote the details URL. State the detected transport
-mode in your first user-facing line.
+mode in your first user-facing line, **and record it** (alongside the resolved host agent)
+for the s11 closure comment: carry the transport (`gh`|`mcp`) and `HOST_AGENT` forward so
+the `--append-ledger` call at s11 stamps them onto the `ship_run` record as durable PR
+evidence (see s11).
 
 ### Argument parsing
 

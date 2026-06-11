@@ -72,8 +72,15 @@ in the run ledger.
 free-form PR or issue comments. For live runs, append exactly one structured record with
 `keel ship .keel/project.yaml --root . --live --append-ledger --run-id <id> --issue <N>
 --pull-request <PR> --capture-status <applied|deferred|skipped[:reason]> --capture-reason <reason>
---implementer <agent> --reviewer-agent <agent> --tester <agent> --approve-scope <scopes>
+--implementer <agent> --reviewer-agent <agent> --tester <agent>
+--host-agent <HOST_AGENT> --transport <gh|mcp> --profile <standard|compound>
+--approve-scope <scopes>
 --operator <operator> --json` after the ship assessment and capture status are known.
+Pass the s0 preflight **run context** through: `--host-agent` (the resolved `HOST_AGENT`)
+and `--transport` (the detected `gh`|`mcp` transport from s0); `--profile`, the jury mode,
+and the consent summary are already available from the run and are stamped onto the
+`ship_run` record so the s11 closure comment renders a durable **Run context** block.
+`--transport` defaults to the transport keel resolved for the run when omitted.
 If the configured ledger path is missing, treat it as empty history; if a ledger record is
 malformed, stop capture/reporting and ask for operator help instead of silently falling
 back to comment scraping.
@@ -110,7 +117,10 @@ transport mode to the implementer so it uses the same one (push via `git push` f
 fall back to an API push on an HTTP 403). Raw failed-CI-log access may be unavailable on
 the fallback transport — there the fixer gets the check name + details URL and reproduces
 locally; if it cannot, mark blocked and quote the details URL. State the detected transport
-mode in your first user-facing line.
+mode in your first user-facing line, **and record it** (alongside the resolved host agent)
+for the s11 closure comment: carry the transport (`gh`|`mcp`) and `HOST_AGENT` forward so
+the `--append-ledger` call at s11 stamps them onto the `ship_run` record as durable PR
+evidence (see s11).
 
 ### Argument parsing
 
@@ -484,4 +494,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=claude command=ship keel_version=1.1.0 source_sha256=3d04d168a7c000b5927e0b98640ed6dac277a26d946acaa38312f0255a71a643 generated_sha256=3d04d168a7c000b5927e0b98640ed6dac277a26d946acaa38312f0255a71a643 -->
+<!-- keel-generated: surface=claude command=ship keel_version=1.1.0 source_sha256=7fcef40b0819a2aa72a01dc47d4f3a564046f0603f2d5f57e1c1470576137ab2 generated_sha256=7fcef40b0819a2aa72a01dc47d4f3a564046f0603f2d5f57e1c1470576137ab2 -->

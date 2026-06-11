@@ -114,6 +114,7 @@ class TestLedgerRecords(unittest.TestCase):
             "verdict",
             "assessment",
             "actors",
+            "run_context",
             "issue_intake",
             "capture",
         ])
@@ -130,6 +131,73 @@ class TestLedgerRecords(unittest.TestCase):
         self.assertEqual(record["capture"]["learning"]["decision"], "marker-only")
         self.assertEqual(record["capture"]["learning"]["reason"], "policy-unavailable")
         self.assertTrue(record["capture"]["fail_soft"])
+
+    def test_run_context_block_is_built_from_inputs(self):
+        record = ledger.build_ship_run_record(
+            command="ship",
+            base_branch="main",
+            changed_files=["src/keel/ledger.py"],
+            outcomes=[],
+            verdict=SimpleNamespace(blocked=False, counts={}),
+            assessment=SimpleNamespace(
+                tier=2, reviewers=2, window_open=True, ci_ok=None,
+                merge=SimpleNamespace(action="merge", reason="ok"),
+                halted=False, bypassed_window=False,
+            ),
+            host_agent="claude",
+            transport="mcp",
+            profile="compound",
+            jury_mode="gating",
+            consent_status="approved",
+            consent_scopes=["pr-merge", "label"],
+        )
+
+        run_context = record["run_context"]
+        self.assertEqual(run_context["host_agent"], "claude")
+        self.assertEqual(run_context["transport"], "mcp")
+        self.assertEqual(run_context["profile"], "compound")
+        self.assertEqual(run_context["jury_mode"], "gating")
+        self.assertEqual(run_context["consent"]["status"], "approved")
+        self.assertEqual(run_context["consent"]["scopes"], ["pr-merge", "label"])
+
+    def test_run_context_block_is_optional_and_degrades(self):
+        # The default fixture passes none of the run-context inputs.
+        run_context = _record()["run_context"]
+        self.assertIsNone(run_context["host_agent"])
+        self.assertIsNone(run_context["transport"])
+        self.assertIsNone(run_context["profile"])
+        self.assertIsNone(run_context["jury_mode"])
+        self.assertIsNone(run_context["consent"]["status"])
+        self.assertEqual(run_context["consent"]["scopes"], [])
+
+    def test_run_context_blank_scalars_and_scopes_degrade(self):
+        record = ledger.build_ship_run_record(
+            command="ship",
+            base_branch="main",
+            changed_files=[],
+            outcomes=[],
+            verdict=SimpleNamespace(blocked=False, counts={}),
+            assessment=SimpleNamespace(
+                tier=1, reviewers=1, window_open=True, ci_ok=None,
+                merge=SimpleNamespace(action="merge", reason="ok"),
+                halted=False, bypassed_window=False,
+            ),
+            host_agent="  ",
+            transport="",
+            profile="   ",
+            jury_mode="",
+            consent_status="  ",
+            consent_scopes=["pr-merge", "  ", ""],
+        )
+
+        run_context = record["run_context"]
+        self.assertIsNone(run_context["host_agent"])
+        self.assertIsNone(run_context["transport"])
+        self.assertIsNone(run_context["profile"])
+        self.assertIsNone(run_context["jury_mode"])
+        self.assertIsNone(run_context["consent"]["status"])
+        # Blank scope entries are dropped; non-blank ones are kept.
+        self.assertEqual(run_context["consent"]["scopes"], ["pr-merge"])
 
     def test_ship_run_record_can_store_learning_create_decision(self):
         record = _record(

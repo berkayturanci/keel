@@ -155,6 +155,11 @@ class TestBuildCommandContract(unittest.TestCase):
             "post rendered markdown verbatim when available",
         )
         self.assertEqual(contract["closure_comment"]["heading"], "Ship outcome")
+        self.assertIn("run_context", contract["closure_comment"]["sections"])
+        self.assertEqual(
+            contract["closure_comment"]["run_context_fields"],
+            ["host_agent", "transport", "profile", "jury", "consent"],
+        )
         self.assertIn("issue_intake", contract)
         self.assertEqual(contract["issue_intake"]["status"], "needs-input")
         self.assertFalse(contract["issue_intake"]["can_mutate_code"])
@@ -1182,6 +1187,9 @@ class TestShipResultClosureComment(unittest.TestCase):
         )
         self.assertIn("## Ship outcome", result["closure_comment"])
         self.assertIn("- **Implementer:** codex (gpt-5)", result["closure_comment"])
+        # The additive Run context section renders even when the record omits it.
+        self.assertIn("### Run context", result["closure_comment"])
+        self.assertIn("- **Transport:** unknown", result["closure_comment"])
         self.assertIn("## Summary", result["artifact_bodies"]["pr_body"])
         self.assertIn("Closes #1", result["artifact_bodies"]["pr_body"])
         self.assertIn("keel.review-verdict.v1",

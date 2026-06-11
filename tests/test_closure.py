@@ -36,6 +36,13 @@ def _record(**overrides):
             "reviewers": ["claude (opus)", "qwen (ollama)", "AI Jury"],
             "tester": "host (manual list)",
         },
+        "run_context": {
+            "host_agent": "claude",
+            "transport": "mcp",
+            "profile": "compound",
+            "jury_mode": "gating",
+            "consent": {"status": "approved", "scopes": ["pr-merge", "label"]},
+        },
     }
     record.update(overrides)
     return record
@@ -70,6 +77,12 @@ class TestRenderClosureComment(unittest.TestCase):
             "**Docs touched:**",
             "**Capture:**",
             "**Run id:**",
+            "### Run context",
+            "**Host agent:**",
+            "**Transport:**",
+            "**Profile:**",
+            "**Jury:**",
+            "**Consent:**",
         ):
             self.assertIn(label, rendered)
 
@@ -301,6 +314,91 @@ class TestRenderClosureComment(unittest.TestCase):
         self.assertIn("- **Run id:** none", closure.render_closure_comment(record))
 
 
+class TestRunContext(unittest.TestCase):
+    def test_full_run_context_rendered(self):
+        rendered = closure.render_closure_comment(_record())
+        self.assertIn("### Run context", rendered)
+        self.assertIn("- **Host agent:** claude", rendered)
+        self.assertIn("- **Transport:** mcp", rendered)
+        self.assertIn("- **Profile:** compound", rendered)
+        self.assertIn("- **Jury:** gating", rendered)
+        self.assertIn("- **Consent:** approved (scopes: pr-merge, label)", rendered)
+
+    def test_run_context_appended_after_run_id(self):
+        rendered = closure.render_closure_comment(_record())
+        self.assertRegex(rendered, r"- \*\*Run id:\*\* RUN-170\n\n### Run context\n")
+
+    def test_transport_gh(self):
+        record = _record()
+        record["run_context"]["transport"] = "gh"
+        self.assertIn("- **Transport:** gh", closure.render_closure_comment(record))
+
+    def test_missing_run_context_block_degrades(self):
+        record = _record()
+        del record["run_context"]
+        rendered = closure.render_closure_comment(record)
+        self.assertIn("- **Host agent:** unknown", rendered)
+        self.assertIn("- **Transport:** unknown", rendered)
+        self.assertIn("- **Profile:** unknown", rendered)
+        self.assertIn("- **Jury:** off", rendered)
+        self.assertIn("- **Consent:** unknown (scopes: none)", rendered)
+
+    def test_run_context_not_a_dict_degrades(self):
+        record = _record(run_context=None)
+        rendered = closure.render_closure_comment(record)
+        self.assertIn("- **Host agent:** unknown", rendered)
+        self.assertIn("- **Jury:** off", rendered)
+
+    def test_each_scalar_field_missing_degrades(self):
+        record = _record(run_context={
+            "consent": {"status": "approved", "scopes": ["pr-merge"]},
+        })
+        rendered = closure.render_closure_comment(record)
+        self.assertIn("- **Host agent:** unknown", rendered)
+        self.assertIn("- **Transport:** unknown", rendered)
+        self.assertIn("- **Profile:** unknown", rendered)
+        self.assertIn("- **Jury:** off", rendered)
+        self.assertIn("- **Consent:** approved (scopes: pr-merge)", rendered)
+
+    def test_blank_scalar_fields_degrade(self):
+        record = _record(run_context={
+            "host_agent": "  ",
+            "transport": "",
+            "profile": "   ",
+            "jury_mode": "",
+            "consent": {"status": "  ", "scopes": []},
+        })
+        rendered = closure.render_closure_comment(record)
+        self.assertIn("- **Host agent:** unknown", rendered)
+        self.assertIn("- **Transport:** unknown", rendered)
+        self.assertIn("- **Profile:** unknown", rendered)
+        self.assertIn("- **Jury:** off", rendered)
+        self.assertIn("- **Consent:** unknown (scopes: none)", rendered)
+
+    def test_consent_missing_and_scopes_not_a_list(self):
+        record = _record(run_context={"consent": {"scopes": "pr-merge"}})
+        self.assertIn(
+            "- **Consent:** unknown (scopes: none)",
+            closure.render_closure_comment(record),
+        )
+
+    def test_consent_block_missing(self):
+        record = _record(run_context={"host_agent": "codex"})
+        self.assertIn(
+            "- **Consent:** unknown (scopes: none)",
+            closure.render_closure_comment(record),
+        )
+
+    def test_consent_scopes_drop_blank_entries(self):
+        record = _record(run_context={
+            "consent": {"status": "approved", "scopes": ["pr-merge", "  ", 7, ""]},
+        })
+        self.assertIn(
+            "- **Consent:** approved (scopes: pr-merge)",
+            closure.render_closure_comment(record),
+        )
+
+
 class TestClosureContract(unittest.TestCase):
     def test_contract_shape(self):
         contract = closure.contract_as_dict()
@@ -314,9 +412,16 @@ class TestClosureContract(unittest.TestCase):
         self.assertIn("implementer", contract["sections"])
         self.assertIn("capture", contract["sections"])
         self.assertIn("docs_touched", contract["sections"])
+        self.assertIn("run_context", contract["sections"])
         sections = contract["sections"]
         self.assertEqual(
             sections.index("docs_touched"), sections.index("changed_files") + 1
+        )
+        # Run context is the final, additive section.
+        self.assertEqual(sections[-1], "run_context")
+        self.assertEqual(
+            contract["run_context_fields"],
+            ["host_agent", "transport", "profile", "jury", "consent"],
         )
 
 

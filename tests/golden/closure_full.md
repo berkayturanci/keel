@@ -14,3 +14,11 @@
 - **Docs touched:** yes
 - **Capture:** applied (capture hook completed)
 - **Run id:** RUN-170
+
+### Run context
+
+- **Host agent:** claude
+- **Transport:** mcp
+- **Profile:** compound
+- **Jury:** gating
+- **Consent:** approved (scopes: pr-merge, label)

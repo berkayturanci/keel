@@ -52,6 +52,14 @@ def contract_as_dict() -> dict[str, Any]:
             "docs_touched",
             "capture",
             "run_id",
+            "run_context",
+        ],
+        "run_context_fields": [
+            "host_agent",
+            "transport",
+            "profile",
+            "jury",
+            "consent",
         ],
         "jury_label": JURY_LABEL,
     }
@@ -78,6 +86,7 @@ def render_closure_comment(record: dict[str, Any]) -> str:
     lines.append(f"- **Docs touched:** {_docs_touched(record.get('changes'))}")
     lines.append(f"- **Capture:** {_capture(record.get('capture'))}")
     lines.append(f"- **Run id:** {_value(record.get('run_id'))}")
+    lines.extend(_run_context(record.get("run_context")))
     return "\n".join(lines) + "\n"
 
 
@@ -168,6 +177,53 @@ def _learning(learning: Any) -> str | None:
     if isinstance(reason, str) and reason.strip():
         return f"{decision.strip()} ({reason.strip()})"
     return decision.strip()
+
+
+def _run_context(run_context: Any) -> list[str]:
+    """Render the deterministic preflight Run context block.
+
+    Always emitted (additive section, appended after the existing lines). Each
+    field degrades gracefully when missing: host agent / profile / consent
+    status render ``unknown``; transport renders ``unknown``; jury renders
+    ``off``; an empty consent scope list renders ``none``.
+    """
+    block = run_context if isinstance(run_context, dict) else {}
+    return [
+        "",
+        "### Run context",
+        "",
+        f"- **Host agent:** {_unknown(block.get('host_agent'))}",
+        f"- **Transport:** {_unknown(block.get('transport'))}",
+        f"- **Profile:** {_unknown(block.get('profile'))}",
+        f"- **Jury:** {_jury_mode(block.get('jury_mode'))}",
+        f"- **Consent:** {_consent(block.get('consent'))}",
+    ]
+
+
+def _unknown(value: Any) -> str:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return "unknown"
+
+
+def _jury_mode(value: Any) -> str:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return "off"
+
+
+def _consent(consent: Any) -> str:
+    block = consent if isinstance(consent, dict) else {}
+    status = _unknown(block.get("status"))
+    scopes = block.get("scopes")
+    scopes = scopes if isinstance(scopes, list) else []
+    listed = [scope.strip() for scope in scopes if _is_scope(scope)]
+    rendered = ", ".join(listed) if listed else "none"
+    return f"{status} (scopes: {rendered})"
+
+
+def _is_scope(scope: Any) -> bool:
+    return isinstance(scope, str) and bool(scope.strip())
 
 
 def _value(value: Any) -> str:

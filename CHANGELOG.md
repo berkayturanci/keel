@@ -7,6 +7,18 @@ All notable changes to keel are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Ship run-context as durable PR evidence** — the s0 preflight run context (resolved
+  GitHub transport `gh`|`mcp`, host agent, workflow profile, jury mode, and operator-consent
+  summary) is now persisted on the `ship_run` ledger record and rendered as a deterministic
+  **Run context** block in the s11 closure comment, so it is durable PR evidence rather than
+  an ephemeral chat line. `keel ship --append-ledger` gains `--host-agent` and `--transport`
+  (`gh`|`mcp`) inputs; `--transport` defaults to the transport keel resolved for the run, the
+  profile is threaded from `--profile`, the jury mode is derived from the resolved review
+  contract, and the consent summary is derived from the existing `--operator`/`--approve-scope`
+  inputs. The block is additive — the `keel.closure-comment.v1` marker and every existing
+  closure line stay byte-identical, so the evidence verifier is unaffected — and missing
+  fields degrade gracefully (`unknown`/`off`/`none`). The `closure_comment` contract, the ship
+  adapter (s0/s11), and the CLI/command-contract docs are updated to match. (#241)
 - **`keel adapter-status` surfaces orphan & unmanaged keel-like files** — the command now
   scans the managed surface directories (`commands/`, `.claude/commands/keel/`,
   `.claude/commands/`, `.agents/skills/keel-*`, `.agents/skills/source-command-*`) for files
