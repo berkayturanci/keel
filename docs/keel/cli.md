@@ -5,6 +5,11 @@ keel <command> [options]
 keel --version
 ```
 
+> This is the quick reference. For the exhaustive per-flag detail — every parameter's
+> type, default, precedence/interaction rules, consent implications, and worked examples
+> (including the `/keel:ship` adapter argument grammar) — see
+> [`parameter-reference.md`](parameter-reference.md).
+
 ## `keel version`
 
 Print the keel version.

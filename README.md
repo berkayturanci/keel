@@ -203,6 +203,7 @@ If a step's gate fails, keel blocks its own merge — the same backbone every co
   `pages.yml` workflow). Locally, `make site` builds the coverage HTML into
   `website/coverage/` and serves it at <http://localhost:8000>.
 - [`docs/keel/configuration.md`](docs/keel/configuration.md) — `project.yaml` reference
+- [`docs/keel/parameter-reference.md`](docs/keel/parameter-reference.md) — exhaustive per-flag reference for every CLI command and the `/keel:ship` adapter arguments
 - [`docs/keel/onboarding.md`](docs/keel/onboarding.md) — one-command consumer setup and follow-up checks
 - [`docs/keel/extensions.md`](docs/keel/extensions.md) — authoring Lego extensions
 - [`docs/keel/consumer-neutrality.md`](docs/keel/consumer-neutrality.md) — core vs project policy boundary
