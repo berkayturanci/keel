@@ -86,14 +86,20 @@ class TestRunGate(unittest.TestCase):
     def test_absent_is_noop(self):
         self.assertEqual(jury.run_gate("a diff", _run=_jury_absent), (True, []))
 
-    def test_oversized_diff_is_noop_before_cli_probe(self):
+    def test_oversized_diff_skips_cli_but_emits_advisory(self):
         def fail_if_called(argv, **kw):
             raise AssertionError(f"unexpected jury call: {argv}")
 
-        self.assertEqual(
-            jury.run_gate("x" * (jury.MAX_DIFF_BYTES + 1), _run=fail_if_called),
-            (True, []),
+        ok, findings = jury.run_gate(
+            "x" * (jury.MAX_DIFF_BYTES + 1), _run=fail_if_called
         )
+
+        # Non-blocking (does not gate) but no longer silent: the skip is surfaced.
+        self.assertTrue(ok)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].severity, "nit")
+        self.assertEqual(findings[0].source, "jury:skipped-oversize")
+        self.assertIn("over the", findings[0].message)
 
     def test_present_blocks_on_major(self):
         ok, fs = jury.run_gate("some diff", _run=_jury_ok)
