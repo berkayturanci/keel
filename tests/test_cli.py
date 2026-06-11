@@ -10,7 +10,7 @@ from argparse import Namespace
 from pathlib import Path
 from unittest.mock import patch
 
-from keel import cli, install, runtime
+from keel import cli, install, runtime, stepverifier
 
 PROJECTS = Path(__file__).resolve().parent.parent / "projects"
 REPO_ROOT = PROJECTS.parent
@@ -1644,6 +1644,233 @@ class TestShip(unittest.TestCase):
         )
 
 
+class TestStepVerifyAndRunControls(unittest.TestCase):
+    def test_step_verify_passes_with_handoff_and_evidence(self):
+        handoff = stepverifier.build_handoff(
+            step_id="s7",
+            evidence_ids=["review-verdict-1"],
+        )
+        evidence_report = {
+            "results": [{"id": "review-verdict-1", "ok": True}],
+        }
+        rc, out, _ = run([
+            "step-verify",
+            "--step", "s7",
+            "--handoff-file", _write_raw(json.dumps(handoff)),
+            "--evidence-report", _write_raw(json.dumps(evidence_report)),
+            "--reviewers", "1",
+            "--json",
+        ])
+
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["verification"]["status"], "pass")
+        self.assertEqual(data["verification"]["required_evidence"], ["review-verdict-1"])
+
+    def test_step_verify_human_pass_without_missing(self):
+        handoff = stepverifier.build_handoff(step_id="s4")
+        evidence_report = {"results": []}
+        rc, out, _ = run([
+            "step-verify",
+            "--step", "s4",
+            "--handoff-file", _write_raw(json.dumps(handoff)),
+            "--evidence-report", _write_raw(json.dumps(evidence_report)),
+        ])
+
+        self.assertEqual(rc, 0)
+        self.assertIn("keel step-verify", out)
+        self.assertIn("required      : 0", out)
+
+    def test_step_verify_fails_closed_for_bad_handoff_and_bad_json_shape(self):
+        rc_bad, out_bad, _ = run([
+            "step-verify",
+            "--step", "s7",
+            "--handoff-file", _write_raw(json.dumps({"step_id": "s7"})),
+            "--evidence-report", _write_raw(json.dumps({"results": []})),
+            "--reviewers", "1",
+            "--json",
+        ])
+        rc_shape, _, err_shape = run([
+            "step-verify",
+            "--step", "s7",
+            "--handoff-file", _write_raw("[]"),
+            "--evidence-report", _write_raw(json.dumps({"results": []})),
+            "--reviewers", "1",
+        ])
+
+        self.assertEqual(rc_bad, 1)
+        self.assertEqual(json.loads(out_bad)["verification"]["status"], "fail")
+        self.assertEqual(rc_shape, 1)
+        self.assertIn("must contain a JSON object", err_shape)
+
+    def test_runcontrols_appends_event_and_halts_on_cap(self):
+        with tempfile.TemporaryDirectory() as d:
+            events = Path(d) / "events.json"
+            rc_first, out_first, _ = run([
+                "runcontrols", str(events),
+                "--slot", "fixloop",
+                "--action", "fix",
+                "--json",
+            ])
+            rc_halt, out_halt, _ = run([
+                "runcontrols", str(events),
+                "--slot", "fixloop",
+                "--action", "fix",
+                "--step-cap", "fixloop=1",
+                "--json",
+            ])
+
+            stored = json.loads(events.read_text(encoding="utf-8"))
+
+        self.assertEqual(rc_first, 0)
+        self.assertEqual(json.loads(out_first)["run_controls"]["status"], "pass")
+        self.assertEqual(rc_halt, 1)
+        self.assertEqual(json.loads(out_halt)["run_controls"]["status"], "halt")
+        self.assertEqual(len(stored), 2)
+
+    def test_runcontrols_dry_run_and_invalid_step_cap(self):
+        with tempfile.TemporaryDirectory() as d:
+            events = Path(d) / "events.json"
+            rc_dry, out_dry, _ = run([
+                "runcontrols", str(events),
+                "--slot", "tester",
+                "--dry-run",
+                "--json",
+            ])
+            rc_bad, _, err_bad = run([
+                "runcontrols", str(events),
+                "--step-cap", "bad",
+            ])
+
+            exists = events.exists()
+
+        self.assertEqual(rc_dry, 0)
+        self.assertFalse(json.loads(out_dry)["appended"])
+        self.assertFalse(exists)
+        self.assertEqual(rc_bad, 1)
+        self.assertIn("--step-cap must use SLOT=N", err_bad)
+
+    def test_runcontrols_human_halt_event_json_and_step_cap_errors(self):
+        with tempfile.TemporaryDirectory() as d:
+            events = Path(d) / "events.json"
+            event = Path(d) / "event.json"
+            events.write_text(json.dumps([
+                {"slot": "fixloop", "action": "fix"},
+            ]), encoding="utf-8")
+            event.write_text(json.dumps({"slot": "fixloop", "action": "fix"}), encoding="utf-8")
+            rc_human, out_human, _ = run([
+                "runcontrols", str(events),
+                "--event-json", str(event),
+                "--step-cap", "fixloop=1",
+            ])
+            rc_bad_int, _, err_bad_int = run([
+                "runcontrols", str(events),
+                "--step-cap", "fixloop=nope",
+            ])
+            rc_bad_empty, _, err_bad_empty = run([
+                "runcontrols", str(events),
+                "--step-cap", "=0",
+            ])
+
+        self.assertEqual(rc_human, 1)
+        self.assertIn("halt", out_human)
+        self.assertEqual(rc_bad_int, 1)
+        self.assertIn("positive integer", err_bad_int)
+        self.assertEqual(rc_bad_empty, 1)
+        self.assertIn("N > 0", err_bad_empty)
+
+    def test_runcontrols_records_soft_failure_event(self):
+        with tempfile.TemporaryDirectory() as d:
+            events = Path(d) / "events.json"
+            rc, out, _ = run([
+                "runcontrols", str(events),
+                "--slot", "tester",
+                "--soft-failure",
+                "--json",
+            ])
+
+        self.assertEqual(rc, 0)
+        self.assertTrue(json.loads(out)["event"]["soft_failure"])
+
+    def test_runcontrols_human_pass_without_event(self):
+        with tempfile.TemporaryDirectory() as d:
+            events = Path(d) / "events.json"
+            events.write_text("[]", encoding="utf-8")
+            rc, out, _ = run(["runcontrols", str(events)])
+
+        self.assertEqual(rc, 0)
+        self.assertIn("keel runcontrols", out)
+        self.assertIn("events        : 0", out)
+
+    def test_ship_ledger_stamps_run_controls_and_blocks_on_halt(self):
+        with tempfile.TemporaryDirectory() as d:
+            events = Path(d) / "events.json"
+            events.write_text(json.dumps([
+                {"slot": "fixloop", "action": "fix"},
+                {"slot": "fixloop", "action": "fix"},
+            ]), encoding="utf-8")
+            rc, out, _ = run([
+                "ship", _write_config("'true'"),
+                "--root", d,
+                "--run-events-file", str(events),
+                "--max-rounds", "1",
+                "--json",
+            ])
+
+        self.assertEqual(rc, 1)
+        record = json.loads(out)["result"]["run_ledger"]["record"]
+        self.assertEqual(record["run_controls"]["status"], "halt")
+        self.assertEqual(record["run_controls"]["summary"]["event_count"], 2)
+
+    def test_ship_invalid_run_events_file_and_human_halt(self):
+        with tempfile.TemporaryDirectory() as d:
+            events = Path(d) / "events.json"
+            events.write_text("{}", encoding="utf-8")
+            rc_bad, _, err_bad = run([
+                "ship", _write_config("'true'"),
+                "--root", d,
+                "--run-events-file", str(events),
+            ])
+            events.write_text(json.dumps([
+                {"slot": "fixloop", "action": "fix"},
+                {"slot": "fixloop", "action": "fix"},
+            ]), encoding="utf-8")
+            rc_halt, out_halt, _ = run([
+                "ship", _write_config("'true'"),
+                "--root", d,
+                "--run-events-file", str(events),
+                "--max-rounds", "1",
+            ])
+
+        self.assertEqual(rc_bad, 1)
+        self.assertIn("must contain a JSON array", err_bad)
+        self.assertEqual(rc_halt, 1)
+        self.assertIn("run controls  : halt", out_halt)
+
+    def test_step_verify_human_missing_and_unknown_step(self):
+        handoff = stepverifier.build_handoff(step_id="s7")
+        evidence_report = {"results": []}
+        rc_missing, out_missing, _ = run([
+            "step-verify",
+            "--step", "s7",
+            "--handoff-file", _write_raw(json.dumps(handoff)),
+            "--evidence-report", _write_raw(json.dumps(evidence_report)),
+            "--reviewers", "1",
+        ])
+        rc_unknown, _, err_unknown = run([
+            "step-verify",
+            "--step", "s404",
+            "--handoff-file", _write_raw(json.dumps(handoff)),
+            "--evidence-report", _write_raw(json.dumps(evidence_report)),
+        ])
+
+        self.assertEqual(rc_missing, 1)
+        self.assertIn("missing", out_missing)
+        self.assertIn("required      : 1", out_missing)
+        self.assertEqual(rc_unknown, 1)
+        self.assertIn("unknown backbone step", err_unknown)
+
+
 class TestCoreMerge(unittest.TestCase):
     def test_claim_and_release_cli(self):
         with tempfile.TemporaryDirectory() as d:
@@ -1817,6 +2044,38 @@ class TestCoreMerge(unittest.TestCase):
         self.assertIn("missing required", err_cap)
         self.assertEqual(rc_consent, 1)
         self.assertIn("operator consent required", err_consent)
+
+    def test_merge_blocks_when_escalation_scope_is_not_approved(self):
+        fake_report = _merge_capability_report()
+        argv = _merge_args(json_out=True)
+        argv.extend([
+            "--risk-tier", "tier-3",
+            "--trust-signal", "low",
+            "--escalation-side-effect", "secret_access",
+        ])
+        with (
+            patch("keel.cli.runtime.detect", return_value=fake_report),
+            patch("keel.cli.lock.claim_resource") as claim_mock,
+        ):
+            rc, out, _ = run(argv)
+
+        data = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertEqual(data["reason"], "operator escalation required")
+        self.assertEqual(data["missing_scope"], ["secrets"])
+        self.assertTrue(data["escalation"]["operator_required"])
+        claim_mock.assert_not_called()
+
+    def test_merge_human_blocks_when_escalation_scope_is_not_approved(self):
+        fake_report = _merge_capability_report()
+        argv = _merge_args()
+        argv.extend(["--escalation-side-effect", "secret_access"])
+        with patch("keel.cli.runtime.detect", return_value=fake_report):
+            rc, _, err = run(argv)
+
+        self.assertEqual(rc, 1)
+        self.assertIn("operator escalation required", err)
+        self.assertIn("secrets", err)
 
     def test_merge_reports_extension_problem_and_consent_env_error(self):
         fake_report = _merge_capability_report()

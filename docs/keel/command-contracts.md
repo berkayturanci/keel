@@ -316,6 +316,10 @@ Run-control halt reasons are intentionally structured so operators and adapters 
 post, or checkpoint the exact control, scope, observed value, limit, and action without
 parsing prose.
 
+`keel runcontrols` is the CLI enforcement surface for this block. It appends/evaluates the
+run-events JSON file and exits non-zero on hard halt; `keel ship --run-events-file` stamps
+the evaluated round counts and cap outcome into the `ship_run` ledger record.
+
 ## Work Creation Policy
 
 Signal-driven commands that can open follow-up work (`regression`, `review-all-day`,
@@ -407,6 +411,9 @@ evidence contract used by `keel evidence-verify`. Review verdict evidence is att
 `s7 review`; gating jury evidence is attached to `s8 test`; closure comments are attached
 to `s12 close`. Steps without public GitHub evidence still require a complete structured
 handoff, so a generated command cannot silently skip or prematurely terminate a step.
+
+`keel step-verify` is the CLI enforcement surface for this block. Adapters persist the
+canonical handoff JSON and run the verifier before advancing each backbone transition.
 
 ## Evidence block
 

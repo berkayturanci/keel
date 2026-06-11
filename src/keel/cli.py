@@ -33,10 +33,12 @@ from . import (
     ledger,
     lock,
     project_commands,
+    runcontrols,
     runtime,
     scaffold,
     ship,
     status,
+    stepverifier,
     window,
 )
 from . import config as cfg
@@ -325,6 +327,35 @@ def _cmd_merge(args: argparse.Namespace) -> int:
     if not consent_ok:
         print(consent_message, file=sys.stderr)
         return 1
+    escalation = consent.evaluate_escalation(
+        risk_tier=args.risk_tier,
+        trust_signal=args.trust_signal,
+        side_effects=("git_worktree", "merge", *args.escalation_side_effect),
+        retry_count=args.retry_count,
+        conflicting_sources=args.conflicting_sources,
+        changed_lines=args.changed_lines,
+    )
+    missing_escalation_scope = [
+        scope for scope in escalation["consent_scope"] if scope not in approved_scopes
+    ]
+    if escalation["operator_required"] and missing_escalation_scope:
+        payload = {
+            "schema_version": "keel.merge.v1",
+            "pull_request": args.pr,
+            "status": "fail",
+            "reason": "operator escalation required",
+            "escalation": escalation,
+            "missing_scope": missing_escalation_scope,
+        }
+        if args.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print(
+                "operator escalation required: missing approved scope "
+                f"{', '.join(missing_escalation_scope)}",
+                file=sys.stderr,
+            )
+        return 1
 
     owner = args.owner or f"keel-merge-pr-{args.pr}"
     claim = lock.claim_resource(_lock_root(args.root), "merge", owner=owner)
@@ -335,6 +366,7 @@ def _cmd_merge(args: argparse.Namespace) -> int:
         "window": None,
         "ci": None,
         "evidence": None,
+        "escalation": escalation,
         "merged": False,
     }
     if not claim.granted:
@@ -520,6 +552,18 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     except ledger.LedgerError as exc:
         print(f"invalid ledger {ledger_path}: {exc}", file=sys.stderr)
         return 1
+    try:
+        run_control_events = (
+            _read_json_list(args.run_events_file, missing_ok=True)
+            if args.run_events_file else []
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    run_control_report = runcontrols.evaluate_run_controls(
+        run_control_events,
+        max_work_units=args.max_rounds or runcontrols.DEFAULT_RUN_BUDGET,
+    )
     ledger_record = ledger.build_ship_run_record(
         command=command,
         base_branch=config.base_branch,
@@ -549,6 +593,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         jury_mode=a.review_contract["jury"]["mode"],
         consent_status=contract["operator_consent"]["status"],
         consent_scopes=contract["operator_consent"]["effective_approved_scope"],
+        run_controls=run_control_report,
     )
     try:
         ledger_record = ledger.sanitize_record(ledger_record, config)
@@ -595,6 +640,8 @@ def _cmd_ship(args: argparse.Namespace) -> int:
                 run_ledger=ledger_result,
             ),
         }, indent=2, sort_keys=True))
+        if run_control_report["hard_halt"]:
+            return 1
         return 0 if a.merge.action != "block" else 1
 
     name = config.repo or config.extends
@@ -613,6 +660,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     print(f"  consent       : {contract['operator_consent']['status']}")
     print(f"  intake        : {intake_record['status']}")
     print(f"  run ledger    : {ledger_result['path']}")
+    print(f"  run controls  : {run_control_report['status']}")
     if args.append_ledger:
         print(f"  ledger append : {'yes' if ledger_result['appended'] else 'dry-run/no-live'}")
     if intake_record["questions"]:
@@ -629,6 +677,8 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         print("  audit         : hotfix bypassed the merge window")
     print(f"  decision      : {a.merge.action.upper()} — {a.merge.reason}")
     print("  note: dry assessment; live merge (s10) needs a configured runner (git + gh auth).")
+    if run_control_report["hard_halt"]:
+        return 1
     return 0 if a.merge.action != "block" else 1
 
 
@@ -755,6 +805,92 @@ def _cmd_capture_reconcile(args: argparse.Namespace) -> int:
             for action in result["actions"]:
                 print(f"    DRY-RUN: {action['type']}  {action['idempotency_key']}")
     return 0 if plan["status"] != "blocked" else 1
+
+
+def _cmd_step_verify(args: argparse.Namespace) -> int:
+    try:
+        handoff = _read_json_object(args.handoff_file)
+        evidence_report = _read_json_object(args.evidence_report)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    review_contract = ship.resolve_review_contract(
+        tier=None,
+        reviewer_override=args.reviewers,
+        review_comments=args.review_comments,
+        gates=(),
+        policy_pack={},
+        jury=args.jury,
+        no_jury=args.no_jury,
+        jury_advisory=args.jury_advisory,
+    )
+    try:
+        report = stepverifier.verify_step_completion(
+            step_id=args.step,
+            handoff=handoff,
+            evidence_report=evidence_report,
+            review_contract=review_contract,
+            dry_run=args.dry_run,
+            enforced=not args.not_enforced,
+        )
+    except KeyError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    payload = {
+        "contract": stepverifier.contract_as_dict(
+            review_contract,
+            dry_run=args.dry_run,
+            enforced=not args.not_enforced,
+        ),
+        "verification": report,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"keel step-verify — {report['status']}  {args.step}")
+        if report["missing"]:
+            print(f"  missing       : {', '.join(report['missing'])}")
+        print(f"  required      : {len(report['required_evidence'])}")
+    return 0 if report["status"] == "pass" else 1
+
+
+def _cmd_runcontrols(args: argparse.Namespace) -> int:
+    try:
+        events = _read_json_list(args.events_file, missing_ok=True)
+        event = _event_from_args(args)
+        step_caps = _step_caps_from_args(args.step_cap)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if event:
+        events.append(event)
+        if not args.dry_run:
+            _write_json_list(args.events_file, events)
+    report = runcontrols.evaluate_run_controls(
+        events,
+        max_work_units=args.max_work_units,
+        default_step_cap=args.default_step_cap,
+        step_caps=step_caps,
+        identical_action_threshold=args.identical_action_threshold,
+        alternating_diff_window=args.alternating_diff_window,
+    )
+    payload = {
+        "contract": runcontrols.contract_as_dict(),
+        "path": args.events_file,
+        "appended": bool(event) and not args.dry_run,
+        "event": event,
+        "run_controls": report,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"keel runcontrols — {report['status']}  {args.events_file}")
+        print(f"  events        : {report['summary']['event_count']}")
+        print(f"  work units    : {report['summary']['work_units']}")
+        if report["reason"]:
+            reason = report["reason"]
+            print(f"  halt          : {reason['reason']} ({reason['scope']})")
+    return 0 if report["status"] == "pass" else 1
 
 
 def _cmd_evidence_verify(args: argparse.Namespace) -> int:
@@ -1464,13 +1600,68 @@ def _read_optional_text(path: str | None) -> str:
     return Path(path).read_text(encoding="utf-8") if path else ""
 
 
-def _read_optional_json_list(path: str | None) -> list[dict[str, object]]:
-    if path is None:
-        return []
+def _read_json_object(path: str) -> dict[str, object]:
     value = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError(f"{path} must contain a JSON object")
+    return value
+
+
+def _read_json_list(path: str, *, missing_ok: bool = False) -> list[dict[str, object]]:
+    p = Path(path)
+    if missing_ok and not p.exists():
+        return []
+    value = json.loads(p.read_text(encoding="utf-8"))
     if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
         raise ValueError(f"{path} must contain a JSON array of objects")
     return value
+
+
+def _write_json_list(path: str, value: list[dict[str, object]]) -> None:
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _read_optional_json_list(path: str | None) -> list[dict[str, object]]:
+    if path is None:
+        return []
+    return _read_json_list(path)
+
+
+def _event_from_args(args: argparse.Namespace) -> dict[str, object] | None:
+    if args.event_json:
+        event = _read_json_object(args.event_json)
+    else:
+        fields = {
+            "step_id": args.step,
+            "slot": args.slot,
+            "action": args.action,
+            "output_fingerprint": args.output_fingerprint,
+            "diff_fingerprint": args.diff_fingerprint,
+            "work_units": args.work_units,
+        }
+        event = {key: value for key, value in fields.items() if value not in (None, "")}
+        if args.soft_failure:
+            event["soft_failure"] = True
+    return event or None
+
+
+def _step_caps_from_args(values: list[str]) -> dict[str, int]:
+    caps: dict[str, int] = {}
+    for raw in values:
+        if "=" not in raw:
+            raise ValueError("--step-cap must use SLOT=N")
+        slot, value = raw.split("=", 1)
+        slot = slot.strip()
+        try:
+            parsed = int(value)
+        except ValueError as exc:
+            raise ValueError("--step-cap value must be a positive integer") from exc
+        if not slot or parsed <= 0:
+            raise ValueError("--step-cap must use SLOT=N with N > 0")
+        caps[slot] = parsed
+    return caps
 
 
 def _gh_json(args: list[str], *, cwd: str) -> dict[str, object]:
@@ -2101,6 +2292,18 @@ def build_parser() -> argparse.ArgumentParser:
                          help="operator identifier for consent evidence")
     p_merge.add_argument("--consent-mode", choices=consent.CONSENT_MODES, default=None,
                          help="operator consent mode")
+    p_merge.add_argument("--risk-tier", choices=consent.RISK_TIERS, default="tier-1",
+                         help="risk tier for deterministic escalation evaluation")
+    p_merge.add_argument("--trust-signal", choices=consent.TRUST_SIGNALS, default="medium",
+                         help="trust signal for deterministic escalation evaluation")
+    p_merge.add_argument("--retry-count", type=int, default=0,
+                         help="retry count for deterministic escalation evaluation")
+    p_merge.add_argument("--conflicting-sources", action="store_true",
+                         help="mark conflicting sources for escalation evaluation")
+    p_merge.add_argument("--changed-lines", type=int, default=0,
+                         help="changed-line count for escalation evaluation")
+    p_merge.add_argument("--escalation-side-effect", action="append", default=[],
+                         help="additional side-effect signal for escalation evaluation")
     p_merge.add_argument("--review-comments", choices=("inline", "summary"), default="inline",
                          help="review posting mode for evidence verification")
     p_merge.add_argument("--reviewers", type=int, choices=(1, 2, 3), default=None,
@@ -2166,6 +2369,61 @@ def build_parser() -> argparse.ArgumentParser:
                              help="label the output as a live reconciliation plan")
     p_reconcile.add_argument("--json", action="store_true", help="emit structured JSON")
     p_reconcile.set_defaults(func=_cmd_capture_reconcile)
+
+    p_step = sub.add_parser(
+        "step-verify",
+        help="verify a persisted step handoff against the evidence report",
+    )
+    p_step.add_argument("--step", required=True, help="backbone step id, e.g. s7")
+    p_step.add_argument("--handoff-file", required=True, help="JSON step handoff file")
+    p_step.add_argument("--evidence-report", required=True,
+                        help="JSON evidence verification report or verification block")
+    p_step.add_argument("--review-comments", choices=("inline", "summary"),
+                        default="inline", help="review posting mode in the ship contract")
+    p_step.add_argument("--reviewers", type=int, choices=(1, 2, 3), default=None,
+                        help="override the required reviewer verdict count")
+    p_step.add_argument("--jury", action="store_true",
+                        help="enable the cross-vendor jury requirement")
+    p_step.add_argument("--no-jury", action="store_true",
+                        help="disable the cross-vendor jury requirement")
+    p_step.add_argument("--jury-advisory", action="store_true",
+                        help="make an enabled jury advisory instead of required")
+    p_step.add_argument("--dry-run", action="store_true",
+                        help="verify with dry-run evidence requirements")
+    p_step.add_argument("--not-enforced", action="store_true",
+                        help="verify with evidence requirements disabled")
+    p_step.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_step.set_defaults(func=_cmd_step_verify)
+
+    p_rc = sub.add_parser(
+        "runcontrols",
+        help="append/evaluate deterministic run-control events",
+    )
+    p_rc.add_argument("events_file", help="JSON array run-events file")
+    p_rc.add_argument("--event-json", default=None, help="single event JSON object to append")
+    p_rc.add_argument("--step", default=None, help="event step id")
+    p_rc.add_argument("--slot", default=None, help="event slot name")
+    p_rc.add_argument("--action", default=None, help="event action")
+    p_rc.add_argument("--output-fingerprint", default=None, help="event output fingerprint")
+    p_rc.add_argument("--diff-fingerprint", default=None, help="event diff fingerprint")
+    p_rc.add_argument("--work-units", type=int, default=None, help="event work-unit count")
+    p_rc.add_argument("--soft-failure", action="store_true", help="mark event as soft failure")
+    p_rc.add_argument("--max-work-units", type=int, default=runcontrols.DEFAULT_RUN_BUDGET,
+                      help="run budget hard cap")
+    p_rc.add_argument("--default-step-cap", type=int, default=runcontrols.DEFAULT_STEP_CAP,
+                      help="default per-step/slot iteration cap")
+    p_rc.add_argument("--step-cap", action="append", default=[],
+                      help="override per-slot cap as SLOT=N; repeatable")
+    p_rc.add_argument("--identical-action-threshold", type=int,
+                      default=runcontrols.DEFAULT_IDENTICAL_THRESHOLD,
+                      help="oscillation threshold for repeated identical actions")
+    p_rc.add_argument("--alternating-diff-window", type=int,
+                      default=runcontrols.DEFAULT_ALTERNATION_WINDOW,
+                      help="oscillation window for alternating diff fingerprints")
+    p_rc.add_argument("--dry-run", action="store_true",
+                      help="evaluate without appending the event")
+    p_rc.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_rc.set_defaults(func=_cmd_runcontrols)
 
     p_evidence = sub.add_parser(
         "evidence-verify",
@@ -2616,6 +2874,10 @@ def _add_ship_parser(parser: argparse.ArgumentParser, *, command: str) -> None:
                         help="append the structured ship run record when --live succeeds")
     parser.add_argument("--run-id", default=None,
                         help="operator/session run id to store in the run ledger record")
+    parser.add_argument("--run-events-file", default=None,
+                        help="JSON run-events file to evaluate and stamp into the ledger record")
+    parser.add_argument("--max-rounds", type=_positive_int, default=None,
+                        help="explicit run-control work-unit budget override")
     parser.add_argument("--issue", type=_positive_int, default=None,
                         help="issue number to store in the run ledger record")
     parser.add_argument("--pull-request", dest="ledger_pr", type=_positive_int, default=None,

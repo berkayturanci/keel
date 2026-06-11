@@ -254,6 +254,34 @@ offline CI harnesses can provide `--pr-comments-json`, `--issue-comments-json`,
 `--pr-reviews-json`, `--pr-body-file`, `--changed-file`, and `--head-sha` fixtures; the same
 verifier path is used either way.
 
+## `keel step-verify --step sN --handoff-file handoff.json --evidence-report evidence.json`
+
+Verify a persisted step handoff before an adapter advances the ship backbone. The handoff
+must be the JSON object produced by `keel.stepverifier.build_handoff`; the evidence report
+must be the JSON verification block from `keel evidence-verify` (or an equivalent report
+with `results`). The command exits non-zero when the handoff schema/status/renderer marker
+is missing or when the step's required evidence ids are not ok.
+
+```bash
+keel step-verify --step s7 \
+  --handoff-file .keel/run/handoffs/s7.json \
+  --evidence-report .keel/run/evidence.json \
+  --reviewers 2 --json
+```
+
+## `keel runcontrols EVENTS.json [--slot fixloop --action fix] [--json]`
+
+Append one run-control event to a JSON array file and evaluate deterministic work caps:
+run budget, per-step/slot caps, repeated identical actions, and alternating diff
+fingerprints. `--dry-run` evaluates without writing. A hard halt exits non-zero and returns
+the structured halt reason; `keel ship --run-events-file EVENTS.json` stamps the same
+summary into the ship ledger record and also exits non-zero on a hard halt.
+
+```bash
+keel runcontrols .keel/run/events.json --slot fixloop --action fix
+keel runcontrols .keel/run/events.json --step-cap fixloop=3 --json
+```
+
 ## `keel checkpoint <project.yaml> [--root DIR] [--json]`
 
 Read the current resumable checkpoint. The default path is

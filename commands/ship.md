@@ -265,6 +265,13 @@ passed the tier is not computed, so the tier-3 jury auto-trigger does not apply.
 default (`--jury-advisory` ⇒ advisory-only). The jury never changes the reviewer count.
 Log the decision (`jury: enabled (reason; mode) / disabled`).
 
+### Step boundary verification
+At every successful backbone transition, persist the canonical JSON handoff produced from
+`keel.stepverifier.build_handoff`, write/update the checkpoint for the next safe boundary,
+and run `keel step-verify --step sN --handoff-file <file> --evidence-report <file>` before
+advancing. A failed step verification is a BLOCKER: do not continue, merge, or mark the
+step complete from chat prose alone.
+
 ### s6 ci
 Push the branch, open the **draft** PR, and wait for the project's `ci_workflows` to go
 green. The required `keel evidence (required)` check is provenance-armed for ship-driven PRs
@@ -350,12 +357,19 @@ just the originating focus(es) (carry the original reviewer codename forward, fr
 per narrowed reviewer, "verify only the applied fix in commit `<sha>`; do not re-review what
 you already approved" prompt; spawn multiple narrowed focuses in one Agent message). A
 suggestion is gated like a blocker — apply it, or obtain an explicit, tracked user deferral;
-never silently relabel one "advisory/flake". A narrowed reviewer that surfaces a NEW blocker
+never silently relabel one "advisory/flake". Recorded suggestion deferrals must be public
+and checkable: post a `keel.deferral.v1` PR/issue comment marker that names the finding,
+authorising operator, and reason before treating the suggestion as deferred. A narrowed
+reviewer that surfaces a NEW blocker
 escalates back to the full loop. Each round posts its own review (per `--review-comments`)
 and increments the counter; exceeding the budget marks the issue blocked with the
 outstanding findings quoted. Defensive loop-backs (tester, merge-conflict prep) don't spend
 budget unless they require a fix. Before exiting, surface any deferred suggestion/nit with
 its authorising decision/issue — a silent skip is a process violation.
+
+Append each fix/review/test round to the run-events file with `keel runcontrols`. A hard
+halt from `keel runcontrols` is fail-closed and must stop the ship run until an operator
+chooses an explicit `--max-rounds` override.
 
 ### s10 merge
 Only inside the **merge window** (unless the issue is a blocker / `--hotfix`), holding the
@@ -494,4 +508,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=plugin command=ship keel_version=1.2.0 source_sha256=39ce50608db6d51a1989d5d7af8684a3eb9f9934e09592ddf0094ee729e28097 generated_sha256=39ce50608db6d51a1989d5d7af8684a3eb9f9934e09592ddf0094ee729e28097 -->
+<!-- keel-generated: surface=plugin command=ship keel_version=1.2.0 source_sha256=ef2ef5432ffd7ddbd9ae5089fcca060f543bf14802b272717c7b93db92d7a241 generated_sha256=ef2ef5432ffd7ddbd9ae5089fcca060f543bf14802b272717c7b93db92d7a241 -->
