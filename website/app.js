@@ -202,13 +202,18 @@
     var tb = document.querySelector(".titlebar");
     if (!mainEl || !tb) return;
     var mqm = matchMedia("(max-width: 760px)");
-    var last = 0;
+    /* Accumulate per-direction travel: mobile browsers fire many small-delta
+       scroll events, so a per-event threshold never sees an upward move. */
+    var last = 0, acc = 0;
     mainEl.addEventListener("scroll", function () {
       if (!mqm.matches) { tb.style.marginTop = ""; return; }
       var y = mainEl.scrollTop;
-      if (y > 140 && y > last + 6) tb.style.marginTop = -tb.offsetHeight + "px";
-      else if (y < last - 6 || y < 140) tb.style.marginTop = "0px";
+      var dy = y - last;
       last = y;
+      if ((dy < 0) !== (acc < 0)) acc = 0;
+      acc += dy;
+      if (y < 140 || acc < -10) tb.style.marginTop = "0px";
+      else if (acc > 24) tb.style.marginTop = -tb.offsetHeight + "px";
     }, { passive: true });
     if (mqm.addEventListener) mqm.addEventListener("change", function () { tb.style.marginTop = ""; });
   })();

@@ -136,6 +136,18 @@
 .bb-tbl thead th { font-family: var(--font-display); font-weight: 600; font-size: .8rem; color: var(--muted); background: var(--surface-2); }
 .bb-tbl tbody tr:last-child td { border-bottom: none; }
 .bb-tbl tbody tr:hover td { background: color-mix(in srgb, var(--accent) 5%, transparent); }
+
+/* Mobile: the 4-column table becomes stacked cards — no horizontal scroll */
+@media (max-width: 760px) {
+  .bb-tbl { min-width: 0; }
+  .bb-tbl thead { display: none; }
+  .bb-tbl tbody, .bb-tbl tr, .bb-tbl td { display: block; }
+  .bb-tbl tr { padding: .55rem .9rem .7rem; border-bottom: 1px solid var(--border-soft); }
+  .bb-tbl tbody tr:last-child { border-bottom: none; }
+  .bb-tbl td { padding: .12rem 0; border-bottom: none; }
+  .bb-tbl td:first-child { display: inline-block; margin-right: .55rem; }
+  .bb-tbl td:nth-child(2) { display: inline-block; }
+}
 .bb-id { font-family: var(--font-mono); font-weight: 700; color: var(--accent-2); }
 .bb-nm { font-family: var(--font-display); font-weight: 600; color: var(--text); }
 .bb-hooks { display: flex; flex-wrap: wrap; gap: .3rem; }

@@ -10,7 +10,7 @@
 .st-group { font-family: var(--font-mono); font-size: .62rem; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); margin: .55rem 0 .05rem .2rem; }
 .st-group:first-child { margin-top: 0; }
 @media (max-width: 880px) {
-  .show-rail { flex-direction: row; height: auto; min-height: 0; max-height: none; overflow-x: auto; overflow-y: hidden; gap: .45rem; padding-bottom: .4rem; scrollbar-width: thin; order: 2; }
+  .show-rail { flex-direction: row; height: auto; min-height: 0; max-height: none; overflow-x: auto; overflow-y: hidden; gap: .45rem; padding-bottom: .4rem; scrollbar-width: thin; }
   .show-tab { flex: 0 0 auto; }
   .st-group { flex: 0 0 auto; align-self: center; margin: 0 .2rem; }
   .show-main { order: 1; }
@@ -198,3 +198,7 @@
 .sc-cap .blink { width: 7px; height: 7px; border-radius: 50%; background: var(--accent-2); animation: pip 1.4s ease-out infinite; flex: none; }
 .sc-cap.ok { color: var(--green-2); }
 .sc-cap.ok .blink { background: var(--green-2); animation: none; }
+
+@media (max-width: 760px) {
+  .det-flag { white-space: normal; overflow-wrap: anywhere; }
+}

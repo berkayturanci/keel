@@ -8,7 +8,7 @@
 html, body { height: 100%; }
 body { padding-top: 0; overflow: hidden; }
 
-.desk { height: 100vh; display: flex; padding: clamp(0px, 1.8vw, 26px); background:
+.desk { height: 100vh; height: 100dvh; display: flex; padding: clamp(0px, 1.8vw, 26px); background:
   radial-gradient(62% 80% at 100% 0%, color-mix(in srgb, var(--accent) 20%, transparent), transparent 60%),
   radial-gradient(62% 80% at 0% 100%, color-mix(in srgb, var(--green) 14%, transparent), transparent 60%),
   linear-gradient(135deg, color-mix(in srgb, var(--accent) 12%, var(--bg)), var(--bg) 50%, color-mix(in srgb, var(--green) 10%, var(--bg))); }
@@ -62,7 +62,7 @@ body { padding-top: 0; overflow: hidden; }
 .sb-disp { position: relative; margin-top: .4rem; }
 
 /* ---- main pane: stacked views, scroll between them ------------------- */
-.main { position: relative; overflow-y: auto; scroll-behavior: smooth;
+.main { position: relative; overflow-y: auto; overflow-x: clip; scroll-behavior: smooth;
   background-color: color-mix(in srgb, var(--accent) 4%, var(--bg));
   background-image:
     radial-gradient(color-mix(in srgb, var(--accent) 9%, transparent) 1.1px, transparent 1.2px),
@@ -117,7 +117,7 @@ body { padding-top: 0; overflow: hidden; }
 .ov-install .p { color: var(--green-2); font-family: var(--font-mono); }
 .ov-install code { font-family: var(--font-mono); color: var(--text); font-size: .9rem; white-space: nowrap; }
 .ov-top .ov-plugin { margin: 1.6rem 0 1.4rem; display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; font-size: .88rem; color: var(--muted); }
-.ov-plugin code.plain { font-family: var(--font-mono); font-size: .84em; color: var(--text); background: none; border: none; padding: 0; }
+.ov-plugin code.plain { font-family: var(--font-mono); font-size: .84em; color: var(--text); background: none; border: none; padding: 0; overflow-wrap: anywhere; }
 .plugin-btn { display: inline-flex; align-items: center; gap: .55rem; cursor: pointer; font-family: var(--font-mono); padding: .42rem .7rem; border-radius: 9px; background: var(--surface); border: 1px solid var(--accent-line); transition: border-color .2s, transform .2s, box-shadow .2s; }
 .plugin-btn:hover { transform: translateY(-1px); box-shadow: var(--shadow-md); }
 .plugin-btn code { font-size: .82rem; color: var(--accent-2); background: none; padding: 0; }
@@ -165,3 +165,7 @@ body { padding-top: 0; overflow: hidden; }
 /* view footer link row */
 .view-foot { margin-top: 2.4rem; padding-top: 1.2rem; border-top: 1px solid var(--border-soft); display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; font-size: .82rem; color: var(--faint); }
 .view-foot a { color: var(--muted); }
+
+@media (max-width: 760px) {
+  .ov-badges .bgrp { display: contents; }
+}
