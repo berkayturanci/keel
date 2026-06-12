@@ -172,5 +172,6 @@ body { padding-top: 0; overflow: hidden; }
 
 .ov-install code { overflow-wrap: anywhere; }
 @media (max-width: 760px) {
-  .ov-install { flex-wrap: wrap; }
+  .ov-install { flex-wrap: wrap; max-width: 100%; }
+  .ov-install code { white-space: normal; min-width: 0; flex: 1 1 auto; }
 }
