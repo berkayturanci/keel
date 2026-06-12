@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en" data-theme="dark" data-type="a" data-motion="balanced">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>
+  (function () { try { var r=document.documentElement, ls=localStorage, mq=matchMedia("(prefers-color-scheme: dark)");
+    r.setAttribute("data-theme", ls.getItem("theme") || (mq.matches?"dark":"light"));
+    r.setAttribute("data-type", ls.getItem("type")||"a"); r.setAttribute("data-motion", ls.getItem("motion")||"balanced"); } catch(e){} })();
+</script>
+<title>Off the keel — 404</title>
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@500;700;800&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="styles.css">
+<style>
+  .e-wrap { min-height: 100vh; display: grid; place-items: center; text-align: center; padding: 2rem; }
+  .e-card { max-width: 540px; }
+  .e-code { font-family: var(--font-display); font-weight: 700; font-size: clamp(4rem, 16vw, 8rem); line-height: 1; background: linear-gradient(108deg, var(--accent-2), var(--brass-2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .e-card h1 { font-size: 1.5rem; margin: .6rem 0 .6rem; }
+  .e-card p { color: var(--muted); margin: 0 0 1.6rem; }
+  .e-rail { display: flex; align-items: center; justify-content: center; gap: .35rem; margin: 1.4rem 0 2rem; }
+  .e-node { width: 12px; height: 12px; border-radius: 50%; background: var(--surface-3); border: 1px solid var(--border); }
+  .e-node.b { background: var(--accent); border-color: var(--accent); animation: e-pulse 2.4s ease-in-out infinite; }
+  .e-node.s { background: var(--brass); border-color: var(--brass); }
+  .e-node.g { background: var(--green); border-color: var(--green); }
+  .e-conn { width: 22px; height: 2px; background: var(--border); }
+  @keyframes e-pulse { 50% { box-shadow: 0 0 0 5px var(--accent-soft); } }
+  .e-btn { display: inline-flex; align-items: center; gap: .5rem; padding: .72rem 1.3rem; border-radius: 11px; font-weight: 600; background: linear-gradient(180deg, var(--accent-2), var(--accent)); color: #021018; border: none; }
+</style>
+<!-- Google Analytics (GA4) — cookieless: analytics_storage denied by default, so no consent banner is required.
+     Replace G-XXXXXXXXXX with your real Measurement ID (analytics.google.com → Admin → Data streams). -->
+<script>
+  if (location.hostname === "berkayturanci.github.io") {
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){ dataLayer.push(arguments); }
+    gtag("consent", "default", { analytics_storage: "denied", ad_storage: "denied", ad_user_data: "denied", ad_personalization: "denied" });
+    gtag("js", new Date());
+    gtag("config", "G-XXXXXXXXXX");
+    var s = document.createElement("script"); s.async = true;
+    s.src = "https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXXXX";
+    document.head.appendChild(s);
+  }
+</script>
+</head>
+<body>
+  <div class="e-wrap">
+    <div class="e-card">
+      <div class="e-code">404</div>
+      <div class="e-rail">
+        <span class="e-node b"></span><span class="e-conn"></span>
+        <span class="e-node"></span><span class="e-conn"></span>
+        <span class="e-node s"></span><span class="e-conn"></span>
+        <span class="e-node"></span><span class="e-conn"></span>
+        <span class="e-node g"></span>
+      </div>
+      <h1>This page drifted off the keel.</h1>
+      <p>The backbone only runs the steps it knows. This route isn't one of them — let's get you back to a fixed point.</p>
+      <a class="e-btn" href="index.html">← Back to keel</a>
+    </div>
+  </div>
+</body>
+</html>

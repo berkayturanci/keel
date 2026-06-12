@@ -1,172 +1,345 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark" data-type="a" data-motion="balanced">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="icon" type="image/svg+xml" href="favicon.svg">
-<meta name="description" content="keel turns coding agents into work owners: issue intake, implementation, review, safe merge, closure, and capture hooks on one project-neutral backbone.">
-<title>keel — coding agents into work owners</title>
-<style>
-  :root { --bg:#0d1117; --panel:#161b22; --fg:#e6edf3; --muted:#9aa7b4; --accent:#58a6ff; --green:#3fb950; --border:#30363d; }
-  * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
-  a { color:var(--accent); text-decoration:none; } a:hover { text-decoration:underline; }
-  a:focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:2px; }
-  .wrap { max-width:860px; margin:0 auto; padding:0 20px; }
-  header { padding:64px 0 32px; border-bottom:1px solid var(--border); }
-  h1 { font-size:44px; margin:0 0 8px; letter-spacing:-1px; }
-  .tag { color:var(--muted); font-size:19px; margin:0; }
-  .badges { margin-top:20px; display:flex; gap:10px; flex-wrap:wrap; }
-  .badge { background:var(--panel); border:1px solid var(--border); border-radius:6px; padding:4px 10px; font-size:13px; color:var(--muted); }
-  .badge b { color:var(--green); }
-  a.badge:hover, a.badge:focus-visible { border-color:var(--accent); color:var(--fg); text-decoration:none; }
-  h2 { margin:40px 0 12px; font-size:24px; border-bottom:1px solid var(--border); padding-bottom:6px; }
-  h3 { margin:24px 0 6px; font-size:17px; color:var(--fg); }
-  p { color:var(--fg); } .muted { color:var(--muted); }
-  pre { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:14px 16px; overflow-x:auto; font:13.5px/1.55 "SF Mono",Menlo,Consolas,monospace; }
-  pre:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; border-radius:8px; }
-  code { font-family:"SF Mono",Menlo,Consolas,monospace; font-size:90%; }
-  p code, li code { background:var(--panel); border:1px solid var(--border); border-radius:4px; padding:1px 5px; }
-  table { width:100%; border-collapse:collapse; margin:12px 0; font-size:14px; }
-  th,td { text-align:left; padding:7px 10px; border-bottom:1px solid var(--border); }
-  th { color:var(--muted); font-weight:600; }
-  .cols { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
-  @media(max-width:640px){ .cols{ grid-template-columns:1fr; } h1{font-size:34px;} }
-  footer { margin:56px 0 40px; color:var(--muted); font-size:14px; border-top:1px solid var(--border); padding-top:16px; }
-  .pill { color:var(--green); }
-</style>
+<script>
+  (function () {
+    try {
+      var r = document.documentElement, ls = localStorage, mq = matchMedia("(prefers-color-scheme: dark)");
+      r.setAttribute("data-theme", ls.getItem("theme") || (mq.matches ? "dark" : "light"));
+      r.setAttribute("data-motion", ls.getItem("motion") || "balanced");
+      mq.addEventListener("change", function (e) { if (!ls.getItem("theme")) r.setAttribute("data-theme", e.matches ? "dark" : "light"); });
+    } catch (e) {}
+  })();
+</script>
+<title>keel — turn coding agents into work owners</title>
+<meta name="description" content="keel turns coding agents into work owners. A project-neutral, multi-agent workflow backbone drives a GitHub issue from intake to done — projects set values in project.yaml and snap their own Lego into named extension slots. 16 /keel commands, stdlib-first, 100% covered.">
+<meta name="keywords" content="keel, workflow core, multi-agent, GitHub automation, CI, merge queue, code review, ship, backbone, project-neutral, Claude Code, Codex, Gemini, Python CLI">
+<meta name="author" content="Berkay Turancı">
+<meta name="theme-color" content="#6366f1">
+<link rel="canonical" href="https://berkayturanci.github.io/keel/">
+<meta name="robots" content="index, follow">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&amp;family=JetBrains+Mono:wght@400;500;600;700&amp;display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&amp;family=JetBrains+Mono:wght@400;500;600;700&amp;display=swap">
+
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="icon" href="favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png" sizes="180x180">
+<link rel="manifest" href="site.webmanifest">
+
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="keel">
+<meta property="og:url" content="https://berkayturanci.github.io/keel/">
+<meta property="og:title" content="keel — turn coding agents into work owners">
+<meta property="og:description" content="keel turns coding agents into work owners: one fixed backbone drives a GitHub issue from intake to done. Projects set values and snap in their own Lego.">
+<meta property="og:image" content="https://berkayturanci.github.io/keel/assets/og-banner.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="keel — turn coding agents into work owners">
+<meta name="twitter:description" content="A project-neutral, multi-agent workflow backbone — drives an issue from intake to done. Stdlib-first, 100% covered, 16 /keel commands.">
+<meta name="twitter:image" content="https://berkayturanci.github.io/keel/assets/og-banner.png">
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "keel",
+  "applicationCategory": "DeveloperApplication",
+  "operatingSystem": "macOS, Linux, Windows",
+  "description": "keel turns coding agents into work owners: a project-neutral, multi-agent workflow backbone drives a GitHub issue from intake to done. 16 /keel commands, stdlib-first, 100% covered.",
+  "url": "https://berkayturanci.github.io/keel/",
+  "image": "https://berkayturanci.github.io/keel/assets/og-banner.png",
+  "license": "https://www.apache.org/licenses/LICENSE-2.0",
+  "author": { "@type": "Person", "name": "Berkay Turancı", "url": "https://github.com/berkayturanci" },
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "downloadUrl": "https://pypi.org/project/keel-workflow/",
+  "codeRepository": "https://github.com/berkayturanci/keel"
+}
+</script>
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org", "@type": "SoftwareApplication", "name": "keel",
+  "applicationCategory": "DeveloperApplication", "operatingSystem": "Linux, macOS, Windows",
+  "description": "Project-neutral multi-agent workflow core: one fixed backbone drives a GitHub issue from backlog to merged; projects set values and snap in add-only Lego extensions.",
+  "url": "https://berkayturanci.github.io/keel/", "downloadUrl": "https://pypi.org/project/keel-workflow/",
+  "codeRepository": "https://github.com/berkayturanci/keel", "author": { "@type": "Person", "name": "Berkay Turancı" },
+  "license": "https://www.apache.org/licenses/LICENSE-2.0", "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org", "@type": "WebSite", "name": "keel", "url": "https://berkayturanci.github.io/keel/",
+  "subjectOf": [
+    { "@type": "TechArticle", "name": "Documentation", "url": "https://berkayturanci.github.io/keel/docs.html" },
+    { "@type": "WebPage", "name": "Test coverage", "url": "https://berkayturanci.github.io/keel/coverage.html" }
+  ]
+}
+</script>
+
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="ui.css">
+<link rel="stylesheet" href="scenes.css">
+<link rel="stylesheet" href="workspace.css">
+<!-- Google Analytics (GA4) — cookieless: analytics_storage denied by default, so no consent banner is required.
+     Replace G-XXXXXXXXXX with your real Measurement ID (analytics.google.com → Admin → Data streams). -->
+<script>
+  if (location.hostname === "berkayturanci.github.io") {
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){ dataLayer.push(arguments); }
+    gtag("consent", "default", { analytics_storage: "denied", ad_storage: "denied", ad_user_data: "denied", ad_personalization: "denied" });
+    gtag("js", new Date());
+    gtag("config", "G-XXXXXXXXXX");
+    var s = document.createElement("script"); s.async = true;
+    s.src = "https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXXXX";
+    document.head.appendChild(s);
+  }
+</script>
 </head>
 <body>
-<div class="wrap">
+<div class="desk">
+  <div class="app">
 
-<header>
-  <img src="hero.svg" alt="keel setup installs config, Claude commands, and shared skills for the same workflow backbone" style="width:100%;height:auto;border-radius:12px;margin-bottom:8px">
-  <h1>keel ⚓</h1>
-  <p class="tag"><b>Keel turns coding agents into work owners.</b> From issue intake to implementation, review, safe merge, closure, and capture hooks.</p>
-  <div class="badges">
-    <span class="badge"><b>100%</b> line + branch coverage</span>
-    <span class="badge">one-command setup</span>
-    <span class="badge">stdlib-first · 1 runtime dep</span>
-    <span class="badge">Python ≥ 3.11</span>
-    <a class="badge" href="./coverage/">📊 coverage report →</a>
-    <a class="badge" href="https://github.com/berkayturanci/keel">GitHub →</a>
-  </div>
-</header>
+    <!-- ───── title bar ───── -->
+    <div class="titlebar">
+      <span class="tb-dots"><i class="r"></i><i class="y"></i><i class="g"></i></span>
+      <span class="tb-title"><b>keel</b></span>
+      <span class="tb-right">
+        <button class="icon-btn theme-toggle" id="theme-toggle" type="button" aria-label="Toggle light / dark" title="Light / dark">
+          <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M6.3 17.7l-1.4 1.4M19.1 4.9l-1.4 1.4"/></svg>
+        </button>
+      </span>
+    </div>
 
-<main>
-<h2>What it is</h2>
-<p>keel is a ship's backbone — the fixed spine every project builds on. It models the work pattern of a strong teammate: decide whether an issue is ready, own the implementation, get it reviewed, keep quality gates green, merge inside policy, close the loop, and leave useful memory behind. The same flow runs whether the coding agent is Claude Code, Codex, Gemini or Antigravity; projects never fork the backbone, they only:</p>
-<div class="cols">
-  <div>
-    <h3>① set values</h3>
-    <p class="muted">A small <code>.keel/project.yaml</code>: package core range, base branch, gates, capabilities, workflow policy, health sources, and path globs.</p>
-  </div>
-  <div>
-    <h3>② snap in Lego</h3>
-    <p class="muted">Add-only extensions into every backbone step hook plus <code>policy_pack</code> data for labels, local commands, reports, and review rules. The backbone stays fixed.</p>
+    <div class="app-body">
+      <!-- ───── sidebar ───── -->
+      <nav class="sidebar" id="sidebar" aria-label="Workspace">
+        <div class="sb-brand"><img src="favicon.svg" alt=""><span class="nm">keel</span><span class="ver" data-version>v1.0.2</span></div>
+
+        <div class="sb-lab">Workspace</div>
+        <button class="sb-item on" data-view="overview"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span> Overview</button>
+
+        <div class="sb-lab">Understand</div>
+        <button class="sb-item" data-view="what"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l9 5-9 5-9-5z"/><path d="M3 12l9 5 9-5"/><path d="M3 17l9 5 9-5"/></svg></span> What it is</button>
+        <button class="sb-item" data-view="backbone"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/><path d="M7 12h3M14 12h3"/></svg></span> The backbone</button>
+        <button class="sb-item" data-view="compare"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v18M5 8l-3 6h6zM19 8l-3 6h6zM5 8V6M19 8V6M5 6h14"/></svg></span> How it compares</button>
+
+        <div class="sb-lab">Use</div>
+        <button class="sb-item" data-view="commands"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/></svg></span> Workflow commands <span class="badge">16</span></button>
+        <button class="sb-item" data-view="cli"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-5-6-5M12 19h8"/></svg></span> CLI</button>
+        <button class="sb-item" data-view="config"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h10M18 6h2M4 12h2M10 12h10M4 18h7M15 18h5"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="13" cy="18" r="2"/></svg></span> Configuration</button>
+
+        <div class="sb-lab">More</div>
+        <button class="sb-item" data-view="ship"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2"/><path d="M12 7v13M8 11H5a7 7 0 0 0 14 0h-3"/></svg></span> Dogfooding</button>
+        <button class="sb-item" data-view="security"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M9.5 12l2 2 3.5-4"/></svg></span> Security</button>
+        <button class="sb-item" data-view="faq"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.8.4-1 .9-1 1.7M12 17h.01"/></svg></span> FAQ</button>
+
+        <div class="sb-spacer"></div>
+        <div class="sb-lab">Open</div>
+        <a class="sb-item" href="docs.html"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 4h9l3 3v13H4z"/><path d="M7 11h7M7 15h7"/></svg></span> Docs <span class="ext">↗</span></a>
+        <a class="sb-item" href="coverage.html"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 6L9 17l-5-5"/></svg></span> Coverage <span class="ext">↗</span></a>
+        <a class="sb-item" href="https://github.com/berkayturanci/keel"><span class="ic"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.2.8-.5v-1.7c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.7 1.3 3.4 1 .1-.8.4-1.3.8-1.6-2.6-.3-5.3-1.3-5.3-5.8 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17.3 4.7 18.3 5 18.3 5c.6 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.5-2.7 5.5-5.3 5.8.4.4.8 1.1.8 2.2v3.3c0 .3.2.6.8.5 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5z"/></svg></span> GitHub <span class="ext">↗</span></a>
+        <div class="sb-foot">Apache-2.0<br>© <a href="https://github.com/berkayturanci">Berkay Turancı</a></div>
+      </nav>
+
+      <!-- ───── main ───── -->
+      <main class="main" id="main">
+
+        <!-- Overview -->
+        <section class="view active" id="view-overview" data-view="overview">
+          <div class="ov-hero">
+            <div class="ov-top">
+              <h1>Drive every issue to <span class="grad">merged</span> — on one fixed backbone.</h1>
+              <p><strong>keel</strong> turns coding agents into <strong>work owners</strong>. A project-neutral, multi-agent <strong>workflow backbone</strong> drives a GitHub issue from <strong>intake to done</strong> — projects never fork the backbone; they set values and snap their own <strong>Lego</strong> into named slots.</p>
+              <div class="ov-cta">
+                <a class="btn primary" href="https://github.com/berkayturanci/keel">View on GitHub</a>
+                <span class="ov-install"><span class="p">$</span><code id="install-cmd">pip install keel-workflow</code><button class="hi-copy" type="button" data-copy="pip install keel-workflow" data-copy-target="#install-cmd" aria-label="Copy"><span>copy</span></button></span>
+              </div>
+              <p class="ov-plugin">In Claude Code? Install it as a plugin — no <code class="plain">pip</code> required:
+                <span class="ov-install"><span class="p">&gt;</span><code id="plugin-cmd">/plugin install keel</code><button class="hi-copy" type="button" data-copy="/plugin install keel" aria-label="Copy plugin install command"><span>copy</span></button></span>
+              </p>
+              <p class="ov-plugin">Or pin a release: <code class="plain">pip install "git+https://github.com/berkayturanci/keel@v1.2.2"</code></p>
+              <p class="ov-badges">
+                <a href="https://github.com/berkayturanci/keel/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/berkayturanci/keel/ci.yml?branch=main&amp;label=CI&amp;logo=githubactions&amp;logoColor=white" alt="CI" loading="lazy"></a>
+                <a href="coverage.html"><img src="https://img.shields.io/endpoint?url=https://berkayturanci.github.io/keel/coverage-badge.json" alt="coverage" loading="lazy"></a>
+                <a href="https://github.com/berkayturanci/keel/actions/workflows/codeql.yml"><img src="https://img.shields.io/github/actions/workflow/status/berkayturanci/keel/codeql.yml?branch=main&amp;label=CodeQL&amp;logo=github&amp;logoColor=white" alt="CodeQL" loading="lazy"></a>
+                <span class="bgrp"><a href="https://pypi.org/project/keel-workflow/"><img src="https://img.shields.io/pypi/v/keel-workflow?logo=pypi&amp;logoColor=white" alt="PyPI" loading="lazy"></a>
+                <a href="https://pypi.org/project/keel-workflow/"><img src="https://img.shields.io/pypi/pyversions/keel-workflow" alt="Python versions" loading="lazy"></a>
+                <a href="https://github.com/berkayturanci/keel/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache-2.0" loading="lazy"></a></span>
+              </p>
+            </div>
+            <div class="kpis">
+              <div class="kpi"><b>13<span class="u"> steps</span></b><span>fixed backbone</span></div>
+              <div class="kpi"><b>16<span class="u"> cmds</span></b><span>/keel:&lt;command&gt;</span></div>
+              <div class="kpi"><b>100<span class="u">%</span></b><span>line + branch</span></div>
+              <div class="kpi"><b>1<span class="u"> dep</span></b><span>stdlib-first</span></div>
+            </div>
+          </div>
+
+          <div class="queue">
+            <div class="q-panel">
+              <div class="q-head"><span class="t">Ship queue</span><span class="q-head-r"><button class="q-speed" id="q-speed" type="button" title="Animation speed">1×</button><span class="q-run"><i></i> running</span></span></div>
+              <div class="q-body">
+                <div class="q-cur-head"><b id="q-issue">#128 · auth retry swallows last error</b><span class="q-tier" id="q-tier">TIER-3</span></div>
+                <div class="q-prog" id="q-prog"></div>
+                <div class="q-status" id="q-status">s0 config…</div>
+              </div>
+              <div class="q-backlog">backlog <span><b id="q-count">6</b> issue(s)</span></div>
+            </div>
+            <div class="q-panel">
+              <div class="q-merged-lab">Merged</div>
+              <div class="q-merged" id="q-merged"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- What it is -->
+        <section class="view" id="view-what" data-view="what">
+          <div class="view-head"><p class="view-kicker">What it is</p><h1>An agentic work-ownership backbone</h1><p>keel is based on the work pattern of a <strong>strong teammate</strong> in a real engineering team: take an issue from the queue, decide whether it's ready, own the implementation, get it reviewed, keep the quality gates green, merge inside policy, and leave useful memory behind for the next session. It is not another isolated coding command, review bot, or merge queue — it's the spine that makes an agent <strong>accountable for the whole path</strong>.</p></div>
+          <div class="layers" id="layers"></div>
+          <p class="view-kicker" style="margin:2rem 0 .6rem">What you get</p>
+          <div class="invs">
+            <div class="inv"><b>One backbone, every agent</b><span>Install once; /keel:&lt;command&gt; runs as native Claude commands and as one shared skill set every other agent reads (Codex, Antigravity, Gemini).</span></div>
+            <div class="inv"><b>Project Lego + policy packs</b><span>Snap gates and steps into named hooks (guard, tester, pre-merge, …); keep labels, path policy, health sources, and workflow preferences in policy_pack data — not packaged command prose.</span></div>
+            <div class="inv"><b>Opt-in jury gate</b><span>Runs the <a href="https://github.com/berkayturanci/ai-jury">ai-jury</a> multi-agent reviewer on the diff when installed; a fail-soft no-op otherwise.</span></div>
+            <div class="inv"><b>Safe merges by construction</b><span>A core-owned <code style="font-family:var(--font-mono)">keel merge</code> path — resource claim, window re-check, live CI rollup, and PR evidence verification before the merge — plus the timezone-aware night no-merge window, mkdir merge lock, risk-tier → reviewer count, hotfix bypass with an audit line, and vendor+model attribution.</span></div>
+          </div>
+        </section>
+
+        <!-- Backbone -->
+        <section class="view" id="view-backbone" data-view="backbone">
+          <div class="view-head"><p class="view-kicker">The backbone</p><h1>One fixed, ordered step machine</h1><p>Every unit of work travels the same 13 steps — <strong>s0 config</strong> through <strong>s12 close</strong>. Every step exposes <strong>add-only extension slots</strong> — 28 named slots in total — where a project snaps in its own gates and steps; slots can extend the machine but never reorder or remove it, and invariants like the merge lock and window can't be overridden. Below: the safety primitives pinned to the spine, and <strong>which command covers which steps</strong> — hover a step for its slots, hover a command strip to see its span.</p></div>
+          <div class="bb-figure" id="bb-figure"></div>
+          <p class="view-kicker" style="margin:2rem 0 .6rem">The ordered step machine</p>
+          <div class="bb-tbl-wrap"><table class="bb-tbl"><thead><tr><th>step</th><th>name</th><th>does</th><th>primary hooks</th></tr></thead><tbody id="bb-tbl-body"></tbody></table></div>
+          <p class="bb-note"><span class="bbn-line"><span class="tag-agent">agent</span> the step's work is produced by a coding agent (Claude Code, Codex, Gemini, …) — but only the orchestrator writes to git/PRs.</span> <span class="bbn-line"><span class="hook slot">hook</span> all 28 hooks are <strong>add-only extension slots</strong>. Amber ones are <strong>primary slots</strong> that can own or shape the step's outcome (<span style="font-family:var(--font-mono)">after-implement</span>, <span style="font-family:var(--font-mono)">reviewers</span>, <span style="font-family:var(--font-mono)">capture</span>, <span style="font-family:var(--font-mono)">post-merge</span>); grey ones are passive before/after points that observe without gating.</span> <span class="bbn-line"><span class="hook slot block">guard ⊘</span> red slots can <strong>block</strong> the run — <span style="font-family:var(--font-mono)">guard</span> (s3), <span style="font-family:var(--font-mono)">tester / test</span> (s8) and <span style="font-family:var(--font-mono)">pre-merge</span> (s10) stop work when their checks fail.</span></p>
+          <p class="view-kicker" style="margin:2rem 0 .6rem">Invariants the backbone always preserves</p>
+          <div class="invs" id="invs"></div>
+        </section>
+
+        <!-- Compare -->
+        <section class="view" id="view-compare" data-view="compare">
+          <div class="view-head"><p class="view-kicker">How it compares</p><h1>Between three tool categories</h1><p>keel is not trying to replace coding agents, PR reviewers, or merge queues — it's the <strong>work-ownership backbone</strong> that can use all three in one lifecycle.</p></div>
+          <div class="cmp-wrap"><table class="cmp" id="cmp"></table></div>
+          <p class="cmp-note" id="cmp-note"></p>
+        </section>
+
+        <!-- Commands -->
+        <section class="view" id="view-commands" data-view="commands">
+          <div class="view-head"><p class="view-kicker brass">16 workflows · /keel:&lt;command&gt;</p><h1>Pick a command, watch it run</h1><p>These are the agentic flows — every one is <strong>project-neutral</strong>: behaviour comes only from that repo's <code style="font-family:var(--font-mono);color:var(--accent-2)">.keel/project.yaml</code>. Select any of the 16 — its scene plays a scripted run, with its arguments and flags below.</p></div>
+          <div class="show-grid">
+            <div class="show-rail" id="show-rail"></div>
+            <div class="show-main">
+              <div class="sc-panel"><div class="sc-head"><span class="sc-head-l"><span class="sc-group" id="sc-group"></span><span class="sc-cmd" id="sc-cmd"></span></span><button class="q-speed" id="sc-speed" type="button" title="Animation speed">1×</button></div><div class="sc-stage" id="show-scene"></div></div>
+              <div class="show-detail" id="show-detail"></div>
+            </div>
+          </div>
+          <p class="cmd-note" style="margin-top:1.6rem;font-size:.82rem;color:var(--faint);font-style:italic">Examples are illustrative — each command reads its values from .keel/project.yaml. Install them with <code style="font-family:var(--font-mono)">keel install-adapter all</code> or the Claude Code plugin.</p>
+        </section>
+
+        <!-- CLI -->
+        <section class="view" id="view-cli" data-view="cli">
+          <div class="view-head"><p class="view-kicker">The deterministic core</p><h1>The <code style="font-family:var(--font-mono)">keel</code> CLI</h1><p>The CLI does the deterministic work — config resolution, gate planning &amp; execution, risk-tier classification, merge window + lock, the fail-closed <code style="font-family:var(--font-mono)">keel merge</code> pipeline, evidence verification, checkpoint / resume and run controls. The workflow commands above are the agentic flows layered on top. Every flag is documented in the <a href="docs.html#parameter-reference">parameter reference</a>.</p></div>
+          <div class="codewrap" style="margin-bottom:1.4rem">
+            <button class="code-copy" type="button" data-copy="keel setup --root ." data-copy-target="#code-quick"><span>copy</span></button>
+            <pre class="code" id="code-quick"><code>keel setup --root .           <span class="cm"># one command: init + adapters + validate + plan</span>
+keel validate &lt;cfg&gt;           <span class="cm"># check against the schema</span>
+keel plan     &lt;cfg&gt;           <span class="cm"># render the backbone</span>
+keel ship     &lt;cfg&gt; --root .  <span class="cm"># dry assessment → decision</span></code></pre>
+          </div>
+          <div class="cli-grid" id="cli-grid"></div>
+        </section>
+
+        <!-- Configuration -->
+        <section class="view" id="view-config" data-view="config">
+          <div class="view-head"><p class="view-kicker brass">Layer 2 · values, not copied commands</p><h1>Configured with a small project.yaml</h1><p>A keel consumer is driven by values. Unknown keys are rejected by the bundled schema, so the reference is intentionally strict.</p></div>
+          <div class="split">
+            <div class="cfg-keys" id="cfg-keys"></div>
+            <div class="codewrap">
+              <button class="code-copy" type="button" data-copy="see docs" data-copy-target="#code-yaml"><span>copy</span></button>
+              <pre class="code" id="code-yaml"><code><span class="k">core</span>: <span class="s">"^1.0"</span>
+<span class="k">base_branch</span>: <span class="s">main</span>
+<span class="k">timezone</span>: <span class="s">Europe/Istanbul</span>
+<span class="k">merge_window</span>: <span class="s">"07:00-01:30"</span>
+
+<span class="k">gates</span>:
+  <span class="k">build</span>: <span class="s">make test</span>
+  <span class="k">lint</span>:  <span class="s">make lint</span>
+
+<span class="k">extensions</span>:          <span class="cm"># add-only Lego</span>
+  <span class="k">pre-merge</span>:
+    - <span class="s">design-parity-gate</span>
+
+<span class="k">policy_pack</span>:
+  <span class="k">labels</span>: [<span class="s">bug</span>, <span class="s">feature</span>, <span class="s">flake</span>]
+  <span class="k">tier3_globs</span>: [<span class="s">"src/keel/orchestrator.py"</span>]</code></pre>
+            </div>
+          </div>
+        </section>
+
+        <!-- Dogfooding / Ship -->
+        <section class="view" id="view-ship" data-view="ship">
+          <div class="view-head"><p class="view-kicker" style="color:var(--green-2)">Dogfooding</p><h1>keel ships itself</h1><p>keel's own config is <code style="font-family:var(--font-mono);color:var(--accent-2)">.keel/project.yaml</code>, and CI runs keel on keel-core on every push. If a gate fails, keel blocks its own merge — the same backbone every consumer gets. Here's the dry assessment, live.</p></div>
+          <div class="reveal-band" id="reveal-band">
+            <div class="dogfood">
+              <div class="term">
+                <div class="term-bar"><span class="cdot r"></span><span class="cdot y"></span><span class="cdot g"></span><span class="term-title">keel ship --issue 142 · keel-core</span></div>
+                <pre class="term-body" id="term-body"></pre>
+              </div>
+              <div class="verdict-wrap">
+                <div class="assess" id="assess"></div>
+                <div class="decision" id="decision">
+                  <svg class="anchor-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2"/><path d="M12 7v13M8 11H5a7 7 0 0 0 14 0h-3M5 12H3M21 12h-2"/></svg>
+                  MERGED — issue #142 closed
+                </div>
+                <button class="replay" id="replay" type="button">↻ replay the run</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Security -->
+        <section class="view" id="view-security" data-view="security">
+          <div class="view-head"><p class="view-kicker">Security</p><h1>No telemetry, no surprises</h1><p>keel's deterministic core makes <strong>no network calls</strong> of its own and ships a single runtime dependency (PyYAML). It collects and transmits <strong>no telemetry</strong> — the only outbound activity comes from the gate commands and agent CLIs <strong>you</strong> explicitly configure.</p></div>
+          <div class="invs">
+            <div class="inv"><b>Gate commands run your shell</b><span><code style="font-family:var(--font-mono)">run-gates</code> / <code style="font-family:var(--font-mono)">ship</code> execute the build / lint / command Lego from your config. Review a config before running it on a sensitive repository — exactly as you would a Makefile or CI script.</span></div>
+            <div class="inv"><b>Agent reach = agent auth</b><span>The /keel:&lt;command&gt; adapters drive coding agents that may receive diffs, push branches, comment and merge. Their reach is governed by your agent's own auth and permissions, not by keel.</span></div>
+            <div class="inv"><b>The jury sees only the diff</b><span>The opt-in jury gate passes just the change's diff to the <a href="https://github.com/berkayturanci/ai-jury">ai-jury</a> CLI; keel takes no runtime dependency on it, and the gate is a fail-soft no-op when it's absent.</span></div>
+            <div class="inv"><b>Private vulnerability reporting</b><span>Don't open a public issue — email <a href="mailto:berkayturanci@gmail.com">berkayturanci@gmail.com</a> or use GitHub's private “Report a vulnerability” advisory. Acknowledgement within 48 hours when possible.</span></div>
+          </div>
+          <p class="view-kicker" style="margin:2.2rem 0 .8rem">Security audits — published in the repo</p>
+          <div class="cli-grid">
+            <div class="cli-row"><code>2026-06-11</code><span>v1.2.1 line — no findings; prior follow-ups verified resolved. <a href="https://github.com/berkayturanci/keel/blob/main/docs/security/2026-06-11-security-audit.md">report →</a></span></div>
+            <div class="cli-row"><code>2026-06-09</code><span>v1.0.1 line — secret scanning and consumer-neutrality follow-ups (resolved). <a href="https://github.com/berkayturanci/keel/blob/main/docs/security/2026-06-09-security-audit.md">report →</a></span></div>
+            <div class="cli-row"><code>2026-06-08</code><span>Initial audit — trust boundaries, bandit, pip-audit, workflow &amp; permission review. <a href="https://github.com/berkayturanci/keel/blob/main/docs/security/2026-06-08-security-audit.md">report →</a></span></div>
+          </div>
+          <p class="cmd-note" style="margin-top:1.2rem;font-size:.84rem;color:var(--muted)">Each report covers source-level trust boundaries, static analysis (<code style="font-family:var(--font-mono)">bandit</code>), dependency scanning (<code style="font-family:var(--font-mono)">pip-audit</code>), workflow / permission review, and the repository's GitHub security settings. Full policy: <a href="https://github.com/berkayturanci/keel/blob/main/SECURITY.md">SECURITY.md</a></p>
+        </section>
+
+        <!-- FAQ -->
+        <section class="view" id="view-faq" data-view="faq">
+          <div class="view-head"><p class="view-kicker">FAQ</p><h1>Questions, answered</h1></div>
+          <div class="faq" id="faq"></div>
+          <div class="view-foot"><span>Stdlib-first, deterministic, fully covered.</span><span>© <span data-year>2026</span> Berkay Turancı · Apache-2.0</span></div>
+        </section>
+
+      </main>
+    </div>
   </div>
 </div>
 
-<h2>How it compares</h2>
-<p>Keel is not just a coding agent, PR reviewer, or merge queue. It connects those pieces into one issue-to-done ownership loop.</p>
-<table>
-  <tr><th scope="col">category</th><th scope="col">examples</th><th scope="col">usually stops at</th><th scope="col">Keel adds</th></tr>
-  <tr><td>Coding agents</td><td>OpenHands, SWE-agent, Copilot coding agent</td><td>PR opened or updated</td><td>review gates, merge policy, closeout, capture hooks</td></tr>
-  <tr><td>PR review tools</td><td>CodeRabbit, Qodo, Greptile, Cursor Bugbot</td><td>findings on an existing PR</td><td>implementation loop, tests, merge lock/window</td></tr>
-  <tr><td>Merge queues</td><td>GitHub Merge Queue, Mergify, Graphite, Trunk</td><td>safe PR serialization</td><td>issue intake and ownership before the PR exists</td></tr>
-</table>
-<p class="muted">Full source-backed comparison: <a href="https://github.com/berkayturanci/keel/blob/main/docs/keel/comparison.md">docs/keel/comparison.md</a>.</p>
+<script src="content.js"></script>
+<script src="params.js"></script>
+<script src="app.js"></script>
+<script src="home.js"></script>
+<script src="scenes.js"></script>
+<script src="workspace.js"></script>
 
-<h2>The backbone</h2>
-<table>
-  <tr><th scope="col">step</th><th scope="col">does</th><th scope="col">primary hooks</th></tr>
-  <tr><td>config → guard</td><td>validate config, select work, branch, and enforce preflight rules</td><td><code>after:config</code>, <code>select</code>, <code>guard</code></td></tr>
-  <tr><td>implement → ci</td><td>agent writes code, classify risk, wait on CI</td><td><code>before:implement</code>, <code>after-implement</code>, <code>classify</code></td></tr>
-  <tr><td>review → test</td><td>parallel reviewers, optional jury, build/lint/test gates</td><td><code>reviewers</code>, <code>tester</code>, <code>test</code></td></tr>
-  <tr><td>fixloop → merge</td><td>bounded fixes, merge-window + lock, pre-merge project gates</td><td><code>fixloop</code>, <code>pre-merge</code>, <code>after:merge</code></td></tr>
-  <tr><td>capture → close</td><td>write reports, post closeout, retire the issue</td><td><code>capture</code>, <code>post-merge</code>, <code>on-close</code></td></tr>
-</table>
-
-<h2>Install</h2>
-<pre tabindex="0">pip install keel-workflow
-# provides the `keel` command
-
-pip install "git+https://github.com/berkayturanci/keel@v1.2.2"
-# or pin an existing git tag</pre>
-
-<h2>Quickstart</h2>
-<h3>Set up a consumer repo in one pass</h3>
-<pre tabindex="0">keel setup --root .
-# writes .keel/project.yaml when missing
-# installs .claude/commands/keel/*
-# installs .agents/skills/keel-*
-# strict-validates config + extensions
-# renders the resolved backbone plan</pre>
-
-<h3>See what ship would do, right now</h3>
-<pre tabindex="0">keel ship .keel/project.yaml --root .
-# keel ship — myapp  (base main)
-#   risk tier     : TIER-3  → 3 reviewer(s)
-#   merge window  : <span class="pill">OPEN</span>
-#   gate build          ok
-#   gate lint           ok
-#   decision      : MERGE — clear to merge</pre>
-
-<h2>CLI</h2>
-<table>
-  <tr><th scope="col">command</th><th scope="col">what</th></tr>
-  <tr><td><code>keel setup [--wizard]</code></td><td>one-command onboarding: config, adapters, strict validation, and plan rendering</td></tr>
-  <tr><td><code>keel init [--wizard]</code></td><td>scaffold <code>.keel/project.yaml</code> (detects the stack)</td></tr>
-  <tr><td><code>keel validate &lt;cfg&gt;</code></td><td>validate a config (and its extensions) against the schema</td></tr>
-  <tr><td><code>keel plan &lt;cfg&gt;</code></td><td>render the backbone with this project's gates</td></tr>
-  <tr><td><code>keel run-gates &lt;cfg&gt;</code></td><td>run the project's build/lint/command gates</td></tr>
-  <tr><td><code>keel window &lt;cfg&gt;</code></td><td>is the merge window open now?</td></tr>
-  <tr><td><code>keel ship &lt;cfg&gt;</code></td><td>full dry assessment: tier, window, gates, decision</td></tr>
-  <tr><td><code>keel capabilities &lt;cfg&gt;</code></td><td>check runtime requirements and selected GitHub transport</td></tr>
-  <tr><td><code>keel project-commands &lt;cfg&gt;</code></td><td>list project-owned commands declared in <code>policy_pack</code></td></tr>
-  <tr><td><code>keel install-adapter &lt;claude|skills|all&gt;</code></td><td>install the <code>/keel:&lt;command&gt;</code> workflows (below)</td></tr>
-  <tr><td><code>keel sync [--dry-run]</code></td><td>refresh generated adapters after upgrading the pinned keel version</td></tr>
-</table>
-<p class="muted"><code>keel sync</code> does not install the latest PyPI package. Upgrade <code>keel-workflow</code> with <code>pipx upgrade keel-workflow</code> or <code>python -m pip install --upgrade keel-workflow</code>, then run <code>keel sync --dry-run</code> and <code>keel sync</code>. Sync only updates marker-protected generated adapter files; project config and extensions are validated afterward, never rewritten.</p>
-
-<h2>Claude plugin</h2>
-<p>The repository now includes a Claude plugin manifest and a <code>keel-onboard</code> skill. The plugin does not fork the command bodies; it teaches Claude Code to run <code>keel setup</code>, verify <code>.keel/project.yaml</code>, and keep project behavior in policy packs or extensions. The generated adapters remain the runtime surface for actual <code>/keel:&lt;command&gt;</code> work.</p>
-
-<h2>Configuration reference</h2>
-<p>A Keel consumer is configured with values, not copied command bodies. Top-level fields choose the core version, repository, base branch, timezone, merge window, built-in gates, extension directory, and add-only extension hooks. <code>knobs</code> declares runnable commands, risk globs, docs paths, CI workflow mapping, local agent roles, and runtime capabilities. <code>policy_pack</code> is durable project-owned data for labels, lifecycle transitions, risk rules, test groups, docs policy, health providers, scan scope, local project commands, workflow policies, report destinations, and review rubric additions.</p>
-<p class="muted">Every field and nested parameter is documented in <a href="https://github.com/berkayturanci/keel/blob/main/docs/keel/configuration.md">docs/keel/configuration.md</a>. Unknown keys are rejected by the bundled schema, so the reference is intentionally strict.</p>
-
-<h2>Workflow commands (<code>/keel:&lt;command&gt;</code>)</h2>
-<p class="muted">17 agentic workflows ship with the package. <code>keel install-adapter claude</code> installs native Claude commands; <code>keel install-adapter skills</code> installs <em>one shared</em> skill set under <code>.agents/skills/keel-&lt;command&gt;/</code> that every non-Claude agent (Codex, Antigravity, Gemini) reads. Each is project-neutral — behaviour comes from that repo's <code>.keel/project.yaml</code>. Full reference: <a href="https://github.com/berkayturanci/keel/blob/main/docs/keel/commands.md">docs/keel/commands.md</a>.</p>
-<table>
-  <tr><th scope="col">command</th><th scope="col">what</th></tr>
-  <tr><td><code>/keel:ship</code></td><td>drive an issue end-to-end (select → branch → implement → CI → review → test → merge → close) — per-round review, inline comments, delegation, jury gate, merge window + lock, attribution; <code>--compound</code> selects the compound-engineering profile that reuses the same backbone with documented s4/s7/s9/s11 step overrides</td></tr>
-  <tr><td><code>/keel:implement</code></td><td>delegate one issue to the right implementer; the s4 implement step standalone</td></tr>
-  <tr><td><code>/keel:review-cycle</code></td><td>multi-reviewer review→fix cycle over open PRs (parallel reviewers, capped fix rounds); does not merge</td></tr>
-  <tr><td><code>/keel:pr-loop</code></td><td>iterate an open PR's review comments + CI to green, then hand off to the windowed merge</td></tr>
-  <tr><td><code>/keel:review-all-day</code></td><td>time-window diff-review sweep; open one issue per serious finding (read-only otherwise)</td></tr>
-  <tr><td><code>/keel:regression</code></td><td>codebase-wide regression scan via parallel per-area subagents; open fix issues, route to ship</td></tr>
-  <tr><td><code>/keel:triage</code></td><td>auto-classify unlabelled issues (role/priority/status) via a classifier subagent</td></tr>
-  <tr><td><code>/keel:morning</code></td><td>morning briefing — deferrals, shipped-since, health signals, ranked focus list</td></tr>
-  <tr><td><code>/keel:overnight</code></td><td>unattended overnight block — run ship over the queue until the merge window closes</td></tr>
-  <tr><td><code>/keel:wrap</code></td><td>finish a session — run gates, commit, push, open a PR, record a recap</td></tr>
-  <tr><td><code>/keel:ci-check</code></td><td>check the latest CI run; on failure diagnose root cause + propose one fix (no auto-apply)</td></tr>
-  <tr><td><code>/keel:coverage</code></td><td>per-PR coverage delta (base→head); flag low-coverage × high-risk hot spots</td></tr>
-  <tr><td><code>/keel:deps-audit</code></td><td>dependency security + licence audit; classify and route fixes to ship</td></tr>
-  <tr><td><code>/keel:flake-audit</code></td><td>detect intermittently-failing tests from CI history; open one issue per new flake</td></tr>
-  <tr><td><code>/keel:stale-prs</code></td><td>find quiet/drifted PRs; triage, comment, optionally rebase (respecting the window)</td></tr>
-</table>
-
-<h2>Runs on the free runner</h2>
-<p>The <a href="https://github.com/berkayturanci/keel/blob/main/.github/workflows/keel-ship.yml"><code>keel-ship</code></a> GitHub Action runs keel against every PR on GitHub's free hosted runner — using the runner's own <code>git</code> + <code>gh</code> — and posts the assessment as a comment. This very site &amp; its <a href="./coverage/">coverage report</a> are built and deployed the same way.</p>
-</main>
-
-<footer>
-  keel — Stdlib-first, deterministic, fully covered.
-  · <a href="https://github.com/berkayturanci/keel">source</a>
-  · <a href="./coverage/">coverage</a>
-</footer>
-
-</div>
 </body>
 </html>
