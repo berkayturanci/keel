@@ -28,7 +28,13 @@
         var items = K.commands.filter(function (c) { return c.group === g; });
         if (!items.length) return;
         out += '<p style="margin:1rem 0 .5rem"><b>' + g + "</b></p><div class='doc-cmd-list'>";
-        items.forEach(function (c) { out += '<div class="doc-cmd-item"><code>' + c.name + "</code><span>" + c.detail + "</span></div>"; });
+        items.forEach(function (c) {
+          var a = (window.KEEL_ARGS || {})[c.slug];
+          var flags = a && a.flags && a.flags.length
+            ? '<span class="doc-cmd-flags">' + a.flags.map(function (f) { return "<code>" + esc(f) + "</code>"; }).join(" ") + ' <a href="#parameter-reference">all parameter details →</a></span>'
+            : '<span class="doc-cmd-flags"><a href="#parameter-reference">all parameter details →</a></span>';
+          out += '<div class="doc-cmd-item"><code>' + c.name + "</code><span>" + c.detail + " " + flags + "</span></div>";
+        });
         out += "</div>";
       });
       return '<div class="doc-embed">' + out + "</div>";

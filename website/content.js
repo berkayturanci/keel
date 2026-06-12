@@ -418,6 +418,20 @@ window.KEEL = {
       source: "https://github.com/berkayturanci/keel/blob/main/docs/keel/github-actions.md",
     },
     {
+      group: "Operating", title: "Security audits", slug: "security-audits",
+      summary: "Published security audit reports — scope, verdicts, and follow-up status for each release line.",
+      body:
+        "<p>keel ships with recurring security audits, published in the repository under <code>docs/security/</code>. Each report covers source-level vulnerability classes (command injection, path traversal, unsafe deserialization, secret leakage), data-flow from untrusted GitHub inputs to dangerous sinks, dependency exposure (<code>pip-audit</code>), static analysis (<code>bandit</code>), and GitHub Actions / repository-settings review.</p>" +
+        "<h3>2026-06-11 — v1.2.1 line</h3>" +
+        "<p><b>No critical, high, or medium-severity finding.</b> The core remains deterministic, uses <code>yaml.safe_load</code> exclusively, keeps all <code>git</code>/<code>gh</code> calls on argv wrappers (no shell), enforces path containment for checkpoint/ledger/worktree paths, and redacts capture artifacts before durability. Both follow-ups from the previous audit are confirmed resolved: secret scanning + push protection enabled, and required PR approvals enforced by branch protection. <a href='https://github.com/berkayturanci/keel/blob/main/docs/security/2026-06-11-security-audit.md'>full report →</a></p>" +
+        "<h3>2026-06-09 — v1.0.1 line</h3>" +
+        "<p>No critical or high-severity finding; follow-ups raised on GitHub secret scanning and consumer-neutrality (both since resolved). <a href='https://github.com/berkayturanci/keel/blob/main/docs/security/2026-06-09-security-audit.md'>full report →</a></p>" +
+        "<h3>2026-06-08 — initial audit</h3>" +
+        "<p>Trust-boundary review, <code>bandit</code> + <code>pip-audit</code> passes, workflow-injection and token-permission review. No critical or high-severity finding; the command-gate trust boundary (gates execute your configured shell commands) is documented as the single accepted risk — review a config before running it on a sensitive repository, exactly as you would a Makefile. <a href='https://github.com/berkayturanci/keel/blob/main/docs/security/2026-06-08-security-audit.md'>full report →</a></p>" +
+        "<p>Private vulnerability reporting: do not open a public issue — use GitHub's private \u201cReport a vulnerability\u201d advisory, or email the maintainer. See <a href='https://github.com/berkayturanci/keel/blob/main/SECURITY.md'>SECURITY.md</a>.</p>",
+      source: "https://github.com/berkayturanci/keel/tree/main/docs/security",
+    },
+    {
       group: "Operating", title: "Coverage", slug: "coverage-doc",
       summary: "The pure core is held at 100% line + branch coverage; the gate is fail_under = 100 in CI.",
       body:

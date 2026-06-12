@@ -130,6 +130,7 @@
 .bb-note strong { color: var(--text); }
 .bb-note .tag-agent, .bb-note .hook { margin-right: .25rem; vertical-align: baseline; }
 .bb-note .bbn-line { display: block; }
+.bb-note .bbn-lead { color: var(--text); margin-bottom: .15rem; }
 .bb-note .bbn-line + .bbn-line { margin-top: .35rem; }
 .bb-tbl { width: 100%; border-collapse: collapse; min-width: 620px; font-size: .92rem; }
 .bb-tbl th, .bb-tbl td { padding: .7rem 1rem; text-align: left; border-bottom: 1px solid var(--border-soft); vertical-align: top; }

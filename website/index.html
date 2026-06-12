@@ -138,12 +138,12 @@
         <div class="sb-lab">More</div>
         <button class="sb-item" data-view="ship"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2"/><path d="M12 7v13M8 11H5a7 7 0 0 0 14 0h-3"/></svg></span> Dogfooding</button>
         <button class="sb-item" data-view="security"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M9.5 12l2 2 3.5-4"/></svg></span> Security</button>
+        <a class="sb-item" href="docs.html"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 4h9l3 3v13H4z"/><path d="M7 11h7M7 15h7"/></svg></span> Docs <span class="ext">↗</span></a>
+        <a class="sb-item" href="coverage.html"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 6L9 17l-5-5"/></svg></span> Coverage <span class="ext">↗</span></a>
         <button class="sb-item" data-view="faq"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.8.4-1 .9-1 1.7M12 17h.01"/></svg></span> FAQ</button>
 
         <div class="sb-spacer"></div>
         <div class="sb-lab">Open</div>
-        <a class="sb-item" href="docs.html"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 4h9l3 3v13H4z"/><path d="M7 11h7M7 15h7"/></svg></span> Docs <span class="ext">↗</span></a>
-        <a class="sb-item" href="coverage.html"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 6L9 17l-5-5"/></svg></span> Coverage <span class="ext">↗</span></a>
         <a class="sb-item" href="https://github.com/berkayturanci/keel"><span class="ic"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.2.8-.5v-1.7c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.7 1.3 3.4 1 .1-.8.4-1.3.8-1.6-2.6-.3-5.3-1.3-5.3-5.8 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17.3 4.7 18.3 5 18.3 5c.6 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.5-2.7 5.5-5.3 5.8.4.4.8 1.1.8 2.2v3.3c0 .3.2.6.8.5 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5z"/></svg></span> GitHub <span class="ext">↗</span></a>
         <div class="sb-foot">Apache-2.0<br>© <a href="https://github.com/berkayturanci">Berkay Turancı</a></div>
       </nav>
@@ -164,7 +164,9 @@
               <p class="ov-plugin">In Claude Code? Install it as a plugin — no <code class="plain">pip</code> required:
                 <span class="ov-install"><span class="p">&gt;</span><code id="plugin-cmd">/plugin install keel</code><button class="hi-copy" type="button" data-copy="/plugin install keel" aria-label="Copy plugin install command"><span>copy</span></button></span>
               </p>
-              <p class="ov-plugin">Or pin a release: <code class="plain">pip install "git+https://github.com/berkayturanci/keel@v1.2.2"</code></p>
+              <p class="ov-plugin">Or pin a release:
+                <span class="ov-install"><span class="p">$</span><code id="pin-cmd">pip install "git+https://github.com/berkayturanci/keel@v1.2.2"</code><button class="hi-copy" type="button" data-copy="" data-copy-target="#pin-cmd" aria-label="Copy pinned install command"><span>copy</span></button></span>
+              </p>
               <p class="ov-badges">
                 <a href="https://github.com/berkayturanci/keel/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/berkayturanci/keel/ci.yml?branch=main&amp;label=CI&amp;logo=githubactions&amp;logoColor=white" alt="CI" loading="lazy"></a>
                 <a href="coverage.html"><img src="https://img.shields.io/endpoint?url=https://berkayturanci.github.io/keel/coverage-badge.json" alt="coverage" loading="lazy"></a>
@@ -218,7 +220,7 @@
           <div class="bb-figure" id="bb-figure"></div>
           <p class="view-kicker" style="margin:2rem 0 .6rem">The ordered step machine</p>
           <div class="bb-tbl-wrap"><table class="bb-tbl"><thead><tr><th>step</th><th>name</th><th>does</th><th>primary hooks</th></tr></thead><tbody id="bb-tbl-body"></tbody></table></div>
-          <p class="bb-note"><span class="bbn-line"><span class="tag-agent">agent</span> the step's work is produced by a coding agent (Claude Code, Codex, Gemini, …) — but only the orchestrator writes to git/PRs.</span> <span class="bbn-line"><span class="hook slot">hook</span> all 28 hooks are <strong>add-only extension slots</strong>. Amber ones are <strong>primary slots</strong> that can own or shape the step's outcome (<span style="font-family:var(--font-mono)">after-implement</span>, <span style="font-family:var(--font-mono)">reviewers</span>, <span style="font-family:var(--font-mono)">capture</span>, <span style="font-family:var(--font-mono)">post-merge</span>); grey ones are passive before/after points that observe without gating.</span> <span class="bbn-line"><span class="hook slot block">guard ⊘</span> red slots can <strong>block</strong> the run — <span style="font-family:var(--font-mono)">guard</span> (s3), <span style="font-family:var(--font-mono)">tester / test</span> (s8) and <span style="font-family:var(--font-mono)">pre-merge</span> (s10) stop work when their checks fail.</span></p>
+          <p class="bb-note"><span class="bbn-line bbn-lead"><span class="hook slot">hook</span> all 28 hooks are <strong>add-only extension slots</strong> — every step exposes them; a project snaps in its own Lego and can never reorder or remove the machine.</span> <span class="bbn-line"><span class="tag-agent">agent</span> the step's work is produced by a coding agent (Claude Code, Codex, Gemini, …) — but only the orchestrator writes to git/PRs.</span> <span class="bbn-line"><span class="hook slot">after-implement</span> amber hooks are <strong>primary slots</strong> that can own or shape the step's outcome (<span style="font-family:var(--font-mono)">after-implement</span>, <span style="font-family:var(--font-mono)">reviewers</span>, <span style="font-family:var(--font-mono)">capture</span>, <span style="font-family:var(--font-mono)">post-merge</span>); grey ones are passive before/after points that observe without gating.</span> <span class="bbn-line"><span class="hook slot block">guard ⊘</span> red slots can <strong>block</strong> the run — <span style="font-family:var(--font-mono)">guard</span> (s3), <span style="font-family:var(--font-mono)">tester / test</span> (s8) and <span style="font-family:var(--font-mono)">pre-merge</span> (s10) stop work when their checks fail.</span></p>
           <p class="view-kicker" style="margin:2rem 0 .6rem">Invariants the backbone always preserves</p>
           <div class="invs" id="invs"></div>
         </section>
@@ -315,9 +317,9 @@ keel ship     &lt;cfg&gt; --root .  <span class="cm"># dry assessment → decisi
           </div>
           <p class="view-kicker" style="margin:2.2rem 0 .8rem">Security audits — published in the repo</p>
           <div class="cli-grid">
-            <div class="cli-row"><code>2026-06-11</code><span>v1.2.1 line — no findings; prior follow-ups verified resolved. <a href="https://github.com/berkayturanci/keel/blob/main/docs/security/2026-06-11-security-audit.md">report →</a></span></div>
-            <div class="cli-row"><code>2026-06-09</code><span>v1.0.1 line — secret scanning and consumer-neutrality follow-ups (resolved). <a href="https://github.com/berkayturanci/keel/blob/main/docs/security/2026-06-09-security-audit.md">report →</a></span></div>
-            <div class="cli-row"><code>2026-06-08</code><span>Initial audit — trust boundaries, bandit, pip-audit, workflow &amp; permission review. <a href="https://github.com/berkayturanci/keel/blob/main/docs/security/2026-06-08-security-audit.md">report →</a></span></div>
+            <div class="cli-row"><code>2026-06-11</code><span>v1.2.1 line — no findings; prior follow-ups verified resolved. <a href="docs.html#security-audits">report →</a></span></div>
+            <div class="cli-row"><code>2026-06-09</code><span>v1.0.1 line — secret scanning and consumer-neutrality follow-ups (resolved). <a href="docs.html#security-audits">report →</a></span></div>
+            <div class="cli-row"><code>2026-06-08</code><span>Initial audit — trust boundaries, bandit, pip-audit, workflow &amp; permission review. <a href="docs.html#security-audits">report →</a></span></div>
           </div>
           <p class="cmd-note" style="margin-top:1.2rem;font-size:.84rem;color:var(--muted)">Each report covers source-level trust boundaries, static analysis (<code style="font-family:var(--font-mono)">bandit</code>), dependency scanning (<code style="font-family:var(--font-mono)">pip-audit</code>), workflow / permission review, and the repository's GitHub security settings. Full policy: <a href="https://github.com/berkayturanci/keel/blob/main/SECURITY.md">SECURITY.md</a></p>
         </section>

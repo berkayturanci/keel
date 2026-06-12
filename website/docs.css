@@ -76,3 +76,7 @@
 .docs-foot { max-width: var(--max); margin: 0 auto; }
 .docs-no-results { padding: 2rem; text-align: center; color: var(--muted); display: none; }
 .docs-no-results.show { display: block; }
+
+.doc-cmd-flags { display: block; margin-top: .35rem; line-height: 1.9; }
+.doc-cmd-flags code { font-family: var(--font-mono); font-size: .72rem; color: var(--accent-2); background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: .12rem .4rem; min-width: 0; margin-right: .25rem; overflow-wrap: anywhere; }
+.doc-cmd-flags a { font-size: .78rem; white-space: nowrap; }

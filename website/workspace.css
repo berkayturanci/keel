@@ -169,3 +169,8 @@ body { padding-top: 0; overflow: hidden; }
 @media (max-width: 760px) {
   .ov-badges .bgrp { display: contents; }
 }
+
+.ov-install code { overflow-wrap: anywhere; }
+@media (max-width: 760px) {
+  .ov-install { flex-wrap: wrap; }
+}

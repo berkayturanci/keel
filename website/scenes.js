@@ -464,7 +464,7 @@
         }
         detail.innerHTML = "<p>" + c.detail + "</p>" +
           '<p><span class="det-cmd"><span class="gp">/</span>' + (K.cmdExample && K.cmdExample[c.slug] ? K.cmdExample[c.slug].replace("/", "") : c.name.replace("/keel:", "keel:")) + "</span></p>" + params +
-          '<p><a class="det-link" href="docs.html#commands">full command reference →</a></p>';
+          '<p><a class="det-link" href="docs.html#commands">full command reference →</a> <a class="det-link" href="docs.html#parameter-reference">all parameter details →</a></p>';
       }
       if (stop) stop();
       var builder = SCENES[c.scene] || SCENES.ship;
