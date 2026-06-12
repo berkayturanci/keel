@@ -72,12 +72,19 @@
   var nav = document.getElementById("nav");
   if (nav) {
     var last = 0;
+    var navTicking = false;
     addEventListener("scroll", function () {
-      var y = scrollY || pageYOffset;
-      nav.classList.toggle("scrolled", y > 8);
-      if (y > 420 && y > last + 4) nav.classList.add("nav-hidden");
-      else if (y < last - 4 || y < 120) nav.classList.remove("nav-hidden");
-      last = y;
+      if (!navTicking) {
+        requestAnimationFrame(function () {
+          var y = scrollY || pageYOffset;
+          nav.classList.toggle("scrolled", y > 8);
+          if (y > 420 && y > last + 4) nav.classList.add("nav-hidden");
+          else if (y < last - 4 || y < 120) nav.classList.remove("nav-hidden");
+          last = y;
+          navTicking = false;
+        });
+        navTicking = true;
+      }
     }, { passive: true });
   }
   var burger = document.getElementById("nav-burger");
@@ -204,16 +211,22 @@
     var mqm = matchMedia("(max-width: 760px)");
     /* Accumulate per-direction travel: mobile browsers fire many small-delta
        scroll events, so a per-event threshold never sees an upward move. */
-    var last = 0, acc = 0;
+    var last = 0, acc = 0, tbTicking = false;
     mainEl.addEventListener("scroll", function () {
-      if (!mqm.matches) { tb.style.marginTop = ""; return; }
-      var y = mainEl.scrollTop;
-      var dy = y - last;
-      last = y;
-      if ((dy < 0) !== (acc < 0)) acc = 0;
-      acc += dy;
-      if (y < 140 || acc < -10) tb.style.marginTop = "0px";
-      else if (acc > 24) tb.style.marginTop = -tb.offsetHeight + "px";
+      if (!tbTicking) {
+        requestAnimationFrame(function () {
+          if (!mqm.matches) { tb.style.marginTop = ""; tbTicking = false; return; }
+          var y = mainEl.scrollTop;
+          var dy = y - last;
+          last = y;
+          if ((dy < 0) !== (acc < 0)) acc = 0;
+          acc += dy;
+          if (y < 140 || acc < -10) tb.style.marginTop = "0px";
+          else if (acc > 24) tb.style.marginTop = -tb.offsetHeight + "px";
+          tbTicking = false;
+        });
+        tbTicking = true;
+      }
     }, { passive: true });
     if (mqm.addEventListener) mqm.addEventListener("change", function () { tb.style.marginTop = ""; });
   })();
