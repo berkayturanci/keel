@@ -96,6 +96,12 @@
 /* ---- Backbone reference table --------------------------------------- */
 .bb-figure { position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.2rem 1.3rem 1rem; margin-bottom: 1rem; box-shadow: var(--shadow-md); }
 .bb-figure .bb-svg { width: 100%; height: auto; display: block; }
+.bb-scroll { overflow-x: auto; scrollbar-width: thin; }
+.bb-canvas { position: relative; }
+@media (max-width: 760px) {
+  .bb-canvas { min-width: 880px; }
+  .bb-figure { padding: 1rem .8rem .8rem; }
+}
 .bb-figure .bbf-hit { cursor: pointer; }
 .bbf-tip { position: absolute; transform: translate(-50%, -100%); width: 250px; background: var(--surface-3); border: 1px solid var(--border); border-radius: 10px; padding: .55rem .75rem; box-shadow: var(--shadow-md); opacity: 0; pointer-events: none; transition: opacity .15s; z-index: 5; }
 .bbf-tip.show { opacity: 1; }

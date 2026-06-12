@@ -108,8 +108,9 @@
     s += "</g>";
     s += '<defs><marker id="bbArr" markerWidth="7" markerHeight="7" refX="5.5" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 Z" fill="var(--green)"/></marker></defs>';
     s += "</svg>";
-    fig.innerHTML = s +
+    fig.innerHTML = '<div class="bb-scroll"><div class="bb-canvas">' + s + '</div></div>' +
       '<div class="bb-legend"><span><i style="background:var(--accent)"></i> fixed step</span><span><i style="background:transparent;border:1.5px solid var(--brass)"></i> add-only slots (every step · 28 total)</span><span><i style="background:var(--block)"></i> can block</span><span><i style="background:var(--green)"></i> merged</span></div>';
+    var canvas = fig.querySelector(".bb-canvas");
     /* safety primitive chips */
     var saf = el("div", "safety");
     SAFETY.forEach(function (c) {
@@ -119,16 +120,16 @@
       d.innerHTML = BBICONS[c.icon] + c.label + '<span class="tip"><b>' + st[c.i].id + " " + st[c.i].name + "</b> — " + c.tip + "</span>";
       saf.appendChild(d);
     });
-    fig.appendChild(saf);
+    canvas.appendChild(saf);
     /* hover tooltips: step name + what it does + its slots */
     var tip = el("div", "bbf-tip");
-    fig.appendChild(tip);
+    canvas.appendChild(tip);
     fig.querySelectorAll(".bbf-hit").forEach(function (c) {
       function show() {
         var b = st[+c.dataset.i];
         var slots = b.slots && b.slots.length ? '<span class="slots">' + b.slots.map(function (h) { return '<code class="' + (BLOCKING[h] ? "block" : PRIMARY[h] ? "primary" : "") + '">' + h + (BLOCKING[h] ? " ⊘" : "") + "</code>"; }).join("") + "</span>" : "";
         tip.innerHTML = "<b>" + b.id + " " + b.name + (b.agent ? ' · agent' : '') + (b.block ? ' · can block' : '') + "</b><span>" + b.blurb + "</span>" + slots;
-        var fr = fig.getBoundingClientRect(), cr = c.getBoundingClientRect();
+        var fr = canvas.getBoundingClientRect(), cr = c.getBoundingClientRect();
         var cx = cr.left - fr.left + cr.width / 2;
         tip.style.left = Math.min(Math.max(cx, 130), fr.width - 130) + "px";
         tip.style.top = (cr.top - fr.top - 10) + "px";
