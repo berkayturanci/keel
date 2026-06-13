@@ -365,7 +365,16 @@ the verifier is fail-closed and accepts only durable GitHub artifacts:
   blocking `review-vendor-distinctness` finding. This check is jury-agnostic: it reads only
   the verdict provenance fields and takes no dependency on any review vendor;
 - a posted jury verdict carrying `keel.jury-verdict.v1` and the current `head: <sha>`
-  when jury is enabled in gating mode, posted by a trusted GitHub actor.
+  when jury is enabled in gating mode, posted by a trusted GitHub actor;
+- at least one mandatory `agent:<vendor>` attribution label on the PR (the labels keel
+  computes for the effective implementer). A missing `agent:*` label fails with a blocking
+  `attribution-label` finding. When a `ship_run` ledger record exists for the PR, the label
+  vendor is additionally cross-checked against the record's implementer vendor
+  (`actors.implementer`, the slug before any `:model`); a contradiction (for example an
+  `agent:codex` label against a `claude` implementer) fails with the same finding. With no
+  ledger record (or no recorded implementer) only the presence check runs, and when PR labels
+  are unavailable the check is skipped entirely (back-compat). This check engages only when
+  the gate is enforced and is suppressed under `--dry-run`.
 
 For live GitHub payloads, trusted means `author_association` is `OWNER`, `MEMBER`, or
 `COLLABORATOR`. Explicitly untrusted associations are rejected even when the author type is

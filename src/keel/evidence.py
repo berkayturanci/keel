@@ -14,9 +14,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from . import closure
+from . import agents, closure
 
 SCHEMA_VERSION = "keel.evidence.v1"
+AGENT_LABEL_PREFIX = "agent:"
 REVIEW_VERDICT_MARKER = "keel.review-verdict.v1"
 JURY_VERDICT_MARKER = "keel.jury-verdict.v1"
 SHIP_ASSESSMENT_HEADING = "### \U0001f6a2 keel ship"
@@ -217,6 +218,7 @@ def verify(
     issue_comments: list[dict[str, Any]] | None = None,
     pr_reviews: list[dict[str, Any]] | None = None,
     pr_body: str | None = None,
+    pr_labels: Sequence[str] | None = None,
     head_sha: str | None = None,
     ledger_record: dict[str, Any] | None = None,
     dry_run: bool = False,
@@ -228,6 +230,11 @@ def verify(
     When ``ledger_record`` is the ship_run record for this PR, a closure comment
     only counts when its content matches the canonical render of that record
     (closure-comment fidelity). Without a record the marker-only behavior holds.
+
+    When the gate is active, ``pr_labels`` are additionally checked for the
+    mandatory ``agent:<vendor>`` attribution label (and cross-checked against the
+    ledger implementer vendor when a record is present); see
+    :func:`attribution_check`.
     """
     del pr_body  # Explicitly not accepted as evidence.
     items = required_items(review_contract, dry_run=dry_run, enforced=enforced)
@@ -278,6 +285,13 @@ def verify(
     )
     if distinct is not None:
         findings = [*findings, distinct]
+    attribution = _attribution_finding(
+        pr_labels=pr_labels,
+        enforced=enforced and not dry_run,
+        ledger_record=ledger_record,
+    )
+    if attribution is not None:
+        findings = [*findings, attribution]
     blocking_findings = [finding for finding in findings if finding["severity"] == "major"]
     return {
         "schema_version": SCHEMA_VERSION,
@@ -655,6 +669,122 @@ def distinct_vendor_check(
             "missing_provenance": missing,
         }
     return {"ok": True, "reason": None, "duplicated": [], "missing_provenance": missing}
+
+
+def agent_label_vendors(labels: Sequence[str] | None) -> list[str]:
+    """Return the lower-cased vendor slugs from every ``agent:<vendor>`` label.
+
+    A blank vendor (a bare ``agent:`` label) is ignored. Order is preserved and
+    duplicates are kept so callers can reason about the raw label set; this is a
+    pure helper with no I/O.
+    """
+    vendors: list[str] = []
+    for label in labels or ():
+        if not isinstance(label, str) or not label.startswith(AGENT_LABEL_PREFIX):
+            continue
+        vendor = label[len(AGENT_LABEL_PREFIX):].strip().lower()
+        if vendor:
+            vendors.append(vendor)
+    return vendors
+
+
+def ledger_implementer_vendor(ledger_record: dict[str, Any] | None) -> str | None:
+    """Return the implementer's vendor slug from a ship_run ``ledger_record``.
+
+    The ledger stores the effective implementer as a codename or ``vendor:model``
+    string under ``actors.implementer``; the vendor is the part before the first
+    ``:``. Returns ``None`` when no record, no implementer, or a blank implementer
+    is recorded so the cross-check can degrade to presence-only. Pure — no I/O.
+    """
+    if not isinstance(ledger_record, dict):
+        return None
+    actors = ledger_record.get("actors")
+    implementer = actors.get("implementer") if isinstance(actors, dict) else None
+    if not isinstance(implementer, str) or not implementer.strip():
+        return None
+    vendor, _ = agents.split_delegate(implementer.strip())
+    vendor = vendor.strip().lower()
+    return vendor or None
+
+
+def attribution_check(
+    labels: Sequence[str] | None,
+    *,
+    implementer_vendor: str | None = None,
+) -> dict[str, Any]:
+    """Pure attribution-label check over a PR's labels and the ledger implementer.
+
+    Two layers, both fail-closed only on a real contradiction:
+
+    * **Presence** — at least one non-blank ``agent:<vendor>`` label must exist.
+      Missing one is a ``missing-label`` finding.
+    * **Cross-check** — when ``implementer_vendor`` is known (a ship_run record
+      recorded an implementer), one of the PR's ``agent:*`` vendors must match it.
+      A mismatch is a ``vendor-mismatch`` finding. When ``implementer_vendor`` is
+      ``None`` (no record / no implementer) only the presence layer runs, so PRs
+      that predate attribution recording are not broken.
+
+    Returns ``{ok, reason, label_vendors, implementer_vendor}``. No I/O.
+    """
+    label_vendors = agent_label_vendors(labels)
+    implementer = implementer_vendor.strip().lower() if implementer_vendor else None
+    if not label_vendors:
+        return {
+            "ok": False,
+            "reason": "missing-label",
+            "label_vendors": label_vendors,
+            "implementer_vendor": implementer,
+        }
+    if implementer is not None and implementer not in label_vendors:
+        return {
+            "ok": False,
+            "reason": "vendor-mismatch",
+            "label_vendors": label_vendors,
+            "implementer_vendor": implementer,
+        }
+    return {
+        "ok": True,
+        "reason": None,
+        "label_vendors": label_vendors,
+        "implementer_vendor": implementer,
+    }
+
+
+def _attribution_finding(
+    *,
+    pr_labels: Sequence[str] | None,
+    enforced: bool,
+    ledger_record: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Return a blocking attribution finding when the gate is active, else ``None``.
+
+    Only runs when the evidence gate is active (``enforced``) *and* PR labels were
+    actually fetched (``pr_labels is not None``): the presence check is cheap and
+    default-on, while the vendor cross-check engages only when the ledger recorded
+    an implementer vendor. Degrades gracefully — labels not available skips the
+    check entirely, no record means presence-only, and a gate-inactive run skips
+    the check (back-compat with callers that never pass labels).
+    """
+    if not enforced or pr_labels is None:
+        return None
+    implementer_vendor = ledger_implementer_vendor(ledger_record)
+    result = attribution_check(pr_labels, implementer_vendor=implementer_vendor)
+    if result["ok"]:
+        return None
+    if result["reason"] == "missing-label":
+        message = "PR is missing a mandatory agent:<vendor> attribution label."
+    else:
+        message = (
+            "PR agent:<vendor> attribution "
+            f"({', '.join(result['label_vendors'])}) does not match the ship_run "
+            f"ledger implementer vendor ({result['implementer_vendor']})."
+        )
+    return {
+        "id": "attribution-label",
+        "severity": "major",
+        "kind": "attribution",
+        "message": message,
+    }
 
 
 def _reviewer_key(item: dict[str, Any], body: str) -> str:

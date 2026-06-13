@@ -947,5 +947,187 @@ class TestRequireDistinctVendors(unittest.TestCase):
         self.assertFalse(off["require_distinct_vendors"])
 
 
+def _satisfied_evidence_kwargs():
+    """Evidence inputs that satisfy a one-reviewer contract (closure + review)."""
+    return {
+        "pr_comments": [
+            _trusted_comment(_closure_with_run_context()),
+            _trusted_comment("keel.review-verdict.v1\nreviewer: alpha\nLGTM"),
+        ],
+        "issue_comments": [_trusted_comment(_closure_with_run_context())],
+    }
+
+
+def _ledger_record(implementer):
+    return {"actors": {"implementer": implementer}}
+
+
+class TestAgentLabelVendors(unittest.TestCase):
+    def test_extracts_lowercased_vendor_slugs(self):
+        self.assertEqual(
+            evidence.agent_label_vendors(["agent:Claude", "model:gpt-5", "agent:codex"]),
+            ["claude", "codex"],
+        )
+
+    def test_ignores_blank_and_non_agent_labels(self):
+        self.assertEqual(
+            evidence.agent_label_vendors(["agent:", "agent: ", "tier:3", 7, None]),
+            [],
+        )
+
+    def test_none_labels_yield_empty(self):
+        self.assertEqual(evidence.agent_label_vendors(None), [])
+
+
+class TestLedgerImplementerVendor(unittest.TestCase):
+    def test_vendor_before_colon(self):
+        self.assertEqual(
+            evidence.ledger_implementer_vendor(_ledger_record("ollama:qwen2.5")),
+            "ollama",
+        )
+
+    def test_bare_codename(self):
+        self.assertEqual(
+            evidence.ledger_implementer_vendor(_ledger_record("Claude")),
+            "claude",
+        )
+
+    def test_none_record(self):
+        self.assertIsNone(evidence.ledger_implementer_vendor(None))
+
+    def test_missing_or_blank_implementer(self):
+        self.assertIsNone(evidence.ledger_implementer_vendor({"actors": {}}))
+        self.assertIsNone(evidence.ledger_implementer_vendor(_ledger_record("  ")))
+        self.assertIsNone(evidence.ledger_implementer_vendor(_ledger_record(None)))
+
+    def test_non_dict_actors(self):
+        self.assertIsNone(evidence.ledger_implementer_vendor({"actors": "claude"}))
+
+
+class TestAttributionCheck(unittest.TestCase):
+    def test_present_and_matching_vendor_ok(self):
+        result = evidence.attribution_check(["agent:claude"], implementer_vendor="claude")
+        self.assertTrue(result["ok"])
+        self.assertIsNone(result["reason"])
+
+    def test_missing_label_is_finding(self):
+        result = evidence.attribution_check([], implementer_vendor="claude")
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["reason"], "missing-label")
+
+    def test_vendor_mismatch_is_finding(self):
+        result = evidence.attribution_check(["agent:codex"], implementer_vendor="claude")
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["reason"], "vendor-mismatch")
+
+    def test_no_implementer_is_presence_only(self):
+        result = evidence.attribution_check(["agent:codex"], implementer_vendor=None)
+        self.assertTrue(result["ok"])
+
+    def test_matching_among_multiple_labels_ok(self):
+        result = evidence.attribution_check(
+            ["agent:codex", "agent:claude"], implementer_vendor="claude"
+        )
+        self.assertTrue(result["ok"])
+
+    def test_implementer_vendor_is_normalized(self):
+        result = evidence.attribution_check(["agent:claude"], implementer_vendor="  Claude ")
+        self.assertTrue(result["ok"])
+
+
+class TestAttributionVerifyWiring(unittest.TestCase):
+    def test_present_and_matching_passes(self):
+        # Cross-check matching is exercised at the pure layer; here we confirm the
+        # presence layer does not flag a PR that carries an agent:* label. No
+        # ledger_record is passed so closure-fidelity matching stays out of scope.
+        report = evidence.verify(
+            _review_contract(reviewers=1),
+            pr_labels=["agent:claude"],
+            **_satisfied_evidence_kwargs(),
+        )
+        self.assertEqual(report["status"], "pass")
+        self.assertNotIn(
+            "attribution-label", [f["id"] for f in report["findings"]]
+        )
+
+    def test_matching_vendor_with_ledger_record_passes(self):
+        # A real ship_run record (implementer "codex"): closure comments render-
+        # match it and the agent:codex label matches its implementer vendor.
+        record = _ship_run_record()
+        body = closure.render_closure_comment(record)
+        report = evidence.verify(
+            _review_contract(reviewers=1),
+            pr_labels=["agent:codex"],
+            ledger_record=record,
+            pr_comments=[
+                _trusted_comment(body),
+                _trusted_comment("keel.review-verdict.v1\nreviewer: alpha\nLGTM"),
+            ],
+            issue_comments=[_trusted_comment(body)],
+        )
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["findings"], [])
+
+    def test_vendor_mismatch_with_ledger_record_fails(self):
+        # Same matching closure, but the label vendor (claude) contradicts the
+        # record's implementer vendor (codex) -> attribution finding, gate fails.
+        record = _ship_run_record()
+        body = closure.render_closure_comment(record)
+        report = evidence.verify(
+            _review_contract(reviewers=1),
+            pr_labels=["agent:claude"],
+            ledger_record=record,
+            pr_comments=[
+                _trusted_comment(body),
+                _trusted_comment("keel.review-verdict.v1\nreviewer: alpha\nLGTM"),
+            ],
+            issue_comments=[_trusted_comment(body)],
+        )
+        self.assertEqual(report["status"], "fail")
+        self.assertEqual(report["missing"], [])
+        finding = next(f for f in report["findings"] if f["id"] == "attribution-label")
+        self.assertEqual(finding["severity"], "major")
+        self.assertIn("does not match", finding["message"])
+
+    def test_missing_label_fails_when_gate_active(self):
+        report = evidence.verify(
+            _review_contract(reviewers=1),
+            pr_labels=[],
+            **_satisfied_evidence_kwargs(),
+        )
+        self.assertEqual(report["status"], "fail")
+        finding = next(f for f in report["findings"] if f["id"] == "attribution-label")
+        self.assertEqual(finding["severity"], "major")
+        self.assertIn("missing a mandatory agent", finding["message"])
+
+    def test_no_ledger_record_is_presence_only(self):
+        report = evidence.verify(
+            _review_contract(reviewers=1),
+            pr_labels=["agent:codex"],
+            ledger_record=None,
+            **_satisfied_evidence_kwargs(),
+        )
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["findings"], [])
+
+    def test_gate_inactive_skips_attribution_check(self):
+        report = evidence.verify(
+            _review_contract(reviewers=1),
+            pr_labels=[],
+            enforced=False,
+        )
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["findings"], [])
+
+    def test_dry_run_skips_attribution_check(self):
+        report = evidence.verify(
+            _review_contract(reviewers=1),
+            pr_labels=[],
+            dry_run=True,
+        )
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["findings"], [])
+
+
 if __name__ == "__main__":
     unittest.main()

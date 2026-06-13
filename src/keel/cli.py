@@ -1495,6 +1495,7 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
         issue_comments=artifacts["issue_comments"],
         pr_reviews=artifacts["pr_reviews"],
         pr_body=artifacts["pr_body"],
+        pr_labels=artifacts["pr_labels"],
         head_sha=artifacts["head_sha"],
         ledger_record=ledger_record,
         dry_run=args.dry_run,
@@ -2258,6 +2259,7 @@ def _verify_merge_evidence(
         issue_comments=artifacts["issue_comments"],
         pr_reviews=artifacts["pr_reviews"],
         pr_body=artifacts["pr_body"],
+        pr_labels=artifacts["pr_labels"],
         head_sha=artifacts["head_sha"],
         enforced=enforced,
     )

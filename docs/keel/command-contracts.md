@@ -467,6 +467,14 @@ The block records:
   verdict must carry `vendor:` provenance and no two may share a vendor; a missing or
   duplicate vendor yields a blocking `review-vendor-distinctness` finding. The check is
   jury-agnostic — it reads only the verdict provenance fields and imports no review vendor.
+- **Attribution label** (default on when the gate is enforced): the PR must carry at least
+  one mandatory `agent:<vendor>` attribution label (the labels keel computes for the
+  effective implementer). A missing label, or — when a `ship_run` ledger record exists — a
+  label vendor that contradicts the record's implementer vendor (`actors.implementer`),
+  yields a blocking `attribution-label` finding. With no ledger record only the presence
+  check runs; when PR labels are unavailable the check is skipped (back-compat), and it is
+  suppressed under `--dry-run`. This keeps cross-vendor morning/wrap stats honest by
+  confirming the attribution labels were actually applied and match the ledger implementer.
 
 `keel evidence-verify <project.yaml> --pr <N>` reads those public artifacts through `gh`,
 derives the current PR tier from the live changed-file list, binds verdict evidence to the

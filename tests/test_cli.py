@@ -1457,6 +1457,7 @@ class TestShip(unittest.TestCase):
                 "--root", str(REPO_ROOT),
                 "--pr", "300",
                 "--pr-label", "keel:ship",
+                "--pr-label", "agent:codex",
                 "--reviewers", "2",
                 "--jury",
                 "--pr-comments-json", str(pr_comments),
@@ -1472,6 +1473,44 @@ class TestShip(unittest.TestCase):
         self.assertTrue(data["enforced"])
         self.assertEqual(data["verification"]["status"], "pass")
         self.assertEqual(data["verification"]["counts"]["review_verdict"], 2)
+
+    def test_evidence_verify_missing_attribution_label_fails_when_gated(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            pr_comments = root / "pr-comments.json"
+            issue_comments = root / "issue-comments.json"
+            reviews = root / "reviews.json"
+            body = root / "body.md"
+            _write_json_fixture(pr_comments, [
+                _trusted_comment("<!-- keel.closure-comment.v1 -->"),
+                _trusted_comment("keel.review-verdict.v1\nreviewer: a\nLGTM"),
+            ])
+            _write_json_fixture(issue_comments, [
+                _trusted_comment("<!-- keel.closure-comment.v1 -->"),
+            ])
+            reviews.write_text("[]", encoding="utf-8")
+            body.write_text("Closes #212", encoding="utf-8")
+            rc, out, _ = run([
+                "evidence-verify", str(PROJECTS / "example-android.yaml"),
+                "--root", str(REPO_ROOT),
+                "--pr", "300",
+                "--pr-label", "keel:ship",
+                "--reviewers", "1",
+                "--pr-comments-json", str(pr_comments),
+                "--issue-comments-json", str(issue_comments),
+                "--pr-reviews-json", str(reviews),
+                "--pr-body-file", str(body),
+                "--json",
+            ])
+
+        self.assertEqual(rc, 1)
+        data = json.loads(out)
+        self.assertTrue(data["enforced"])
+        self.assertEqual(data["verification"]["status"], "fail")
+        self.assertTrue(any(
+            f["id"] == "attribution-label"
+            for f in data["verification"]["findings"]
+        ))
 
     def _run_distinct_vendor_verify(self, *, flag, vendor_b):
         with tempfile.TemporaryDirectory() as d:
@@ -1498,6 +1537,7 @@ class TestShip(unittest.TestCase):
                 "--root", str(REPO_ROOT),
                 "--pr", "300",
                 "--pr-label", "keel:ship",
+                "--pr-label", "agent:claude",
                 "--reviewers", "2",
                 "--pr-comments-json", str(pr_comments),
                 "--issue-comments-json", str(issue_comments),
@@ -1567,6 +1607,7 @@ class TestShip(unittest.TestCase):
                 "--root", str(REPO_ROOT),
                 "--pr", "300",
                 "--pr-label", "keel:ship",
+                "--pr-label", "agent:codex",
                 "--reviewers", "1",
                 "--deferral", "review",
                 "--pr-comments-json", str(pr_comments),
@@ -1738,6 +1779,7 @@ class TestShip(unittest.TestCase):
                 "--root", str(REPO_ROOT),
                 "--pr", "300",
                 "--reviewers", "1",
+                "--pr-label", "agent:claude",
                 "--head-ref", "fix/issue-266-evidence-arming",
                 "--pr-comments-json", str(pr_comments),
                 "--issue-comments-json", str(issue_comments),
@@ -1844,6 +1886,7 @@ class TestShip(unittest.TestCase):
                 "--pr", "300",
                 "--issue", "99",
                 "--reviewers", "2",
+                "--pr-label", "agent:claude",
                 "--pr-comments-json", str(pr_comments),
                 "--issue-comments-json", str(issue_comments),
                 "--pr-reviews-json", str(reviews),
@@ -1923,7 +1966,7 @@ class TestShip(unittest.TestCase):
                 return Namespace(ok=True, output=json.dumps({
                     "body": "Closes #212",
                     "head": {"sha": "abc123", "ref": "fix/issue-266-evidence-arming"},
-                    "labels": [{"name": "keel:ship"}],
+                    "labels": [{"name": "keel:ship"}, {"name": "agent:claude"}],
                 }))
             if endpoint.endswith("/pulls/300/files"):
                 return Namespace(ok=True, output=json.dumps([
@@ -1961,7 +2004,7 @@ class TestShip(unittest.TestCase):
         data = json.loads(out)
         self.assertEqual(data["verification"]["status"], "pass")
         self.assertTrue(data["enforced"])
-        self.assertEqual(data["pr_labels"], ["keel:ship"])
+        self.assertEqual(data["pr_labels"], ["keel:ship", "agent:claude"])
         self.assertEqual(data["head_sha"], "abc123")
         self.assertEqual(data["changed_files"], ["src/keel/evidence.py"])
         self.assertTrue(any(argv[:3] == ["gh", "api", "--paginate"] for argv in calls))
@@ -2033,6 +2076,7 @@ class TestShip(unittest.TestCase):
                 "--root", str(REPO_ROOT),
                 "--pr", "300",
                 "--pr-label", "keel:ship",
+                "--pr-label", "agent:claude",
                 "--changed-file", ".github/workflows/keel-ship.yml",
                 "--head-sha", "abc123",
                 "--pr-comments-json", str(pr_comments),
@@ -2056,7 +2100,7 @@ class TestShip(unittest.TestCase):
             if endpoint.endswith("/pulls/300"):
                 return Namespace(ok=True, output=json.dumps({
                     "body": "Closes #212",
-                    "labels": [{"name": "keel:ship"}],
+                    "labels": [{"name": "keel:ship"}, {"name": "agent:claude"}],
                 }))
             if endpoint.endswith("/pulls/300/files"):
                 return Namespace(ok=True, output=json.dumps([
@@ -3695,7 +3739,7 @@ class TestCoreMerge(unittest.TestCase):
             "issue": 265,
             "head_sha": "abc",
             "changed_files": ["src/keel/cli.py"],
-            "pr_labels": ["keel:ship"],
+            "pr_labels": ["keel:ship", "agent:claude"],
         }
         with patch("keel.cli._load_evidence_artifacts", return_value=artifact):
             report = cli._verify_merge_evidence(args, config)
