@@ -30,6 +30,7 @@ JURY_LABEL = "AI Jury"
 # A doc-ish text file (e.g. ``docs/notes.txt``) still counts via the ``docs/``
 # path-component rule, so rely on that directory rule for text docs.
 _DOC_SUFFIXES = frozenset({".md", ".mdx", ".markdown", ".rst", ".adoc"})
+_DOC_SUFFIXES_TUPLE = tuple(_DOC_SUFFIXES)
 
 
 def contract_as_dict() -> dict[str, Any]:
@@ -152,7 +153,7 @@ def _is_doc(file: Any) -> bool:
     lowered = file.lower()
     if any(part == "docs" for part in lowered.replace("\\", "/").split("/")):
         return True
-    return any(lowered.endswith(suffix) for suffix in _DOC_SUFFIXES)
+    return lowered.endswith(_DOC_SUFFIXES_TUPLE)
 
 
 def _capture(capture: Any) -> str:

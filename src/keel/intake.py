@@ -28,12 +28,14 @@ _AMBIGUOUS_RE = re.compile(
     r"\b(tbd|todo|unclear|ambiguous|maybe|not sure|needs clarification|decide later)\b",
     re.IGNORECASE,
 )
+_OUT_OF_SCOPE_LABELS = frozenset({"out-of-scope", "wontfix", "not-planned"})
 _OUT_OF_SCOPE_RE = re.compile(
     r"\b(out[- ]of[- ]scope|not planned|wontfix|won't fix|non-goal|not in scope)\b",
     re.IGNORECASE,
 )
 _DOCS_RE = re.compile(r"\b(doc|docs|documentation|readme|changelog)\b", re.IGNORECASE)
 _TESTS_RE = re.compile(r"\b(test|tests|coverage|ci|lint)\b", re.IGNORECASE)
+_BLOCKED_LABELS = frozenset({"blocked", "status:blocked", "needs-dependency"})
 _RISK_RE = re.compile(
     r"\b(security|release|migration|schema|api|breaking|billing|secret|credential|ci|"
     r"production|compatibility)\b",
@@ -206,14 +208,13 @@ def _sentences(text: str) -> list[str]:
 
 
 def _is_out_of_scope(combined: str, labels: tuple[str, ...]) -> bool:
-    return any(label in {"out-of-scope", "wontfix", "not-planned"} for label in labels) or bool(
+    return not _OUT_OF_SCOPE_LABELS.isdisjoint(labels) or bool(
         _OUT_OF_SCOPE_RE.search(combined)
     )
 
 
 def _is_blocked(combined: str, labels: tuple[str, ...]) -> bool:
-    label_blocks = {"blocked", "status:blocked", "needs-dependency"}
-    if any(label in label_blocks for label in labels):
+    if not _BLOCKED_LABELS.isdisjoint(labels):
         return True
     return any(_is_actionable_blocker(sentence) for sentence in _sentences(combined))
 
