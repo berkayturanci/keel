@@ -49,8 +49,8 @@ for every later delegated-agent brief.
 `lint_cmd`), `implementer_agents`, `tier3_globs`, `ci_workflows`, `docs_gate_paths`,
 and the `tester` / `pre-merge` / `reviewers` / `capture` extensions. `keel window`
 evaluates `merge_window` in the project `timezone` and reports `merge_window_mode`
-(`pause` = halt outside the window; `freeze` = defer to the morning queue). Hold the
-**merge lock** for the merge step (s10) only.
+(`pause` = halt outside the window; `freeze` = defer to the morning queue). The merge
+resource claim is acquired and released by `keel merge` at the merge step (s10) only.
 
 After s1 selects an issue, rerun the live preflight with the selected issue title/body/labels:
 
@@ -83,7 +83,9 @@ Pass the s0 preflight **run context** through: `--host-agent` (the resolved `HOS
 and `--transport` (the detected `gh`|`mcp` transport from s0); `--profile`, the jury mode,
 and the consent summary are already available from the run and are stamped onto the
 `ship_run` record so the s11 closure comment renders a durable **Run context** block.
-`--transport` defaults to the transport keel resolved for the run when omitted.
+`--transport` defaults to the transport keel resolved for the run when omitted. A missing
+`--host-agent` emits a warning on live append; pass `--strict-run-context` when the run
+should fail instead of producing a degraded closure audit trail.
 If the configured ledger path is missing, treat it as empty history; if a ledger record is
 malformed, stop capture/reporting and ask for operator help instead of silently falling
 back to comment scraping.
@@ -123,7 +125,9 @@ locally; if it cannot, mark blocked and quote the details URL. State the detecte
 mode in your first user-facing line, **and record it** (alongside the resolved host agent)
 for the s11 closure comment: carry the transport (`gh`|`mcp`) and `HOST_AGENT` forward so
 the `--append-ledger` call at s11 stamps them onto the `ship_run` record as durable PR
-evidence (see s11).
+evidence (see s11). Evidence verification flags a closure Run context where every field
+degraded as `run-context-empty`; do not treat an all-unknown Run context as acceptable
+capture.
 
 ### Argument parsing
 
@@ -268,12 +272,19 @@ passed the tier is not computed, so the tier-3 jury auto-trigger does not apply.
 default (`--jury-advisory` ⇒ advisory-only). The jury never changes the reviewer count.
 Log the decision (`jury: enabled (reason; mode) / disabled`).
 
+### Step boundary verification
+At every successful backbone transition, persist the canonical JSON handoff produced from
+`keel.stepverifier.build_handoff`, write/update the checkpoint for the next safe boundary,
+and run `keel step-verify --step sN --handoff-file <file> --evidence-report <file>` before
+advancing. A failed step verification is a BLOCKER: do not continue, merge, or mark the
+step complete from chat prose alone.
+
 ### s6 ci
 Push the branch, open the **draft** PR, and wait for the project's `ci_workflows` to go
-green. When opening the PR the orchestrator MUST apply the evidence gate label — the
-`evidence_gate_label` knob (default `keel:ship`) — to the PR, so the required
-`keel evidence (required)` check engages for ship-driven PRs (hand-authored PRs that lack
-the label are not gated). Evaluate the rollup with **failure-before-pending** precedence — a
+green. The required `keel evidence (required)` check is provenance-armed for ship-driven PRs
+(ship branch, posted review marker, ship-run ledger record, or legacy gate label); only an
+operator-applied `keel:evidence-waived` label may disarm it. Evaluate the rollup with
+**failure-before-pending** precedence — a
 mixed state with any failure is a failure, never poll past it. Three branches:
 - **all green** (`success`/`skipped`/`neutral`/`stale`) ⇒ proceed.
 - **empty check set** ⇒ allow only if every changed path is in `docs_gate_paths`, else
@@ -310,6 +321,9 @@ for the operator-posted review verdict.
 When available, use `result.artifact_bodies.review_verdict_template` as the canonical
 comment shape: keep `keel.review-verdict.v1`, `reviewer: <stable-id>`, and `head: <sha>`
 intact, then fill in the reviewer-specific verdict, scope, findings, and testing notes.
+Post each review verdict through `keel post-comment` with a reviewer-scoped run id
+(`--run-id "$RUN_ID:<reviewer-id>"`) so same-run idempotency updates that reviewer only and
+does not collapse multiple reviewer verdicts into one comment.
 
 - `inline` → fetch the diff once; anchor each `critical`/`major` finding as an **inline
   review comment** on its `file:line` (resolve `RIGHT`/`LEFT` side; `line` is the new-file
@@ -340,10 +354,13 @@ panel is downgraded to advisory (count distinct participating vendors before ass
 verdict so the posted comment matches what is enforced), and any jury run that did not
 complete cleanly **never gates**. Honour `--review-comments` (pass the jury's native inline
 flag through in inline mode, never under `--dry-run`). The orchestrator MUST POST the
-single jury summary/verdict comment to the GitHub PR via a body-file (for example,
-`gh pr comment <PR_ID> --body-file <file>` when `gh` is the selected transport). Never
-interpolate report text into a shell argument. Re-runs use the jury's incremental/cache
-flags to stay cheap.
+single jury summary/verdict comment to the GitHub PR through `keel post-comment`:
+`keel post-comment .keel/project.yaml --root . --target pr:<PR> --artifact jury-verdict
+--body-file <file> --run-id "$RUN_ID"`. Raw `gh pr comment`, `gh issue comment`, or
+hand-rolled comment API calls are spec violations for jury/review/closure/issue-update
+artifacts because they bypass marker validation, transport selection, and same-run
+idempotency. Never interpolate report text into a shell argument. Re-runs use the jury's
+incremental/cache flags to stay cheap.
 
 ### s9 fixloop
 While there are blocking findings and the budget (**≤3 review-fix rounds**) is not spent:
@@ -353,50 +370,67 @@ just the originating focus(es) (carry the original reviewer codename forward, fr
 per narrowed reviewer, "verify only the applied fix in commit `<sha>`; do not re-review what
 you already approved" prompt; spawn multiple narrowed focuses in one Agent message). A
 suggestion is gated like a blocker — apply it, or obtain an explicit, tracked user deferral;
-never silently relabel one "advisory/flake". A narrowed reviewer that surfaces a NEW blocker
+never silently relabel one "advisory/flake". Recorded suggestion deferrals must be public
+and checkable: post a `keel.deferral.v1` PR/issue comment marker that names the finding,
+authorising operator, and reason before treating the suggestion as deferred. A narrowed
+reviewer that surfaces a NEW blocker
 escalates back to the full loop. Each round posts its own review (per `--review-comments`)
 and increments the counter; exceeding the budget marks the issue blocked with the
 outstanding findings quoted. Defensive loop-backs (tester, merge-conflict prep) don't spend
 budget unless they require a fix. Before exiting, surface any deferred suggestion/nit with
 its authorising decision/issue — a silent skip is a process violation.
 
+Append each fix/review/test round to the run-events file with `keel runcontrols`. A hard
+halt from `keel runcontrols` is fail-closed and must stop the ship run until an operator
+chooses an explicit `--max-rounds` override.
+
 ### s10 merge
-Only inside the **merge window** (unless the issue is a blocker / `--hotfix`), holding the
-**merge lock**:
-- **Pre-merge prep (outside the lock):** re-assert mergeability; if behind/dirty, integrate
-  `base_branch` (merge, not rebase), re-green CI, run a single focused merge-conflict review
-  (max 2 integration iterations, then blocked + morning queue). Run any `pre-merge` Lego.
-  Then pre-clean the worktree so `--delete-branch` won't be held by a local ref
-  (hard-validate `worktree_path` is nested under the repo root — reject the repo root, the
-  filesystem root, or any path outside the nested worktrees dir, and assert it is a
-  registered worktree — before removing). This sub-step may span multiple tool calls; the
-  literal merge (below) must not.
-- **Lock + literal merge (single shell block):** acquire an atomic `mkdir`-based mutex with
-  stale-PID recovery and a ~10-min acquisition budget (on timeout: mark the issue blocked,
-  comment, continue with the next); a trap releases it on exit. (Local POSIX filesystems
-  only — not NFS-safe.) Inside: re-assert `base == base_branch`, not behind/dirty (if it is,
-  abort and block — never resolve inside the lock), flip draft→ready; **re-check the window**
-  (`keel window`) — if closed and not a blocker, abort the merge, append to the morning
-  queue, post the deferral comment, leave the PR ready, release the lock, continue. Otherwise
-  **squash-merge** with a conventional-commit subject and `--delete-branch`. Treat the **PR
-  state (`MERGED`)** as authoritative, not `gh pr merge`'s exit code (a non-zero exit on a
-  successful server-side squash is just a local-cleanup failure — proceed to capture/close;
-  a real non-MERGED state aborts the closure block and blocks the issue).
+The literal merge is **core-owned**: route it through `keel merge`. Raw `gh pr merge`
+calls and hand-rolled lock shells are **spec violations** for ship-style flows — the
+lock, window re-check, CI rollup read, and evidence verification must run deterministically
+inside core, not as adapter prose.
+
+- **Pre-merge prep:** re-assert mergeability; if behind/dirty, integrate `base_branch`
+  (merge, not rebase), re-green CI, run a single focused merge-conflict review (max 2
+  integration iterations, then blocked + morning queue). Run any `pre-merge` Lego. Then
+  pre-clean the worktree so `--delete-branch` won't be held by a local ref — remove it
+  with `keel worktree-remove <worktree_path> --root .`, which validates the path is nested
+  under the repo root and registered in `git worktree list` before removing (never call
+  `git worktree remove --force` directly on an implementer-supplied path).
+- **Core-owned merge:** run
+  `keel merge .keel/project.yaml --root . --pr <PR> --approve-scope <scopes> --operator <operator>`.
+  The command acquires the merge resource claim (atomic `mkdir`, single-host), re-checks
+  the **merge window inside the claim**, reads the live PR check rollup with
+  failure-before-pending precedence, runs `evidence-verify` against the current PR
+  artifacts, and only then performs the squash-merge. Any failed stage exits non-zero
+  **without merging** — on a closed window, append to the morning queue, post the deferral
+  comment via `keel post-comment`, leave the PR ready, and continue with the next issue;
+  on a denied claim, treat it as lock contention (mark the issue blocked, comment,
+  continue). For a blocker issue, pass `--hotfix` — the audited window bypass; it still
+  requires the approved consent scopes and is recorded in the ledger.
+- **Outcome:** treat the **PR state (`MERGED`)** as authoritative. A non-zero exit after a
+  successful server-side squash is a local-cleanup failure — proceed to capture/close; a
+  real non-MERGED state aborts the closure block and blocks the issue.
 
 `merge_window_mode`: `pause` halts here outside the window; `freeze` defers to the morning
-queue. The merge lock and "never `gh pr merge` outside s10" are non-negotiable invariants.
+queue. The merge claim and "the only merge path is `keel merge` at s10" are non-negotiable
+invariants.
 
 ### s11 capture
 Record the run for `/keel:wrap`: the **effective** implementer + reviewer vendors/models,
 tier, rounds, window decision, and outcome. Post the **closure comment** to **both** the
-issue and the PR as distinct comments. The PR closure comment MUST be a PR conversation
-comment, not appended to or folded into the PR body, and not represented by the automated
-`keel ship` CI assessment block. Render it deterministically from the `ship_run` ledger
-record via the `result.closure_comment` field of `keel ship --json` (the
+issue and the PR as distinct comments through `keel post-comment` with
+`--artifact closure-comment` and the same `--run-id`. The PR closure comment MUST be a PR
+conversation comment, not appended to or folded into the PR body, and not represented by
+the automated `keel ship` CI assessment block. Render it deterministically from the
+`ship_run` ledger record via the `result.closure_comment` field of `keel ship --json` (the
 `contract.closure_comment` contract describes its stable marker plus sections: heading,
 Implementer `vendor (model)`, Reviewers — noting AI Jury when present, Tester, PR number,
 changed files, capture outcome, run id). Do **not** hand-write closure prose: post the
 rendered markdown verbatim so the issue and PR comments mirror the ledger byte-for-byte.
+Use `keel post-comment` for issue-update, review-verdict, jury-verdict, and
+closure-comment artifacts; a malformed body missing its marker must stop the step before
+any public comment is posted.
 Run any post-merge
 `capture` Lego (e.g. durable-learning capture: classify the merged PR's signal, optionally
 file a follow-up issue or hand off to a project-owned destination) fail-soft, emit its
@@ -470,8 +504,9 @@ Run s0–s8 read-only and print the plan + `keel ship` assessment (tier, window,
 decision). Do **not** push, open a PR, post comments/labels, or merge — log every would-be
 write as `DRY-RUN: …` (every label edit, comment, ready-flip, merge, close, and any review-
 API or jury-inline write). The implementer is told not to push or open a PR; reviewers still
-run for real (read-only) so findings stay meaningful. The merge lock may still be
-acquired/released to exercise the path. The capture step is a logged no-op (`dry-run` marker).
+run for real (read-only) so findings stay meaningful. `keel merge --dry-run` may still be
+run to exercise the claim/window/rollup path without merging. The capture step is a logged
+no-op (`dry-run` marker).
 
 ## `--wizard` (interactive opt-in only)
 
@@ -488,7 +523,8 @@ collecting, echo the resolved config in the worked-example shape, then proceed t
 
 ## Invariants (always)
 
-Merge lock around the merge only (search marker for the literal-merge block) · never merge
+The only merge path is `keel merge` at s10 (claim, window, CI rollup, and evidence checks
+run in core) · never merge
 in the night no-merge window except a blocker / audited `--hotfix` · fail-soft (a missing
 CLI/gate/jury/capture-path degrades, never crashes the run; an absent/erroring jury can
 never manufacture a block) · the **orchestrator owns all writes** (reviewers are
@@ -497,4 +533,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=skills command=ship keel_version=1.2.0 source_sha256=7fcef40b0819a2aa72a01dc47d4f3a564046f0603f2d5f57e1c1470576137ab2 generated_sha256=6f6c35d045156c8e473a1daa12ada40731d5838808bb7b7eb6b6689b739a4d27 -->
+<!-- keel-generated: surface=skills command=ship keel_version=1.2.3 source_sha256=df387b5031c2b143f324227d9792063041fc76aa3fc01ca6a134dca5368443b0 generated_sha256=9ec00342c3a9c1ab223090719ee76837b2a2c3669794c043f98548ccce1c815f -->
