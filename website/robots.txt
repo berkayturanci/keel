@@ -1,4 +1,0 @@
-User-agent: *
-Allow: /
-
-Sitemap: https://berkayturanci.github.io/keel/sitemap.xml
