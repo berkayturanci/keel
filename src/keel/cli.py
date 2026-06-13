@@ -33,6 +33,7 @@ from . import (
     git,
     github,
     github_transport,
+    guard,
     install,
     jury,
     ledger,
@@ -301,6 +302,142 @@ def _cmd_worktree_remove(args: argparse.Namespace) -> int:
     return 0 if result.ok else 1
 
 
+def _parse_labels(raw: str | None) -> tuple[str, ...]:
+    """Split a comma-separated ``--issue-labels`` value into clean labels."""
+    if not raw:
+        return ()
+    return tuple(part.strip() for part in raw.split(",") if part.strip())
+
+
+def _gather_issue_facts(args: argparse.Namespace) -> tuple[str, tuple[str, ...], bool]:
+    """Resolve the issue title + labels for blocker evaluation.
+
+    Offline path: take ``--issue-title`` / ``--issue-labels`` verbatim. Live
+    path: when ``--issue`` is given, fetch the authoritative title/labels from
+    the host via ``gh`` (fail-soft — a failed fetch falls back to the args).
+
+    Returns ``(title, labels, authoritative)``. ``authoritative`` is True ONLY
+    when ``--issue N`` was given AND the live ``gh`` fetch succeeded and parsed
+    into a real dict carrying the host's title/labels. When ``--issue`` is
+    absent, or the fetch failed / fell back to the agent-supplied args, it is
+    False — the facts are agent-supplied and must not self-justify a window
+    bypass (audit GAP-11).
+    """
+    title = args.issue_title or ""
+    labels = _parse_labels(args.issue_labels)
+    authoritative = False
+    issue = getattr(args, "issue", None)
+    if issue is not None:
+        result = github.issue_facts(issue, cwd=args.root)
+        if result.ok:
+            try:
+                data = json.loads(result.output)
+            except json.JSONDecodeError:
+                data = None
+            if isinstance(data, dict):
+                authoritative = True
+                if isinstance(data.get("title"), str):
+                    title = data["title"]
+                raw_labels = data.get("labels")
+                if isinstance(raw_labels, list):
+                    labels = tuple(
+                        str(item.get("name"))
+                        for item in raw_labels
+                        if isinstance(item, dict) and isinstance(item.get("name"), str)
+                    )
+    return title, labels, authoritative
+
+
+def _cmd_guard(args: argparse.Namespace) -> int:
+    try:
+        config = cfg.load_config(args.path)
+    except FileNotFoundError:
+        print(f"no such config: {args.path}", file=sys.stderr)
+        return 1
+    except cfg.ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    try:
+        rules = guard.resolve_rules(config)
+    except guard.GuardError as exc:
+        print(f"invalid blocker rules: {exc}", file=sys.stderr)
+        return 1
+
+    title, labels, _authoritative = _gather_issue_facts(args)
+    result = guard.evaluate(title, labels, rules=rules)
+    if args.json:
+        print(json.dumps(result.as_dict(), indent=2, sort_keys=True))
+    else:
+        verdict = "BLOCKER" if result.is_blocker else "not a blocker"
+        print(f"keel guard — {verdict}")
+        print(f"  title  : {title}")
+        print(f"  labels : {', '.join(labels) or '(none)'}")
+        if result.matched:
+            print(f"  matched: {', '.join(result.matched)}")
+        else:
+            print("  matched: (none)")
+    return 0
+
+
+def _hotfix_justification(
+    args: argparse.Namespace, config: cfg.ProjectConfig, operator: str | None
+) -> tuple[dict[str, object] | None, str | None]:
+    """Resolve the justification required for a ``--hotfix`` window bypass.
+
+    Returns ``(justification, None)`` on success or ``(None, error)`` when the
+    hotfix is refused. A hotfix must carry one of two justifications, recorded
+    in the ledger:
+
+    * ``matched-rule`` — ``--blocker-rule <id>`` names a rule that actually fires
+      for this issue under :mod:`keel.guard`; or
+    * ``operator-override`` — an explicit ``--operator-override`` paired with a
+      named ``--operator`` (the audited human override).
+
+    With neither, the bypass is refused (closing audit GAP-11: an agent can no
+    longer flip ``--hotfix`` on the flag alone).
+
+    The ``matched-rule`` path requires **host-authoritative** issue facts: it
+    refuses unless ``--issue N`` was given and the live ``gh`` fetch succeeded,
+    so an agent cannot self-justify a window bypass with a fabricated
+    ``--issue-title``. The ``operator-override`` path (the audited human escape)
+    is unaffected.
+    """
+    if args.blocker_rule:
+        try:
+            rules = guard.resolve_rules(config)
+        except guard.GuardError as exc:
+            return None, f"invalid blocker rules: {exc}"
+        title, labels, authoritative = _gather_issue_facts(args)
+        if not authoritative:
+            return None, (
+                "hotfix matched-rule justification requires --issue <N> "
+                "(host-authoritative title/labels); agent-supplied --issue-title "
+                "is not accepted for a window bypass — use --operator-override instead"
+            )
+        result = guard.evaluate(title, labels, rules=rules)
+        if args.blocker_rule not in result.rule_ids:
+            return None, f"unknown blocker rule {args.blocker_rule!r}"
+        if args.blocker_rule not in result.matched:
+            return None, (
+                f"blocker rule {args.blocker_rule!r} did not match the issue "
+                "(title/labels do not satisfy the rule)"
+            )
+        return {
+            "kind": "matched-rule",
+            "rule_id": args.blocker_rule,
+            "matched": list(result.matched),
+        }, None
+    if args.operator_override:
+        if not operator:
+            return None, "--operator-override requires a named --operator for the audit trail"
+        return {"kind": "operator-override", "operator": operator}, None
+    return None, (
+        "hotfix requires a justification: pass --blocker-rule <id> matching a "
+        "keel guard rule for the issue, or --operator-override with a named --operator"
+    )
+
+
 def _cmd_merge(args: argparse.Namespace) -> int:
     args.live = True
     try:
@@ -374,6 +511,25 @@ def _cmd_merge(args: argparse.Namespace) -> int:
             )
         return 1
 
+    hotfix_justification: dict[str, object] | None = None
+    if args.hotfix:
+        hotfix_justification, hotfix_error = _hotfix_justification(
+            args, config, approval_operator
+        )
+        if hotfix_justification is None:
+            payload = {
+                "schema_version": "keel.merge.v1",
+                "pull_request": args.pr,
+                "status": "fail",
+                "reason": "hotfix justification required",
+                "hotfix_justification": None,
+            }
+            if args.json:
+                print(json.dumps(payload, indent=2, sort_keys=True))
+            else:
+                print(hotfix_error, file=sys.stderr)
+            return 1
+
     owner = args.owner or f"keel-merge-pr-{args.pr}"
     claim = lock.claim_resource(_lock_root(args.root), "merge", owner=owner)
     payload: dict[str, object] = {
@@ -385,6 +541,7 @@ def _cmd_merge(args: argparse.Namespace) -> int:
         "evidence": None,
         "gates_sha": None,
         "escalation": escalation,
+        "hotfix_justification": hotfix_justification,
         "merged": False,
     }
     if not claim.granted:
@@ -2159,6 +2316,10 @@ def _finish_merge(args: argparse.Namespace, payload: dict[str, object], reason: 
                 print("  gates-sha: bypassed (hotfix)")
             else:
                 print(f"  gates-sha: {'matched' if gates_sha.get('matched') else 'no-match'}")
+        justification = payload.get("hotfix_justification")
+        if isinstance(justification, dict):
+            detail = justification.get("rule_id") or justification.get("operator") or ""
+            print(f"  hotfix : {justification.get('kind')} {detail}".rstrip())
     return code
 
 
@@ -3276,6 +3437,19 @@ def build_parser() -> argparse.ArgumentParser:
     p_release.add_argument("resource", help="resource name, e.g. merge")
     p_release.set_defaults(func=_cmd_release)
 
+    p_guard = sub.add_parser(
+        "guard", help="evaluate an issue against the deterministic blocker ruleset"
+    )
+    p_guard.add_argument("path", help="path to project.yaml")
+    p_guard.add_argument("--root", default=".", help="repo root for live gh issue fetch")
+    p_guard.add_argument("--issue", type=_positive_int, default=None,
+                         help="issue number to fetch title/labels live (offline: use the flags)")
+    p_guard.add_argument("--issue-title", default=None, help="issue title for offline evaluation")
+    p_guard.add_argument("--issue-labels", default=None,
+                         help="comma-separated issue labels for offline evaluation")
+    p_guard.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_guard.set_defaults(func=_cmd_guard)
+
     p_merge = sub.add_parser("merge", help="perform the fail-closed core-owned PR merge")
     p_merge.add_argument("path", help="path to project.yaml")
     p_merge.add_argument("--root", default=".", help="repo root for git/GitHub operations")
@@ -3286,7 +3460,15 @@ def build_parser() -> argparse.ArgumentParser:
                          help="GitHub merge method")
     p_merge.add_argument("--owner", default=None, help="resource claim owner id")
     p_merge.add_argument("--hotfix", action="store_true",
-                         help="bypass the merge window with explicit consent")
+                         help="bypass the merge window with a recorded justification")
+    p_merge.add_argument("--blocker-rule", default=None,
+                         help="keel guard rule id justifying a --hotfix bypass")
+    p_merge.add_argument("--operator-override", action="store_true",
+                         help="authorize a --hotfix bypass as a named operator (audited)")
+    p_merge.add_argument("--issue-title", default=None,
+                         help="issue title for offline blocker-rule validation")
+    p_merge.add_argument("--issue-labels", default=None,
+                         help="comma-separated issue labels for offline blocker-rule validation")
     p_merge.add_argument("--dry-run", action="store_true", help="verify only; do not merge")
     p_merge.add_argument("--approve-scope", action="append", default=[],
                          help="approve a consent scope for this merge")

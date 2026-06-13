@@ -108,6 +108,38 @@ keel claim merge --owner "ship-pr-123" --root . --json
 keel release merge --owner "ship-pr-123" --root .
 ```
 
+## `keel guard <project.yaml> [--issue NUMBER] [--issue-title TITLE] [--issue-labels L1,L2] [--root DIR] [--json]`
+
+Evaluate an issue against the **deterministic blocker ruleset** and report which
+rule(s), if any, fired. Blocker promotion is what unlocks the night-window bypass at
+s10 (`keel merge --hotfix`); `keel guard` makes that promotion a verifiable function of
+the issue's title and labels instead of pure agent judgment (audit GAP-11).
+
+The matching is pure: given the issue title, its labels, and the configured rules, it
+returns the matched rule ids. Rules come from `policy_pack.blocker_rules` when present and
+fall back to built-in defaults when absent (back-compatible). The defaults are:
+
+| Rule id               | Kind          | Fires when                                            |
+|-----------------------|---------------|-------------------------------------------------------|
+| `blocker-label`       | `label`       | issue carries a `blocker` label (case-insensitive)    |
+| `hotfix-label`        | `label`       | issue carries a `hotfix` label                        |
+| `security-label`      | `label`       | issue carries a `security` label                      |
+| `blocker-title-regex` | `title-regex` | title matches `\b(?:hotfix\|security\|blocker)\b`       |
+
+Issue facts are read live from the host with `gh issue view` when `--issue` is given
+(fail-soft: a failed fetch falls back to the offline `--issue-title` / `--issue-labels`
+flags). Offline, pass the flags directly.
+
+```bash
+keel guard .keel/project.yaml --issue-title "hotfix: patch the boot loop" --json
+# -> matched: ["blocker-title-regex"], is_blocker: true
+keel guard .keel/project.yaml --issue 42        # live fetch of title + labels
+```
+
+Override the defaults under `policy_pack.blocker_rules` (each rule needs an `id` and a
+`kind` of `label` (with `labels`) or `title-regex` (with `pattern`)); see
+[configuration.md](configuration.md).
+
 ## `keel merge <project.yaml> --pr N [--root DIR] [--method squash|merge|rebase] [--dry-run]`
 
 Perform the sanctioned core-owned PR merge path. `keel merge` acquires the merge resource
@@ -138,6 +170,21 @@ keel merge .keel/project.yaml --root . --pr 123 --dry-run \
 `--hotfix` is the audited bypass: it skips both the merge window and the gates-SHA
 requirement, still requires explicit consent, and records the bypass (`gates_sha.bypassed`
 with `reason: hotfix`).
+
+A `--hotfix` bypass now **requires a recorded justification** (audit GAP-11) — without
+one it is refused before any merge work. Provide exactly one of:
+
+- `--blocker-rule <id>` — a [`keel guard`](#keel-guard-projectyaml---issue-number---issue-title-title---issue-labels-l1l2---root-dir---json)
+  rule id that **actually fires** for this issue. The merge re-evaluates the ruleset
+  against the issue's title/labels (`--issue` for a live fetch, or `--issue-title` /
+  `--issue-labels` offline) and refuses if the named rule is unknown or did not match.
+  Recorded as `hotfix_justification: {kind: "matched-rule", rule_id, matched}`.
+- `--operator-override` paired with a named `--operator` — the audited human override for
+  a genuine emergency that no rule covers. Recorded as
+  `hotfix_justification: {kind: "operator-override", operator}`.
+
+The justification is written into the merge payload (and surfaced in the ledger), so every
+night-window bypass carries machine-checkable evidence of why it was allowed.
 
 ## `keel post-comment <project.yaml> --target issue:N|pr:N --artifact ARTIFACT --body-file FILE [--run-id ID] [--dry-run] [--json]`
 

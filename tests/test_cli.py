@@ -3338,13 +3338,168 @@ class TestCoreMerge(unittest.TestCase):
                 "enforced": True,
                 "verification": {"status": "pass", "missing": []},
             }),
+            patch("keel.cli.github.issue_facts",
+                  return_value=_ok_result(json.dumps(
+                      {"title": "hotfix: patch the boot loop", "labels": []}))),
+        ):
+            argv = _merge_args(json_out=True, dry_run=True)
+            argv += ["--hotfix", "--blocker-rule", "blocker-title-regex",
+                     "--issue", "42"]
+            rc, out, _ = run(argv)
+
+        payload = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertTrue(payload["window"]["bypassed"])
+        self.assertEqual(payload["hotfix_justification"]["kind"], "matched-rule")
+        self.assertEqual(payload["hotfix_justification"]["rule_id"], "blocker-title-regex")
+
+    def test_merge_hotfix_matched_rule_refused_without_issue(self):
+        # Security-load-bearing: an agent omitting --issue and passing a
+        # fabricated --issue-title must NOT be able to self-justify a window
+        # bypass — the matched-rule path requires host-authoritative facts.
+        fake_report = _merge_capability_report()
+        with patch("keel.cli.runtime.detect", return_value=fake_report):
+            argv = _merge_args(dry_run=True)
+            argv += ["--hotfix", "--blocker-rule", "blocker-title-regex",
+                     "--issue-title", "hotfix: x"]
+            rc, _, err = run(argv)
+        self.assertEqual(rc, 1)
+        self.assertIn("host-authoritative", err)
+        self.assertIn("--operator-override", err)
+
+    def test_merge_hotfix_matched_rule_refused_when_fetch_not_authoritative(self):
+        # --issue given but the live fetch fails (non-dict / error) → facts are
+        # not host-authoritative → matched-rule refused.
+        fake_report = _merge_capability_report()
+        with (
+            patch("keel.cli.runtime.detect", return_value=fake_report),
+            patch("keel.cli.github.issue_facts",
+                  return_value=_fail_result("offline")),
+        ):
+            argv = _merge_args(dry_run=True)
+            argv += ["--hotfix", "--blocker-rule", "blocker-title-regex",
+                     "--issue", "42", "--issue-title", "hotfix: x"]
+            rc, _, err = run(argv)
+        self.assertEqual(rc, 1)
+        self.assertIn("host-authoritative", err)
+
+    def test_merge_hotfix_refused_without_justification(self):
+        fake_report = _merge_capability_report()
+        with (
+            patch("keel.cli.runtime.detect", return_value=fake_report),
+            patch("keel.cli.github.pr_merge_snapshot",
+                  return_value=_json_result({
+                      "mergeStateStatus": "CLEAN",
+                      "statusCheckRollup": [{"conclusion": "SUCCESS"}],
+                  })),
         ):
             argv = _merge_args(json_out=True, dry_run=True)
             argv.append("--hotfix")
             rc, out, _ = run(argv)
+        payload = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertEqual(payload["reason"], "hotfix justification required")
+        self.assertIsNone(payload["hotfix_justification"])
 
+    def test_merge_hotfix_refused_for_non_matching_rule(self):
+        fake_report = _merge_capability_report()
+        with (
+            patch("keel.cli.runtime.detect", return_value=fake_report),
+            patch("keel.cli.github.issue_facts",
+                  return_value=_ok_result(json.dumps(
+                      {"title": "routine docs tidy", "labels": []}))),
+        ):
+            argv = _merge_args(dry_run=True)
+            argv += ["--hotfix", "--blocker-rule", "blocker-title-regex",
+                     "--issue", "42"]
+            rc, _, err = run(argv)
+        self.assertEqual(rc, 1)
+        self.assertIn("did not match", err)
+
+    def test_merge_hotfix_refused_for_unknown_rule(self):
+        fake_report = _merge_capability_report()
+        with (
+            patch("keel.cli.runtime.detect", return_value=fake_report),
+            patch("keel.cli.github.issue_facts",
+                  return_value=_ok_result(json.dumps(
+                      {"title": "hotfix: x", "labels": []}))),
+        ):
+            argv = _merge_args(dry_run=True)
+            argv += ["--hotfix", "--blocker-rule", "no-such-rule",
+                     "--issue", "42"]
+            rc, _, err = run(argv)
+        self.assertEqual(rc, 1)
+        self.assertIn("unknown blocker rule", err)
+
+    def test_merge_hotfix_operator_override(self):
+        fake_report = _merge_capability_report()
+        with (
+            patch("keel.cli.runtime.detect", return_value=fake_report),
+            patch("keel.cli.github.pr_merge_snapshot",
+                  return_value=_json_result({
+                      "mergeStateStatus": "CLEAN",
+                      "statusCheckRollup": [{"conclusion": "SUCCESS"}],
+                  })),
+            patch("keel.cli._verify_merge_evidence", return_value={
+                "enforced": True,
+                "verification": {"status": "pass", "missing": []},
+            }),
+        ):
+            argv = _merge_args(json_out=True, dry_run=True)
+            argv += ["--hotfix", "--operator-override"]
+            rc, out, _ = run(argv)
+        payload = json.loads(out)
         self.assertEqual(rc, 0)
-        self.assertTrue(json.loads(out)["window"]["bypassed"])
+        self.assertEqual(payload["hotfix_justification"]["kind"], "operator-override")
+        self.assertEqual(payload["hotfix_justification"]["operator"], "tester")
+
+    def test_merge_hotfix_refused_on_invalid_blocker_rules(self):
+        fake_report = _merge_capability_report()
+        bad = _write_raw(
+            "extends: keel\ncore_version: 1.0.0\nbase_branch: main\nrepo: tmp\n"
+            "gates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+            "policy_pack:\n  name: x\n  blocker_rules:\n"
+            "    - id: bad\n      kind: title-regex\n      pattern: '('\n"
+        )
+        with (
+            patch("keel.cli.runtime.detect", return_value=fake_report),
+            patch("keel.cli.github.pr_merge_snapshot",
+                  return_value=_json_result({
+                      "mergeStateStatus": "CLEAN",
+                      "statusCheckRollup": [{"conclusion": "SUCCESS"}],
+                  })),
+        ):
+            argv = [
+                "merge", bad, "--root", str(REPO_ROOT), "--pr", "123",
+                "--approve-scope", "filesystem,git,github", "--operator", "tester",
+                "--json", "--dry-run", "--hotfix",
+                "--blocker-rule", "bad", "--issue-title", "hotfix: x",
+            ]
+            rc, out, _ = run(argv)
+        payload = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertEqual(payload["reason"], "hotfix justification required")
+
+    def test_merge_operator_override_requires_named_operator(self):
+        fake_report = _merge_capability_report()
+        with (
+            patch("keel.cli.runtime.detect", return_value=fake_report),
+            patch("keel.cli.github.pr_merge_snapshot",
+                  return_value=_json_result({
+                      "mergeStateStatus": "CLEAN",
+                      "statusCheckRollup": [{"conclusion": "SUCCESS"}],
+                  })),
+        ):
+            argv = [
+                "merge", str(PROJECTS / "keel.yaml"),
+                "--root", str(REPO_ROOT), "--pr", "123",
+                "--approve-scope", "filesystem,git,github",
+                "--json", "--dry-run", "--hotfix", "--operator-override",
+            ]
+            rc, out, _ = run(argv)
+        payload = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertEqual(payload["reason"], "hotfix justification required")
 
     def test_merge_blocks_pending_ci_and_non_enforced_evidence(self):
         fake_report = _merge_capability_report()
@@ -3610,9 +3765,13 @@ class TestCoreMerge(unittest.TestCase):
             patch("keel.cli.ledger.read_records") as read_mock,
             patch("keel.cli.github.merge_pr",
                   return_value=Namespace(ok=True, output="merged")),
+            patch("keel.cli.github.issue_facts",
+                  return_value=_ok_result(json.dumps(
+                      {"title": "boot loop", "labels": [{"name": "blocker"}]}))),
         ):
             argv = _merge_args(json_out=True)
-            argv.append("--hotfix")
+            argv += ["--hotfix", "--blocker-rule", "blocker-label",
+                     "--issue", "42"]
             rc, out, _ = run(argv)
 
         self.assertEqual(rc, 0)
@@ -3620,6 +3779,7 @@ class TestCoreMerge(unittest.TestCase):
         self.assertTrue(data["merged"])
         self.assertTrue(data["gates_sha"]["bypassed"])
         self.assertEqual(data["gates_sha"]["reason"], "hotfix")
+        self.assertEqual(data["hotfix_justification"]["kind"], "matched-rule")
         read_mock.assert_not_called()
 
     def test_merge_reports_invalid_ledger_during_gates_check(self):
@@ -3663,6 +3823,25 @@ class TestCoreMerge(unittest.TestCase):
             cli._finish_merge(args, {"gates_sha": {"bypassed": False, "matched": False}},
                               "blocked", code=1)
         self.assertIn("gates-sha: no-match", out_nomatch.getvalue())
+
+        out_just = io.StringIO()
+        with contextlib.redirect_stdout(out_just):
+            cli._finish_merge(
+                args,
+                {"hotfix_justification": {"kind": "matched-rule", "rule_id": "blocker-label"}},
+                "merged", code=0,
+            )
+        self.assertIn("hotfix : matched-rule blocker-label", out_just.getvalue())
+
+        out_override = io.StringIO()
+        with contextlib.redirect_stdout(out_override):
+            cli._finish_merge(
+                args,
+                {"hotfix_justification": {
+                    "kind": "operator-override", "operator": "tester"}},
+                "merged", code=0,
+            )
+        self.assertIn("hotfix : operator-override tester", out_override.getvalue())
 
     def test_merge_human_output_prints_ci_and_evidence(self):
         args = Namespace(json=False, pr=7)
@@ -5749,6 +5928,149 @@ def _merge_args(*, root: str | None = None, json_out: bool = False, dry_run: boo
 
 def _json_result(payload: dict):
     return Namespace(ok=True, output=json.dumps(payload))
+
+
+class TestGuardCommand(unittest.TestCase):
+    def _cfg(self):
+        return str(PROJECTS / "keel.yaml")
+
+    def test_guard_reports_missing_and_invalid_config(self):
+        rc_missing, _, err_missing = run(["guard", "/no/such.yaml"])
+        self.assertEqual(rc_missing, 1)
+        self.assertIn("no such config", err_missing)
+        bad = _write_raw("repo: x\ngates: [bogus]\nknobs:\n  build_gate_cmd: 'true'\n")
+        rc_bad, _, err_bad = run(["guard", bad])
+        self.assertEqual(rc_bad, 1)
+        self.assertIn("invalid keel config", err_bad)
+
+    def test_guard_title_regex_matches(self):
+        rc, out, _ = run([
+            "guard", self._cfg(), "--issue-title", "hotfix: patch boot loop", "--json",
+        ])
+        payload = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertTrue(payload["is_blocker"])
+        self.assertEqual(payload["matched"], ["blocker-title-regex"])
+
+    def test_guard_label_matches_text_output(self):
+        rc, out, _ = run([
+            "guard", self._cfg(), "--issue-title", "anything", "--issue-labels", "blocker,chore",
+        ])
+        self.assertEqual(rc, 0)
+        self.assertIn("BLOCKER", out)
+        self.assertIn("blocker-label", out)
+
+    def test_guard_no_match_text_output(self):
+        rc, out, _ = run(["guard", self._cfg(), "--issue-title", "tidy docs"])
+        self.assertEqual(rc, 0)
+        self.assertIn("not a blocker", out)
+        self.assertIn("(none)", out)
+
+    def test_guard_live_issue_fetch(self):
+        facts = _ok_result(json.dumps({
+            "title": "security: token leak",
+            "labels": [{"name": "P0"}, {"name": "needs-fix"}],
+        }))
+        with patch("keel.cli.github.issue_facts", return_value=facts):
+            rc, out, _ = run(["guard", self._cfg(), "--issue", "42", "--json"])
+        payload = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertEqual(payload["title"], "security: token leak")
+        self.assertEqual(payload["matched"], ["blocker-title-regex"])
+
+    def test_guard_live_fetch_failure_falls_back_to_args(self):
+        with patch("keel.cli.github.issue_facts", return_value=_fail_result("offline")):
+            rc, out, _ = run([
+                "guard", self._cfg(), "--issue", "42",
+                "--issue-title", "hotfix: x", "--json",
+            ])
+        payload = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertEqual(payload["title"], "hotfix: x")
+
+    def test_guard_live_fetch_bad_json_falls_back(self):
+        with patch("keel.cli.github.issue_facts", return_value=_ok_result("not-json")):
+            rc, out, _ = run([
+                "guard", self._cfg(), "--issue", "42",
+                "--issue-title", "hotfix: x", "--json",
+            ])
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(out)["title"], "hotfix: x")
+
+    def test_guard_live_fetch_non_dict_payload_falls_back(self):
+        with patch("keel.cli.github.issue_facts", return_value=_ok_result("[]")):
+            rc, out, _ = run([
+                "guard", self._cfg(), "--issue", "42",
+                "--issue-title", "hotfix: x", "--json",
+            ])
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(out)["title"], "hotfix: x")
+
+    def test_guard_live_fetch_ignores_malformed_fields(self):
+        facts = _ok_result(json.dumps({"title": 5, "labels": "nope"}))
+        with patch("keel.cli.github.issue_facts", return_value=facts):
+            rc, out, _ = run([
+                "guard", self._cfg(), "--issue", "42",
+                "--issue-title", "hotfix: x", "--json",
+            ])
+        payload = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertEqual(payload["title"], "hotfix: x")
+        self.assertEqual(payload["labels"], [])
+
+    def test_guard_live_fetch_skips_malformed_labels(self):
+        facts = _ok_result(json.dumps({
+            "title": "tidy", "labels": [{"name": "blocker"}, "junk", {"x": 1}],
+        }))
+        with patch("keel.cli.github.issue_facts", return_value=facts):
+            rc, out, _ = run(["guard", self._cfg(), "--issue", "42", "--json"])
+        payload = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertEqual(payload["labels"], ["blocker"])
+
+    def test_guard_invalid_blocker_rules(self):
+        bad = _write_raw(
+            "extends: keel\ncore_version: 1.0.0\nbase_branch: main\n"
+            "knobs:\n  build_gate_cmd: 'true'\n"
+            "policy_pack:\n  name: x\n  blocker_rules:\n"
+            "    - id: bad\n      kind: title-regex\n      pattern: '('\n"
+        )
+        rc, _, err = run(["guard", bad, "--issue-title", "x"])
+        self.assertEqual(rc, 1)
+        self.assertIn("invalid blocker rules", err)
+
+
+class TestGatherIssueFacts(unittest.TestCase):
+    def _args(self, **kw):
+        base = {"issue": None, "issue_title": None, "issue_labels": None, "root": "."}
+        base.update(kw)
+        return Namespace(**base)
+
+    def test_authoritative_true_on_live_fetch(self):
+        facts = _ok_result(json.dumps({
+            "title": "security: leak", "labels": [{"name": "P0"}],
+        }))
+        with patch("keel.cli.github.issue_facts", return_value=facts):
+            title, labels, authoritative = cli._gather_issue_facts(self._args(issue=42))
+        self.assertEqual(title, "security: leak")
+        self.assertEqual(labels, ("P0",))
+        self.assertTrue(authoritative)
+
+    def test_authoritative_false_without_issue(self):
+        title, labels, authoritative = cli._gather_issue_facts(
+            self._args(issue_title="hotfix: x", issue_labels="blocker")
+        )
+        self.assertEqual(title, "hotfix: x")
+        self.assertEqual(labels, ("blocker",))
+        self.assertFalse(authoritative)
+
+    def test_authoritative_false_on_failed_fetch(self):
+        with patch("keel.cli.github.issue_facts", return_value=_fail_result("offline")):
+            title, _labels, authoritative = cli._gather_issue_facts(
+                self._args(issue=42, issue_title="hotfix: x")
+            )
+        self.assertEqual(title, "hotfix: x")
+        self.assertFalse(authoritative)
 
 
 if __name__ == "__main__":

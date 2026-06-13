@@ -188,6 +188,21 @@
           },
           "description": "Project-owned high-risk path rules and extra review/doc expectations."
         },
+        "blocker_rules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "kind"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "kind": { "type": "string", "enum": ["label", "title-regex"] },
+              "labels": { "type": "array", "items": { "type": "string" } },
+              "pattern": { "type": "string", "minLength": 1 }
+            }
+          },
+          "description": "Deterministic blocker ruleset for keel guard (window-bypass justification). Absent -> built-in defaults."
+        },
         "test_groups": {
           "type": "object",
           "additionalProperties": {

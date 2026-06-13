@@ -165,6 +165,14 @@ class TestGitHub(unittest.TestCase):
         self.assertEqual(rec.calls[0], ["gh", "pr", "comment", "7", "--body", "hi"])
         self.assertEqual(rec.calls[1], ["gh", "issue", "close", "42"])
 
+    def test_issue_facts(self):
+        rec = _Recorder()
+        github.issue_facts(42, _run=rec)
+        self.assertEqual(
+            rec.calls[0],
+            ["gh", "issue", "view", "42", "--json", "title,labels"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

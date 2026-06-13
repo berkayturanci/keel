@@ -134,6 +134,27 @@ recording the bypass (`gates_sha.bypassed`, `reason: hotfix`). The gates-match d
 pure function (`ledger.gates_pass_for_head`); the command supplies the live head SHA and the
 ledger records.
 
+A `--hotfix` bypass is **refused without a recorded justification** (audit GAP-11): the
+night-window bypass is no longer reachable on the flag alone. The command requires exactly
+one of (a) `--blocker-rule <id>` naming a `keel guard` rule that actually fires for the
+issue (re-evaluated against the issue's title/labels), or (b) `--operator-override` with a
+named `--operator`. The chosen justification is written to `hotfix_justification`
+(`kind: matched-rule | operator-override`, plus `rule_id`/`matched` or `operator`) and
+surfaced in the ledger, so every bypass carries machine-checkable evidence.
+
+## Deterministic blocker ruleset
+
+`keel guard` evaluates an issue against the configured blocker ruleset and returns the
+matched rule ids. The matching is a pure function of the issue's title, its labels, and the
+resolved rules (`guard.evaluate`); the command gathers the live issue facts (a fail-soft
+`gh issue view`, or offline flags) and reads the rules. Rules resolve from
+`policy_pack.blocker_rules` when present and fall back to built-in defaults when absent —
+projects without any blocker config keep working unchanged. Each rule is a `label` match
+(case-insensitive) or a `title-regex` match; the built-in defaults cover `\bhotfix\b`,
+`\bsecurity\b`, `\bblocker\b` titles and the `blocker`/`hotfix`/`security` labels. This is
+the rule layer that `keel merge --hotfix --blocker-rule <id>` validates against, so a
+claimed blocker must actually match a rule before it can unlock the night-window bypass.
+
 `keel claim` and `keel release` expose the same resource primitive for adapters that need
 explicit orchestration, while `keel worktree-remove` owns the destructive cleanup guard:
 the path must be nested under the repository root and registered in `git worktree list`

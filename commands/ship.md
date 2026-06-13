@@ -182,16 +182,20 @@ recorded operator escape for an intentionally stale base.
 
 ### s3 guard
 Refuse if the working tree is dirty or the branch already has an open PR. **Blocker
-auto-detection** (any rule promotes the issue to a window-bypassing blocker — see s10):
-an explicit `--hotfix`/blocker flag; an alert/escalation label; a title/body match on a
-**word-boundary, case-insensitive** blocker regex (CI breakage, data loss, security fix,
-breaking change, crash, critical regression); a high-priority label plus an urgent-keyword
-title (`critical|urgent|blocker`); or `base_branch` currently red on a **gating**
-`ci_workflow` whose paths this PR touches. These are heuristics — humans override by
-passing or omitting the blocker flag. Word-bounded regexes still match negated phrasings
-("no crashes on…") — bounded false-positive risk, accepted. When the branch-scoped
-red-`base_branch` signal is unavailable on the fallback transport, treat that rule as
-no-fire and log it.
+auto-detection** is deterministic and core-owned — run `keel guard .keel/project.yaml
+--issue <N>` (or `--issue-title`/`--issue-labels` offline). It evaluates the issue against
+the configured blocker ruleset (`policy_pack.blocker_rules`, or built-in defaults) and
+returns the matched rule id(s): word-boundary, case-insensitive title regexes
+(`\bhotfix\b`, `\bsecurity\b`, `\bblocker\b`) and `blocker`/`hotfix`/`security` labels.
+A non-empty match promotes the issue to a window-bypassing blocker — and the matched rule
+id is what s10 requires as justification for `--hotfix` (see s10). Do **not** hand-wave a
+blocker: if `keel guard` returns no match, the issue is not a blocker. Run `make plugin`
+after editing this contract so the rendered adapters stay in sync.
+
+Additional live signals the agent may still weigh (not part of the deterministic ruleset):
+an alert/escalation label, or `base_branch` currently red on a **gating** `ci_workflow`
+whose paths this PR touches. When the branch-scoped red-`base_branch` signal is unavailable
+on the fallback transport, treat that rule as no-fire and log it.
 
 ### s4 implement *(agent)*
 Resolve the implementer: `implementer_agents` by the issue's role label, **overridden by
@@ -436,7 +440,14 @@ gates-pass check must run deterministically inside core, not as adapter prose.
   ship with `--append-ledger`) against the head and retry; on a denied claim, treat it as
   lock contention (mark the issue blocked, comment, continue). For a blocker issue, pass
   `--hotfix` — the audited bypass of both the window and the gates-SHA requirement; it still
-  requires the approved consent scopes and is recorded in the ledger.
+  requires the approved consent scopes and is recorded in the ledger. **The `--hotfix`
+  bypass is refused without a justification** (audit GAP-11): pass
+  `--blocker-rule <id>` where `<id>` is the rule `keel guard` returned for this issue
+  (s3) — `keel merge` re-validates it against the issue's title/labels and refuses an
+  unknown or non-matching rule — or, for a genuine emergency no rule covers,
+  `--operator-override` with a named `--operator`. The chosen justification
+  (`hotfix_justification: {kind: matched-rule|operator-override, …}`) is recorded in the
+  ledger.
 - **Outcome:** treat the **PR state (`MERGED`)** as authoritative. A non-zero exit after a
   successful server-side squash is a local-cleanup failure — proceed to capture/close; a
   real non-MERGED state aborts the closure block and blocks the issue.
@@ -566,4 +577,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=plugin command=ship keel_version=1.2.3 source_sha256=89a1d6cbef66a1faba3d29d6cb1b46088917511ee9014ef0a43fe1a66905119c generated_sha256=89a1d6cbef66a1faba3d29d6cb1b46088917511ee9014ef0a43fe1a66905119c -->
+<!-- keel-generated: surface=plugin command=ship keel_version=1.2.3 source_sha256=b580b7d1be8c3d581c0767423725c639602b35ee2c3711842f6b4e2611a0c153 generated_sha256=b580b7d1be8c3d581c0767423725c639602b35ee2c3711842f6b4e2611a0c153 -->

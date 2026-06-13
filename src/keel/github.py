@@ -117,5 +117,18 @@ def close_issue(issue: int | str, *, cwd: str | None = None, _run=None) -> Comma
     return run_argv(["gh", "issue", "close", str(issue)], cwd=cwd, **_kw(_run))
 
 
+def issue_facts(issue: int | str, *, cwd: str | None = None, _run=None) -> CommandResult:
+    """Fetch an issue's ``title`` and ``labels`` as JSON for ``keel guard``.
+
+    Thin I/O for blocker evaluation: the issue facts are read from the host
+    rather than trusting agent-supplied args. Fail-soft — the caller inspects
+    ``result.ok`` and falls back to offline args when offline.
+    """
+    return run_argv(
+        ["gh", "issue", "view", str(issue), "--json", "title,labels"],
+        cwd=cwd, **_kw(_run),
+    )
+
+
 def _kw(_run):
     return {"_run": _run} if _run is not None else {}
