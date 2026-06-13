@@ -1337,6 +1337,23 @@ class TestShip(unittest.TestCase):
         self.assertEqual(data["gate"]["reason"], "operator-waiver-label")
         self.assertEqual(data["verification"]["required_count"], 0)
 
+    def test_evidence_verify_waiver_human_output_reports_note(self):
+        rc, out, _ = run([
+            "evidence-verify", str(PROJECTS / "example-android.yaml"),
+            "--root", str(REPO_ROOT),
+            "--pr", "300",
+            "--head-ref", "fix/issue-266-evidence-arming",
+            "--pr-label", "keel:evidence-waived",
+            "--pr-comments-json", _write_raw("[]"),
+            "--issue-comments-json", _write_raw("[]"),
+            "--pr-reviews-json", _write_raw("[]"),
+        ])
+
+        self.assertEqual(rc, 0)
+        self.assertIn("enforced      : false (operator-waiver-label)", out)
+        self.assertIn("required      : 0", out)
+        self.assertIn("note          : evidence gate disarmed by operator waiver label", out)
+
     def test_evidence_verify_hand_authored_pr_without_provenance_is_ungated(self):
         rc, out, _ = run([
             "evidence-verify", str(PROJECTS / "example-android.yaml"),
