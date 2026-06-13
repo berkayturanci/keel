@@ -530,4 +530,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=plugin command=ship keel_version=1.2.2 source_sha256=df387b5031c2b143f324227d9792063041fc76aa3fc01ca6a134dca5368443b0 generated_sha256=df387b5031c2b143f324227d9792063041fc76aa3fc01ca6a134dca5368443b0 -->
+<!-- keel-generated: surface=plugin command=ship keel_version=1.2.3 source_sha256=df387b5031c2b143f324227d9792063041fc76aa3fc01ca6a134dca5368443b0 generated_sha256=df387b5031c2b143f324227d9792063041fc76aa3fc01ca6a134dca5368443b0 -->
