@@ -273,7 +273,7 @@ On a live append, a missing `--host-agent` emits a run-context warning by defaul
 fields would degrade. `--transport` is auto-filled from the resolved GitHub transport when
 omitted, so adapters should not echo a stale transport value.
 
-## `keel capture-verify <project.yaml> --merged-pr <N> [--json]`
+## `keel capture-verify <project.yaml> [--merged-pr <N>] [--from-transport] [--json]`
 
 Verify that merged PRs have exactly one valid capture marker in the configured run ledger.
 Missing, invalid, or duplicate markers make the command exit non-zero.
@@ -281,6 +281,37 @@ Missing, invalid, or duplicate markers make the command exit non-zero.
 ```bash
 keel capture-verify .keel/project.yaml --root . --merged-pr 456 --json
 ```
+
+### Reconcile cross-checks (GAP-8 hardening)
+
+Passing `--merged-pr` alone is the offline back-compat path: the merged set is trusted and
+only marker presence/validity is checked. To stop an agent from silently dropping a merged PR
+from capture accounting by omitting it from the args, derive the authoritative merged set from
+the transport instead:
+
+```bash
+keel capture-verify .keel/project.yaml --root . --from-transport --merged-since 2026-06-01 --json
+```
+
+`--from-transport` lists merged PRs from the host (`gh pr list --state merged`, narrowed by
+`--merged-since`). `--merged-pr` still works and is *added* to the derived set (the union is
+verified, so an explicit override can only widen, never shrink, the checked set). The transport
+query is fail-soft: when it errors the report sets `merged_pr_source.transport_failed: true` and
+falls back to any `--merged-pr` values.
+
+When the merged set is derived (or any reconcile input is supplied) three additive checks run:
+
+- **missing-marker** — a merged PR with no valid capture marker in the ledger.
+- **applied-without-artifact** — an `applied` capture lacking a durable artifact reference
+  (recorded via `keel ship --capture-artifact <path|hash>`). `deferred`/`skipped` need none.
+- **reviewer-count-mismatch** — the ledger's `actors.reviewers` count exceeds the evidence-side
+  review-verdict count for that PR. Per-PR verdict counts come from the transport when deriving
+  live, or from `--verdict-count PR=N` fixtures offline; a PR with no known count is advisory.
+
+Offline fixtures for deterministic runs: `--merged-prs-json <file>` (a JSON array of
+`{"number": N}`) substitutes for the transport query, and `--verdict-count PR=N` supplies
+evidence-side counts. Any reconcile finding makes the command exit non-zero in addition to the
+base marker semantics.
 
 ## `keel capture-reconcile <project.yaml> --merged-pr <N> [--json]`
 

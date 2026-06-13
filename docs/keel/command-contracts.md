@@ -215,6 +215,17 @@ reads the configured run ledger and returns `complete` only when every expected 
 has exactly one valid marker. Missing, invalid, or duplicate markers make verification
 `incomplete` and exit non-zero.
 
+To harden the accounting against an agent dropping a merged PR from the args (GAP-8),
+`--from-transport` derives the authoritative merged set from the host instead of trusting
+`--merged-pr` (which still works and is added to the derived set). When the set is derived —
+or any reconcile input is supplied — three additive cross-checks run over the same ledger:
+`missing-marker` (a merged PR with no valid marker), `applied-without-artifact` (an `applied`
+capture with no durable artifact reference, recorded via `keel ship --capture-artifact`), and
+`reviewer-count-mismatch` (ledger `actors.reviewers` count exceeds the evidence-side
+review-verdict count). The transport query and per-PR verdict fetch are fail-soft; offline runs
+use `--merged-prs-json` and `--verdict-count PR=N` fixtures. Any finding exits non-zero in
+addition to the base marker semantics.
+
 `keel capture-reconcile <project.yaml> --root <repo> --merged-pr <N>` reads the same
 ledger and returns a dry-run-safe recovery plan for merged PRs whose capture bookkeeping is
 incomplete. It may plan idempotent actions such as emitting the missing marker, rerunning a

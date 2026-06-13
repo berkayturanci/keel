@@ -31,6 +31,22 @@ def ci_conclusion(pr: int | str, *, cwd: str | None = None, _run=None) -> str | 
     return result.output.strip() or None
 
 
+def merged_prs(
+    *, search: str | None = None, limit: int = 100, cwd: str | None = None, _run=None
+) -> CommandResult:
+    """List recently-merged PR numbers as a JSON array (``[{"number": N}, ...]``).
+
+    Thin I/O for ``capture-verify`` transport derivation: the authoritative
+    merged-PR set is read from the host instead of trusting the agent's args.
+    ``search`` narrows the set (e.g. ``"merged:>=2026-06-01"``). Fail-soft —
+    the caller inspects ``result.ok`` and degrades gracefully when offline.
+    """
+    argv = ["gh", "pr", "list", "--state", "merged", "--limit", str(limit), "--json", "number"]
+    if search:
+        argv += ["--search", search]
+    return run_argv(argv, cwd=cwd, **_kw(_run))
+
+
 def pr_merge_snapshot(pr: int | str, *, cwd: str | None = None, _run=None) -> CommandResult:
     return run_argv(
         [

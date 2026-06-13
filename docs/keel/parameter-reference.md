@@ -576,15 +576,22 @@ keel ledger .keel/project.yaml --root . --limit 10
 Verify that merged PRs each have exactly one valid capture marker in the run ledger.
 
 ```
-keel capture-verify <project.yaml> --merged-pr N [--merged-pr N…] [--root DIR] [--json]
+keel capture-verify <project.yaml> [--merged-pr N…] [--from-transport] [--merged-since DATE]
+                     [--merged-prs-json FILE] [--verdict-count PR=N…] [--root DIR] [--json]
 ```
 
 | Flag | Type / values | Default | Effect |
 | --- | --- | --- | --- |
 | `path` | file path | required | Project config. |
 | `--root DIR` | path | `.` | Root for resolving the ledger path. |
-| `--merged-pr N` | positive int, repeatable | **required** | Merged PR(s) expected to carry a capture marker. |
+| `--merged-pr N` | positive int, repeatable | — | Merged PR(s) expected to carry a marker; explicit override added to the derived set. |
+| `--from-transport` | flag | off | Derive the merged set from the host and run reconcile cross-checks. |
+| `--merged-since DATE` | `YYYY-MM-DD` | none | With `--from-transport`, only PRs merged on/after this date. |
+| `--merged-prs-json FILE` | file path | none | Offline transport fixture: JSON array of `{"number": N}`. |
+| `--verdict-count PR=N` | `PR=N`, repeatable | none | Offline evidence-side review-verdict count per PR. |
 | `--json` | flag | off | Structured verification report. |
+
+One of `--merged-pr` or `--from-transport` (or `--merged-prs-json`) is required.
 
 ### Details
 
@@ -594,11 +601,19 @@ Missing, invalid, or duplicate markers fail that PR; any failing PR makes the ov
 status non-`complete` and the exit code 1. This is the session-end verifier adapters run
 after s11.
 
+When the merged set is derived from the transport (or any reconcile input is supplied),
+three additive cross-checks also run and a finding makes the exit code 1: `missing-marker`,
+`applied-without-artifact` (an `applied` capture with no `--capture-artifact` reference in the
+ledger), and `reviewer-count-mismatch` (ledger reviewer count > evidence-side verdict count).
+The transport query and per-PR verdict fetch are fail-soft. Passing only `--merged-pr` keeps
+the legacy offline behavior (marker checks only).
+
 ### Examples
 
 ```bash
 keel capture-verify .keel/project.yaml --root . --merged-pr 456 --json
 keel capture-verify .keel/project.yaml --root . --merged-pr 456 --merged-pr 457
+keel capture-verify .keel/project.yaml --root . --from-transport --merged-since 2026-06-01
 ```
 
 ## `keel capture-reconcile`
@@ -1288,7 +1303,7 @@ keel ship <project.yaml> [--root DIR] [--pr N] [--hotfix] [--dry-run] [--live]
           [--approve-scope SCOPE] [--operator ID] [--consent-mode MODE] [--target TEXT]
           [--append-ledger] [--run-id ID] [--run-events-file FILE] [--max-rounds N]
           [--issue N] [--pull-request N] [--branch NAME] [--head-sha SHA]
-          [--capture-status STATUS] [--capture-reason TEXT]
+          [--capture-status STATUS] [--capture-reason TEXT] [--capture-artifact REF]
           [--implementer LABEL] [--reviewer-agent LABEL] [--tester LABEL]
           [--host-agent NAME] [--transport gh|mcp] [--strict-run-context]
           [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL]
@@ -1315,6 +1330,7 @@ keel ship <project.yaml> [--root DIR] [--pr N] [--hotfix] [--dry-run] [--live]
 | `--head-sha SHA` | string | `None` | Head SHA stored in the ledger record. |
 | `--capture-status` | `applied` \| `deferred` \| `skipped:<reason>` | `None` | Capture outcome for the ledger record. **Required** when `--live --append-ledger` (exit 1 otherwise). Allowed skip reasons: `dry-run`, `deferred`, `merge-failed`, `recursion-guard`, `capability-unavailable`, `no-policy`. |
 | `--capture-reason TEXT` | string | `None` | Capture outcome reason. |
+| `--capture-artifact REF` | string (path or hash) | `None` | Durable capture artifact reference proving an `applied` capture; `keel capture-verify` reconcile flags `applied` records with no artifact. |
 | `--implementer LABEL` | string | `None` | Effective implementer codename or `vendor:model` label for attribution. |
 | `--reviewer-agent LABEL` | string, repeatable | none | Effective reviewer labels (order-preserving parallel array). |
 | `--tester LABEL` | string | `None` | Effective tester label. |

@@ -11,6 +11,15 @@ from pathlib import Path
 from unittest.mock import patch
 
 from keel import cli, install, ledger, runtime, ship, stepverifier
+from keel.runner import CommandResult
+
+
+def _ok_result(output):
+    return CommandResult(True, 0, output)
+
+
+def _fail_result(output):
+    return CommandResult(False, 1, output)
 
 PROJECTS = Path(__file__).resolve().parent.parent / "projects"
 REPO_ROOT = PROJECTS.parent
@@ -1147,6 +1156,282 @@ class TestShip(unittest.TestCase):
 
         self.assertEqual(rc_bad, 1)
         self.assertIn("invalid ledger", err_bad)
+
+    def test_capture_verify_requires_a_merged_pr_source(self):
+        config = _write_config_with_ledger("'true'")
+        with tempfile.TemporaryDirectory() as d:
+            rc, _, err = run(["capture-verify", config, "--root", d])
+        self.assertEqual(rc, 1)
+        self.assertIn("provide --merged-pr or --from-transport", err)
+
+    def _ship_applied(self, config, root, pr, *, artifact=None):
+        argv = ["ship", config, "--root", root, "--live", "--append-ledger",
+                "--pull-request", str(pr),
+                "--capture-status", "applied",
+                "--approve-scope", "filesystem,git,github",
+                "--operator", "tester"]
+        if artifact is not None:
+            argv += ["--capture-artifact", artifact]
+        rc, _, _ = run(argv)
+        self.assertEqual(rc, 0)
+
+    def test_capture_verify_back_compat_merged_pr_path_passes(self):
+        # Legacy offline path: applied capture, no artifact, only --merged-pr.
+        # Reconcile is not activated, so the historic pass/fail is preserved.
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger("'true'")
+            self._ship_applied(config, d, 160)
+            rc, out, _ = run(["capture-verify", config, "--root", d,
+                              "--merged-pr", "160", "--json"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["merged_pr_source"]["source"], "args")
+        self.assertNotIn("reconcile", data)
+
+    def test_capture_verify_transport_derivation_catches_omitted_pr(self):
+        # The agent only passes PR 160, but the transport says 160 AND 161 merged.
+        # 161 has no capture marker, so derivation surfaces the omission.
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger("'true'")
+            self._ship_applied(config, d, 160, artifact="artifacts/160.md")
+            with patch.object(cli.github, "merged_prs", return_value=_ok_result(
+                    json.dumps([{"number": 160}, {"number": 161}]))):
+                rc, out, _ = run(["capture-verify", config, "--root", d,
+                                  "--merged-pr", "160", "--from-transport", "--json"])
+        self.assertEqual(rc, 1)
+        data = json.loads(out)
+        self.assertEqual(data["merged_pr_source"]["source"], "transport")
+        types = [f["type"] for f in data["reconcile"]["findings"]]
+        self.assertIn("missing-marker", types)
+        self.assertIn(161, [f["pr"] for f in data["reconcile"]["findings"]])
+
+    def test_capture_verify_applied_without_artifact_fails_under_reconcile(self):
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger("'true'")
+            self._ship_applied(config, d, 160)  # no artifact
+            fixture = Path(d) / "merged.json"
+            _write_json_fixture(fixture, [{"number": 160}])
+            rc, out, _ = run(["capture-verify", config, "--root", d,
+                              "--merged-prs-json", str(fixture), "--json"])
+        self.assertEqual(rc, 1)
+        data = json.loads(out)
+        self.assertEqual(data["merged_pr_source"]["source"], "transport-fixture")
+        types = [f["type"] for f in data["reconcile"]["findings"]]
+        self.assertEqual(types, ["applied-without-artifact"])
+
+    def test_capture_verify_applied_with_artifact_passes_under_reconcile(self):
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger("'true'")
+            self._ship_applied(config, d, 160, artifact="artifacts/160.md")
+            fixture = Path(d) / "merged.json"
+            # A junk entry (no/invalid number) is ignored by the fixture reader.
+            _write_json_fixture(fixture, [{"number": 160}, {"note": "no number"},
+                                          {"number": 0}])
+            rc, out, _ = run(["capture-verify", config, "--root", d,
+                              "--merged-prs-json", str(fixture)])
+        self.assertEqual(rc, 0)
+        self.assertIn("reconcile: ok", out)
+
+    def test_capture_verify_deferred_without_artifact_ok_under_reconcile(self):
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger("'true'")
+            rc_ship, _, _ = run(["ship", config, "--root", d, "--live", "--append-ledger",
+                                 "--pull-request", "160",
+                                 "--capture-status", "deferred",
+                                 "--capture-reason", "queued for later",
+                                 "--approve-scope", "filesystem,git,github",
+                                 "--operator", "tester"])
+            self.assertEqual(rc_ship, 0)
+            fixture = Path(d) / "merged.json"
+            _write_json_fixture(fixture, [{"number": 160}])
+            rc, out, _ = run(["capture-verify", config, "--root", d,
+                              "--merged-prs-json", str(fixture), "--json"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertTrue(data["reconcile"]["ok"])
+
+    def test_capture_verify_reviewer_count_mismatch_fails(self):
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger("'true'")
+            rc_ship, _, _ = run(["ship", config, "--root", d, "--live", "--append-ledger",
+                                 "--pull-request", "160",
+                                 "--capture-status", "applied",
+                                 "--capture-artifact", "artifacts/160.md",
+                                 "--reviewer-agent", "agent-a",
+                                 "--reviewer-agent", "agent-b",
+                                 "--approve-scope", "filesystem,git,github",
+                                 "--operator", "tester"])
+            self.assertEqual(rc_ship, 0)
+            fixture = Path(d) / "merged.json"
+            _write_json_fixture(fixture, [{"number": 160}])
+            rc, out, _ = run(["capture-verify", config, "--root", d,
+                              "--merged-prs-json", str(fixture),
+                              "--verdict-count", "160=1", "--json"])
+        self.assertEqual(rc, 1)
+        data = json.loads(out)
+        types = [f["type"] for f in data["reconcile"]["findings"]]
+        self.assertEqual(types, ["reviewer-count-mismatch"])
+
+    def test_capture_verify_transport_failure_is_fail_soft(self):
+        # Transport query fails; --merged-pr still provides the set.
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger("'true'")
+            self._ship_applied(config, d, 160, artifact="artifacts/160.md")
+            with patch.object(cli.github, "merged_prs",
+                              return_value=_fail_result("gh offline")):
+                rc, out, _ = run(["capture-verify", config, "--root", d,
+                                  "--merged-pr", "160", "--from-transport", "--json"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertTrue(data["merged_pr_source"]["transport_failed"])
+
+    def test_capture_verify_transport_empty_with_no_override_errors(self):
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger("'true'")
+            with patch.object(cli.github, "merged_prs",
+                              return_value=_ok_result("[]")):
+                rc, _, err = run(["capture-verify", config, "--root", d, "--from-transport"])
+        self.assertEqual(rc, 1)
+        self.assertIn("no merged PRs derived", err)
+
+    def test_capture_verify_transport_bad_json_is_fail_soft(self):
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger("'true'")
+            self._ship_applied(config, d, 160, artifact="artifacts/160.md")
+            with patch.object(cli.github, "merged_prs",
+                              return_value=_ok_result("not json")):
+                rc, out, _ = run(["capture-verify", config, "--root", d,
+                                  "--merged-pr", "160", "--from-transport", "--json"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertTrue(data["merged_pr_source"]["transport_failed"])
+
+    def test_capture_verify_transport_non_list_json_is_fail_soft(self):
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger("'true'")
+            self._ship_applied(config, d, 160, artifact="artifacts/160.md")
+            with patch.object(cli.github, "merged_prs",
+                              return_value=_ok_result("{}")):
+                rc, out, _ = run(["capture-verify", config, "--root", d,
+                                  "--merged-pr", "160", "--from-transport", "--json"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertTrue(data["merged_pr_source"]["transport_failed"])
+
+    def test_capture_verify_merged_since_narrows_search(self):
+        captured = {}
+
+        def fake_merged_prs(*, search=None, cwd=None):
+            captured["search"] = search
+            return _ok_result(json.dumps([{"number": 160}]))
+
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger("'true'")
+            self._ship_applied(config, d, 160, artifact="artifacts/160.md")
+            with patch.object(cli.github, "merged_prs", side_effect=fake_merged_prs):
+                rc, _, _ = run(["capture-verify", config, "--root", d,
+                                "--from-transport", "--merged-since", "2026-06-01"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(captured["search"], "merged:>=2026-06-01")
+
+    def test_capture_verify_human_output_shows_reconcile_findings(self):
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger("'true'")
+            self._ship_applied(config, d, 160)  # no artifact
+            fixture = Path(d) / "merged.json"
+            _write_json_fixture(fixture, [{"number": 160}])
+            rc, out, _ = run(["capture-verify", config, "--root", d,
+                              "--merged-prs-json", str(fixture)])
+        self.assertEqual(rc, 1)
+        self.assertIn("merged-PR source: transport-fixture", out)
+        self.assertIn("reconcile PR #160", out)
+        self.assertIn("applied-without-artifact", out)
+
+    def test_capture_verify_bad_merged_prs_json_errors(self):
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger("'true'")
+            fixture = Path(d) / "merged.json"
+            fixture.write_text("{}", encoding="utf-8")
+            rc, _, err = run(["capture-verify", config, "--root", d,
+                              "--merged-prs-json", str(fixture)])
+        self.assertEqual(rc, 1)
+        self.assertIn("must contain a JSON array", err)
+
+    def _config_owner_repo_ledger(self):
+        return _write_raw(
+            "extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
+            "owner: acme\nrepo: tmp\ngates: [build]\n"
+            "knobs:\n  build_gate_cmd: 'true'\n"
+            "policy_pack:\n  name: tmp\n  reports:\n"
+            "    run_ledger: 'state/runs.jsonl'\n"
+        )
+
+    def _write_ledger_record(self, root, pr, *, reviewers):
+        record = {
+            "schema_version": "keel.run-ledger.v1",
+            "record_type": "ship_run",
+            "pull_request": {"number": pr},
+            "capture": {
+                "marker": f"compound-learning: pr={pr} status=applied",
+                "artifact": f"artifacts/{pr}.md",
+            },
+            "actors": {"reviewers": reviewers},
+        }
+        path = Path(root) / "state" / "runs.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+    def test_capture_verify_live_verdict_fetch_detects_mismatch(self):
+        def fake_run(argv, **kwargs):
+            endpoint = argv[-1]
+            if endpoint.endswith("/issues/160/comments"):
+                return CommandResult(True, 0, json.dumps([[
+                    {"body": "keel.review-verdict.v1\nreviewer: a\nLGTM",
+                     "author_association": "MEMBER"},
+                ]]))
+            if endpoint.endswith("/pulls/160/reviews"):
+                return CommandResult(True, 0, json.dumps([[]]))
+            return CommandResult(False, 1, "unexpected endpoint")
+
+        with tempfile.TemporaryDirectory() as d:
+            config = self._config_owner_repo_ledger()
+            self._write_ledger_record(d, 160, reviewers=["agent-a", "agent-b"])
+            with patch.object(cli.github, "merged_prs",
+                              return_value=_ok_result(json.dumps([{"number": 160}]))), \
+                    patch("keel.cli.run_argv", side_effect=fake_run):
+                rc, out, _ = run(["capture-verify", config, "--root", d,
+                                  "--from-transport", "--json"])
+        self.assertEqual(rc, 1)
+        data = json.loads(out)
+        types = [f["type"] for f in data["reconcile"]["findings"]]
+        self.assertEqual(types, ["reviewer-count-mismatch"])
+        self.assertEqual(data["reconcile"]["results"][0]["posted_verdicts"], 1)
+
+    def test_capture_verify_live_verdict_fetch_failure_is_advisory(self):
+        def fake_run(argv, **kwargs):
+            return CommandResult(False, 1, "gh offline")
+
+        with tempfile.TemporaryDirectory() as d:
+            config = self._config_owner_repo_ledger()
+            self._write_ledger_record(d, 160, reviewers=["agent-a", "agent-b"])
+            with patch.object(cli.github, "merged_prs",
+                              return_value=_ok_result(json.dumps([{"number": 160}]))), \
+                    patch("keel.cli.run_argv", side_effect=fake_run):
+                rc, out, _ = run(["capture-verify", config, "--root", d,
+                                  "--from-transport", "--json"])
+        # Verdict fetch failed for PR 160, so the reviewer cross-check is skipped.
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertIsNone(data["reconcile"]["results"][0]["posted_verdicts"])
+
+    def test_verdict_count_arg_rejects_bad_values(self):
+        config = _write_config_with_ledger("'true'")
+        with tempfile.TemporaryDirectory() as d:
+            for bad in ("noequals", "x=1", "1=y", "0=1", "1=-1"):
+                with self.assertRaises(SystemExit) as ctx:
+                    run(["capture-verify", config, "--root", d,
+                         "--merged-pr", "1", "--verdict-count", bad])
+                self.assertEqual(ctx.exception.code, 2, bad)
 
     def test_evidence_verify_passes_from_offline_artifacts(self):
         with tempfile.TemporaryDirectory() as d:

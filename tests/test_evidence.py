@@ -88,6 +88,34 @@ class TestEvidenceContract(unittest.TestCase):
         self.assertNotIn("jury-verdict", report["missing"])
 
 
+class TestCountReviewVerdicts(unittest.TestCase):
+    def test_counts_distinct_trusted_reviewers(self):
+        count = evidence.count_review_verdicts(
+            pr_comments=[
+                _trusted_comment("keel.review-verdict.v1\nLGTM", reviewer="agent-a"),
+                _trusted_comment("keel.review-verdict.v1\nLGTM", reviewer="agent-b"),
+                # idempotent re-post by agent-a collapses to one verdict
+                _trusted_comment("keel.review-verdict.v1\nLGTM again", reviewer="agent-a"),
+            ],
+        )
+
+        self.assertEqual(count, 2)
+
+    def test_ignores_untrusted_and_non_verdicts(self):
+        count = evidence.count_review_verdicts(
+            pr_comments=[
+                _untrusted_comment("keel.review-verdict.v1\nLGTM"),
+                _comment("just a chat comment"),
+            ],
+            pr_reviews=[_comment("keel.review-verdict.v1\nLGTM\nreviewer: r1")],
+        )
+
+        self.assertEqual(count, 1)
+
+    def test_empty_inputs_count_zero(self):
+        self.assertEqual(evidence.count_review_verdicts(), 0)
+
+
 class TestEvidenceVerify(unittest.TestCase):
     def test_missing_closure_blocks(self):
         report = evidence.verify(

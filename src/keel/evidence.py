@@ -542,6 +542,28 @@ def _is_ship_assessment(body: str) -> bool:
     return SHIP_ASSESSMENT_HEADING in body or "keel ship \u2014" in body
 
 
+def count_review_verdicts(
+    pr_comments: list[dict[str, Any]] | None = None,
+    pr_reviews: list[dict[str, Any]] | None = None,
+    *,
+    head_sha: str | None = None,
+    enforced: bool = True,
+) -> int:
+    """Count distinct trusted review-verdict reviewers for a PR.
+
+    This is the same evidence-side counting the verify report uses for the
+    ``review`` items: it collapses idempotent re-posts by the same reviewer to
+    one verdict and only counts trusted, head-bound verdicts. Reused by capture
+    reconcile to cross-check the ledger's recorded reviewer count.
+    """
+    keys = _review_evidence_keys(
+        [*(pr_comments or []), *(pr_reviews or [])],
+        head_sha=head_sha,
+        enforced=enforced,
+    )
+    return len(keys)
+
+
 def _review_evidence_keys(
     items: list[dict[str, Any]],
     *,

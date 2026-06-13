@@ -21,6 +21,7 @@ from . import (
     artifacts,
     branchscope,
     capture,
+    captureverify,
     checkpoint,
     classify,
     closure,
@@ -650,6 +651,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         head_sha=args.head_sha,
         capture_status=args.capture_status,
         capture_reason=args.capture_reason,
+        capture_artifact=args.capture_artifact,
         issue_title=args.issue_title,
         issue_labels=_issue_labels(args),
         existing_records=existing_ledger_records,
@@ -810,23 +812,155 @@ def _cmd_capture_verify(args: argparse.Namespace) -> int:
     except ledger.LedgerError as exc:
         print(f"invalid ledger {ledger_path}: {exc}", file=sys.stderr)
         return 1
-    report = capture.verify_session(records, args.merged_pr)
+    try:
+        derived_prs, derivation = _capture_verify_merged_prs(args, config)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    report = capture.verify_session(records, derived_prs)
+
+    reconcile_active = derivation["source"] != "args" or _reconcile_inputs_active(args)
+    reconcile_report = None
+    if reconcile_active:
+        verdict_counts = _capture_verify_verdict_counts(args, config, derived_prs)
+        reconcile_report = captureverify.reconcile(
+            records, derived_prs, verdict_counts=verdict_counts
+        )
+
     payload = {
         "contract": capture.contract_as_dict(config),
         "ledger_path": str(ledger_path),
+        "merged_pr_source": derivation,
         "verification": report,
     }
+    if reconcile_report is not None:
+        payload["reconcile"] = reconcile_report
+
+    base_ok = report["status"] == "complete"
+    reconcile_ok = reconcile_report is None or reconcile_report["ok"]
+
     if args.json:
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
         print(f"keel capture-verify — {report['status']}  {ledger_path}")
+        print(f"  merged-PR source: {derivation['source']} ({len(derived_prs)} PR(s))")
         for result in report["results"]:
             state = "ok" if result["ok"] else "FAIL"
             print(
                 f"  {state:>4}  PR #{result['pr']}  "
                 f"{result['status']}  {result['reason'] or '-'}"
             )
-    return 0 if report["status"] == "complete" else 1
+        if reconcile_report is not None:
+            for finding in reconcile_report["findings"]:
+                print(f"  FAIL  reconcile PR #{finding['pr']}  "
+                      f"{finding['type']}  {finding['reason']}")
+            if reconcile_report["ok"]:
+                print("  reconcile: ok")
+    return 0 if base_ok and reconcile_ok else 1
+
+
+def _reconcile_inputs_active(args: argparse.Namespace) -> bool:
+    return bool(
+        getattr(args, "from_transport", False)
+        or getattr(args, "merged_prs_json", None)
+        or getattr(args, "verdict_count", None)
+        or getattr(args, "pr_reviews_json", None)
+    )
+
+
+def _capture_verify_merged_prs(
+    args: argparse.Namespace, config: cfg.ProjectConfig
+) -> tuple[list[int], dict[str, object]]:
+    """Resolve the authoritative merged-PR set for capture reconciliation.
+
+    Priority: an explicit transport fixture (``--merged-prs-json``), then a live
+    transport derivation (``--from-transport``), then the explicit ``--merged-pr``
+    override. ``--merged-pr`` always augments the derived set so an agent cannot
+    *shrink* the merged set by omitting PRs (the union is verified).
+    """
+    explicit = list(args.merged_pr or ())
+    fixture = getattr(args, "merged_prs_json", None)
+    if fixture is not None:
+        derived = _merged_prs_from_json(fixture)
+        merged = _dedupe_ints([*derived, *explicit])
+        return merged, {"source": "transport-fixture", "transport_failed": False}
+    if getattr(args, "from_transport", False):
+        derived, failed = _merged_prs_from_transport(args)
+        merged = _dedupe_ints([*derived, *explicit])
+        if not merged:
+            raise ValueError(
+                "no merged PRs derived from transport and none passed via --merged-pr"
+            )
+        return merged, {"source": "transport", "transport_failed": failed}
+    if not explicit:
+        raise ValueError("provide --merged-pr or --from-transport")
+    return _dedupe_ints(explicit), {"source": "args", "transport_failed": False}
+
+
+def _merged_prs_from_json(path: str) -> list[int]:
+    items = _read_json_list(path)
+    numbers: list[int] = []
+    for item in items:
+        number = item.get("number")
+        if isinstance(number, int) and number > 0:
+            numbers.append(number)
+    return numbers
+
+
+def _merged_prs_from_transport(args: argparse.Namespace) -> tuple[list[int], bool]:
+    search = getattr(args, "merged_since", None)
+    search_arg = f"merged:>={search}" if search else None
+    result = github.merged_prs(search=search_arg, cwd=args.root)
+    if not result.ok:
+        return [], True
+    try:
+        items = json.loads(result.output or "[]")
+    except json.JSONDecodeError:
+        return [], True
+    if not isinstance(items, list):
+        return [], True
+    numbers = [
+        item["number"]
+        for item in items
+        if isinstance(item, dict) and isinstance(item.get("number"), int)
+    ]
+    return numbers, False
+
+
+def _capture_verify_verdict_counts(
+    args: argparse.Namespace, config: cfg.ProjectConfig, merged_prs: list[int]
+) -> dict[int, int]:
+    """Evidence-side review-verdict counts per PR for the reviewer cross-check.
+
+    Offline: ``--verdict-count PR=N`` fixtures. Live: counts are read from the
+    transport per PR via the shared evidence counter; a fetch failure simply
+    omits that PR (the cross-check degrades to advisory rather than failing).
+    """
+    explicit = dict(getattr(args, "verdict_count", None) or ())
+    if explicit:
+        return explicit
+    if not getattr(args, "from_transport", False):
+        return {}
+    try:
+        owner_repo = _owner_repo(config)
+    except ValueError:
+        # No owner/repo configured: the reviewer cross-check degrades to advisory.
+        return {}
+    counts: dict[int, int] = {}
+    for pr in merged_prs:
+        try:
+            pr_comments = _gh_json_list(
+                ["repos", owner_repo, "issues", str(pr), "comments"], cwd=args.root
+            )
+            pr_reviews = _gh_json_list(
+                ["repos", owner_repo, "pulls", str(pr), "reviews"], cwd=args.root
+            )
+        except ValueError:
+            continue
+        counts[pr] = evidence.count_review_verdicts(
+            pr_comments, pr_reviews, enforced=False
+        )
+    return counts
 
 
 def _cmd_capture_reconcile(args: argparse.Namespace) -> int:
@@ -2367,6 +2501,16 @@ def _read_json_object(path: str) -> dict[str, object]:
     return value
 
 
+def _dedupe_ints(values: list[int]) -> list[int]:
+    seen: set[int] = set()
+    out: list[int] = []
+    for value in values:
+        if value not in seen:
+            seen.add(value)
+            out.append(value)
+    return out
+
+
 def _read_json_list(path: str, *, missing_ok: bool = False) -> list[dict[str, object]]:
     p = Path(path)
     if missing_ok and not p.exists():
@@ -2422,6 +2566,20 @@ def _step_caps_from_args(values: list[str]) -> dict[str, int]:
             raise ValueError("--step-cap must use SLOT=N with N > 0")
         caps[slot] = parsed
     return caps
+
+
+def _verdict_count_arg(value: str) -> tuple[int, int]:
+    if "=" not in value:
+        raise argparse.ArgumentTypeError("--verdict-count must use PR=N")
+    pr_raw, count_raw = value.split("=", 1)
+    try:
+        pr = int(pr_raw)
+        count = int(count_raw)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("--verdict-count must use PR=N with integers") from exc
+    if pr <= 0 or count < 0:
+        raise argparse.ArgumentTypeError("--verdict-count requires PR>0 and N>=0")
+    return pr, count
 
 
 def _gh_json(args: list[str], *, cwd: str) -> dict[str, object]:
@@ -3180,8 +3338,22 @@ def build_parser() -> argparse.ArgumentParser:
     p_capture.add_argument("path", help="path to project.yaml")
     p_capture.add_argument("--root", default=".",
                            help="repo root for resolving the ledger path")
-    p_capture.add_argument("--merged-pr", type=_positive_int, action="append", required=True,
-                           help="merged PR number expected to have a capture marker")
+    p_capture.add_argument("--merged-pr", type=_positive_int, action="append",
+                           help="merged PR number expected to have a capture marker "
+                                "(explicit override; always added to the derived set)")
+    p_capture.add_argument("--from-transport", action="store_true",
+                           help="derive the merged-PR set from the transport instead of "
+                                "trusting --merged-pr (also runs reconcile cross-checks)")
+    p_capture.add_argument("--merged-since", default=None,
+                           help="with --from-transport, only PRs merged on/after this date "
+                                "(YYYY-MM-DD)")
+    p_capture.add_argument("--merged-prs-json", default=None,
+                           help="offline transport fixture: JSON array of {\"number\": N}")
+    p_capture.add_argument("--pr-reviews-json", default=None,
+                           help="offline fixture path; presence activates reconcile checks")
+    p_capture.add_argument("--verdict-count", type=_verdict_count_arg, action="append",
+                           default=None, metavar="PR=N",
+                           help="evidence-side review-verdict count for a PR (offline fixture)")
     p_capture.add_argument("--json", action="store_true", help="emit structured JSON")
     p_capture.set_defaults(func=_cmd_capture_verify)
 
@@ -3898,6 +4070,9 @@ def _add_ship_parser(parser: argparse.ArgumentParser, *, command: str) -> None:
                         help="capture outcome to store in the run ledger record")
     parser.add_argument("--capture-reason", default=None,
                         help="capture outcome reason to store in the run ledger record")
+    parser.add_argument("--capture-artifact", default=None,
+                        help="durable capture artifact reference (path or content hash) "
+                             "proving an applied capture; required for clean reconcile")
     parser.add_argument("--implementer", default=None,
                         help="effective implementer codename or vendor/model label")
     parser.add_argument("--reviewer-agent", action="append", default=[],

@@ -194,13 +194,21 @@ def record_marker(
     pr_number: int | None,
     status: str | None,
     reason: str | None = None,
+    artifact: str | None = None,
     title: str | None = None,
     labels: list[str] | tuple[str, ...] = (),
     changed_files: list[str] | tuple[str, ...] = (),
     existing_records: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
     config: cfg.ProjectConfig | None = None,
 ) -> dict[str, Any]:
-    """Build the capture block stored in a ship run ledger record."""
+    """Build the capture block stored in a ship run ledger record.
+
+    ``artifact`` is an optional reference (path or content hash) to the durable
+    capture artifact. It is the proof that an ``applied`` capture actually
+    produced something; capture reconcile treats ``applied`` with no artifact as
+    a finding. ``deferred``/``skipped`` need no artifact.
+    """
+    clean_artifact = artifact.strip() if isinstance(artifact, str) and artifact.strip() else None
     if status is None:
         return {
             "schema_version": CAPTURE_SCHEMA_VERSION,
@@ -208,6 +216,7 @@ def record_marker(
             "reason": reason,
             "marker_reason": None,
             "marker": None,
+            "artifact": clean_artifact,
             "fail_soft": True,
             "learning": learning_decision(
                 title=title,
@@ -237,6 +246,7 @@ def record_marker(
             "reason": reason,
             "marker_reason": clean_marker_reason,
             "marker": None,
+            "artifact": clean_artifact,
             "fail_soft": True,
             "learning": learning,
         }
@@ -247,6 +257,7 @@ def record_marker(
         "reason": reason,
         "marker_reason": marker.reason,
         "marker": marker.as_text(),
+        "artifact": clean_artifact,
         "fail_soft": True,
         "learning": learning,
     }
