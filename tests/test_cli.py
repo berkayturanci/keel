@@ -1933,6 +1933,189 @@ class TestShip(unittest.TestCase):
         )
 
 
+def _scope_ledger(declared_files, *, pr=300):
+    record = {
+        "schema_version": "keel.run-ledger.v1",
+        "record_type": "ship_run",
+        "pull_request": {"number": pr},
+        "changes": {"file_count": 1, "files": ["a.py"]},
+        "declared": {"file_count": len(declared_files), "files": list(declared_files)},
+    }
+    return ledger.encode_record(record)
+
+
+class TestScopeVerify(unittest.TestCase):
+    def _run(self, *, ledger_text, changed, deferral=None):
+        with tempfile.TemporaryDirectory() as d:
+            ledger_jsonl = Path(d) / "ledger.jsonl"
+            ledger_jsonl.write_text(ledger_text, encoding="utf-8")
+            argv = [
+                "scope-verify", str(PROJECTS / "example-android.yaml"),
+                "--root", str(REPO_ROOT), "--pr", "300", "--dry-run",
+                "--ledger-jsonl", str(ledger_jsonl), "--json",
+            ]
+            for path in changed:
+                argv += ["--changed-file", path]
+            if deferral is not None:
+                argv += ["--deferral", deferral]
+            return run(argv)
+
+    def test_in_scope_diff_passes(self):
+        rc, out, _ = self._run(
+            ledger_text=_scope_ledger(["a.py"]), changed=["a.py"]
+        )
+        data = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertEqual(data["verification"]["status"], "pass")
+        self.assertEqual(data["verification"]["scope_creep"], [])
+
+    def test_scope_creep_fails_and_lists_unexpected_file(self):
+        rc, out, _ = self._run(
+            ledger_text=_scope_ledger(["a.py"]), changed=["a.py", "unrelated.py"]
+        )
+        data = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertEqual(data["verification"]["status"], "fail")
+        self.assertEqual(data["verification"]["scope_creep"], ["unrelated.py"])
+
+    def test_docs_paths_are_exempt(self):
+        rc, out, _ = self._run(
+            ledger_text=_scope_ledger(["a.py"]),
+            changed=["a.py", "docs/keel/cli.md"],
+        )
+        data = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertEqual(data["verification"]["status"], "pass")
+        self.assertEqual(data["verification"]["docs_exempt"], ["docs/keel/cli.md"])
+
+    def test_no_declared_record_is_advisory_pass(self):
+        rc, out, _ = self._run(ledger_text="", changed=["a.py", "x.py"])
+        data = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertTrue(data["verification"]["advisory"])
+        self.assertEqual(data["verification"]["note"], "no declared scope recorded")
+
+    def test_scope_waived_deferral_is_honored(self):
+        rc, out, _ = self._run(
+            ledger_text=_scope_ledger(["a.py"]),
+            changed=["a.py", "unrelated.py"],
+            deferral="scope-waived",
+        )
+        data = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertEqual(data["verification"]["status"], "pass")
+        self.assertTrue(data["verification"]["waived"])
+
+    def test_human_output_lists_creep_and_docs(self):
+        with tempfile.TemporaryDirectory() as d:
+            ledger_jsonl = Path(d) / "ledger.jsonl"
+            ledger_jsonl.write_text(_scope_ledger(["a.py"]), encoding="utf-8")
+            rc, out, _ = run([
+                "scope-verify", str(PROJECTS / "example-android.yaml"),
+                "--root", str(REPO_ROOT), "--pr", "300", "--dry-run",
+                "--ledger-jsonl", str(ledger_jsonl),
+                "--changed-file", "a.py", "--changed-file", "docs/x.md",
+                "--changed-file", "unrelated.py",
+            ])
+        self.assertEqual(rc, 1)
+        self.assertIn("keel scope-verify — fail", out)
+        self.assertIn("scope-creep   : unrelated.py", out)
+        self.assertIn("docs-exempt   : docs/x.md", out)
+
+    def test_human_output_advisory_note(self):
+        with tempfile.TemporaryDirectory() as d:
+            ledger_jsonl = Path(d) / "ledger.jsonl"
+            ledger_jsonl.write_text("", encoding="utf-8")
+            rc, out, _ = run([
+                "scope-verify", str(PROJECTS / "example-android.yaml"),
+                "--root", str(REPO_ROOT), "--pr", "300", "--dry-run",
+                "--ledger-jsonl", str(ledger_jsonl), "--changed-file", "a.py",
+            ])
+        self.assertEqual(rc, 0)
+        self.assertIn("note          : no declared scope recorded", out)
+
+    def test_human_output_waived_note(self):
+        with tempfile.TemporaryDirectory() as d:
+            ledger_jsonl = Path(d) / "ledger.jsonl"
+            ledger_jsonl.write_text(_scope_ledger(["a.py"]), encoding="utf-8")
+            rc, out, _ = run([
+                "scope-verify", str(PROJECTS / "example-android.yaml"),
+                "--root", str(REPO_ROOT), "--pr", "300", "--dry-run",
+                "--ledger-jsonl", str(ledger_jsonl),
+                "--changed-file", "a.py", "--changed-file", "unrelated.py",
+                "--deferral", "scope-waived",
+            ])
+        self.assertEqual(rc, 0)
+        self.assertIn("note          : scope creep waived by operator deferral", out)
+
+    def test_human_output_clean_in_scope_pass(self):
+        with tempfile.TemporaryDirectory() as d:
+            ledger_jsonl = Path(d) / "ledger.jsonl"
+            ledger_jsonl.write_text(_scope_ledger(["a.py"]), encoding="utf-8")
+            rc, out, _ = run([
+                "scope-verify", str(PROJECTS / "example-android.yaml"),
+                "--root", str(REPO_ROOT), "--pr", "300", "--dry-run",
+                "--ledger-jsonl", str(ledger_jsonl), "--changed-file", "a.py",
+            ])
+        self.assertEqual(rc, 0)
+        self.assertIn("keel scope-verify — pass", out)
+        self.assertIn("in-scope      : 1 file(s)", out)
+        self.assertNotIn("scope-creep", out)
+
+    def test_reads_configured_ledger_under_root_when_no_fixture(self):
+        # With no --ledger-jsonl, scope-verify reads the configured run ledger
+        # under --root; a fresh root has no ledger → advisory pass.
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run([
+                "scope-verify", str(PROJECTS / "example-android.yaml"),
+                "--root", d, "--pr", "300", "--dry-run",
+                "--changed-file", "a.py", "--json",
+            ])
+        data = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertTrue(data["verification"]["advisory"])
+
+    def test_invalid_ledger_reports_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            bad = Path(d) / "ledger.jsonl"
+            bad.write_text("{not json", encoding="utf-8")
+            rc, _, err = run([
+                "scope-verify", str(PROJECTS / "example-android.yaml"),
+                "--root", str(REPO_ROOT), "--pr", "300", "--dry-run",
+                "--ledger-jsonl", str(bad), "--changed-file", "a.py", "--json",
+            ])
+        self.assertEqual(rc, 1)
+        self.assertIn("invalid run ledger", err)
+
+    def test_missing_config_reports_error(self):
+        rc, _, err = run([
+            "scope-verify", "no-such.yaml", "--pr", "300", "--dry-run",
+            "--changed-file", "a.py",
+        ])
+        self.assertEqual(rc, 1)
+        self.assertIn("no such config", err)
+
+    def test_invalid_config_reports_error(self):
+        bad = _write_raw("extends: keel\nbase_branch: main\ngates: [build]\n")
+        rc, _, err = run([
+            "scope-verify", bad, "--pr", "300", "--dry-run", "--changed-file", "a.py",
+        ])
+        self.assertEqual(rc, 1)
+
+    def test_artifact_value_error_reports(self):
+        # A live (non-dry-run, no-fixture) fetch on a config missing owner/repo
+        # raises ValueError from _owner_repo and is surfaced cleanly.
+        bad = _write_raw(
+            "extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
+            "repo: tmp\ngates: [build]\nknobs:\n  build_gate_cmd: \"true\"\n"
+        )
+        rc, _, err = run([
+            "scope-verify", bad, "--root", str(REPO_ROOT), "--pr", "300", "--json",
+        ])
+        self.assertEqual(rc, 1)
+        self.assertIn("owner and repo", err)
+
+
 class TestStepVerifyAndRunControls(unittest.TestCase):
     def test_step_verify_passes_with_handoff_and_evidence(self):
         handoff = stepverifier.build_handoff(

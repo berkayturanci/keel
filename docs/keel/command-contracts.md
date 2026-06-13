@@ -462,6 +462,24 @@ Explicit operator deferrals must be passed as
 `--deferral <id|kind|all>` and should be recorded in the PR/issue conversation before
 branch protection is bypassed.
 
+## Branch-scope verification
+
+`keel scope-verify <project.yaml> --pr <N>` is keel's enforceable defence against branch
+contamination. The implementer's **declared** in-scope files are persisted into the
+`ship_run` ledger record (`declared.files`) by `keel ship --append-ledger --declared-file
+<path>`. `scope-verify` reads the most recent ship-run record for the PR, fetches the live
+PR diff through `gh`, and compares the two via the pure `keel.scope.verify` function:
+
+- files in the diff that are also in the declared set are `in_scope`;
+- files matching the project's `docs_gate_paths` globs are `docs_exempt` allowed extras;
+- any remaining diff file is `scope_creep` and fails the check (exit non-zero), named in the
+  output;
+- with no declared scope recorded for the PR the command is an advisory pass (exit 0,
+  `note: no declared scope recorded`) — back-compat for flows that never recorded a scope.
+
+The operator escape hatch mirrors `evidence-verify`: `--deferral scope-waived` (or `all`)
+accepts scope creep for a single run and should be recorded in the PR/issue conversation.
+
 ## Progress status surface
 
 `keel status <project.yaml> --root <repo> --json` exposes the

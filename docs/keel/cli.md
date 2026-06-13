@@ -366,6 +366,35 @@ offline CI harnesses can provide `--pr-comments-json`, `--issue-comments-json`,
 fixtures; the same verifier path is used either way. `--ledger-jsonl` supplies an offline run
 ledger for closure-fidelity checks; without it the configured ledger under `--root` is read.
 
+## `keel scope-verify <project.yaml> --pr <N> [--issue <N>] [--json]`
+
+Enforce keel's branch-contamination defence: compare the implementer's **declared**
+in-scope files against the live PR diff. The declared file list is the implementer's scope
+contract, recorded into the `ship_run` run-ledger record by `keel ship --append-ledger`
+(via repeatable `--declared-file <path>`). `scope-verify` reads the most recent ship-run
+record for the PR (`latest_ship_run_for_pr`), loads the PR's changed files through `gh`, and
+flags any changed file that is **not** in the declared set as **scope creep**.
+
+The comparison itself is pure (`keel.scope.verify`): given the declared files, the diff
+files, and the project's `docs_gate_paths` globs, it returns the in-scope, docs-exempt, and
+scope-creep lists plus a verdict. Files matching `docs_gate_paths` (e.g. `docs/**`, `*.md`)
+are always allowed extras and never count as creep. Any non-docs file outside the declared
+set fails the check (exit 1) and is named in the output.
+
+Back-compat: when no ship-run record carries a declared scope for the PR, the command is an
+**advisory pass** (exit 0) with the note `no declared scope recorded`, so existing flows that
+never recorded a scope are never broken.
+
+```bash
+keel scope-verify .keel/project.yaml --root . --pr 456
+keel scope-verify .keel/project.yaml --root . --pr 456 --json
+```
+
+`--deferral scope-waived` (or `--deferral all`) is the operator escape hatch — it accepts
+scope creep for a single run, mirroring `keel evidence-verify --deferral`. Tests and offline
+CI harnesses can supply the diff and ledger offline with `--dry-run --changed-file <path>`
+and `--ledger-jsonl <fixture>`; the same pure verifier path is used either way.
+
 ## `keel step-verify --step sN --handoff-file handoff.json --evidence-report evidence.json`
 
 Verify a persisted step handoff before an adapter advances the ship backbone. The handoff

@@ -245,13 +245,18 @@ families, e.g. `<word>2.5`→`<word>`; keep `<word>-<major>` on hyphenated ones,
 never the requested-but-fell-back one — and is written at label-flip time (skipped only
 under `--dry-run`, logged instead).
 
-After the implementer returns, the **orchestrator** runs a **branch-scope validation gate**:
-diff `base_branch...origin/<branch>`, compare against the declared `files_changed`, and if
-anything falls outside the issue's scope (and is not a `docs_gate_paths` exempt path), hand
-it back for **one** correction pass; if it persists, mark blocked and quote the offending
-files. (One pass is intentionally stricter than the CI budget — the implementer's own
-pre-push self-check should have caught drift; a second failure is systemic.) Docs-only PRs
-(all paths in `docs_gate_paths`) treat the scope check as advisory. This gate is the primary
+After the implementer returns, the **orchestrator** runs a **branch-scope validation gate**.
+Persist the implementer's declared `files_changed` into the run-ledger record at append time
+(`keel ship --append-ledger --declared-file <path>` per declared file), then enforce the
+comparison with **`keel scope-verify .keel/project.yaml --root . --pr <PR>`**: it reads the
+declared files from the ship-run ledger record, diffs them against the live PR changed files,
+and flags anything outside the declared scope (and not a `docs_gate_paths` exempt path) as
+scope creep. On a failing verdict, hand it back for **one** correction pass; if it persists,
+mark blocked and quote the offending files `scope-verify` named. (One pass is intentionally
+stricter than the CI budget — the implementer's own pre-push self-check should have caught
+drift; a second failure is systemic.) Docs-only extras under `docs_gate_paths` are exempt,
+and when no declared scope was recorded `scope-verify` is an advisory pass. An operator may
+accept creep for a single run with `--deferral scope-waived`. This gate is the primary
 defence against branch contamination — it catches scope creep before review spends budget.
 
 ### s5 classify
@@ -550,4 +555,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=plugin command=ship keel_version=1.2.3 source_sha256=03fbe4a171ae194e531c04c2892a524bb3553acfb4006ce0d441c69bce52cab0 generated_sha256=03fbe4a171ae194e531c04c2892a524bb3553acfb4006ce0d441c69bce52cab0 -->
+<!-- keel-generated: surface=plugin command=ship keel_version=1.2.3 source_sha256=f17a90445471a901ce86301b23c1c420475a906e5aaf3f30b946929866f59405 generated_sha256=f17a90445471a901ce86301b23c1c420475a906e5aaf3f30b946929866f59405 -->

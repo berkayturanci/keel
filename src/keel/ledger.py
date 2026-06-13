@@ -85,6 +85,7 @@ def build_ship_run_record(
     command: str,
     base_branch: str,
     changed_files: list[str],
+    declared_files: list[str] | None = None,
     outcomes: list[Any],
     verdict: Any,
     assessment: Any,
@@ -130,6 +131,7 @@ def build_ship_run_record(
             "file_count": len(changed_files),
             "files": list(changed_files),
         },
+        "declared": _declared_block(declared_files),
         "gates": [
             {
                 "gate": outcome.gate,
@@ -182,6 +184,35 @@ def build_ship_run_record(
             config=config,
         ),
     }
+
+
+def _declared_block(declared_files: list[str] | None) -> dict[str, Any] | None:
+    """Build the implementer's declared-scope block, or ``None`` when unset.
+
+    ``declared_files`` is the implementer's contract of which files the change is
+    *supposed* to touch (distinct from the observed ``changes`` diff). When the
+    implementer does not declare a scope, the block is omitted so readers can
+    degrade to advisory back-compat behavior.
+    """
+    if declared_files is None:
+        return None
+    files = [str(path) for path in declared_files]
+    return {"file_count": len(files), "files": files}
+
+
+def declared_files_for_record(record: dict[str, Any]) -> list[str] | None:
+    """Return the implementer's declared file list from a ship_run ``record``.
+
+    Returns ``None`` when no declared scope was recorded (a missing or malformed
+    ``declared`` block), letting ``scope-verify`` degrade to an advisory pass.
+    """
+    declared = record.get("declared")
+    if not isinstance(declared, dict):
+        return None
+    files = declared.get("files")
+    if not isinstance(files, list):
+        return None
+    return [str(path) for path in files]
 
 
 def _run_context(

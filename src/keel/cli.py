@@ -40,6 +40,7 @@ from . import (
     runcontrols,
     runtime,
     scaffold,
+    scope,
     ship,
     status,
     stepverifier,
@@ -635,6 +636,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         command=command,
         base_branch=config.base_branch,
         changed_files=changed,
+        declared_files=args.declared_file,
         outcomes=outcomes,
         verdict=verdict,
         assessment=a,
@@ -1402,6 +1404,77 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
             suffix = " (deferred)" if result["deferred"] else ""
             print(f"  {state:>4}  {result['id']}{suffix}")
     return 0 if report["status"] == "pass" else 1
+
+
+def _cmd_scope_verify(args: argparse.Namespace) -> int:
+    try:
+        config = cfg.load_config(args.path)
+    except FileNotFoundError:
+        print(f"no such config: {args.path}", file=sys.stderr)
+        return 1
+    except cfg.ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    try:
+        artifacts = _load_evidence_artifacts(args, config)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    try:
+        record = _scope_ledger_record(args, config)
+    except ledger.LedgerError as exc:
+        print(f"invalid run ledger: {exc}", file=sys.stderr)
+        return 1
+    declared = ledger.declared_files_for_record(record) if record is not None else None
+    report = scope.verify(
+        declared,
+        list(artifacts["changed_files"]),
+        docs_globs=config.knobs.docs_gate_paths,
+        deferrals=tuple(args.deferral or ()),
+    )
+    payload = {
+        "schema_version": scope.SCHEMA_VERSION,
+        "pull_request": args.pr,
+        "head_sha": artifacts["head_sha"],
+        "changed_files": artifacts["changed_files"],
+        "deferrals": list(args.deferral or ()),
+        "verification": report,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"keel scope-verify — {report['status']}  PR #{args.pr}")
+        if report["advisory"]:
+            print(f"  note          : {report['note']}")
+            return 0
+        print(f"  declared      : {len(report['declared'])} file(s)")
+        print(f"  in-scope      : {len(report['in_scope'])} file(s)")
+        if report["docs_exempt"]:
+            print(f"  docs-exempt   : {', '.join(report['docs_exempt'])}")
+        if report["scope_creep"]:
+            print(f"  scope-creep   : {', '.join(report['scope_creep'])}")
+        if report["note"]:
+            print(f"  note          : {report['note']}")
+    return 0 if report["status"] == "pass" else 1
+
+
+def _scope_ledger_record(
+    args: argparse.Namespace,
+    config: cfg.ProjectConfig,
+) -> dict[str, object] | None:
+    """Load the latest ship_run ledger record for the PR under scope-verify.
+
+    Reads the run ledger (offline fixture via ``--ledger-jsonl`` or the configured
+    path under ``--root``) and returns the most recent matching ship_run record,
+    or ``None`` when no record matches — the advisory back-compat path.
+    """
+    fixture = getattr(args, "ledger_jsonl", None)
+    if fixture is not None:
+        records = ledger.parse_records(Path(fixture).read_text(encoding="utf-8"))
+    else:
+        records = ledger.read_records(ledger.resolve_path(args.root, config))
+    return ledger.latest_ship_run_for_pr(records, args.pr)
 
 
 def _cmd_status(args: argparse.Namespace) -> int:
@@ -3149,6 +3222,43 @@ def build_parser() -> argparse.ArgumentParser:
     p_evidence.add_argument("--json", action="store_true", help="emit structured JSON")
     p_evidence.set_defaults(func=_cmd_evidence_verify)
 
+    p_scope = sub.add_parser(
+        "scope-verify",
+        help="compare the implementer's declared files against the live PR diff",
+    )
+    p_scope.add_argument("path", help="path to project.yaml")
+    p_scope.add_argument("--root", default=".", help="repo root for live gh fetches")
+    p_scope.add_argument("--pr", type=_positive_int, required=True,
+                         help="pull request number to verify")
+    p_scope.add_argument("--issue", type=_positive_int, default=None,
+                         help="linked issue number; otherwise inferred from PR body")
+    p_scope.add_argument("--deferral", action="append", default=[],
+                         help="operator escape hatch; pass 'scope-waived' (or 'all') to "
+                              "accept scope creep for this run")
+    p_scope.add_argument("--ledger-jsonl", default=None,
+                         help="offline run-ledger JSONL fixture; otherwise the configured "
+                              "ledger under --root is read for the declared scope")
+    p_scope.add_argument("--changed-file", action="append", default=[],
+                         help="offline changed file path; repeat to supply the diff offline")
+    p_scope.add_argument("--head-sha", default=None,
+                         help="offline PR head SHA recorded in the report")
+    p_scope.add_argument("--head-ref", default=None,
+                         help="offline PR head branch")
+    p_scope.add_argument("--pr-body-file", default=None,
+                         help="offline PR body fixture, used only to infer the linked issue")
+    p_scope.add_argument("--pr-comments-json", default=None,
+                         help="offline PR issue-comments JSON fixture")
+    p_scope.add_argument("--issue-comments-json", default=None,
+                         help="offline linked-issue comments JSON fixture")
+    p_scope.add_argument("--pr-reviews-json", default=None,
+                         help="offline PR reviews JSON fixture")
+    p_scope.add_argument("--pr-label", action="append", default=[],
+                         help="inject a PR label name (repeatable)")
+    p_scope.add_argument("--dry-run", action="store_true",
+                         help="use offline inputs without a live gh fetch")
+    p_scope.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_scope.set_defaults(func=_cmd_scope_verify)
+
     p_status = sub.add_parser("status", help="show active/recent run progress")
     p_status.add_argument("path", help="path to project.yaml")
     p_status.add_argument("--root", default=".",
@@ -3575,6 +3685,9 @@ def _add_ship_parser(parser: argparse.ArgumentParser, *, command: str) -> None:
                         help="branch name to store in the run ledger record")
     parser.add_argument("--head-sha", default=None,
                         help="head commit SHA to store in the run ledger record")
+    parser.add_argument("--declared-file", action="append", default=None,
+                        help="implementer's declared in-scope file path (repeatable); "
+                             "recorded for keel scope-verify branch-contamination checks")
     parser.add_argument("--capture-status", type=_capture_status_arg, default=None,
                         help="capture outcome to store in the run ledger record")
     parser.add_argument("--capture-reason", default=None,

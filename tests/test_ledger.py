@@ -129,6 +129,7 @@ class TestLedgerRecords(unittest.TestCase):
             "pull_request",
             "git",
             "changes",
+            "declared",
             "gates",
             "verdict",
             "assessment",
