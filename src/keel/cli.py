@@ -25,6 +25,7 @@ from . import (
     closure,
     consent,
     contracts,
+    doctor,
     evidence,
     gates,
     git,
@@ -2178,6 +2179,88 @@ def _report_orphan_rows(orphans: list[install.OrphanFileStatus]) -> None:
         print(f"  {row.category:<16} [{row.surface}] {row.name}  {row.path} — {row.reason}")
 
 
+#: PyPI JSON metadata endpoint for the published distribution.
+_PYPI_LATEST_URL = "https://pypi.org/pypi/keel-workflow/json"
+
+
+def _fetch_latest_pypi_version(
+    *, url: str = _PYPI_LATEST_URL, timeout: float = 3.0, _open=None
+) -> str | None:
+    """Fetch the latest ``keel-workflow`` version from PyPI. Thin, fail-soft I/O.
+
+    Returns the version string, or ``None`` on any failure (offline, timeout,
+    HTTP error, malformed JSON) so ``keel doctor`` degrades to ``latest: unknown``
+    rather than crashing or blocking. The network seam (``_open``) is injectable so
+    the parsing is unit-tested offline; the live ``urlopen`` boundary is excluded.
+    """
+    if _open is None:  # pragma: no cover - live network boundary
+        from urllib.request import urlopen
+        _open = lambda u, t: urlopen(u, timeout=t)  # noqa: E731
+    try:
+        with _open(url, timeout) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        version = payload["info"]["version"]
+        return version if isinstance(version, str) else None
+    except Exception:
+        return None
+
+
+def _doctor_state_paths(root: str, config: cfg.ProjectConfig) -> list[dict[str, object]]:
+    """Resolve the configured ledger + checkpoint paths and probe their existence."""
+    entries: list[dict[str, object]] = []
+    for label, resolver, error in (
+        ("ledger", ledger.resolve_path, ledger.LedgerError),
+        ("checkpoint", checkpoint.resolve_path, checkpoint.CheckpointError),
+    ):
+        try:
+            path = resolver(root, config)
+        except error as exc:
+            entries.append({"label": label, "path": None, "status": "invalid",
+                            "reason": str(exc)})
+            continue
+        entries.append({
+            "label": label,
+            "path": str(path),
+            "status": "present" if path.exists() else "missing",
+            "reason": "",
+        })
+    return entries
+
+
+def _cmd_doctor(args: argparse.Namespace) -> int:
+    config = None
+    core_version = None
+    state_paths: list[dict[str, object]] = []
+    if args.path:
+        try:
+            config = cfg.load_config(args.path)
+        except FileNotFoundError:
+            print(f"no such config: {args.path}", file=sys.stderr)
+            return 1
+        except cfg.ConfigError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        core_version = config.core_version
+        state_paths = _doctor_state_paths(args.root, config)
+
+    latest = None if args.offline else _fetch_latest_pypi_version()
+    report = doctor.run_doctor(
+        installed_version=__version__,
+        latest_version=latest,
+        adapter_markers=install.scan_adapter_markers(args.root),
+        orphans=[o.as_dict() for o in _scan_orphans(args.root, include_unmanaged=False)],
+        core_version=core_version,
+        state_paths=state_paths,
+    )
+    if args.json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        print(doctor.render_report(report))
+    if args.strict and report["status"] == "fail":
+        return 1
+    return 0
+
+
 def _cmd_install_adapter(args: argparse.Namespace) -> int:
     if args.agent == "plugin":
         installed, skipped = install.install_plugin(args.root, force=args.force)
@@ -3016,6 +3099,20 @@ def build_parser() -> argparse.ArgumentParser:
                         help="PR number for ship capability requirements")
     p_caps.add_argument("--json", action="store_true", help="emit structured JSON")
     p_caps.set_defaults(func=_cmd_capabilities)
+
+    p_doctor = sub.add_parser(
+        "doctor",
+        help="read-only diagnostics: CLI/adapter version drift, orphans, core_version, state",
+    )
+    p_doctor.add_argument("path", nargs="?", default=None,
+                          help="optional project.yaml (enables core_version + state checks)")
+    p_doctor.add_argument("--root", default=".", help="project root to inspect")
+    p_doctor.add_argument("--offline", action="store_true",
+                          help="skip the PyPI latest-version check (report latest as unknown)")
+    p_doctor.add_argument("--strict", action="store_true",
+                          help="exit non-zero when any check fails (default: advisory, exit 0)")
+    p_doctor.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_doctor.set_defaults(func=_cmd_doctor)
 
     p_proj = sub.add_parser("project-commands",
                             help="list project-provided commands declared by policy")

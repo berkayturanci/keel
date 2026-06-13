@@ -583,6 +583,40 @@ The output also includes the selected GitHub transport and any degraded GitHub o
 capabilities. See [`runtime-capabilities.md`](runtime-capabilities.md) and
 [`github-transport.md`](github-transport.md).
 
+## `keel doctor [project.yaml] [--root DIR] [--offline] [--strict] [--json]`
+
+Run a read-only diagnostic pass over the installed keel and its adapter surfaces. No
+mutation: `doctor` only reads versions, markers, and on-disk state, then classifies each
+check as `ok` / `warn` / `fail`. The roll-up `status` is the worst of all checks.
+
+```bash
+keel doctor                                   # CLI + adapter health only
+keel doctor --root . --json                   # machine-readable report
+keel doctor .keel/project.yaml --root .        # also check core_version + state paths
+keel doctor .keel/project.yaml --offline --strict
+```
+
+The checks are:
+
+- **`cli_version`** — installed `keel` version vs the latest published on PyPI
+  (`keel-workflow`). This is the headline check: an installed version *behind* the latest
+  is a `fail` (it catches a silent downgrade). The PyPI lookup is fail-soft with a short
+  timeout — when offline or unreachable, `latest` is reported as `unknown` (a `warn`),
+  never a crash or a hang. Pass `--offline` to skip the lookup entirely.
+- **`adapter_version`** — the `keel_version=` markers on installed adapter surfaces
+  (`.claude/commands/keel/*.md`, `.agents/skills/keel-*/SKILL.md`) vs the running CLI. Any
+  surface that drifts is a `warn` — run `keel update-adapter`.
+- **`orphan_adapters`** — surfaces whose `command=` is no longer in the installed keel
+  (e.g. a stale `ship-v2.md`); a `warn`, same scan as `keel adapter-status`.
+- **`core_version`** — the `core_version` constraint from `project.yaml` (e.g. `^1.0`)
+  vs the installed CLI version. An unsatisfied constraint is a `fail`. Only runs when a
+  config path is given.
+- **`state_paths`** — existence/validity of the configured ledger + checkpoint paths.
+  Advisory: a missing path is fine (reported as empty history); an invalid path is a `warn`.
+
+By default `doctor` is advisory and exits `0` (unless the command itself errors, e.g. a
+missing or invalid config). Pass `--strict` to exit non-zero when any check is `fail`.
+
 ## `keel project-commands <project.yaml> [--json]`
 
 List project-provided commands declared by `policy_pack.project_commands` or the older

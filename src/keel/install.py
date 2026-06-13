@@ -611,6 +611,37 @@ def scan_surface_orphans(
     return out
 
 
+def scan_adapter_markers(root: str | Path) -> list[dict[str, str]]:
+    """Read the ``keel_version`` markers off every installed adapter surface (pure).
+
+    Reuses :data:`_ORPHAN_SCAN` and :func:`_split_marker` so the marker source of
+    truth is shared with the orphan scan. Returns one entry per marker-bearing
+    surface: ``surface``, ``name``, ``command``, and ``keel_version`` (the value of
+    the ``keel_version=`` marker field, or ``""`` when absent). Marker-less files
+    are skipped. Deterministic and read-only.
+    """
+    root_path = Path(root)
+    out: list[dict[str, str]] = []
+    for surface, rel_dir, pattern, recurse in _ORPHAN_SCAN:
+        base = root_path / rel_dir
+        if not base.is_dir():
+            continue
+        matches = base.rglob(pattern) if recurse else base.glob(pattern)
+        for path in sorted(matches):
+            if not path.is_file():
+                continue
+            _body, marker = _split_marker(path.read_text(encoding="utf-8"))
+            if not marker:
+                continue
+            out.append({
+                "surface": surface,
+                "name": path.relative_to(base).as_posix(),
+                "command": marker.get("command", ""),
+                "keel_version": marker.get("keel_version", ""),
+            })
+    return out
+
+
 def update_adapters(
     agent: str,
     root: str | Path,
