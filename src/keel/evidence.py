@@ -217,11 +217,17 @@ def verify(
     pr_reviews: list[dict[str, Any]] | None = None,
     pr_body: str | None = None,
     head_sha: str | None = None,
+    ledger_record: dict[str, Any] | None = None,
     dry_run: bool = False,
     enforced: bool = True,
     deferrals: tuple[str, ...] = (),
 ) -> dict[str, Any]:
-    """Verify required evidence artifacts and return a deterministic report."""
+    """Verify required evidence artifacts and return a deterministic report.
+
+    When ``ledger_record`` is the ship_run record for this PR, a closure comment
+    only counts when its content matches the canonical render of that record
+    (closure-comment fidelity). Without a record the marker-only behavior holds.
+    """
     del pr_body  # Explicitly not accepted as evidence.
     items = required_items(review_contract, dry_run=dry_run, enforced=enforced)
     deferred = set(deferrals)
@@ -231,11 +237,19 @@ def verify(
         pr_reviews=pr_reviews or [],
         head_sha=head_sha,
         enforced=enforced,
+        ledger_record=ledger_record,
     )
     findings = _run_context_findings(
         pr_comments=pr_comments or [],
         issue_comments=issue_comments or [],
         enforced=enforced,
+        ledger_record=ledger_record,
+    )
+    mismatch = _closure_mismatch_scopes(
+        pr_comments=pr_comments or [],
+        issue_comments=issue_comments or [],
+        enforced=enforced,
+        ledger_record=ledger_record,
     )
     results = []
     for item in items:
@@ -249,7 +263,7 @@ def verify(
             "present": present,
             "deferred": is_deferred,
             "ok": ok,
-            "reason": None if ok else f"missing required evidence: {item.id}",
+            "reason": None if ok else _result_reason(item, mismatch),
         })
     missing = [result["id"] for result in results if not result["ok"]]
     blocking_findings = [finding for finding in findings if finding["severity"] == "major"]
@@ -266,6 +280,49 @@ def verify(
     }
 
 
+_CLOSURE_MISMATCH_REASON = (
+    "closure comment does not match the ship_run ledger record"
+)
+
+
+def _result_reason(item: EvidenceItem, mismatch: set[str]) -> str:
+    if item.id == "closure-comment-pr" and "pr" in mismatch:
+        return _CLOSURE_MISMATCH_REASON
+    if item.id == "closure-comment-issue" and "issue" in mismatch:
+        return _CLOSURE_MISMATCH_REASON
+    return f"missing required evidence: {item.id}"
+
+
+def _closure_mismatch_scopes(
+    *,
+    pr_comments: list[dict[str, Any]],
+    issue_comments: list[dict[str, Any]],
+    enforced: bool,
+    ledger_record: dict[str, Any] | None,
+) -> set[str]:
+    """Return scopes ({"pr"}/{"issue"}) where a marker closure mismatched the ledger.
+
+    A scope is reported only when a trusted marker-bearing closure exists but none
+    of them match the record — so a stale comment alongside a correct re-post does
+    not produce a misleading mismatch reason.
+    """
+    if ledger_record is None:
+        return set()
+    scopes: set[str] = set()
+    for scope, comments in (("pr", pr_comments), ("issue", issue_comments)):
+        markered = [
+            comment for comment in comments
+            if _is_trusted_source(comment, enforced=enforced)
+            and _has_closure_marker(_body(comment))
+        ]
+        if markered and not any(
+            closure_body_matches_record(_body(comment), ledger_record)
+            for comment in markered
+        ):
+            scopes.add(scope)
+    return scopes
+
+
 def _evidence_counts(
     *,
     pr_comments: list[dict[str, Any]],
@@ -273,6 +330,7 @@ def _evidence_counts(
     pr_reviews: list[dict[str, Any]],
     head_sha: str | None = None,
     enforced: bool = True,
+    ledger_record: dict[str, Any] | None = None,
 ) -> dict[str, int]:
     review_keys = _review_evidence_keys(
         [*pr_comments, *pr_reviews],
@@ -281,10 +339,12 @@ def _evidence_counts(
     )
     return {
         "closure_pr": sum(
-            _is_closure_comment(comment, enforced=enforced) for comment in pr_comments
+            _is_closure_comment(comment, enforced=enforced, record=ledger_record)
+            for comment in pr_comments
         ),
         "closure_issue": sum(
-            _is_closure_comment(comment, enforced=enforced) for comment in issue_comments
+            _is_closure_comment(comment, enforced=enforced, record=ledger_record)
+            for comment in issue_comments
         ),
         "review_verdict": len(review_keys),
         "jury_verdict": sum(_is_jury_verdict(comment, head_sha=head_sha, enforced=enforced)
@@ -314,8 +374,43 @@ def _has_closure_marker(body: str) -> bool:
     return closure.COMMENT_MARKER in body
 
 
-def _is_closure_comment(item: dict[str, Any], *, enforced: bool = True) -> bool:
-    return _is_trusted_source(item, enforced=enforced) and _has_closure_marker(_body(item))
+def _normalize_closure_body(body: str) -> str:
+    """Normalize a closure body for content comparison.
+
+    Robust to harmless formatting drift but sensitive to real content changes:
+    trailing whitespace is stripped per line, runs of blank lines collapse to a
+    single blank line, and leading/trailing blank lines are dropped.
+    """
+    lines = [line.rstrip() for line in body.splitlines()]
+    normalized: list[str] = []
+    for line in lines:
+        if not line and (not normalized or not normalized[-1]):
+            continue
+        normalized.append(line)
+    while normalized and not normalized[-1]:
+        normalized.pop()
+    return "\n".join(normalized)
+
+
+def closure_body_matches_record(body: str, record: dict[str, Any]) -> bool:
+    """Return whether ``body`` matches the canonical render of ``record``."""
+    expected = closure.render_closure_comment(record)
+    return _normalize_closure_body(body) == _normalize_closure_body(expected)
+
+
+def _is_closure_comment(
+    item: dict[str, Any],
+    *,
+    enforced: bool = True,
+    record: dict[str, Any] | None = None,
+) -> bool:
+    if not _is_trusted_source(item, enforced=enforced):
+        return False
+    if not _has_closure_marker(_body(item)):
+        return False
+    if record is None:
+        return True
+    return closure_body_matches_record(_body(item), record)
 
 
 def _run_context_findings(
@@ -323,11 +418,12 @@ def _run_context_findings(
     pr_comments: list[dict[str, Any]],
     issue_comments: list[dict[str, Any]],
     enforced: bool,
+    ledger_record: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     comments = [*pr_comments, *issue_comments]
     findings: list[dict[str, Any]] = []
     for item in comments:
-        if not _is_closure_comment(item, enforced=enforced):
+        if not _is_closure_comment(item, enforced=enforced, record=ledger_record):
             continue
         body = _body(item)
         if _has_empty_run_context(body):

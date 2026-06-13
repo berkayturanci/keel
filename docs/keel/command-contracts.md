@@ -428,7 +428,11 @@ The block records:
 - `schema_version: keel.evidence.v1`
 - `accepted_sources`: trusted PR/issue comments with `keel.closure-comment.v1`,
   trusted PR comments or reviews with a reviewer verdict, and trusted PR comments with a
-  jury verdict. Live GitHub payloads are trusted only when their `author_association` is
+  jury verdict. **Closure fidelity:** when a `ship_run` ledger record exists for the PR, the
+  posted closure body must match the canonical render of that record after whitespace
+  normalization, so a marker-bearing but stale or contradictory body fails; with no record
+  the closure check stays marker-only. Live GitHub payloads are trusted only when their
+  `author_association` is
   `OWNER`, `MEMBER`, or `COLLABORATOR`. Explicitly untrusted associations are rejected
   even for bot authors, and enforced evidence rejects fixture payloads that omit
   `author_association`.

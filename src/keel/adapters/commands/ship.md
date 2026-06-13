@@ -437,6 +437,10 @@ the automated `keel ship` CI assessment block. Render it deterministically from 
 Implementer `vendor (model)`, Reviewers — noting AI Jury when present, Tester, PR number,
 changed files, capture outcome, run id). Do **not** hand-write closure prose: post the
 rendered markdown verbatim so the issue and PR comments mirror the ledger byte-for-byte.
+`evidence-verify` enforces this **closure fidelity**: when a `ship_run` ledger record exists
+for the PR, the posted closure body must match that record's canonical render (after
+whitespace normalization) on both the PR and the issue, so a stale or edited marker-bearing
+body fails the closure check.
 Use `keel post-comment` for issue-update, review-verdict, jury-verdict, and
 closure-comment artifacts; a malformed body missing its marker must stop the step before
 any public comment is posted.

@@ -246,6 +246,26 @@ def read_records(path: str | Path) -> list[dict[str, Any]]:
     return parse_records(ledger_path.read_text(encoding="utf-8"))
 
 
+def latest_ship_run_for_pr(
+    records: list[dict[str, Any]],
+    pr_number: int,
+) -> dict[str, Any] | None:
+    """Return the last ship_run record whose pull_request matches ``pr_number``.
+
+    Records are appended in chronological order, so the last match is the most
+    recent ship run for that PR. Returns ``None`` when no record matches.
+    """
+    match: dict[str, Any] | None = None
+    for record in records:
+        if record.get("record_type") != RECORD_TYPE_SHIP_RUN:
+            continue
+        pull_request = record.get("pull_request")
+        number = pull_request.get("number") if isinstance(pull_request, dict) else None
+        if number == pr_number:
+            match = record
+    return match
+
+
 def capture_health_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
     """Summarize capture visibility for morning, wrap, status, and ledger readers."""
     items = [_capture_health_item(record) for record in records]

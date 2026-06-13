@@ -300,7 +300,13 @@ waiver label `keel:evidence-waived`, which is reported in the check output. When
 the verifier is fail-closed and accepts only durable GitHub artifacts:
 
 - a `keel.closure-comment.v1` closure marker on both the PR and linked issue, posted by a
-  trusted GitHub actor;
+  trusted GitHub actor. **Closure fidelity:** when a `ship_run` ledger record exists for the
+  PR, the posted closure body must match the canonical render of that record
+  (`keel.closure.render_closure_comment`) after whitespace normalization; a marker-bearing
+  but contradictory or stale body fails with reason `closure comment does not match the
+  ship_run ledger record`. Multiple closures pass when **at least one** matches the ledger
+  (so a corrected re-post supersedes a stale one). With no ledger record for the PR, the
+  closure check stays marker-only (back-compat);
 - the required count of distinct posted s7 reviewer verdicts from PR comments or reviews
   carrying `keel.review-verdict.v1`, `reviewer: <stable-id>`, and the current
   `head: <sha>` (formal PR reviews may use GitHub's review `commit_id` as the head
@@ -344,8 +350,9 @@ only within an enforced run and has no effect when the gate is unenforced. `--dr
 prints the contract shape without fetching live artifacts or requiring evidence; pass
 `--pr-label` alongside it to preview the enforcement state a labelled PR would see. Tests and
 offline CI harnesses can provide `--pr-comments-json`, `--issue-comments-json`,
-`--pr-reviews-json`, `--pr-body-file`, `--changed-file`, and `--head-sha` fixtures; the same
-verifier path is used either way.
+`--pr-reviews-json`, `--pr-body-file`, `--changed-file`, `--head-sha`, and `--ledger-jsonl`
+fixtures; the same verifier path is used either way. `--ledger-jsonl` supplies an offline run
+ledger for closure-fidelity checks; without it the configured ledger under `--root` is read.
 
 ## `keel step-verify --step sN --handoff-file handoff.json --evidence-report evidence.json`
 

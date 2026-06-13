@@ -466,3 +466,31 @@ class TestLedgerRecords(unittest.TestCase):
 
         with self.assertRaisesRegex(ledger.LedgerError, "record must be an object"):
             ledger.parse_records("[]")
+
+
+class TestLatestShipRunForPr(unittest.TestCase):
+    def _record_for(self, pr_number, run_id):
+        record = dict(_record())
+        record["pull_request"] = {"number": pr_number}
+        record["run_id"] = run_id
+        return record
+
+    def test_returns_latest_match_for_pr(self):
+        records = [
+            self._record_for(160, "RUN-1"),
+            self._record_for(999, "RUN-other"),
+            self._record_for(160, "RUN-2"),
+        ]
+        match = ledger.latest_ship_run_for_pr(records, 160)
+        self.assertEqual(match["run_id"], "RUN-2")
+
+    def test_returns_none_when_no_match(self):
+        records = [self._record_for(160, "RUN-1")]
+        self.assertIsNone(ledger.latest_ship_run_for_pr(records, 161))
+
+    def test_ignores_non_ship_run_and_malformed_pull_request(self):
+        non_ship = dict(self._record_for(160, "RUN-x"), record_type="capture_run")
+        malformed = dict(self._record_for(160, "RUN-y"))
+        malformed["pull_request"] = "nope"
+        records = [non_ship, malformed]
+        self.assertIsNone(ledger.latest_ship_run_for_pr(records, 160))

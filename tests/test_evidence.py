@@ -591,5 +591,155 @@ class TestEvidenceEnforcement(unittest.TestCase):
         self.assertTrue(contract["required"])
 
 
+def _ship_run_record(*, pr_number=42):
+    return {
+        "schema_version": "keel.run-ledger.v1",
+        "record_type": "ship_run",
+        "target": "demo",
+        "actors": {"implementer": "codex", "reviewers": ["claude"], "tester": "codex"},
+        "pull_request": {"number": pr_number},
+        "changes": {"file_count": 1, "files": ["src/keel/evidence.py"]},
+        "capture": {"status": "applied"},
+        "run_id": "run-1",
+        "run_context": {
+            "host_agent": "codex",
+            "transport": "gh",
+            "profile": "standard",
+            "jury_mode": "off",
+            "consent": {"status": "approved", "scopes": ["git"]},
+        },
+    }
+
+
+class TestClosureNormalization(unittest.TestCase):
+    def test_normalize_strips_trailing_whitespace_and_collapses_blanks(self):
+        drifted = "a  \n\n\n\nb   \n"
+        self.assertEqual(evidence._normalize_closure_body(drifted), "a\n\nb")
+
+    def test_normalize_drops_leading_and_trailing_blank_lines(self):
+        self.assertEqual(evidence._normalize_closure_body("\n\nx\n\n"), "x")
+
+    def test_body_matches_record_round_trip(self):
+        record = _ship_run_record()
+        rendered = closure.render_closure_comment(record)
+        self.assertTrue(evidence.closure_body_matches_record(rendered, record))
+
+    def test_body_matches_record_tolerates_harmless_drift(self):
+        record = _ship_run_record()
+        rendered = closure.render_closure_comment(record)
+        drifted = rendered.replace("\n\n", "\n\n\n") + "\n\n   \n"
+        drifted = "\n".join(line + "  " for line in drifted.splitlines())
+        self.assertTrue(evidence.closure_body_matches_record(drifted, record))
+
+    def test_body_matches_record_rejects_content_change(self):
+        record = _ship_run_record()
+        tampered = closure.render_closure_comment(record).replace("codex", "intruder")
+        self.assertFalse(evidence.closure_body_matches_record(tampered, record))
+
+
+class TestClosureFidelity(unittest.TestCase):
+    def _verify(self, *, pr_body, issue_body, record):
+        return evidence.verify(
+            _review_contract(reviewers=1),
+            pr_comments=[_trusted_comment(pr_body)],
+            issue_comments=[_trusted_comment(issue_body)],
+            ledger_record=record,
+            deferrals=("review",),
+        )
+
+    def test_matching_closure_passes(self):
+        record = _ship_run_record()
+        body = closure.render_closure_comment(record)
+        report = self._verify(pr_body=body, issue_body=body, record=record)
+
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["counts"]["closure_pr"], 1)
+        self.assertEqual(report["counts"]["closure_issue"], 1)
+
+    def test_mismatched_pr_closure_fails_with_reason(self):
+        record = _ship_run_record()
+        good = closure.render_closure_comment(record)
+        tampered = good.replace("codex", "intruder")
+        report = self._verify(pr_body=tampered, issue_body=good, record=record)
+
+        self.assertEqual(report["status"], "fail")
+        self.assertIn("closure-comment-pr", report["missing"])
+        self.assertNotIn("closure-comment-issue", report["missing"])
+        pr_result = next(
+            item for item in report["results"] if item["id"] == "closure-comment-pr"
+        )
+        self.assertEqual(
+            pr_result["reason"],
+            "closure comment does not match the ship_run ledger record",
+        )
+
+    def test_mismatched_issue_closure_fails(self):
+        record = _ship_run_record()
+        good = closure.render_closure_comment(record)
+        tampered = good.replace("applied", "skipped")
+        report = self._verify(pr_body=good, issue_body=tampered, record=record)
+
+        self.assertEqual(report["status"], "fail")
+        self.assertIn("closure-comment-issue", report["missing"])
+        issue_result = next(
+            item for item in report["results"] if item["id"] == "closure-comment-issue"
+        )
+        self.assertEqual(
+            issue_result["reason"],
+            "closure comment does not match the ship_run ledger record",
+        )
+
+    def test_no_ledger_record_keeps_marker_only_behavior(self):
+        # A hand-written marker-bearing body passes when no record exists.
+        report = evidence.verify(
+            _review_contract(reviewers=1),
+            pr_comments=[_trusted_comment(closure.COMMENT_MARKER + "\nhand written")],
+            issue_comments=[_trusted_comment(closure.COMMENT_MARKER + "\nhand written")],
+            ledger_record=None,
+            deferrals=("review",),
+        )
+
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["counts"]["closure_pr"], 1)
+
+    def test_marker_only_body_fails_when_record_exists(self):
+        # The GAP-9 regression: marker presence alone no longer suffices.
+        record = _ship_run_record()
+        good = closure.render_closure_comment(record)
+        stale = closure.COMMENT_MARKER + "\nstale hand-written body"
+        report = self._verify(pr_body=stale, issue_body=good, record=record)
+
+        self.assertEqual(report["status"], "fail")
+        self.assertIn("closure-comment-pr", report["missing"])
+
+    def test_multiple_closures_one_matching_passes(self):
+        record = _ship_run_record()
+        good = closure.render_closure_comment(record)
+        stale = closure.COMMENT_MARKER + "\nsuperseded stale body"
+        report = evidence.verify(
+            _review_contract(reviewers=1),
+            pr_comments=[_trusted_comment(stale), _trusted_comment(good)],
+            issue_comments=[_trusted_comment(stale), _trusted_comment(good)],
+            ledger_record=record,
+            deferrals=("review",),
+        )
+
+        self.assertEqual(report["status"], "pass")
+        # The matching re-post supersedes the stale one; no mismatch reason fires.
+        pr_result = next(
+            item for item in report["results"] if item["id"] == "closure-comment-pr"
+        )
+        self.assertTrue(pr_result["ok"])
+
+    def test_whitespace_drift_still_matches(self):
+        record = _ship_run_record()
+        good = closure.render_closure_comment(record)
+        drifted = good.replace("- **Tester:** codex", "- **Tester:** codex   ")
+        drifted = drifted.replace("\n\n", "\n\n\n")
+        report = self._verify(pr_body=drifted, issue_body=drifted, record=record)
+
+        self.assertEqual(report["status"], "pass")
+
+
 if __name__ == "__main__":
     unittest.main()

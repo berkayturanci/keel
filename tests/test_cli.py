@@ -1188,6 +1188,94 @@ class TestShip(unittest.TestCase):
         self.assertEqual(data["verification"]["status"], "pass")
         self.assertEqual(data["verification"]["counts"]["review_verdict"], 2)
 
+    def test_evidence_verify_enforces_closure_fidelity_against_ledger(self):
+        from keel import closure, ledger
+
+        record = {
+            "schema_version": "keel.run-ledger.v1",
+            "record_type": "ship_run",
+            "target": "issue #212",
+            "actors": {"implementer": "codex", "reviewers": [], "tester": "codex"},
+            "pull_request": {"number": 300},
+            "changes": {"file_count": 1, "files": ["src/keel/evidence.py"]},
+            "capture": {"status": "applied"},
+            "run_id": "RUN-212",
+            "run_context": {
+                "host_agent": "codex", "transport": "gh", "profile": "standard",
+                "jury_mode": "off",
+                "consent": {"status": "approved", "scopes": ["git"]},
+            },
+        }
+        canonical = closure.render_closure_comment(record)
+        tampered = canonical.replace("codex", "intruder")
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            pr_comments = root / "pr-comments.json"
+            issue_comments = root / "issue-comments.json"
+            reviews = root / "reviews.json"
+            body = root / "body.md"
+            ledger_jsonl = root / "ledger.jsonl"
+            ledger_jsonl.write_text(ledger.encode_record(record), encoding="utf-8")
+            _write_json_fixture(pr_comments, [_trusted_comment(tampered)])
+            _write_json_fixture(issue_comments, [_trusted_comment(canonical)])
+            reviews.write_text("[]", encoding="utf-8")
+            body.write_text("Closes #212", encoding="utf-8")
+            args = [
+                "evidence-verify", str(PROJECTS / "example-android.yaml"),
+                "--root", str(REPO_ROOT),
+                "--pr", "300",
+                "--pr-label", "keel:ship",
+                "--reviewers", "1",
+                "--deferral", "review",
+                "--pr-comments-json", str(pr_comments),
+                "--issue-comments-json", str(issue_comments),
+                "--pr-reviews-json", str(reviews),
+                "--pr-body-file", str(body),
+                "--ledger-jsonl", str(ledger_jsonl),
+                "--json",
+            ]
+            rc_fail, out_fail, _ = run(args)
+            # The matching canonical body on the PR passes (fidelity satisfied).
+            _write_json_fixture(pr_comments, [_trusted_comment(canonical)])
+            rc_ok, out_ok, _ = run(args)
+
+        data_fail = json.loads(out_fail)
+        self.assertEqual(rc_fail, 1)
+        self.assertEqual(data_fail["verification"]["status"], "fail")
+        self.assertIn("closure-comment-pr", data_fail["verification"]["missing"])
+        pr_result = next(
+            item for item in data_fail["verification"]["results"]
+            if item["id"] == "closure-comment-pr"
+        )
+        self.assertEqual(
+            pr_result["reason"],
+            "closure comment does not match the ship_run ledger record",
+        )
+        data_ok = json.loads(out_ok)
+        self.assertEqual(rc_ok, 0)
+        self.assertEqual(data_ok["verification"]["status"], "pass")
+
+    def test_evidence_verify_invalid_ledger_jsonl_reports_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            bad = root / "ledger.jsonl"
+            bad.write_text("{not json", encoding="utf-8")
+            rc, _, err = run([
+                "evidence-verify", str(PROJECTS / "example-android.yaml"),
+                "--root", str(REPO_ROOT),
+                "--pr", "300",
+                "--pr-label", "keel:ship",
+                "--reviewers", "1",
+                "--pr-comments-json", _write_raw("[]"),
+                "--issue-comments-json", _write_raw("[]"),
+                "--pr-reviews-json", _write_raw("[]"),
+                "--pr-body-file", _write_raw("Closes #212"),
+                "--ledger-jsonl", str(bad),
+                "--json",
+            ])
+        self.assertEqual(rc, 1)
+        self.assertIn("invalid run ledger", err)
+
     def test_evidence_verify_rejects_body_and_assessment_as_evidence(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)

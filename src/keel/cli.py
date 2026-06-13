@@ -1317,6 +1317,11 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
         pr_reviews=artifacts["pr_reviews"],
     )
     enforced = gate["enforced"]
+    try:
+        ledger_record = _evidence_ledger_record(args, config)
+    except ledger.LedgerError as exc:
+        print(f"invalid run ledger: {exc}", file=sys.stderr)
+        return 1
     report = evidence.verify(
         review_contract,
         pr_comments=artifacts["pr_comments"],
@@ -1324,6 +1329,7 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
         pr_reviews=artifacts["pr_reviews"],
         pr_body=artifacts["pr_body"],
         head_sha=artifacts["head_sha"],
+        ledger_record=ledger_record,
         dry_run=args.dry_run,
         enforced=enforced,
         deferrals=tuple(args.deferral or ()),
@@ -1958,6 +1964,24 @@ def _load_evidence_artifacts(
         "changed_files": changed_files,
         "pr_labels": _dedupe_preserve([*pr_labels, *injected_labels]),
     }
+
+
+def _evidence_ledger_record(
+    args: argparse.Namespace,
+    config: cfg.ProjectConfig,
+) -> dict[str, object] | None:
+    """Load the ship_run ledger record for the PR under verification.
+
+    Reads the run ledger (offline fixture via ``--ledger-jsonl`` or the configured
+    path under ``--root``) and returns the latest matching ship_run record, or
+    ``None`` when no record matches — preserving marker-only closure behavior.
+    """
+    fixture = getattr(args, "ledger_jsonl", None)
+    if fixture is not None:
+        records = ledger.parse_records(Path(fixture).read_text(encoding="utf-8"))
+    else:
+        records = ledger.read_records(ledger.resolve_path(args.root, config))
+    return ledger.latest_ship_run_for_pr(records, args.pr)
 
 
 def _label_names(labels: object) -> list[str]:
@@ -3073,6 +3097,9 @@ def build_parser() -> argparse.ArgumentParser:
                             help="offline PR reviews JSON fixture")
     p_evidence.add_argument("--pr-body-file", default=None,
                             help="offline PR body fixture, used only to infer linked issue")
+    p_evidence.add_argument("--ledger-jsonl", default=None,
+                            help="offline run-ledger JSONL fixture; otherwise the configured "
+                                 "ledger under --root is read to enforce closure fidelity")
     p_evidence.add_argument("--changed-file", action="append", default=[],
                             help="offline changed file path; repeat to derive tier from fixtures")
     p_evidence.add_argument("--head-sha", default=None,
