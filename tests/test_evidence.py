@@ -5,13 +5,21 @@ import unittest
 from keel import closure, evidence, ship
 
 
-def _review_contract(*, reviewers=2, jury=False, no_jury=False, jury_advisory=False):
+def _review_contract(
+    *,
+    reviewers=2,
+    jury=False,
+    no_jury=False,
+    jury_advisory=False,
+    require_distinct_vendors=False,
+):
     return ship.resolve_review_contract(
         tier=None,
         reviewer_override=reviewers,
         jury=jury,
         no_jury=no_jury,
         jury_advisory=jury_advisory,
+        require_distinct_vendors=require_distinct_vendors,
     )
 
 
@@ -739,6 +747,176 @@ class TestClosureFidelity(unittest.TestCase):
         report = self._verify(pr_body=drifted, issue_body=drifted, record=record)
 
         self.assertEqual(report["status"], "pass")
+
+
+def _verdict(reviewer, *, head="abc123", vendor=None, model=None):
+    from keel import artifacts
+    return _comment(
+        artifacts.render_review_verdict(
+            reviewer=reviewer,
+            head_sha=head,
+            vendor=vendor,
+            model=model,
+        )
+    )
+
+
+class TestDistinctVendorCheck(unittest.TestCase):
+    """The pure, I/O-free vendor-distinctness primitive."""
+
+    def test_non_positive_required_count_always_passes(self):
+        result = evidence.distinct_vendor_check([], required_count=0)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["duplicated"], [])
+        self.assertEqual(result["missing_provenance"], 0)
+
+    def test_distinct_vendors_pass(self):
+        result = evidence.distinct_vendor_check(["claude", "codex"], required_count=2)
+        self.assertTrue(result["ok"])
+        self.assertIsNone(result["reason"])
+
+    def test_duplicate_vendors_fail(self):
+        result = evidence.distinct_vendor_check(["claude", "claude"], required_count=2)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["duplicated"], ["claude"])
+        self.assertIn("share a vendor", result["reason"])
+
+    def test_missing_provenance_fails(self):
+        result = evidence.distinct_vendor_check(["claude", None], required_count=2)
+        self.assertFalse(result["ok"])
+        self.assertIn("missing vendor provenance", result["reason"])
+        self.assertEqual(result["missing_provenance"], 1)
+
+    def test_triple_duplicate_reports_each_vendor_once(self):
+        result = evidence.distinct_vendor_check(
+            ["claude", "claude", "codex"], required_count=3
+        )
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["duplicated"], ["claude"])
+
+
+class TestRequireDistinctVendors(unittest.TestCase):
+    """The optional ``require_distinct_vendors`` evidence knob (default OFF)."""
+
+    def _verify(self, *, verdicts, reviewers=2, require, deferrals=()):
+        return evidence.verify(
+            _review_contract(reviewers=reviewers, require_distinct_vendors=require),
+            pr_comments=[_comment(closure.COMMENT_MARKER), *verdicts],
+            issue_comments=[_comment(closure.COMMENT_MARKER)],
+            head_sha="abc123",
+            deferrals=deferrals,
+        )
+
+    def test_knob_off_allows_duplicate_vendors(self):
+        report = self._verify(
+            verdicts=[
+                _verdict("alpha", vendor="claude"),
+                _verdict("beta", vendor="claude"),
+            ],
+            require=False,
+        )
+        self.assertEqual(report["status"], "pass")
+        self.assertFalse(
+            any(f["id"] == "review-vendor-distinctness" for f in report["findings"])
+        )
+
+    def test_knob_off_allows_missing_provenance(self):
+        report = self._verify(
+            verdicts=[_verdict("alpha"), _verdict("beta")],
+            require=False,
+        )
+        self.assertEqual(report["status"], "pass")
+
+    def test_knob_on_distinct_vendors_pass(self):
+        report = self._verify(
+            verdicts=[
+                _verdict("alpha", vendor="claude"),
+                _verdict("beta", vendor="codex"),
+            ],
+            require=True,
+        )
+        self.assertEqual(report["status"], "pass")
+
+    def test_knob_on_duplicate_vendors_fail(self):
+        report = self._verify(
+            verdicts=[
+                _verdict("alpha", vendor="claude"),
+                _verdict("beta", vendor="claude"),
+            ],
+            require=True,
+        )
+        self.assertEqual(report["status"], "fail")
+        finding = next(
+            f for f in report["findings"] if f["id"] == "review-vendor-distinctness"
+        )
+        self.assertEqual(finding["severity"], "major")
+        self.assertIn("claude", finding["message"])
+
+    def test_knob_on_missing_provenance_fail(self):
+        report = self._verify(
+            verdicts=[_verdict("alpha", vendor="claude"), _verdict("beta")],
+            require=True,
+        )
+        self.assertEqual(report["status"], "fail")
+        self.assertTrue(
+            any(f["id"] == "review-vendor-distinctness" for f in report["findings"])
+        )
+
+    def test_knob_on_with_zero_reviewers_is_noop(self):
+        report = evidence.verify(
+            _review_contract(reviewers=1, require_distinct_vendors=True),
+            pr_comments=[_comment(closure.COMMENT_MARKER)],
+            issue_comments=[_comment(closure.COMMENT_MARKER)],
+            head_sha="abc123",
+            dry_run=True,
+        )
+        self.assertFalse(
+            any(f["id"] == "review-vendor-distinctness" for f in report["findings"])
+        )
+
+    def test_deferred_review_skips_distinctness(self):
+        report = self._verify(
+            verdicts=[
+                _verdict("alpha", vendor="claude"),
+                _verdict("beta", vendor="claude"),
+            ],
+            require=True,
+            deferrals=("review",),
+        )
+        self.assertFalse(
+            any(f["id"] == "review-vendor-distinctness" for f in report["findings"])
+        )
+
+    def test_provenance_map_skips_untrusted_head_mismatch_and_duplicates(self):
+        provenance = evidence._review_vendor_provenance(
+            [
+                _untrusted_comment(
+                    "keel.review-verdict.v1\nreviewer: u\nvendor: claude\nLGTM"
+                ),
+                _comment("keel.review-verdict.v1\nreviewer: a\nhead: old\nvendor: x\nLGTM"),
+                _comment(
+                    "keel.review-verdict.v1\nreviewer: b\nhead: abc123\nvendor: claude\nLGTM"
+                ),
+                _comment(
+                    "keel.review-verdict.v1\nreviewer: b\nhead: abc123\nvendor: codex\nLGTM"
+                ),
+            ],
+            head_sha="abc123",
+        )
+        self.assertEqual(provenance, {"reviewer:b": "claude"})
+
+    def test_provenance_map_records_missing_vendor_as_none(self):
+        provenance = evidence._review_vendor_provenance(
+            [_comment("keel.review-verdict.v1\nreviewer: a\nhead: abc123\nLGTM")],
+            head_sha="abc123",
+        )
+        self.assertEqual(provenance, {"reviewer:a": None})
+
+    def test_contract_exposes_require_distinct_vendors(self):
+        on = evidence.contract_as_dict(_review_contract(require_distinct_vendors=True))
+        off = evidence.contract_as_dict(_review_contract(require_distinct_vendors=False))
+        self.assertTrue(on["require_distinct_vendors"])
+        self.assertFalse(off["require_distinct_vendors"])
 
 
 if __name__ == "__main__":

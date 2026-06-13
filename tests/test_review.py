@@ -101,6 +101,28 @@ class TestParseReviews(unittest.TestCase):
         items = review.parse_reviews([{"reviewer": "a", "verdict": "LGTM", "findings": None}])
         self.assertEqual(items[0].findings, ())
 
+    def test_parses_optional_vendor_and_model_provenance(self):
+        items = review.parse_reviews([
+            {"reviewer": "a", "verdict": "LGTM", "vendor": " Claude ", "model": "opus"},
+            {"reviewer": "b", "verdict": "LGTM"},
+        ])
+        self.assertEqual(items[0].vendor, "Claude")
+        self.assertEqual(items[0].model, "opus")
+        self.assertIsNone(items[1].vendor)
+        self.assertIsNone(items[1].model)
+
+    def test_blank_vendor_becomes_none(self):
+        items = review.parse_reviews([{"reviewer": "a", "verdict": "LGTM", "vendor": "  "}])
+        self.assertIsNone(items[0].vendor)
+
+    def test_rejects_non_string_vendor(self):
+        with self.assertRaises(review.ReviewError):
+            review.parse_reviews([{"reviewer": "a", "verdict": "LGTM", "vendor": 5}])
+
+    def test_rejects_non_string_model(self):
+        with self.assertRaises(review.ReviewError):
+            review.parse_reviews([{"reviewer": "a", "verdict": "LGTM", "model": 5}])
+
 
 class TestRunIdSubKeys(unittest.TestCase):
     def test_review_run_id_is_stable_slug(self):
@@ -135,6 +157,25 @@ class TestBuildReviewPlan(unittest.TestCase):
         self.assertEqual(first.marker, evidence.REVIEW_VERDICT_MARKER)
         self.assertIn("head: abc123", first.body)
         self.assertIn("Verdict: LGTM", first.body)
+
+    def test_vendor_provenance_flows_into_rendered_verdict(self):
+        items = review.parse_reviews([
+            {"reviewer": "A", "verdict": "LGTM", "vendor": "claude", "model": "opus"},
+            {"reviewer": "B", "verdict": "LGTM", "vendor": "codex"},
+        ])
+        plan = review.build_review_plan(
+            items,
+            required_count=2,
+            head_sha="abc123",
+            pull_request=42,
+            issue=7,
+            run_id="run",
+            tier=2,
+        )
+        self.assertIn("vendor: claude", plan.posts[0].body)
+        self.assertIn("model: opus", plan.posts[0].body)
+        self.assertIn("vendor: codex", plan.posts[1].body)
+        self.assertNotIn("model:", plan.posts[1].body)
 
     def test_over_count_is_allowed(self):
         items = review.parse_reviews([*_two_reviews(),

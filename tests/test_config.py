@@ -288,6 +288,28 @@ class TestParse(unittest.TestCase):
         changed = cfg.parse_config(data)
         self.assertNotEqual(cfg.config_hash(base), cfg.config_hash(changed))
 
+    def test_require_distinct_vendors_defaults_off_and_parses(self):
+        config = cfg.parse_config(copy.deepcopy(VALID))
+        self.assertFalse(config.knobs.evidence_require_distinct_vendors)
+
+        data = copy.deepcopy(VALID)
+        data["knobs"]["evidence_require_distinct_vendors"] = True
+        overridden = cfg.parse_config(data)
+        self.assertTrue(overridden.knobs.evidence_require_distinct_vendors)
+
+    def test_require_distinct_vendors_changes_config_hash(self):
+        base = cfg.parse_config(copy.deepcopy(VALID))
+        data = copy.deepcopy(VALID)
+        data["knobs"]["evidence_require_distinct_vendors"] = True
+        changed = cfg.parse_config(data)
+        self.assertNotEqual(cfg.config_hash(base), cfg.config_hash(changed))
+
+    def test_require_distinct_vendors_rejects_non_boolean(self):
+        bad = copy.deepcopy(VALID)
+        bad["knobs"]["evidence_require_distinct_vendors"] = "yes"
+        with self.assertRaises(cfg.ConfigError):
+            cfg.parse_config(bad)
+
     def test_unknown_capability_rejected(self):
         bad = copy.deepcopy(VALID)
         bad["knobs"]["required_capabilities"] = ["bogus"]

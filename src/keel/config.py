@@ -64,6 +64,7 @@ class Knobs:
     required_capabilities: tuple[str, ...] = ()
     optional_capabilities: tuple[str, ...] = ()
     evidence_gate_label: str = "keel:ship"
+    evidence_require_distinct_vendors: bool = False
 
 
 @dataclass(frozen=True)
@@ -116,6 +117,7 @@ def _build(data: dict) -> ProjectConfig:
         required_capabilities=tuple(k.get("required_capabilities", [])),
         optional_capabilities=tuple(k.get("optional_capabilities", [])),
         evidence_gate_label=k.get("evidence_gate_label", "keel:ship"),
+        evidence_require_distinct_vendors=bool(k.get("evidence_require_distinct_vendors", False)),
     )
     extensions = {slot: tuple(files) for slot, files in data.get("extensions", {}).items()}
     automation_data = data.get("automation", {})
@@ -229,5 +231,6 @@ def _canonical(config: ProjectConfig) -> dict:
             "required_capabilities": list(config.knobs.required_capabilities),
             "optional_capabilities": list(config.knobs.optional_capabilities),
             "evidence_gate_label": config.knobs.evidence_gate_label,
+            "evidence_require_distinct_vendors": config.knobs.evidence_require_distinct_vendors,
         },
     }

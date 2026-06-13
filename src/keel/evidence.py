@@ -24,7 +24,7 @@ DEFAULT_WAIVER_LABEL = "keel:evidence-waived"
 TRUSTED_AUTHOR_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 TRUSTED_SHIP_ASSESSMENT_BOTS = frozenset({"github-actions", "github-actions[bot]"})
 
-_FIELD_RE = re.compile(r"^\s*(?P<key>reviewer|head)\s*:\s*(?P<value>\S+)\s*$",
+_FIELD_RE = re.compile(r"^\s*(?P<key>reviewer|head|vendor|model)\s*:\s*(?P<value>\S+)\s*$",
                        re.IGNORECASE | re.MULTILINE)
 _SHIP_BRANCH_RE = re.compile(r"^(feature|fix|chore|docs|test)/issue-\d+(?:-|$)")
 
@@ -133,6 +133,7 @@ def contract_as_dict(
         "source": "review_merge_contract + closure_comment",
         "dry_run_disables_gating": True,
         "fail_closed": True,
+        "require_distinct_vendors": _require_distinct_vendors(review_contract),
         "accepted_sources": {
             "closure": (
                 "trusted issue/PR comments carrying keel.closure-comment.v1"
@@ -266,6 +267,17 @@ def verify(
             "reason": None if ok else _result_reason(item, mismatch),
         })
     missing = [result["id"] for result in results if not result["ok"]]
+    distinct = _distinct_vendor_finding(
+        review_contract,
+        items=items,
+        deferred=deferred,
+        pr_comments=pr_comments or [],
+        pr_reviews=pr_reviews or [],
+        head_sha=head_sha,
+        enforced=enforced,
+    )
+    if distinct is not None:
+        findings = [*findings, distinct]
     blocking_findings = [finding for finding in findings if finding["severity"] == "major"]
     return {
         "schema_version": SCHEMA_VERSION,
@@ -277,6 +289,50 @@ def verify(
         "results": results,
         "counts": counts,
         "findings": findings,
+    }
+
+
+def _require_distinct_vendors(review_contract: dict[str, Any]) -> bool:
+    reviewers = review_contract.get("reviewers")
+    return bool(reviewers.get("require_distinct_vendors")) if isinstance(reviewers, dict) else False
+
+
+def _distinct_vendor_finding(
+    review_contract: dict[str, Any],
+    *,
+    items: tuple[EvidenceItem, ...],
+    deferred: set[str],
+    pr_comments: list[dict[str, Any]],
+    pr_reviews: list[dict[str, Any]],
+    head_sha: str | None,
+    enforced: bool,
+) -> dict[str, Any] | None:
+    """Return a blocking finding when the optional vendor-distinctness check fails.
+
+    Off by default: ``None`` unless ``reviewers.require_distinct_vendors`` is set
+    on the contract. Skipped when review evidence is deferred so the knob never
+    overrides an explicit deferral.
+    """
+    if not _require_distinct_vendors(review_contract):
+        return None
+    if "review" in deferred or "all" in deferred:
+        return None
+    required = sum(1 for item in items if item.kind == "review" and item.id not in deferred)
+    if required <= 0:
+        return None
+    provenance = _review_vendor_provenance(
+        [*pr_comments, *pr_reviews],
+        head_sha=head_sha,
+        enforced=enforced,
+    )
+    result = distinct_vendor_check(list(provenance.values()), required_count=required)
+    if result["ok"]:
+        return None
+    return {
+        "id": "review-vendor-distinctness",
+        "severity": "major",
+        "kind": "review",
+        "message": f"require_distinct_vendors: {result['reason']}.",
     }
 
 
@@ -503,6 +559,80 @@ def _review_evidence_keys(
             continue
         keys.add(_reviewer_key(item, body))
     return keys
+
+
+def _review_vendor_provenance(
+    items: list[dict[str, Any]],
+    *,
+    head_sha: str | None = None,
+    enforced: bool = True,
+) -> dict[str, str | None]:
+    """Map each accepted review-verdict reviewer-key to its declared vendor.
+
+    The value is the lower-cased ``vendor:`` provenance for that verdict, or
+    ``None`` when the verdict carries no vendor field. Keys mirror
+    :func:`_review_evidence_keys`, so duplicate reviewer-keys collapse to one
+    entry (idempotent re-posts do not inflate the vendor set).
+    """
+    provenance: dict[str, str | None] = {}
+    for item in items:
+        if not _is_trusted_source(item, enforced=enforced):
+            continue
+        body = _body(item)
+        if not _is_review_verdict_body(body):
+            continue
+        if not _matches_head(item, body, head_sha):
+            continue
+        key = _reviewer_key(item, body)
+        if key in provenance:
+            continue
+        vendor = _fields(body).get("vendor")
+        provenance[key] = vendor.lower() if vendor else None
+    return provenance
+
+
+def distinct_vendor_check(
+    vendors: Sequence[str | None],
+    *,
+    required_count: int,
+) -> dict[str, Any]:
+    """Pure vendor-distinctness check over review-verdict provenance.
+
+    ``vendors`` is one entry per accepted review verdict: the declared vendor, or
+    ``None`` when the verdict carries no vendor provenance. The check passes only
+    when at least ``required_count`` verdicts each declare a vendor and those
+    vendors are all distinct. It fails when a required verdict is missing vendor
+    provenance, or when two required verdicts share a vendor.
+
+    Returns ``{ok, reason, duplicated, missing_provenance}``. No I/O — fully
+    unit-testable. A non-positive ``required_count`` always passes (nothing to
+    require).
+    """
+    if required_count <= 0:
+        return {"ok": True, "reason": None, "duplicated": [], "missing_provenance": 0}
+    present = [vendor for vendor in vendors if vendor]
+    missing = len(vendors) - len(present)
+    seen: set[str] = set()
+    duplicated: list[str] = []
+    for vendor in present:
+        if vendor in seen and vendor not in duplicated:
+            duplicated.append(vendor)
+        seen.add(vendor)
+    if len(present) < required_count:
+        return {
+            "ok": False,
+            "reason": "missing vendor provenance on required review verdict(s)",
+            "duplicated": duplicated,
+            "missing_provenance": missing,
+        }
+    if duplicated:
+        return {
+            "ok": False,
+            "reason": f"review verdicts share a vendor: {', '.join(sorted(duplicated))}",
+            "duplicated": sorted(duplicated),
+            "missing_provenance": missing,
+        }
+    return {"ok": True, "reason": None, "duplicated": [], "missing_provenance": missing}
 
 
 def _reviewer_key(item: dict[str, Any], body: str) -> str:

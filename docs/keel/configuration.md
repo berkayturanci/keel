@@ -142,6 +142,7 @@ contracts, but executable project behavior remains in extension files or project
 | `required_capabilities` | string[] | | runtime capabilities that must be present before mutating work starts |
 | `optional_capabilities` | string[] | | runtime capabilities that may degrade explicitly when unavailable |
 | `evidence_gate_label` | string | | Legacy PR label that also arms the required pre-merge evidence gate (default `keel:ship`); ship provenance now arms the gate by default |
+| `evidence_require_distinct_vendors` | boolean | | When `true`, `evidence-verify` additionally requires each required review verdict to carry vendor provenance and that no two share a vendor (default `false`) |
 
 ### `knobs` field details
 
@@ -207,6 +208,23 @@ without ship provenance pass with `enforced: false` and `required: 0`. The opera
 label `keel:evidence-waived` is the intentional disarm path and is reported in the
 verifier output. Override the legacy arming label per run with
 `keel evidence-verify --gate-label`.
+
+#### `evidence_require_distinct_vendors`
+
+Off by default (`false`), so behaviour is exactly the count + head-pin check. When set to
+`true`, `keel evidence-verify` additionally enforces **verdict provenance distinctness**:
+each required review verdict must carry a `vendor:` provenance line, and no two required
+verdicts may declare the same vendor. This closes the gap where one agent could post N
+verdicts under invented reviewer ids — the verdict *count* was checkable but the *vendors*
+behind them were not.
+
+The check is **jury-agnostic**: it operates purely on the `vendor:` / `model:` fields
+carried by the posted review verdicts (rendered by `render_review_verdict` and supplied per
+review through `keel review`). Any reviewer — a plain host-agent reviewer or a cross-vendor
+jury — satisfies it simply by carrying distinct vendor provenance; keel takes no dependency
+on any review vendor. A missing `vendor:` on a required verdict, or two verdicts sharing a
+vendor, fails verification with a blocking `review-vendor-distinctness` finding. Override
+per run with `keel evidence-verify --require-distinct-vendors`.
 
 ## `policy_pack`
 

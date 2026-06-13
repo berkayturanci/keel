@@ -1188,6 +1188,63 @@ class TestShip(unittest.TestCase):
         self.assertEqual(data["verification"]["status"], "pass")
         self.assertEqual(data["verification"]["counts"]["review_verdict"], 2)
 
+    def _run_distinct_vendor_verify(self, *, flag, vendor_b):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            pr_comments = root / "pr-comments.json"
+            issue_comments = root / "issue-comments.json"
+            reviews = root / "reviews.json"
+            _write_json_fixture(pr_comments, [
+                _trusted_comment("<!-- keel.closure-comment.v1 -->"),
+                _trusted_comment(
+                    "keel.review-verdict.v1\nreviewer: a\nvendor: claude\nLGTM"
+                ),
+            ])
+            _write_json_fixture(issue_comments, [
+                _trusted_comment("<!-- keel.closure-comment.v1 -->"),
+            ])
+            _write_json_fixture(reviews, [
+                _trusted_comment(
+                    f"keel.review-verdict.v1\nreviewer: b\nvendor: {vendor_b}\nLGTM"
+                ),
+            ])
+            argv = [
+                "evidence-verify", str(PROJECTS / "example-android.yaml"),
+                "--root", str(REPO_ROOT),
+                "--pr", "300",
+                "--pr-label", "keel:ship",
+                "--reviewers", "2",
+                "--pr-comments-json", str(pr_comments),
+                "--issue-comments-json", str(issue_comments),
+                "--pr-reviews-json", str(reviews),
+                "--json",
+            ]
+            if flag:
+                argv.append("--require-distinct-vendors")
+            return run(argv)
+
+    def test_evidence_verify_require_distinct_vendors_flag_blocks_duplicates(self):
+        rc, out, _ = self._run_distinct_vendor_verify(flag=True, vendor_b="claude")
+        data = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertEqual(data["verification"]["status"], "fail")
+        self.assertTrue(
+            any(f["id"] == "review-vendor-distinctness"
+                for f in data["verification"]["findings"])
+        )
+
+    def test_evidence_verify_require_distinct_vendors_flag_passes_distinct(self):
+        rc, out, _ = self._run_distinct_vendor_verify(flag=True, vendor_b="codex")
+        data = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertEqual(data["verification"]["status"], "pass")
+
+    def test_evidence_verify_duplicate_vendors_pass_without_flag(self):
+        rc, out, _ = self._run_distinct_vendor_verify(flag=False, vendor_b="claude")
+        data = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertEqual(data["verification"]["status"], "pass")
+
     def test_evidence_verify_enforces_closure_fidelity_against_ledger(self):
         from keel import closure, ledger
 

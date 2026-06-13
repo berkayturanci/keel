@@ -1333,6 +1333,10 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
         jury=args.jury,
         no_jury=args.no_jury,
         jury_advisory=args.jury_advisory,
+        require_distinct_vendors=(
+            args.require_distinct_vendors
+            or config.knobs.evidence_require_distinct_vendors
+        ),
     )
     gate_label = args.gate_label or config.knobs.evidence_gate_label
     waiver_label = args.waiver_label or evidence.DEFAULT_WAIVER_LABEL
@@ -1941,6 +1945,7 @@ def _verify_merge_evidence(
         jury=args.jury,
         no_jury=args.no_jury,
         jury_advisory=args.jury_advisory,
+        require_distinct_vendors=config.knobs.evidence_require_distinct_vendors,
     )
     gate_label = args.gate_label or config.knobs.evidence_gate_label
     waiver_label = getattr(args, "waiver_label", None) or evidence.DEFAULT_WAIVER_LABEL
@@ -3190,6 +3195,9 @@ def build_parser() -> argparse.ArgumentParser:
                             help="disable the cross-vendor jury requirement")
     p_evidence.add_argument("--jury-advisory", action="store_true",
                             help="make an enabled jury advisory instead of required")
+    p_evidence.add_argument("--require-distinct-vendors", action="store_true",
+                            help="require each review verdict to carry a distinct vendor "
+                                 "(overrides the project knob; off by default)")
     p_evidence.add_argument("--dry-run", action="store_true",
                             help="emit the contract without requiring evidence")
     p_evidence.add_argument("--deferral", action="append", default=[],

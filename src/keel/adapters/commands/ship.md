@@ -323,6 +323,11 @@ for the operator-posted review verdict.
 When available, use `result.artifact_bodies.review_verdict_template` as the canonical
 comment shape: keep `keel.review-verdict.v1`, `reviewer: <stable-id>`, and `head: <sha>`
 intact, then fill in the reviewer-specific verdict, scope, findings, and testing notes.
+Carry the **effective** reviewer `vendor` (and `model` when known) on each verdict — the
+same attribution computed at s7 — so a project that enables `evidence_require_distinct_vendors`
+can verify the verdicts came from distinct vendors. This is jury-agnostic: a plain
+host-agent reviewer carrying distinct vendor provenance satisfies the check just as a
+cross-vendor panel would; keel takes no dependency on any review vendor.
 Post each review verdict through `keel post-comment` with a reviewer-scoped run id
 (`--run-id "$RUN_ID:<reviewer-id>"`) so same-run idempotency updates that reviewer only and
 does not collapse multiple reviewer verdicts into one comment.
@@ -333,7 +338,9 @@ each verdict by hand. `keel review .keel/project.yaml --root . --pr <PR> --revie
 <reviews.json> --run-id "$RUN_ID" --live` resolves the tier-required reviewer count (failing
 closed if the bundle is under-count), renders each verdict head-pinned to the current PR
 head SHA, and posts them through the same `post-comment` path with stable
-`<run-id>:rv-<reviewer>` sub-keys. Add `--closure <ship-run.json> --issue <N>` to fold the
+`<run-id>:rv-<reviewer>` sub-keys. Include `vendor` (and optional `model`) on each review
+item in `<reviews.json>` so the rendered verdicts carry vendor provenance. Add
+`--closure <ship-run.json> --issue <N>` to fold the
 s11 closure into the same call, and `--verify` to re-run `evidence-verify` immediately after
 posting. This is the canonical way to collapse `render_review_verdict` + N× `post-comment`
 + `evidence-verify` into one deterministic, idempotent step; it never spawns reviewers — the

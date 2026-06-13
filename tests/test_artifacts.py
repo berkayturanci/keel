@@ -77,6 +77,33 @@ class TestVerdictRenderers(unittest.TestCase):
         self.assertIn("head: abc123", body)
         self.assertIn("- minor: Consider a docs note.", body)
 
+    def test_review_verdict_omits_provenance_lines_by_default(self):
+        body = artifacts.render_review_verdict(reviewer="Reviewer A", head_sha="abc123")
+
+        self.assertNotIn("vendor:", body)
+        self.assertNotIn("model:", body)
+
+    def test_review_verdict_renders_vendor_and_model_provenance(self):
+        body = artifacts.render_review_verdict(
+            reviewer="Reviewer A",
+            head_sha="abc123",
+            vendor="Claude",
+            model="Opus 4.8",
+        )
+
+        self.assertIn("vendor: claude", body)
+        self.assertIn("model: opus-4-8", body)
+
+    def test_review_verdict_model_requires_vendor(self):
+        body = artifacts.render_review_verdict(
+            reviewer="Reviewer A",
+            head_sha="abc123",
+            model="opus",
+        )
+
+        self.assertNotIn("vendor:", body)
+        self.assertNotIn("model:", body)
+
     def test_review_verdict_falls_back_when_findings_have_no_messages(self):
         body = artifacts.render_review_verdict(
             reviewer="Reviewer A",

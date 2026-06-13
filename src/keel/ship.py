@@ -124,6 +124,7 @@ def resolve_review_contract(
     jury: bool = False,
     no_jury: bool = False,
     jury_advisory: bool = False,
+    require_distinct_vendors: bool = False,
 ) -> dict[str, Any]:
     """Machine-readable review, jury, test, and merge-gate plan for ship-like flows."""
     if reviewer_override is not None and reviewer_override not in {1, 2, 3}:
@@ -145,6 +146,7 @@ def resolve_review_contract(
             "independent": True,
             "self_review_counts_toward_lgtm": False,
             "minimum_lgtm": count,
+            "require_distinct_vendors": bool(require_distinct_vendors),
             "orchestrator_owns_writes": True,
             "focuses": list(reviewer_focuses(count)),
             "project_additions": list(review_policy.get("additions", [])),

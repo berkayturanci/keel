@@ -182,9 +182,14 @@ idempotent step.
 
 `--reviews` is a JSON array of review objects, each shaped
 `{ "reviewer": str, "verdict": str, "scope": str?, "findings": [{"severity","message"}]?,
-"testing": str? }`. Each review is rendered via `keel.artifacts.render_review_verdict`,
-head-pinned to the PR's current head SHA, and posted to the PR through the same
-post-comment path with a stable per-reviewer run-id sub-key (`<run-id>:rv-<reviewer-slug>`).
+"testing": str?, "vendor": str?, "model": str? }`. Each review is rendered via
+`keel.artifacts.render_review_verdict`, head-pinned to the PR's current head SHA, and posted
+to the PR through the same post-comment path with a stable per-reviewer run-id sub-key
+(`<run-id>:rv-<reviewer-slug>`). When a review item carries `vendor` (and optionally
+`model`), those are rendered as structured `vendor:` / `model:` provenance lines on the
+verdict so a later `evidence-verify --require-distinct-vendors` can enforce that the required
+verdicts came from distinct vendors. Provenance is omitted entirely when not supplied, so the
+default verdict rendering is unchanged.
 
 The required reviewer count is resolved from the live diff tier using the exact same logic
 `keel evidence-verify` uses (`ship.resolve_review_contract`). If fewer reviews are supplied
@@ -322,7 +327,12 @@ the verifier is fail-closed and accepts only durable GitHub artifacts:
 - the required count of distinct posted s7 reviewer verdicts from PR comments or reviews
   carrying `keel.review-verdict.v1`, `reviewer: <stable-id>`, and the current
   `head: <sha>` (formal PR reviews may use GitHub's review `commit_id` as the head
-  binding), posted by a trusted GitHub actor;
+  binding), posted by a trusted GitHub actor. Verdicts may additionally carry
+  `vendor: <id>` / `model: <id>` provenance; with `--require-distinct-vendors` (or the
+  `evidence_require_distinct_vendors` knob) the verifier requires each required verdict to
+  declare a vendor and that no two share one — a missing or duplicate vendor fails with a
+  blocking `review-vendor-distinctness` finding. This check is jury-agnostic: it reads only
+  the verdict provenance fields and takes no dependency on any review vendor;
 - a posted jury verdict carrying `keel.jury-verdict.v1` and the current `head: <sha>`
   when jury is enabled in gating mode, posted by a trusted GitHub actor.
 

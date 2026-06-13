@@ -80,6 +80,10 @@
           "type": "string",
           "minLength": 1,
           "description": "Legacy PR label that also arms the required pre-merge evidence gate. Ship provenance now arms the gate by default; the operator waiver label is the disarm path. Default keel:ship. Must be non-empty."
+        },
+        "evidence_require_distinct_vendors": {
+          "type": "boolean",
+          "description": "When true, evidence-verify additionally requires that each required review verdict carries vendor provenance and that no two share a vendor. Off by default (back-compatible: count + head-pin only). Jury-agnostic — works with any reviewer carrying vendor provenance."
         }
       }
     },

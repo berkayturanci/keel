@@ -286,7 +286,9 @@ Markdown verbatim when available.
   Testing, Docs Impact, and a closing or reference line
 - `issue_update`: stable issue progress/update comment with `keel.issue-update.v1`
 - `review_verdict_template`: marker-based reviewer verdict carrying
-  `keel.review-verdict.v1`, `reviewer: <id>`, and `head: <sha>` when available
+  `keel.review-verdict.v1`, `reviewer: <id>`, and `head: <sha>` when available, plus
+  optional `vendor: <id>` / `model: <id>` provenance lines for the
+  `evidence_require_distinct_vendors` check
 - `jury_verdict_template`: marker-based jury verdict carrying `keel.jury-verdict.v1` and
   `head: <sha>` when available
 - `extension_result_template`: stable `keel.extension-result.v1` shape for slot/extension
@@ -449,6 +451,11 @@ The block records:
 - `required`: stable ids such as `closure-comment-pr`, `closure-comment-issue`,
   `review-verdict-1`, `review-verdict-2`, and `jury-verdict` when jury is gating
 - `dry_run_disables_gating: true` and `fail_closed: true`
+- `require_distinct_vendors`: reflects the `evidence_require_distinct_vendors` knob /
+  `--require-distinct-vendors` flag (default `false`). When `true`, each required review
+  verdict must carry `vendor:` provenance and no two may share a vendor; a missing or
+  duplicate vendor yields a blocking `review-vendor-distinctness` finding. The check is
+  jury-agnostic — it reads only the verdict provenance fields and imports no review vendor.
 
 `keel evidence-verify <project.yaml> --pr <N>` reads those public artifacts through `gh`,
 derives the current PR tier from the live changed-file list, binds verdict evidence to the

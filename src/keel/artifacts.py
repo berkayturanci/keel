@@ -115,19 +115,34 @@ def render_review_verdict(
     scope: str | None = None,
     findings: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
     testing: str | None = None,
+    vendor: str | None = None,
+    model: str | None = None,
 ) -> str:
-    """Render a head-bound reviewer verdict comment accepted by evidence verification."""
+    """Render a head-bound reviewer verdict comment accepted by evidence verification.
+
+    When ``vendor`` (and optionally ``model``) is supplied, structured
+    ``vendor:`` / ``model:`` provenance lines are emitted so evidence
+    verification can enforce vendor distinctness across required verdicts. The
+    fields use the same vendor/model conventions as ``keel.provenance`` and are
+    omitted entirely when not supplied, so the default rendering is unchanged.
+    """
     lines = [
         evidence.REVIEW_VERDICT_MARKER,
         f"reviewer: {_slug(reviewer)}",
         f"head: {_value(head_sha, '<head-sha>')}",
+    ]
+    if isinstance(vendor, str) and vendor.strip():
+        lines.append(f"vendor: {_slug(vendor)}")
+        if isinstance(model, str) and model.strip():
+            lines.append(f"model: {_slug(model)}")
+    lines.extend([
         "",
         f"Verdict: {_value(verdict, 'LGTM')}",
         "",
         f"Scope reviewed: {_value(scope, 'Full changed-file diff and relevant contracts.')}",
         "",
         "Findings:",
-    ]
+    ])
     lines.extend(_finding_lines(findings))
     lines.extend(["", f"Testing noted: {_value(testing, 'See PR Testing section.')}"])
     return "\n".join(lines) + "\n"

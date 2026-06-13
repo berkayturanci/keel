@@ -34,6 +34,8 @@ class ReviewItem:
     scope: str | None
     findings: tuple[dict[str, Any], ...]
     testing: str | None
+    vendor: str | None = None
+    model: str | None = None
 
 
 @dataclass(frozen=True)
@@ -109,6 +111,8 @@ def _parse_review(entry: object, index: int) -> ReviewItem:
     testing = entry.get("testing")
     if testing is not None and not isinstance(testing, str):
         raise ReviewError(f"review #{index + 1} 'testing' must be a string when present")
+    vendor = _parse_provenance_field(entry.get("vendor"), index, "vendor")
+    model = _parse_provenance_field(entry.get("model"), index, "model")
     findings = _parse_findings(entry.get("findings"), index)
     return ReviewItem(
         reviewer=reviewer.strip(),
@@ -116,7 +120,19 @@ def _parse_review(entry: object, index: int) -> ReviewItem:
         scope=scope,
         findings=findings,
         testing=testing,
+        vendor=vendor,
+        model=model,
     )
+
+
+def _parse_provenance_field(value: object, index: int, name: str) -> str | None:
+    """Parse an optional ``vendor``/``model`` provenance string from a review entry."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ReviewError(f"review #{index + 1} '{name}' must be a string when present")
+    cleaned = value.strip()
+    return cleaned or None
 
 
 def _parse_findings(raw: object, index: int) -> tuple[dict[str, Any], ...]:
@@ -176,6 +192,8 @@ def build_review_plan(
             scope=item.scope,
             findings=list(item.findings),
             testing=item.testing,
+            vendor=item.vendor,
+            model=item.model,
         )
         posts.append(
             PostTarget(
