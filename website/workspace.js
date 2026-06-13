@@ -61,7 +61,14 @@
       if (rt.top < mt.top + main.clientHeight * 0.88) reveal(v);
     });
   }
-  if (main) main.addEventListener("scroll", revealInView, { passive: true });
+  if (main) {
+    var revealTicking = false;
+    main.addEventListener("scroll", function () {
+      if (revealTicking) return;
+      revealTicking = true;
+      requestAnimationFrame(function () { revealInView(); revealTicking = false; });
+    }, { passive: true });
+  }
   setTimeout(revealInView, 500);
   // final safety: never leave a view invisible, even if observers don't fire
   setTimeout(function () { Object.keys(views).forEach(function (k) { reveal(views[k]); }); }, 2600);
