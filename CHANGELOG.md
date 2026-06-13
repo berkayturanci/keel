@@ -6,6 +6,15 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.2.3] — 2026-06-13
+
+### Fixed
+- **Evidence gate now arms from workflow ship assessments.** Trusted `keel ship`
+  assessment comments, including repository-owned `github-actions[bot]` comments, now
+  arm the evidence gate as ship provenance without satisfying any closure, review, or jury
+  evidence item. This prevents agent-created PRs from silently passing with
+  `enforced=false` when review or closure evidence is missing. (#327)
+
 ## [1.2.2] — 2026-06-11
 
 ### Fixed
