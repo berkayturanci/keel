@@ -1,14 +1,32 @@
 {
   "name": "keel",
   "short_name": "keel",
-  "description": "A project-neutral, multi-agent workflow core — one fixed backbone from issue to merged.",
+  "description": "A project-neutral, multi-agent workflow core \u2014 one fixed backbone from issue to merged.",
   "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#0a0e15",
   "theme_color": "#6366f1",
   "icons": [
-    { "src": "favicon.svg", "sizes": "any", "type": "image/svg+xml" },
-    { "src": "favicon-32.png", "sizes": "32x32", "type": "image/png" },
-    { "src": "apple-touch-icon.png", "sizes": "180x180", "type": "image/png" }
+    {
+      "src": "favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    },
+    {
+      "src": "favicon-32.png",
+      "sizes": "32x32",
+      "type": "image/png"
+    },
+    {
+      "src": "apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    },
+    {
+      "src": "apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
   ]
 }
