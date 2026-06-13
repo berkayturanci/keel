@@ -266,6 +266,63 @@ def latest_ship_run_for_pr(
     return match
 
 
+def record_gates_passed(record: dict[str, Any]) -> bool:
+    """Return whether a ship_run record's gates count as a clean pass.
+
+    A pass requires that the run was not blocked by findings and that every
+    recorded gate either ran clean (``ok``) or was deliberately skipped, with no
+    gate reporting an error. A missing or malformed ``gates``/``verdict`` block
+    degrades to "not a pass" so a corrupt record can never authorize a merge.
+    """
+    verdict = record.get("verdict")
+    if not isinstance(verdict, dict) or verdict.get("blocked") is not False:
+        return False
+    gates = record.get("gates")
+    if not isinstance(gates, list) or not gates:
+        return False
+    for gate in gates:
+        if not isinstance(gate, dict):
+            return False
+        if gate.get("error"):
+            return False
+        if not (gate.get("ok") is True or gate.get("skipped") is True):
+            return False
+    return True
+
+
+def gates_pass_for_head(
+    records: list[dict[str, Any]],
+    pr_number: int,
+    head_sha: str,
+) -> tuple[bool, dict[str, Any] | None]:
+    """Find a passing gates run recorded against ``head_sha`` for ``pr_number``.
+
+    Returns ``(matched, record)``. ``matched`` is ``True`` only when some
+    ship_run record for the PR carries the exact current ``head_sha`` *and* its
+    gates passed (see :func:`record_gates_passed`). The most recent matching
+    record is returned. A blank ``head_sha`` never matches — an unknown head
+    must not be authorized by a stale green run. This is a pure function: it
+    reads only its arguments and performs no I/O.
+    """
+    if not isinstance(head_sha, str) or not head_sha.strip():
+        return False, None
+    match: dict[str, Any] | None = None
+    for record in records:
+        if record.get("record_type") != RECORD_TYPE_SHIP_RUN:
+            continue
+        pull_request = record.get("pull_request")
+        number = pull_request.get("number") if isinstance(pull_request, dict) else None
+        if number != pr_number:
+            continue
+        git = record.get("git")
+        record_sha = git.get("head_sha") if isinstance(git, dict) else None
+        if record_sha != head_sha:
+            continue
+        if record_gates_passed(record):
+            match = record
+    return (match is not None), match
+
+
 def capture_health_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
     """Summarize capture visibility for morning, wrap, status, and ledger readers."""
     items = [_capture_health_item(record) for record in records]

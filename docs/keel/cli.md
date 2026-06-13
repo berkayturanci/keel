@@ -113,10 +113,20 @@ keel release merge --owner "ship-pr-123" --root .
 Perform the sanctioned core-owned PR merge path. `keel merge` acquires the merge resource
 claim, re-checks the merge window inside that claim, reads the live PR check rollup with
 failure-before-pending precedence, runs `evidence-verify` against the current PR artifacts,
-and only then calls `gh pr merge`.
+requires a SHA-stamped gates-pass for the PR's current head, and only then calls
+`gh pr merge`.
+
+The gates-SHA check reads the run ledger and requires a `ship_run` record whose
+`pull_request.number` matches the PR, whose `git.head_sha` equals the PR's current head
+(from the live merge snapshot), and whose gates passed (verdict not blocked and every
+recorded gate `ok` or `skipped`, none errored). A stale green run from an older head no
+longer authorizes a merge of a newer head; if no record matches, the merge refuses with
+`no gates-pass recorded for the current head <sha>`. The decision is reported in the
+`gates_sha` block of the JSON payload (`matched`, `head_sha`, `run_id`).
 
 Raw adapter `gh pr merge` calls are a spec violation for ship-style flows: adapters should
-delegate s10 to this command so lock, window, CI, and evidence checks are deterministic.
+delegate s10 to this command so lock, window, CI, evidence, and gates-SHA checks are
+deterministic.
 
 ```bash
 keel merge .keel/project.yaml --root . --pr 123 \
@@ -125,7 +135,9 @@ keel merge .keel/project.yaml --root . --pr 123 --dry-run \
   --approve-scope filesystem,git,github --operator "$USER" --json
 ```
 
-`--hotfix` is the audited merge-window bypass and still requires explicit consent.
+`--hotfix` is the audited bypass: it skips both the merge window and the gates-SHA
+requirement, still requires explicit consent, and records the bypass (`gates_sha.bypassed`
+with `reason: hotfix`).
 
 ## `keel post-comment <project.yaml> --target issue:N|pr:N --artifact ARTIFACT --body-file FILE [--run-id ID] [--dry-run] [--json]`
 

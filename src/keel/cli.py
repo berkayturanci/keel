@@ -380,6 +380,7 @@ def _cmd_merge(args: argparse.Namespace) -> int:
         "window": None,
         "ci": None,
         "evidence": None,
+        "gates_sha": None,
         "escalation": escalation,
         "merged": False,
     }
@@ -417,6 +418,31 @@ def _cmd_merge(args: argparse.Namespace) -> int:
         if evidence_payload["verification"]["status"] != "pass":
             missing = ", ".join(evidence_payload["verification"]["missing"])
             return _finish_merge(args, payload, f"missing evidence: {missing}", code=1)
+
+        head_sha = snapshot["head_sha"]
+        if args.hotfix:
+            payload["gates_sha"] = {"bypassed": True, "reason": "hotfix", "head_sha": head_sha}
+        else:
+            try:
+                gates_records = ledger.read_records(ledger.resolve_path(args.root, config))
+            except ledger.LedgerError as exc:
+                return _finish_merge(args, payload, f"invalid run ledger: {exc}", code=1)
+            matched, record = ledger.gates_pass_for_head(
+                gates_records, args.pr, head_sha if isinstance(head_sha, str) else ""
+            )
+            payload["gates_sha"] = {
+                "bypassed": False,
+                "head_sha": head_sha,
+                "matched": matched,
+                "run_id": record.get("run_id") if record else None,
+            }
+            if not matched:
+                return _finish_merge(
+                    args,
+                    payload,
+                    f"no gates-pass recorded for the current head {head_sha}",
+                    code=1,
+                )
 
         if args.dry_run:
             return _finish_merge(args, payload, "dry-run: merge not performed", code=0)
@@ -1755,6 +1781,12 @@ def _finish_merge(args: argparse.Namespace, payload: dict[str, object], reason: 
             verification = evidence_payload.get("verification")
             if isinstance(verification, dict):
                 print(f"  evidence: {verification.get('status')}")
+        gates_sha = payload.get("gates_sha")
+        if isinstance(gates_sha, dict):
+            if gates_sha.get("bypassed"):
+                print("  gates-sha: bypassed (hotfix)")
+            else:
+                print(f"  gates-sha: {'matched' if gates_sha.get('matched') else 'no-match'}")
     return code
 
 

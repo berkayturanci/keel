@@ -494,3 +494,97 @@ class TestLatestShipRunForPr(unittest.TestCase):
         malformed["pull_request"] = "nope"
         records = [non_ship, malformed]
         self.assertIsNone(ledger.latest_ship_run_for_pr(records, 160))
+
+
+def _gates_record(*, pr, head_sha, run_id="RUN-1", blocked=False, gates=None):
+    return {
+        "schema_version": ledger.LEDGER_SCHEMA_VERSION,
+        "record_type": ledger.RECORD_TYPE_SHIP_RUN,
+        "run_id": run_id,
+        "pull_request": {"number": pr},
+        "git": {"head_sha": head_sha},
+        "verdict": {"blocked": blocked},
+        "gates": gates if gates is not None
+        else [{"gate": "build", "ok": True, "skipped": False, "error": None}],
+    }
+
+
+class TestRecordGatesPassed(unittest.TestCase):
+    def test_clean_run_with_ok_and_skipped_gates_passes(self):
+        record = _gates_record(pr=1, head_sha="a", gates=[
+            {"gate": "build", "ok": True, "skipped": False, "error": None},
+            {"gate": "docs", "ok": False, "skipped": True, "error": None},
+        ])
+        self.assertTrue(ledger.record_gates_passed(record))
+
+    def test_blocked_verdict_is_not_a_pass(self):
+        self.assertFalse(ledger.record_gates_passed(_gates_record(pr=1, head_sha="a",
+                                                                  blocked=True)))
+
+    def test_missing_or_malformed_verdict_is_not_a_pass(self):
+        no_verdict = _gates_record(pr=1, head_sha="a")
+        del no_verdict["verdict"]
+        self.assertFalse(ledger.record_gates_passed(no_verdict))
+
+    def test_empty_or_missing_gates_is_not_a_pass(self):
+        self.assertFalse(ledger.record_gates_passed(_gates_record(pr=1, head_sha="a", gates=[])))
+        no_gates = _gates_record(pr=1, head_sha="a")
+        no_gates["gates"] = "nope"
+        self.assertFalse(ledger.record_gates_passed(no_gates))
+
+    def test_gate_with_error_or_not_ok_is_not_a_pass(self):
+        errored = _gates_record(pr=1, head_sha="a", gates=[
+            {"gate": "build", "ok": True, "skipped": False, "error": "boom"},
+        ])
+        self.assertFalse(ledger.record_gates_passed(errored))
+        failed = _gates_record(pr=1, head_sha="a", gates=[
+            {"gate": "build", "ok": False, "skipped": False, "error": None},
+        ])
+        self.assertFalse(ledger.record_gates_passed(failed))
+        malformed = _gates_record(pr=1, head_sha="a", gates=["nope"])
+        self.assertFalse(ledger.record_gates_passed(malformed))
+
+
+class TestGatesPassForHead(unittest.TestCase):
+    def test_matching_head_with_passing_gates_matches(self):
+        records = [_gates_record(pr=42, head_sha="head-new", run_id="RUN-9")]
+        matched, record = ledger.gates_pass_for_head(records, 42, "head-new")
+        self.assertTrue(matched)
+        self.assertEqual(record["run_id"], "RUN-9")
+
+    def test_returns_latest_matching_record(self):
+        records = [
+            _gates_record(pr=42, head_sha="head-new", run_id="RUN-1"),
+            _gates_record(pr=42, head_sha="head-new", run_id="RUN-2"),
+        ]
+        matched, record = ledger.gates_pass_for_head(records, 42, "head-new")
+        self.assertTrue(matched)
+        self.assertEqual(record["run_id"], "RUN-2")
+
+    def test_stale_head_does_not_match(self):
+        records = [_gates_record(pr=42, head_sha="head-old")]
+        matched, record = ledger.gates_pass_for_head(records, 42, "head-new")
+        self.assertFalse(matched)
+        self.assertIsNone(record)
+
+    def test_blank_head_never_matches(self):
+        records = [_gates_record(pr=42, head_sha="head-new")]
+        self.assertEqual(ledger.gates_pass_for_head(records, 42, ""), (False, None))
+        self.assertEqual(ledger.gates_pass_for_head(records, 42, None), (False, None))
+
+    def test_other_pr_and_non_ship_run_are_ignored(self):
+        other_pr = _gates_record(pr=99, head_sha="head-new")
+        non_ship = dict(_gates_record(pr=42, head_sha="head-new"),
+                        record_type="capture_run")
+        malformed_git = _gates_record(pr=42, head_sha="head-new")
+        malformed_git["git"] = "nope"
+        bad_pr = _gates_record(pr=42, head_sha="head-new")
+        bad_pr["pull_request"] = "nope"
+        records = [other_pr, non_ship, malformed_git, bad_pr]
+        self.assertEqual(ledger.gates_pass_for_head(records, 42, "head-new"), (False, None))
+
+    def test_matching_head_but_failing_gates_does_not_match(self):
+        records = [_gates_record(pr=42, head_sha="head-new", blocked=True)]
+        matched, record = ledger.gates_pass_for_head(records, 42, "head-new")
+        self.assertFalse(matched)
+        self.assertIsNone(record)

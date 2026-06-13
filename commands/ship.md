@@ -396,8 +396,8 @@ chooses an explicit `--max-rounds` override.
 ### s10 merge
 The literal merge is **core-owned**: route it through `keel merge`. Raw `gh pr merge`
 calls and hand-rolled lock shells are **spec violations** for ship-style flows — the
-lock, window re-check, CI rollup read, and evidence verification must run deterministically
-inside core, not as adapter prose.
+lock, window re-check, CI rollup read, evidence verification, and the SHA-stamped
+gates-pass check must run deterministically inside core, not as adapter prose.
 
 - **Pre-merge prep:** re-assert mergeability; if behind/dirty, integrate `base_branch`
   (merge, not rebase), re-green CI, run a single focused merge-conflict review (max 2
@@ -411,11 +411,15 @@ inside core, not as adapter prose.
   The command acquires the merge resource claim (atomic `mkdir`, single-host), re-checks
   the **merge window inside the claim**, reads the live PR check rollup with
   failure-before-pending precedence, runs `evidence-verify` against the current PR
-  artifacts, and only then performs the squash-merge. Any failed stage exits non-zero
-  **without merging** — on a closed window, append to the morning queue, post the deferral
-  comment via `keel post-comment`, leave the PR ready, and continue with the next issue;
-  on a denied claim, treat it as lock contention (mark the issue blocked, comment,
-  continue). For a blocker issue, pass `--hotfix` — the audited window bypass; it still
+  artifacts, requires a SHA-stamped gates-pass (a `ship_run` ledger record whose gates
+  passed against the PR's **current** head SHA, so a stale green run from an older head
+  cannot authorize the merge), and only then performs the squash-merge. Any failed stage
+  exits non-zero **without merging** — on a closed window, append to the morning queue, post
+  the deferral comment via `keel post-comment`, leave the PR ready, and continue with the
+  next issue; on a missing gates-pass for the current head, re-run `keel run-gates` (or
+  ship with `--append-ledger`) against the head and retry; on a denied claim, treat it as
+  lock contention (mark the issue blocked, comment, continue). For a blocker issue, pass
+  `--hotfix` — the audited bypass of both the window and the gates-SHA requirement; it still
   requires the approved consent scopes and is recorded in the ledger.
 - **Outcome:** treat the **PR state (`MERGED`)** as authoritative. A non-zero exit after a
   successful server-side squash is a local-cleanup failure — proceed to capture/close; a
@@ -546,4 +550,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=plugin command=ship keel_version=1.2.3 source_sha256=c7b734f6d916d5c6d196f54bd153b96a2867a9d37986db0829718283ba3651e1 generated_sha256=c7b734f6d916d5c6d196f54bd153b96a2867a9d37986db0829718283ba3651e1 -->
+<!-- keel-generated: surface=plugin command=ship keel_version=1.2.3 source_sha256=03fbe4a171ae194e531c04c2892a524bb3553acfb4006ce0d441c69bce52cab0 generated_sha256=03fbe4a171ae194e531c04c2892a524bb3553acfb4006ce0d441c69bce52cab0 -->

@@ -10,7 +10,7 @@ from argparse import Namespace
 from pathlib import Path
 from unittest.mock import patch
 
-from keel import cli, install, runtime, ship, stepverifier
+from keel import cli, install, ledger, runtime, ship, stepverifier
 
 PROJECTS = Path(__file__).resolve().parent.parent / "projects"
 REPO_ROOT = PROJECTS.parent
@@ -2541,6 +2541,9 @@ class TestCoreMerge(unittest.TestCase):
                 "enforced": True,
                 "verification": {"status": "pass", "missing": []},
             }),
+            patch("keel.cli.ledger.read_records", return_value=[]),
+            patch("keel.cli.ledger.gates_pass_for_head",
+                  return_value=(True, {"run_id": "RUN-1"})),
         ):
             rc, out, _ = run([
                 "merge", path,
@@ -2581,12 +2584,16 @@ class TestCoreMerge(unittest.TestCase):
                 "enforced": True,
                 "verification": {"status": "pass", "missing": []},
             }),
+            patch("keel.cli.ledger.read_records", return_value=[]),
+            patch("keel.cli.ledger.gates_pass_for_head",
+                  return_value=(True, {"run_id": "RUN-1"})),
             patch("keel.cli.github.merge_pr") as merge_mock,
         ):
             rc, out, _ = run(_merge_args(json_out=True, dry_run=True))
 
         self.assertEqual(rc, 0)
         self.assertFalse(json.loads(out)["merged"])
+        self.assertTrue(json.loads(out)["gates_sha"]["matched"])
         merge_mock.assert_not_called()
 
     def test_merge_executes_and_reports_gh_merge_failure(self):
@@ -2604,6 +2611,9 @@ class TestCoreMerge(unittest.TestCase):
                 "enforced": True,
                 "verification": {"status": "pass", "missing": []},
             }),
+            patch("keel.cli.ledger.read_records", return_value=[]),
+            patch("keel.cli.ledger.gates_pass_for_head",
+                  return_value=(True, {"run_id": "RUN-1"})),
             patch("keel.cli.github.merge_pr",
                   return_value=Namespace(ok=False, output="merge failed")),
         ):
@@ -2621,6 +2631,9 @@ class TestCoreMerge(unittest.TestCase):
                 "enforced": True,
                 "verification": {"status": "pass", "missing": []},
             }),
+            patch("keel.cli.ledger.read_records", return_value=[]),
+            patch("keel.cli.ledger.gates_pass_for_head",
+                  return_value=(True, {"run_id": "RUN-1"})),
             patch("keel.cli.github.merge_pr",
                   return_value=Namespace(ok=True, output="merged")),
         ):
@@ -2630,6 +2643,145 @@ class TestCoreMerge(unittest.TestCase):
         self.assertEqual(json.loads(out_fail)["reason"], "gh merge failed")
         self.assertEqual(rc_ok, 0)
         self.assertTrue(json.loads(out_ok)["merged"])
+
+    def _gates_record(self, *, pr, head_sha, ok=True, blocked=False, error=None):
+        return {
+            "schema_version": ledger.LEDGER_SCHEMA_VERSION,
+            "record_type": ledger.RECORD_TYPE_SHIP_RUN,
+            "run_id": f"RUN-{pr}",
+            "pull_request": {"number": pr},
+            "git": {"head_sha": head_sha},
+            "verdict": {"blocked": blocked},
+            "gates": [{"gate": "build", "ok": ok, "skipped": False, "error": error}],
+        }
+
+    def _merge_with_gates(self, records):
+        fake_report = _merge_capability_report()
+        with (
+            patch("keel.cli.runtime.detect", return_value=fake_report),
+            patch("keel.cli.window.is_merge_open", return_value=True),
+            patch("keel.cli.github.pr_merge_snapshot",
+                  return_value=_json_result({
+                      "headRefOid": "head-new",
+                      "mergeStateStatus": "CLEAN",
+                      "statusCheckRollup": [{"conclusion": "SUCCESS"}],
+                  })),
+            patch("keel.cli._verify_merge_evidence", return_value={
+                "enforced": True,
+                "verification": {"status": "pass", "missing": []},
+            }),
+            patch("keel.cli.ledger.read_records", return_value=records),
+            patch("keel.cli.github.merge_pr",
+                  return_value=Namespace(ok=True, output="merged")),
+        ):
+            return run(_merge_args(json_out=True))
+
+    def test_merge_requires_gates_pass_for_current_head(self):
+        records = [self._gates_record(pr=123, head_sha="head-new")]
+        rc, out, _ = self._merge_with_gates(records)
+
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertTrue(data["merged"])
+        self.assertTrue(data["gates_sha"]["matched"])
+        self.assertEqual(data["gates_sha"]["head_sha"], "head-new")
+
+    def test_merge_refuses_when_gates_pass_is_for_stale_head(self):
+        records = [self._gates_record(pr=123, head_sha="head-old")]
+        rc, out, _ = self._merge_with_gates(records)
+
+        self.assertEqual(rc, 1)
+        data = json.loads(out)
+        self.assertFalse(data["merged"])
+        self.assertFalse(data["gates_sha"]["matched"])
+        self.assertIn("no gates-pass recorded for the current head head-new", data["reason"])
+
+    def test_merge_refuses_when_no_gates_record_exists(self):
+        rc, out, _ = self._merge_with_gates([])
+
+        self.assertEqual(rc, 1)
+        data = json.loads(out)
+        self.assertIn("no gates-pass recorded for the current head head-new", data["reason"])
+
+    def test_merge_refuses_when_gates_record_failed(self):
+        records = [
+            self._gates_record(pr=123, head_sha="head-new", ok=False, blocked=True),
+        ]
+        rc, out, _ = self._merge_with_gates(records)
+
+        self.assertEqual(rc, 1)
+        self.assertFalse(json.loads(out)["gates_sha"]["matched"])
+
+    def test_merge_hotfix_bypasses_gates_sha_requirement(self):
+        fake_report = _merge_capability_report()
+        with (
+            patch("keel.cli.runtime.detect", return_value=fake_report),
+            patch("keel.cli.github.pr_merge_snapshot",
+                  return_value=_json_result({
+                      "headRefOid": "head-new",
+                      "mergeStateStatus": "CLEAN",
+                      "statusCheckRollup": [{"conclusion": "SUCCESS"}],
+                  })),
+            patch("keel.cli._verify_merge_evidence", return_value={
+                "enforced": True,
+                "verification": {"status": "pass", "missing": []},
+            }),
+            patch("keel.cli.ledger.read_records") as read_mock,
+            patch("keel.cli.github.merge_pr",
+                  return_value=Namespace(ok=True, output="merged")),
+        ):
+            argv = _merge_args(json_out=True)
+            argv.append("--hotfix")
+            rc, out, _ = run(argv)
+
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertTrue(data["merged"])
+        self.assertTrue(data["gates_sha"]["bypassed"])
+        self.assertEqual(data["gates_sha"]["reason"], "hotfix")
+        read_mock.assert_not_called()
+
+    def test_merge_reports_invalid_ledger_during_gates_check(self):
+        fake_report = _merge_capability_report()
+        with (
+            patch("keel.cli.runtime.detect", return_value=fake_report),
+            patch("keel.cli.window.is_merge_open", return_value=True),
+            patch("keel.cli.github.pr_merge_snapshot",
+                  return_value=_json_result({
+                      "headRefOid": "head-new",
+                      "mergeStateStatus": "CLEAN",
+                      "statusCheckRollup": [{"conclusion": "SUCCESS"}],
+                  })),
+            patch("keel.cli._verify_merge_evidence", return_value={
+                "enforced": True,
+                "verification": {"status": "pass", "missing": []},
+            }),
+            patch("keel.cli.ledger.read_records",
+                  side_effect=ledger.LedgerError("bad line")),
+        ):
+            rc, out, _ = run(_merge_args(json_out=True))
+
+        self.assertEqual(rc, 1)
+        self.assertIn("invalid run ledger", json.loads(out)["reason"])
+
+    def test_merge_human_output_prints_gates_sha(self):
+        args = Namespace(json=False, pr=7)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            cli._finish_merge(args, {"gates_sha": {"bypassed": False, "matched": True}},
+                              "merged", code=0)
+        self.assertIn("gates-sha: matched", out.getvalue())
+
+        out_bypass = io.StringIO()
+        with contextlib.redirect_stdout(out_bypass):
+            cli._finish_merge(args, {"gates_sha": {"bypassed": True}}, "merged", code=0)
+        self.assertIn("gates-sha: bypassed (hotfix)", out_bypass.getvalue())
+
+        out_nomatch = io.StringIO()
+        with contextlib.redirect_stdout(out_nomatch):
+            cli._finish_merge(args, {"gates_sha": {"bypassed": False, "matched": False}},
+                              "blocked", code=1)
+        self.assertIn("gates-sha: no-match", out_nomatch.getvalue())
 
     def test_merge_human_output_prints_ci_and_evidence(self):
         args = Namespace(json=False, pr=7)

@@ -124,7 +124,15 @@ one fail-closed path:
 2. re-run the configured merge-window check inside the claim;
 3. read the live PR check rollup and classify failure before pending;
 4. run `evidence-verify` for the current PR artifacts;
-5. call GitHub's merge operation only when every prior gate passes.
+5. require a SHA-stamped gates-pass: a `ship_run` ledger record for the PR whose
+   `git.head_sha` equals the PR's current head and whose gates passed, so a stale green
+   run from an older head cannot authorize merging a newer head;
+6. call GitHub's merge operation only when every prior gate passes.
+
+`--hotfix` bypasses both the merge window (step 2) and the gates-SHA requirement (step 5),
+recording the bypass (`gates_sha.bypassed`, `reason: hotfix`). The gates-match decision is a
+pure function (`ledger.gates_pass_for_head`); the command supplies the live head SHA and the
+ledger records.
 
 `keel claim` and `keel release` expose the same resource primitive for adapters that need
 explicit orchestration, while `keel worktree-remove` owns the destructive cleanup guard:
