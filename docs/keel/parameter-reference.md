@@ -682,10 +682,12 @@ keel evidence-verify <project.yaml> --pr N [--issue N] [--root DIR]
 
 **Gate arming.** The gate is provenance-armed: it engages when deterministic ship
 provenance exists — a ship-style issue branch on the head ref, an existing
-`keel.review-verdict.v1` marker, a ship-run ledger record reference, or the legacy
-arming label (`evidence_gate_label`, default `keel:ship`). A hand-authored PR without
-provenance reports `enforced: false`, `required: 0`, status `pass`, exit 0. The only
-disarm path for armed ship provenance is the operator-applied waiver label
+`keel.review-verdict.v1` marker, a trusted `keel ship` assessment comment, a ship-run
+ledger record reference, or the legacy arming label (`evidence_gate_label`, default
+`keel:ship`). The assessment comment is provenance only; it is still never accepted as
+closure, review, or jury evidence. A hand-authored PR without provenance reports
+`enforced: false`, `required: 0`, status `pass`, exit 0. The only disarm path for armed
+ship provenance is the operator-applied waiver label
 (`--waiver-label`, default `keel:evidence-waived`), which is reported in the output.
 
 **Required items** (when enforced, derived from the resolved review contract): a

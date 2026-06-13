@@ -1114,6 +1114,11 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
         print(f"  dry-run       : {str(args.dry_run).lower()}")
         if not enforced:
             print(f"  enforced      : false ({gate['reason']})")
+            print("  required      : 0")
+            if gate.get("waived"):
+                print("  note          : evidence gate disarmed by operator waiver label")
+            else:
+                print("  note          : evidence gate not enforced; no ship provenance detected")
             return 0
         print(f"  enforced      : true ({gate['reason']})")
         print(f"  required      : {report['required_count']}")

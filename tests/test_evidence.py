@@ -457,11 +457,45 @@ class TestGateActive(unittest.TestCase):
         self.assertTrue(decision["enforced"])
         self.assertEqual(decision["reason"], "review-verdict-marker")
 
+    def test_ship_assessment_comment_arms_gate_without_label(self):
+        decision = evidence.gate_decision(
+            [],
+            "keel:ship",
+            pr_comments=[_trusted_comment("### \U0001f6a2 keel ship\nstatus: pass")],
+        )
+
+        self.assertTrue(decision["enforced"])
+        self.assertEqual(decision["reason"], "ship-assessment-comment")
+
+    def test_untrusted_ship_assessment_does_not_arm_gate(self):
+        decision = evidence.gate_decision(
+            [],
+            "keel:ship",
+            pr_comments=[{
+                "author": {"association": "CONTRIBUTOR"},
+                "body": "### \U0001f6a2 keel ship\nstatus: pass",
+            }],
+        )
+
+        self.assertFalse(decision["enforced"])
+        self.assertEqual(decision["reason"], "no-ship-provenance")
+
     def test_operator_waiver_disarms_even_with_ship_provenance(self):
         decision = evidence.gate_decision(
             ["keel:evidence-waived"],
             "keel:ship",
             head_ref="fix/issue-266-hardening",
+        )
+
+        self.assertFalse(decision["enforced"])
+        self.assertTrue(decision["waived"])
+        self.assertEqual(decision["reason"], "operator-waiver-label")
+
+    def test_operator_waiver_disarms_even_with_ship_assessment(self):
+        decision = evidence.gate_decision(
+            ["keel:evidence-waived"],
+            "keel:ship",
+            pr_comments=[_trusted_comment("### \U0001f6a2 keel ship\nstatus: pass")],
         )
 
         self.assertFalse(decision["enforced"])

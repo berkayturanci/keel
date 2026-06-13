@@ -249,12 +249,13 @@ Verify that a PR has the public evidence required by the ship contract before me
 
 The gate is **provenance-armed** by default: it engages when deterministic ship provenance
 is present, including a ship-style issue branch (`feature/issue-*`, `fix/issue-*`, etc.),
-an existing `keel.review-verdict.v1` marker, a ship-run ledger record, or the legacy
-`evidence_gate_label` knob (default `keel:ship`). A hand-authored PR without ship
-provenance reports `enforced: false`, `required: 0`, status `pass` (exit 0). The only
-disarm path for ship provenance is the operator-applied waiver label
-`keel:evidence-waived`, which is reported in the check output. When enforced, the verifier
-is fail-closed and accepts only durable GitHub artifacts:
+an existing `keel.review-verdict.v1` marker, a trusted `keel ship` assessment comment, a
+ship-run ledger record, or the legacy `evidence_gate_label` knob (default `keel:ship`).
+The assessment comment is provenance only; it does not satisfy any required evidence item.
+A hand-authored PR without ship provenance reports `enforced: false`, `required: 0`,
+status `pass` (exit 0). The only disarm path for ship provenance is the operator-applied
+waiver label `keel:evidence-waived`, which is reported in the check output. When enforced,
+the verifier is fail-closed and accepts only durable GitHub artifacts:
 
 - a `keel.closure-comment.v1` closure marker on both the PR and linked issue, posted by a
   trusted GitHub actor;

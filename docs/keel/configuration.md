@@ -200,11 +200,13 @@ capabilities are reported as degraded rather than silently treated as success.
 
 The legacy PR label that also arms the required pre-merge evidence gate enforced by
 `keel evidence-verify` (default `keel:ship`). The gate no longer relies on an agent-applied
-opt-in label: ship provenance such as a ship-style issue branch, posted review marker, or
-ship-run ledger record arms it by default. Hand-authored PRs without ship provenance pass
-with `enforced: false` and `required: 0`. The operator waiver label
-`keel:evidence-waived` is the intentional disarm path and is reported in the verifier
-output. Override the legacy arming label per run with `keel evidence-verify --gate-label`.
+opt-in label: ship provenance such as a ship-style issue branch, posted review marker,
+trusted `keel ship` assessment comment, or ship-run ledger record arms it by default. The
+assessment comment is only an arming signal, not accepted evidence. Hand-authored PRs
+without ship provenance pass with `enforced: false` and `required: 0`. The operator waiver
+label `keel:evidence-waived` is the intentional disarm path and is reported in the
+verifier output. Override the legacy arming label per run with
+`keel evidence-verify --gate-label`.
 
 ## `policy_pack`
 

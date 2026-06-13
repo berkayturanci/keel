@@ -78,6 +78,8 @@ def gate_decision(
         return _gate_decision(True, "gate-label", gate_label)
     if head_ref and _SHIP_BRANCH_RE.search(head_ref):
         return _gate_decision(True, "ship-branch", head_ref)
+    if _has_trusted_ship_assessment(pr_comments or []):
+        return _gate_decision(True, "ship-assessment-comment", SHIP_ASSESSMENT_HEADING)
     if _has_trusted_review_marker([*(pr_comments or []), *(pr_reviews or [])]):
         return _gate_decision(True, "review-verdict-marker", REVIEW_VERDICT_MARKER)
     if ledger_records:
@@ -99,6 +101,13 @@ def _gate_decision(
         "reason": reason,
         "source": source,
     }
+
+
+def _has_trusted_ship_assessment(items: list[dict[str, Any]]) -> bool:
+    return any(
+        _is_trusted_source(item, enforced=True) and _is_ship_assessment(_body(item))
+        for item in items
+    )
 
 
 def contract_as_dict(
