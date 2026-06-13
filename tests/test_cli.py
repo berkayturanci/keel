@@ -1236,7 +1236,11 @@ class TestShip(unittest.TestCase):
             reviews = root / "reviews.json"
             body = root / "body.md"
             _write_json_fixture(pr_comments, [
-                _trusted_comment("### \U0001f6a2 keel ship\nstatus: pass"),
+                {
+                    "author_association": "NONE",
+                    "user": {"login": "github-actions[bot]"},
+                    "body": "### \U0001f6a2 keel ship\nstatus: pass",
+                },
             ])
             issue_comments.write_text("[]", encoding="utf-8")
             reviews.write_text("[]", encoding="utf-8")

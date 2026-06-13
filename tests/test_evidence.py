@@ -467,12 +467,27 @@ class TestGateActive(unittest.TestCase):
         self.assertTrue(decision["enforced"])
         self.assertEqual(decision["reason"], "ship-assessment-comment")
 
+    def test_github_actions_ship_assessment_arms_gate_without_label(self):
+        decision = evidence.gate_decision(
+            [],
+            "keel:ship",
+            pr_comments=[{
+                "author_association": "NONE",
+                "user": {"login": "github-actions[bot]"},
+                "body": "### \U0001f6a2 keel ship\nstatus: pass",
+            }],
+        )
+
+        self.assertTrue(decision["enforced"])
+        self.assertEqual(decision["reason"], "ship-assessment-comment")
+
     def test_untrusted_ship_assessment_does_not_arm_gate(self):
         decision = evidence.gate_decision(
             [],
             "keel:ship",
             pr_comments=[{
-                "author": {"association": "CONTRIBUTOR"},
+                "author_association": "NONE",
+                "user": {"login": "drive-by"},
                 "body": "### \U0001f6a2 keel ship\nstatus: pass",
             }],
         )
