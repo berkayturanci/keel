@@ -1,7 +1,7 @@
 <picture>
-  <source media="(prefers-color-scheme: light)" srcset="docs/assets/hero-light.svg">
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hero.svg">
-  <img src="docs/assets/hero.svg" alt="keel — a fixed backbone that drives a GitHub issue from backlog to merged">
+  <source media="(prefers-color-scheme: light)" srcset="docs/assets/hero-light.svg">
+  <img src="docs/assets/hero-light.svg" alt="keel — drive every issue to merged on one fixed backbone: 13 steps, 28 extension slots, 16 /keel commands, 100% covered">
 </picture>
 
 # keel ⚓
