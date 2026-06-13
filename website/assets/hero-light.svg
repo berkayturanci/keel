@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="300" viewBox="0 0 1200 300" role="img" aria-label="keel — drive every issue to merged">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f8fafc"></stop>
+      <stop offset="1" stop-color="#eef2f7"></stop>
+    </linearGradient>
+    <linearGradient id="merged" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#0d9488"></stop>
+      <stop offset="1" stop-color="#15803d"></stop>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.82" cy="0.2" r="0.6">
+      <stop offset="0" stop-color="#0d9488" stop-opacity="0.08"></stop>
+      <stop offset="1" stop-color="#0d9488" stop-opacity="0"></stop>
+    </radialGradient>
+  </defs>
+
+  <rect width="1200" height="300" rx="24" fill="url(#bg)"></rect>
+  <rect width="1200" height="300" rx="24" fill="url(#glow)"></rect>
+  <g stroke="#0d9488" stroke-opacity="0.05">
+    <path d="M150 0v300M300 0v300M450 0v300M600 0v300M750 0v300M900 0v300M1050 0v300"></path>
+    <path d="M0 75h1200M0 150h1200M0 225h1200"></path>
+  </g>
+  <rect x="1" y="1" width="1198" height="298" rx="23" fill="none" stroke="#dbe2ea" stroke-width="2"></rect>
+
+  
+  <g transform="translate(64,52)">
+    <rect width="56" height="56" rx="13" fill="#0c1118"></rect>
+    <rect x="0.7" y="0.7" width="54.6" height="54.6" rx="12.5" fill="none" stroke="#2a3543"></rect>
+    <line x1="10.5" y1="35" x2="28" y2="35" stroke="#2a3744" stroke-width="2.6" stroke-linecap="round"></line>
+    <circle cx="10.5" cy="35" r="2.8" fill="#2dd4bf"></circle>
+    <circle cx="17.5" cy="35" r="2.8" fill="#2dd4bf"></circle>
+    <circle cx="24.5" cy="35" r="2.8" fill="#2dd4bf"></circle>
+    <circle cx="28" cy="35" r="3.3" fill="#f5a524"></circle>
+    <path d="M28 35 Q38.5 29.7 45.5 16.6" stroke="#4ade80" stroke-width="4.8" fill="none" stroke-linecap="round"></path>
+    <circle cx="45.5" cy="16.6" r="3.9" fill="#4ade80"></circle>
+  </g>
+  <text x="136" y="84" font-family="ui-sans-serif, system-ui, -apple-system, &#39;Segoe UI&#39;, sans-serif" font-size="30" font-weight="700" fill="#0f172a">keel</text>
+  <text x="136" y="104" font-family="ui-monospace, &#39;SF Mono&#39;, Menlo, Consolas, monospace" font-size="13" fill="#5b6878">turn coding agents into work owners</text>
+
+  
+  <text x="64" y="172" font-family="ui-sans-serif, system-ui, -apple-system, &#39;Segoe UI&#39;, sans-serif" font-size="46" font-weight="800" fill="#0f172a">Drive every issue to <tspan fill="url(#merged)">merged.</tspan></text>
+  <text x="64" y="206" font-family="ui-sans-serif, system-ui, -apple-system, &#39;Segoe UI&#39;, sans-serif" font-size="17" fill="#5b6878">One fixed backbone — you set the values, snap in the Lego. It never forks.</text>
+
+  
+  <text x="64" y="252" font-family="ui-monospace, &#39;SF Mono&#39;, Menlo, Consolas, monospace" font-size="13" fill="#7c8898">13 steps s0→s12  ·  28 extension slots  ·  16 /keel commands  ·  100% covered  ·  Apache-2.0</text>
+
+  
+  <g transform="translate(712,0)">
+    <line x1="40" y1="150" x2="320" y2="150" stroke="#cdd6e0" stroke-width="3" stroke-linecap="round"></line>
+    <circle cx="40" cy="150" r="4.5" fill="#0d9488"></circle>
+    <circle cx="80" cy="150" r="4.5" fill="#0d9488"></circle>
+    <circle cx="120" cy="150" r="4.5" fill="#0d9488"></circle>
+    <circle cx="160" cy="150" r="4.5" fill="#0d9488"></circle>
+    <circle cx="200" cy="150" r="4.5" fill="#0d9488"></circle>
+    <circle cx="240" cy="150" r="4.5" fill="#0d9488"></circle>
+    <circle cx="280" cy="150" r="4.5" fill="#0d9488"></circle>
+    <circle cx="320" cy="150" r="5.2" fill="#b45309"></circle>
+    <path d="M320 150 Q360 138 384 92" stroke="#16a34a" stroke-width="7" fill="none" stroke-linecap="round"></path>
+    <circle cx="384" cy="92" r="7" fill="#16a34a"></circle>
+    <text x="40" y="178" font-family="ui-monospace, &#39;SF Mono&#39;, Menlo, Consolas, monospace" font-size="11" fill="#7c8898">s0 intake</text>
+    <text x="299" y="178" font-family="ui-monospace, &#39;SF Mono&#39;, Menlo, Consolas, monospace" font-size="11" fill="#b45309">s10 merge</text>
+    <rect x="312" y="60" width="158" height="26" rx="13" fill="#16a34a" fill-opacity="0.12"></rect>
+    <text x="328" y="77" font-family="ui-monospace, &#39;SF Mono&#39;, Menlo, Consolas, monospace" font-size="12" font-weight="700" fill="#15803d">merged + closed ✓</text>
+  </g>
+</svg>
