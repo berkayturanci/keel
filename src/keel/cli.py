@@ -36,6 +36,7 @@ from . import (
     ledger,
     lock,
     project_commands,
+    review,
     runcontrols,
     runtime,
     scaffold,
@@ -936,6 +937,210 @@ def _cmd_runcontrols(args: argparse.Namespace) -> int:
     return 0 if report["status"] == "pass" else 1
 
 
+def _cmd_review(args: argparse.Namespace) -> int:
+    if args.dry_run and args.live:
+        print("--dry-run and --live cannot be used together", file=sys.stderr)
+        return 1
+    dry_run = not args.live
+    try:
+        config = cfg.load_config(args.path)
+    except FileNotFoundError:
+        print(f"no such config: {args.path}", file=sys.stderr)
+        return 1
+    except cfg.ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    report = runtime.detect(args.root)
+    evaluation = runtime.evaluate(
+        runtime.CapabilityRequirement(required=("gh", "gh-auth")), report
+    )
+    transport = github_transport.resolve(report)
+    if not evaluation.ok or not transport.supports("comments"):
+        print(evaluation.render(), file=sys.stderr)
+        print(transport.render(), file=sys.stderr)
+        return 1
+
+    try:
+        raw_reviews = json.loads(Path(args.reviews).read_text(encoding="utf-8"))
+        reviews = review.parse_reviews(raw_reviews)
+    except OSError as exc:
+        print(f"cannot read --reviews {args.reviews}: {exc}", file=sys.stderr)
+        return 1
+    except json.JSONDecodeError as exc:
+        print(f"--reviews {args.reviews} is not valid JSON: {exc}", file=sys.stderr)
+        return 1
+    except review.ReviewError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    closure_record: dict[str, object] | None = None
+    if args.closure is not None:
+        try:
+            closure_record = _read_json_object(args.closure)
+        except OSError as exc:
+            print(f"cannot read --closure {args.closure}: {exc}", file=sys.stderr)
+            return 1
+        except (json.JSONDecodeError, ValueError) as exc:
+            print(f"--closure {args.closure} must be a JSON object: {exc}", file=sys.stderr)
+            return 1
+
+    try:
+        approved_scopes, approval_source, approval_operator, consent_mode = _approved_consent(
+            args, config, True
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    operator_consent = consent.build_consent_contract(
+        command="review",
+        side_effects=("comments",),
+        dry_run=dry_run,
+        approved_scopes=approved_scopes,
+        approval_source=approval_source,
+        mode=consent_mode,
+        operator=approval_operator,
+        target=f"PR #{args.pr}",
+    )
+    consent_ok, consent_message = consent.assert_operator_consent(operator_consent)
+    if not consent_ok:
+        print(consent_message, file=sys.stderr)
+        return 1
+
+    try:
+        owner_repo = _owner_repo(config)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    evidence_args = argparse.Namespace(
+        pr=args.pr,
+        issue=args.issue,
+        pr_body_file=None,
+        pr_comments_json=None,
+        issue_comments_json=None,
+        pr_reviews_json=None,
+        changed_file=tuple(args.changed_file or ()),
+        head_sha=args.head_sha,
+        head_ref=None,
+        pr_label=(),
+        dry_run=dry_run,
+        root=args.root,
+    )
+    try:
+        artifacts_ctx = _load_evidence_artifacts(evidence_args, config)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    changed_files = artifacts_ctx["changed_files"]
+    tier = (
+        classify.tier_for_files(
+            changed_files,
+            tier3_globs=config.knobs.tier3_globs,
+            docs_globs=config.knobs.docs_gate_paths,
+        )
+        if changed_files else None
+    )
+    review_contract = ship.resolve_review_contract(
+        tier=tier,
+        reviewer_override=args.reviewers,
+        gates=config.gates,
+        policy_pack=config.policy_pack,
+    )
+    required_count = review_contract["reviewers"]["count"]
+
+    try:
+        plan = review.build_review_plan(
+            reviews,
+            required_count=required_count,
+            head_sha=artifacts_ctx["head_sha"],
+            pull_request=args.pr,
+            issue=artifacts_ctx["issue"],
+            run_id=args.run_id,
+            tier=tier,
+            closure_record=closure_record,
+        )
+    except review.ReviewError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    posted: list[dict[str, object]] = []
+    for post in plan.posts:
+        if dry_run:
+            posted.append({
+                "artifact": post.artifact,
+                "target": {"kind": post.target_kind, "number": post.target_number},
+                "run_id": post.run_id,
+                "action": "dry-run",
+            })
+            if not args.json:
+                print(f"DRY-RUN: would post {post.artifact} to "
+                      f"{post.target_kind}:{post.target_number} (run-id {post.run_id})")
+            continue
+        try:
+            result, error = _post_artifact_comment(
+                owner_repo,
+                target_kind=post.target_kind,
+                target_number=post.target_number,
+                artifact=post.artifact,
+                marker=post.marker,
+                body=post.body,
+                run_id=post.run_id,
+                transport_name=transport.name,
+                dry_run=False,
+                cwd=args.root,
+            )
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        if error is not None:
+            print(error, file=sys.stderr)
+            return 1
+        posted.append(result)
+
+    verification: dict[str, object] | None = None
+    if args.verify and not dry_run:
+        verification = _verify_merge_evidence(
+            argparse.Namespace(
+                pr=args.pr,
+                issue=args.issue,
+                root=args.root,
+                reviewers=args.reviewers,
+                review_comments="inline",
+                jury=False,
+                no_jury=False,
+                jury_advisory=False,
+                gate_label=None,
+                waiver_label=None,
+            ),
+            config,
+        )
+
+    result_payload = {
+        "schema_version": review.SCHEMA_VERSION,
+        "plan": plan.as_dict(),
+        "dry_run": dry_run,
+        "transport": transport.name,
+        "posted": posted,
+        "consent": operator_consent["status"],
+        "verification": verification,
+    }
+    if args.json:
+        print(json.dumps(result_payload, indent=2, sort_keys=True))
+    else:
+        mode = "dry-run" if dry_run else "live"
+        print(f"keel review — {mode}  PR #{args.pr}")
+        print(f"  tier          : {tier if tier is not None else 'unresolved'}")
+        print(f"  required      : {required_count}")
+        print(f"  supplied      : {plan.supplied_count}")
+        print(f"  posts         : {len(plan.posts)}")
+        if verification is not None:
+            print(f"  verify        : {verification['verification']['status']}")
+    if verification is not None and verification["verification"]["status"] != "pass":
+        return 1
+    return 0
+
+
 def _cmd_post_comment(args: argparse.Namespace) -> int:
     try:
         config = cfg.load_config(args.path)
@@ -987,41 +1192,76 @@ def _cmd_post_comment(args: argparse.Namespace) -> int:
         return 1
 
     try:
-        existing = _gh_json_list(
-            ["repos", owner_repo, "issues", str(target_number), "comments"], cwd=args.root
+        payload, error = _post_artifact_comment(
+            owner_repo,
+            target_kind=target_kind,
+            target_number=target_number,
+            artifact=args.artifact,
+            marker=marker,
+            body=body,
+            run_id=args.run_id,
+            transport_name=transport.name,
+            dry_run=args.dry_run,
+            cwd=args.root,
         )
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    match = _find_comment_match(existing, marker=marker, run_id=args.run_id)
+    if error is not None:
+        print(error, file=sys.stderr)
+        return 1
+    return _finish_post_comment(args, payload, code=0)
+
+
+def _post_artifact_comment(
+    owner_repo: str,
+    *,
+    target_kind: str,
+    target_number: int,
+    artifact: str,
+    marker: str,
+    body: str,
+    run_id: str | None,
+    transport_name: str,
+    dry_run: bool,
+    cwd: str,
+) -> tuple[dict[str, object], str | None]:
+    """Post or update one marker/run-id comment via the existing gh path.
+
+    Returns a ``(payload, error)`` pair. ``error`` is ``None`` on success; on a gh
+    mutation failure it is the message to surface. Raises ``ValueError`` only when
+    the comment fetch itself fails. Dry runs plan the action and never mutate.
+    """
+    existing = _gh_json_list(
+        ["repos", owner_repo, "issues", str(target_number), "comments"], cwd=cwd
+    )
+    match = _find_comment_match(existing, marker=marker, run_id=run_id)
     payload: dict[str, object] = {
         "schema_version": "keel.post-comment.v1",
         "target": {"kind": target_kind, "number": target_number},
-        "artifact": args.artifact,
+        "artifact": artifact,
         "marker": marker,
-        "transport": transport.name,
-        "run_id": args.run_id,
-        "dry_run": args.dry_run,
+        "transport": transport_name,
+        "run_id": run_id,
+        "dry_run": dry_run,
     }
-    if args.dry_run:
+    if dry_run:
         payload["action"] = "edit" if match else "post"
         payload["comment_id"] = match.get("id") if match else None
-        return _finish_post_comment(args, payload, code=0)
+        return payload, None
 
     if match:
         comment_id = match.get("id")
         if not isinstance(comment_id, int):
-            print("matching comment is missing an integer id", file=sys.stderr)
-            return 1
-        result = github.edit_issue_comment(owner_repo, comment_id, body, cwd=args.root)
+            return payload, "matching comment is missing an integer id"
+        result = github.edit_issue_comment(owner_repo, comment_id, body, cwd=cwd)
         payload["action"] = "edited"
         payload["comment_id"] = comment_id
     else:
-        result = github.post_issue_comment(owner_repo, target_number, body, cwd=args.root)
+        result = github.post_issue_comment(owner_repo, target_number, body, cwd=cwd)
         payload["action"] = "posted"
     if not result.ok:
-        print(result.output.strip() or "gh comment mutation failed", file=sys.stderr)
-        return 1
+        return payload, result.output.strip() or "gh comment mutation failed"
     try:
         response = json.loads(result.output or "{}")
     except json.JSONDecodeError:
@@ -1029,7 +1269,7 @@ def _cmd_post_comment(args: argparse.Namespace) -> int:
     if isinstance(response, dict):
         payload["comment_id"] = response.get("id", payload.get("comment_id"))
         payload["html_url"] = response.get("html_url")
-    return _finish_post_comment(args, payload, code=0)
+    return payload, None
 
 
 def _cmd_evidence_verify(args: argparse.Namespace) -> int:
@@ -2763,6 +3003,43 @@ def build_parser() -> argparse.ArgumentParser:
     p_post.add_argument("--dry-run", action="store_true", help="plan only; do not mutate GitHub")
     p_post.add_argument("--json", action="store_true", help="emit structured JSON")
     p_post.set_defaults(func=_cmd_post_comment)
+
+    p_review = sub.add_parser(
+        "review",
+        help="orchestrate a supplied review evidence bundle: render, post, re-verify",
+    )
+    p_review.add_argument("path", help="path to project.yaml")
+    p_review.add_argument("--root", default=".", help="repo root for GitHub operations")
+    p_review.add_argument("--pr", type=_positive_int, required=True,
+                          help="pull request number to attach verdicts to")
+    p_review.add_argument("--reviews", required=True,
+                          help="JSON array of reviewer verdict objects supplied by the host")
+    p_review.add_argument("--issue", type=_positive_int, default=None,
+                          help="linked issue number; otherwise inferred from PR body")
+    p_review.add_argument("--closure", default=None,
+                          help="optional ship_run-shaped JSON record to post as the closure")
+    p_review.add_argument("--reviewers", type=int, choices=(1, 2, 3), default=None,
+                          help="override the required reviewer verdict count")
+    p_review.add_argument("--head-sha", default=None,
+                          help="offline PR head SHA used to pin verdict evidence")
+    p_review.add_argument("--changed-file", action="append", default=[],
+                          help="offline changed file path; repeat to derive tier from fixtures")
+    p_review.add_argument("--run-id", default="run",
+                          help="run id; per-reviewer sub-keys bind idempotent comments")
+    p_review.add_argument("--verify", action="store_true",
+                          help="run evidence-verify after posting and include the outcome")
+    p_review.add_argument("--dry-run", action="store_true",
+                          help="render and print what would post; do not mutate GitHub")
+    p_review.add_argument("--live", action="store_true",
+                          help="actually post the rendered bundle (consent-gated)")
+    p_review.add_argument("--approve-scope", action="append", default=[],
+                          help="approve a consent scope for the live run; repeatable")
+    p_review.add_argument("--operator", default=None,
+                          help="operator identity recorded with an approved live run")
+    p_review.add_argument("--consent-mode", choices=consent.CONSENT_MODES, default=None,
+                          help="override the project consent mode for this run")
+    p_review.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_review.set_defaults(func=_cmd_review)
 
     p_evidence = sub.add_parser(
         "evidence-verify",

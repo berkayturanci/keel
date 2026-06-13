@@ -273,9 +273,14 @@ def _pr(pull_request: int | None) -> str:
     return f"#{pull_request}" if isinstance(pull_request, int) else "not opened"
 
 
-def _slug(value: str) -> str:
+def slug(value: str) -> str:
+    """Stable, deterministic slug for reviewer/run-id sub-keys (public alias)."""
     clean = "".join(ch.lower() if ch.isalnum() else "-" for ch in value.strip())
     return "-".join(part for part in clean.split("-") if part) or "reviewer"
+
+
+def _slug(value: str) -> str:
+    return slug(value)
 
 
 def _value(value: Any, fallback: str) -> str:

@@ -322,6 +322,18 @@ Post each review verdict through `keel post-comment` with a reviewer-scoped run 
 (`--run-id "$RUN_ID:<reviewer-id>"`) so same-run idempotency updates that reviewer only and
 does not collapse multiple reviewer verdicts into one comment.
 
+**Sanctioned bundle path:** once the reviewers have returned their content, the
+orchestrator SHOULD hand the whole set to `keel review` rather than rendering and posting
+each verdict by hand. `keel review .keel/project.yaml --root . --pr <PR> --reviews
+<reviews.json> --run-id "$RUN_ID" --live` resolves the tier-required reviewer count (failing
+closed if the bundle is under-count), renders each verdict head-pinned to the current PR
+head SHA, and posts them through the same `post-comment` path with stable
+`<run-id>:rv-<reviewer>` sub-keys. Add `--closure <ship-run.json> --issue <N>` to fold the
+s11 closure into the same call, and `--verify` to re-run `evidence-verify` immediately after
+posting. This is the canonical way to collapse `render_review_verdict` + N× `post-comment`
++ `evidence-verify` into one deterministic, idempotent step; it never spawns reviewers — the
+host still produces the review content above.
+
 - `inline` → fetch the diff once; anchor each `critical`/`major` finding as an **inline
   review comment** on its `file:line` (resolve `RIGHT`/`LEFT` side; `line` is the new-file
   number on `RIGHT`, old-file on `LEFT`; non-anchorable or whole-PR findings go to the

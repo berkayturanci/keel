@@ -322,6 +322,18 @@ Post each review verdict through `keel post-comment` with a reviewer-scoped run 
 (`--run-id "$RUN_ID:<reviewer-id>"`) so same-run idempotency updates that reviewer only and
 does not collapse multiple reviewer verdicts into one comment.
 
+**Sanctioned bundle path:** once the reviewers have returned their content, the
+orchestrator SHOULD hand the whole set to `keel review` rather than rendering and posting
+each verdict by hand. `keel review .keel/project.yaml --root . --pr <PR> --reviews
+<reviews.json> --run-id "$RUN_ID" --live` resolves the tier-required reviewer count (failing
+closed if the bundle is under-count), renders each verdict head-pinned to the current PR
+head SHA, and posts them through the same `post-comment` path with stable
+`<run-id>:rv-<reviewer>` sub-keys. Add `--closure <ship-run.json> --issue <N>` to fold the
+s11 closure into the same call, and `--verify` to re-run `evidence-verify` immediately after
+posting. This is the canonical way to collapse `render_review_verdict` + N× `post-comment`
++ `evidence-verify` into one deterministic, idempotent step; it never spawns reviewers — the
+host still produces the review content above.
+
 - `inline` → fetch the diff once; anchor each `critical`/`major` finding as an **inline
   review comment** on its `file:line` (resolve `RIGHT`/`LEFT` side; `line` is the new-file
   number on `RIGHT`, old-file on `LEFT`; non-anchorable or whole-PR findings go to the
@@ -530,4 +542,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=plugin command=ship keel_version=1.2.3 source_sha256=df387b5031c2b143f324227d9792063041fc76aa3fc01ca6a134dca5368443b0 generated_sha256=df387b5031c2b143f324227d9792063041fc76aa3fc01ca6a134dca5368443b0 -->
+<!-- keel-generated: surface=plugin command=ship keel_version=1.2.3 source_sha256=b18f5993fa2ad77c6be423f19334d156175395b0bbcc243f6c70b2a2a2b113cc generated_sha256=b18f5993fa2ad77c6be423f19334d156175395b0bbcc243f6c70b2a2a2b113cc -->

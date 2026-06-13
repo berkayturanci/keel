@@ -160,6 +160,48 @@ spec violation for ship evidence artifacts: adapters should delegate closure com
 issue updates, review verdicts, and jury verdicts to this command so marker validation,
 transport selection, and same-run idempotency are enforced in core.
 
+## `keel review <project.yaml> --pr N --reviews FILE [--root DIR] [--issue N] [--closure FILE] [--reviewers 1|2|3] [--head-sha SHA] [--changed-file PATH] [--run-id ID] [--verify] [--dry-run] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--json]`
+
+Orchestrate a supplied review *evidence bundle* in one deterministic command. The host
+agent runs the actual reviewers and produces the review content; `keel review` is **not**
+an agent spawner — it takes that content and collapses the previously hand-done
+`render_review_verdict` + N× `post-comment` + `evidence-verify` sequence into a single
+idempotent step.
+
+`--reviews` is a JSON array of review objects, each shaped
+`{ "reviewer": str, "verdict": str, "scope": str?, "findings": [{"severity","message"}]?,
+"testing": str? }`. Each review is rendered via `keel.artifacts.render_review_verdict`,
+head-pinned to the PR's current head SHA, and posted to the PR through the same
+post-comment path with a stable per-reviewer run-id sub-key (`<run-id>:rv-<reviewer-slug>`).
+
+The required reviewer count is resolved from the live diff tier using the exact same logic
+`keel evidence-verify` uses (`ship.resolve_review_contract`). If fewer reviews are supplied
+than the tier requires, the command fails rather than silently under-posting evidence; an
+exact count or more is allowed. `--reviewers` overrides the required count.
+
+```bash
+# Dry by default: render and print what it WOULD post, no network.
+keel review .keel/project.yaml --root . --pr 456 \
+  --reviews /tmp/reviews.json --json
+
+# Live: post each verdict plus the closure to the PR and linked issue, then re-verify.
+keel review .keel/project.yaml --root . --pr 456 --issue 123 \
+  --reviews /tmp/reviews.json --closure /tmp/ship-run.json \
+  --verify --live --approve-scope github --operator "$USER"
+```
+
+`--closure` takes an optional `ship_run`-shaped JSON record, rendered via
+`keel.closure.render_closure_comment` and posted to both the PR and `--issue` as the
+`closure-comment` artifact (sub-key `<run-id>:closure`). `--verify` runs the
+`evidence-verify` check after posting and folds its pass/fail into the result (and exit
+code). `--head-sha` / `--changed-file` supply offline fixtures so dry runs stay fully
+offline and deterministic.
+
+Dry by default: renders the bundle and prints `DRY-RUN:` lines for each planned post with
+no network writes. `--live` actually posts and is consent-gated exactly like other live
+commands (`assert_operator_consent`). `--json` emits the full plan: rendered bodies, post
+targets, resolved tier, required vs. supplied count, and the verify outcome.
+
 ## `keel worktree-remove WORKTREE [--root DIR] [--json]`
 
 Safely remove a worktree after validating that the path is nested under the repository root
