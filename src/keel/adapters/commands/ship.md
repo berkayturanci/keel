@@ -174,7 +174,11 @@ Cut a work branch off `base_branch`. A **git worktree per issue** is the isolati
 contract: never mutate the user's primary checkout. Create it under a gitignored,
 repo-nested path (e.g. `worktrees/issue-<N>`); the worktree path is returned in the JSON
 contract and hard-validated at s10 (must be nested under the repo root, never the repo
-root or filesystem root). Every edit/build/push happens inside the worktree.
+root or filesystem root). Every edit/build/push happens inside the worktree. Once the PR
+exists, `keel verify-branch <project.yaml> --pr <N>` enforces this contract: the head must be
+cut from an up-to-date `origin/base_branch` (else `stale`) and the work must live in a nested
+linked worktree, not the primary checkout (else `contaminated`). `--allow-stale-base` is the
+recorded operator escape for an intentionally stale base.
 
 ### s3 guard
 Refuse if the working tree is dirty or the branch already has an open PR. **Blocker

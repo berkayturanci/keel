@@ -2173,6 +2173,318 @@ class TestScopeVerify(unittest.TestCase):
         self.assertIn("owner and repo", err)
 
 
+class TestVerifyBranch(unittest.TestCase):
+    BASE = [
+        "verify-branch", str(PROJECTS / "example-android.yaml"),
+        "--root", str(REPO_ROOT), "--pr", "300", "--offline",
+    ]
+
+    def test_clean_offline_passes(self):
+        rc, out, _ = run(self.BASE + [
+            "--json", "--head-sha", "h", "--base-tip-sha", "t",
+            "--merge-base-sha", "t", "--base-distance", "0",
+            "--worktree-path", "/repo/worktrees/i", "--repo-root", "/repo",
+            "--linked-worktree", "true",
+        ])
+        data = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertEqual(data["verification"]["status"], "pass")
+        self.assertEqual(data["verification"]["verdict"], "ok")
+        self.assertEqual(data["verification"]["base_branch"], "develop")
+
+    def test_stale_base_fails(self):
+        rc, out, _ = run(self.BASE + [
+            "--json", "--head-sha", "h", "--base-tip-sha", "t",
+            "--merge-base-sha", "old", "--base-distance", "9", "--tolerance", "5",
+            "--linked-worktree", "true", "--worktree-path", "/repo/wt",
+            "--repo-root", "/repo",
+        ])
+        data = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertEqual(data["verification"]["verdict"], "stale")
+        self.assertIn("base is stale", data["verification"]["note"])
+
+    def test_allow_stale_base_downgrades_to_advisory_pass(self):
+        rc, out, _ = run(self.BASE + [
+            "--json", "--head-sha", "h", "--base-tip-sha", "t",
+            "--merge-base-sha", "old", "--base-distance", "9", "--tolerance", "5",
+            "--allow-stale-base", "--linked-worktree", "true",
+            "--worktree-path", "/repo/wt", "--repo-root", "/repo",
+        ])
+        data = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertEqual(data["verification"]["status"], "pass")
+        self.assertEqual(data["verification"]["verdict"], "stale")
+        self.assertTrue(data["verification"]["allow_stale_base"])
+        self.assertIn("advisory", data["verification"]["note"])
+
+    def test_contaminated_primary_checkout_fails(self):
+        rc, out, _ = run(self.BASE + [
+            "--json", "--head-sha", "h", "--base-tip-sha", "t",
+            "--merge-base-sha", "t", "--base-distance", "0",
+            "--worktree-path", "/repo", "--repo-root", "/repo",
+            "--linked-worktree", "false",
+        ])
+        data = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertEqual(data["verification"]["verdict"], "contaminated")
+        self.assertIn("primary checkout", data["verification"]["note"])
+
+    def test_ci_no_worktree_skips_isolation(self):
+        rc, out, _ = run(self.BASE + [
+            "--json", "--head-sha", "h", "--base-tip-sha", "t",
+            "--merge-base-sha", "t", "--base-distance", "0",
+        ])
+        data = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertEqual(data["verification"]["isolation"]["verdict"], "n/a")
+
+    def test_human_output_renders_summary(self):
+        rc, out, _ = run(self.BASE + [
+            "--head-sha", "h", "--base-tip-sha", "t",
+            "--merge-base-sha", "old", "--base-distance", "9", "--tolerance", "5",
+            "--worktree-path", "/repo/wt", "--repo-root", "/repo",
+            "--linked-worktree", "true",
+        ])
+        self.assertEqual(rc, 1)
+        self.assertIn("keel verify-branch — fail", out)
+        self.assertIn("base          : origin/develop", out)
+        self.assertIn("verdict       : stale", out)
+        self.assertIn("base-distance : 9 (tolerance 5)", out)
+        self.assertIn("isolation     : ok", out)
+
+    def test_live_path_gathers_facts_via_gh_and_git(self):
+        # A non-offline run resolves the PR head via gh and the ancestry +
+        # worktree facts via the git wrappers. We stub run_argv for both surfaces.
+        def fake_run(argv, **kwargs):
+            if argv[0] == "gh":
+                body = json.dumps({"head": {"sha": "headsha", "ref": "feature/x"}})
+                return Namespace(ok=True, output=body)
+            if argv[:2] == ["git", "rev-parse"]:
+                return Namespace(ok=True, output="tipsha\n")
+            if argv[:2] == ["git", "merge-base"]:
+                return Namespace(ok=True, output="tipsha\n")
+            if argv[:2] == ["git", "rev-list"]:
+                return Namespace(ok=True, output="0\n")
+            if argv[:3] == ["git", "worktree", "list"]:
+                porcelain = (
+                    "worktree /repo\nHEAD aaa\nbranch refs/heads/develop\n\n"
+                    "worktree /repo/worktrees/i\nHEAD bbb\nbranch refs/heads/feature/x\n"
+                )
+                return Namespace(ok=True, output=porcelain)
+            raise AssertionError(f"unexpected argv {argv}")
+
+        with patch("keel.cli.run_argv", side_effect=fake_run), \
+             patch("keel.git.run_argv", side_effect=fake_run):
+            rc, out, _ = run([
+                "verify-branch", str(PROJECTS / "example-android.yaml"),
+                "--root", "/repo", "--pr", "300", "--json",
+            ])
+        data = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertEqual(data["head_ref"], "feature/x")
+        self.assertEqual(data["verification"]["verdict"], "ok")
+        self.assertTrue(data["verification"]["isolation"]["is_linked_worktree"])
+
+    def test_live_worktree_list_failure_skips_isolation(self):
+        def fake_run(argv, **kwargs):
+            if argv[0] == "gh":
+                body = json.dumps({"head": {"sha": "h", "ref": "feature/x"}})
+                return Namespace(ok=True, output=body)
+            if argv[:2] == ["git", "rev-parse"]:
+                return Namespace(ok=True, output="tip\n")
+            if argv[:2] == ["git", "merge-base"]:
+                return Namespace(ok=True, output="tip\n")
+            if argv[:2] == ["git", "rev-list"]:
+                return Namespace(ok=True, output="0\n")
+            if argv[:3] == ["git", "worktree", "list"]:
+                return Namespace(ok=False, output="")
+            raise AssertionError(f"unexpected argv {argv}")
+
+        with patch("keel.cli.run_argv", side_effect=fake_run), \
+             patch("keel.git.run_argv", side_effect=fake_run):
+            rc, out, _ = run([
+                "verify-branch", str(PROJECTS / "example-android.yaml"),
+                "--root", "/repo", "--pr", "300", "--json",
+            ])
+        data = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertEqual(data["verification"]["isolation"]["verdict"], "n/a")
+
+    def test_live_branch_not_checked_out_skips_isolation(self):
+        def fake_run(argv, **kwargs):
+            if argv[0] == "gh":
+                body = json.dumps({"head": {"sha": "h", "ref": "feature/absent"}})
+                return Namespace(ok=True, output=body)
+            if argv[:2] == ["git", "rev-parse"]:
+                return Namespace(ok=True, output="tip\n")
+            if argv[:2] == ["git", "merge-base"]:
+                return Namespace(ok=True, output="tip\n")
+            if argv[:2] == ["git", "rev-list"]:
+                return Namespace(ok=True, output="0\n")
+            if argv[:3] == ["git", "worktree", "list"]:
+                return Namespace(ok=True, output="worktree /repo\n")
+            raise AssertionError(f"unexpected argv {argv}")
+
+        with patch("keel.cli.run_argv", side_effect=fake_run), \
+             patch("keel.git.run_argv", side_effect=fake_run):
+            rc, out, _ = run([
+                "verify-branch", str(PROJECTS / "example-android.yaml"),
+                "--root", "/repo", "--pr", "300", "--json",
+            ])
+        data = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertEqual(data["verification"]["isolation"]["verdict"], "n/a")
+
+    def test_live_head_without_ref_skips_isolation(self):
+        # gh returns a head SHA but no ref → no branch to locate locally.
+        def fake_run(argv, **kwargs):
+            if argv[0] == "gh":
+                return Namespace(ok=True, output=json.dumps({"head": {"sha": "h"}}))
+            if argv[:2] == ["git", "rev-parse"]:
+                return Namespace(ok=True, output="tip\n")
+            if argv[:2] == ["git", "merge-base"]:
+                return Namespace(ok=True, output="tip\n")
+            if argv[:2] == ["git", "rev-list"]:
+                return Namespace(ok=True, output="0\n")
+            raise AssertionError(f"unexpected argv {argv}")
+
+        with patch("keel.cli.run_argv", side_effect=fake_run), \
+             patch("keel.git.run_argv", side_effect=fake_run):
+            rc, out, _ = run([
+                "verify-branch", str(PROJECTS / "example-android.yaml"),
+                "--root", "/repo", "--pr", "300", "--json",
+            ])
+        data = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertEqual(data["verification"]["isolation"]["verdict"], "n/a")
+        self.assertEqual(data["verification"]["ancestry"]["verdict"], "ok")
+
+    def test_live_missing_owner_repo_reports_cleanly(self):
+        bad = _write_raw(
+            "extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
+            "repo: tmp\ngates: [build]\nknobs:\n  build_gate_cmd: \"true\"\n"
+        )
+        rc, _, err = run([
+            "verify-branch", bad, "--root", str(REPO_ROOT), "--pr", "300", "--json",
+        ])
+        self.assertEqual(rc, 1)
+        self.assertIn("owner and repo", err)
+
+    def test_missing_config_reports_error(self):
+        rc, _, err = run([
+            "verify-branch", "no-such.yaml", "--pr", "300", "--offline",
+        ])
+        self.assertEqual(rc, 1)
+        self.assertIn("no such config", err)
+
+    def test_invalid_config_reports_error(self):
+        bad = _write_raw("extends: keel\nbase_branch: main\ngates: [build]\n")
+        rc, _, _ = run([
+            "verify-branch", bad, "--pr", "300", "--offline",
+        ])
+        self.assertEqual(rc, 1)
+
+    def test_negative_tolerance_rejected(self):
+        with self.assertRaisesRegex(cli.argparse.ArgumentTypeError, "non-negative"):
+            cli._nonnegative_int("-1")
+        self.assertEqual(cli._nonnegative_int("0"), 0)
+
+    def test_human_output_fully_clean_has_no_note(self):
+        # All facts resolved + ok → no note line printed (the no-note branch).
+        rc, out, _ = run(self.BASE + [
+            "--head-sha", "h", "--base-tip-sha", "t", "--merge-base-sha", "t",
+            "--base-distance", "0", "--worktree-path", "/repo/wt",
+            "--repo-root", "/repo", "--linked-worktree", "true",
+        ])
+        self.assertEqual(rc, 0)
+        self.assertIn("keel verify-branch — pass", out)
+        self.assertIn("base-distance : 0 (tolerance 5)", out)
+        self.assertNotIn("note", out)
+
+    def test_human_output_omits_distance_when_base_unresolved(self):
+        # No base facts → base_distance is None, so no distance line is printed.
+        rc, out, _ = run(self.BASE + ["--head-sha", "h"])
+        self.assertEqual(rc, 0)
+        self.assertNotIn("base-distance", out)
+        self.assertIn("isolation     : n/a", out)
+
+
+class TestVerifyBranchFactGathering(unittest.TestCase):
+    """Direct unit coverage for the live fact-gathering seam branches."""
+
+    def _args(self, **kw):
+        base = dict(
+            path=str(PROJECTS / "example-android.yaml"), root="/repo", pr=300,
+            offline=False, head_sha=None, head_ref=None, base_tip_sha=None,
+            merge_base_sha=None, base_distance=None, worktree_path=None,
+            repo_root=None, linked_worktree=None,
+        )
+        base.update(kw)
+        return Namespace(**base)
+
+    def test_supplied_facts_short_circuit_live_calls(self):
+        # Ancestry facts pre-supplied + no head_ref → every `is None` guard takes
+        # its False side and the worktree lookup is skipped, so no git/gh call runs.
+        def boom(*a, **k):
+            raise AssertionError("no live call expected")
+
+        args = self._args(
+            head_sha="h", base_tip_sha="t", merge_base_sha="t", base_distance=0,
+            worktree_path="/repo/wt", repo_root="/repo", linked_worktree="true",
+        )
+        with patch("keel.cli._gh_json", side_effect=boom), \
+             patch("keel.git.run_argv", side_effect=boom):
+            facts = cli._gather_branch_facts(args, "develop")
+        self.assertEqual(facts["head_sha"], "h")
+        self.assertEqual(facts["base_distance"], 0)
+        self.assertTrue(facts["is_linked_worktree"])
+
+    def test_head_without_ref_skips_local_worktree_lookup(self):
+        # head_ref stays None → the `head_ref is not None` guard is False and the
+        # worktree lookup is skipped without calling git for it.
+        def fake_run(argv, **kwargs):
+            if argv[:2] == ["git", "rev-parse"]:
+                return Namespace(ok=True, output="t\n")
+            raise AssertionError(f"unexpected {argv}")
+
+        args = self._args(head_sha="h", merge_base_sha="t", base_distance=0)
+        with patch("keel.git.run_argv", side_effect=fake_run):
+            facts = cli._gather_branch_facts(args, "develop")
+        self.assertIsNone(facts["is_linked_worktree"])
+        self.assertEqual(facts["base_tip_sha"], "t")
+
+    def test_local_facts_do_not_override_supplied_worktree_path(self):
+        # worktree_path/is_linked supplied as flags; a live worktree lookup still
+        # runs (head_ref set) but the supplied values win the `or`/`is None` guards.
+        def fake_run(argv, **kwargs):
+            if argv[:3] == ["git", "worktree", "list"]:
+                porcelain = (
+                    "worktree /repo\nbranch refs/heads/develop\n\n"
+                    "worktree /repo/wt-auto\nbranch refs/heads/feature/x\n"
+                )
+                return Namespace(ok=True, output=porcelain)
+            raise AssertionError(f"unexpected {argv}")
+
+        args = self._args(
+            head_sha="h", head_ref="feature/x", base_tip_sha="t",
+            merge_base_sha="t", base_distance=0,
+            worktree_path="/supplied/wt", repo_root="/supplied",
+            linked_worktree="false",
+        )
+        with patch("keel.git.run_argv", side_effect=fake_run):
+            facts = cli._gather_branch_facts(args, "develop")
+        self.assertEqual(facts["worktree_path"], "/supplied/wt")
+        self.assertEqual(facts["repo_root"], "/supplied")
+        self.assertFalse(facts["is_linked_worktree"])
+
+    def test_empty_porcelain_returns_none(self):
+        self.assertEqual(cli._parse_worktree_porcelain(""), [])
+        with patch("keel.git.run_argv",
+                   side_effect=lambda *a, **k: Namespace(ok=True, output="\n")):
+            self.assertIsNone(cli._local_worktree_facts("feature/x", cwd="/repo"))
+
+
 class TestStepVerifyAndRunControls(unittest.TestCase):
     def test_step_verify_passes_with_handoff_and_evidence(self):
         handoff = stepverifier.build_handoff(

@@ -19,6 +19,7 @@ from pathlib import Path
 from . import (
     __version__,
     artifacts,
+    branchscope,
     capture,
     checkpoint,
     classify,
@@ -1461,6 +1462,165 @@ def _cmd_scope_verify(args: argparse.Namespace) -> int:
         if report["note"]:
             print(f"  note          : {report['note']}")
     return 0 if report["status"] == "pass" else 1
+
+
+def _cmd_verify_branch(args: argparse.Namespace) -> int:
+    try:
+        config = cfg.load_config(args.path)
+    except FileNotFoundError:
+        print(f"no such config: {args.path}", file=sys.stderr)
+        return 1
+    except cfg.ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    base_branch = config.base_branch
+    try:
+        facts = _gather_branch_facts(args, base_branch)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    report = branchscope.verify(
+        base_branch=base_branch,
+        head_sha=facts["head_sha"],
+        merge_base_sha=facts["merge_base_sha"],
+        base_tip_sha=facts["base_tip_sha"],
+        base_distance=facts["base_distance"],
+        worktree_path=facts["worktree_path"],
+        repo_root=facts["repo_root"],
+        is_linked_worktree=facts["is_linked_worktree"],
+        tolerance=args.tolerance,
+        allow_stale_base=args.allow_stale_base,
+    )
+    payload = {
+        "schema_version": branchscope.SCHEMA_VERSION,
+        "pull_request": args.pr,
+        "head_ref": facts["head_ref"],
+        "verification": report,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"keel verify-branch — {report['status']}  PR #{args.pr}")
+        print(f"  base          : origin/{base_branch}")
+        print(f"  verdict       : {report['verdict']}")
+        ancestry = report["ancestry"]
+        if ancestry["base_distance"] is not None:
+            print(
+                f"  base-distance : {ancestry['base_distance']} "
+                f"(tolerance {report['tolerance']})"
+            )
+        isolation = report["isolation"]
+        print(f"  isolation     : {isolation['verdict']}")
+        if report["note"]:
+            print(f"  note          : {report['note']}")
+    return 0 if report["status"] == "pass" else 1
+
+
+def _gather_branch_facts(args: argparse.Namespace, base_branch: str) -> dict[str, object]:
+    """Collect the git/gh facts the pure branch verdict needs.
+
+    Offline fixtures (``--head-sha``, ``--base-tip-sha``, ``--merge-base-sha``,
+    ``--base-distance``, ``--worktree-path``/``--repo-root``/``--linked-worktree``)
+    short-circuit every live call so the gather path is deterministic in tests; a
+    live run resolves the PR head via ``gh`` and the ancestry/worktree facts via
+    the thin ``git`` wrappers, fail-soft (a missing fact becomes ``None`` and the
+    pure layer skips that check rather than hard-blocking).
+    """
+    head_sha = args.head_sha
+    head_ref = args.head_ref
+    base_ref = f"origin/{base_branch}"
+    if head_sha is None and not args.offline:
+        owner_repo = _owner_repo_from_args(args)
+        pr = _gh_json(["repos", owner_repo, "pulls", str(args.pr)], cwd=args.root)
+        head = pr.get("head") if isinstance(pr.get("head"), dict) else {}
+        head_sha = head.get("sha") if isinstance(head.get("sha"), str) else None
+        head_ref = head.get("ref") if isinstance(head.get("ref"), str) else head_ref
+
+    base_tip_sha = args.base_tip_sha
+    merge_base_sha = args.merge_base_sha
+    base_distance = args.base_distance
+    if not args.offline:
+        if base_tip_sha is None:
+            base_tip_sha = git.rev_parse(base_ref, cwd=args.root)
+        if merge_base_sha is None and head_sha is not None and base_tip_sha is not None:
+            merge_base_sha = git.merge_base(head_sha, base_tip_sha, cwd=args.root)
+        if (
+            base_distance is None
+            and merge_base_sha is not None
+            and base_tip_sha is not None
+        ):
+            base_distance = git.rev_count(merge_base_sha, base_tip_sha, cwd=args.root)
+
+    worktree_path = args.worktree_path
+    repo_root = args.repo_root
+    is_linked_worktree = _linked_flag(args.linked_worktree)
+    if not args.offline and head_ref is not None:
+        local = _local_worktree_facts(head_ref, cwd=args.root)
+        if local is not None:
+            worktree_path = worktree_path or local["worktree_path"]
+            repo_root = repo_root or local["repo_root"]
+            if is_linked_worktree is None:
+                is_linked_worktree = local["is_linked_worktree"]
+    return {
+        "head_sha": head_sha,
+        "head_ref": head_ref,
+        "base_tip_sha": base_tip_sha,
+        "merge_base_sha": merge_base_sha,
+        "base_distance": base_distance,
+        "worktree_path": worktree_path,
+        "repo_root": repo_root,
+        "is_linked_worktree": is_linked_worktree,
+    }
+
+
+def _owner_repo_from_args(args: argparse.Namespace) -> str:
+    config = cfg.load_config(args.path)
+    return _owner_repo(config)
+
+
+def _linked_flag(value: str | None) -> bool | None:
+    if value is None:
+        return None
+    return value == "true"
+
+
+def _local_worktree_facts(branch: str, *, cwd: str) -> dict[str, object] | None:
+    """Locate ``branch``'s checkout in ``git worktree list --porcelain`` (fail-soft).
+
+    Returns the worktree path, the repo root (the first/primary worktree), and
+    whether the branch lives in a *linked* (non-primary) worktree — or ``None``
+    when the listing fails or the branch is not checked out locally (CI/PR-only).
+    """
+    listed = git.worktree_list(cwd=cwd)
+    if not listed.ok:
+        return None
+    entries = _parse_worktree_porcelain(listed.output)
+    if not entries:
+        return None
+    repo_root = entries[0]["path"]
+    for index, entry in enumerate(entries):
+        if entry["branch"] == branch:
+            return {
+                "worktree_path": entry["path"],
+                "repo_root": repo_root,
+                "is_linked_worktree": index > 0,
+            }
+    return None
+
+
+def _parse_worktree_porcelain(output: str) -> list[dict[str, str | None]]:
+    """Parse ``git worktree list --porcelain`` into ``{path, branch}`` blocks."""
+    entries: list[dict[str, str | None]] = []
+    current: dict[str, str | None] | None = None
+    for line in output.splitlines():
+        if line.startswith("worktree "):
+            current = {"path": line[len("worktree ") :], "branch": None}
+            entries.append(current)
+        elif line.startswith("branch ") and current is not None:
+            ref = line[len("branch ") :]
+            current["branch"] = ref[len("refs/heads/") :] if ref.startswith("refs/heads/") else ref
+    return entries
 
 
 def _scope_ledger_record(
@@ -3267,6 +3427,44 @@ def build_parser() -> argparse.ArgumentParser:
     p_scope.add_argument("--json", action="store_true", help="emit structured JSON")
     p_scope.set_defaults(func=_cmd_scope_verify)
 
+    p_verify_branch = sub.add_parser(
+        "verify-branch",
+        help="verify the s2 branch contract: up-to-date base + worktree isolation",
+    )
+    p_verify_branch.add_argument("path", help="path to project.yaml")
+    p_verify_branch.add_argument("--root", default=".",
+                                 help="repo root for live git/gh fact gathering")
+    p_verify_branch.add_argument("--pr", type=_positive_int, required=True,
+                                 help="pull request number to verify")
+    p_verify_branch.add_argument(
+        "--tolerance", type=_nonnegative_int, default=branchscope.DEFAULT_BASE_DISTANCE,
+        help="commits the merge-base may sit behind the base tip before stale "
+             f"(default {branchscope.DEFAULT_BASE_DISTANCE}; 0 is strict)")
+    p_verify_branch.add_argument(
+        "--allow-stale-base", action="store_true",
+        help="operator escape (consent scope git): downgrade a stale base from a "
+             "failure to an advisory note, recorded on the report")
+    p_verify_branch.add_argument("--offline", action="store_true",
+                                 help="use only supplied facts; make no git/gh calls")
+    p_verify_branch.add_argument("--head-sha", default=None,
+                                 help="offline PR head SHA (otherwise fetched via gh)")
+    p_verify_branch.add_argument("--head-ref", default=None,
+                                 help="offline PR head branch (otherwise fetched via gh)")
+    p_verify_branch.add_argument("--base-tip-sha", default=None,
+                                 help="offline current origin/<base> tip SHA")
+    p_verify_branch.add_argument("--merge-base-sha", default=None,
+                                 help="offline merge-base of head and the base tip")
+    p_verify_branch.add_argument("--base-distance", type=_nonnegative_int, default=None,
+                                 help="offline commit distance merge-base..base-tip")
+    p_verify_branch.add_argument("--worktree-path", default=None,
+                                 help="offline working-tree path for the head branch")
+    p_verify_branch.add_argument("--repo-root", default=None,
+                                 help="offline repo root (primary checkout) path")
+    p_verify_branch.add_argument("--linked-worktree", choices=("true", "false"), default=None,
+                                 help="offline: is the head branch in a linked worktree?")
+    p_verify_branch.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_verify_branch.set_defaults(func=_cmd_verify_branch)
+
     p_status = sub.add_parser("status", help="show active/recent run progress")
     p_status.add_argument("path", help="path to project.yaml")
     p_status.add_argument("--root", default=".",
@@ -3742,6 +3940,13 @@ def _positive_int(value: str) -> int:
     parsed = int(value)
     if parsed <= 0:
         raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
+
+
+def _nonnegative_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must be a non-negative integer")
     return parsed
 
 

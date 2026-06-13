@@ -72,6 +72,39 @@ class TestGit(unittest.TestCase):
     def test_diff_failsoft(self):
         self.assertEqual(git.diff("a", "b", _run=_Recorder(code=1)), "")
 
+    def test_rev_parse_resolves_sha(self):
+        rec = _Recorder(out="deadbeef\n")
+        self.assertEqual(git.rev_parse("origin/main", _run=rec), "deadbeef")
+        self.assertEqual(rec.calls[0], ["git", "rev-parse", "--verify", "--quiet", "origin/main"])
+
+    def test_rev_parse_failsoft_on_error(self):
+        self.assertIsNone(git.rev_parse("origin/main", _run=_Recorder(code=1)))
+
+    def test_rev_parse_failsoft_on_empty(self):
+        self.assertIsNone(git.rev_parse("origin/main", _run=_Recorder(out="\n")))
+
+    def test_merge_base_argv_and_value(self):
+        rec = _Recorder(out="abc123\n")
+        self.assertEqual(git.merge_base("head", "tip", _run=rec), "abc123")
+        self.assertEqual(rec.calls[0], ["git", "merge-base", "head", "tip"])
+
+    def test_merge_base_failsoft_on_error(self):
+        self.assertIsNone(git.merge_base("a", "b", _run=_Recorder(code=1)))
+
+    def test_merge_base_failsoft_on_empty(self):
+        self.assertIsNone(git.merge_base("a", "b", _run=_Recorder(out="")))
+
+    def test_rev_count_argv_and_value(self):
+        rec = _Recorder(out="4\n")
+        self.assertEqual(git.rev_count("base", "tip", _run=rec), 4)
+        self.assertEqual(rec.calls[0], ["git", "rev-list", "--count", "base..tip"])
+
+    def test_rev_count_failsoft_on_error(self):
+        self.assertIsNone(git.rev_count("a", "b", _run=_Recorder(code=2)))
+
+    def test_rev_count_failsoft_on_non_numeric(self):
+        self.assertIsNone(git.rev_count("a", "b", _run=_Recorder(out="oops\n")))
+
 
 class TestGitHub(unittest.TestCase):
     def test_open_pr_argv(self):

@@ -405,6 +405,43 @@ scope creep for a single run, mirroring `keel evidence-verify --deferral`. Tests
 CI harnesses can supply the diff and ledger offline with `--dry-run --changed-file <path>`
 and `--ledger-jsonl <fixture>`; the same pure verifier path is used either way.
 
+## `keel verify-branch <project.yaml> --pr N [--root DIR] [--tolerance N] [--allow-stale-base] [--offline] [--json]`
+
+Enforce keel's **s2 branch contract**: cut the work branch off an up-to-date
+`origin/<base_branch>`, keep the work in one repo-nested gitignored linked worktree per
+issue, and never mutate the operator's primary checkout. A branch cut from a *stale* local
+base produces phantom diffs and wrong tier classification; edits landing in the primary
+checkout contaminate the operator's tree. `verify-branch` makes that contract enforceable.
+
+Two independent checks compose into one verdict:
+
+- **Base ancestry** — the PR head's merge-base with `origin/<base_branch>` (read from config)
+  must equal the current base tip, or sit within `--tolerance` commits behind it (default `5`;
+  `0` is strict). Beyond the tolerance the branch was cut from a stale base → **stale**
+  (exit 1).
+- **Worktree isolation** — when run locally, the working branch must live in a *linked*
+  worktree nested under the repo root. A primary-checkout edit, or a worktree outside the
+  repo root, is **contaminated** (exit 1). In CI / PR-only mode there is no local worktree to
+  inspect, so the isolation check is **N/A** and skipped gracefully.
+
+The comparison itself is pure (`keel.branchscope.verify`): given the head/merge-base/base-tip
+SHAs, the commit distance, and the worktree facts, it returns an `ok`/`stale`/`contaminated`
+verdict with a per-check breakdown. The CLI gathers the live facts via the thin `git`/`gh`
+wrappers (`merge-base`, `rev-parse origin/<base>`, `rev-list --count`, `worktree list
+--porcelain`), fail-soft — a fact that cannot be resolved becomes `None` and the pure layer
+skips that check rather than hard-blocking.
+
+```bash
+keel verify-branch .keel/project.yaml --root . --pr 456
+keel verify-branch .keel/project.yaml --root . --pr 456 --json
+```
+
+`--allow-stale-base` is the operator escape (consent scope `git`): it downgrades a stale-base
+failure to an **advisory pass** (exit 0), recording the downgrade in the report's `note`. Tests
+and offline CI harnesses can supply every fact directly with `--offline` plus `--head-sha`,
+`--base-tip-sha`, `--merge-base-sha`, `--base-distance`, `--worktree-path`, `--repo-root`, and
+`--linked-worktree true|false`; the same pure verifier path is used either way.
+
 ## `keel step-verify --step sN --handoff-file handoff.json --evidence-report evidence.json`
 
 Verify a persisted step handoff before an adapter advances the ship backbone. The handoff

@@ -487,6 +487,28 @@ PR diff through `gh`, and compares the two via the pure `keel.scope.verify` func
 The operator escape hatch mirrors `evidence-verify`: `--deferral scope-waived` (or `all`)
 accepts scope creep for a single run and should be recorded in the PR/issue conversation.
 
+## Branch-contract verification
+
+`keel verify-branch <project.yaml> --pr <N>` makes keel's s2 branch contract enforceable: cut
+the work branch off an up-to-date `origin/<base_branch>`, keep the work in one repo-nested
+gitignored linked worktree per issue, and never mutate the operator's primary checkout. The
+comparison is the pure `keel.branchscope.verify` function over gathered git facts; the CLI
+collects those facts through the thin `git`/`gh` wrappers, fail-soft.
+
+Two checks compose into one `ok`/`stale`/`contaminated` verdict:
+
+- **Base ancestry** — the PR head's merge-base with `origin/<base_branch>` must equal the
+  current base tip or sit within `--tolerance` commits behind it (default `5`, `0` strict).
+  Beyond the tolerance the branch was cut from a stale base → `stale`, fail (exit non-zero).
+- **Worktree isolation** — locally, the working branch must live in a linked worktree nested
+  under the repo root; a primary-checkout edit or an out-of-tree worktree is `contaminated`,
+  fail. In CI / PR-only mode there is no local worktree, so the check is N/A and skipped.
+
+When a fact cannot be resolved (a transient `git`/`gh` gap) the relevant check is an advisory
+skip rather than a hard block. `--allow-stale-base` is the operator escape (consent scope
+`git`): it downgrades a stale-base failure to an advisory pass and records the downgrade in the
+report's `note`. It should be recorded in the PR/issue conversation like any other escape.
+
 ## Progress status surface
 
 `keel status <project.yaml> --root <repo> --json` exposes the

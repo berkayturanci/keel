@@ -34,6 +34,33 @@ def current_branch(*, cwd: str | None = None, _run=None) -> str | None:
     return result.output.strip() if result.ok else None
 
 
+def rev_parse(ref: str, *, cwd: str | None = None, _run=None) -> str | None:
+    """Resolve ``ref`` to a full commit SHA; ``None`` when it cannot be resolved."""
+    result = run_argv(["git", "rev-parse", "--verify", "--quiet", ref], cwd=cwd, **_kw(_run))
+    output = result.output.strip()
+    return output if result.ok and output else None
+
+
+def merge_base(a: str, b: str, *, cwd: str | None = None, _run=None) -> str | None:
+    """Best common ancestor of ``a`` and ``b``; ``None`` when there is none/on error."""
+    result = run_argv(["git", "merge-base", a, b], cwd=cwd, **_kw(_run))
+    output = result.output.strip()
+    return output if result.ok and output else None
+
+
+def rev_count(base: str, head: str, *, cwd: str | None = None, _run=None) -> int | None:
+    """Commits in ``base..head`` (how far ``head`` is ahead of ``base``); ``None`` on error."""
+    result = run_argv(
+        ["git", "rev-list", "--count", f"{base}..{head}"], cwd=cwd, **_kw(_run)
+    )
+    if not result.ok:
+        return None
+    output = result.output.strip()
+    if not output.isdigit():
+        return None
+    return int(output)
+
+
 def changed_files(base: str, head: str, *, cwd: str | None = None, _run=None) -> list[str]:
     """Files changed between ``base`` and ``head`` (``base...head``); ``[]`` on error."""
     result = run_argv(["git", "diff", "--name-only", f"{base}...{head}"], cwd=cwd, **_kw(_run))

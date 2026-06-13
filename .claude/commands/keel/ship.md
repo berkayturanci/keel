@@ -174,7 +174,11 @@ Cut a work branch off `base_branch`. A **git worktree per issue** is the isolati
 contract: never mutate the user's primary checkout. Create it under a gitignored,
 repo-nested path (e.g. `worktrees/issue-<N>`); the worktree path is returned in the JSON
 contract and hard-validated at s10 (must be nested under the repo root, never the repo
-root or filesystem root). Every edit/build/push happens inside the worktree.
+root or filesystem root). Every edit/build/push happens inside the worktree. Once the PR
+exists, `keel verify-branch <project.yaml> --pr <N>` enforces this contract: the head must be
+cut from an up-to-date `origin/base_branch` (else `stale`) and the work must live in a nested
+linked worktree, not the primary checkout (else `contaminated`). `--allow-stale-base` is the
+recorded operator escape for an intentionally stale base.
 
 ### s3 guard
 Refuse if the working tree is dirty or the branch already has an open PR. **Blocker
@@ -245,13 +249,18 @@ families, e.g. `<word>2.5`→`<word>`; keep `<word>-<major>` on hyphenated ones,
 never the requested-but-fell-back one — and is written at label-flip time (skipped only
 under `--dry-run`, logged instead).
 
-After the implementer returns, the **orchestrator** runs a **branch-scope validation gate**:
-diff `base_branch...origin/<branch>`, compare against the declared `files_changed`, and if
-anything falls outside the issue's scope (and is not a `docs_gate_paths` exempt path), hand
-it back for **one** correction pass; if it persists, mark blocked and quote the offending
-files. (One pass is intentionally stricter than the CI budget — the implementer's own
-pre-push self-check should have caught drift; a second failure is systemic.) Docs-only PRs
-(all paths in `docs_gate_paths`) treat the scope check as advisory. This gate is the primary
+After the implementer returns, the **orchestrator** runs a **branch-scope validation gate**.
+Persist the implementer's declared `files_changed` into the run-ledger record at append time
+(`keel ship --append-ledger --declared-file <path>` per declared file), then enforce the
+comparison with **`keel scope-verify .keel/project.yaml --root . --pr <PR>`**: it reads the
+declared files from the ship-run ledger record, diffs them against the live PR changed files,
+and flags anything outside the declared scope (and not a `docs_gate_paths` exempt path) as
+scope creep. On a failing verdict, hand it back for **one** correction pass; if it persists,
+mark blocked and quote the offending files `scope-verify` named. (One pass is intentionally
+stricter than the CI budget — the implementer's own pre-push self-check should have caught
+drift; a second failure is systemic.) Docs-only extras under `docs_gate_paths` are exempt,
+and when no declared scope was recorded `scope-verify` is an advisory pass. An operator may
+accept creep for a single run with `--deferral scope-waived`. This gate is the primary
 defence against branch contamination — it catches scope creep before review spends budget.
 
 ### s5 classify
@@ -318,6 +327,11 @@ for the operator-posted review verdict.
 When available, use `result.artifact_bodies.review_verdict_template` as the canonical
 comment shape: keep `keel.review-verdict.v1`, `reviewer: <stable-id>`, and `head: <sha>`
 intact, then fill in the reviewer-specific verdict, scope, findings, and testing notes.
+Carry the **effective** reviewer `vendor` (and `model` when known) on each verdict — the
+same attribution computed at s7 — so a project that enables `evidence_require_distinct_vendors`
+can verify the verdicts came from distinct vendors. This is jury-agnostic: a plain
+host-agent reviewer carrying distinct vendor provenance satisfies the check just as a
+cross-vendor panel would; keel takes no dependency on any review vendor.
 Post each review verdict through `keel post-comment` with a reviewer-scoped run id
 (`--run-id "$RUN_ID:<reviewer-id>"`) so same-run idempotency updates that reviewer only and
 does not collapse multiple reviewer verdicts into one comment.
@@ -328,7 +342,9 @@ each verdict by hand. `keel review .keel/project.yaml --root . --pr <PR> --revie
 <reviews.json> --run-id "$RUN_ID" --live` resolves the tier-required reviewer count (failing
 closed if the bundle is under-count), renders each verdict head-pinned to the current PR
 head SHA, and posts them through the same `post-comment` path with stable
-`<run-id>:rv-<reviewer>` sub-keys. Add `--closure <ship-run.json> --issue <N>` to fold the
+`<run-id>:rv-<reviewer>` sub-keys. Include `vendor` (and optional `model`) on each review
+item in `<reviews.json>` so the rendered verdicts carry vendor provenance. Add
+`--closure <ship-run.json> --issue <N>` to fold the
 s11 closure into the same call, and `--verify` to re-run `evidence-verify` immediately after
 posting. This is the canonical way to collapse `render_review_verdict` + N× `post-comment`
 + `evidence-verify` into one deterministic, idempotent step; it never spawns reviewers — the
@@ -396,8 +412,8 @@ chooses an explicit `--max-rounds` override.
 ### s10 merge
 The literal merge is **core-owned**: route it through `keel merge`. Raw `gh pr merge`
 calls and hand-rolled lock shells are **spec violations** for ship-style flows — the
-lock, window re-check, CI rollup read, and evidence verification must run deterministically
-inside core, not as adapter prose.
+lock, window re-check, CI rollup read, evidence verification, and the SHA-stamped
+gates-pass check must run deterministically inside core, not as adapter prose.
 
 - **Pre-merge prep:** re-assert mergeability; if behind/dirty, integrate `base_branch`
   (merge, not rebase), re-green CI, run a single focused merge-conflict review (max 2
@@ -411,11 +427,15 @@ inside core, not as adapter prose.
   The command acquires the merge resource claim (atomic `mkdir`, single-host), re-checks
   the **merge window inside the claim**, reads the live PR check rollup with
   failure-before-pending precedence, runs `evidence-verify` against the current PR
-  artifacts, and only then performs the squash-merge. Any failed stage exits non-zero
-  **without merging** — on a closed window, append to the morning queue, post the deferral
-  comment via `keel post-comment`, leave the PR ready, and continue with the next issue;
-  on a denied claim, treat it as lock contention (mark the issue blocked, comment,
-  continue). For a blocker issue, pass `--hotfix` — the audited window bypass; it still
+  artifacts, requires a SHA-stamped gates-pass (a `ship_run` ledger record whose gates
+  passed against the PR's **current** head SHA, so a stale green run from an older head
+  cannot authorize the merge), and only then performs the squash-merge. Any failed stage
+  exits non-zero **without merging** — on a closed window, append to the morning queue, post
+  the deferral comment via `keel post-comment`, leave the PR ready, and continue with the
+  next issue; on a missing gates-pass for the current head, re-run `keel run-gates` (or
+  ship with `--append-ledger`) against the head and retry; on a denied claim, treat it as
+  lock contention (mark the issue blocked, comment, continue). For a blocker issue, pass
+  `--hotfix` — the audited bypass of both the window and the gates-SHA requirement; it still
   requires the approved consent scopes and is recorded in the ledger.
 - **Outcome:** treat the **PR state (`MERGED`)** as authoritative. A non-zero exit after a
   successful server-side squash is a local-cleanup failure — proceed to capture/close; a
@@ -546,4 +566,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=claude command=ship keel_version=1.2.3 source_sha256=c7b734f6d916d5c6d196f54bd153b96a2867a9d37986db0829718283ba3651e1 generated_sha256=c7b734f6d916d5c6d196f54bd153b96a2867a9d37986db0829718283ba3651e1 -->
+<!-- keel-generated: surface=claude command=ship keel_version=1.2.3 source_sha256=89a1d6cbef66a1faba3d29d6cb1b46088917511ee9014ef0a43fe1a66905119c generated_sha256=89a1d6cbef66a1faba3d29d6cb1b46088917511ee9014ef0a43fe1a66905119c -->

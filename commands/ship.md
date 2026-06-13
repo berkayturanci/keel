@@ -174,7 +174,11 @@ Cut a work branch off `base_branch`. A **git worktree per issue** is the isolati
 contract: never mutate the user's primary checkout. Create it under a gitignored,
 repo-nested path (e.g. `worktrees/issue-<N>`); the worktree path is returned in the JSON
 contract and hard-validated at s10 (must be nested under the repo root, never the repo
-root or filesystem root). Every edit/build/push happens inside the worktree.
+root or filesystem root). Every edit/build/push happens inside the worktree. Once the PR
+exists, `keel verify-branch <project.yaml> --pr <N>` enforces this contract: the head must be
+cut from an up-to-date `origin/base_branch` (else `stale`) and the work must live in a nested
+linked worktree, not the primary checkout (else `contaminated`). `--allow-stale-base` is the
+recorded operator escape for an intentionally stale base.
 
 ### s3 guard
 Refuse if the working tree is dirty or the branch already has an open PR. **Blocker
@@ -562,4 +566,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=plugin command=ship keel_version=1.2.3 source_sha256=b967f0613f15a20d056c807c08a61ba2b78e66af6ab99c833171ea8ec5ae0084 generated_sha256=b967f0613f15a20d056c807c08a61ba2b78e66af6ab99c833171ea8ec5ae0084 -->
+<!-- keel-generated: surface=plugin command=ship keel_version=1.2.3 source_sha256=89a1d6cbef66a1faba3d29d6cb1b46088917511ee9014ef0a43fe1a66905119c generated_sha256=89a1d6cbef66a1faba3d29d6cb1b46088917511ee9014ef0a43fe1a66905119c -->
