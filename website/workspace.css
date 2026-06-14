@@ -133,13 +133,15 @@ body { padding-top: 0; overflow: hidden; }
 .ov-badges a { display: block; transition: transform .15s; }
 .ov-badges a:hover { transform: translateY(-1px); }
 .ov-companion { margin: 1.1rem 0 0; max-width: 52ch; color: var(--muted); font-size: .92rem; line-height: 1.6; }
-.ov-visual { margin: 1.1rem 0 0; max-width: 60ch; }
-.ov-visual > a { display: block; }
-.ov-visual img { display: block; width: 100%; height: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); transition: border-color .15s; }
-.ov-visual > a:hover img { border-color: var(--accent-line); }
-.ov-visual figcaption { margin-top: .5rem; font-size: .86rem; color: var(--muted); }
-.ov-visual-h { font-weight: 650; color: var(--text); }
 .ov-companion-ic { color: var(--accent-2); margin-right: .4rem; }
+.ov-companion-pill { display: inline-flex; align-items: center; margin-left: .15rem; padding: .12rem .55rem; border: 1px solid var(--accent-line); border-radius: 999px; font-size: .82rem; font-weight: 600; color: var(--accent-2); text-decoration: none; white-space: nowrap; transition: background .15s, border-color .15s; }
+.ov-companion-pill:hover { background: var(--accent-soft); border-color: var(--accent-2); }
+/* Visual view hero (animated 3D preview) */
+.vis-hero { margin: 0 0 1.6rem; max-width: 760px; }
+.vis-hero > a { display: block; }
+.vis-hero img { display: block; width: 100%; height: auto; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); transition: border-color .15s; }
+.vis-hero > a:hover img { border-color: var(--accent-line); }
+.vis-hero figcaption { margin-top: .55rem; font-size: .86rem; color: var(--muted); }
 .ov-companion a { color: var(--accent-2); font-weight: 600; }
 .ov-companion code { font-family: var(--font-mono); font-size: .85rem; color: var(--text); }
 

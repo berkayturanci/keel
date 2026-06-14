@@ -228,6 +228,7 @@ window.KEEL = {
     ["Opt-in multi-agent review (jury) gate", "y", "n", "p", "p"],
     ["Vendor + model attribution on every action", "y", "n", "n", "n"],
     ["Drives an issue end-to-end, not one stage", "y", "n", "n", "p"],
+    ["Built-in run visualization (2D / 3D)", "y", "n", "n", "n"],
     ["Dependency footprint", "stdlib-first", "hosted", "hosted", "hosted"],
   ],
   compareNote: "A point-in-time map of categories — Coding agents (OpenHands, SWE-agent, Devin) stop at a PR · PR reviewers (CodeRabbit, Qodo, Greptile) review an existing PR · Merge queues (GitHub Merge Queue, Mergify, Graphite) serialize tested PRs. keel is the work-ownership backbone that drives the whole lifecycle and can use all three. Verify against current docs before deciding.",
@@ -461,8 +462,7 @@ window.KEEL = {
       body:
         "<p>keel is an <b>agentic work-ownership backbone</b>. Its job is not to be another isolated coding command, review bot, or merge queue — it is to make an agent <b>accountable for the whole path</b> a strong software teammate would normally own.</p>" +
         "<p>That path starts before code is written: read the issue, decide whether the scope is ready, ask for clarification when it is not, cut an isolated branch, implement, keep CI and tests green, get reviewed, fix feedback, merge inside policy, close the loop, and record what should be remembered next time.</p>" +
-        "<p><b>v1 — one-agent work ownership.</b> Hand keel one issue (or a bounded work block) and get the same quality loop every time: readiness before mutation, isolated worktree, deterministic gates + capability checks, independent review and optional jury, merge-window + merge-lock safety, structured ledger, closeout + capture hooks, and morning/wrap visibility. The point isn't autonomy for its own sake — it's work that is observable, recoverable, reviewable, and governed by policy while the agent owns the execution details.</p>" +
-        "<p><b>Future — an autonomous software-team layer</b> on the same contracts: multiple agents creating issues from signals, claiming work, reviewing each other, and handing off blocked items. A human lead remains the decision owner for ambiguous scope, credentials, approvals, and product tradeoffs.</p>",
+        "<p><b>v1 — one-agent work ownership.</b> Hand keel one issue (or a bounded work block) and get the same quality loop every time: readiness before mutation, isolated worktree, deterministic gates + capability checks, independent review and optional jury, merge-window + merge-lock safety, structured ledger, closeout + capture hooks, and morning/wrap visibility. The point isn't autonomy for its own sake — it's work that is observable, recoverable, reviewable, and governed by policy while the agent owns the execution details.</p>",
       source: "https://github.com/berkayturanci/keel/blob/main/docs/keel/vision.md",
     },
     {
@@ -477,7 +477,7 @@ window.KEEL = {
       group: "Visualize", title: "keel-visual", slug: "keel-visual",
       summary: "An optional companion that renders any run from the ledger keel already writes \u2014 a 2D flow and an animated 3D scene, in the terminal or the browser.",
       body:
-        "<p><a href='https://github.com/berkayturanci/keel/tree/main/keel-visual' target='_blank' rel='noopener'>keel-visual</a> is an optional companion package. It reads the run-ledger and checkpoint keel <b>already writes</b> \u2014 no extra wiring \u2014 and draws the run as a <b>2D flow</b> or an animated <b>3D scene</b>. It ships its own colour language: green = done / merged, cyan = the active step, amber = a gate or the jury, dim = not yet reached.</p>" +
+        "<p><a href='https://github.com/berkayturanci/keel/tree/main/keel-visual' target='_blank' rel='noopener'>keel-visual</a> is an optional companion package, published on <a href='https://pypi.org/project/keel-visual/' target='_blank' rel='noopener'>PyPI</a>. It reads the run-ledger and checkpoint keel <b>already writes</b> \u2014 no extra wiring \u2014 and draws the run as a <b>2D flow</b> or an animated <b>3D scene</b>. It ships its own colour language: green = done / merged, cyan = the active step, amber = a gate or the jury, dim = not yet reached.</p>" +
         "<pre class='doc-pre' tabindex='0' role='region' aria-label='Install keel-visual'><code>pipx install keel-visual                 <span class='cm'># pulls in keel-workflow (core) automatically</span>\nkeel-visual play   .keel/project.yaml --follow   <span class='cm'># live in the terminal</span>\nkeel-visual render .keel/project.yaml --pr 42 --out run.html  <span class='cm'># the web 2D/3D page</span></code></pre>" +
         "<p>Terminal <code>play</code> animates the run as it happens (<code>--loop</code> for a demo, <code>--follow</code> for live); <code>dash</code> is a board of every active worktree; <code>render</code> is the self-contained web page below.</p>",
       source: "https://github.com/berkayturanci/keel/blob/main/keel-visual/README.md",
