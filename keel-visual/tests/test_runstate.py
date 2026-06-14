@@ -145,6 +145,21 @@ class TestBuildRunState(unittest.TestCase):
         self.assertIsNone(st["issue"])
         self.assertIsNone(st["pr"])
 
+    def test_non_int_issue_number_coerced_to_none(self):
+        # Defense-in-depth: a string issue number (e.g. an injection payload from
+        # a corrupt ledger) never reaches the run-state as free text.
+        rec = _record(action="defer")
+        rec["issue"] = {"number": "42</script>"}
+        rec["pull_request"] = {"number": True}
+        st = rs.build_run_state(rec)
+        self.assertIsNone(st["issue"])
+        self.assertIsNone(st["pr"])
+
+    def test_int_issue_number_preserved(self):
+        st = rs.build_run_state(_record(action="defer", issue=7, pr=9))
+        self.assertEqual(st["issue"], 7)
+        self.assertEqual(st["pr"], 9)
+
 
 if __name__ == "__main__":
     unittest.main()

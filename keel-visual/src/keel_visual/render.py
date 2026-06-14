@@ -20,10 +20,18 @@ def render_html(template: str, run_state: dict[str, Any], *, title: str = "keel 
     """Return the template with the run-state JSON and title substituted in.
 
     ``run_state`` is serialised with ``sort_keys`` for deterministic output (two
-    identical runs render byte-identical HTML). ``title`` is escaped for safe use
-    in a ``<title>``/heading context. Pure — reads only its arguments.
+    identical runs render byte-identical HTML) and with ``<``/``>``/``&`` escaped
+    to their JSON ``\\uXXXX`` forms so a string value can never break out of the
+    enclosing ``<script>`` (a ``</script>`` in the payload would otherwise close
+    the tag). ``title`` is HTML-escaped for safe use in a ``<title>``/heading
+    context. Pure — reads only its arguments.
     """
-    payload = json.dumps(run_state, sort_keys=True)
+    payload = (
+        json.dumps(run_state, sort_keys=True)
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+    )
     safe_title = (
         str(title)
         .replace("&", "&amp;")

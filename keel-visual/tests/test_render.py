@@ -29,6 +29,20 @@ class TestRenderHtml(unittest.TestCase):
         out = render.render_html("__TITLE__", {})
         self.assertEqual(out, "keel run")
 
+    def test_script_breakout_is_neutralised(self):
+        tmpl = "<script>window.KEEL_RUN = __KEEL_RUN__;</script>"
+        out = render.render_html(tmpl, {"x": "</script><img src=x onerror=alert(1)>"}, title="t")
+        # No literal </script> or angle brackets from the payload survive.
+        self.assertNotIn("</script><img", out)
+        self.assertIn("\\u003c", out)
+        # Still valid JSON once the unicode escapes are parsed back.
+        body = out[len("<script>window.KEEL_RUN = "):out.index(";</script>")]
+        self.assertEqual(json.loads(body), {"x": "</script><img src=x onerror=alert(1)>"})
+
+    def test_ampersand_escaped(self):
+        out = render.render_html("__KEEL_RUN__", {"a": "x&y"})
+        self.assertIn("\\u0026", out)
+
 
 if __name__ == "__main__":
     unittest.main()

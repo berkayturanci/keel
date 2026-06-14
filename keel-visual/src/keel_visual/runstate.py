@@ -54,6 +54,16 @@ WORST_MAJOR = "major"
 WORST_CRITICAL = "critical"
 
 
+def _int_or_none(value: Any) -> int | None:
+    """Coerce an issue/PR number to ``int`` (or ``None``) — never free text.
+
+    Defense-in-depth: keel writes these as ints, but a hand-edited or corrupt
+    ledger could carry a string. Forcing ``int`` here means no arbitrary string
+    from a record ever reaches the HTML ``window.KEEL_RUN`` payload.
+    """
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
 def step_index(step_id: str | None) -> int | None:
     """Return the backbone index of ``step_id`` (``None`` when unknown/missing)."""
     if not isinstance(step_id, str):
@@ -198,8 +208,8 @@ def build_run_state(
     return {
         "schema_version": SCHEMA_VERSION,
         "command": command,
-        "issue": issue.get("number") if isinstance(issue, dict) else None,
-        "pr": pr.get("number") if isinstance(pr, dict) else None,
+        "issue": _int_or_none(issue.get("number")) if isinstance(issue, dict) else None,
+        "pr": _int_or_none(pr.get("number")) if isinstance(pr, dict) else None,
         "active_index": active,
         "active_id": BACKBONE[active].id,
         "merged": merged,

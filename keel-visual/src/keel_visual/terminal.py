@@ -136,10 +136,10 @@ def _flow_body(
             cglyph = "red"
         cells.append(paint(glyph, cglyph, enable=color))
         lab = step.get("id", "")
-        labels.append(paint(f"{lab:<2}", "white" if idx == active else "dim", enable=color))
-    connector = paint("──", "dim", enable=color)
+        labels.append(paint(f"{lab:<4}", "white" if idx == active else "dim", enable=color))
+    connector = paint("───", "dim", enable=color)
     pipeline = connector.join(cells)
-    label_line = "  ".join(labels)
+    label_line = "".join(labels)
 
     cur = steps[active] if steps else {"id": "s0", "name": "?"}
     pointer_pad = " " * (active * 4)
