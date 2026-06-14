@@ -56,6 +56,57 @@ class TestCurrentStepFromCheckpoint(unittest.TestCase):
         self.assertIsNone(rs.current_step_from_checkpoint({"position": {"current_step": 5}}))
 
 
+class TestLiveStateFromCheckpoint(unittest.TestCase):
+    def test_extracts_recognised_fields(self):
+        rec = {"state": {"merge": "merged", "capture": "applied", "close": "closed",
+                         "last_gate": "test", "stop_reason": None}}
+        self.assertEqual(
+            rs.live_state_from_checkpoint(rec),
+            {"merge": "merged", "capture": "applied", "close": "closed", "last_gate": "test"},
+        )
+
+    def test_malformed(self):
+        self.assertEqual(rs.live_state_from_checkpoint(None), {})
+        self.assertEqual(rs.live_state_from_checkpoint("x"), {})
+        self.assertEqual(rs.live_state_from_checkpoint({"state": "x"}), {})
+        self.assertEqual(rs.live_state_from_checkpoint({"state": {"merge": 5, "close": ""}}), {})
+
+
+class TestMergeOutcome(unittest.TestCase):
+    def test_live_state_maps(self):
+        self.assertEqual(rs._merge_outcome(merged=False, live_merge="merged"), "pass")
+        self.assertEqual(rs._merge_outcome(merged=False, live_merge="pending"), "pending")
+        self.assertEqual(rs._merge_outcome(merged=False, live_merge="failed"), "fail")
+
+    def test_falls_back_to_ledger_merged(self):
+        self.assertEqual(rs._merge_outcome(merged=True, live_merge=None), "pass")
+        self.assertEqual(rs._merge_outcome(merged=False, live_merge=None), "pending")
+
+
+class TestLiveCheckpointInBuild(unittest.TestCase):
+    def test_live_merged_without_ledger_record(self):
+        st = rs.build_run_state(None, checkpoint_step="s10", checkpoint_state={"merge": "merged"})
+        self.assertTrue(st["merged"])
+        self.assertEqual(st["merge_state"], "merged")
+        s10 = next(s for s in st["steps"] if s["id"] == "s10")
+        self.assertEqual(s10["gate"]["outcome"], "pass")
+
+    def test_live_pending_merge(self):
+        st = rs.build_run_state(None, checkpoint_step="s10", checkpoint_state={"merge": "pending"})
+        self.assertFalse(st["merged"])
+        s10 = next(s for s in st["steps"] if s["id"] == "s10")
+        self.assertEqual(s10["gate"]["outcome"], "pending")
+
+    def test_live_failed_merge(self):
+        st = rs.build_run_state(None, checkpoint_step="s10", checkpoint_state={"merge": "failed"})
+        s10 = next(s for s in st["steps"] if s["id"] == "s10")
+        self.assertEqual(s10["gate"]["outcome"], "fail")
+
+    def test_no_checkpoint_state_keeps_ledger_behavior(self):
+        st = rs.build_run_state(None, checkpoint_step="s10")
+        self.assertIsNone(st["merge_state"])
+
+
 class TestBuildRunState(unittest.TestCase):
     def test_none_record_starts_at_s0(self):
         st = rs.build_run_state(None)

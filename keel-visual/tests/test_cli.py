@@ -168,16 +168,17 @@ class TestCheckpointResolve(unittest.TestCase):
         return cfg.load_config(PROJECT)
 
     def test_explicit_step_wins(self):
-        self.assertEqual(
-            cli._resolve_checkpoint_step(_args(checkpoint_step="s5"), self._config()), "s5"
-        )
+        step, state = cli._resolve_checkpoint(_args(checkpoint_step="s5"), self._config())
+        self.assertEqual(step, "s5")
+        self.assertEqual(state, {})  # explicit step skips the file -> no live state
 
     def test_missing_checkpoint_is_none(self):
         import tempfile
         with tempfile.TemporaryDirectory() as d:
-            self.assertIsNone(
-                cli._resolve_checkpoint_step(_args(root=d, checkpoint_step=None), self._config())
-            )
+            args = _args(root=d, checkpoint_step=None)
+            step, state = cli._resolve_checkpoint(args, self._config())
+        self.assertIsNone(step)
+        self.assertEqual(state, {})
 
     def test_corrupt_checkpoint_is_none(self):
         import tempfile
@@ -188,24 +189,26 @@ class TestCheckpointResolve(unittest.TestCase):
             cp = checkpoint.resolve_path(d, config)
             cp.parent.mkdir(parents=True, exist_ok=True)
             cp.write_text("{not json", encoding="utf-8")  # parse -> CheckpointError
-            self.assertIsNone(
-                cli._resolve_checkpoint_step(_args(root=d, checkpoint_step=None), config)
-            )
+            step, state = cli._resolve_checkpoint(_args(root=d, checkpoint_step=None), config)
+        self.assertIsNone(step)
+        self.assertEqual(state, {})
 
-    def test_reads_current_step_from_checkpoint_file(self):
+    def test_reads_step_and_state_from_checkpoint_file(self):
         import tempfile
 
         from keel import checkpoint
         config = self._config()
         record = checkpoint.build_checkpoint_record(
-            run_id="r1", command="ship", current_step="s6", base_branch="main",
+            run_id="r1", command="ship", current_step="s10", base_branch="main",
+            merge_state="merged",
         )
         with tempfile.TemporaryDirectory() as d:
             cp = checkpoint.resolve_path(d, config)
             cp.parent.mkdir(parents=True, exist_ok=True)
             cp.write_text(checkpoint.encode_checkpoint(record), encoding="utf-8")
-            step = cli._resolve_checkpoint_step(_args(root=d, checkpoint_step=None), config)
-        self.assertEqual(step, "s6")
+            step, state = cli._resolve_checkpoint(_args(root=d, checkpoint_step=None), config)
+        self.assertEqual(step, "s10")
+        self.assertEqual(state.get("merge"), "merged")
 
 
 class TestLoopAndFollow(unittest.TestCase):
@@ -270,6 +273,176 @@ class TestLoopAndFollow(unittest.TestCase):
         out = _TTY()
         cli.cmd_play(_args(step=8, color="auto"), sleep=lambda s: None, out=out)
         self.assertIn("\x1b[38;5;", out.getvalue())
+
+
+def _dash_args(**kw):
+    base = dict(path=PROJECT, root=".", interval=2.0, once=True, no_clear=True, color="never")
+    base.update(kw)
+    return Namespace(**base)
+
+
+def _write_checkpoint(wt, config, *, step, pr=None, issue=None, merge_state="not-started"):
+    from keel import checkpoint
+    rec = checkpoint.build_checkpoint_record(
+        run_id="r", command="ship", current_step=step, base_branch="main",
+        pull_request=pr, active_issue=issue, merge_state=merge_state,
+    )
+    cp = checkpoint.resolve_path(wt, config)
+    cp.parent.mkdir(parents=True, exist_ok=True)
+    cp.write_text(checkpoint.encode_checkpoint(rec), encoding="utf-8")
+
+
+class TestDash(unittest.TestCase):
+    def _config(self):
+        from keel import config as cfg
+        return cfg.load_config(PROJECT)
+
+    def _porcelain(self, *paths):
+        from keel.runner import CommandResult
+        text = "".join(f"worktree {p}\nHEAD abc\n\n" for p in paths)
+        return CommandResult(True, 0, text)
+
+    def test_lists_active_runs(self):
+        import tempfile
+        from unittest.mock import patch
+        config = self._config()
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
+            _write_checkpoint(a, config, step="s8", pr=361, merge_state="pending")
+            _write_checkpoint(b, config, step="s12", pr=360, merge_state="merged")
+            with patch("keel_visual.cli.git.worktree_list", return_value=self._porcelain(a, b)):
+                rc = cli.cmd_dash(_dash_args(), sleep=lambda s: None, out=out)
+        self.assertEqual(rc, 0)
+        text = out.getvalue()
+        self.assertIn("2 active runs", text)
+        self.assertIn("#361", text)
+        self.assertIn("#360", text)
+        self.assertIn("merged", text)
+
+    def test_skips_worktree_without_checkpoint(self):
+        import tempfile
+        from unittest.mock import patch
+        config = self._config()
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
+            _write_checkpoint(a, config, step="s4", pr=361)
+            with patch("keel_visual.cli.git.worktree_list", return_value=self._porcelain(a, b)):
+                cli.cmd_dash(_dash_args(), sleep=lambda s: None, out=out)
+        self.assertIn("1 active run", out.getvalue())
+
+    def test_worktree_list_failure_falls_back_to_root(self):
+        import tempfile
+        from unittest.mock import patch
+
+        from keel.runner import CommandResult
+        config = self._config()
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as d:
+            _write_checkpoint(d, config, step="s4", pr=361)
+            with patch("keel_visual.cli.git.worktree_list",
+                       return_value=CommandResult(False, 1, "not a git repo")):
+                cli.cmd_dash(_dash_args(root=d), sleep=lambda s: None, out=out)
+        self.assertIn("1 active run", out.getvalue())
+
+    def test_discover_finds_ledger_record(self):
+        import tempfile
+        from unittest.mock import patch
+        config = self._config()
+        with tempfile.TemporaryDirectory() as d:
+            _write_checkpoint(d, config, step="s12", pr=361, merge_state="merged")
+            led = ledger_path(d, config)
+            led.parent.mkdir(parents=True, exist_ok=True)
+            led.write_text(Path(SAMPLE).read_text(encoding="utf-8"), encoding="utf-8")
+            with patch("keel_visual.cli.git.worktree_list", return_value=self._porcelain(d)):
+                rows = cli._discover_runs(_dash_args(root=d), config)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["label"], "#361")
+
+    def test_latest_ship_record_by_pr(self):
+        import tempfile
+        config = self._config()
+        with tempfile.TemporaryDirectory() as d:
+            led = ledger_path(d, config)
+            led.parent.mkdir(parents=True, exist_ok=True)
+            led.write_text(Path(SAMPLE).read_text(encoding="utf-8"), encoding="utf-8")
+            rec = cli._latest_ship_record(d, config, 361)
+        self.assertEqual(rec["pull_request"]["number"], 361)
+
+    def test_latest_ship_record_no_pr_is_none(self):
+        import tempfile
+        config = self._config()
+        with tempfile.TemporaryDirectory() as d:
+            led = ledger_path(d, config)
+            led.parent.mkdir(parents=True, exist_ok=True)
+            led.write_text(Path(SAMPLE).read_text(encoding="utf-8"), encoding="utf-8")
+            self.assertIsNone(cli._latest_ship_record(d, config, None))
+
+    def test_discover_bad_ledger_is_failsoft(self):
+        import tempfile
+        from unittest.mock import patch
+        config = self._config()
+        with tempfile.TemporaryDirectory() as d:
+            _write_checkpoint(d, config, step="s4", issue=351, merge_state="not-started")
+            led = ledger_path(d, config)
+            led.parent.mkdir(parents=True, exist_ok=True)
+            led.write_text("{bad json", encoding="utf-8")
+            with patch("keel_visual.cli.git.worktree_list", return_value=self._porcelain(d)):
+                rows = cli._discover_runs(_dash_args(root=d), config)
+        # no pr in checkpoint -> ledger not consulted by pr; bad ledger tolerated.
+        self.assertEqual(rows[0]["label"], "#351")
+
+    def test_dash_config_error(self):
+        rc = cli.cmd_dash(_dash_args(path="no-such.yaml"), sleep=lambda s: None, out=io.StringIO())
+        self.assertEqual(rc, 1)
+
+    def test_dash_loop_and_keyboard_interrupt(self):
+        from unittest.mock import patch
+
+        def boom(_):
+            raise KeyboardInterrupt
+        out = io.StringIO()
+        with patch("keel_visual.cli.git.worktree_list", return_value=self._porcelain()):
+            rc = cli.cmd_dash(_dash_args(once=False, no_clear=False), sleep=boom, out=out,
+                              max_cycles=None)
+        self.assertEqual(rc, 0)
+        self.assertTrue(out.getvalue().endswith("\n"))
+
+    def test_dash_bounded_refresh(self):
+        from unittest.mock import patch
+        out = io.StringIO()
+        calls = []
+        with patch("keel_visual.cli.git.worktree_list", return_value=self._porcelain()):
+            rc = cli.cmd_dash(_dash_args(once=False), sleep=lambda s: calls.append(s),
+                              out=out, max_cycles=3)
+        self.assertEqual(rc, 0)
+        self.assertEqual(out.getvalue().count("keel ·"), 3)
+        self.assertEqual(len(calls), 3)
+
+    def test_discover_skips_corrupt_checkpoint(self):
+        import tempfile
+        from unittest.mock import patch
+
+        from keel import checkpoint
+        config = self._config()
+        with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
+            _write_checkpoint(a, config, step="s4", pr=361)
+            cp = checkpoint.resolve_path(b, config)
+            cp.parent.mkdir(parents=True, exist_ok=True)
+            cp.write_text("{corrupt", encoding="utf-8")  # read -> CheckpointError -> skipped
+            with patch("keel_visual.cli.git.worktree_list", return_value=self._porcelain(a, b)):
+                rows = cli._discover_runs(_dash_args(), config)
+        self.assertEqual(len(rows), 1)
+
+    def test_main_dash(self):
+        from unittest.mock import patch
+        with patch("keel_visual.cli.git.worktree_list", return_value=self._porcelain()):
+            rc = cli.main(["dash", PROJECT, "--root", ".", "--once", "--color", "never"])
+        self.assertEqual(rc, 0)
+
+
+def ledger_path(root, config):
+    from keel import ledger
+    return ledger.resolve_path(root, config)
 
 
 class TestMain(unittest.TestCase):

@@ -35,9 +35,9 @@
   .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r)}
   /* 2D ribbon */
   .ribbon{position:relative;padding:22px 18px 14px;margin-bottom:16px;overflow:hidden}
-  .track{position:absolute;left:30px;right:30px;top:40px;height:2px;background:var(--line2)}
-  .fill{position:absolute;left:30px;top:40px;height:2px;width:0;background:var(--info);box-shadow:0 0 10px var(--info);transition:width .45s ease,background .35s}
-  .spark{position:absolute;top:35px;left:30px;width:12px;height:12px;border-radius:50%;background:#cdebff;box-shadow:0 0 16px 4px var(--info);transform:translate(-6px,0);transition:transform .45s ease}
+  .track{position:absolute;left:30px;top:40px;height:2px;background:var(--line2)}
+  .fill{position:absolute;left:30px;top:40px;height:2px;width:0;background:var(--info);box-shadow:0 0 10px var(--info);transition:width .45s ease,left .45s ease,top .2s,background .35s}
+  .spark{position:absolute;top:34px;left:24px;width:12px;height:12px;border-radius:50%;background:#cdebff;box-shadow:0 0 16px 4px var(--info);transition:left .45s ease,top .2s,background .35s}
   .nodes{position:relative;display:flex;justify-content:space-between}
   .node{display:flex;flex-direction:column;align-items:center;gap:7px;width:48px;cursor:pointer;z-index:1}
   .dot{width:28px;height:28px;border-radius:50%;background:var(--panel2);border:2px solid var(--line2);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;color:var(--dim);transition:.3s}
@@ -177,15 +177,23 @@
 
   function gateOutcome(s){ return s.gate ? s.gate.outcome : null; }
 
+  function nodeCenter(idx){
+    const n=nodeEls[idx]; const dot=n.querySelector('.dot');
+    return {cx: nodesEl.offsetLeft + n.offsetLeft + n.offsetWidth/2,
+            cy: nodesEl.offsetTop + n.offsetTop + dot.offsetHeight/2};
+  }
   function paint(){
-    const W = nodesEl.clientWidth||860;
-    const frac = N>1?active/(N-1):0;
     const mergedNow = RUN.merged && active>=10;
     const fill=document.getElementById('fill'), spark=document.getElementById('spark');
-    fill.style.width=(frac*W)+'px';
+    const track=document.querySelector('.track');
+    if(nodeEls.length){
+      const first=nodeCenter(0), last=nodeCenter(N-1), cur=nodeCenter(active);
+      track.style.left=first.cx+'px'; track.style.width=(last.cx-first.cx)+'px'; track.style.top=(first.cy-1)+'px';
+      fill.style.left=first.cx+'px'; fill.style.width=Math.max(0,cur.cx-first.cx)+'px'; fill.style.top=(first.cy-1)+'px';
+      spark.style.left=(cur.cx-6)+'px'; spark.style.top=(cur.cy-6)+'px';
+    }
     fill.style.background= mergedNow?col('ok'):col('info');
     fill.style.boxShadow='0 0 10px '+(mergedNow?col('ok'):col('info'));
-    spark.style.transform='translate('+(frac*W-6)+'px,0)';
     spark.style.background= mergedNow?'#d8f5c4':'#cdebff';
     spark.style.boxShadow='0 0 16px 4px '+(mergedNow?col('ok'):col('info'));
 

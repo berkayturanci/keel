@@ -14,6 +14,28 @@ Both outputs are fed by a single **pure** adapter,
 record onto the fixed backbone (`keel.model.BACKBONE`). No parallel data model,
 no second source of truth — the visualizer shows exactly what the ledger says.
 
+### Parallel runs — `keel-visual dash`
+
+Running 2-3 `keel ship` (or other) commands at once? Each runs in its own git
+worktree with its own `.keel/state/`, so `dash` discovers them all via
+`git worktree list` and shows one live board:
+
+```
+keel-visual dash .keel/project.yaml          # live board of every active run
+keel-visual dash .keel/project.yaml --once   # one snapshot
+```
+
+```
+keel · 3 active runs
+  #351  ████████░░░░  s8  test     gate
+  #352  ██████████░░  s10 merge    gate
+  #360  ████████████  s12 close    merged
+```
+
+A worktree with no live checkpoint is skipped; all per-run reads are fail-soft so
+one bad run never blanks the board. See
+[`screenshots/dash-board.png`](screenshots/dash-board.png).
+
 ### 1. Terminal — `keel-visual play` (runs in the CLI)
 
 The flow animates right in the terminal while a command runs:
@@ -31,9 +53,10 @@ keel-visual play .keel/project.yaml --pr 361 --step 8     # a single frame (e.g.
 - `wave` — the run drawn on a sine ribbon with a light trail up to the active
   step (the terminal's take on the 3D ribbon).
 - **`--follow`** — live mode: every `--interval` seconds it re-reads the run's
-  ledger + checkpoint (`position.current_step`) and redraws where the run
-  *actually* is now. Point it at a running keel command and watch the playhead
-  move in real time. Ctrl-C to stop.
+  ledger + checkpoint (`position.current_step` *and* the `state` block, so merge
+  progress shows live — pending / merged / failed — not just position) and
+  redraws where the run *actually* is now. Point it at a running keel command and
+  watch the playhead move in real time. Ctrl-C to stop.
 - **`--loop`** — replay the animation continuously (demo / always-on display).
 
 `render` and `play` both pick up the live checkpoint automatically when you

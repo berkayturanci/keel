@@ -1,0 +1,131 @@
+"""Tests for the pure multi-run dashboard."""
+
+import unittest
+
+from keel_visual import dash
+from keel_visual import runstate as rs
+
+
+def _run_state(*, action="merge", checkpoint=None, merge_state=None):
+    rec = {
+        "record_type": "ship_run",
+        "issue": {"number": 351}, "pull_request": {"number": 361},
+        "assessment": {"merge": {"action": action, "reason": "r"}},
+        "verdict": {"counts": {"critical": 0, "major": 0, "minor": 0, "nit": 0}},
+    }
+    cps = {"merge": merge_state} if merge_state else None
+    return rs.build_run_state(rec, checkpoint_step=checkpoint, checkpoint_state=cps)
+
+
+class TestParseWorktrees(unittest.TestCase):
+    def test_extracts_paths(self):
+        text = "worktree /repo\nHEAD abc\nbranch refs/heads/main\n\nworktree /repo/wt-1\nHEAD def\n"
+        self.assertEqual(dash.parse_worktrees(text), ["/repo", "/repo/wt-1"])
+
+    def test_skips_blank_path(self):
+        self.assertEqual(dash.parse_worktrees("worktree \nworktree /a\n"), ["/a"])
+
+    def test_empty(self):
+        self.assertEqual(dash.parse_worktrees(""), [])
+
+
+class TestIdentity(unittest.TestCase):
+    def test_full(self):
+        rec = {"command": "ship", "queue": {"active_issue": 351},
+               "identifiers": {"pull_request": 361}}
+        self.assertEqual(
+            dash.identity_from_checkpoint(rec),
+            {"issue": 351, "pr": 361, "command": "ship"},
+        )
+
+    def test_malformed(self):
+        self.assertEqual(
+            dash.identity_from_checkpoint(None),
+            {"issue": None, "pr": None, "command": None},
+        )
+        self.assertEqual(
+            dash.identity_from_checkpoint({"queue": "x", "identifiers": 5, "command": ""}),
+            {"issue": None, "pr": None, "command": None},
+        )
+
+    def test_int_or_none_rejects_bool(self):
+        self.assertIsNone(dash._int_or_none(True))
+        self.assertEqual(dash._int_or_none(7), 7)
+        self.assertIsNone(dash._int_or_none("7"))
+
+
+class TestStatusOf(unittest.TestCase):
+    def test_merged(self):
+        self.assertEqual(dash._status_of(_run_state(action="merge")), "merged")
+
+    def test_blocked_gate(self):
+        st = rs.build_run_state(
+            {"record_type": "ship_run", "assessment": {"merge": {"action": "defer"}},
+             "verdict": {"counts": {"major": 1}}},
+            checkpoint_step="s8",
+        )
+        self.assertEqual(dash._status_of(st), "blocked")
+
+    def test_gate_running(self):
+        st = rs.build_run_state(
+            {"record_type": "ship_run", "assessment": {"merge": {"action": "defer"}}},
+            checkpoint_step="s8",
+        )
+        self.assertEqual(dash._status_of(st), "gate")
+
+    def test_running(self):
+        st = rs.build_run_state(
+            {"record_type": "ship_run", "assessment": {"merge": {"action": "defer"}}},
+            checkpoint_step="s4",
+        )
+        self.assertEqual(dash._status_of(st), "running")
+
+    def test_active_out_of_range_is_running(self):
+        self.assertEqual(dash._status_of({"steps": [], "active_index": 0}), "running")
+
+
+class TestBoardRow(unittest.TestCase):
+    def test_row_uses_pr_label(self):
+        row = dash.board_row(_run_state(action="merge"), {"pr": 361, "issue": 351})
+        self.assertEqual(row["label"], "#361")
+        self.assertEqual(row["status"], "merged")
+        self.assertEqual(row["total"], 13)
+
+    def test_row_falls_back_to_issue(self):
+        st = rs.build_run_state(None, checkpoint_step="s4")
+        row = dash.board_row(st, {"pr": None, "issue": 351})
+        self.assertEqual(row["label"], "#351")
+
+    def test_row_unknown_label(self):
+        st = rs.build_run_state(None, checkpoint_step="s4")
+        row = dash.board_row(st, {"pr": None, "issue": None})
+        self.assertEqual(row["label"], "?")
+
+
+class TestRenderBoard(unittest.TestCase):
+    def test_empty_board(self):
+        out = dash.render_board([], color=False)
+        self.assertIn("0 active runs", out)
+        self.assertIn("no active runs found", out)
+
+    def test_single_run_singular(self):
+        rows = [dash.board_row(_run_state(action="merge"), {"pr": 361})]
+        out = dash.render_board(rows, color=False)
+        self.assertIn("1 active run", out)
+        self.assertNotIn("1 active runs", out)
+        self.assertIn("#361", out)
+        self.assertIn("merged", out)
+        self.assertIn("█", out)
+
+    def test_multiple_runs_colored(self):
+        rows = [
+            dash.board_row(_run_state(action="merge"), {"pr": 361}),
+            dash.board_row(rs.build_run_state(None, checkpoint_step="s4"), {"issue": 360}),
+        ]
+        out = dash.render_board(rows, color=True)
+        self.assertIn("2 active runs", out)
+        self.assertIn("\x1b[", out)
+
+
+if __name__ == "__main__":
+    unittest.main()

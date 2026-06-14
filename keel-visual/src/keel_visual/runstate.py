@@ -147,12 +147,51 @@ def _active_index(
     return step_index(MERGE_STEP_ID) or 0
 
 
-def _gate_for(step_id: str, *, counts: dict[str, int], merged: bool) -> dict[str, Any] | None:
+def live_state_from_checkpoint(record: dict[str, Any] | None) -> dict[str, Any]:
+    """Extract the live ``state`` block from a keel checkpoint record.
+
+    keel writes ``state.merge`` / ``state.capture`` / ``state.close`` /
+    ``state.last_gate`` at each step (see :func:`keel.checkpoint.build_checkpoint_record`),
+    so a run *in progress* — which has no ledger ship_run record yet — still
+    exposes its merge/gate progress here. Returns only the recognised string
+    fields; a missing/malformed block yields ``{}`` so position falls back to the
+    ledger. Pure — reads only its argument.
+    """
+    if not isinstance(record, dict):
+        return {}
+    state = record.get("state")
+    if not isinstance(state, dict):
+        return {}
+    out: dict[str, Any] = {}
+    for key in ("merge", "capture", "close", "last_gate"):
+        value = state.get(key)
+        if isinstance(value, str) and value.strip():
+            out[key] = value
+    return out
+
+
+# Checkpoint merge_state -> merge-gate outcome shown by the visualizer.
+_MERGE_STATE_OUTCOME = {
+    "merged": "pass", "pending": "pending", "failed": "fail",
+    "skipped": "pass", "not-started": "pending",
+}
+
+
+def _merge_outcome(*, merged: bool, live_merge: str | None) -> str:
+    """Resolve the merge-gate outcome from the live checkpoint, else the ledger."""
+    if live_merge in _MERGE_STATE_OUTCOME:
+        return _MERGE_STATE_OUTCOME[live_merge]
+    return "pass" if merged else "pending"
+
+
+def _gate_for(
+    step_id: str, *, counts: dict[str, int], merge_outcome: str,
+) -> dict[str, Any] | None:
     """Build the gate block for a gate step, or ``None`` for a non-gate step."""
     if step_id not in GATE_STEP_IDS:
         return None
     if step_id == MERGE_STEP_ID:
-        return {"kind": "merge", "outcome": "pass" if merged else "pending"}
+        return {"kind": "merge", "outcome": merge_outcome}
     blocked = bool(counts.get("critical") or counts.get("major"))
     return {
         "kind": "test",
@@ -188,20 +227,27 @@ def build_run_state(
     record: dict[str, Any] | None,
     *,
     checkpoint_step: str | None = None,
+    checkpoint_state: dict[str, Any] | None = None,
     command: str = "ship",
 ) -> dict[str, Any]:
     """Project a keel ship_run ``record`` onto the backbone as a ``RunState``.
 
     ``record`` is a ship_run ledger record (or ``None`` for an empty/just-started
-    run). ``checkpoint_step`` is the current step id from the keel checkpoint, if
-    any — it takes priority over inferring position from the record.
-    ``command`` selects which steps are highlighted vs dimmed.
+    run). ``checkpoint_step`` is the current step id from the keel checkpoint;
+    ``checkpoint_state`` is its live ``state`` block (see
+    :func:`live_state_from_checkpoint`). Both take priority over the ledger so a
+    run *in progress* shows live position and merge progress before any ship_run
+    record exists. ``command`` selects which steps are highlighted vs dimmed.
 
     Returns a flat JSON-serialisable dict the front-end animates. Pure — reads
     only its arguments.
     """
     rec = record if isinstance(record, dict) else None
-    merged = _merge_action(rec) == "merge" if rec else False
+    live = checkpoint_state if isinstance(checkpoint_state, dict) else {}
+    live_merge = live.get("merge")
+    ledger_merged = _merge_action(rec) == "merge" if rec else False
+    merged = live_merge == "merged" or ledger_merged
+    merge_outcome = _merge_outcome(merged=merged, live_merge=live_merge)
     counts = _verdict_counts(rec) if rec else {"critical": 0, "major": 0, "minor": 0, "nit": 0}
     active = _active_index(rec, checkpoint_step, merged=merged)
     active = max(0, min(active, len(BACKBONE) - 1))
@@ -216,7 +262,7 @@ def build_run_state(
             "kind": _kind(step.id),
             "status": _status(idx, active, step.id),
             "exercised": step.id in exercised,
-            "gate": _gate_for(step.id, counts=counts, merged=merged),
+            "gate": _gate_for(step.id, counts=counts, merge_outcome=merge_outcome),
         })
 
     issue = rec.get("issue") if rec else None
@@ -229,6 +275,7 @@ def build_run_state(
         "active_index": active,
         "active_id": BACKBONE[active].id,
         "merged": merged,
+        "merge_state": live_merge if isinstance(live_merge, str) else None,
         "steps": steps,
         "regression": _regression(active, counts),
     }

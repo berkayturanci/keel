@@ -16,10 +16,10 @@ import time
 from importlib import resources
 from pathlib import Path
 
-from keel import checkpoint, ledger
+from keel import checkpoint, git, ledger
 from keel import config as cfg
 
-from . import render, runstate, terminal
+from . import dash, render, runstate, terminal
 
 _CLEAR = "\x1b[2J\x1b[H"
 
@@ -44,22 +44,26 @@ def _resolve_record(args: argparse.Namespace, config: cfg.ProjectConfig) -> dict
     return ship_runs[-1] if ship_runs else None
 
 
-def _resolve_checkpoint_step(args: argparse.Namespace, config: cfg.ProjectConfig) -> str | None:
-    """Resolve the live current step: explicit ``--checkpoint-step``, else the checkpoint.
+def _resolve_checkpoint(
+    args: argparse.Namespace, config: cfg.ProjectConfig,
+) -> tuple[str | None, dict]:
+    """Resolve ``(current_step, live_state)`` from the run's checkpoint.
 
-    When the operator does not pin a step, read the run's checkpoint file under
-    ``--root`` and take its ``position.current_step`` — this is what makes
-    ``--follow`` (and a plain ``render``) reflect where the run actually is.
-    Fail-soft: a missing or malformed checkpoint yields ``None`` so position
-    falls back to inference from the ledger.
+    An explicit ``--checkpoint-step`` pins the step and skips the file (no live
+    state). Otherwise read the checkpoint under ``--root`` and take both its
+    ``position.current_step`` *and* its ``state`` block — the latter is what lets
+    ``--follow`` show live merge progress, not just position. Fail-soft: a
+    missing/malformed checkpoint yields ``(None, {})`` so position falls back to
+    the ledger.
     """
     if args.checkpoint_step is not None:
-        return args.checkpoint_step
+        return args.checkpoint_step, {}
     try:
         record = checkpoint.read_checkpoint(checkpoint.resolve_path(args.root, config))
     except checkpoint.CheckpointError:
-        return None
-    return runstate.current_step_from_checkpoint(record)
+        return None, {}
+    return (runstate.current_step_from_checkpoint(record),
+            runstate.live_state_from_checkpoint(record))
 
 
 def cmd_render(args: argparse.Namespace) -> int:
@@ -78,8 +82,9 @@ def cmd_render(args: argparse.Namespace) -> int:
         print(f"invalid run ledger: {exc}", file=sys.stderr)
         return 1
 
+    cp_step, cp_state = _resolve_checkpoint(args, config)
     state = runstate.build_run_state(
-        record, checkpoint_step=_resolve_checkpoint_step(args, config), command=args.command,
+        record, checkpoint_step=cp_step, checkpoint_state=cp_state, command=args.command,
     )
     title = f"{args.command} · issue #{state['issue']}" if state["issue"] else args.command
     html = render.render_html(load_template(), state, title=title)
@@ -105,8 +110,9 @@ def _resolve_config(args: argparse.Namespace) -> cfg.ProjectConfig | tuple[int, 
 def _state_from_config(args: argparse.Namespace, config: cfg.ProjectConfig) -> dict:
     """Build the RunState from an already-loaded config; may raise ``LedgerError``."""
     record = _resolve_record(args, config)
+    cp_step, cp_state = _resolve_checkpoint(args, config)
     return runstate.build_run_state(
-        record, checkpoint_step=_resolve_checkpoint_step(args, config), command=args.command,
+        record, checkpoint_step=cp_step, checkpoint_state=cp_state, command=args.command,
     )
 
 
@@ -211,6 +217,73 @@ def _play_follow(args, *, sleep, out, max_cycles: int | None) -> int:
     return 0
 
 
+def _discover_runs(args: argparse.Namespace, config: cfg.ProjectConfig) -> list[dict]:
+    """Find every worktree with a live checkpoint and build its board row.
+
+    Worktrees come from ``git worktree list`` (keel's own run isolation — each
+    parallel ship runs in its own worktree). A worktree with no readable
+    checkpoint is skipped (not an active run). All per-worktree reads are
+    fail-soft so one bad run never blanks the board.
+    """
+    result = git.worktree_list(cwd=args.root)
+    paths = dash.parse_worktrees(result.output) if result.ok else [args.root]
+    rows: list[dict] = []
+    for worktree in paths:
+        try:
+            record = checkpoint.read_checkpoint(checkpoint.resolve_path(worktree, config))
+        except checkpoint.CheckpointError:
+            record = None
+        if record is None:
+            continue
+        identity = dash.identity_from_checkpoint(record)
+        ship_record = _latest_ship_record(worktree, config, identity.get("pr"))
+        run_state = runstate.build_run_state(
+            ship_record,
+            checkpoint_step=runstate.current_step_from_checkpoint(record),
+            checkpoint_state=runstate.live_state_from_checkpoint(record),
+            command=identity.get("command") or "ship",
+        )
+        rows.append(dash.board_row(run_state, identity))
+    return rows
+
+
+def _latest_ship_record(worktree: str, config: cfg.ProjectConfig, pr: int | None) -> dict | None:
+    """Best-effort: the worktree's latest ship_run record for ``pr`` (None if absent)."""
+    try:
+        records = ledger.read_records(ledger.resolve_path(worktree, config))
+    except ledger.LedgerError:
+        return None
+    if pr is not None:
+        return ledger.latest_ship_run_for_pr(records, pr)
+    return None
+
+
+def cmd_dash(
+    args: argparse.Namespace, *, sleep=time.sleep, out=sys.stdout, max_cycles: int | None = None,
+) -> int:
+    """Live board of every active run across the project's worktrees."""
+    config = _resolve_config(args)
+    if isinstance(config, tuple):
+        print(config[1], file=sys.stderr)
+        return config[0]
+    color = _resolve_color(args, out)
+    cycle = 0
+    try:
+        while max_cycles is None or cycle < max_cycles:
+            rows = _discover_runs(args, config)
+            if not args.no_clear:
+                out.write(_CLEAR)
+            out.write(dash.render_board(rows, color=color) + "\n")
+            out.flush()
+            cycle += 1
+            if args.once:
+                break
+            sleep(max(0.0, args.interval))
+    except KeyboardInterrupt:
+        out.write("\n")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="keel-visual", description="visualize a keel run")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -245,6 +318,16 @@ def build_parser() -> argparse.ArgumentParser:
     pl.add_argument("--color", default="auto", choices=("auto", "always", "never"),
                     help="ANSI colour (auto = only on a tty)")
     pl.set_defaults(func=cmd_play)
+
+    pd = sub.add_parser("dash", help="live board of all active runs across the project's worktrees")
+    pd.add_argument("path", help="path to project.yaml")
+    pd.add_argument("--root", default=".", help="repo root to discover worktrees from")
+    pd.add_argument("--interval", type=float, default=2.0, help="refresh interval in seconds")
+    pd.add_argument("--once", action="store_true", help="render the board once and exit")
+    pd.add_argument("--no-clear", action="store_true", help="keep frames (no screen clear)")
+    pd.add_argument("--color", default="auto", choices=("auto", "always", "never"),
+                    help="ANSI colour (auto = only on a tty)")
+    pd.set_defaults(func=cmd_dash)
     return parser
 
 
