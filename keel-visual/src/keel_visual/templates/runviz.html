@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__ · keel-visual</title>
+<style>
+  :root{
+    --bg:#0a0e1a; --panel:#111728; --panel2:#0e1422; --line:#1d2740; --line2:#2a3756;
+    --txt:#e7ecf7; --mut:#8ea0c6; --dim:#5b6b92;
+    --idle:#2a3550; --info:#49b6ff; --warn:#f0a020; --minor:#e6c12e;
+    --danger:#ff5468; --ok:#7ad14a; --ribbon:#2f3c5e;
+    --r:14px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--txt);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+  body{padding:26px;max-width:980px;margin:0 auto}
+  a{color:var(--info)}
+  header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:20px}
+  .brand{display:flex;align-items:center;gap:10px;font-size:18px;font-weight:600;letter-spacing:.01em}
+  .brand .mark{width:26px;height:26px;border-radius:7px;background:linear-gradient(135deg,var(--info),var(--ok));box-shadow:0 0 18px rgba(73,182,255,.5)}
+  .meta{display:flex;gap:8px;flex-wrap:wrap;margin-left:auto;align-items:center}
+  .chip{font-size:12px;color:var(--mut);background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:5px 11px}
+  .chip b{color:var(--txt);font-weight:600}
+  .controls{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+  button{font:inherit;color:var(--txt);background:var(--panel);border:1px solid var(--line2);border-radius:10px;padding:8px 14px;cursor:pointer;display:inline-flex;align-items:center;gap:8px;transition:.15s}
+  button:hover{border-color:var(--info);box-shadow:0 0 14px rgba(73,182,255,.25)}
+  .seg{display:flex;background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .seg button{border:0;border-radius:0;background:transparent;box-shadow:none;padding:8px 14px}
+  .seg button.on{background:rgba(73,182,255,.16);color:var(--info)}
+  input[type=range]{accent-color:var(--info);width:300px}
+  label.rng{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--mut)}
+  .view{display:none}
+  .view.show{display:block}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r)}
+  /* 2D ribbon */
+  .ribbon{position:relative;padding:22px 18px 14px;margin-bottom:16px;overflow:hidden}
+  .track{position:absolute;left:30px;right:30px;top:40px;height:2px;background:var(--line2)}
+  .fill{position:absolute;left:30px;top:40px;height:2px;width:0;background:var(--info);box-shadow:0 0 10px var(--info);transition:width .45s ease,background .35s}
+  .spark{position:absolute;top:35px;left:30px;width:12px;height:12px;border-radius:50%;background:#cdebff;box-shadow:0 0 16px 4px var(--info);transform:translate(-6px,0);transition:transform .45s ease}
+  .nodes{position:relative;display:flex;justify-content:space-between}
+  .node{display:flex;flex-direction:column;align-items:center;gap:7px;width:48px;cursor:pointer;z-index:1}
+  .dot{width:28px;height:28px;border-radius:50%;background:var(--panel2);border:2px solid var(--line2);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;color:var(--dim);transition:.3s}
+  .node .lab{font-size:10px;color:var(--dim);text-align:center;line-height:1.15;transition:.3s}
+  .node.dim{opacity:.3}
+  .node.done .dot{background:rgba(122,209,74,.16);border-color:var(--ok);color:var(--ok)}
+  .node.done .lab{color:var(--mut)}
+  .node.act .dot{background:rgba(73,182,255,.18);border-color:var(--info);color:var(--info);box-shadow:0 0 18px rgba(73,182,255,.55);animation:pulse 1.2s ease-in-out infinite}
+  .node.gate .dot{background:rgba(240,160,32,.18);border-color:var(--warn);color:var(--warn);box-shadow:0 0 18px rgba(240,160,32,.5);animation:pulse 1.2s ease-in-out infinite}
+  .node.gate.fail .dot{background:rgba(255,84,104,.2);border-color:var(--danger);color:var(--danger);box-shadow:0 0 18px rgba(255,84,104,.55)}
+  .node.act .lab,.node.gate .lab{color:var(--txt)}
+  @keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.16)}}
+  /* stage panel */
+  .stage{padding:18px 20px}
+  .srow{display:flex;align-items:center;gap:12px}
+  .badge{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px;background:rgba(73,182,255,.16);color:var(--info)}
+  .sname{font-size:17px;font-weight:600}
+  .sdesc{font-size:13px;color:var(--mut)}
+  .pill{margin-left:auto;font-size:12px;font-weight:600;padding:5px 12px;border-radius:999px;background:rgba(73,182,255,.16);color:var(--info)}
+  .pill.ok{background:rgba(122,209,74,.16);color:var(--ok)}
+  .pill.warn{background:rgba(240,160,32,.16);color:var(--warn)}
+  .pill.fail{background:rgba(255,84,104,.18);color:var(--danger)}
+  .sub{margin-top:16px;display:none}
+  .sub.show{display:block}
+  .lbl{font-size:12px;color:var(--mut);margin-bottom:7px}
+  .bar{height:9px;border-radius:999px;background:var(--panel2);overflow:hidden}
+  .bar > i{display:block;height:100%;width:0;border-radius:999px;background:var(--ok);transition:width .3s linear,background .3s}
+  .folder{display:flex;align-items:center;gap:14px}
+  .folder .ico{font-size:30px;width:34px;text-align:center;color:var(--mut)}
+  .msg{font-size:12px;margin-top:7px;color:var(--mut)}
+  .merge{display:flex;align-items:center;gap:9px;color:var(--ok);font-size:14px;font-weight:600}
+  /* 3D */
+  #scene{position:relative;height:380px;border-radius:var(--r);overflow:hidden;background:radial-gradient(120% 100% at 50% 0%,#10182e 0%,#080c16 70%)}
+  #c3{display:block;width:100%;height:100%}
+  .hud{position:absolute;left:16px;bottom:13px;font-size:12px;color:var(--dim);letter-spacing:.03em}
+  .hud3{position:absolute;right:16px;top:14px;font-size:13px;font-weight:600;color:var(--txt);background:rgba(10,14,26,.6);border:1px solid var(--line);border-radius:999px;padding:5px 13px}
+  .legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--mut);margin-top:12px}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  .legend i{width:10px;height:10px;border-radius:3px;display:inline-block}
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+<header>
+  <div class="brand"><span class="mark"></span> keel-visual</div>
+  <div class="meta" id="meta"></div>
+</header>
+
+<div class="controls">
+  <button id="play"><span class="i">▶</span><span id="playlbl">play</span></button>
+  <label class="rng">step <input id="scrub" type="range" min="0" max="12" step="1" value="0"></label>
+  <div class="seg" id="seg">
+    <button data-m="2d" class="on">2D flow</button>
+    <button data-m="3d">3D ribbon</button>
+  </div>
+</div>
+
+<section id="view2d" class="view show">
+  <div class="card ribbon">
+    <div class="track"></div><div class="fill" id="fill"></div><div class="spark" id="spark"></div>
+    <div class="nodes" id="nodes"></div>
+  </div>
+  <div class="card stage">
+    <div class="srow">
+      <div class="badge" id="badge">●</div>
+      <div><div class="sname" id="sname">s0 · config</div><div class="sdesc" id="sdesc"></div></div>
+      <div class="pill" id="pill">active</div>
+    </div>
+    <div class="sub" id="gatewrap">
+      <div class="lbl">gate</div>
+      <div class="bar"><i id="gatebar"></i></div>
+      <div class="msg" id="gatemsg">evaluating…</div>
+    </div>
+    <div class="sub" id="regwrap">
+      <div class="folder">
+        <div class="ico" id="folder">▣</div>
+        <div style="flex:1">
+          <div class="lbl" style="display:flex;justify-content:space-between"><span>regression coverage</span><span id="regpct">0%</span></div>
+          <div class="bar"><i id="regbar"></i></div>
+          <div class="msg" id="regmsg">scanning suites…</div>
+        </div>
+      </div>
+    </div>
+    <div class="sub" id="mergewrap"><div class="merge">◆ <span id="mergemsg">merged — run is green</span></div></div>
+    <div class="legend">
+      <span><i style="background:var(--info)"></i>active</span>
+      <span><i style="background:var(--warn)"></i>gate</span>
+      <span><i style="background:var(--minor)"></i>minor</span>
+      <span><i style="background:var(--danger)"></i>critical</span>
+      <span><i style="background:var(--ok)"></i>passed / merged</span>
+    </div>
+  </div>
+</section>
+
+<section id="view3d" class="view">
+  <div class="card" id="scene">
+    <canvas id="c3"></canvas>
+    <div class="hud3" id="hud3">s0 · config</div>
+    <div class="hud">drag to orbit · light runs to where the run is</div>
+  </div>
+</section>
+
+<script>window.KEEL_RUN = __KEEL_RUN__;</script>
+<script>
+(function(){
+  const RUN = window.KEEL_RUN || {steps:[],active_index:0,merged:false,regression:{}};
+  const STEP_DESC = {s0:"resolve config + plan",s1:"pick the issue(s)",s2:"worktree off base",s3:"blocker preconditions",s4:"agent writes the change",s5:"risk tier + reviewers",s6:"poll CI workflows",s7:"N reviewer verdicts",s8:"run the gate suite",s9:"address findings",s10:"lock + window + merge",s11:"compound capture",s12:"close + finalize"};
+  const GLYPH = {s0:"⚙",s1:"☑",s2:"⎇",s3:"⛨",s4:"</>",s5:"▤",s6:"⟳",s7:"◉",s8:"⚗",s9:"↻",s10:"⑃",s11:"◳",s12:"✓"};
+  const steps = RUN.steps||[];
+  const N = steps.length||13;
+  const params = new URLSearchParams(location.search);
+  const css = getComputedStyle(document.documentElement);
+  const col = k => css.getPropertyValue('--'+k).trim();
+
+  let active = params.has('step') ? Math.max(0,Math.min(N-1,+params.get('step'))) : (RUN.active_index||0);
+  let playing = false, timer=null;
+
+  // meta chips
+  const meta = document.getElementById('meta');
+  const chips = [];
+  if(RUN.command) chips.push('<span class="chip">cmd <b>'+RUN.command+'</b></span>');
+  if(RUN.issue) chips.push('<span class="chip">issue <b>#'+RUN.issue+'</b></span>');
+  if(RUN.pr) chips.push('<span class="chip">PR <b>#'+RUN.pr+'</b></span>');
+  chips.push('<span class="chip">'+(RUN.merged?'<b style="color:var(--ok)">merged</b>':'in progress')+'</span>');
+  meta.innerHTML = chips.join('');
+
+  // build 2D nodes
+  const nodesEl = document.getElementById('nodes');
+  steps.forEach((s,idx)=>{
+    const n=document.createElement('div'); n.className='node'; n.dataset.idx=idx;
+    n.innerHTML='<div class="dot">'+(GLYPH[s.id]||'●')+'</div><div class="lab">'+s.id+'</div>';
+    n.addEventListener('click',()=>{pause();active=idx;paint();});
+    nodesEl.appendChild(n);
+  });
+  const nodeEls=[...nodesEl.children];
+  const scrub=document.getElementById('scrub'); scrub.max=N-1;
+
+  function gateOutcome(s){ return s.gate ? s.gate.outcome : null; }
+
+  function paint(){
+    const W = nodesEl.clientWidth||860;
+    const frac = N>1?active/(N-1):0;
+    const mergedNow = RUN.merged && active>=10;
+    const fill=document.getElementById('fill'), spark=document.getElementById('spark');
+    fill.style.width=(frac*W)+'px';
+    fill.style.background= mergedNow?col('ok'):col('info');
+    fill.style.boxShadow='0 0 10px '+(mergedNow?col('ok'):col('info'));
+    spark.style.transform='translate('+(frac*W-6)+'px,0)';
+    spark.style.background= mergedNow?'#d8f5c4':'#cdebff';
+    spark.style.boxShadow='0 0 16px 4px '+(mergedNow?col('ok'):col('info'));
+
+    nodeEls.forEach((n,idx)=>{
+      const s=steps[idx];
+      n.className='node'+(s.exercised?'':' dim');
+      if(idx<active){ n.classList.add('done'); }
+      else if(idx===active){
+        if(s.kind==='gate'||s.kind==='merge'){ n.classList.add('gate'); if(gateOutcome(s)==='fail') n.classList.add('fail'); }
+        else n.classList.add('act');
+      }
+      if(mergedNow && idx<=active){ n.classList.remove('gate','act','fail'); n.classList.add('done'); }
+    });
+
+    const s=steps[active]||{id:'s0',name:'config'};
+    document.getElementById('sname').textContent=s.id+' · '+s.name;
+    document.getElementById('sdesc').textContent=STEP_DESC[s.id]||'';
+    document.getElementById('badge').textContent=GLYPH[s.id]||'●';
+    const pill=document.getElementById('pill');
+    show('gatewrap',false); show('regwrap',false); show('mergewrap',false);
+    const badge=document.getElementById('badge');
+
+    function setPill(t,cls){ pill.textContent=t; pill.className='pill'+(cls?' '+cls:''); }
+    badge.style.background='rgba(73,182,255,.16)'; badge.style.color=col('info');
+
+    if(s.kind==='merge'){
+      badge.style.background='rgba(122,209,74,.16)'; badge.style.color=col('ok');
+      if(mergedNow){ setPill('green','ok'); show('mergewrap',true); }
+      else { setPill('gate','warn'); gatePanel(s); }
+    } else if(s.kind==='gate'){
+      const fail=gateOutcome(s)==='fail';
+      badge.style.background= fail?'rgba(255,84,104,.18)':'rgba(240,160,32,.16)';
+      badge.style.color= fail?col('danger'):col('warn');
+      setPill(fail?'blocked':'passed', fail?'fail':'ok');
+      gatePanel(s); regPanel();
+    } else if(s.kind==='loop'){
+      setPill('loop ↩','warn');
+    } else {
+      setPill(idx2done(active)?'done':'active', idx2done(active)?'ok':'');
+    }
+  }
+  function idx2done(i){ return false; }
+
+  function gatePanel(s){
+    show('gatewrap',true);
+    const bar=document.getElementById('gatebar'), msg=document.getElementById('gatemsg');
+    const fail = gateOutcome(s)==='fail';
+    bar.style.width='100%';
+    bar.style.background= fail?col('danger'):col('ok');
+    msg.textContent= fail?'gate blocked — blocking findings':'gate passed';
+    msg.style.color= fail?col('danger'):col('ok');
+  }
+  function regPanel(){
+    const reg=RUN.regression||{}; if(!reg.reached) return;
+    show('regwrap',true);
+    const bar=document.getElementById('regbar'),pct=document.getElementById('regpct'),
+          msg=document.getElementById('regmsg'),folder=document.getElementById('folder');
+    const cov=reg.coverage||0; bar.style.width=cov+'%'; pct.textContent=Math.round(cov)+'%';
+    const worst=reg.worst||'none';
+    const map={none:[col('ok'),'all suites green'],minor:[col('minor'),'minor finding — folder yellow'],major:[col('warn'),'major finding — folder amber'],critical:[col('danger'),'critical finding — folder red']};
+    const m=map[worst]||map.none; bar.style.background=m[0]; folder.style.color=m[0]; msg.textContent=m[1];
+    folder.textContent = worst==='none' ? '▦' : '▣';
+  }
+  function show(id,on){ document.getElementById(id).classList.toggle('show',on); }
+
+  // playback
+  function step(){ let n=active+1; while(n<N && steps[n] && !steps[n].exercised) n++; if(n>=N){pause();return;} active=n; paint(); update3D(); }
+  function play(){ playing=true; lbl('pause'); if(active>=N-1) active=0; loop(); }
+  function pause(){ playing=false; lbl('play'); clearTimeout(timer); }
+  function loop(){ if(!playing) return; const g=steps[active]&&(steps[active].kind!=='normal'); timer=setTimeout(()=>{step();loop();}, g?1700:1050); }
+  function lbl(t){ document.getElementById('playlbl').textContent=t; document.querySelector('#play .i').textContent= t==='pause'?'❚❚':'▶'; }
+  document.getElementById('play').addEventListener('click',()=>playing?pause():play());
+  scrub.addEventListener('input',()=>{pause();active=+scrub.value;paint();update3D();});
+  function syncScrub(){ scrub.value=active; }
+
+  // mode toggle
+  const seg=document.getElementById('seg');
+  function setMode(m){
+    document.getElementById('view2d').classList.toggle('show',m==='2d');
+    document.getElementById('view3d').classList.toggle('show',m==='3d');
+    [...seg.children].forEach(b=>b.classList.toggle('on',b.dataset.m===m));
+    if(m==='3d'){ resize3D(); }
+  }
+  seg.addEventListener('click',e=>{ const b=e.target.closest('button'); if(b) setMode(b.dataset.m); });
+
+  // ---- 3D ----
+  let renderer,scene,camera,nodes3=[],runners=[],curve,glowMat,tubeMat;
+  function init3D(){
+    if(!window.THREE){ document.getElementById('hud3').textContent='3D unavailable'; return; }
+    const canvas=document.getElementById('c3'), wrap=document.getElementById('scene');
+    renderer=new THREE.WebGLRenderer({canvas,antialias:true});
+    renderer.setClearColor(0x080c16,1);
+    scene=new THREE.Scene(); scene.fog=new THREE.Fog(0x080c16,10,28);
+    camera=new THREE.PerspectiveCamera(52,2,0.1,100);
+    const pts=[];
+    for(let k=0;k<N;k++){ const t=k/(N-1); pts.push(new THREE.Vector3((t-0.5)*16,Math.sin(t*Math.PI*2.4)*2.2,Math.cos(t*Math.PI*1.7)*2.6)); }
+    curve=new THREE.CatmullRomCurve3(pts,false,'catmullrom',0.5);
+    tubeMat=new THREE.MeshBasicMaterial({color:0x2f3c5e,transparent:true,opacity:0.5});
+    scene.add(new THREE.Mesh(new THREE.TubeGeometry(curve,240,0.12,12,false),tubeMat));
+    glowMat=new THREE.MeshBasicMaterial({color:0x49b6ff,transparent:true,opacity:0.16,blending:THREE.AdditiveBlending});
+    scene.add(new THREE.Mesh(new THREE.TubeGeometry(curve,240,0.34,12,false),glowMat));
+    for(let k=0;k<N;k++){
+      const p=curve.getPointAt(k/(N-1));
+      const core=new THREE.Mesh(new THREE.SphereGeometry(0.26,22,22),new THREE.MeshBasicMaterial({color:0x2a3550})); core.position.copy(p); scene.add(core);
+      const halo=new THREE.Mesh(new THREE.SphereGeometry(0.5,18,18),new THREE.MeshBasicMaterial({color:0x49b6ff,transparent:true,opacity:0,blending:THREE.AdditiveBlending})); halo.position.copy(p); scene.add(halo);
+      nodes3.push({core,halo,hi:false});
+    }
+    const rgeo=new THREE.SphereGeometry(0.09,10,10);
+    for(let k=0;k<22;k++){ const m=new THREE.Mesh(rgeo,new THREE.MeshBasicMaterial({color:0x49b6ff,transparent:true,opacity:.9,blending:THREE.AdditiveBlending})); scene.add(m); runners.push({m,off:k/22}); }
+    let drag=false,px=0,py=0,yaw=0,pitch=0.14,auto=0;
+    canvas.addEventListener('pointerdown',e=>{drag=true;px=e.clientX;py=e.clientY;});
+    window.addEventListener('pointerup',()=>drag=false);
+    window.addEventListener('pointermove',e=>{if(!drag)return;yaw+=(e.clientX-px)*0.006;pitch+=(e.clientY-py)*0.004;pitch=Math.max(-0.5,Math.min(0.7,pitch));px=e.clientX;py=e.clientY;});
+    let last=0;
+    function f(t){
+      const dt=Math.min(0.05,(t-last)/1000); last=t;
+      auto+= drag?0:dt*0.18; const r=15, ay=yaw+auto;
+      camera.position.set(Math.sin(ay)*r,3.6+Math.sin(pitch)*5,Math.cos(ay)*r); camera.lookAt(0,0,0);
+      const headT=N>1?active/(N-1):0;
+      const mergedNow=RUN.merged&&active>=10;
+      runners.forEach(rn=>{ let tt=(rn.off+t*0.00012)%1; tt=Math.min(tt,headT+0.02); const p=curve.getPointAt(Math.max(0.0001,tt)); rn.m.position.copy(p); const past=tt<=headT+0.001; rn.m.material.color.setHex(mergedNow?0x7ad14a:(past?0x49b6ff:0x2a3550)); rn.m.material.opacity=past?0.9:0.1; });
+      const pulse=0.5+0.5*Math.sin(t*0.006);
+      nodes3.forEach(nd=>{ nd.halo.material.opacity=nd.hi?(0.3+pulse*0.5):0.1; nd.halo.scale.setScalar(nd.hi?(1+pulse*0.35):1); });
+      glowMat.opacity=0.12+pulse*0.06;
+      renderer.render(scene,camera);
+      requestAnimationFrame(f);
+    }
+    requestAnimationFrame(f);
+    update3D(); resize3D();
+  }
+  function update3D(){
+    if(!renderer) return;
+    const mergedNow=RUN.merged&&active>=10;
+    glowMat.color.setHex(mergedNow?0x7ad14a:0x49b6ff);
+    nodes3.forEach((nd,k)=>{
+      const s=steps[k]||{}; let c=0x2a3550, hi=false;
+      if(k<active) c=0x7ad14a;
+      if(k===active){ hi=true; c=(s.kind==='gate'||s.kind==='merge')?(gateOutcome(s)==='fail'?0xff5468:0xf0a020):0x49b6ff; if(s.kind==='merge'&&mergedNow)c=0x7ad14a; }
+      if(mergedNow&&k<=active) c=0x7ad14a;
+      nd.core.material.color.setHex(c); nd.halo.material.color.setHex(c); nd.hi=hi;
+    });
+    const s=steps[active]||{id:'s0',name:'config'};
+    document.getElementById('hud3').textContent=s.id+' · '+s.name;
+  }
+  function resize3D(){ if(!renderer) return; const wrap=document.getElementById('scene'); const w=wrap.clientWidth,h=wrap.clientHeight; renderer.setPixelRatio(Math.min(2,window.devicePixelRatio||1)); renderer.setSize(w,h,false); camera.aspect=w/h; camera.updateProjectionMatrix(); }
+  window.addEventListener('resize',resize3D);
+
+  // boot — 2D first so a 3D/WebGL failure never blanks the page
+  paint(); syncScrub();
+  try { init3D(); update3D(); }
+  catch(err){ const h=document.getElementById('hud3'); if(h) h.textContent='3D unavailable'; }
+  const m0 = params.get('mode'); if(m0==='3d') setMode('3d'); else if(m0==='2d') setMode('2d');
+  if(params.get('play')==='1') play();
+  window.__keelReady = true;
+})();
+</script>
+</body>
+</html>

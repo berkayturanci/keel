@@ -1,0 +1,179 @@
+"""Tests for the keel-visual CLI (I/O thin layer)."""
+
+import io
+import unittest
+from argparse import Namespace
+from pathlib import Path
+
+from keel_visual import cli
+
+FIX = Path(__file__).resolve().parent / "fixtures"
+PROJECT = str(FIX / "project.yaml")
+SAMPLE = str(FIX / "sample-run.jsonl")
+
+
+def _args(**kw):
+    base = dict(
+        path=PROJECT, root=str(FIX), pr=361, ledger_jsonl=SAMPLE,
+        checkpoint_step=None, command="ship", out=None,
+        style="flow", fps=2, step=None, once=False, no_clear=True, color="never",
+    )
+    base.update(kw)
+    return Namespace(**base)
+
+
+class TestTemplate(unittest.TestCase):
+    def test_load_template_has_placeholders(self):
+        tmpl = cli.load_template()
+        self.assertIn("__KEEL_RUN__", tmpl)
+        self.assertIn("__TITLE__", tmpl)
+
+
+class TestResolveRecord(unittest.TestCase):
+    def test_fixture_by_pr(self):
+        from keel import config as cfg
+        rec = cli._resolve_record(_args(), cfg.load_config(PROJECT))
+        self.assertEqual(rec["pull_request"]["number"], 361)
+
+    def test_fixture_latest_when_no_pr(self):
+        from keel import config as cfg
+        rec = cli._resolve_record(_args(pr=None), cfg.load_config(PROJECT))
+        self.assertEqual(rec["record_type"], "ship_run")
+
+    def test_pr_no_match_returns_none(self):
+        from keel import config as cfg
+        self.assertIsNone(cli._resolve_record(_args(pr=999), cfg.load_config(PROJECT)))
+
+    def test_live_empty_root_returns_none(self, ):
+        import tempfile
+
+        from keel import config as cfg
+        with tempfile.TemporaryDirectory() as d:
+            rec = cli._resolve_record(_args(ledger_jsonl=None, root=d, pr=None),
+                                      cfg.load_config(PROJECT))
+        self.assertIsNone(rec)
+
+
+class TestRender(unittest.TestCase):
+    def test_render_writes_html(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d) / "run.html"
+            rc = cli.cmd_render(_args(out=str(out)))
+        self.assertEqual(rc, 0)
+
+    def test_render_writes_and_injects(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d) / "run.html"
+            rc = cli.cmd_render(_args(out=str(out)))
+            html = out.read_text(encoding="utf-8")
+        self.assertEqual(rc, 0)
+        self.assertIn("window.KEEL_RUN =", html)
+        self.assertIn('"pr": 361', html)
+
+    def test_render_missing_config(self):
+        self.assertEqual(cli.cmd_render(_args(path="no-such.yaml")), 1)
+
+    def test_render_invalid_ledger(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            bad = Path(d) / "bad.jsonl"
+            bad.write_text("{not json", encoding="utf-8")
+            rc = cli.cmd_render(_args(ledger_jsonl=str(bad), out=str(Path(d) / "o.html")))
+        self.assertEqual(rc, 1)
+
+    def test_render_invalid_config(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            bad = Path(d) / "p.yaml"
+            bad.write_text("extends: keel\nbase_branch: main\ngates: [build]\n", encoding="utf-8")
+            rc = cli.cmd_render(_args(path=str(bad)))
+        self.assertEqual(rc, 1)
+
+
+class TestPlay(unittest.TestCase):
+    def test_play_single_step(self):
+        out = io.StringIO()
+        rc = cli.cmd_play(_args(step=8), sleep=lambda s: None, out=out)
+        self.assertEqual(rc, 0)
+        self.assertIn("s8 · test", out.getvalue())
+
+    def test_play_once(self):
+        out = io.StringIO()
+        rc = cli.cmd_play(_args(once=True, pr=361), sleep=lambda s: None, out=out)
+        self.assertEqual(rc, 0)
+        self.assertIn("s12 · close", out.getvalue())
+
+    def test_play_full_animation_calls_sleep(self):
+        out = io.StringIO()
+        calls = []
+        rc = cli.cmd_play(_args(command="review", no_clear=False),
+                          sleep=lambda s: calls.append(s), out=out)
+        self.assertEqual(rc, 0)
+        # review exercises 5 steps -> 4 inter-frame sleeps, and clears between frames.
+        self.assertEqual(len(calls), 4)
+        self.assertIn("\x1b[2J", out.getvalue())
+
+    def test_play_color_always(self):
+        out = io.StringIO()
+        cli.cmd_play(_args(step=8, color="always"), sleep=lambda s: None, out=out)
+        self.assertIn("\x1b[38;5;", out.getvalue())
+
+    def test_play_color_auto_non_tty(self):
+        out = io.StringIO()
+        cli.cmd_play(_args(step=12, color="auto"), sleep=lambda s: None, out=out)
+        # io.StringIO is not a tty -> auto disables colour.
+        self.assertNotIn("\x1b[38;5;", out.getvalue())
+
+    def test_play_config_error(self):
+        rc = cli.cmd_play(_args(path="no-such.yaml"), sleep=lambda s: None, out=io.StringIO())
+        self.assertEqual(rc, 1)
+
+    def test_play_invalid_config_error(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            bad = Path(d) / "p.yaml"
+            bad.write_text("extends: keel\nbase_branch: main\ngates: [build]\n", encoding="utf-8")
+            rc = cli.cmd_play(_args(path=str(bad)), sleep=lambda s: None, out=io.StringIO())
+        self.assertEqual(rc, 1)
+
+    def test_play_ledger_error(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            bad = Path(d) / "bad.jsonl"
+            bad.write_text("{nope", encoding="utf-8")
+            rc = cli.cmd_play(_args(ledger_jsonl=str(bad)), sleep=lambda s: None, out=io.StringIO())
+        self.assertEqual(rc, 1)
+
+    def test_play_empty_run_uses_active_index(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            out = io.StringIO()
+            rc = cli.cmd_play(_args(ledger_jsonl=None, root=d, pr=None),
+                              sleep=lambda s: None, out=out)
+        self.assertEqual(rc, 0)
+        self.assertIn("s0 · config", out.getvalue())
+
+
+class TestMain(unittest.TestCase):
+    def test_main_render(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d) / "r.html"
+            rc = cli.main([
+                "render", PROJECT, "--root", str(FIX),
+                "--ledger-jsonl", SAMPLE, "--pr", "361", "--out", str(out),
+            ])
+        self.assertEqual(rc, 0)
+
+    def test_main_play(self):
+        rc = cli.main([
+            "play", PROJECT, "--root", str(FIX),
+            "--ledger-jsonl", SAMPLE, "--pr", "361", "--step", "8", "--color", "never",
+        ])
+        self.assertEqual(rc, 0)
+
+
+if __name__ == "__main__":
+    unittest.main()
