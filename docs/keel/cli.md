@@ -108,6 +108,38 @@ keel claim merge --owner "ship-pr-123" --root . --json
 keel release merge --owner "ship-pr-123" --root .
 ```
 
+## `keel guard <project.yaml> [--issue NUMBER] [--issue-title TITLE] [--issue-labels L1,L2] [--root DIR] [--json]`
+
+Evaluate an issue against the **deterministic blocker ruleset** and report which
+rule(s), if any, fired. Blocker promotion is what unlocks the night-window bypass at
+s10 (`keel merge --hotfix`); `keel guard` makes that promotion a verifiable function of
+the issue's title and labels instead of pure agent judgment (audit GAP-11).
+
+The matching is pure: given the issue title, its labels, and the configured rules, it
+returns the matched rule ids. Rules come from `policy_pack.blocker_rules` when present and
+fall back to built-in defaults when absent (back-compatible). The defaults are:
+
+| Rule id               | Kind          | Fires when                                            |
+|-----------------------|---------------|-------------------------------------------------------|
+| `blocker-label`       | `label`       | issue carries a `blocker` label (case-insensitive)    |
+| `hotfix-label`        | `label`       | issue carries a `hotfix` label                        |
+| `security-label`      | `label`       | issue carries a `security` label                      |
+| `blocker-title-regex` | `title-regex` | title matches `\b(?:hotfix\|security\|blocker)\b`       |
+
+Issue facts are read live from the host with `gh issue view` when `--issue` is given
+(fail-soft: a failed fetch falls back to the offline `--issue-title` / `--issue-labels`
+flags). Offline, pass the flags directly.
+
+```bash
+keel guard .keel/project.yaml --issue-title "hotfix: patch the boot loop" --json
+# -> matched: ["blocker-title-regex"], is_blocker: true
+keel guard .keel/project.yaml --issue 42        # live fetch of title + labels
+```
+
+Override the defaults under `policy_pack.blocker_rules` (each rule needs an `id` and a
+`kind` of `label` (with `labels`) or `title-regex` (with `pattern`)); see
+[configuration.md](configuration.md).
+
 ## `keel merge <project.yaml> --pr N [--root DIR] [--method squash|merge|rebase] [--dry-run]`
 
 Perform the sanctioned core-owned PR merge path. `keel merge` acquires the merge resource
@@ -138,6 +170,48 @@ keel merge .keel/project.yaml --root . --pr 123 --dry-run \
 `--hotfix` is the audited bypass: it skips both the merge window and the gates-SHA
 requirement, still requires explicit consent, and records the bypass (`gates_sha.bypassed`
 with `reason: hotfix`).
+
+A `--hotfix` bypass now **requires a recorded justification** (audit GAP-11) — without
+one it is refused before any merge work. Provide exactly one of:
+
+- `--blocker-rule <id>` — a [`keel guard`](#keel-guard-projectyaml---issue-number---issue-title-title---issue-labels-l1l2---root-dir---json)
+  rule id that **actually fires** for this issue. The merge re-evaluates the ruleset
+  against the issue's title/labels (`--issue` for a live fetch, or `--issue-title` /
+  `--issue-labels` offline) and refuses if the named rule is unknown or did not match.
+  Recorded as `hotfix_justification: {kind: "matched-rule", rule_id, matched}`.
+- `--operator-override` paired with a named `--operator` — the audited human override for
+  a genuine emergency that no rule covers. Recorded as
+  `hotfix_justification: {kind: "operator-override", operator}`.
+
+The justification is written into the merge payload (and surfaced in the ledger), so every
+night-window bypass carries machine-checkable evidence of why it was allowed.
+
+### Checkpoint gate (audit GAP-13)
+
+After the gates-SHA check and before the merge, `keel merge` requires a **covering
+checkpoint** for the run at the merge step (`s10`). This closes the hazard where a run that
+never wrote a checkpoint is undetectable: a crash mid-`s10` would otherwise leave the next
+session a clean slate that can re-merge or duplicate comments. The decision is pure
+([`keel.checkpoint.covering_checkpoint`](../../src/keel/checkpoint.py)); the CLI only reads
+the checkpoint file. The result is reported in the `checkpoint_gate` block of the payload:
+
+- **`covered`** — a current checkpoint for this run reached `s10` (its `current_step` is at
+  or past `s10`, or `s10` is in `completed_steps`). The merge proceeds.
+- **`missing`** — no checkpoint, or the checkpoint is for a different run. Refused with
+  `no current checkpoint for run <id> at step s10`.
+- **`stale-step`** — a checkpoint for this run that has not reached `s10`. Refused.
+
+The run-id is the gates-SHA `run_id` by default; override it with `--run-id`.
+
+**Back-compat / degrade gracefully.** The gate is enforced **only when checkpointing is
+configured** for the project (`policy_pack.reports.checkpoint`). When that key is absent the
+gate is **advisory** (`status: advisory-skip`) and the merge proceeds — flows that never
+write checkpoints keep working unchanged.
+
+`--no-checkpoint-gate` is the audited escape (mirroring `--operator-override`): it bypasses
+the gate for callers that legitimately do not checkpoint. It **requires a named
+`--operator`** and records the bypass in the merge payload
+(`checkpoint_gate: {status: "bypassed", operator}`).
 
 ## `keel post-comment <project.yaml> --target issue:N|pr:N --artifact ARTIFACT --body-file FILE [--run-id ID] [--dry-run] [--json]`
 
@@ -273,7 +347,7 @@ On a live append, a missing `--host-agent` emits a run-context warning by defaul
 fields would degrade. `--transport` is auto-filled from the resolved GitHub transport when
 omitted, so adapters should not echo a stale transport value.
 
-## `keel capture-verify <project.yaml> --merged-pr <N> [--json]`
+## `keel capture-verify <project.yaml> [--merged-pr <N>] [--from-transport] [--json]`
 
 Verify that merged PRs have exactly one valid capture marker in the configured run ledger.
 Missing, invalid, or duplicate markers make the command exit non-zero.
@@ -281,6 +355,37 @@ Missing, invalid, or duplicate markers make the command exit non-zero.
 ```bash
 keel capture-verify .keel/project.yaml --root . --merged-pr 456 --json
 ```
+
+### Reconcile cross-checks (GAP-8 hardening)
+
+Passing `--merged-pr` alone is the offline back-compat path: the merged set is trusted and
+only marker presence/validity is checked. To stop an agent from silently dropping a merged PR
+from capture accounting by omitting it from the args, derive the authoritative merged set from
+the transport instead:
+
+```bash
+keel capture-verify .keel/project.yaml --root . --from-transport --merged-since 2026-06-01 --json
+```
+
+`--from-transport` lists merged PRs from the host (`gh pr list --state merged`, narrowed by
+`--merged-since`). `--merged-pr` still works and is *added* to the derived set (the union is
+verified, so an explicit override can only widen, never shrink, the checked set). The transport
+query is fail-soft: when it errors the report sets `merged_pr_source.transport_failed: true` and
+falls back to any `--merged-pr` values.
+
+When the merged set is derived (or any reconcile input is supplied) three additive checks run:
+
+- **missing-marker** — a merged PR with no valid capture marker in the ledger.
+- **applied-without-artifact** — an `applied` capture lacking a durable artifact reference
+  (recorded via `keel ship --capture-artifact <path|hash>`). `deferred`/`skipped` need none.
+- **reviewer-count-mismatch** — the ledger's `actors.reviewers` count exceeds the evidence-side
+  review-verdict count for that PR. Per-PR verdict counts come from the transport when deriving
+  live, or from `--verdict-count PR=N` fixtures offline; a PR with no known count is advisory.
+
+Offline fixtures for deterministic runs: `--merged-prs-json <file>` (a JSON array of
+`{"number": N}`) substitutes for the transport query, and `--verdict-count PR=N` supplies
+evidence-side counts. Any reconcile finding makes the command exit non-zero in addition to the
+base marker semantics.
 
 ## `keel capture-reconcile <project.yaml> --merged-pr <N> [--json]`
 
@@ -334,7 +439,16 @@ the verifier is fail-closed and accepts only durable GitHub artifacts:
   blocking `review-vendor-distinctness` finding. This check is jury-agnostic: it reads only
   the verdict provenance fields and takes no dependency on any review vendor;
 - a posted jury verdict carrying `keel.jury-verdict.v1` and the current `head: <sha>`
-  when jury is enabled in gating mode, posted by a trusted GitHub actor.
+  when jury is enabled in gating mode, posted by a trusted GitHub actor;
+- at least one mandatory `agent:<vendor>` attribution label on the PR (the labels keel
+  computes for the effective implementer). A missing `agent:*` label fails with a blocking
+  `attribution-label` finding. When a `ship_run` ledger record exists for the PR, the label
+  vendor is additionally cross-checked against the record's implementer vendor
+  (`actors.implementer`, the slug before any `:model`); a contradiction (for example an
+  `agent:codex` label against a `claude` implementer) fails with the same finding. With no
+  ledger record (or no recorded implementer) only the presence check runs, and when PR labels
+  are unavailable the check is skipped entirely (back-compat). This check engages only when
+  the gate is enforced and is suppressed under `--dry-run`.
 
 For live GitHub payloads, trusted means `author_association` is `OWNER`, `MEMBER`, or
 `COLLABORATOR`. Explicitly untrusted associations are rejected even when the author type is
@@ -404,6 +518,57 @@ keel scope-verify .keel/project.yaml --root . --pr 456 --json
 scope creep for a single run, mirroring `keel evidence-verify --deferral`. Tests and offline
 CI harnesses can supply the diff and ledger offline with `--dry-run --changed-file <path>`
 and `--ledger-jsonl <fixture>`; the same pure verifier path is used either way.
+
+## `keel consent-verify <project.yaml> --pr <N> [--root DIR] [--offline] [--json]`
+
+Close keel's consent-boundary gap (audit GAP-12). keel's consent scopes gate the CLI
+*contract* an agent renders before a live run — they do not gate the side effects
+themselves. Every real mutation (git push, `gh pr create`/`comment`/`merge`, label writes)
+is executed by the agent directly and never passes a consent check, and the consent
+`status`/`scopes` recorded on the ledger are whatever the agent passed. `consent-verify` is
+the deterministic post-hoc reconcile that checks the side effects actually **observed** on a
+PR against the scopes that were **approved**.
+
+The reconcile is pure (`keel.consentverify.reconcile`). It maps each observed effect to its
+required consent scopes through `keel.consent.side_effect_scopes` (reusing the canonical
+scope vocabulary, not a parallel one):
+
+| observed effect | required scopes | rationale |
+| --- | --- | --- |
+| `pr_exists` | `git`, `github` | the PR existing means a branch was pushed (`git`) and a PR opened (`github`) |
+| `comment` | `github` | a comment was posted |
+| `merged` | `github` | the PR was merged |
+| `label` | `github` | labels were written |
+
+Any observed mutation whose required scope is **not** in the ledger's approved consent
+scopes is flagged as `mutation <kind> not covered by approved consent scopes`, and the
+command exits non-zero.
+
+The verdict has three states, fail-closed only on a real boundary breach:
+
+- **advisory** (exit 0) — no consent record exists for the PR (a pre-consent or
+  agent-self-reported PR). There is nothing to reconcile against, so back-compat is
+  preserved and nothing fails.
+- **pass** (exit 0) — a consent record exists and every observed mutation is covered.
+- **fail** (exit 1) — a consent record exists but an observed mutation exceeds it.
+
+A consent record is considered to exist only when the ledger's
+`run_context.consent.status` is a non-blank string; the approved scopes come from
+`run_context.consent.scopes`.
+
+```bash
+# A merged PR whose consent record only approved git → fails, naming the uncovered merge.
+keel consent-verify .keel/project.yaml --root . --pr 456 --json
+```
+
+The CLI does the I/O (observing PR state, comments, merged, and labels through `gh`,
+fail-soft; the ledger consent record via `latest_ship_run_for_pr`) and feeds the pure
+reconcile. Offline CI harnesses and tests supply the observed effects and ledger directly:
+`--offline` with `--pr-exists`/`--commented`/`--merged`/`--labeled` flags and
+`--ledger-jsonl <fixture>` exercise the same pure verifier path with no transport.
+
+A live `gh`/`git` consent proxy that gates the side effects *as they happen* (rather than
+reconciling after the fact) is a separate, heavier follow-up and is out of scope here.
 
 ## `keel verify-branch <project.yaml> --pr N [--root DIR] [--tolerance N] [--allow-stale-base] [--offline] [--json]`
 
@@ -519,7 +684,7 @@ non-zero and includes warnings plus the reconciliation action, for example when 
 checkpoint references a PR or worktree that live state reports missing. If the PR is
 already merged, the plan resumes at capture or closeout and never repeats the merge.
 
-## `keel status <project.yaml> [--root DIR] [--json]`
+## `keel status <project.yaml> [--root DIR] [--live-branch NAME ...] [--live-pr N ...] [--json]`
 
 Show the operator-facing progress snapshot for the active or most recent run. `status`
 reads the resumable checkpoint and the run ledger (same paths as `keel checkpoint` and
@@ -538,6 +703,14 @@ from the checkpoint queue, ledger counts of shipped / blocked / deferred / skipp
 capture-health gaps. A missing checkpoint or ledger is not an error — the snapshot degrades
 to `no-active-run`/`completed` and empty counts — but an invalid checkpoint or corrupted
 ledger exits non-zero, since adapters must not report progress from corrupted state.
+
+**Orphan detection (audit GAP-13).** Pass live git/transport references with repeatable
+`--live-branch NAME` and `--live-pr N` flags (an adapter supplies these from `git branch` /
+`gh pr list`). The snapshot's `orphans` block flags any live branch or PR that is covered by
+neither the current checkpoint nor any ledger record — the git-side of the missing-checkpoint
+hazard (a PR/branch keel has no covering state for). This is **advisory**: orphans are
+reported but never block. The decision is pure
+([`keel.checkpoint.find_orphans`](../../src/keel/checkpoint.py)).
 
 ## `keel morning <project.yaml> [--root DIR] [--since WHEN] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--json]`
 

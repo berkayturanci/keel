@@ -1,0 +1,474 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__ · keel-visual</title>
+<style>
+  :root{
+    --bg:#0a0e1a; --panel:#111728; --panel2:#0e1422; --line:#1d2740; --line2:#2a3756;
+    --txt:#e7ecf7; --mut:#8ea0c6; --dim:#5b6b92;
+    --idle:#2a3550; --info:#49b6ff; --warn:#f0a020; --minor:#e6c12e;
+    --danger:#ff5468; --ok:#7ad14a; --ribbon:#2f3c5e;
+    --r:14px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--txt);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+  body{padding:26px;max-width:980px;margin:0 auto}
+  a{color:var(--info)}
+  header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:20px}
+  .brand{display:flex;align-items:center;gap:10px;font-size:18px;font-weight:600;letter-spacing:.01em}
+  .brand .mark{width:30px;height:30px;border-radius:9px;background:#0c1118;border:1.5px solid var(--ok);box-shadow:0 0 16px rgba(122,209,74,.45);display:inline-flex;align-items:center;justify-content:center;overflow:hidden}
+  .brand .mark svg{width:100%;height:100%;display:block}
+  .meta{display:flex;gap:8px;flex-wrap:wrap;margin-left:auto;align-items:center}
+  .chip{font-size:12px;color:var(--mut);background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:5px 11px}
+  .chip b{color:var(--txt);font-weight:600}
+  .controls{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+  button{font:inherit;color:var(--txt);background:var(--panel);border:1px solid var(--line2);border-radius:10px;padding:8px 14px;cursor:pointer;display:inline-flex;align-items:center;gap:8px;transition:.15s}
+  button:hover{border-color:var(--info);box-shadow:0 0 14px rgba(73,182,255,.25)}
+  .seg{display:flex;background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .seg button{border:0;border-radius:0;background:transparent;box-shadow:none;padding:8px 14px}
+  .seg button.on{background:rgba(73,182,255,.16);color:var(--info)}
+  input[type=range]{accent-color:var(--info);width:300px}
+  label.rng{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--mut)}
+  .view{display:none}
+  .view.show{display:block}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r)}
+  /* 2D ribbon */
+  .ribbon{position:relative;padding:22px 18px 14px;margin-bottom:16px;overflow:hidden}
+  .track{position:absolute;left:30px;top:40px;height:2px;background:var(--line2)}
+  .fill{position:absolute;left:30px;top:40px;height:2px;width:0;background:var(--info);box-shadow:0 0 10px var(--info);transition:width .45s ease,left .45s ease,top .2s,background .35s}
+  .spark{position:absolute;top:34px;left:24px;width:12px;height:12px;border-radius:50%;background:#cdebff;box-shadow:0 0 16px 4px var(--info);transition:left .45s ease,top .2s,background .35s}
+  .nodes{position:relative;display:flex;justify-content:space-between}
+  .node{display:flex;flex-direction:column;align-items:center;gap:7px;width:48px;cursor:pointer;z-index:1}
+  .dot{width:28px;height:28px;border-radius:50%;background:var(--panel2);border:2px solid var(--line2);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;color:var(--dim);transition:.3s}
+  .node .lab{font-size:10px;color:var(--dim);text-align:center;line-height:1.15;transition:.3s}
+  .node.dim{opacity:.3}
+  .node.done .dot{background:rgba(122,209,74,.16);border-color:var(--ok);color:var(--ok)}
+  .node.done .lab{color:var(--mut)}
+  .node.act .dot{background:rgba(73,182,255,.18);border-color:var(--info);color:var(--info);box-shadow:0 0 18px rgba(73,182,255,.55);animation:pulse 1.2s ease-in-out infinite}
+  .node.gate .dot{background:rgba(240,160,32,.18);border-color:var(--warn);color:var(--warn);box-shadow:0 0 18px rgba(240,160,32,.5);animation:pulse 1.2s ease-in-out infinite}
+  .node.gate.fail .dot{background:rgba(255,84,104,.2);border-color:var(--danger);color:var(--danger);box-shadow:0 0 18px rgba(255,84,104,.55)}
+  .node.act .lab,.node.gate .lab{color:var(--txt)}
+  @keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.16)}}
+  /* stage panel */
+  .stage{padding:18px 20px}
+  .srow{display:flex;align-items:center;gap:12px}
+  .badge{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px;background:rgba(73,182,255,.16);color:var(--info)}
+  .sname{font-size:17px;font-weight:600}
+  .sdesc{font-size:13px;color:var(--mut)}
+  .pill{margin-left:auto;font-size:12px;font-weight:600;padding:5px 12px;border-radius:999px;background:rgba(73,182,255,.16);color:var(--info)}
+  .pill.ok{background:rgba(122,209,74,.16);color:var(--ok)}
+  .pill.warn{background:rgba(240,160,32,.16);color:var(--warn)}
+  .pill.fail{background:rgba(255,84,104,.18);color:var(--danger)}
+  .sub{margin-top:16px;display:none}
+  .sub.show{display:block}
+  .lbl{font-size:12px;color:var(--mut);margin-bottom:7px}
+  .bar{height:9px;border-radius:999px;background:var(--panel2);overflow:hidden}
+  .bar > i{display:block;height:100%;width:0;border-radius:999px;background:var(--ok);transition:width .3s linear,background .3s}
+  .folder{display:flex;align-items:center;gap:14px}
+  .folder .ico{font-size:30px;width:34px;text-align:center;color:var(--mut)}
+  .msg{font-size:12px;margin-top:7px;color:var(--mut)}
+  .merge{display:flex;align-items:center;gap:9px;color:var(--ok);font-size:14px;font-weight:600}
+  /* jury — static by default; .anim only while the run is animating */
+  .jury2d{display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:4px 2px}
+  .jurors{display:flex;gap:12px}
+  .juror{width:34px;height:34px;border-radius:50%;border:2px solid var(--line2);background:var(--panel2);display:flex;align-items:center;justify-content:center;font-size:14px;color:var(--mut);transition:.3s}
+  .jury2d.anim .juror{animation:jvote 1.7s ease-in-out infinite}
+  .jury2d.anim .juror:nth-child(2){animation-delay:.28s}
+  .jury2d.anim .juror:nth-child(3){animation-delay:.56s}
+  .jury2d.anim .juror:nth-child(4){animation-delay:.84s}
+  @keyframes jvote{0%,100%{border-color:var(--line2);color:var(--mut);box-shadow:none}45%{border-color:var(--info);color:var(--info);box-shadow:0 0 14px rgba(73,182,255,.55)}}
+  .jarrow{color:var(--dim);font-size:16px}
+  .jverdict{display:flex;align-items:center;gap:7px;font-size:13px;font-weight:600;color:var(--info)}
+  .jverdict.gating{color:var(--warn)}
+  .jury2d.anim .jverdict{animation:jpulse 1.7s ease-in-out infinite;animation-delay:.9s}
+  @keyframes jpulse{0%,100%{opacity:.55}50%{opacity:1;text-shadow:0 0 11px currentColor}}
+  /* 3D */
+  #scene{position:relative;height:clamp(440px,60vh,600px);border-radius:var(--r);overflow:hidden;background:radial-gradient(120% 100% at 50% 0%,#10182e 0%,#080c16 70%)}
+  #c3{display:block;width:100%;height:100%}
+  .hud{position:absolute;right:16px;bottom:13px;font-size:12px;color:var(--dim);letter-spacing:.03em}
+  .hud3{position:absolute;right:16px;top:14px;font-size:13px;font-weight:600;color:var(--txt);background:rgba(10,14,26,.6);border:1px solid var(--line);border-radius:999px;padding:5px 13px}
+  .detail3{position:absolute;left:16px;bottom:13px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;max-width:70%;font-size:12.5px;background:rgba(10,14,26,.55);border:1px solid var(--line);border-radius:11px;padding:7px 12px}
+  .detail3 .d3step{font-weight:600;color:var(--txt)}
+  .detail3 .d3desc{color:var(--mut)}
+  .detail3 .d3jury{color:var(--info);font-weight:600;background:rgba(73,182,255,.14);border:1px solid var(--line);border-radius:999px;padding:2px 9px}
+  .detail3 .d3jury.gating{color:var(--warn);background:rgba(240,160,32,.14)}
+  .seg3d{position:absolute;left:14px;top:13px;display:flex;gap:3px;flex-wrap:wrap;max-width:60%;background:rgba(10,14,26,.55);border:1px solid var(--line);border-radius:10px;padding:3px;z-index:2}
+  .seg3d button{border:0;background:transparent;color:var(--mut);font-size:11px;padding:4px 9px;border-radius:7px;cursor:pointer;box-shadow:none}
+  .seg3d button:hover{color:var(--txt);box-shadow:none;border-color:transparent}
+  .seg3d button.on{background:rgba(73,182,255,.18);color:var(--info)}
+  .legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--mut);margin-top:12px}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  .legend i{width:10px;height:10px;border-radius:3px;display:inline-block}
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+<header>
+  <div class="brand"><span class="mark" aria-hidden="true"><svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><line x1="12" y1="40" x2="32" y2="40" stroke="#2a3744" stroke-width="3" stroke-linecap="round"></line><circle cx="12" cy="40" r="3.2" fill="#6366f1"></circle><circle cx="20" cy="40" r="3.2" fill="#6366f1"></circle><circle cx="28" cy="40" r="3.2" fill="#6366f1"></circle><circle cx="32" cy="40" r="3.8" fill="#f5a524"></circle><path d="M32 40 Q44 34 52 19" stroke="#10b981" stroke-width="5.5" fill="none" stroke-linecap="round"></path><circle cx="52" cy="19" r="4.5" fill="#10b981"></circle></svg></span> keel-visual</div>
+  <div class="meta" id="meta"></div>
+</header>
+
+<div class="controls">
+  <button id="play"><span class="i">▶</span><span id="playlbl">play</span></button>
+  <label class="rng">step <input id="scrub" type="range" min="0" max="12" step="1" value="0"></label>
+  <div class="seg" id="seg">
+    <button data-m="2d" class="on">2D flow</button>
+    <button data-m="3d">3D ribbon</button>
+  </div>
+</div>
+
+<section id="view2d" class="view show">
+  <div class="card ribbon">
+    <div class="track"></div><div class="fill" id="fill"></div><div class="spark" id="spark"></div>
+    <div class="nodes" id="nodes"></div>
+  </div>
+  <div class="card stage">
+    <div class="srow">
+      <div class="badge" id="badge">●</div>
+      <div><div class="sname" id="sname">s0 · config</div><div class="sdesc" id="sdesc"></div></div>
+      <div class="pill" id="pill">active</div>
+    </div>
+    <div class="sub" id="gatewrap">
+      <div class="lbl">gate</div>
+      <div class="bar"><i id="gatebar"></i></div>
+      <div class="msg" id="gatemsg">evaluating…</div>
+    </div>
+    <div class="sub" id="regwrap">
+      <div class="folder">
+        <div class="ico" id="folder">▣</div>
+        <div style="flex:1">
+          <div class="lbl" style="display:flex;justify-content:space-between"><span>regression coverage</span><span id="regpct">0%</span></div>
+          <div class="bar"><i id="regbar"></i></div>
+          <div class="msg" id="regmsg">scanning suites…</div>
+        </div>
+      </div>
+    </div>
+    <div class="sub" id="jurywrap">
+      <div class="lbl">cross-vendor jury · <span id="jurymode">advisory</span></div>
+      <div class="jury2d" id="jury2d">
+        <div class="jurors" id="jurors"></div>
+        <span class="jarrow">→</span>
+        <div class="jverdict" id="jverdict">⚖ <span id="jverdicttxt">deliberating…</span></div>
+      </div>
+    </div>
+    <div class="sub" id="mergewrap"><div class="merge">◆ <span id="mergemsg">merged — run is green</span></div></div>
+    <div class="legend">
+      <span><i style="background:var(--info)"></i>active</span>
+      <span><i style="background:var(--warn)"></i>gate</span>
+      <span><i style="background:var(--minor)"></i>minor</span>
+      <span><i style="background:var(--danger)"></i>critical</span>
+      <span><i style="background:var(--ok)"></i>passed / merged</span>
+    </div>
+  </div>
+</section>
+
+<section id="view3d" class="view">
+  <div class="card" id="scene">
+    <canvas id="c3"></canvas>
+    <div class="seg3d" id="seg3d"></div>
+    <div class="hud3" id="hud3">s0 · config</div>
+    <div class="detail3" id="detail3">
+      <span class="d3step" id="d3step">s0 · config</span>
+      <span class="d3desc" id="d3desc">resolve config + plan</span>
+      <span class="d3jury gating" id="d3jury" hidden>jury · gating</span>
+    </div>
+    <div class="hud">drag to orbit · light runs to where the run is</div>
+  </div>
+</section>
+
+<script>window.KEEL_RUN = __KEEL_RUN__;</script>
+<script>
+(function(){
+  const RUN = window.KEEL_RUN || {steps:[],active_index:0,merged:false,regression:{}};
+  const STEP_DESC = {s0:"resolve config + plan",s1:"pick the issue(s)",s2:"worktree off base",s3:"blocker preconditions",s4:"agent writes the change",s5:"risk tier + reviewers",s6:"poll CI workflows",s7:"N reviewer verdicts",s8:"run the gate suite",s9:"address findings",s10:"lock + window + merge",s11:"compound capture",s12:"close + finalize"};
+  const GLYPH = {s0:"⚙",s1:"☑",s2:"⎇",s3:"⛨",s4:"</>",s5:"▤",s6:"⟳",s7:"◉",s8:"⚗",s9:"↻",s10:"⑃",s11:"◳",s12:"✓"};
+  const REVIEW_STEP = "s7";   // jury attaches to the review step (keel.runstate.REVIEW_STEP_ID)
+  const steps = RUN.steps||[];
+  const N = steps.length||13;
+  const params = new URLSearchParams(location.search);
+  const css = getComputedStyle(document.documentElement);
+  const col = k => css.getPropertyValue('--'+k).trim();
+
+  let active = params.has('step') ? Math.max(0,Math.min(N-1,+params.get('step'))) : (RUN.active_index||0);
+  let playing = false, timer=null;
+
+  // meta chips
+  const meta = document.getElementById('meta');
+  const chips = [];
+  if(RUN.command) chips.push('<span class="chip">cmd <b>'+RUN.command+'</b></span>');
+  if(RUN.issue) chips.push('<span class="chip">issue <b>#'+RUN.issue+'</b></span>');
+  if(RUN.pr) chips.push('<span class="chip">PR <b>#'+RUN.pr+'</b></span>');
+  chips.push('<span class="chip">'+(RUN.merged?'<b style="color:var(--ok)">merged</b>':'in progress')+'</span>');
+  if(RUN.jury && RUN.jury.active) chips.push('<span class="chip">jury <b style="color:var(--info)">'+(RUN.jury.mode||'on')+'</b></span>');
+  meta.innerHTML = chips.join('');
+
+  // build 2D nodes
+  const nodesEl = document.getElementById('nodes');
+  steps.forEach((s,idx)=>{
+    const n=document.createElement('div'); n.className='node'; n.dataset.idx=idx;
+    n.innerHTML='<div class="dot">'+(GLYPH[s.id]||'●')+'</div><div class="lab">'+s.id+'</div>';
+    n.addEventListener('click',()=>{pause();active=idx;paint();});
+    nodesEl.appendChild(n);
+  });
+  const nodeEls=[...nodesEl.children];
+  const scrub=document.getElementById('scrub'); scrub.max=N-1;
+
+  // jury (2D) — populate juror seats + verdict once; reflects RUN.jury (post-run state)
+  const juryActive = !!(RUN.jury && RUN.jury.active);
+  const juryMode = (RUN.jury && RUN.jury.mode) || 'on';
+  const JURY_SEATS = 3;   // cross-vendor panel — same count in 2D and 3D
+  if(juryActive){
+    const seats = JURY_SEATS;
+    const jurorsEl = document.getElementById('jurors');
+    for(let k=0;k<seats;k++){ const d=document.createElement('div'); d.className='juror'; d.textContent='§'; jurorsEl.appendChild(d); }
+    document.getElementById('jurymode').textContent = juryMode;
+    const gating = juryMode==='gating';
+    const jv = document.getElementById('jverdict'); jv.classList.toggle('gating', gating);
+    document.getElementById('jverdicttxt').textContent = gating ? 'gating verdict' : 'advisory verdict';
+  }
+  function syncJuryAnim(){
+    const jw=document.getElementById('jury2d'); if(!jw) return;
+    const atReview = (steps[active]||{}).id===REVIEW_STEP;
+    jw.classList.toggle('anim', playing && juryActive && atReview);
+  }
+
+  function gateOutcome(s){ return s.gate ? s.gate.outcome : null; }
+
+  function nodeCenter(idx){
+    const n=nodeEls[idx]; const dot=n.querySelector('.dot');
+    return {cx: nodesEl.offsetLeft + n.offsetLeft + n.offsetWidth/2,
+            cy: nodesEl.offsetTop + n.offsetTop + dot.offsetHeight/2};
+  }
+  function paint(){
+    const mergedNow = RUN.merged && active>=10;
+    const fill=document.getElementById('fill'), spark=document.getElementById('spark');
+    const track=document.querySelector('.track');
+    if(nodeEls.length){
+      const first=nodeCenter(0), last=nodeCenter(N-1), cur=nodeCenter(active);
+      track.style.left=first.cx+'px'; track.style.width=(last.cx-first.cx)+'px'; track.style.top=(first.cy-1)+'px';
+      fill.style.left=first.cx+'px'; fill.style.width=Math.max(0,cur.cx-first.cx)+'px'; fill.style.top=(first.cy-1)+'px';
+      spark.style.left=(cur.cx-6)+'px'; spark.style.top=(cur.cy-6)+'px';
+    }
+    fill.style.background= mergedNow?col('ok'):col('info');
+    fill.style.boxShadow='0 0 10px '+(mergedNow?col('ok'):col('info'));
+    spark.style.background= mergedNow?'#d8f5c4':'#cdebff';
+    spark.style.boxShadow='0 0 16px 4px '+(mergedNow?col('ok'):col('info'));
+
+    nodeEls.forEach((n,idx)=>{
+      const s=steps[idx];
+      n.className='node'+(s.exercised?'':' dim');
+      if(idx<active){ n.classList.add('done'); }
+      else if(idx===active){
+        if(s.kind==='gate'||s.kind==='merge'){ n.classList.add('gate'); if(gateOutcome(s)==='fail') n.classList.add('fail'); }
+        else n.classList.add('act');
+      }
+      if(mergedNow && idx<=active){ n.classList.remove('gate','act','fail'); n.classList.add('done'); }
+    });
+
+    const s=steps[active]||{id:'s0',name:'config'};
+    document.getElementById('sname').textContent=s.id+' · '+s.name;
+    document.getElementById('sdesc').textContent=STEP_DESC[s.id]||'';
+    document.getElementById('badge').textContent=GLYPH[s.id]||'●';
+    const pill=document.getElementById('pill');
+    show('gatewrap',false); show('regwrap',false); show('mergewrap',false); show('jurywrap',false);
+    const badge=document.getElementById('badge');
+
+    function setPill(t,cls){ pill.textContent=t; pill.className='pill'+(cls?' '+cls:''); }
+    badge.style.background='rgba(73,182,255,.16)'; badge.style.color=col('info');
+
+    if(s.kind==='merge'){
+      badge.style.background='rgba(122,209,74,.16)'; badge.style.color=col('ok');
+      if(mergedNow){ setPill('green','ok'); show('mergewrap',true); }
+      else { setPill('gate','warn'); gatePanel(s); }
+    } else if(s.kind==='gate'){
+      const fail=gateOutcome(s)==='fail';
+      badge.style.background= fail?'rgba(255,84,104,.18)':'rgba(240,160,32,.16)';
+      badge.style.color= fail?col('danger'):col('warn');
+      setPill(fail?'blocked':'passed', fail?'fail':'ok');
+      gatePanel(s); regPanel();
+    } else if(s.kind==='loop'){
+      setPill('loop ↩','warn');
+    } else {
+      if(s.id===REVIEW_STEP && juryActive){ setPill('jury · '+juryMode, juryMode==='gating'?'warn':''); show('jurywrap',true); }
+      else setPill(idx2done(active)?'done':'active', idx2done(active)?'ok':'');
+    }
+    syncJuryAnim();
+  }
+  function idx2done(i){ return false; }
+
+  function gatePanel(s){
+    show('gatewrap',true);
+    const bar=document.getElementById('gatebar'), msg=document.getElementById('gatemsg');
+    const fail = gateOutcome(s)==='fail';
+    bar.style.width='100%';
+    bar.style.background= fail?col('danger'):col('ok');
+    msg.textContent= fail?'gate blocked — blocking findings':'gate passed';
+    msg.style.color= fail?col('danger'):col('ok');
+  }
+  function regPanel(){
+    const reg=RUN.regression||{}; if(!reg.reached) return;
+    show('regwrap',true);
+    const bar=document.getElementById('regbar'),pct=document.getElementById('regpct'),
+          msg=document.getElementById('regmsg'),folder=document.getElementById('folder');
+    const cov=reg.coverage||0; bar.style.width=cov+'%'; pct.textContent=Math.round(cov)+'%';
+    const worst=reg.worst||'none';
+    const map={none:[col('ok'),'all suites green'],minor:[col('minor'),'minor finding — folder yellow'],major:[col('warn'),'major finding — folder amber'],critical:[col('danger'),'critical finding — folder red']};
+    const m=map[worst]||map.none; bar.style.background=m[0]; folder.style.color=m[0]; msg.textContent=m[1];
+    folder.textContent = worst==='none' ? '▦' : '▣';
+  }
+  function show(id,on){ document.getElementById(id).classList.toggle('show',on); }
+
+  // playback
+  function step(){ let n=active+1; while(n<N && steps[n] && !steps[n].exercised) n++; if(n>=N){pause();return;} active=n; paint(); update3D(); }
+  function play(){ playing=true; lbl('pause'); if(active>=N-1) active=0; syncJuryAnim(); loop(); }
+  function pause(){ playing=false; lbl('play'); clearTimeout(timer); syncJuryAnim(); }
+  function loop(){ if(!playing) return; const g=steps[active]&&(steps[active].kind!=='normal'); timer=setTimeout(()=>{step();loop();}, g?1700:1050); }
+  function lbl(t){ document.getElementById('playlbl').textContent=t; document.querySelector('#play .i').textContent= t==='pause'?'❚❚':'▶'; }
+  document.getElementById('play').addEventListener('click',()=>playing?pause():play());
+  scrub.addEventListener('input',()=>{pause();active=+scrub.value;paint();update3D();});
+  function syncScrub(){ scrub.value=active; }
+
+  // mode toggle
+  const seg=document.getElementById('seg');
+  function setMode(m){
+    document.getElementById('view2d').classList.toggle('show',m==='2d');
+    document.getElementById('view3d').classList.toggle('show',m==='3d');
+    [...seg.children].forEach(b=>b.classList.toggle('on',b.dataset.m===m));
+    if(m==='3d'){ resize3D(); }
+  }
+  seg.addEventListener('click',e=>{ const b=e.target.closest('button'); if(b) setMode(b.dataset.m); });
+
+  // ---- 3D engine: selectable interweaving styles, one shared run semantics ----
+  const STYLE_ORDER=['plexus','comet','aurora','combined','line'];
+  const STYLE_LABEL={plexus:'plexus',comet:'comet',aurora:'aurora',combined:'combo',line:'line'};
+  const COL3={done:0x7ad14a,act:0x49b6ff,gate:0xf0a020,fail:0xff5468,idle:0x223052};
+  const TAU=Math.PI*2, SPAN=15;
+  let renderer,scene,camera,styles3={},cur3=null,style3d='plexus';
+  if(STYLE_ORDER.includes(params.get('s3d'))) style3d=params.get('s3d');
+
+  function mergedNow(){ return RUN.merged && active>=10; }
+  function headT(){ return N>1 ? active/(N-1) : 0; }
+  function headX(){ return (headT()-0.5)*SPAN; }
+  function stepHex(k){ const s=steps[k]||{};
+    if(mergedNow() && k<=active) return COL3.done;
+    if(k<active) return COL3.done;
+    if(k===active){ if(s.kind==='gate'||s.kind==='merge') return gateOutcome(s)==='fail'?COL3.fail:COL3.gate; return COL3.act; }
+    return COL3.idle; }
+  function rgb3(h){ return [(h>>16&255)/255,(h>>8&255)/255,(h&255)/255]; }
+  // progress colour by x position relative to the running head; merged paints all green
+  function progCol(x,b,out,o){ let h; if(mergedNow())h=COL3.done; else if(Math.abs(x-headX())<1.1)h=COL3.act; else if(x<headX())h=COL3.done; else h=COL3.idle; const c=rgb3(h); out[o]=c[0]*b; out[o+1]=c[1]*b; out[o+2]=c[2]*b; }
+  function strand3(t,ph,rad){ const a=t*2.6*TAU+ph; return new THREE.Vector3((t-0.5)*SPAN,Math.sin(a)*rad,Math.cos(a)*rad); }
+  const seed3=i=>((Math.sin(i*127.1)*43758.5453)%1+1)%1;
+  function centerPos(){ const a=[]; for(let k=0;k<N;k++) a.push(new THREE.Vector3((k/(N-1)-0.5)*SPAN,0,0)); return a; }
+  function strandPos(){ const a=[]; for(let k=0;k<N;k++) a.push(strand3(k/(N-1),0,1.6)); return a; }
+  function s7base(pos){ const i=steps.findIndex(s=>s.id===REVIEW_STEP); return pos[i>=0?i:0]; }
+
+  // shared step markers + jurors (each style owns its own copy, positioned for its geometry)
+  function buildMarkers(group,pos){ const arr=[]; pos.forEach((p,k)=>{
+      const core=new THREE.Mesh(new THREE.SphereGeometry(0.22,18,18),new THREE.MeshBasicMaterial({color:0x223052,transparent:true,opacity:.95})); core.position.copy(p); group.add(core);
+      const halo=new THREE.Mesh(new THREE.SphereGeometry(0.47,16,16),new THREE.MeshBasicMaterial({color:0x49b6ff,transparent:true,opacity:0,blending:THREE.AdditiveBlending})); halo.position.copy(p); group.add(halo);
+      arr.push({core,halo,k,hi:false}); }); return arr; }
+  function recolorMarkers(arr){ arr.forEach(nd=>{ const c=stepHex(nd.k); nd.core.material.color.setHex(c); nd.halo.material.color.setHex(c); nd.hi=(nd.k===active); }); }
+  function animMarkers(arr,t){ const pulse=0.5+0.5*Math.sin(t*0.006); arr.forEach(nd=>{ nd.halo.material.opacity=nd.hi?(0.3+pulse*0.5):0.1; nd.halo.scale.setScalar(nd.hi?(1+pulse*0.4):1); }); }
+  function buildJurors(group,base){ const arr=[]; if(!juryActive||!base) return arr; const jcol=juryMode==='gating'?COL3.gate:COL3.act;
+    for(let k=0;k<JURY_SEATS;k++){ const m=new THREE.Mesh(new THREE.SphereGeometry(0.13,14,14),new THREE.MeshBasicMaterial({color:jcol,transparent:true,opacity:0,blending:THREE.AdditiveBlending})); group.add(m); arr.push({m,base,off:k/JURY_SEATS}); } return arr; }
+  function animJurors(arr,t){ const atRev=steps[active]&&steps[active].id===REVIEW_STEP; arr.forEach((j,ix)=>{ const a=t*0.0022+j.off*TAU,rd=0.78; j.m.position.set(j.base.x+Math.cos(a)*rd,j.base.y+Math.sin(a*1.4)*0.45,j.base.z+Math.sin(a)*rd); j.m.material.opacity=atRev?(0.45+0.45*Math.sin(t*0.005+ix*2)):0; }); }
+
+  // reusable interweaving + fading systems
+  function addComet(group){ const phs=[0,TAU/3,2*TAU/3],RAD=1.3,NP=140,part=[];
+    for(let s=0;s<3;s++)for(let i=0;i<NP;i++)part.push({ph:phs[s],u0:i/NP,sp:0.05+0.02*(s%2)});
+    const pos=new Float32Array(part.length*3),col=new Float32Array(part.length*3);
+    const g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.BufferAttribute(pos,3)); g.setAttribute('color',new THREE.BufferAttribute(col,3));
+    group.add(new THREE.Points(g,new THREE.PointsMaterial({size:0.16,vertexColors:true,transparent:true,opacity:.95,blending:THREE.AdditiveBlending,depthWrite:false})));
+    return t=>{ const hT=headT(); for(let i=0;i<part.length;i++){ const p=part[i]; let u=(p.u0+t*0.00008*(p.sp*10))%1; const v=strand3(u,p.ph,RAD); pos[i*3]=v.x;pos[i*3+1]=v.y;pos[i*3+2]=v.z;
+        let b; const dd=u-hT; if(dd>0.005)b=Math.max(0,0.12-dd*0.6); else b=Math.max(0.12,0.5+0.5*Math.cos((hT-u)*7.0)); b*=0.6+0.4*Math.sin(t*0.004+i); progCol(v.x,b,col,i*3); }
+      g.attributes.position.needsUpdate=true; g.attributes.color.needsUpdate=true; }; }
+  function addPlexus(group){ const BAND=3.2,M=52,THR=2.6,P=[];
+    for(let i=0;i<M;i++)P.push({base:new THREE.Vector3((seed3(i)-0.5)*SPAN,(seed3(i+9)-0.5)*BAND,(seed3(i+99)-0.5)*BAND),ph:seed3(i+5)*6.28,sp:0.6+seed3(i+3)});
+    const maxSeg=M*8,pos=new Float32Array(maxSeg*2*3),col=new Float32Array(maxSeg*2*3);
+    const g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.BufferAttribute(pos,3)); g.setAttribute('color',new THREE.BufferAttribute(col,3));
+    group.add(new THREE.LineSegments(g,new THREE.LineBasicMaterial({vertexColors:true,transparent:true,opacity:.7,blending:THREE.AdditiveBlending,depthWrite:false})));
+    const cur=[]; for(let i=0;i<M;i++)cur.push(new THREE.Vector3());
+    return t=>{ for(let i=0;i<M;i++){ const p=P[i]; cur[i].set(p.base.x,p.base.y+Math.sin(t*0.0009*p.sp+p.ph)*0.9,p.base.z+Math.cos(t*0.0011*p.sp+p.ph)*0.9); }
+      let c=0; for(let i=0;i<M&&c<maxSeg;i++)for(let j=i+1;j<M&&c<maxSeg;j++){ const d=cur[i].distanceTo(cur[j]); if(d<THR){ const b=(1-d/THR)*(0.5+0.4*Math.sin(t*0.003+i+j)); const o=c*6;
+        pos[o]=cur[i].x;pos[o+1]=cur[i].y;pos[o+2]=cur[i].z; pos[o+3]=cur[j].x;pos[o+4]=cur[j].y;pos[o+5]=cur[j].z; const mx=(cur[i].x+cur[j].x)/2; progCol(mx,b,col,o); progCol(mx,b,col,o+3); c++; } }
+      g.setDrawRange(0,c*2); g.attributes.position.needsUpdate=true; g.attributes.color.needsUpdate=true; }; }
+  function addAurora(group){ const phs=[0,Math.PI*0.66,Math.PI*1.33],RAD=1.6,W=120,ribs=[];
+    phs.forEach((ph,si)=>{ const segs=W,pos=new Float32Array((segs+1)*2*3),col=new Float32Array((segs+1)*2*3),idx=[];
+      for(let i=0;i<segs;i++){ const a=i*2; idx.push(a,a+1,a+2, a+1,a+3,a+2); }
+      const g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.BufferAttribute(pos,3)); g.setAttribute('color',new THREE.BufferAttribute(col,3)); g.setIndex(idx);
+      group.add(new THREE.Mesh(g,new THREE.MeshBasicMaterial({vertexColors:true,transparent:true,opacity:.5,side:THREE.DoubleSide,blending:THREE.AdditiveBlending,depthWrite:false}))); ribs.push({g,pos,col,segs,ph,si}); });
+    return t=>{ const hT=headT(); ribs.forEach(rb=>{ for(let i=0;i<=rb.segs;i++){ const tt=i/rb.segs,c=strand3(tt,rb.ph+t*0.0004,RAD),wob=0.55+0.2*Math.sin(t*0.002+tt*8+rb.si),o=i*6;
+        rb.pos[o]=c.x;rb.pos[o+1]=c.y+wob;rb.pos[o+2]=c.z; rb.pos[o+3]=c.x;rb.pos[o+4]=c.y-wob;rb.pos[o+5]=c.z;
+        let b; const dd=tt-hT; if(dd>0.01)b=Math.max(0,0.1-dd*0.5); else b=0.35+0.25*Math.sin(t*0.003+tt*6); b=Math.max(0.04,b)*(0.6+0.4*Math.sin(t*0.0016+rb.si*2)); progCol(c.x,b,rb.col,o); progCol(c.x,b*0.4,rb.col,o+3); }
+      rb.g.attributes.position.needsUpdate=true; rb.g.attributes.color.needsUpdate=true; }); }; }
+
+  function buildParticleStyle(adders,posFn,camR){ const group=new THREE.Group(); const ups=adders.map(fn=>fn(group)); const pos=posFn(); const nodes=buildMarkers(group,pos); const jur=buildJurors(group,s7base(pos));
+    return {group,camR,recolor(){ recolorMarkers(nodes); },update(t){ ups.forEach(u=>u(t)); animMarkers(nodes,t); animJurors(jur,t); }}; }
+  function buildLine(){ const group=new THREE.Group(); const pts=[]; for(let k=0;k<N;k++){ const t=k/(N-1); pts.push(new THREE.Vector3((t-0.5)*16,Math.sin(t*Math.PI*2.4)*2.2,Math.cos(t*Math.PI*1.7)*2.6)); }
+    const curve=new THREE.CatmullRomCurve3(pts,false,'catmullrom',0.5);
+    const tubeMat=new THREE.MeshBasicMaterial({color:0x2f3c5e,transparent:true,opacity:0.5}); group.add(new THREE.Mesh(new THREE.TubeGeometry(curve,240,0.12,12,false),tubeMat));
+    const glowMat=new THREE.MeshBasicMaterial({color:0x49b6ff,transparent:true,opacity:0.16,blending:THREE.AdditiveBlending}); group.add(new THREE.Mesh(new THREE.TubeGeometry(curve,240,0.34,12,false),glowMat));
+    const pos=[]; for(let k=0;k<N;k++) pos.push(curve.getPointAt(k/(N-1))); const nodes=buildMarkers(group,pos); const jur=buildJurors(group,s7base(pos));
+    const runners=[],rgeo=new THREE.SphereGeometry(0.09,10,10); for(let k=0;k<22;k++){ const m=new THREE.Mesh(rgeo,new THREE.MeshBasicMaterial({color:0x49b6ff,transparent:true,opacity:.9,blending:THREE.AdditiveBlending})); group.add(m); runners.push({m,off:k/22}); }
+    return {group,camR:15,recolor(){ recolorMarkers(nodes); glowMat.color.setHex(mergedNow()?COL3.done:COL3.act); },
+      update(t){ const hT=headT(); runners.forEach(rn=>{ let tt=(rn.off+t*0.00012)%1; tt=Math.min(tt,hT+0.02); const p=curve.getPointAt(Math.max(0.0001,tt)); rn.m.position.copy(p); const past=tt<=hT+0.001; rn.m.material.color.setHex(mergedNow()?COL3.done:(past?COL3.act:0x2a3550)); rn.m.material.opacity=past?0.9:0.1; });
+        animMarkers(nodes,t); animJurors(jur,t); const pulse=0.5+0.5*Math.sin(t*0.006); glowMat.opacity=0.12+pulse*0.06; }}; }
+
+  function buildStyle(name){ switch(name){
+    case 'comet': return buildParticleStyle([addComet],centerPos,17);
+    case 'aurora': return buildParticleStyle([addAurora],strandPos,18);
+    case 'combined': return buildParticleStyle([addPlexus,addComet],centerPos,17);
+    case 'line': return buildLine();
+    default: return buildParticleStyle([addPlexus],centerPos,17); } }
+
+  function setStyle3d(name){ if(!styles3[name]) return; style3d=name;
+    STYLE_ORDER.forEach(k=>{ if(styles3[k]) styles3[k].group.visible=(k===name); });
+    cur3=styles3[name]; cur3.recolor();
+    [...document.getElementById('seg3d').children].forEach(b=>b.classList.toggle('on',b.dataset.s===name)); }
+
+  function init3D(){
+    if(!window.THREE){ document.getElementById('hud3').textContent='3D unavailable'; return; }
+    const canvas=document.getElementById('c3');
+    renderer=new THREE.WebGLRenderer({canvas,antialias:true}); renderer.setClearColor(0x080c16,1);
+    scene=new THREE.Scene(); scene.fog=new THREE.Fog(0x080c16,14,42);
+    camera=new THREE.PerspectiveCamera(52,2,0.1,100);
+    STYLE_ORDER.forEach(name=>{ const st=buildStyle(name); st.group.visible=false; scene.add(st.group); styles3[name]=st; });
+    // style selector
+    const seg3=document.getElementById('seg3d');
+    STYLE_ORDER.forEach(name=>{ const b=document.createElement('button'); b.dataset.s=name; b.textContent=STYLE_LABEL[name]; b.addEventListener('click',()=>setStyle3d(name)); seg3.appendChild(b); });
+    setStyle3d(style3d);
+    let drag=false,px=0,py=0,yaw=0,pitch=0.14,auto=0,last=0;
+    canvas.addEventListener('pointerdown',e=>{drag=true;px=e.clientX;py=e.clientY;});
+    window.addEventListener('pointerup',()=>drag=false);
+    window.addEventListener('pointermove',e=>{if(!drag)return;yaw+=(e.clientX-px)*0.006;pitch+=(e.clientY-py)*0.004;pitch=Math.max(-0.5,Math.min(0.7,pitch));px=e.clientX;py=e.clientY;});
+    function f(t){ const dt=Math.min(0.05,(t-last)/1000); last=t; auto+= drag?0:dt*0.16; const r=cur3?cur3.camR:16, ay=yaw+auto;
+      camera.position.set(Math.sin(ay)*r,3.4+Math.sin(pitch)*5.5,Math.cos(ay)*r); camera.lookAt(0,0,0);
+      if(cur3) cur3.update(t);
+      renderer.render(scene,camera); requestAnimationFrame(f); }
+    requestAnimationFrame(f);
+    update3D(); resize3D();
+  }
+  function update3D(){ if(!renderer) return; if(cur3) cur3.recolor();
+    const s=steps[active]||{id:'s0',name:'config'};
+    document.getElementById('hud3').textContent=s.id+' · '+s.name;
+    document.getElementById('d3step').textContent=s.id+' · '+s.name;
+    document.getElementById('d3desc').textContent=STEP_DESC[s.id]||'';
+    const jchip=document.getElementById('d3jury'), atRev=(s.id===REVIEW_STEP&&juryActive);
+    if(atRev){ jchip.textContent='jury · '+juryMode; jchip.classList.toggle('gating',juryMode==='gating'); jchip.hidden=false; } else { jchip.hidden=true; } }
+  function resize3D(){ if(!renderer) return; const wrap=document.getElementById('scene'); const w=wrap.clientWidth,h=wrap.clientHeight; renderer.setPixelRatio(Math.min(2,window.devicePixelRatio||1)); renderer.setSize(w,h,false); camera.aspect=w/h; camera.updateProjectionMatrix(); }
+  window.addEventListener('resize',resize3D);
+
+  // boot — 2D first so a 3D/WebGL failure never blanks the page
+  paint(); syncScrub();
+  try { init3D(); update3D(); }
+  catch(err){ const h=document.getElementById('hud3'); if(h) h.textContent='3D unavailable'; }
+  const m0 = params.get('mode'); if(m0==='3d') setMode('3d'); else if(m0==='2d') setMode('2d');
+  if(params.get('play')==='1') play();
+  window.__keelReady = true;
+})();
+</script>
+</body>
+</html>

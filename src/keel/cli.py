@@ -21,17 +21,22 @@ from . import (
     artifacts,
     branchscope,
     capture,
+    captureverify,
     checkpoint,
     classify,
+    closeorder,
     closure,
     consent,
+    consentverify,
     contracts,
     doctor,
+    dryrunverify,
     evidence,
     gates,
     git,
     github,
     github_transport,
+    guard,
     install,
     jury,
     ledger,
@@ -300,6 +305,243 @@ def _cmd_worktree_remove(args: argparse.Namespace) -> int:
     return 0 if result.ok else 1
 
 
+def _parse_labels(raw: str | None) -> tuple[str, ...]:
+    """Split a comma-separated ``--issue-labels`` value into clean labels."""
+    if not raw:
+        return ()
+    return tuple(part.strip() for part in raw.split(",") if part.strip())
+
+
+def _gather_issue_facts(args: argparse.Namespace) -> tuple[str, tuple[str, ...], bool]:
+    """Resolve the issue title + labels for blocker evaluation.
+
+    Offline path: take ``--issue-title`` / ``--issue-labels`` verbatim. Live
+    path: when ``--issue`` is given, fetch the authoritative title/labels from
+    the host via ``gh`` (fail-soft — a failed fetch falls back to the args).
+
+    Returns ``(title, labels, authoritative)``. ``authoritative`` is True ONLY
+    when ``--issue N`` was given AND the live ``gh`` fetch succeeded and parsed
+    into a real dict carrying the host's title/labels. When ``--issue`` is
+    absent, or the fetch failed / fell back to the agent-supplied args, it is
+    False — the facts are agent-supplied and must not self-justify a window
+    bypass (audit GAP-11).
+    """
+    title = args.issue_title or ""
+    labels = _parse_labels(args.issue_labels)
+    authoritative = False
+    issue = getattr(args, "issue", None)
+    if issue is not None:
+        result = github.issue_facts(issue, cwd=args.root)
+        if result.ok:
+            try:
+                data = json.loads(result.output)
+            except json.JSONDecodeError:
+                data = None
+            if isinstance(data, dict):
+                authoritative = True
+                if isinstance(data.get("title"), str):
+                    title = data["title"]
+                raw_labels = data.get("labels")
+                if isinstance(raw_labels, list):
+                    labels = tuple(
+                        str(item.get("name"))
+                        for item in raw_labels
+                        if isinstance(item, dict) and isinstance(item.get("name"), str)
+                    )
+    return title, labels, authoritative
+
+
+def _cmd_guard(args: argparse.Namespace) -> int:
+    try:
+        config = cfg.load_config(args.path)
+    except FileNotFoundError:
+        print(f"no such config: {args.path}", file=sys.stderr)
+        return 1
+    except cfg.ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    try:
+        rules = guard.resolve_rules(config)
+    except guard.GuardError as exc:
+        print(f"invalid blocker rules: {exc}", file=sys.stderr)
+        return 1
+
+    title, labels, _authoritative = _gather_issue_facts(args)
+    result = guard.evaluate(title, labels, rules=rules)
+    if args.json:
+        print(json.dumps(result.as_dict(), indent=2, sort_keys=True))
+    else:
+        verdict = "BLOCKER" if result.is_blocker else "not a blocker"
+        print(f"keel guard — {verdict}")
+        print(f"  title  : {title}")
+        print(f"  labels : {', '.join(labels) or '(none)'}")
+        if result.matched:
+            print(f"  matched: {', '.join(result.matched)}")
+        else:
+            print("  matched: (none)")
+    return 0
+
+
+def _hotfix_justification(
+    args: argparse.Namespace, config: cfg.ProjectConfig, operator: str | None
+) -> tuple[dict[str, object] | None, str | None]:
+    """Resolve the justification required for a ``--hotfix`` window bypass.
+
+    Returns ``(justification, None)`` on success or ``(None, error)`` when the
+    hotfix is refused. A hotfix must carry one of two justifications, recorded
+    in the ledger:
+
+    * ``matched-rule`` — ``--blocker-rule <id>`` names a rule that actually fires
+      for this issue under :mod:`keel.guard`; or
+    * ``operator-override`` — an explicit ``--operator-override`` paired with a
+      named ``--operator`` (the audited human override).
+
+    With neither, the bypass is refused (closing audit GAP-11: an agent can no
+    longer flip ``--hotfix`` on the flag alone).
+
+    The ``matched-rule`` path requires **host-authoritative** issue facts: it
+    refuses unless ``--issue N`` was given and the live ``gh`` fetch succeeded,
+    so an agent cannot self-justify a window bypass with a fabricated
+    ``--issue-title``. The ``operator-override`` path (the audited human escape)
+    is unaffected.
+    """
+    if args.blocker_rule:
+        try:
+            rules = guard.resolve_rules(config)
+        except guard.GuardError as exc:
+            return None, f"invalid blocker rules: {exc}"
+        title, labels, authoritative = _gather_issue_facts(args)
+        if not authoritative:
+            return None, (
+                "hotfix matched-rule justification requires --issue <N> "
+                "(host-authoritative title/labels); agent-supplied --issue-title "
+                "is not accepted for a window bypass — use --operator-override instead"
+            )
+        result = guard.evaluate(title, labels, rules=rules)
+        if args.blocker_rule not in result.rule_ids:
+            return None, f"unknown blocker rule {args.blocker_rule!r}"
+        if args.blocker_rule not in result.matched:
+            return None, (
+                f"blocker rule {args.blocker_rule!r} did not match the issue "
+                "(title/labels do not satisfy the rule)"
+            )
+        return {
+            "kind": "matched-rule",
+            "rule_id": args.blocker_rule,
+            "matched": list(result.matched),
+        }, None
+    if args.operator_override:
+        if not operator:
+            return None, "--operator-override requires a named --operator for the audit trail"
+        return {"kind": "operator-override", "operator": operator}, None
+    return None, (
+        "hotfix requires a justification: pass --blocker-rule <id> matching a "
+        "keel guard rule for the issue, or --operator-override with a named --operator"
+    )
+
+
+CHECKPOINT_MERGE_STEP = "s10"
+
+
+def _checkpoint_gate(
+    args: argparse.Namespace,
+    config: cfg.ProjectConfig,
+    *,
+    run_id: str | None,
+    operator: str | None,
+) -> tuple[dict[str, object], str | None]:
+    """Gate the merge on a covering checkpoint for the run at step s10.
+
+    Returns ``(payload, None)`` when the merge may proceed or ``(payload, error)``
+    when it must be refused. The gate is enforced only when checkpointing is
+    *configured* for the project (``policy_pack.reports.checkpoint``); when it is
+    absent the gate degrades to advisory (back-compat — flows that never wrote a
+    checkpoint still merge). The ``--no-checkpoint-gate`` escape requires a named
+    ``--operator`` (mirroring ``--operator-override``) and records the bypass in
+    the merge payload audit trail.
+
+    This is the thin I/O layer: it reads the checkpoint file and delegates the
+    decision to :func:`keel.checkpoint.covering_checkpoint` (pure).
+    """
+    _, path_source = checkpoint.configured_checkpoint_path(config)
+    configured = path_source == "policy_pack.reports.checkpoint"
+
+    if args.no_checkpoint_gate:
+        if not operator:
+            return (
+                {
+                    "enforced": configured,
+                    "status": "bypass-refused",
+                    "bypassed": False,
+                    "reason": "--no-checkpoint-gate requires a named --operator",
+                },
+                "--no-checkpoint-gate requires a named --operator for the audit trail",
+            )
+        return (
+            {
+                "enforced": configured,
+                "status": "bypassed",
+                "bypassed": True,
+                "operator": operator,
+                "expected_step": CHECKPOINT_MERGE_STEP,
+                "reason": "checkpoint gate bypassed by operator",
+            },
+            None,
+        )
+
+    if not configured:
+        return (
+            {
+                "enforced": False,
+                "status": "advisory-skip",
+                "bypassed": False,
+                "reason": "no checkpoint configured (policy_pack.reports.checkpoint); advisory",
+            },
+            None,
+        )
+
+    if not run_id:
+        return (
+            {
+                "enforced": True,
+                "status": "missing",
+                "bypassed": False,
+                "expected_step": CHECKPOINT_MERGE_STEP,
+                "reason": (
+                    "checkpointing is configured but no run-id is available "
+                    "(pass --run-id or record a gates-pass for this head)"
+                ),
+            },
+            (
+                "checkpointing is configured but no run-id is available for the "
+                "checkpoint gate; pass --run-id or use --no-checkpoint-gate"
+            ),
+        )
+
+    try:
+        path = checkpoint.resolve_path(args.root, config)
+        record = checkpoint.read_checkpoint(path)
+    except checkpoint.CheckpointError as exc:
+        return (
+            {"enforced": True, "status": "invalid", "bypassed": False, "reason": str(exc)},
+            f"invalid checkpoint: {exc}",
+        )
+    coverage = checkpoint.covering_checkpoint(record, run_id, CHECKPOINT_MERGE_STEP)
+    gate_payload = {
+        "enforced": True,
+        "status": coverage["status"],
+        "bypassed": False,
+        "expected_step": CHECKPOINT_MERGE_STEP,
+        "run_id": run_id,
+        "checkpoint_step": coverage["checkpoint_step"],
+        "reason": coverage["reason"],
+    }
+    if coverage["covered"]:
+        return gate_payload, None
+    return gate_payload, coverage["reason"]
+
+
 def _cmd_merge(args: argparse.Namespace) -> int:
     args.live = True
     try:
@@ -373,6 +615,25 @@ def _cmd_merge(args: argparse.Namespace) -> int:
             )
         return 1
 
+    hotfix_justification: dict[str, object] | None = None
+    if args.hotfix:
+        hotfix_justification, hotfix_error = _hotfix_justification(
+            args, config, approval_operator
+        )
+        if hotfix_justification is None:
+            payload = {
+                "schema_version": "keel.merge.v1",
+                "pull_request": args.pr,
+                "status": "fail",
+                "reason": "hotfix justification required",
+                "hotfix_justification": None,
+            }
+            if args.json:
+                print(json.dumps(payload, indent=2, sort_keys=True))
+            else:
+                print(hotfix_error, file=sys.stderr)
+            return 1
+
     owner = args.owner or f"keel-merge-pr-{args.pr}"
     claim = lock.claim_resource(_lock_root(args.root), "merge", owner=owner)
     payload: dict[str, object] = {
@@ -384,6 +645,8 @@ def _cmd_merge(args: argparse.Namespace) -> int:
         "evidence": None,
         "gates_sha": None,
         "escalation": escalation,
+        "hotfix_justification": hotfix_justification,
+        "checkpoint_gate": None,
         "merged": False,
     }
     if not claim.granted:
@@ -422,6 +685,7 @@ def _cmd_merge(args: argparse.Namespace) -> int:
             return _finish_merge(args, payload, f"missing evidence: {missing}", code=1)
 
         head_sha = snapshot["head_sha"]
+        gates_run_id: str | None = None
         if args.hotfix:
             payload["gates_sha"] = {"bypassed": True, "reason": "hotfix", "head_sha": head_sha}
         else:
@@ -432,11 +696,12 @@ def _cmd_merge(args: argparse.Namespace) -> int:
             matched, record = ledger.gates_pass_for_head(
                 gates_records, args.pr, head_sha if isinstance(head_sha, str) else ""
             )
+            gates_run_id = record.get("run_id") if record else None
             payload["gates_sha"] = {
                 "bypassed": False,
                 "head_sha": head_sha,
                 "matched": matched,
-                "run_id": record.get("run_id") if record else None,
+                "run_id": gates_run_id,
             }
             if not matched:
                 return _finish_merge(
@@ -445,6 +710,13 @@ def _cmd_merge(args: argparse.Namespace) -> int:
                     f"no gates-pass recorded for the current head {head_sha}",
                     code=1,
                 )
+
+        gate_payload, gate_error = _checkpoint_gate(
+            args, config, run_id=args.run_id or gates_run_id, operator=approval_operator
+        )
+        payload["checkpoint_gate"] = gate_payload
+        if gate_error is not None:
+            return _finish_merge(args, payload, gate_error, code=1)
 
         if args.dry_run:
             return _finish_merge(args, payload, "dry-run: merge not performed", code=0)
@@ -650,6 +922,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         head_sha=args.head_sha,
         capture_status=args.capture_status,
         capture_reason=args.capture_reason,
+        capture_artifact=args.capture_artifact,
         issue_title=args.issue_title,
         issue_labels=_issue_labels(args),
         existing_records=existing_ledger_records,
@@ -810,23 +1083,466 @@ def _cmd_capture_verify(args: argparse.Namespace) -> int:
     except ledger.LedgerError as exc:
         print(f"invalid ledger {ledger_path}: {exc}", file=sys.stderr)
         return 1
-    report = capture.verify_session(records, args.merged_pr)
+    try:
+        derived_prs, derivation = _capture_verify_merged_prs(args, config)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    report = capture.verify_session(records, derived_prs)
+
+    reconcile_active = derivation["source"] != "args" or _reconcile_inputs_active(args)
+    reconcile_report = None
+    if reconcile_active:
+        verdict_counts = _capture_verify_verdict_counts(args, config, derived_prs)
+        reconcile_report = captureverify.reconcile(
+            records, derived_prs, verdict_counts=verdict_counts
+        )
+
     payload = {
         "contract": capture.contract_as_dict(config),
         "ledger_path": str(ledger_path),
+        "merged_pr_source": derivation,
         "verification": report,
     }
+    if reconcile_report is not None:
+        payload["reconcile"] = reconcile_report
+
+    base_ok = report["status"] == "complete"
+    reconcile_ok = reconcile_report is None or reconcile_report["ok"]
+
     if args.json:
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
         print(f"keel capture-verify — {report['status']}  {ledger_path}")
+        print(f"  merged-PR source: {derivation['source']} ({len(derived_prs)} PR(s))")
         for result in report["results"]:
             state = "ok" if result["ok"] else "FAIL"
             print(
                 f"  {state:>4}  PR #{result['pr']}  "
                 f"{result['status']}  {result['reason'] or '-'}"
             )
-    return 0 if report["status"] == "complete" else 1
+        if reconcile_report is not None:
+            for finding in reconcile_report["findings"]:
+                print(f"  FAIL  reconcile PR #{finding['pr']}  "
+                      f"{finding['type']}  {finding['reason']}")
+            if reconcile_report["ok"]:
+                print("  reconcile: ok")
+    return 0 if base_ok and reconcile_ok else 1
+
+
+def _cmd_consent_verify(args: argparse.Namespace) -> int:
+    try:
+        config = cfg.load_config(args.path)
+    except FileNotFoundError:
+        print(f"no such config: {args.path}", file=sys.stderr)
+        return 1
+    except cfg.ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    try:
+        record = _consent_ledger_record(args, config)
+    except ledger.LedgerError as exc:
+        print(f"invalid run ledger: {exc}", file=sys.stderr)
+        return 1
+    try:
+        observed = _consent_observed_effects(args, config)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    has_record, approved_scopes = consentverify.consent_record_from_ledger(record)
+    report = consentverify.reconcile(
+        observed, approved_scopes, has_consent_record=has_record
+    )
+    payload = {
+        "schema_version": consentverify.SCHEMA_VERSION,
+        "pull_request": args.pr,
+        "scope_effect_table": consentverify.scope_effect_table(),
+        "reconcile": report,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"keel consent-verify — {report['verdict']}  PR #{args.pr}")
+        print(f"  consent record : {'present' if has_record else 'absent (advisory)'}")
+        print(f"  approved scopes: {', '.join(report['approved_scopes']) or 'none'}")
+        print(f"  observed       : {', '.join(report['observed_effects']) or 'none'}")
+        for finding in report["uncovered"]:
+            print(f"  FAIL  {finding['message']}")
+        if report["verdict"] == consentverify.VERDICT_PASS:
+            print("  all observed mutations covered by approved scopes")
+    return 0 if report["ok"] else 1
+
+
+def _consent_ledger_record(
+    args: argparse.Namespace,
+    config: cfg.ProjectConfig,
+) -> dict[str, object] | None:
+    """Load the latest ship_run ledger record for the PR under consent-verify.
+
+    Reads the run ledger (offline fixture via ``--ledger-jsonl`` or the configured
+    path under ``--root``) and returns the most recent matching ship_run record,
+    or ``None`` when no record matches — the advisory back-compat path.
+    """
+    fixture = getattr(args, "ledger_jsonl", None)
+    if fixture is not None:
+        records = ledger.parse_records(Path(fixture).read_text(encoding="utf-8"))
+    else:
+        records = ledger.read_records(ledger.resolve_path(args.root, config))
+    return ledger.latest_ship_run_for_pr(records, args.pr)
+
+
+def _consent_observed_effects(
+    args: argparse.Namespace,
+    config: cfg.ProjectConfig,
+) -> consentverify.ObservedEffects:
+    """Observe the mutating side effects on the PR for consent reconciliation.
+
+    Offline (``--offline``): the effect flags are taken straight from the
+    ``--pr-exists``/``--commented``/``--merged``/``--labeled`` switches, so tests
+    are deterministic with no transport. Live: the PR state is read via the thin
+    ``gh`` wrappers, fail-soft — a transport failure raises so the operator sees
+    the fetch error rather than a silently-empty observation.
+    """
+    if args.offline:
+        return consentverify.ObservedEffects(
+            pr_exists=args.pr_exists,
+            commented=args.commented,
+            merged=args.merged,
+            labeled=args.labeled,
+        )
+    owner_repo = _owner_repo(config)
+    pr = _gh_json(["repos", owner_repo, "pulls", str(args.pr)], cwd=args.root)
+    comments = _gh_json_list(
+        ["repos", owner_repo, "issues", str(args.pr), "comments"], cwd=args.root
+    )
+    return consentverify.ObservedEffects(
+        pr_exists=True,
+        commented=bool(comments),
+        merged=pr.get("merged") is True,
+        labeled=bool(_label_names(pr.get("labels"))),
+    )
+
+
+def _cmd_close_reconcile(args: argparse.Namespace) -> int:
+    try:
+        config = cfg.load_config(args.path)
+    except FileNotFoundError:
+        print(f"no such config: {args.path}", file=sys.stderr)
+        return 1
+    except cfg.ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    done_label = _done_label(config)
+    try:
+        records = _close_ledger_records(args, config)
+    except ledger.LedgerError as exc:
+        print(f"invalid run ledger: {exc}", file=sys.stderr)
+        return 1
+    try:
+        observed = _close_observed_issues(args, config, records, done_label)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    report = closeorder.reconcile(observed, done_label=done_label)
+    payload = {
+        "schema_version": closeorder.SCHEMA_VERSION,
+        "done_label": done_label,
+        "reconcile": report,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        observed_count = report["summary"]["observed"]
+        print(f"keel close-reconcile — {report['verdict']}  ({observed_count} issue(s))")
+        for finding in report["findings"]:
+            print(f"  FLAG  {finding['message']}")
+        if report["ok"]:
+            print("  all observed issues consistent with the ledger")
+    return 0 if report["ok"] else 1
+
+
+def _done_label(config: cfg.ProjectConfig) -> str:
+    """Resolve the done-marking label from ``policy_pack.status_transitions.done``.
+
+    Falls back to :data:`keel.closeorder.DEFAULT_DONE_LABEL` when a project does
+    not configure a done transition, so the reconcile still has a label to check.
+    """
+    policy = config.policy_pack if isinstance(config.policy_pack, dict) else {}
+    transitions = policy.get("status_transitions")
+    done = transitions.get("done") if isinstance(transitions, dict) else None
+    return done if isinstance(done, str) and done.strip() else closeorder.DEFAULT_DONE_LABEL
+
+
+def _close_ledger_records(
+    args: argparse.Namespace,
+    config: cfg.ProjectConfig,
+) -> list[dict[str, object]]:
+    """Load the ship_run ledger records for close-ordering reconciliation.
+
+    Reads the run ledger (offline fixture via ``--ledger-jsonl`` or the configured
+    path under ``--root``) and returns every record; the per-issue lookup is done
+    by :func:`keel.closeorder.latest_record_for_issue`.
+    """
+    fixture = getattr(args, "ledger_jsonl", None)
+    if fixture is not None:
+        return ledger.parse_records(Path(fixture).read_text(encoding="utf-8"))
+    return ledger.read_records(ledger.resolve_path(args.root, config))
+
+
+def _close_observed_issues(
+    args: argparse.Namespace,
+    config: cfg.ProjectConfig,
+    records: list[dict[str, object]],
+    done_label: str,
+) -> list[closeorder.ObservedIssue]:
+    """Observe each issue's lifecycle state for close-ordering reconciliation.
+
+    Offline (``--offline``): the ``--closed``/``--status-done`` switches apply to
+    every ``--issue`` so tests are deterministic with no transport. Live: each
+    issue's state and labels are read via ``gh``; a transport failure raises so
+    the operator sees the fetch error rather than a silently-empty observation.
+    """
+    observed: list[closeorder.ObservedIssue] = []
+    for number in args.issue:
+        record = closeorder.latest_record_for_issue(records, number)
+        if args.offline:
+            labels = (done_label,) if args.status_done else ()
+            observed.append(closeorder.ObservedIssue(
+                number=number, closed=args.closed, labels=labels, record=record,
+            ))
+            continue
+        owner_repo = _owner_repo(config)
+        issue = _gh_json(["repos", owner_repo, "issues", str(number)], cwd=args.root)
+        observed.append(closeorder.ObservedIssue(
+            number=number,
+            closed=issue.get("state") == "closed",
+            labels=tuple(_label_names(issue.get("labels"))),
+            record=record,
+        ))
+    return observed
+
+
+def _cmd_dryrun_verify(args: argparse.Namespace) -> int:
+    try:
+        config = cfg.load_config(args.path)
+    except FileNotFoundError:
+        print(f"no such config: {args.path}", file=sys.stderr)
+        return 1
+    except cfg.ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    try:
+        before = _dryrun_snapshot_from_json(args.before_json)
+    except (OSError, ValueError) as exc:
+        print(f"invalid before snapshot: {exc}", file=sys.stderr)
+        return 1
+    try:
+        after = _dryrun_after_snapshot(args, config)
+    except (OSError, ValueError, ledger.LedgerError) as exc:
+        print(f"invalid after snapshot: {exc}", file=sys.stderr)
+        return 1
+
+    report = dryrunverify.reconcile(before, after, run_id=args.run_id, issue=args.issue)
+    payload = {"schema_version": dryrunverify.SCHEMA_VERSION, "reconcile": report}
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"keel dryrun-verify — {report['verdict']}  run {args.run_id!r} issue #{args.issue}")
+        for finding in report["findings"]:
+            print(f"  LEAK  {finding['message']}")
+        if report["ok"]:
+            print("  dry run left no new ledger record, branch, or PR")
+    return 0 if report["ok"] else 1
+
+
+def _dryrun_snapshot_from_json(path: str) -> dryrunverify.ArtifactSnapshot:
+    """Parse an artifact snapshot from a JSON file ``{ledger_run_ids, branches, pr_numbers}``."""
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("snapshot must be a JSON object")
+    return dryrunverify.ArtifactSnapshot(
+        ledger_run_ids=tuple(str(rid) for rid in data.get("ledger_run_ids", ())),
+        branches=tuple(str(name) for name in data.get("branches", ())),
+        pr_numbers=tuple(int(num) for num in data.get("pr_numbers", ())),
+    )
+
+
+def _dryrun_after_snapshot(
+    args: argparse.Namespace,
+    config: cfg.ProjectConfig,
+) -> dryrunverify.ArtifactSnapshot:
+    """Gather the post-dry-run artifact snapshot.
+
+    Offline (``--after-json``): the snapshot is read straight from the fixture so
+    tests are deterministic. Live: ledger run_ids come from the configured ledger,
+    branches from ``git for-each-ref``, and PRs from ``gh pr list`` scoped to the
+    run's issue ship-branch pattern.
+
+    The after snapshot is read **fail-closed**: a corrupt ledger, a failed
+    ``git``/``gh`` read, all raise. An integrity detector that cannot observe the
+    after state must say "cannot certify", never silently report a clean diff —
+    an empty-on-error snapshot would mask a real leak (``after − before = ∅``).
+    """
+    if args.after_json is not None:
+        return _dryrun_snapshot_from_json(args.after_json)
+    records = ledger.read_records(ledger.resolve_path(args.root, config))
+    run_ids = tuple(
+        str(record["run_id"])
+        for record in records
+        if record.get("record_type") == ledger.RECORD_TYPE_SHIP_RUN
+        and isinstance(record.get("run_id"), str)
+    )
+    branches_result = git.list_branches(cwd=args.root)
+    if not branches_result.ok:
+        raise ValueError(
+            "after snapshot incomplete: git branch listing failed; cannot certify dry run"
+        )
+    branches = tuple(
+        line.strip() for line in branches_result.output.splitlines() if line.strip()
+    )
+    pattern = dryrunverify.issue_branch_pattern(args.issue)
+    pr_numbers = tuple(
+        number
+        for number, head in _dryrun_live_prs(args.root)
+        if pattern.search(head)
+    )
+    return dryrunverify.ArtifactSnapshot(
+        ledger_run_ids=run_ids, branches=branches, pr_numbers=pr_numbers,
+    )
+
+
+def _dryrun_live_prs(root: str) -> list[tuple[int, str]]:
+    """Return ``(number, headRefName)`` for the repo's PRs.
+
+    Fail-closed: a ``gh`` transport failure raises ``ValueError`` rather than
+    degrading to an empty list, so an unobservable PR set can never masquerade
+    as "no new PRs" and hide a leaked PR. Malformed entries are skipped (a
+    well-formed-but-empty list is a legitimate observation).
+    """
+    result = github.list_prs(cwd=root)
+    if not result.ok:
+        raise ValueError(
+            "after snapshot incomplete: gh PR listing failed; cannot certify dry run"
+        )
+    entries = json.loads(result.output or "[]")
+    pairs: list[tuple[int, str]] = []
+    for entry in entries if isinstance(entries, list) else ():
+        if not isinstance(entry, dict):
+            continue
+        number = entry.get("number")
+        head = entry.get("headRefName")
+        if isinstance(number, int) and isinstance(head, str):
+            pairs.append((number, head))
+    return pairs
+
+
+def _reconcile_inputs_active(args: argparse.Namespace) -> bool:
+    return bool(
+        getattr(args, "from_transport", False)
+        or getattr(args, "merged_prs_json", None)
+        or getattr(args, "verdict_count", None)
+        or getattr(args, "pr_reviews_json", None)
+    )
+
+
+def _capture_verify_merged_prs(
+    args: argparse.Namespace, config: cfg.ProjectConfig
+) -> tuple[list[int], dict[str, object]]:
+    """Resolve the authoritative merged-PR set for capture reconciliation.
+
+    Priority: an explicit transport fixture (``--merged-prs-json``), then a live
+    transport derivation (``--from-transport``), then the explicit ``--merged-pr``
+    override. ``--merged-pr`` always augments the derived set so an agent cannot
+    *shrink* the merged set by omitting PRs (the union is verified).
+    """
+    explicit = list(args.merged_pr or ())
+    fixture = getattr(args, "merged_prs_json", None)
+    if fixture is not None:
+        derived = _merged_prs_from_json(fixture)
+        merged = _dedupe_ints([*derived, *explicit])
+        return merged, {"source": "transport-fixture", "transport_failed": False}
+    if getattr(args, "from_transport", False):
+        derived, failed = _merged_prs_from_transport(args)
+        merged = _dedupe_ints([*derived, *explicit])
+        if not merged:
+            raise ValueError(
+                "no merged PRs derived from transport and none passed via --merged-pr"
+            )
+        return merged, {"source": "transport", "transport_failed": failed}
+    if not explicit:
+        raise ValueError("provide --merged-pr or --from-transport")
+    return _dedupe_ints(explicit), {"source": "args", "transport_failed": False}
+
+
+def _merged_prs_from_json(path: str) -> list[int]:
+    items = _read_json_list(path)
+    numbers: list[int] = []
+    for item in items:
+        number = item.get("number")
+        if isinstance(number, int) and number > 0:
+            numbers.append(number)
+    return numbers
+
+
+def _merged_prs_from_transport(args: argparse.Namespace) -> tuple[list[int], bool]:
+    search = getattr(args, "merged_since", None)
+    search_arg = f"merged:>={search}" if search else None
+    result = github.merged_prs(search=search_arg, cwd=args.root)
+    if not result.ok:
+        return [], True
+    try:
+        items = json.loads(result.output or "[]")
+    except json.JSONDecodeError:
+        return [], True
+    if not isinstance(items, list):
+        return [], True
+    numbers = [
+        item["number"]
+        for item in items
+        if isinstance(item, dict) and isinstance(item.get("number"), int)
+    ]
+    return numbers, False
+
+
+def _capture_verify_verdict_counts(
+    args: argparse.Namespace, config: cfg.ProjectConfig, merged_prs: list[int]
+) -> dict[int, int]:
+    """Evidence-side review-verdict counts per PR for the reviewer cross-check.
+
+    Offline: ``--verdict-count PR=N`` fixtures. Live: counts are read from the
+    transport per PR via the shared evidence counter; a fetch failure simply
+    omits that PR (the cross-check degrades to advisory rather than failing).
+    """
+    explicit = dict(getattr(args, "verdict_count", None) or ())
+    if explicit:
+        return explicit
+    if not getattr(args, "from_transport", False):
+        return {}
+    try:
+        owner_repo = _owner_repo(config)
+    except ValueError:
+        # No owner/repo configured: the reviewer cross-check degrades to advisory.
+        return {}
+    counts: dict[int, int] = {}
+    for pr in merged_prs:
+        try:
+            pr_comments = _gh_json_list(
+                ["repos", owner_repo, "issues", str(pr), "comments"], cwd=args.root
+            )
+            pr_reviews = _gh_json_list(
+                ["repos", owner_repo, "pulls", str(pr), "reviews"], cwd=args.root
+            )
+        except ValueError:
+            continue
+        counts[pr] = evidence.count_review_verdicts(
+            pr_comments, pr_reviews, enforced=False
+        )
+    return counts
 
 
 def _cmd_capture_reconcile(args: argparse.Namespace) -> int:
@@ -1361,6 +2077,7 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
         issue_comments=artifacts["issue_comments"],
         pr_reviews=artifacts["pr_reviews"],
         pr_body=artifacts["pr_body"],
+        pr_labels=artifacts["pr_labels"],
         head_sha=artifacts["head_sha"],
         ledger_record=ledger_record,
         dry_run=args.dry_run,
@@ -1667,6 +2384,8 @@ def _cmd_status(args: argparse.Namespace) -> int:
         config=config,
         checkpoint_record=checkpoint_record,
         ledger_records=ledger_records,
+        live_branches=list(args.live_branch),
+        live_pull_requests=list(args.live_pr),
     )
     payload = {
         "contract": status.status_contract_as_dict(config),
@@ -2024,6 +2743,14 @@ def _finish_merge(args: argparse.Namespace, payload: dict[str, object], reason: 
                 print("  gates-sha: bypassed (hotfix)")
             else:
                 print(f"  gates-sha: {'matched' if gates_sha.get('matched') else 'no-match'}")
+        justification = payload.get("hotfix_justification")
+        if isinstance(justification, dict):
+            detail = justification.get("rule_id") or justification.get("operator") or ""
+            print(f"  hotfix : {justification.get('kind')} {detail}".rstrip())
+        checkpoint_gate = payload.get("checkpoint_gate")
+        if isinstance(checkpoint_gate, dict):
+            detail = checkpoint_gate.get("operator") or checkpoint_gate.get("checkpoint_step") or ""
+            print(f"  checkpoint: {checkpoint_gate.get('status')} {detail}".rstrip())
     return code
 
 
@@ -2124,6 +2851,7 @@ def _verify_merge_evidence(
         issue_comments=artifacts["issue_comments"],
         pr_reviews=artifacts["pr_reviews"],
         pr_body=artifacts["pr_body"],
+        pr_labels=artifacts["pr_labels"],
         head_sha=artifacts["head_sha"],
         enforced=enforced,
     )
@@ -2367,6 +3095,16 @@ def _read_json_object(path: str) -> dict[str, object]:
     return value
 
 
+def _dedupe_ints(values: list[int]) -> list[int]:
+    seen: set[int] = set()
+    out: list[int] = []
+    for value in values:
+        if value not in seen:
+            seen.add(value)
+            out.append(value)
+    return out
+
+
 def _read_json_list(path: str, *, missing_ok: bool = False) -> list[dict[str, object]]:
     p = Path(path)
     if missing_ok and not p.exists():
@@ -2422,6 +3160,20 @@ def _step_caps_from_args(values: list[str]) -> dict[str, int]:
             raise ValueError("--step-cap must use SLOT=N with N > 0")
         caps[slot] = parsed
     return caps
+
+
+def _verdict_count_arg(value: str) -> tuple[int, int]:
+    if "=" not in value:
+        raise argparse.ArgumentTypeError("--verdict-count must use PR=N")
+    pr_raw, count_raw = value.split("=", 1)
+    try:
+        pr = int(pr_raw)
+        count = int(count_raw)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("--verdict-count must use PR=N with integers") from exc
+    if pr <= 0 or count < 0:
+        raise argparse.ArgumentTypeError("--verdict-count requires PR>0 and N>=0")
+    return pr, count
 
 
 def _gh_json(args: list[str], *, cwd: str) -> dict[str, object]:
@@ -3116,6 +3868,19 @@ def build_parser() -> argparse.ArgumentParser:
     p_release.add_argument("resource", help="resource name, e.g. merge")
     p_release.set_defaults(func=_cmd_release)
 
+    p_guard = sub.add_parser(
+        "guard", help="evaluate an issue against the deterministic blocker ruleset"
+    )
+    p_guard.add_argument("path", help="path to project.yaml")
+    p_guard.add_argument("--root", default=".", help="repo root for live gh issue fetch")
+    p_guard.add_argument("--issue", type=_positive_int, default=None,
+                         help="issue number to fetch title/labels live (offline: use the flags)")
+    p_guard.add_argument("--issue-title", default=None, help="issue title for offline evaluation")
+    p_guard.add_argument("--issue-labels", default=None,
+                         help="comma-separated issue labels for offline evaluation")
+    p_guard.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_guard.set_defaults(func=_cmd_guard)
+
     p_merge = sub.add_parser("merge", help="perform the fail-closed core-owned PR merge")
     p_merge.add_argument("path", help="path to project.yaml")
     p_merge.add_argument("--root", default=".", help="repo root for git/GitHub operations")
@@ -3126,7 +3891,19 @@ def build_parser() -> argparse.ArgumentParser:
                          help="GitHub merge method")
     p_merge.add_argument("--owner", default=None, help="resource claim owner id")
     p_merge.add_argument("--hotfix", action="store_true",
-                         help="bypass the merge window with explicit consent")
+                         help="bypass the merge window with a recorded justification")
+    p_merge.add_argument("--blocker-rule", default=None,
+                         help="keel guard rule id justifying a --hotfix bypass")
+    p_merge.add_argument("--operator-override", action="store_true",
+                         help="authorize a --hotfix bypass as a named operator (audited)")
+    p_merge.add_argument("--run-id", default=None,
+                         help="run id for the checkpoint gate (defaults to the gates-pass run id)")
+    p_merge.add_argument("--no-checkpoint-gate", action="store_true",
+                         help="bypass the checkpoint gate as a named operator (audited)")
+    p_merge.add_argument("--issue-title", default=None,
+                         help="issue title for offline blocker-rule validation")
+    p_merge.add_argument("--issue-labels", default=None,
+                         help="comma-separated issue labels for offline blocker-rule validation")
     p_merge.add_argument("--dry-run", action="store_true", help="verify only; do not merge")
     p_merge.add_argument("--approve-scope", action="append", default=[],
                          help="approve a consent scope for this merge")
@@ -3180,10 +3957,92 @@ def build_parser() -> argparse.ArgumentParser:
     p_capture.add_argument("path", help="path to project.yaml")
     p_capture.add_argument("--root", default=".",
                            help="repo root for resolving the ledger path")
-    p_capture.add_argument("--merged-pr", type=_positive_int, action="append", required=True,
-                           help="merged PR number expected to have a capture marker")
+    p_capture.add_argument("--merged-pr", type=_positive_int, action="append",
+                           help="merged PR number expected to have a capture marker "
+                                "(explicit override; always added to the derived set)")
+    p_capture.add_argument("--from-transport", action="store_true",
+                           help="derive the merged-PR set from the transport instead of "
+                                "trusting --merged-pr (also runs reconcile cross-checks)")
+    p_capture.add_argument("--merged-since", default=None,
+                           help="with --from-transport, only PRs merged on/after this date "
+                                "(YYYY-MM-DD)")
+    p_capture.add_argument("--merged-prs-json", default=None,
+                           help="offline transport fixture: JSON array of {\"number\": N}")
+    p_capture.add_argument("--pr-reviews-json", default=None,
+                           help="offline fixture path; presence activates reconcile checks")
+    p_capture.add_argument("--verdict-count", type=_verdict_count_arg, action="append",
+                           default=None, metavar="PR=N",
+                           help="evidence-side review-verdict count for a PR (offline fixture)")
     p_capture.add_argument("--json", action="store_true", help="emit structured JSON")
     p_capture.set_defaults(func=_cmd_capture_verify)
+
+    p_consent = sub.add_parser(
+        "consent-verify",
+        help="reconcile observed PR side effects against approved consent scopes",
+    )
+    p_consent.add_argument("path", help="path to project.yaml")
+    p_consent.add_argument("--root", default=".",
+                           help="repo root for live gh observation and the ledger path")
+    p_consent.add_argument("--pr", type=_positive_int, required=True,
+                           help="pull request number to reconcile")
+    p_consent.add_argument("--ledger-jsonl", default=None,
+                           help="offline run-ledger JSONL fixture; otherwise the configured "
+                                "ledger under --root is read for the consent record")
+    p_consent.add_argument("--offline", action="store_true",
+                           help="use only the supplied observed-effect flags; make no gh calls")
+    p_consent.add_argument("--pr-exists", action="store_true",
+                           help="offline: the PR exists (implies git push + gh pr create)")
+    p_consent.add_argument("--commented", action="store_true",
+                           help="offline: comments were posted on the PR")
+    p_consent.add_argument("--merged", action="store_true",
+                           help="offline: the PR was merged")
+    p_consent.add_argument("--labeled", action="store_true",
+                           help="offline: labels were written on the PR")
+    p_consent.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_consent.set_defaults(func=_cmd_consent_verify)
+
+    p_close = sub.add_parser(
+        "close-reconcile",
+        help="flag issues closed or status-done without a merge-attesting ledger record",
+    )
+    p_close.add_argument("path", help="path to project.yaml")
+    p_close.add_argument("--root", default=".",
+                         help="repo root for live gh observation and the ledger path")
+    p_close.add_argument("--issue", type=_positive_int, action="append", required=True,
+                         help="issue number to reconcile (repeat for several)")
+    p_close.add_argument("--ledger-jsonl", default=None,
+                         help="offline run-ledger JSONL fixture; otherwise the configured "
+                              "ledger under --root is read for the ship_run records")
+    p_close.add_argument("--offline", action="store_true",
+                         help="use only the supplied lifecycle flags; make no gh calls "
+                              "(test/back-compat; live mode reads host-authoritative state)")
+    p_close.add_argument("--closed", action="store_true",
+                         help="offline only: treat every --issue as closed (ignored when live)")
+    p_close.add_argument("--status-done", action="store_true",
+                         help="offline only: treat every --issue as carrying the done label "
+                              "(ignored when live)")
+    p_close.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_close.set_defaults(func=_cmd_close_reconcile)
+
+    p_dryrun = sub.add_parser(
+        "dryrun-verify",
+        help="assert a dry run left no new ledger record, branch, or PR (post-hoc)",
+    )
+    p_dryrun.add_argument("path", help="path to project.yaml")
+    p_dryrun.add_argument("--root", default=".",
+                          help="repo root for the ledger, git, and gh observation")
+    p_dryrun.add_argument("--run-id", required=True,
+                          help="the rehearsed dry-run id whose leaks to detect")
+    p_dryrun.add_argument("--issue", type=_positive_int, required=True,
+                          help="the issue the dry run rehearsed (scopes branch/PR attribution)")
+    p_dryrun.add_argument("--before-json", required=True,
+                          help="JSON snapshot {ledger_run_ids, branches, pr_numbers} "
+                               "captured before the dry run")
+    p_dryrun.add_argument("--after-json", default=None,
+                          help="offline after-snapshot JSON; otherwise gathered live "
+                               "from the ledger, git, and gh")
+    p_dryrun.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_dryrun.set_defaults(func=_cmd_dryrun_verify)
 
     p_reconcile = sub.add_parser(
         "capture-reconcile",
@@ -3469,6 +4328,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_status.add_argument("path", help="path to project.yaml")
     p_status.add_argument("--root", default=".",
                           help="repo root for resolving checkpoint and ledger paths")
+    p_status.add_argument("--live-branch", action="append", default=[],
+                          help="live branch name for orphan detection (repeatable)")
+    p_status.add_argument("--live-pr", action="append", type=_positive_int, default=[],
+                          help="live pull-request number for orphan detection (repeatable)")
     p_status.add_argument("--json", action="store_true", help="emit structured JSON")
     p_status.set_defaults(func=_cmd_status)
 
@@ -3898,6 +4761,9 @@ def _add_ship_parser(parser: argparse.ArgumentParser, *, command: str) -> None:
                         help="capture outcome to store in the run ledger record")
     parser.add_argument("--capture-reason", default=None,
                         help="capture outcome reason to store in the run ledger record")
+    parser.add_argument("--capture-artifact", default=None,
+                        help="durable capture artifact reference (path or content hash) "
+                             "proving an applied capture; required for clean reconcile")
     parser.add_argument("--implementer", default=None,
                         help="effective implementer codename or vendor/model label")
     parser.add_argument("--reviewer-agent", action="append", default=[],

@@ -1,0 +1,140 @@
+# keel project config — example-android (Android + Web)
+# Seeded from the frozen example-android@0297bb9 behaviour. Consumer holds this
+# file + project-only Lego; the keel core is installed (pinned), never copied.
+extends: keel
+core_version: "^1.0"
+owner: berkayturanci
+repo: example-android
+base_branch: develop
+platform: android-web
+timezone: Etc/GMT-3            # POSIX inverted sign for UTC+3
+merge_window: "07:00-01:30"   # night no-merge window is the complement
+
+knobs:
+  implementer_agents:
+    android: android-developer
+    web: web-developer
+  build_gate_cmd: "cd android && ./gradlew test --no-daemon 2>&1 | tail -30"
+  lint_cmd: "cd android && ./gradlew lint --no-daemon 2>&1 | tail -30"
+  tier3_globs:
+    - "android/example-android/src/main/**/object/db/**"   # Realm models
+    - "**/billing/**"
+    - "**/lifecycle/**"
+    - ".github/workflows/**"
+  ci_workflows:
+    "Android CI": "android/**"
+    "Web CI": "web/**"
+  docs_gate_paths: ["docs/**", "*.md"]
+  sot_doc: AGENTS.md
+
+gates: [build, lint, jury]
+
+extensions:
+  tester: []
+  pre-merge: []
+extensions_dir: .keel/extensions
+
+policy_pack:
+  name: example-android-web
+  labels:
+    status: ["status:backlog", "status:in-progress", "status:needs-review", "status:done"]
+    priority: ["priority:high", "priority:medium", "priority:low"]
+    role: ["android", "web"]
+  status_transitions:
+    start: "status:in-progress"
+    review: "status:needs-review"
+    done: "status:done"
+  risk_rules:
+    - id: local-data-migration
+      paths: ["android/example-android/src/main/**/object/db/**"]
+      required_gates: ["build", "lint", "migration-smoke"]
+      review_additions: ["Check upgrade safety for existing local data."]
+      docs_required: true
+    - id: payment-flow
+      paths: ["**/billing/**"]
+      required_gates: ["build", "lint", "payment-regression"]
+      review_additions: ["Check purchase, restore, and entitlement edge cases."]
+      docs_required: true
+  test_groups:
+    android-unit:
+      command: "cd android && ./gradlew test --no-daemon"
+      paths: ["android/**"]
+      reports: ["android/build/reports/tests/"]
+      required_capabilities: ["shell"]
+    web-validate:
+      command: "cd web && npm test"
+      paths: ["web/**"]
+      reports: ["web/coverage/"]
+      required_capabilities: ["shell"]
+  docs:
+    required_paths: ["docs/**", "AGENTS.md"]
+    allow_none_reasons: ["Test-only change with no operator-facing behavior change."]
+    impact_required: true
+  health_providers:
+    app-health:
+      kind: project-command
+      command: ".keel/health/app-summary"
+      optional_capabilities: ["shell"]
+  scan:
+    areas:
+      android: ["android/**"]
+      web: ["web/**"]
+      shared: ["shared/**"]
+      workflows: [".github/workflows/**"]
+    active_branch_patterns: ["feature/**", "fix/**", "chore/**"]
+    issue_labels:
+      regression: ["type:bug", "source:regression-scan"]
+      review-all-day: ["type:bug", "source:review-all-day"]
+    near_text_similarity: 0.6
+    batch_threshold: 5
+    large_diff_max_bytes: 200000
+  command_routing:
+    device-smoke:
+      agent_role: android
+      paths: ["android/**"]
+      required_capabilities: ["shell"]
+      side_effects: ["report_write"]
+      dry_run_safe: true
+  project_commands:
+    android-build:
+      command: ".keel/commands/android-build"
+      description: "Run the project's Android build, test, and lint playbook."
+      agent_role: android
+      paths: ["android/**"]
+      required_capabilities: ["shell"]
+      side_effects: ["report_write"]
+      dry_run_safe: true
+    web-check:
+      command: ".keel/commands/web-check"
+      description: "Run the project's web validation playbook."
+      agent_role: web
+      paths: ["web/**"]
+      required_capabilities: ["shell"]
+      side_effects: ["report_write"]
+      dry_run_safe: true
+    ui-test:
+      command: ".keel/commands/ui-test"
+      description: "Run the project's device or browser smoke-test checklist."
+      agent_role: android
+      paths: ["android/**"]
+      required_capabilities: ["shell", "adb"]
+      optional_capabilities: ["browser"]
+      side_effects: ["report_write"]
+      dry_run_safe: false
+    post-issue-1-regression:
+      command: ".keel/commands/post-issue-1-regression"
+      description: "Run a project-owned historical regression playbook."
+      agent_role: android
+      paths: ["android/**", "shared/**"]
+      required_capabilities: ["shell"]
+      optional_capabilities: ["firebase", "gh"]
+      side_effects: ["report_write", "comments"]
+      dry_run_safe: false
+  reports:
+    regression: "reports/regression/"
+    session: "reports/session/"
+    overnight: "reports/overnight/"
+    deferrals: "reports/deferrals.md"
+  review:
+    additions: ["Apply extra scrutiny to local data and payment-flow changes."]
+    required_sections: ["Testing", "Docs Impact"]

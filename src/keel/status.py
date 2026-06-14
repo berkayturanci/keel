@@ -43,12 +43,26 @@ def build_status_snapshot(
     config: cfg.ProjectConfig,
     checkpoint_record: dict[str, Any] | None,
     ledger_records: list[dict[str, Any]],
+    live_branches: list[str] | None = None,
+    live_pull_requests: list[int] | None = None,
 ) -> dict[str, Any]:
-    """Build a concise, consumer-neutral progress snapshot."""
+    """Build a concise, consumer-neutral progress snapshot.
+
+    ``live_branches``/``live_pull_requests`` are the git/transport-side live
+    references (supplied by the thin CLI layer). When present, orphans — live
+    branches/PRs with no covering checkpoint or ledger record — are flagged
+    advisorily (GAP-13, the git side of the missing-checkpoint hazard).
+    """
     history = _history(ledger_records)
     capture_health = ledger.capture_health_summary(ledger_records)
     current = _current(checkpoint_record)
     state = _state(checkpoint_record, history)
+    orphans = checkpoint.find_orphans(
+        live_branches=live_branches,
+        live_pull_requests=live_pull_requests,
+        checkpoint_record=checkpoint_record,
+        ledger_records=ledger_records,
+    )
     return {
         "schema_version": STATUS_SCHEMA_VERSION,
         "status": state,
@@ -60,6 +74,7 @@ def build_status_snapshot(
         "current": current,
         "history": history,
         "capture_health": capture_health,
+        "orphans": orphans,
         "next": _next_item(checkpoint_record),
     }
 
@@ -82,6 +97,13 @@ def render_status(snapshot: dict[str, Any]) -> str:
     capture_health = snapshot["capture_health"]
     lines.append(f"  capture       : {capture_health['status']}")
     lines.append(f"  capture gaps  : {capture_health['counts']['needs_reconcile']}")
+    orphans = snapshot["orphans"]
+    lines.append(f"  orphans       : {orphans['orphan_count']}")
+    if orphans["branches"]:
+        lines.append(f"  orphan branch : {', '.join(orphans['branches'])}")
+    if orphans["pull_requests"]:
+        joined = ", ".join(f"#{pr}" for pr in orphans["pull_requests"])
+        lines.append(f"  orphan pr     : {joined}")
     lines.append(f"  next          : {snapshot['next']['issue'] or '-'}")
     return "\n".join(lines)
 

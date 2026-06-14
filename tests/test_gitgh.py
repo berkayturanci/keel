@@ -140,12 +140,75 @@ class TestGitHub(unittest.TestCase):
             ],
         )
 
+    def test_merged_prs_argv_default(self):
+        rec = _Recorder(out="[]")
+        result = github.merged_prs(_run=rec)
+        self.assertTrue(result.ok)
+        self.assertEqual(
+            rec.calls[0],
+            ["gh", "pr", "list", "--state", "merged", "--limit", "100", "--json", "number"],
+        )
+
+    def test_merged_prs_argv_with_search_and_limit(self):
+        rec = _Recorder(out="[]")
+        github.merged_prs(search="merged:>=2026-06-01", limit=5, _run=rec)
+        self.assertEqual(
+            rec.calls[0],
+            ["gh", "pr", "list", "--state", "merged", "--limit", "5", "--json", "number",
+             "--search", "merged:>=2026-06-01"],
+        )
+
     def test_comment_and_close(self):
         rec = _Recorder()
         github.comment(7, "hi", _run=rec)
         github.close_issue(42, _run=rec)
         self.assertEqual(rec.calls[0], ["gh", "pr", "comment", "7", "--body", "hi"])
         self.assertEqual(rec.calls[1], ["gh", "issue", "close", "42"])
+
+    def test_issue_facts(self):
+        rec = _Recorder()
+        github.issue_facts(42, _run=rec)
+        self.assertEqual(
+            rec.calls[0],
+            ["gh", "issue", "view", "42", "--json", "title,labels"],
+        )
+
+    def test_list_prs_argv_default(self):
+        rec = _Recorder(out="[]")
+        github.list_prs(_run=rec)
+        self.assertEqual(
+            rec.calls[0],
+            ["gh", "pr", "list", "--state", "all", "--limit", "100",
+             "--json", "number,headRefName"],
+        )
+
+    def test_list_prs_argv_with_head(self):
+        rec = _Recorder(out="[]")
+        github.list_prs(head="feature/issue-8", limit=5, _run=rec)
+        self.assertEqual(
+            rec.calls[0],
+            ["gh", "pr", "list", "--state", "all", "--limit", "5",
+             "--json", "number,headRefName", "--head", "feature/issue-8"],
+        )
+
+
+class TestListBranches(unittest.TestCase):
+    def test_list_branches_argv_and_raw_result(self):
+        rec = _Recorder(out="main\nfeature/issue-8\norigin/main\n\n")
+        result = git.list_branches(_run=rec)
+        self.assertEqual(
+            rec.calls[0],
+            ["git", "for-each-ref", "--format=%(refname:short)",
+             "refs/heads", "refs/remotes"],
+        )
+        # Returns the raw CommandResult (parsing is the caller's) so an error is
+        # distinguishable from an empty repo.
+        self.assertTrue(result.ok)
+        self.assertIn("feature/issue-8", result.output)
+
+    def test_list_branches_error_is_visible(self):
+        result = git.list_branches(_run=_Recorder(code=1))
+        self.assertFalse(result.ok)
 
 
 if __name__ == "__main__":

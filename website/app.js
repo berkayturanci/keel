@@ -46,15 +46,14 @@
   }
   wireSeg();
 
-  /* simple light/dark toggle button */
-  var themeToggle = document.getElementById("theme-toggle");
-  if (themeToggle) {
-    themeToggle.addEventListener("click", function () {
+  /* simple light/dark toggle — wires every .theme-toggle (titlebar + mobile FAB) */
+  document.querySelectorAll(".theme-toggle").forEach(function (btn) {
+    btn.addEventListener("click", function () {
       var next = root.getAttribute("data-theme") === "light" ? "dark" : "light";
       root.setAttribute("data-theme", next); store.set("theme", next);
       try { var tc = JSON.parse(localStorage.getItem("keel-colors-v2") || "null"); if (tc && window.__keelApplyColors) window.__keelApplyColors(tc, false); } catch (e) {}
     });
-  }
+  });
 
   /* ---- Scroll reveal ----------------------------------------------- */
   var reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;

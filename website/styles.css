@@ -233,6 +233,22 @@ body::after {
 :root[data-theme="light"] .theme-toggle .sun { display: block; }
 :root[data-theme="light"] .theme-toggle .moon { display: none; }
 
+/* mobile light/dark FAB — the titlebar toggle is reflowed off-screen <= 760px,
+   so a fixed, always-reachable toggle takes over there. Hidden on desktop. */
+.theme-fab { display: none; }
+@media (max-width: 760px) {
+  /* on mobile the titlebar reflows the toggle off-screen — the FAB takes over,
+     so hide the titlebar toggle there to avoid two controls. */
+  #theme-toggle { display: none; }
+  .theme-fab {
+    display: inline-flex; position: fixed; right: 14px; bottom: 14px; z-index: 60;
+    width: 46px; height: 46px; border-radius: 50%;
+    background: var(--surface-2); border: 1px solid var(--border);
+    box-shadow: var(--shadow-md);
+  }
+  .theme-fab svg { width: 20px; height: 20px; }
+}
+
 /* hamburger + mobile menu */
 .nav-burger { display: none; }
 .nav-burger .ic-close { display: none; }

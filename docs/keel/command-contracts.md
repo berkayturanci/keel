@@ -114,6 +114,43 @@ always gates; repeated retry, conflicting sources, and large diffs gate; low-ris
 be sampled by a deterministic bucket; and the risk/trust matrix is based on risk tier plus
 trust signal, not model confidence alone. Unknown risk or trust values fail closed.
 
+## Consent-boundary reconciliation (audit GAP-12)
+
+The `operator_consent` block gates the command *contract* an agent renders before a live
+run — it does not gate the side effects themselves. Every real mutation (git push, `gh pr
+create`/`comment`/`merge`, label writes) is executed by the agent directly and never passes
+a consent check, and the consent `status`/`scopes` recorded on the ledger are whatever the
+agent passed. `keel consent-verify <project.yaml> --pr <N>` is the deterministic post-hoc
+reconcile that closes this gap: it checks the side effects actually **observed** on a PR
+against the scopes that were **approved** in the ledger's consent record.
+
+The reconcile is pure (`keel.consentverify.reconcile`). Each observed effect maps to its
+required consent scopes through `keel.consent.side_effect_scopes` — the same canonical scope
+vocabulary as `operator_consent`, not a parallel one:
+
+| observed effect | required scopes |
+|---|---|
+| `pr_exists` (the PR exists → branch push + `gh pr create`) | `git`, `github` |
+| `comment` (a comment was posted) | `github` |
+| `merged` (the PR was merged) | `github` |
+| `label` (labels were written) | `github` |
+
+Any observed mutation whose required scope is not in the ledger's approved scopes is flagged
+as `mutation <kind> not covered by approved consent scopes`. The verdict is fail-closed only
+on a real breach:
+
+- **advisory** (exit 0) — no consent record exists for the PR (`run_context.consent.status`
+  is blank): a pre-consent or agent-self-reported PR, nothing to reconcile against, so
+  back-compat is preserved;
+- **pass** (exit 0) — a consent record exists and every observed mutation is covered;
+- **fail** (exit non-zero) — a consent record exists but an observed mutation exceeds it.
+
+The approved scopes come from `run_context.consent.scopes` on the latest ship-run record.
+The CLI observes PR state, comments, merged, and labels through `gh` (fail-soft); offline
+fixtures (`--offline` with the observed-effect flags, `--ledger-jsonl`) drive the same pure
+path. A live `gh`/`git` proxy that gates side effects as they happen is a separate,
+heavier follow-up and is out of scope.
+
 ## Core-owned merge execution
 
 Ship-style adapters must route s10 through `keel merge`; raw `gh pr merge` calls bypass
@@ -127,12 +164,44 @@ one fail-closed path:
 5. require a SHA-stamped gates-pass: a `ship_run` ledger record for the PR whose
    `git.head_sha` equals the PR's current head and whose gates passed, so a stale green
    run from an older head cannot authorize merging a newer head;
-6. call GitHub's merge operation only when every prior gate passes.
+6. require a **covering checkpoint** for the run at the merge step `s10`, so a run that
+   never recorded state cannot cold-merge (audit GAP-13);
+7. call GitHub's merge operation only when every prior gate passes.
 
 `--hotfix` bypasses both the merge window (step 2) and the gates-SHA requirement (step 5),
 recording the bypass (`gates_sha.bypassed`, `reason: hotfix`). The gates-match decision is a
 pure function (`ledger.gates_pass_for_head`); the command supplies the live head SHA and the
 ledger records.
+
+The checkpoint gate (step 6) is **enforced only when checkpointing is configured**
+(`policy_pack.reports.checkpoint`); when absent it degrades to advisory and the merge
+proceeds, preserving back-compat for flows that do not checkpoint. When enforced, the
+decision is a pure function (`checkpoint.covering_checkpoint`) over the run-id (the gates-SHA
+`run_id`, or `--run-id`) and the read checkpoint: a checkpoint for this run that reached
+`s10` is `covered`; no/other-run checkpoint is `missing`; an under-`s10` checkpoint is
+`stale-step`. `--no-checkpoint-gate` is the audited escape (requires a named `--operator`,
+mirroring `--operator-override`) and records the bypass in `checkpoint_gate`.
+
+A `--hotfix` bypass is **refused without a recorded justification** (audit GAP-11): the
+night-window bypass is no longer reachable on the flag alone. The command requires exactly
+one of (a) `--blocker-rule <id>` naming a `keel guard` rule that actually fires for the
+issue (re-evaluated against the issue's title/labels), or (b) `--operator-override` with a
+named `--operator`. The chosen justification is written to `hotfix_justification`
+(`kind: matched-rule | operator-override`, plus `rule_id`/`matched` or `operator`) and
+surfaced in the ledger, so every bypass carries machine-checkable evidence.
+
+## Deterministic blocker ruleset
+
+`keel guard` evaluates an issue against the configured blocker ruleset and returns the
+matched rule ids. The matching is a pure function of the issue's title, its labels, and the
+resolved rules (`guard.evaluate`); the command gathers the live issue facts (a fail-soft
+`gh issue view`, or offline flags) and reads the rules. Rules resolve from
+`policy_pack.blocker_rules` when present and fall back to built-in defaults when absent —
+projects without any blocker config keep working unchanged. Each rule is a `label` match
+(case-insensitive) or a `title-regex` match; the built-in defaults cover `\bhotfix\b`,
+`\bsecurity\b`, `\bblocker\b` titles and the `blocker`/`hotfix`/`security` labels. This is
+the rule layer that `keel merge --hotfix --blocker-rule <id>` validates against, so a
+claimed blocker must actually match a rule before it can unlock the night-window bypass.
 
 `keel claim` and `keel release` expose the same resource primitive for adapters that need
 explicit orchestration, while `keel worktree-remove` owns the destructive cleanup guard:
@@ -214,6 +283,17 @@ learn and where the learning goes through `policy_pack.capture` plus a `capture`
 reads the configured run ledger and returns `complete` only when every expected merged PR
 has exactly one valid marker. Missing, invalid, or duplicate markers make verification
 `incomplete` and exit non-zero.
+
+To harden the accounting against an agent dropping a merged PR from the args (GAP-8),
+`--from-transport` derives the authoritative merged set from the host instead of trusting
+`--merged-pr` (which still works and is added to the derived set). When the set is derived —
+or any reconcile input is supplied — three additive cross-checks run over the same ledger:
+`missing-marker` (a merged PR with no valid marker), `applied-without-artifact` (an `applied`
+capture with no durable artifact reference, recorded via `keel ship --capture-artifact`), and
+`reviewer-count-mismatch` (ledger `actors.reviewers` count exceeds the evidence-side
+review-verdict count). The transport query and per-PR verdict fetch are fail-soft; offline runs
+use `--merged-prs-json` and `--verdict-count PR=N` fixtures. Any finding exits non-zero in
+addition to the base marker semantics.
 
 `keel capture-reconcile <project.yaml> --root <repo> --merged-pr <N>` reads the same
 ledger and returns a dry-run-safe recovery plan for merged PRs whose capture bookkeeping is
@@ -456,6 +536,14 @@ The block records:
   verdict must carry `vendor:` provenance and no two may share a vendor; a missing or
   duplicate vendor yields a blocking `review-vendor-distinctness` finding. The check is
   jury-agnostic — it reads only the verdict provenance fields and imports no review vendor.
+- **Attribution label** (default on when the gate is enforced): the PR must carry at least
+  one mandatory `agent:<vendor>` attribution label (the labels keel computes for the
+  effective implementer). A missing label, or — when a `ship_run` ledger record exists — a
+  label vendor that contradicts the record's implementer vendor (`actors.implementer`),
+  yields a blocking `attribution-label` finding. With no ledger record only the presence
+  check runs; when PR labels are unavailable the check is skipped (back-compat), and it is
+  suppressed under `--dry-run`. This keeps cross-vendor morning/wrap stats honest by
+  confirming the attribution labels were actually applied and match the ledger implementer.
 
 `keel evidence-verify <project.yaml> --pr <N>` reads those public artifacts through `gh`,
 derives the current PR tier from the live changed-file list, binds verdict evidence to the
@@ -527,6 +615,10 @@ The snapshot includes:
   `wrap`; `needs-reconcile` means at least one marker is missing or a deferred capture can
   be reconciled
 - `next`: the next queued issue when the checkpoint queue names one
+- `orphans`: live branches/PRs covered by neither the checkpoint nor any ledger record
+  (audit GAP-13, advisory). Adapters pass live references with `--live-branch`/`--live-pr`;
+  the decision is pure (`checkpoint.find_orphans`). An orphan is the git/transport-side of
+  the missing-checkpoint hazard — a PR or branch keel has no covering state for.
 
 Human-readable output is ordered by actionability: current issue/step/wait reason first,
 then PR/branch, shipped/blocked/deferred/skipped counts, capture health, and next item.

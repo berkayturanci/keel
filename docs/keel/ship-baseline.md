@@ -47,7 +47,7 @@ reintroduced as project-specific prose in the packaged command body.
 | Legacy baseline behavior | Classification | Keel representation |
 |---|---|---|
 | Runtime chooses between the GitHub CLI and an API/MCP-style fallback, with known raw-log gaps called out. | Runtime / transport | `github_transport.resolve`, runtime capability reporting, and `/keel:ship` transport instructions. |
-| Operator consent is checked before live mutations, and delegated agents receive only the approved mutation scope. | Core invariant / adapter instruction | `keel plan --live --json`, `operator_consent`, and the delegated-agent scope paragraph in `/keel:ship`. |
+| Operator consent is checked before live mutations, and delegated agents receive only the approved mutation scope. | Core invariant / adapter instruction | `keel plan --live --json`, `operator_consent`, the delegated-agent scope paragraph in `/keel:ship`, and post-hoc `keel consent-verify` reconciling observed PR side effects against the approved scopes (audit GAP-12). |
 | Issue selection is snapshotted; closed or unreadable issues are dropped or blocked before work begins. | Adapter instruction | `/keel:ship` s1 selection rules. |
 | Work happens in an isolated worktree and every branch is cut from the project base branch. | Core invariant / adapter instruction | `/keel:ship` s2 plus worktree path validation in s10. |
 | The orchestrator checks branch scope after implementation instead of trusting a delegated agent's declared file list. | Core invariant | `/keel:ship` s4 branch-scope validation gate. |

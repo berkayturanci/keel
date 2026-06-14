@@ -6,6 +6,39 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-06-14
+
+### Added
+- **Adapter-compliance audit gaps closed.** A sweep of deterministic self-checks
+  and merge-gate hardening: `keel doctor` (environment + drift self-check, #339);
+  `keel review` (deterministic evidence-bundle orchestrator, #340);
+  `keel scope-verify` (declared files vs actual PR diff, #343);
+  `keel verify-branch` (branch-off-base + worktree isolation, #353);
+  verdict provenance + optional cross-vendor distinctness (#344);
+  capture-verify hardening — derived merged set, reviewer cross-check, required
+  artifact (#356); attribution labels verified against the ledger implementer
+  (#357); `keel guard` — deterministic blocker ruleset, hotfix needs
+  host-authoritative justification (#358); `keel consent-verify` (#360);
+  `keel close-reconcile` — flag closed/status-done without a merge decision
+  (#361); `keel dryrun-verify` — post-hoc dry-run integrity check (#362).
+- **`keel.flows` — canonical command-flow registry.** The ordered phases of all
+  16 keel commands, in core (like the ship `BACKBONE`), so consumers can render
+  or reason about any command's structure without re-deriving it (#369).
+
+### Changed
+- **`keel merge` is gated on a current-head gates-pass and a covering
+  checkpoint.** The s10 merge now requires a recorded gates-pass for the exact
+  head SHA (#342) and a current checkpoint at s10, plus status orphan detection
+  (#359).
+
+### Companion
+- **`keel-visual`** (new, optional, separately installable) — an animated 2D/3D
+  run visualizer that *renders* a keel run from its ledger/checkpoint (it never
+  drives one). Terminal `play` (flow + wave ribbon, `--loop`, live `--follow`),
+  parallel `dash` board, and web `render` (2D flow + 3D ribbon). Renders any of
+  the 16 command flows via `keel.flows`. Lives under `keel-visual/`; depends on
+  `keel-workflow >= 1.3.0`.
+
 ## [1.2.3] — 2026-06-13
 
 ### Fixed

@@ -1,0 +1,112 @@
+name: Publish keel-visual to PyPI and GitHub Release
+
+# keel-visual is a separate distribution from the core (keel-workflow). It has its
+# own release tag namespace (keel-visual-v*) so it never collides with core's v*
+# releases, and its own trusted-publisher config on PyPI. Release a matching core
+# (>= 1.3.0) before publishing keel-visual.
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "keel-visual-v*"
+
+# Least-privilege default for the whole workflow; the job below elevates only the
+# scopes it needs (OpenSSF Scorecard TokenPermissions).
+permissions:
+  contents: read
+
+jobs:
+  build-n-publish:
+    name: Build, Publish, and Release keel-visual
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write       # PyPI trusted publishing (OIDC) + provenance attestation
+      contents: write       # create the GitHub Release and upload assets
+      attestations: write   # build-provenance attestations
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.13"
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install \
+            --only-binary=:all: \
+            --require-hashes \
+            -r .github/requirements/publish-visual-tools.txt
+
+      # Build the keel-visual package (in keel-visual/) into a top-level dist/.
+      # --no-isolation uses the hash-locked hatchling installed above; the
+      # force-include in keel-visual/pyproject.toml ships the HTML template.
+      - name: Build keel-visual distributions
+        run: python -m build --no-isolation --sdist --wheel --outdir dist/ keel-visual
+
+      - name: Verify the template shipped in the wheel
+        run: |
+          python - <<'PY'
+          import glob, zipfile, sys
+          whl = glob.glob("dist/*.whl")[0]
+          names = zipfile.ZipFile(whl).namelist()
+          assert "keel_visual/templates/runviz.html" in names, "template missing from wheel"
+          print("template present in", whl)
+          PY
+
+      # CycloneDX SBOM for the built package. Written to release/ (NOT dist/) so the
+      # PyPI upload sees only the wheel + sdist.
+      - name: Generate CycloneDX SBOM
+        run: |
+          python -m pip install --no-deps dist/*.whl
+          mkdir -p release
+          cyclonedx-py environment --output-format JSON --output-file release/sbom.cdx.json
+
+      # A single SHA256SUMS over every release artifact (kept out of dist/ for the
+      # same reason as the SBOM).
+      - name: Generate checksums
+        run: |
+          cp dist/*.whl dist/*.tar.gz release/
+          cd release
+          sha256sum *.whl *.tar.gz sbom.cdx.json > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32  # v4.1.0
+        with:
+          subject-path: "dist/*.whl, dist/*.tar.gz"
+
+      # TestPyPI trusted publishing (OIDC, no token). Manual dispatch is the
+      # rehearsal path; configure a TestPyPI trusted publisher for this repo +
+      # workflow (publish-visual.yml) before use.
+      - name: Publish keel-visual to TestPyPI
+        if: github.event_name == 'workflow_dispatch'
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # v1.14.0
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
+
+      # PyPI trusted publishing (OIDC, no token). Requires a one-time trusted-
+      # publisher config on PyPI for the keel-visual project: this repo, workflow
+      # publish-visual.yml. A failed publish fails the release loudly.
+      - name: Publish keel-visual to PyPI
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/keel-visual-v')
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # v1.14.0
+        with:
+          skip-existing: true
+
+      - name: Create GitHub Release and Upload Packages
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/keel-visual-v')
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda  # v3.0.0
+        with:
+          files: |
+            release/*.whl
+            release/*.tar.gz
+            release/sbom.cdx.json
+            release/SHA256SUMS
+          name: ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

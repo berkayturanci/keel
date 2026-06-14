@@ -242,6 +242,7 @@ back to packaged command prose.
 | `labels` | map group→string[] | | label vocabularies such as status, priority, role, type, or command-specific groups |
 | `status_transitions` | map transition→label | | lifecycle transition targets |
 | `risk_rules` | object[] | | high-risk path rules with extra gate, review, or docs expectations |
+| `blocker_rules` | object[] | | deterministic blocker ruleset for `keel guard` / `keel merge --hotfix` (absent → built-in defaults) |
 | `test_groups` | map name→object | | named test/audit commands, path selectors, reports, and capability needs |
 | `docs` | object | | docs gate policy and allowed no-docs reasons |
 | `health_providers` | map name→object | | project-owned operational signal providers for reporting commands |
@@ -362,6 +363,38 @@ Array of high-risk policy rules. Each entry requires:
 | `docs_required` | boolean | | whether matching changes must update docs |
 
 Use `risk_rules` for project-owned elevated scrutiny beyond generic `tier3_globs`.
+
+### `policy_pack.blocker_rules`
+
+The deterministic blocker ruleset consumed by [`keel guard`](cli.md) and validated by
+`keel merge --hotfix --blocker-rule <id>`. Blocker promotion is what unlocks the
+night-window bypass at s10, so it is a verifiable function of the issue's title and labels
+rather than agent judgment (audit GAP-11). Each entry requires:
+
+| field | type | required | used for |
+|---|---|---|---|
+| `id` | string | ✅ | stable rule id reported by `keel guard` and passed to `keel merge --blocker-rule` |
+| `kind` | `label` \| `title-regex` | ✅ | how the rule matches the issue |
+| `labels` | string[] | for `label` | label names that fire the rule (case-insensitive exact match) |
+| `pattern` | string | for `title-regex` | regex matched against the issue title (case-insensitive) |
+
+When `blocker_rules` is **absent or empty**, the built-in defaults apply (back-compatible):
+`blocker-label`, `hotfix-label`, `security-label` (labels `blocker`/`hotfix`/`security`) and
+`blocker-title-regex` (`\b(?:hotfix|security|blocker)\b`). A malformed configured rule
+(missing `id`/`kind`, duplicate id, empty `labels`, or an invalid `pattern`) is rejected
+fail-closed so a typo can't silently widen or narrow the bypass surface.
+
+```yaml
+policy_pack:
+  name: my-project
+  blocker_rules:
+    - id: p0-label
+      kind: label
+      labels: ["P0", "incident"]
+    - id: urgent-title
+      kind: title-regex
+      pattern: '\b(?:hotfix|outage|sev1)\b'
+```
 
 ### `policy_pack.test_groups`
 

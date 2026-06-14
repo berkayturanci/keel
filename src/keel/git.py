@@ -34,6 +34,21 @@ def current_branch(*, cwd: str | None = None, _run=None) -> str | None:
     return result.output.strip() if result.ok else None
 
 
+def list_branches(*, cwd: str | None = None, _run=None) -> CommandResult:
+    """List local + remote branch short names (one per line) as a ``CommandResult``.
+
+    Returns the raw result (like :func:`worktree_list`) rather than a parsed
+    fail-soft list, so a caller that needs to *distinguish a git error from an
+    empty repo* — e.g. dry-run integrity verification, which must fail closed
+    when it cannot observe — can inspect ``result.ok``. Parsing is the caller's.
+    """
+    return run_argv(
+        ["git", "for-each-ref", "--format=%(refname:short)",
+         "refs/heads", "refs/remotes"],
+        cwd=cwd, **_kw(_run),
+    )
+
+
 def rev_parse(ref: str, *, cwd: str | None = None, _run=None) -> str | None:
     """Resolve ``ref`` to a full commit SHA; ``None`` when it cannot be resolved."""
     result = run_argv(["git", "rev-parse", "--verify", "--quiet", ref], cwd=cwd, **_kw(_run))

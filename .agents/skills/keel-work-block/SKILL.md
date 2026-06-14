@@ -106,4 +106,4 @@ must include the fixed queue snapshot and these buckets:
 
 Also include open questions, consent gaps, and the next 1–3 operator actions.
 
-<!-- keel-generated: surface=skills command=work-block keel_version=1.2.3 source_sha256=0698f77f77539c09880a4299aada98027d29f98c63b5e6f05a45ba071a8c4d94 generated_sha256=f58e09065ab95b6ddb16ea12f76ba7c1d4bd4e267c9cb037b004e2fe22f06eea -->
+<!-- keel-generated: surface=skills command=work-block keel_version=1.3.0 source_sha256=0698f77f77539c09880a4299aada98027d29f98c63b5e6f05a45ba071a8c4d94 generated_sha256=f58e09065ab95b6ddb16ea12f76ba7c1d4bd4e267c9cb037b004e2fe22f06eea -->

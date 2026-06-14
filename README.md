@@ -107,7 +107,7 @@ keel is a Python (≥3.11) package with one runtime dependency (PyYAML):
 
 ```bash
 pip install keel-workflow                                     # from PyPI (provides the `keel` command)
-pip install "git+https://github.com/berkayturanci/keel@v1.2.3"  # or pin an existing git tag
+pip install "git+https://github.com/berkayturanci/keel@v1.3.0"  # or pin an existing git tag
 ```
 
 In a cloud agent session, install it from a `SessionStart` hook (or add keel to the
@@ -236,6 +236,16 @@ The pure core (`config`, `model`, `extensions`, `findings`, `gates`, `orchestrat
 `cli`) is held at **100% line + branch coverage**; the coverage gate (`fail_under = 100`)
 runs in CI.
 
+## Companion: keel-visual
+
+[`keel-visual/`](keel-visual/README.md) is an **optional, separately installable**
+animated run visualizer. It *renders* a keel run from the ledger/checkpoint it
+already writes — it never drives one. Terminal `play` (flow + wave ribbon,
+`--loop`, live `--follow`), a parallel `dash` board, and a web `render` (2D flow
++ 3D ribbon), for any of the 16 command flows. Depends on this core
+(`keel-workflow >= 1.3.0`); the core never depends on it. See
+[`keel-visual/README.md`](keel-visual/README.md).
+
 ## Repo layout
 
 ```
@@ -244,6 +254,7 @@ src/keel/schema/     project.schema.json (bundled)
 .keel/project.yaml   keel's own dogfood consumer config
 projects/*.yaml      example configs and the keel seed copy
 src/keel/adapters/   the packaged /keel:<command> bodies (install-adapter: claude commands + shared skills)
+keel-visual/         optional companion: animated 2D/3D run visualizer (separate package)
 website/             static site + coverage report (make site)
 tests/               unit suite
 docs/                docs + proposals

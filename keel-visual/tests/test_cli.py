@@ -1,0 +1,525 @@
+"""Tests for the keel-visual CLI (I/O thin layer)."""
+
+import io
+import unittest
+from argparse import Namespace
+from pathlib import Path
+
+from keel_visual import cli
+
+FIX = Path(__file__).resolve().parent / "fixtures"
+PROJECT = str(FIX / "project.yaml")
+SAMPLE = str(FIX / "sample-run.jsonl")
+
+
+def _args(**kw):
+    base = dict(
+        path=PROJECT, root=str(FIX), pr=361, ledger_jsonl=SAMPLE,
+        checkpoint_step=None, command="ship", out=None,
+        style="flow", fps=2, step=None, once=False, no_clear=True, color="never",
+        loop=False, follow=False, interval=1.0,
+    )
+    base.update(kw)
+    return Namespace(**base)
+
+
+class TestTemplate(unittest.TestCase):
+    def test_load_template_has_placeholders(self):
+        tmpl = cli.load_template()
+        self.assertIn("__KEEL_RUN__", tmpl)
+        self.assertIn("__TITLE__", tmpl)
+
+
+class TestResolveRecord(unittest.TestCase):
+    def test_fixture_by_pr(self):
+        from keel import config as cfg
+        rec = cli._resolve_record(_args(), cfg.load_config(PROJECT))
+        self.assertEqual(rec["pull_request"]["number"], 361)
+
+    def test_fixture_latest_when_no_pr(self):
+        from keel import config as cfg
+        rec = cli._resolve_record(_args(pr=None), cfg.load_config(PROJECT))
+        self.assertEqual(rec["record_type"], "ship_run")
+
+    def test_pr_no_match_returns_none(self):
+        from keel import config as cfg
+        self.assertIsNone(cli._resolve_record(_args(pr=999), cfg.load_config(PROJECT)))
+
+    def test_live_empty_root_returns_none(self, ):
+        import tempfile
+
+        from keel import config as cfg
+        with tempfile.TemporaryDirectory() as d:
+            rec = cli._resolve_record(_args(ledger_jsonl=None, root=d, pr=None),
+                                      cfg.load_config(PROJECT))
+        self.assertIsNone(rec)
+
+
+class TestRender(unittest.TestCase):
+    def test_render_writes_html(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d) / "run.html"
+            rc = cli.cmd_render(_args(out=str(out)))
+        self.assertEqual(rc, 0)
+
+    def test_render_writes_and_injects(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d) / "run.html"
+            rc = cli.cmd_render(_args(out=str(out)))
+            html = out.read_text(encoding="utf-8")
+        self.assertEqual(rc, 0)
+        self.assertIn("window.KEEL_RUN =", html)
+        self.assertIn('"pr": 361', html)
+
+    def test_render_missing_config(self):
+        self.assertEqual(cli.cmd_render(_args(path="no-such.yaml")), 1)
+
+    def test_render_invalid_ledger(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            bad = Path(d) / "bad.jsonl"
+            bad.write_text("{not json", encoding="utf-8")
+            rc = cli.cmd_render(_args(ledger_jsonl=str(bad), out=str(Path(d) / "o.html")))
+        self.assertEqual(rc, 1)
+
+    def test_render_invalid_config(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            bad = Path(d) / "p.yaml"
+            bad.write_text("extends: keel\nbase_branch: main\ngates: [build]\n", encoding="utf-8")
+            rc = cli.cmd_render(_args(path=str(bad)))
+        self.assertEqual(rc, 1)
+
+
+class TestPlay(unittest.TestCase):
+    def test_play_single_step(self):
+        out = io.StringIO()
+        rc = cli.cmd_play(_args(step=8), sleep=lambda s: None, out=out)
+        self.assertEqual(rc, 0)
+        self.assertIn("s8 · test", out.getvalue())
+
+    def test_play_once(self):
+        out = io.StringIO()
+        rc = cli.cmd_play(_args(once=True, pr=361), sleep=lambda s: None, out=out)
+        self.assertEqual(rc, 0)
+        self.assertIn("s12 · close", out.getvalue())
+
+    def test_play_full_animation_calls_sleep(self):
+        out = io.StringIO()
+        calls = []
+        rc = cli.cmd_play(_args(command="overnight", no_clear=False),
+                          sleep=lambda s: calls.append(s), out=out)
+        self.assertEqual(rc, 0)
+        # overnight's flow is 5 phases -> 4 inter-frame sleeps, and clears between.
+        self.assertEqual(len(calls), 4)
+        self.assertIn("\x1b[2J", out.getvalue())
+
+    def test_play_color_always(self):
+        out = io.StringIO()
+        cli.cmd_play(_args(step=8, color="always"), sleep=lambda s: None, out=out)
+        self.assertIn("\x1b[38;5;", out.getvalue())
+
+    def test_play_color_auto_non_tty(self):
+        out = io.StringIO()
+        cli.cmd_play(_args(step=12, color="auto"), sleep=lambda s: None, out=out)
+        # io.StringIO is not a tty -> auto disables colour.
+        self.assertNotIn("\x1b[38;5;", out.getvalue())
+
+    def test_play_config_error(self):
+        rc = cli.cmd_play(_args(path="no-such.yaml"), sleep=lambda s: None, out=io.StringIO())
+        self.assertEqual(rc, 1)
+
+    def test_play_invalid_config_error(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            bad = Path(d) / "p.yaml"
+            bad.write_text("extends: keel\nbase_branch: main\ngates: [build]\n", encoding="utf-8")
+            rc = cli.cmd_play(_args(path=str(bad)), sleep=lambda s: None, out=io.StringIO())
+        self.assertEqual(rc, 1)
+
+    def test_play_ledger_error(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            bad = Path(d) / "bad.jsonl"
+            bad.write_text("{nope", encoding="utf-8")
+            rc = cli.cmd_play(_args(ledger_jsonl=str(bad)), sleep=lambda s: None, out=io.StringIO())
+        self.assertEqual(rc, 1)
+
+    def test_play_empty_run_uses_active_index(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            out = io.StringIO()
+            rc = cli.cmd_play(_args(ledger_jsonl=None, root=d, pr=None),
+                              sleep=lambda s: None, out=out)
+        self.assertEqual(rc, 0)
+        self.assertIn("s0 · config", out.getvalue())
+
+
+class _TTY(io.StringIO):
+    def isatty(self):
+        return True
+
+
+class TestCheckpointResolve(unittest.TestCase):
+    def _config(self):
+        from keel import config as cfg
+        return cfg.load_config(PROJECT)
+
+    def test_explicit_step_wins(self):
+        step, state = cli._resolve_checkpoint(_args(checkpoint_step="s5"), self._config())
+        self.assertEqual(step, "s5")
+        self.assertEqual(state, {})  # explicit step skips the file -> no live state
+
+    def test_missing_checkpoint_is_none(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            args = _args(root=d, checkpoint_step=None)
+            step, state = cli._resolve_checkpoint(args, self._config())
+        self.assertIsNone(step)
+        self.assertEqual(state, {})
+
+    def test_corrupt_checkpoint_is_none(self):
+        import tempfile
+
+        from keel import checkpoint
+        config = self._config()
+        with tempfile.TemporaryDirectory() as d:
+            cp = checkpoint.resolve_path(d, config)
+            cp.parent.mkdir(parents=True, exist_ok=True)
+            cp.write_text("{not json", encoding="utf-8")  # parse -> CheckpointError
+            step, state = cli._resolve_checkpoint(_args(root=d, checkpoint_step=None), config)
+        self.assertIsNone(step)
+        self.assertEqual(state, {})
+
+    def test_unreadable_checkpoint_path_is_failsoft(self):
+        # A directory where the checkpoint file should be raises OSError, not
+        # CheckpointError — must still degrade to (None, {}), not crash.
+        import tempfile
+
+        from keel import checkpoint
+        config = self._config()
+        with tempfile.TemporaryDirectory() as d:
+            cp = checkpoint.resolve_path(d, config)
+            cp.mkdir(parents=True, exist_ok=True)  # path is a dir -> IsADirectoryError
+            step, state = cli._resolve_checkpoint(_args(root=d, checkpoint_step=None), config)
+        self.assertIsNone(step)
+        self.assertEqual(state, {})
+
+    def test_reads_step_and_state_from_checkpoint_file(self):
+        import tempfile
+
+        from keel import checkpoint
+        config = self._config()
+        record = checkpoint.build_checkpoint_record(
+            run_id="r1", command="ship", current_step="s10", base_branch="main",
+            merge_state="merged",
+        )
+        with tempfile.TemporaryDirectory() as d:
+            cp = checkpoint.resolve_path(d, config)
+            cp.parent.mkdir(parents=True, exist_ok=True)
+            cp.write_text(checkpoint.encode_checkpoint(record), encoding="utf-8")
+            step, state = cli._resolve_checkpoint(_args(root=d, checkpoint_step=None), config)
+        self.assertEqual(step, "s10")
+        self.assertEqual(state.get("merge"), "merged")
+
+
+class TestLoopAndFollow(unittest.TestCase):
+    def test_loop_replays_until_max_cycles(self):
+        out = io.StringIO()
+        rc = cli.cmd_play(_args(command="overnight", loop=True), sleep=lambda s: None,
+                          out=out, max_cycles=2)
+        self.assertEqual(rc, 0)
+        # the first-phase pointer renders once per cycle -> 2 cycles.
+        self.assertEqual(out.getvalue().count("config · config"), 2)
+
+    def test_loop_keyboard_interrupt_exits_clean(self):
+        out = io.StringIO()
+
+        def boom(_):
+            raise KeyboardInterrupt
+
+        rc = cli.cmd_play(_args(command="overnight", loop=True), sleep=boom, out=out,
+                          max_cycles=None)
+        self.assertEqual(rc, 0)
+        self.assertTrue(out.getvalue().endswith("\n"))
+
+    def test_follow_bounded_redraws_current_step(self):
+        out = io.StringIO()
+        calls = []
+        rc = cli.cmd_play(_args(follow=True, no_clear=False), sleep=lambda s: calls.append(s),
+                          out=out, max_cycles=3)
+        self.assertEqual(rc, 0)
+        # merged sample sits at s12; each tick clears + redraws that frame.
+        self.assertEqual(out.getvalue().count("s12 · close"), 3)
+        self.assertEqual(out.getvalue().count("\x1b[2J"), 3)
+        self.assertEqual(len(calls), 3)
+
+    def test_follow_unreadable_ledger_keeps_polling(self):
+        # An OSError on the per-tick ledger read (e.g. path is a dir) must be
+        # transient too — skip the tick, show waiting, don't crash.
+        import tempfile
+
+        from keel import ledger
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as d:
+            ledger.resolve_path(d, config=self._cfg()).mkdir(parents=True, exist_ok=True)
+            rc = cli.cmd_play(_args(follow=True, ledger_jsonl=None, root=d),
+                              sleep=lambda s: None, out=out, max_cycles=2)
+        self.assertEqual(rc, 0)
+        self.assertIn("waiting for run state", out.getvalue())
+
+    def _cfg(self):
+        from keel import config as cfg
+        return cfg.load_config(PROJECT)
+
+    def test_follow_fatal_config_error_returns_code(self):
+        rc = cli.cmd_play(_args(follow=True, path="no-such.yaml"),
+                          sleep=lambda s: None, out=io.StringIO(), max_cycles=2)
+        self.assertEqual(rc, 1)
+
+    def test_follow_transient_ledger_error_keeps_polling(self):
+        # A live run can leave a half-written ledger line; the follower must not
+        # die — it skips the tick and shows a waiting line until a good read.
+        import tempfile
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as d:
+            bad = Path(d) / "bad.jsonl"
+            bad.write_text("{half-written", encoding="utf-8")
+            rc = cli.cmd_play(_args(follow=True, ledger_jsonl=str(bad)),
+                              sleep=lambda s: None, out=out, max_cycles=2)
+        self.assertEqual(rc, 0)  # survived, did not exit on the bad read
+        self.assertIn("waiting for run state", out.getvalue())
+
+    def test_follow_keyboard_interrupt_exits_clean(self):
+        out = io.StringIO()
+
+        def boom(_):
+            raise KeyboardInterrupt
+
+        rc = cli.cmd_play(_args(follow=True), sleep=boom, out=out, max_cycles=None)
+        self.assertEqual(rc, 0)
+        self.assertTrue(out.getvalue().endswith("\n"))
+
+    def test_color_auto_on_tty_stream(self):
+        out = _TTY()
+        cli.cmd_play(_args(step=8, color="auto"), sleep=lambda s: None, out=out)
+        self.assertIn("\x1b[38;5;", out.getvalue())
+
+
+def _dash_args(**kw):
+    base = dict(path=PROJECT, root=".", interval=2.0, once=True, no_clear=True, color="never")
+    base.update(kw)
+    return Namespace(**base)
+
+
+def _write_checkpoint(wt, config, *, step, pr=None, issue=None, merge_state="not-started"):
+    from keel import checkpoint
+    rec = checkpoint.build_checkpoint_record(
+        run_id="r", command="ship", current_step=step, base_branch="main",
+        pull_request=pr, active_issue=issue, merge_state=merge_state,
+    )
+    cp = checkpoint.resolve_path(wt, config)
+    cp.parent.mkdir(parents=True, exist_ok=True)
+    cp.write_text(checkpoint.encode_checkpoint(rec), encoding="utf-8")
+
+
+class TestDash(unittest.TestCase):
+    def _config(self):
+        from keel import config as cfg
+        return cfg.load_config(PROJECT)
+
+    def _porcelain(self, *paths):
+        from keel.runner import CommandResult
+        text = "".join(f"worktree {p}\nHEAD abc\n\n" for p in paths)
+        return CommandResult(True, 0, text)
+
+    def test_lists_active_runs(self):
+        import tempfile
+        from unittest.mock import patch
+        config = self._config()
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
+            _write_checkpoint(a, config, step="s8", pr=361, merge_state="pending")
+            _write_checkpoint(b, config, step="s12", pr=360, merge_state="merged")
+            with patch("keel_visual.cli.git.worktree_list", return_value=self._porcelain(a, b)):
+                rc = cli.cmd_dash(_dash_args(), sleep=lambda s: None, out=out)
+        self.assertEqual(rc, 0)
+        text = out.getvalue()
+        self.assertIn("2 active runs", text)
+        self.assertIn("#361", text)
+        self.assertIn("#360", text)
+        self.assertIn("merged", text)
+
+    def test_skips_worktree_without_checkpoint(self):
+        import tempfile
+        from unittest.mock import patch
+        config = self._config()
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
+            _write_checkpoint(a, config, step="s4", pr=361)
+            with patch("keel_visual.cli.git.worktree_list", return_value=self._porcelain(a, b)):
+                cli.cmd_dash(_dash_args(), sleep=lambda s: None, out=out)
+        self.assertIn("1 active run", out.getvalue())
+
+    def test_worktree_list_failure_falls_back_to_root(self):
+        import tempfile
+        from unittest.mock import patch
+
+        from keel.runner import CommandResult
+        config = self._config()
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as d:
+            _write_checkpoint(d, config, step="s4", pr=361)
+            with patch("keel_visual.cli.git.worktree_list",
+                       return_value=CommandResult(False, 1, "not a git repo")):
+                cli.cmd_dash(_dash_args(root=d), sleep=lambda s: None, out=out)
+        self.assertIn("1 active run", out.getvalue())
+
+    def test_discover_finds_ledger_record(self):
+        import tempfile
+        from unittest.mock import patch
+        config = self._config()
+        with tempfile.TemporaryDirectory() as d:
+            _write_checkpoint(d, config, step="s12", pr=361, merge_state="merged")
+            led = ledger_path(d, config)
+            led.parent.mkdir(parents=True, exist_ok=True)
+            led.write_text(Path(SAMPLE).read_text(encoding="utf-8"), encoding="utf-8")
+            with patch("keel_visual.cli.git.worktree_list", return_value=self._porcelain(d)):
+                rows = cli._discover_runs(_dash_args(root=d), config)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["label"], "#361")
+
+    def test_latest_ship_record_by_pr(self):
+        import tempfile
+        config = self._config()
+        with tempfile.TemporaryDirectory() as d:
+            led = ledger_path(d, config)
+            led.parent.mkdir(parents=True, exist_ok=True)
+            led.write_text(Path(SAMPLE).read_text(encoding="utf-8"), encoding="utf-8")
+            rec = cli._latest_ship_record(d, config, 361)
+        self.assertEqual(rec["pull_request"]["number"], 361)
+
+    def test_discover_skips_unreadable_checkpoint(self):
+        # A worktree whose checkpoint path is a directory (OSError) must be
+        # skipped, not crash the whole board.
+        import tempfile
+        from unittest.mock import patch
+
+        from keel import checkpoint
+        config = self._config()
+        with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
+            _write_checkpoint(a, config, step="s4", pr=361)
+            checkpoint.resolve_path(b, config).mkdir(parents=True, exist_ok=True)
+            with patch("keel_visual.cli.git.worktree_list", return_value=self._porcelain(a, b)):
+                rows = cli._discover_runs(_dash_args(), config)
+        self.assertEqual(len(rows), 1)
+
+    def test_latest_ship_record_unreadable_ledger_is_none(self):
+        import tempfile
+
+        from keel import ledger
+        config = self._config()
+        with tempfile.TemporaryDirectory() as d:
+            ledger.resolve_path(d, config).mkdir(parents=True, exist_ok=True)  # OSError on read
+            self.assertIsNone(cli._latest_ship_record(d, config, 361))
+
+    def test_latest_ship_record_no_pr_is_none(self):
+        import tempfile
+        config = self._config()
+        with tempfile.TemporaryDirectory() as d:
+            led = ledger_path(d, config)
+            led.parent.mkdir(parents=True, exist_ok=True)
+            led.write_text(Path(SAMPLE).read_text(encoding="utf-8"), encoding="utf-8")
+            self.assertIsNone(cli._latest_ship_record(d, config, None))
+
+    def test_discover_bad_ledger_is_failsoft(self):
+        import tempfile
+        from unittest.mock import patch
+        config = self._config()
+        with tempfile.TemporaryDirectory() as d:
+            _write_checkpoint(d, config, step="s4", issue=351, merge_state="not-started")
+            led = ledger_path(d, config)
+            led.parent.mkdir(parents=True, exist_ok=True)
+            led.write_text("{bad json", encoding="utf-8")
+            with patch("keel_visual.cli.git.worktree_list", return_value=self._porcelain(d)):
+                rows = cli._discover_runs(_dash_args(root=d), config)
+        # no pr in checkpoint -> ledger not consulted by pr; bad ledger tolerated.
+        self.assertEqual(rows[0]["label"], "#351")
+
+    def test_dash_config_error(self):
+        rc = cli.cmd_dash(_dash_args(path="no-such.yaml"), sleep=lambda s: None, out=io.StringIO())
+        self.assertEqual(rc, 1)
+
+    def test_dash_loop_and_keyboard_interrupt(self):
+        from unittest.mock import patch
+
+        def boom(_):
+            raise KeyboardInterrupt
+        out = io.StringIO()
+        with patch("keel_visual.cli.git.worktree_list", return_value=self._porcelain()):
+            rc = cli.cmd_dash(_dash_args(once=False, no_clear=False), sleep=boom, out=out,
+                              max_cycles=None)
+        self.assertEqual(rc, 0)
+        self.assertTrue(out.getvalue().endswith("\n"))
+
+    def test_dash_bounded_refresh(self):
+        from unittest.mock import patch
+        out = io.StringIO()
+        calls = []
+        with patch("keel_visual.cli.git.worktree_list", return_value=self._porcelain()):
+            rc = cli.cmd_dash(_dash_args(once=False), sleep=lambda s: calls.append(s),
+                              out=out, max_cycles=3)
+        self.assertEqual(rc, 0)
+        self.assertEqual(out.getvalue().count("keel ·"), 3)
+        self.assertEqual(len(calls), 3)
+
+    def test_discover_skips_corrupt_checkpoint(self):
+        import tempfile
+        from unittest.mock import patch
+
+        from keel import checkpoint
+        config = self._config()
+        with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
+            _write_checkpoint(a, config, step="s4", pr=361)
+            cp = checkpoint.resolve_path(b, config)
+            cp.parent.mkdir(parents=True, exist_ok=True)
+            cp.write_text("{corrupt", encoding="utf-8")  # read -> CheckpointError -> skipped
+            with patch("keel_visual.cli.git.worktree_list", return_value=self._porcelain(a, b)):
+                rows = cli._discover_runs(_dash_args(), config)
+        self.assertEqual(len(rows), 1)
+
+    def test_main_dash(self):
+        from unittest.mock import patch
+        with patch("keel_visual.cli.git.worktree_list", return_value=self._porcelain()):
+            rc = cli.main(["dash", PROJECT, "--root", ".", "--once", "--color", "never"])
+        self.assertEqual(rc, 0)
+
+
+def ledger_path(root, config):
+    from keel import ledger
+    return ledger.resolve_path(root, config)
+
+
+class TestMain(unittest.TestCase):
+    def test_main_render(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d) / "r.html"
+            rc = cli.main([
+                "render", PROJECT, "--root", str(FIX),
+                "--ledger-jsonl", SAMPLE, "--pr", "361", "--out", str(out),
+            ])
+        self.assertEqual(rc, 0)
+
+    def test_main_play(self):
+        rc = cli.main([
+            "play", PROJECT, "--root", str(FIX),
+            "--ledger-jsonl", SAMPLE, "--pr", "361", "--step", "8", "--color", "never",
+        ])
+        self.assertEqual(rc, 0)
+
+
+if __name__ == "__main__":
+    unittest.main()
