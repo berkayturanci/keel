@@ -133,6 +133,12 @@ body { padding-top: 0; overflow: hidden; }
 .ov-badges a { display: block; transition: transform .15s; }
 .ov-badges a:hover { transform: translateY(-1px); }
 .ov-companion { margin: 1.1rem 0 0; max-width: 52ch; color: var(--muted); font-size: .92rem; line-height: 1.6; }
+.ov-visual { margin: 1.1rem 0 0; max-width: 60ch; }
+.ov-visual > a { display: block; }
+.ov-visual img { display: block; width: 100%; height: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); transition: border-color .15s; }
+.ov-visual > a:hover img { border-color: var(--accent-line); }
+.ov-visual figcaption { margin-top: .5rem; font-size: .86rem; color: var(--muted); }
+.ov-visual-h { font-weight: 650; color: var(--text); }
 .ov-companion-ic { color: var(--accent-2); margin-right: .4rem; }
 .ov-companion a { color: var(--accent-2); font-weight: 600; }
 .ov-companion code { font-family: var(--font-mono); font-size: .85rem; color: var(--text); }

@@ -1,8 +1,22 @@
 /* ============================================================
    keel — docs page layout (sidebar + article typography)
    ============================================================ */
-.docs-shell { display: grid; grid-template-columns: 248px minmax(0, 1fr); gap: 2rem; align-items: start; max-width: 1000px; margin: 0 auto; padding: clamp(1.3rem,3vw,2.2rem) clamp(1.3rem,3vw,2.2rem) 4rem; }
+.docs-shell { display: grid; grid-template-columns: 248px minmax(0, 1fr); gap: 2.4rem; align-items: start; max-width: 1320px; margin: 0 auto; padding: clamp(1.3rem,3vw,2.2rem) clamp(1.3rem,3vw,2.6rem) 4rem; }
 @media (max-width: 900px) { .docs-shell { grid-template-columns: 1fr; gap: 1.2rem; } }
+
+/* visual docs — images + galleries */
+.doc-fig { margin: 1rem 0 1.3rem; }
+.doc-fig img { display: block; width: 100%; height: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+.doc-fig figcaption { font-size: .82rem; color: var(--faint); margin-top: .45rem; }
+.vz-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: .9rem; margin: 1rem 0 1.3rem; }
+.vz-card { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--surface); }
+.vz-card img { display: block; width: 100%; height: auto; }
+.vz-card figcaption { font-family: var(--font-mono); font-size: .74rem; color: var(--muted); padding: .4rem .6rem; border-top: 1px solid var(--border); }
+.vz-styles { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: .9rem; margin: 1rem 0 1.3rem; }
+.vz-styles figure { margin: 0; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--surface); }
+.vz-styles img { display: block; width: 100%; height: auto; }
+.vz-styles figcaption { font-size: .78rem; color: var(--muted); padding: .4rem .6rem; border-top: 1px solid var(--border); }
+.vz-styles figcaption b { font-family: var(--font-mono); color: var(--accent-2); }
 
 /* sidebar */
 .docs-side { position: sticky; top: 0; align-self: start; max-height: calc(100vh - 96px); overflow-y: auto; padding-right: .4rem; }
