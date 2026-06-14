@@ -60,7 +60,8 @@ def _resolve_checkpoint(
         return args.checkpoint_step, {}
     try:
         record = checkpoint.read_checkpoint(checkpoint.resolve_path(args.root, config))
-    except checkpoint.CheckpointError:
+    except (checkpoint.CheckpointError, OSError):
+        # CheckpointError = bad content; OSError = bad path (dir/symlink/perms).
         return None, {}
     return (runstate.current_step_from_checkpoint(record),
             runstate.live_state_from_checkpoint(record))
@@ -204,8 +205,8 @@ def _play_follow(args, *, sleep, out, max_cycles: int | None) -> int:
                 last_frame = terminal.frame(
                     state, state["active_index"], style=args.style, color=color
                 )
-            except ledger.LedgerError:
-                pass  # transient: hold the last good frame and keep polling
+            except (ledger.LedgerError, OSError):
+                pass  # transient (bad content or path): hold last frame, keep polling
             if not args.no_clear:
                 out.write(_CLEAR)
             out.write((last_frame or "keel-visual — waiting for run state…") + "\n")
@@ -231,7 +232,9 @@ def _discover_runs(args: argparse.Namespace, config: cfg.ProjectConfig) -> list[
     for worktree in paths:
         try:
             record = checkpoint.read_checkpoint(checkpoint.resolve_path(worktree, config))
-        except checkpoint.CheckpointError:
+        except (checkpoint.CheckpointError, OSError):
+            # One malformed worktree (bad content or bad path) must never blank
+            # the whole board — skip it.
             record = None
         if record is None:
             continue
@@ -251,7 +254,7 @@ def _latest_ship_record(worktree: str, config: cfg.ProjectConfig, pr: int | None
     """Best-effort: the worktree's latest ship_run record for ``pr`` (None if absent)."""
     try:
         records = ledger.read_records(ledger.resolve_path(worktree, config))
-    except ledger.LedgerError:
+    except (ledger.LedgerError, OSError):
         return None
     if pr is not None:
         return ledger.latest_ship_run_for_pr(records, pr)

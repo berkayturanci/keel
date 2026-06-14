@@ -193,6 +193,20 @@ class TestCheckpointResolve(unittest.TestCase):
         self.assertIsNone(step)
         self.assertEqual(state, {})
 
+    def test_unreadable_checkpoint_path_is_failsoft(self):
+        # A directory where the checkpoint file should be raises OSError, not
+        # CheckpointError — must still degrade to (None, {}), not crash.
+        import tempfile
+
+        from keel import checkpoint
+        config = self._config()
+        with tempfile.TemporaryDirectory() as d:
+            cp = checkpoint.resolve_path(d, config)
+            cp.mkdir(parents=True, exist_ok=True)  # path is a dir -> IsADirectoryError
+            step, state = cli._resolve_checkpoint(_args(root=d, checkpoint_step=None), config)
+        self.assertIsNone(step)
+        self.assertEqual(state, {})
+
     def test_reads_step_and_state_from_checkpoint_file(self):
         import tempfile
 
@@ -240,6 +254,24 @@ class TestLoopAndFollow(unittest.TestCase):
         self.assertEqual(out.getvalue().count("s12 · close"), 3)
         self.assertEqual(out.getvalue().count("\x1b[2J"), 3)
         self.assertEqual(len(calls), 3)
+
+    def test_follow_unreadable_ledger_keeps_polling(self):
+        # An OSError on the per-tick ledger read (e.g. path is a dir) must be
+        # transient too — skip the tick, show waiting, don't crash.
+        import tempfile
+
+        from keel import ledger
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as d:
+            ledger.resolve_path(d, config=self._cfg()).mkdir(parents=True, exist_ok=True)
+            rc = cli.cmd_play(_args(follow=True, ledger_jsonl=None, root=d),
+                              sleep=lambda s: None, out=out, max_cycles=2)
+        self.assertEqual(rc, 0)
+        self.assertIn("waiting for run state", out.getvalue())
+
+    def _cfg(self):
+        from keel import config as cfg
+        return cfg.load_config(PROJECT)
 
     def test_follow_fatal_config_error_returns_code(self):
         rc = cli.cmd_play(_args(follow=True, path="no-such.yaml"),
@@ -367,6 +399,30 @@ class TestDash(unittest.TestCase):
             led.write_text(Path(SAMPLE).read_text(encoding="utf-8"), encoding="utf-8")
             rec = cli._latest_ship_record(d, config, 361)
         self.assertEqual(rec["pull_request"]["number"], 361)
+
+    def test_discover_skips_unreadable_checkpoint(self):
+        # A worktree whose checkpoint path is a directory (OSError) must be
+        # skipped, not crash the whole board.
+        import tempfile
+        from unittest.mock import patch
+
+        from keel import checkpoint
+        config = self._config()
+        with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
+            _write_checkpoint(a, config, step="s4", pr=361)
+            checkpoint.resolve_path(b, config).mkdir(parents=True, exist_ok=True)
+            with patch("keel_visual.cli.git.worktree_list", return_value=self._porcelain(a, b)):
+                rows = cli._discover_runs(_dash_args(), config)
+        self.assertEqual(len(rows), 1)
+
+    def test_latest_ship_record_unreadable_ledger_is_none(self):
+        import tempfile
+
+        from keel import ledger
+        config = self._config()
+        with tempfile.TemporaryDirectory() as d:
+            ledger.resolve_path(d, config).mkdir(parents=True, exist_ok=True)  # OSError on read
+            self.assertIsNone(cli._latest_ship_record(d, config, 361))
 
     def test_latest_ship_record_no_pr_is_none(self):
         import tempfile
