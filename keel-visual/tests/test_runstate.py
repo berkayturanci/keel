@@ -217,7 +217,7 @@ class TestBuildRunState(unittest.TestCase):
         self.assertEqual(st["regression"]["worst"], "minor")
 
     def test_checkpoint_out_of_range_clamped(self):
-        # step_index returns None for unknown -> falls back, never crashes.
+        # _phase_index returns None for an unknown step -> falls back, never crashes.
         st = rs.build_run_state(_record(action="merge"), checkpoint_step="s99")
         self.assertEqual(st["active_id"], "s12")
 
