@@ -60,10 +60,11 @@ class TestCurrentStepFromCheckpoint(unittest.TestCase):
 class TestLiveStateFromCheckpoint(unittest.TestCase):
     def test_extracts_recognised_fields(self):
         rec = {"state": {"merge": "merged", "capture": "applied", "close": "closed",
-                         "last_gate": "test", "stop_reason": None}}
+                         "last_gate": "test", "jury_mode": "gating", "stop_reason": None}}
         self.assertEqual(
             rs.live_state_from_checkpoint(rec),
-            {"merge": "merged", "capture": "applied", "close": "closed", "last_gate": "test"},
+            {"merge": "merged", "capture": "applied", "close": "closed",
+             "last_gate": "test", "jury_mode": "gating"},
         )
 
     def test_malformed(self):
@@ -154,6 +155,33 @@ class TestJury(unittest.TestCase):
             command="overnight",
         )
         self.assertEqual(st["jury"], {"mode": None, "active": False})
+
+    def test_jury_from_checkpoint_live(self):
+        self.assertEqual(rs.jury_from_checkpoint({"jury_mode": "advisory"}),
+                         {"mode": "advisory", "active": True})
+        self.assertEqual(rs.jury_from_checkpoint({"jury_mode": "off"}),
+                         {"mode": "off", "active": False})
+        # missing / malformed -> inactive default (callers fall back to the ledger)
+        self.assertEqual(rs.jury_from_checkpoint({}), {"mode": None, "active": False})
+        self.assertEqual(rs.jury_from_checkpoint(None), {"mode": None, "active": False})
+
+    def test_live_checkpoint_jury_wins_over_ledger(self):
+        # a run in progress: checkpoint says gating, the (stale/absent) ledger says off
+        st = rs.build_run_state(
+            {"record_type": "ship_run", "run_context": {"jury_mode": "off"}},
+            checkpoint_step="s7",
+            checkpoint_state={"jury_mode": "gating"},
+        )
+        self.assertEqual(st["jury"], {"mode": "gating", "active": True})
+
+    def test_jury_falls_back_to_ledger_when_checkpoint_silent(self):
+        # post-run: no live jury in the checkpoint -> read the ledger
+        st = rs.build_run_state(
+            {"record_type": "ship_run", "run_context": {"jury_mode": "advisory"}},
+            checkpoint_step="s7",
+            checkpoint_state={"merge": "pending"},
+        )
+        self.assertEqual(st["jury"], {"mode": "advisory", "active": True})
 
     def test_no_record_no_jury(self):
         self.assertEqual(rs.build_run_state(None)["jury"], {"mode": None, "active": False})
