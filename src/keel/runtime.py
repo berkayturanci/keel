@@ -217,8 +217,4 @@ def _can_write(root: Path) -> bool:
 
 
 def _unique(values: tuple[str, ...]) -> tuple[str, ...]:
-    out: list[str] = []
-    for value in values:
-        if value not in out:
-            out.append(value)
-    return tuple(out)
+    return tuple(dict.fromkeys(values))
