@@ -186,6 +186,33 @@ one it is refused before any merge work. Provide exactly one of:
 The justification is written into the merge payload (and surfaced in the ledger), so every
 night-window bypass carries machine-checkable evidence of why it was allowed.
 
+### Checkpoint gate (audit GAP-13)
+
+After the gates-SHA check and before the merge, `keel merge` requires a **covering
+checkpoint** for the run at the merge step (`s10`). This closes the hazard where a run that
+never wrote a checkpoint is undetectable: a crash mid-`s10` would otherwise leave the next
+session a clean slate that can re-merge or duplicate comments. The decision is pure
+([`keel.checkpoint.covering_checkpoint`](../../src/keel/checkpoint.py)); the CLI only reads
+the checkpoint file. The result is reported in the `checkpoint_gate` block of the payload:
+
+- **`covered`** — a current checkpoint for this run reached `s10` (its `current_step` is at
+  or past `s10`, or `s10` is in `completed_steps`). The merge proceeds.
+- **`missing`** — no checkpoint, or the checkpoint is for a different run. Refused with
+  `no current checkpoint for run <id> at step s10`.
+- **`stale-step`** — a checkpoint for this run that has not reached `s10`. Refused.
+
+The run-id is the gates-SHA `run_id` by default; override it with `--run-id`.
+
+**Back-compat / degrade gracefully.** The gate is enforced **only when checkpointing is
+configured** for the project (`policy_pack.reports.checkpoint`). When that key is absent the
+gate is **advisory** (`status: advisory-skip`) and the merge proceeds — flows that never
+write checkpoints keep working unchanged.
+
+`--no-checkpoint-gate` is the audited escape (mirroring `--operator-override`): it bypasses
+the gate for callers that legitimately do not checkpoint. It **requires a named
+`--operator`** and records the bypass in the merge payload
+(`checkpoint_gate: {status: "bypassed", operator}`).
+
 ## `keel post-comment <project.yaml> --target issue:N|pr:N --artifact ARTIFACT --body-file FILE [--run-id ID] [--dry-run] [--json]`
 
 Post or update a deterministic GitHub issue/PR artifact comment. `post-comment` reads the
@@ -606,7 +633,7 @@ non-zero and includes warnings plus the reconciliation action, for example when 
 checkpoint references a PR or worktree that live state reports missing. If the PR is
 already merged, the plan resumes at capture or closeout and never repeats the merge.
 
-## `keel status <project.yaml> [--root DIR] [--json]`
+## `keel status <project.yaml> [--root DIR] [--live-branch NAME ...] [--live-pr N ...] [--json]`
 
 Show the operator-facing progress snapshot for the active or most recent run. `status`
 reads the resumable checkpoint and the run ledger (same paths as `keel checkpoint` and
@@ -625,6 +652,14 @@ from the checkpoint queue, ledger counts of shipped / blocked / deferred / skipp
 capture-health gaps. A missing checkpoint or ledger is not an error — the snapshot degrades
 to `no-active-run`/`completed` and empty counts — but an invalid checkpoint or corrupted
 ledger exits non-zero, since adapters must not report progress from corrupted state.
+
+**Orphan detection (audit GAP-13).** Pass live git/transport references with repeatable
+`--live-branch NAME` and `--live-pr N` flags (an adapter supplies these from `git branch` /
+`gh pr list`). The snapshot's `orphans` block flags any live branch or PR that is covered by
+neither the current checkpoint nor any ledger record — the git-side of the missing-checkpoint
+hazard (a PR/branch keel has no covering state for). This is **advisory**: orphans are
+reported but never block. The decision is pure
+([`keel.checkpoint.find_orphans`](../../src/keel/checkpoint.py)).
 
 ## `keel morning <project.yaml> [--root DIR] [--since WHEN] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--json]`
 

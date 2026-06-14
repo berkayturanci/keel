@@ -109,6 +109,13 @@ merge state, capture state, close state, and stop reason. The checkpoint is the 
 resume point, not run history. Do not delete or overwrite project extensions while writing
 or resuming from it.
 
+When checkpointing is configured (`policy_pack.reports.checkpoint`), `keel merge` enforces a
+**checkpoint gate** at s10 (audit GAP-13): write a checkpoint for the run at `--step s10`
+before calling `keel merge`, or the merge is refused with
+`no current checkpoint for run <id> at step s10`. Projects without checkpoint config are
+unaffected (the gate is advisory). The audited escape is `keel merge --no-checkpoint-gate`
+with a named `--operator`.
+
 **GitHub transport.** Prefer the `gh` CLI when present (richer JSON, `--watch`); detect
 once at session start (`command -v gh`) and, when absent, fall back to an equivalent
 GitHub MCP/API transport for the same operations (issue read/list/comment/close/label,
@@ -577,4 +584,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=plugin command=ship keel_version=1.2.3 source_sha256=b580b7d1be8c3d581c0767423725c639602b35ee2c3711842f6b4e2611a0c153 generated_sha256=b580b7d1be8c3d581c0767423725c639602b35ee2c3711842f6b4e2611a0c153 -->
+<!-- keel-generated: surface=plugin command=ship keel_version=1.2.3 source_sha256=f246e482af1eba930311a13651952eceacd0a901b83c6b5c17d23b5757866353 generated_sha256=f246e482af1eba930311a13651952eceacd0a901b83c6b5c17d23b5757866353 -->

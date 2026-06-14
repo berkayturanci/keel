@@ -260,3 +260,104 @@ class TestResumePlan(unittest.TestCase):
             checkpoint.resume_plan_as_dict(_record(), live_pr_state="bad")
         with self.assertRaisesRegex(checkpoint.CheckpointError, "unsupported live_worktree_state"):
             checkpoint.resume_plan_as_dict(_record(), live_worktree_state="bad")
+
+
+class TestCoveringCheckpoint(unittest.TestCase):
+    def test_covered_when_current_step_is_the_expected_step(self):
+        record = _record(current_step="s10", completed_steps=["s0", "s1"])
+        result = checkpoint.covering_checkpoint(record, "RUN-149", "s10")
+        self.assertEqual(result["status"], "covered")
+        self.assertTrue(result["covered"])
+        self.assertEqual(result["checkpoint_step"], "s10")
+
+    def test_covered_when_expected_step_already_completed_and_run_advanced(self):
+        record = _record(
+            current_step="s11",
+            completed_steps=["s0", "s10"],
+        )
+        result = checkpoint.covering_checkpoint(record, "RUN-149", "s10")
+        self.assertEqual(result["status"], "covered")
+        self.assertTrue(result["covered"])
+
+    def test_missing_when_no_checkpoint(self):
+        result = checkpoint.covering_checkpoint(None, "RUN-149", "s10")
+        self.assertEqual(result["status"], "missing")
+        self.assertFalse(result["covered"])
+        self.assertIsNone(result["checkpoint_run_id"])
+        self.assertIn("no current checkpoint for run RUN-149 at step s10", result["reason"])
+
+    def test_missing_when_checkpoint_is_for_another_run(self):
+        record = _record(run_id="RUN-OTHER", current_step="s10")
+        result = checkpoint.covering_checkpoint(record, "RUN-149", "s10")
+        self.assertEqual(result["status"], "missing")
+        self.assertFalse(result["covered"])
+        self.assertIn("checkpoint is for run RUN-OTHER", result["reason"])
+
+    def test_stale_step_when_run_has_not_reached_the_expected_step(self):
+        record = _record(current_step="s6")
+        result = checkpoint.covering_checkpoint(record, "RUN-149", "s10")
+        self.assertEqual(result["status"], "stale-step")
+        self.assertFalse(result["covered"])
+        self.assertIn("run is at s6", result["reason"])
+
+    def test_invalid_expected_step_is_rejected(self):
+        with self.assertRaisesRegex(checkpoint.CheckpointError, "backbone step id"):
+            checkpoint.covering_checkpoint(_record(), "RUN-149", "s99")
+
+
+class TestFindOrphans(unittest.TestCase):
+    def _ledger_record(self, *, branch=None, pr=None):
+        record = {"git": {"branch": branch}}
+        if pr is not None:
+            record["pull_request"] = {"number": pr}
+        return record
+
+    def test_no_live_state_yields_no_orphans(self):
+        result = checkpoint.find_orphans()
+        self.assertEqual(result["orphan_count"], 0)
+        self.assertEqual(result["branches"], [])
+        self.assertEqual(result["pull_requests"], [])
+
+    def test_branch_and_pr_covered_by_checkpoint_are_not_orphans(self):
+        record = _record(branch="feat/issue-149-resume", pull_request=170)
+        result = checkpoint.find_orphans(
+            live_branches=["feat/issue-149-resume"],
+            live_pull_requests=[170],
+            checkpoint_record=record,
+        )
+        self.assertEqual(result["orphan_count"], 0)
+        self.assertIn("feat/issue-149-resume", result["known_branches"])
+        self.assertIn(170, result["known_pull_requests"])
+
+    def test_branch_and_pr_covered_by_ledger_are_not_orphans(self):
+        result = checkpoint.find_orphans(
+            live_branches=["feat/shipped"],
+            live_pull_requests=[42],
+            ledger_records=[self._ledger_record(branch="feat/shipped", pr=42)],
+        )
+        self.assertEqual(result["orphan_count"], 0)
+
+    def test_uncovered_live_branch_and_pr_are_flagged(self):
+        record = _record(branch="feat/issue-149-resume", pull_request=170)
+        result = checkpoint.find_orphans(
+            live_branches=["feat/issue-149-resume", "feat/orphan"],
+            live_pull_requests=[170, 999],
+            checkpoint_record=record,
+            ledger_records=[self._ledger_record(branch=None)],
+        )
+        self.assertEqual(result["branches"], ["feat/orphan"])
+        self.assertEqual(result["pull_requests"], [999])
+        self.assertEqual(result["orphan_count"], 2)
+
+    def test_checkpoint_without_branch_or_pr_contributes_no_references(self):
+        record = _record(branch=None, pull_request=None)
+        result = checkpoint.find_orphans(
+            live_branches=["feat/orphan"],
+            live_pull_requests=[999],
+            checkpoint_record=record,
+            ledger_records=[{"git": {"branch": None}, "pull_request": {"number": None}}],
+        )
+        self.assertEqual(result["branches"], ["feat/orphan"])
+        self.assertEqual(result["pull_requests"], [999])
+        self.assertEqual(result["known_branches"], [])
+        self.assertEqual(result["known_pull_requests"], [])

@@ -4084,7 +4084,42 @@ class TestCoreMerge(unittest.TestCase):
         self.assertIn("no-active-run", out)
         self.assertIn("capture       : clean", out)
         self.assertIn("capture gaps  : 0", out)
+        self.assertIn("orphans       : 0", out)
         self.assertIn("next          : -", out)
+
+    def test_status_flags_live_branch_and_pr_orphans(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_state_paths("'true'")
+            run([
+                "checkpoint", config, "--root", d, "--write",
+                "--run-id", "RUN-148", "--checkpoint-command", "overnight",
+                "--step", "s6", "--issue-queue", "148", "--active-issue", "148",
+                "--pull-request", "168", "--branch", "feature/issue-148",
+            ])
+            rc, out, _ = run([
+                "status", config, "--root", d, "--json",
+                "--live-branch", "feature/issue-148",
+                "--live-branch", "feature/orphan",
+                "--live-pr", "168", "--live-pr", "999",
+            ])
+        self.assertEqual(rc, 0)
+        orphans = json.loads(out)["snapshot"]["orphans"]
+        self.assertEqual(orphans["branches"], ["feature/orphan"])
+        self.assertEqual(orphans["pull_requests"], [999])
+
+    def test_status_human_output_renders_orphans(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_state_paths("'true'")
+            rc, out, _ = run([
+                "status", config, "--root", d,
+                "--live-branch", "feature/orphan", "--live-pr", "999",
+            ])
+        self.assertEqual(rc, 0)
+        self.assertIn("orphans       : 2", out)
+        self.assertIn("orphan branch : feature/orphan", out)
+        self.assertIn("orphan pr     : #999", out)
 
     def test_status_reports_missing_invalid_config_checkpoint_and_ledger(self):
         import tempfile
@@ -4430,6 +4465,197 @@ class TestCoreMerge(unittest.TestCase):
             rc, _, err = run(["ship", p, "--root", d])
         self.assertEqual(rc, 0)
         self.assertIn("extension not loaded", err)
+
+
+class TestMergeCheckpointGate(unittest.TestCase):
+    """The s10 checkpoint gate in `keel merge` (audit GAP-13)."""
+
+    def _run_merge(self, *, config, root, extra=(), run_id="RUN-1"):
+        fake_report = _merge_capability_report()
+        with (
+            patch("keel.cli.runtime.detect", return_value=fake_report),
+            patch("keel.cli.window.is_merge_open", return_value=True),
+            patch("keel.cli.github.pr_merge_snapshot",
+                  return_value=_json_result({
+                      "headRefOid": "abc",
+                      "mergeStateStatus": "CLEAN",
+                      "statusCheckRollup": [{"conclusion": "SUCCESS"}],
+                  })),
+            patch("keel.cli._verify_merge_evidence", return_value={
+                "enforced": True,
+                "verification": {"status": "pass", "missing": []},
+            }),
+            patch("keel.cli.ledger.read_records", return_value=[]),
+            patch("keel.cli.ledger.gates_pass_for_head",
+                  return_value=(True, {"run_id": run_id})),
+            patch("keel.cli.github.merge_pr",
+                  return_value=Namespace(ok=True, output="merged")),
+        ):
+            argv = [
+                "merge", config, "--root", root, "--pr", "123",
+                "--approve-scope", "filesystem,git,github", "--operator", "tester",
+                "--json",
+            ]
+            argv += list(extra)
+            return run(argv)
+
+    def _write_checkpoint(self, root, config_path, *, run_id="RUN-1", step="s10"):
+        config = cli.cfg.load_config(config_path)
+        path = cli.checkpoint.resolve_path(root, config)
+        record = cli.checkpoint.build_checkpoint_record(
+            run_id=run_id, command="ship", current_step=step, base_branch="main",
+            branch="feat/x", pull_request=123,
+        )
+        cli.checkpoint.write_checkpoint(path, record)
+
+    def test_no_checkpoint_config_merges_advisory_skip(self):
+        # keel.yaml (the default _merge_args config) has no reports.checkpoint.
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = self._run_merge(config=str(PROJECTS / "keel.yaml"), root=d)
+        data = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertTrue(data["merged"])
+        self.assertFalse(data["checkpoint_gate"]["enforced"])
+        self.assertEqual(data["checkpoint_gate"]["status"], "advisory-skip")
+
+    def test_merge_proceeds_with_covering_checkpoint_at_s10(self):
+        config = _write_config_with_checkpoint("'true'")
+        with tempfile.TemporaryDirectory() as d:
+            self._write_checkpoint(d, config, run_id="RUN-1", step="s10")
+            rc, out, _ = self._run_merge(config=config, root=d)
+        data = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertTrue(data["merged"])
+        self.assertTrue(data["checkpoint_gate"]["enforced"])
+        self.assertEqual(data["checkpoint_gate"]["status"], "covered")
+
+    def test_merge_refused_when_checkpoint_missing(self):
+        config = _write_config_with_checkpoint("'true'")
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = self._run_merge(config=config, root=d)
+        data = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertFalse(data["merged"])
+        self.assertEqual(data["checkpoint_gate"]["status"], "missing")
+        self.assertIn("no current checkpoint for run RUN-1 at step s10", data["reason"])
+
+    def test_merge_refused_when_checkpoint_is_stale_step(self):
+        config = _write_config_with_checkpoint("'true'")
+        with tempfile.TemporaryDirectory() as d:
+            self._write_checkpoint(d, config, run_id="RUN-1", step="s6")
+            rc, out, _ = self._run_merge(config=config, root=d)
+        data = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertFalse(data["merged"])
+        self.assertEqual(data["checkpoint_gate"]["status"], "stale-step")
+        self.assertIn("run is at s6", data["reason"])
+
+    def test_merge_refused_when_no_run_id_available(self):
+        config = _write_config_with_checkpoint("'true'")
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = self._run_merge(config=config, root=d, run_id=None)
+        data = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertEqual(data["checkpoint_gate"]["status"], "missing")
+        self.assertIn("no run-id is available", data["reason"])
+
+    def test_explicit_run_id_overrides_gates_pass_run_id(self):
+        config = _write_config_with_checkpoint("'true'")
+        with tempfile.TemporaryDirectory() as d:
+            self._write_checkpoint(d, config, run_id="RUN-XYZ", step="s10")
+            rc, out, _ = self._run_merge(
+                config=config, root=d, run_id="RUN-1", extra=["--run-id", "RUN-XYZ"]
+            )
+        data = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertEqual(data["checkpoint_gate"]["run_id"], "RUN-XYZ")
+        self.assertEqual(data["checkpoint_gate"]["status"], "covered")
+
+    def test_no_checkpoint_gate_bypass_records_operator(self):
+        config = _write_config_with_checkpoint("'true'")
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = self._run_merge(
+                config=config, root=d, extra=["--no-checkpoint-gate"]
+            )
+        data = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertTrue(data["merged"])
+        gate = data["checkpoint_gate"]
+        self.assertEqual(gate["status"], "bypassed")
+        self.assertTrue(gate["bypassed"])
+        self.assertEqual(gate["operator"], "tester")
+
+    def test_no_checkpoint_gate_bypass_requires_named_operator(self):
+        config = _write_config_with_checkpoint("'true'")
+        fake_report = _merge_capability_report()
+        with (
+            tempfile.TemporaryDirectory() as d,
+            patch("keel.cli.runtime.detect", return_value=fake_report),
+            patch("keel.cli.window.is_merge_open", return_value=True),
+            patch("keel.cli.github.pr_merge_snapshot",
+                  return_value=_json_result({
+                      "headRefOid": "abc",
+                      "mergeStateStatus": "CLEAN",
+                      "statusCheckRollup": [{"conclusion": "SUCCESS"}],
+                  })),
+            patch("keel.cli._verify_merge_evidence", return_value={
+                "enforced": True,
+                "verification": {"status": "pass", "missing": []},
+            }),
+            patch("keel.cli.ledger.read_records", return_value=[]),
+            patch("keel.cli.ledger.gates_pass_for_head",
+                  return_value=(True, {"run_id": "RUN-1"})),
+        ):
+            rc, out, _ = run([
+                "merge", config, "--root", d, "--pr", "123",
+                "--approve-scope", "filesystem,git,github",
+                "--no-checkpoint-gate", "--json",
+            ])
+        data = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertEqual(data["checkpoint_gate"]["status"], "bypass-refused")
+        self.assertIn("requires a named --operator", data["reason"])
+
+    def test_human_output_shows_checkpoint_gate_status(self):
+        config = _write_config_with_checkpoint("'true'")
+        fake_report = _merge_capability_report()
+        with (
+            tempfile.TemporaryDirectory() as d,
+            patch("keel.cli.runtime.detect", return_value=fake_report),
+            patch("keel.cli.window.is_merge_open", return_value=True),
+            patch("keel.cli.github.pr_merge_snapshot",
+                  return_value=_json_result({
+                      "headRefOid": "abc",
+                      "mergeStateStatus": "CLEAN",
+                      "statusCheckRollup": [{"conclusion": "SUCCESS"}],
+                  })),
+            patch("keel.cli._verify_merge_evidence", return_value={
+                "enforced": True,
+                "verification": {"status": "pass", "missing": []},
+            }),
+            patch("keel.cli.ledger.read_records", return_value=[]),
+            patch("keel.cli.ledger.gates_pass_for_head",
+                  return_value=(True, {"run_id": "RUN-1"})),
+        ):
+            rc, out, _ = run([
+                "merge", config, "--root", d, "--pr", "123",
+                "--approve-scope", "filesystem,git,github", "--operator", "tester",
+            ])
+        self.assertEqual(rc, 1)
+        self.assertIn("checkpoint: missing", out)
+
+    def test_invalid_checkpoint_file_is_reported(self):
+        config = _write_config_with_checkpoint("'true'")
+        with tempfile.TemporaryDirectory() as d:
+            cfg = cli.cfg.load_config(config)
+            path = cli.checkpoint.resolve_path(d, cfg)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("{ not json", encoding="utf-8")
+            rc, out, _ = self._run_merge(config=config, root=d)
+        data = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertEqual(data["checkpoint_gate"]["status"], "invalid")
+        self.assertIn("invalid checkpoint", data["reason"])
 
 
 class TestStandaloneCommands(unittest.TestCase):

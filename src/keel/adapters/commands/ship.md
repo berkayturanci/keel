@@ -109,6 +109,13 @@ merge state, capture state, close state, and stop reason. The checkpoint is the 
 resume point, not run history. Do not delete or overwrite project extensions while writing
 or resuming from it.
 
+When checkpointing is configured (`policy_pack.reports.checkpoint`), `keel merge` enforces a
+**checkpoint gate** at s10 (audit GAP-13): write a checkpoint for the run at `--step s10`
+before calling `keel merge`, or the merge is refused with
+`no current checkpoint for run <id> at step s10`. Projects without checkpoint config are
+unaffected (the gate is advisory). The audited escape is `keel merge --no-checkpoint-gate`
+with a named `--operator`.
+
 **GitHub transport.** Prefer the `gh` CLI when present (richer JSON, `--watch`); detect
 once at session start (`command -v gh`) and, when absent, fall back to an equivalent
 GitHub MCP/API transport for the same operations (issue read/list/comment/close/label,

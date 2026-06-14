@@ -127,12 +127,23 @@ one fail-closed path:
 5. require a SHA-stamped gates-pass: a `ship_run` ledger record for the PR whose
    `git.head_sha` equals the PR's current head and whose gates passed, so a stale green
    run from an older head cannot authorize merging a newer head;
-6. call GitHub's merge operation only when every prior gate passes.
+6. require a **covering checkpoint** for the run at the merge step `s10`, so a run that
+   never recorded state cannot cold-merge (audit GAP-13);
+7. call GitHub's merge operation only when every prior gate passes.
 
 `--hotfix` bypasses both the merge window (step 2) and the gates-SHA requirement (step 5),
 recording the bypass (`gates_sha.bypassed`, `reason: hotfix`). The gates-match decision is a
 pure function (`ledger.gates_pass_for_head`); the command supplies the live head SHA and the
 ledger records.
+
+The checkpoint gate (step 6) is **enforced only when checkpointing is configured**
+(`policy_pack.reports.checkpoint`); when absent it degrades to advisory and the merge
+proceeds, preserving back-compat for flows that do not checkpoint. When enforced, the
+decision is a pure function (`checkpoint.covering_checkpoint`) over the run-id (the gates-SHA
+`run_id`, or `--run-id`) and the read checkpoint: a checkpoint for this run that reached
+`s10` is `covered`; no/other-run checkpoint is `missing`; an under-`s10` checkpoint is
+`stale-step`. `--no-checkpoint-gate` is the audited escape (requires a named `--operator`,
+mirroring `--operator-override`) and records the bypass in `checkpoint_gate`.
 
 A `--hotfix` bypass is **refused without a recorded justification** (audit GAP-11): the
 night-window bypass is no longer reachable on the flag alone. The command requires exactly
@@ -567,6 +578,10 @@ The snapshot includes:
   `wrap`; `needs-reconcile` means at least one marker is missing or a deferred capture can
   be reconciled
 - `next`: the next queued issue when the checkpoint queue names one
+- `orphans`: live branches/PRs covered by neither the checkpoint nor any ledger record
+  (audit GAP-13, advisory). Adapters pass live references with `--live-branch`/`--live-pr`;
+  the decision is pure (`checkpoint.find_orphans`). An orphan is the git/transport-side of
+  the missing-checkpoint hazard — a PR or branch keel has no covering state for.
 
 Human-readable output is ordered by actionability: current issue/step/wait reason first,
 then PR/branch, shipped/blocked/deferred/skipped counts, capture health, and next item.

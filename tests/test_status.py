@@ -229,3 +229,34 @@ class TestStatusContract(unittest.TestCase):
         self.assertIn("shipped       : 1", rendered)
         self.assertIn("capture       : clean", rendered)
         self.assertIn("capture gaps  : 0", rendered)
+        self.assertIn("orphans       : 0", rendered)
+
+
+class TestStatusOrphans(unittest.TestCase):
+    def test_no_live_state_reports_no_orphans(self):
+        snapshot = progress.build_status_snapshot(
+            config=_config(),
+            checkpoint_record=_checkpoint(current_step="s7"),
+            ledger_records=[],
+        )
+        self.assertEqual(snapshot["orphans"]["orphan_count"], 0)
+
+    def test_uncovered_live_branch_and_pr_flagged_advisorily(self):
+        snapshot = progress.build_status_snapshot(
+            config=_config(),
+            checkpoint_record=_checkpoint(
+                branch="feature/issue-148-progress-status",
+                pull_request=168,
+            ),
+            ledger_records=[_ledger_record(issue=1, pr=10)],
+            live_branches=["feature/issue-148-progress-status", "feature/orphan"],
+            live_pull_requests=[168, 777],
+        )
+        orphans = snapshot["orphans"]
+        self.assertEqual(orphans["branches"], ["feature/orphan"])
+        self.assertEqual(orphans["pull_requests"], [777])
+
+        rendered = progress.render_status(snapshot)
+        self.assertIn("orphans       : 2", rendered)
+        self.assertIn("orphan branch : feature/orphan", rendered)
+        self.assertIn("orphan pr     : #777", rendered)

@@ -274,6 +274,135 @@ def resume_plan_as_dict(
     }
 
 
+COVERAGE_STATES = ("covered", "missing", "stale-step")
+
+
+def covering_checkpoint(
+    record: dict[str, Any] | None,
+    run_id: str,
+    expected_step: str,
+) -> dict[str, Any]:
+    """Decide whether a checkpoint covers ``run_id`` at ``expected_step``.
+
+    Pure and deterministic — no I/O. ``record`` is the current checkpoint
+    (or ``None`` when no checkpoint file exists); ``expected_step`` must be a
+    backbone step id. A run is *covered* when its checkpoint is for the same
+    ``run_id`` and the run actually progressed to ``expected_step`` (the
+    recorded ``current_step`` is at or past it, or the step is in
+    ``completed_steps``). The result distinguishes:
+
+    * ``covered`` — a current checkpoint for this run reached ``expected_step``;
+    * ``missing`` — no checkpoint, or a checkpoint for a different run;
+    * ``stale-step`` — a checkpoint for this run that has not reached the step.
+    """
+    if expected_step not in STEP_IDS:
+        raise CheckpointError("expected_step must be a backbone step id")
+    expected_index = STEP_IDS.index(expected_step)
+    if record is None:
+        return {
+            "status": "missing",
+            "covered": False,
+            "run_id": run_id,
+            "expected_step": expected_step,
+            "checkpoint_run_id": None,
+            "checkpoint_step": None,
+            "reason": f"no current checkpoint for run {run_id} at step {expected_step}",
+        }
+    validate_checkpoint(record)
+    checkpoint_run_id = record.get("run_id")
+    position = record["position"]
+    current_step = position["current_step"]
+    completed = position.get("completed_steps", [])
+    base = {
+        "run_id": run_id,
+        "expected_step": expected_step,
+        "checkpoint_run_id": checkpoint_run_id,
+        "checkpoint_step": current_step,
+    }
+    if checkpoint_run_id != run_id:
+        return {
+            **base,
+            "status": "missing",
+            "covered": False,
+            "reason": (
+                f"no current checkpoint for run {run_id} at step {expected_step} "
+                f"(checkpoint is for run {checkpoint_run_id})"
+            ),
+        }
+    reached = expected_step in completed or STEP_IDS.index(current_step) >= expected_index
+    if not reached:
+        return {
+            **base,
+            "status": "stale-step",
+            "covered": False,
+            "reason": (
+                f"no current checkpoint for run {run_id} at step {expected_step} "
+                f"(run is at {current_step})"
+            ),
+        }
+    return {
+        **base,
+        "status": "covered",
+        "covered": True,
+        "reason": f"checkpoint for run {run_id} reached step {expected_step}",
+    }
+
+
+def find_orphans(
+    *,
+    live_branches: list[str] | None = None,
+    live_pull_requests: list[int] | None = None,
+    checkpoint_record: dict[str, Any] | None = None,
+    ledger_records: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Return live branches/PRs with no covering checkpoint or ledger record.
+
+    Pure and deterministic — no I/O. An *orphan* is a branch or pull request
+    that exists on the git/transport side but is referenced by neither the
+    current checkpoint nor any ledger record, i.e. keel has no covering state
+    for it (the GAP-13 hazard from the git side). Advisory only.
+    """
+    known_branches, known_prs = _known_references(checkpoint_record, ledger_records)
+    orphan_branches = [
+        branch for branch in (live_branches or []) if branch not in known_branches
+    ]
+    orphan_prs = [pr for pr in (live_pull_requests or []) if pr not in known_prs]
+    return {
+        "branches": orphan_branches,
+        "pull_requests": orphan_prs,
+        "orphan_count": len(orphan_branches) + len(orphan_prs),
+        "known_branches": sorted(known_branches),
+        "known_pull_requests": sorted(known_prs),
+    }
+
+
+def _known_references(
+    checkpoint_record: dict[str, Any] | None,
+    ledger_records: list[dict[str, Any]] | None,
+) -> tuple[set[str], set[int]]:
+    branches: set[str] = set()
+    prs: set[int] = set()
+    if checkpoint_record is not None:
+        identifiers = checkpoint_record.get("identifiers", {})
+        branch = identifiers.get("branch")
+        if isinstance(branch, str) and branch:
+            branches.add(branch)
+        pull_request = identifiers.get("pull_request")
+        if isinstance(pull_request, int):
+            prs.add(pull_request)
+    for record in ledger_records or []:
+        git = record.get("git") if isinstance(record.get("git"), dict) else {}
+        branch = git.get("branch")
+        if isinstance(branch, str) and branch:
+            branches.add(branch)
+        pr_entry = record.get("pull_request")
+        if isinstance(pr_entry, dict):
+            number = pr_entry.get("number")
+            if isinstance(number, int):
+                prs.add(number)
+    return branches, prs
+
+
 def validate_checkpoint(record: Any) -> None:
     """Validate the stable checkpoint shape."""
     if not isinstance(record, dict):

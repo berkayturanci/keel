@@ -438,6 +438,107 @@ def _hotfix_justification(
     )
 
 
+CHECKPOINT_MERGE_STEP = "s10"
+
+
+def _checkpoint_gate(
+    args: argparse.Namespace,
+    config: cfg.ProjectConfig,
+    *,
+    run_id: str | None,
+    operator: str | None,
+) -> tuple[dict[str, object], str | None]:
+    """Gate the merge on a covering checkpoint for the run at step s10.
+
+    Returns ``(payload, None)`` when the merge may proceed or ``(payload, error)``
+    when it must be refused. The gate is enforced only when checkpointing is
+    *configured* for the project (``policy_pack.reports.checkpoint``); when it is
+    absent the gate degrades to advisory (back-compat — flows that never wrote a
+    checkpoint still merge). The ``--no-checkpoint-gate`` escape requires a named
+    ``--operator`` (mirroring ``--operator-override``) and records the bypass in
+    the merge payload audit trail.
+
+    This is the thin I/O layer: it reads the checkpoint file and delegates the
+    decision to :func:`keel.checkpoint.covering_checkpoint` (pure).
+    """
+    _, path_source = checkpoint.configured_checkpoint_path(config)
+    configured = path_source == "policy_pack.reports.checkpoint"
+
+    if args.no_checkpoint_gate:
+        if not operator:
+            return (
+                {
+                    "enforced": configured,
+                    "status": "bypass-refused",
+                    "bypassed": False,
+                    "reason": "--no-checkpoint-gate requires a named --operator",
+                },
+                "--no-checkpoint-gate requires a named --operator for the audit trail",
+            )
+        return (
+            {
+                "enforced": configured,
+                "status": "bypassed",
+                "bypassed": True,
+                "operator": operator,
+                "expected_step": CHECKPOINT_MERGE_STEP,
+                "reason": "checkpoint gate bypassed by operator",
+            },
+            None,
+        )
+
+    if not configured:
+        return (
+            {
+                "enforced": False,
+                "status": "advisory-skip",
+                "bypassed": False,
+                "reason": "no checkpoint configured (policy_pack.reports.checkpoint); advisory",
+            },
+            None,
+        )
+
+    if not run_id:
+        return (
+            {
+                "enforced": True,
+                "status": "missing",
+                "bypassed": False,
+                "expected_step": CHECKPOINT_MERGE_STEP,
+                "reason": (
+                    "checkpointing is configured but no run-id is available "
+                    "(pass --run-id or record a gates-pass for this head)"
+                ),
+            },
+            (
+                "checkpointing is configured but no run-id is available for the "
+                "checkpoint gate; pass --run-id or use --no-checkpoint-gate"
+            ),
+        )
+
+    try:
+        path = checkpoint.resolve_path(args.root, config)
+        record = checkpoint.read_checkpoint(path)
+    except checkpoint.CheckpointError as exc:
+        return (
+            {"enforced": True, "status": "invalid", "bypassed": False, "reason": str(exc)},
+            f"invalid checkpoint: {exc}",
+        )
+    coverage = checkpoint.covering_checkpoint(record, run_id, CHECKPOINT_MERGE_STEP)
+    gate_payload = {
+        "enforced": True,
+        "status": coverage["status"],
+        "bypassed": False,
+        "expected_step": CHECKPOINT_MERGE_STEP,
+        "run_id": run_id,
+        "checkpoint_step": coverage["checkpoint_step"],
+        "reason": coverage["reason"],
+    }
+    if coverage["covered"]:
+        return gate_payload, None
+    return gate_payload, coverage["reason"]
+
+
 def _cmd_merge(args: argparse.Namespace) -> int:
     args.live = True
     try:
@@ -542,6 +643,7 @@ def _cmd_merge(args: argparse.Namespace) -> int:
         "gates_sha": None,
         "escalation": escalation,
         "hotfix_justification": hotfix_justification,
+        "checkpoint_gate": None,
         "merged": False,
     }
     if not claim.granted:
@@ -580,6 +682,7 @@ def _cmd_merge(args: argparse.Namespace) -> int:
             return _finish_merge(args, payload, f"missing evidence: {missing}", code=1)
 
         head_sha = snapshot["head_sha"]
+        gates_run_id: str | None = None
         if args.hotfix:
             payload["gates_sha"] = {"bypassed": True, "reason": "hotfix", "head_sha": head_sha}
         else:
@@ -590,11 +693,12 @@ def _cmd_merge(args: argparse.Namespace) -> int:
             matched, record = ledger.gates_pass_for_head(
                 gates_records, args.pr, head_sha if isinstance(head_sha, str) else ""
             )
+            gates_run_id = record.get("run_id") if record else None
             payload["gates_sha"] = {
                 "bypassed": False,
                 "head_sha": head_sha,
                 "matched": matched,
-                "run_id": record.get("run_id") if record else None,
+                "run_id": gates_run_id,
             }
             if not matched:
                 return _finish_merge(
@@ -603,6 +707,13 @@ def _cmd_merge(args: argparse.Namespace) -> int:
                     f"no gates-pass recorded for the current head {head_sha}",
                     code=1,
                 )
+
+        gate_payload, gate_error = _checkpoint_gate(
+            args, config, run_id=args.run_id or gates_run_id, operator=approval_operator
+        )
+        payload["checkpoint_gate"] = gate_payload
+        if gate_error is not None:
+            return _finish_merge(args, payload, gate_error, code=1)
 
         if args.dry_run:
             return _finish_merge(args, payload, "dry-run: merge not performed", code=0)
@@ -1959,6 +2070,8 @@ def _cmd_status(args: argparse.Namespace) -> int:
         config=config,
         checkpoint_record=checkpoint_record,
         ledger_records=ledger_records,
+        live_branches=list(args.live_branch),
+        live_pull_requests=list(args.live_pr),
     )
     payload = {
         "contract": status.status_contract_as_dict(config),
@@ -2320,6 +2433,10 @@ def _finish_merge(args: argparse.Namespace, payload: dict[str, object], reason: 
         if isinstance(justification, dict):
             detail = justification.get("rule_id") or justification.get("operator") or ""
             print(f"  hotfix : {justification.get('kind')} {detail}".rstrip())
+        checkpoint_gate = payload.get("checkpoint_gate")
+        if isinstance(checkpoint_gate, dict):
+            detail = checkpoint_gate.get("operator") or checkpoint_gate.get("checkpoint_step") or ""
+            print(f"  checkpoint: {checkpoint_gate.get('status')} {detail}".rstrip())
     return code
 
 
@@ -3465,6 +3582,10 @@ def build_parser() -> argparse.ArgumentParser:
                          help="keel guard rule id justifying a --hotfix bypass")
     p_merge.add_argument("--operator-override", action="store_true",
                          help="authorize a --hotfix bypass as a named operator (audited)")
+    p_merge.add_argument("--run-id", default=None,
+                         help="run id for the checkpoint gate (defaults to the gates-pass run id)")
+    p_merge.add_argument("--no-checkpoint-gate", action="store_true",
+                         help="bypass the checkpoint gate as a named operator (audited)")
     p_merge.add_argument("--issue-title", default=None,
                          help="issue title for offline blocker-rule validation")
     p_merge.add_argument("--issue-labels", default=None,
@@ -3825,6 +3946,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_status.add_argument("path", help="path to project.yaml")
     p_status.add_argument("--root", default=".",
                           help="repo root for resolving checkpoint and ledger paths")
+    p_status.add_argument("--live-branch", action="append", default=[],
+                          help="live branch name for orphan detection (repeatable)")
+    p_status.add_argument("--live-pr", action="append", type=_positive_int, default=[],
+                          help="live pull-request number for orphan detection (repeatable)")
     p_status.add_argument("--json", action="store_true", help="emit structured JSON")
     p_status.set_defaults(func=_cmd_status)
 
