@@ -30,6 +30,7 @@ from . import (
     consentverify,
     contracts,
     doctor,
+    dryrunverify,
     evidence,
     gates,
     git,
@@ -1323,6 +1324,121 @@ def _close_observed_issues(
             record=record,
         ))
     return observed
+
+
+def _cmd_dryrun_verify(args: argparse.Namespace) -> int:
+    try:
+        config = cfg.load_config(args.path)
+    except FileNotFoundError:
+        print(f"no such config: {args.path}", file=sys.stderr)
+        return 1
+    except cfg.ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    try:
+        before = _dryrun_snapshot_from_json(args.before_json)
+    except (OSError, ValueError) as exc:
+        print(f"invalid before snapshot: {exc}", file=sys.stderr)
+        return 1
+    try:
+        after = _dryrun_after_snapshot(args, config)
+    except (OSError, ValueError, ledger.LedgerError) as exc:
+        print(f"invalid after snapshot: {exc}", file=sys.stderr)
+        return 1
+
+    report = dryrunverify.reconcile(before, after, run_id=args.run_id, issue=args.issue)
+    payload = {"schema_version": dryrunverify.SCHEMA_VERSION, "reconcile": report}
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"keel dryrun-verify — {report['verdict']}  run {args.run_id!r} issue #{args.issue}")
+        for finding in report["findings"]:
+            print(f"  LEAK  {finding['message']}")
+        if report["ok"]:
+            print("  dry run left no new ledger record, branch, or PR")
+    return 0 if report["ok"] else 1
+
+
+def _dryrun_snapshot_from_json(path: str) -> dryrunverify.ArtifactSnapshot:
+    """Parse an artifact snapshot from a JSON file ``{ledger_run_ids, branches, pr_numbers}``."""
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("snapshot must be a JSON object")
+    return dryrunverify.ArtifactSnapshot(
+        ledger_run_ids=tuple(str(rid) for rid in data.get("ledger_run_ids", ())),
+        branches=tuple(str(name) for name in data.get("branches", ())),
+        pr_numbers=tuple(int(num) for num in data.get("pr_numbers", ())),
+    )
+
+
+def _dryrun_after_snapshot(
+    args: argparse.Namespace,
+    config: cfg.ProjectConfig,
+) -> dryrunverify.ArtifactSnapshot:
+    """Gather the post-dry-run artifact snapshot.
+
+    Offline (``--after-json``): the snapshot is read straight from the fixture so
+    tests are deterministic. Live: ledger run_ids come from the configured ledger,
+    branches from ``git for-each-ref``, and PRs from ``gh pr list`` scoped to the
+    run's issue ship-branch pattern.
+
+    The after snapshot is read **fail-closed**: a corrupt ledger, a failed
+    ``git``/``gh`` read, all raise. An integrity detector that cannot observe the
+    after state must say "cannot certify", never silently report a clean diff —
+    an empty-on-error snapshot would mask a real leak (``after − before = ∅``).
+    """
+    if args.after_json is not None:
+        return _dryrun_snapshot_from_json(args.after_json)
+    records = ledger.read_records(ledger.resolve_path(args.root, config))
+    run_ids = tuple(
+        str(record["run_id"])
+        for record in records
+        if record.get("record_type") == ledger.RECORD_TYPE_SHIP_RUN
+        and isinstance(record.get("run_id"), str)
+    )
+    branches_result = git.list_branches(cwd=args.root)
+    if not branches_result.ok:
+        raise ValueError(
+            "after snapshot incomplete: git branch listing failed; cannot certify dry run"
+        )
+    branches = tuple(
+        line.strip() for line in branches_result.output.splitlines() if line.strip()
+    )
+    pattern = dryrunverify.issue_branch_pattern(args.issue)
+    pr_numbers = tuple(
+        number
+        for number, head in _dryrun_live_prs(args.root)
+        if pattern.search(head)
+    )
+    return dryrunverify.ArtifactSnapshot(
+        ledger_run_ids=run_ids, branches=branches, pr_numbers=pr_numbers,
+    )
+
+
+def _dryrun_live_prs(root: str) -> list[tuple[int, str]]:
+    """Return ``(number, headRefName)`` for the repo's PRs.
+
+    Fail-closed: a ``gh`` transport failure raises ``ValueError`` rather than
+    degrading to an empty list, so an unobservable PR set can never masquerade
+    as "no new PRs" and hide a leaked PR. Malformed entries are skipped (a
+    well-formed-but-empty list is a legitimate observation).
+    """
+    result = github.list_prs(cwd=root)
+    if not result.ok:
+        raise ValueError(
+            "after snapshot incomplete: gh PR listing failed; cannot certify dry run"
+        )
+    entries = json.loads(result.output or "[]")
+    pairs: list[tuple[int, str]] = []
+    for entry in entries if isinstance(entries, list) else ():
+        if not isinstance(entry, dict):
+            continue
+        number = entry.get("number")
+        head = entry.get("headRefName")
+        if isinstance(number, int) and isinstance(head, str):
+            pairs.append((number, head))
+    return pairs
 
 
 def _reconcile_inputs_active(args: argparse.Namespace) -> bool:
@@ -3907,6 +4023,26 @@ def build_parser() -> argparse.ArgumentParser:
                               "(ignored when live)")
     p_close.add_argument("--json", action="store_true", help="emit structured JSON")
     p_close.set_defaults(func=_cmd_close_reconcile)
+
+    p_dryrun = sub.add_parser(
+        "dryrun-verify",
+        help="assert a dry run left no new ledger record, branch, or PR (post-hoc)",
+    )
+    p_dryrun.add_argument("path", help="path to project.yaml")
+    p_dryrun.add_argument("--root", default=".",
+                          help="repo root for the ledger, git, and gh observation")
+    p_dryrun.add_argument("--run-id", required=True,
+                          help="the rehearsed dry-run id whose leaks to detect")
+    p_dryrun.add_argument("--issue", type=_positive_int, required=True,
+                          help="the issue the dry run rehearsed (scopes branch/PR attribution)")
+    p_dryrun.add_argument("--before-json", required=True,
+                          help="JSON snapshot {ledger_run_ids, branches, pr_numbers} "
+                               "captured before the dry run")
+    p_dryrun.add_argument("--after-json", default=None,
+                          help="offline after-snapshot JSON; otherwise gathered live "
+                               "from the ledger, git, and gh")
+    p_dryrun.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_dryrun.set_defaults(func=_cmd_dryrun_verify)
 
     p_reconcile = sub.add_parser(
         "capture-reconcile",

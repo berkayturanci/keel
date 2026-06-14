@@ -47,6 +47,25 @@ def merged_prs(
     return run_argv(argv, cwd=cwd, **_kw(_run))
 
 
+def list_prs(
+    *, head: str | None = None, limit: int = 100, cwd: str | None = None, _run=None
+) -> CommandResult:
+    """List PRs (any state) as a JSON array (``[{"number": N, "headRefName": ...}, ...]``).
+
+    Thin I/O for dry-run integrity verification: the PRs that exist around a
+    rehearsed run are read from the host. ``head`` narrows to a specific head
+    branch. Fail-soft — the caller inspects ``result.ok`` and degrades to "no
+    PRs observed" when offline.
+    """
+    argv = [
+        "gh", "pr", "list", "--state", "all", "--limit", str(limit),
+        "--json", "number,headRefName",
+    ]
+    if head:
+        argv += ["--head", head]
+    return run_argv(argv, cwd=cwd, **_kw(_run))
+
+
 def pr_merge_snapshot(pr: int | str, *, cwd: str | None = None, _run=None) -> CommandResult:
     return run_argv(
         [

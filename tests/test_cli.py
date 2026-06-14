@@ -2929,6 +2929,228 @@ class TestCloseReconcile(unittest.TestCase):
         self.assertEqual(rc, 1)
 
 
+class TestDryrunVerify(unittest.TestCase):
+    def _run_offline(self, *, before, after, run_id="dry-8", issue="8", json_out=True):
+        with tempfile.TemporaryDirectory() as d:
+            before_path = Path(d) / "before.json"
+            after_path = Path(d) / "after.json"
+            before_path.write_text(json.dumps(before), encoding="utf-8")
+            after_path.write_text(json.dumps(after), encoding="utf-8")
+            argv = [
+                "dryrun-verify", str(PROJECTS / "example-android.yaml"),
+                "--root", str(REPO_ROOT), "--run-id", run_id, "--issue", issue,
+                "--before-json", str(before_path), "--after-json", str(after_path),
+            ]
+            if json_out:
+                argv += ["--json"]
+            return run(argv)
+
+    def test_clean_dry_run_passes(self):
+        rc, out, _ = self._run_offline(
+            before={"ledger_run_ids": ["r1"], "branches": ["main"], "pr_numbers": [1]},
+            after={"ledger_run_ids": ["r1"], "branches": ["main"], "pr_numbers": [1]},
+        )
+        data = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertEqual(data["reconcile"]["verdict"], "clean")
+
+    def test_violated_dry_run_is_flagged(self):
+        rc, out, _ = self._run_offline(
+            before={"ledger_run_ids": ["r1"], "branches": ["main"], "pr_numbers": []},
+            after={
+                "ledger_run_ids": ["r1", "dry-8"],
+                "branches": ["main", "feature/issue-8"],
+                "pr_numbers": [42],
+            },
+        )
+        data = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertEqual(data["reconcile"]["verdict"], "violated")
+        kinds = sorted(f["finding"] for f in data["reconcile"]["findings"])
+        self.assertEqual(kinds, ["new-branch", "new-ledger-record", "new-pr"])
+
+    def test_human_output_clean(self):
+        rc, out, _ = self._run_offline(
+            before={"branches": ["main"]}, after={"branches": ["main"]}, json_out=False,
+        )
+        self.assertEqual(rc, 0)
+        self.assertIn("keel dryrun-verify — clean", out)
+        self.assertIn("left no new ledger record", out)
+
+    def test_human_output_violated_lists_leaks(self):
+        rc, out, _ = self._run_offline(
+            before={"branches": ["main"]},
+            after={"branches": ["main", "feature/issue-8"]},
+            json_out=False,
+        )
+        self.assertEqual(rc, 1)
+        self.assertIn("keel dryrun-verify — violated", out)
+        self.assertIn("LEAK", out)
+
+    def test_invalid_before_snapshot_reports_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            before = Path(d) / "before.json"
+            before.write_text("[1,2,3]", encoding="utf-8")  # not an object
+            after = Path(d) / "after.json"
+            after.write_text("{}", encoding="utf-8")
+            rc, _, err = run([
+                "dryrun-verify", str(PROJECTS / "example-android.yaml"),
+                "--root", str(REPO_ROOT), "--run-id", "dry-8", "--issue", "8",
+                "--before-json", str(before), "--after-json", str(after), "--json",
+            ])
+        self.assertEqual(rc, 1)
+        self.assertIn("invalid before snapshot", err)
+
+    def test_invalid_after_snapshot_reports_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            before = Path(d) / "before.json"
+            before.write_text("{}", encoding="utf-8")
+            after = Path(d) / "after.json"
+            after.write_text("{not json", encoding="utf-8")
+            rc, _, err = run([
+                "dryrun-verify", str(PROJECTS / "example-android.yaml"),
+                "--root", str(REPO_ROOT), "--run-id", "dry-8", "--issue", "8",
+                "--before-json", str(before), "--after-json", str(after), "--json",
+            ])
+        self.assertEqual(rc, 1)
+        self.assertIn("invalid after snapshot", err)
+
+    def test_missing_config_reports_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            before = Path(d) / "before.json"
+            before.write_text("{}", encoding="utf-8")
+            rc, _, err = run([
+                "dryrun-verify", "no-such.yaml", "--run-id", "dry-8", "--issue", "8",
+                "--before-json", str(before),
+            ])
+        self.assertEqual(rc, 1)
+        self.assertIn("no such config", err)
+
+    def test_invalid_config_reports_error(self):
+        bad = _write_raw("extends: keel\nbase_branch: main\ngates: [build]\n")
+        with tempfile.TemporaryDirectory() as d:
+            before = Path(d) / "before.json"
+            before.write_text("{}", encoding="utf-8")
+            rc, _, _ = run([
+                "dryrun-verify", bad, "--run-id", "dry-8", "--issue", "8",
+                "--before-json", str(before),
+            ])
+        self.assertEqual(rc, 1)
+
+    def test_live_after_snapshot_flags_leaked_branch(self):
+        # Live: ledger read from a fresh root (empty), branches + PRs via gh/git.
+        def fake_run(argv, **kwargs):
+            if argv[:2] == ["git", "for-each-ref"]:
+                return CommandResult(True, 0, "main\nfeature/issue-8\n")
+            if argv[:3] == ["gh", "pr", "list"]:
+                return CommandResult(True, 0, json.dumps(
+                    [{"number": 42, "headRefName": "feature/issue-8"},
+                     {"number": 7, "headRefName": "feature/issue-9"}]
+                ))
+            return CommandResult(False, 1, "unexpected")
+
+        with tempfile.TemporaryDirectory() as d:
+            before = Path(d) / "before.json"
+            before.write_text(
+                json.dumps({"branches": ["main"], "pr_numbers": []}), encoding="utf-8"
+            )
+            with patch("keel.cli.run_argv", side_effect=fake_run), \
+                    patch("keel.git.run_argv", side_effect=fake_run), \
+                    patch("keel.github.run_argv", side_effect=fake_run):
+                rc, out, _ = run([
+                    "dryrun-verify", str(PROJECTS / "example-android.yaml"),
+                    "--root", d, "--run-id", "dry-8", "--issue", "8",
+                    "--before-json", str(before), "--json",
+                ])
+        data = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertEqual(data["reconcile"]["verdict"], "violated")
+        # PR #42 (issue-8 head) flagged; PR #7 (issue-9 head) scoped out.
+        prs = [f["artifact"] for f in data["reconcile"]["findings"] if f["finding"] == "new-pr"]
+        self.assertEqual(prs, [42])
+
+    def test_live_pr_transport_failure_fails_closed(self):
+        # A gh failure on the AFTER snapshot must NOT report clean — an
+        # unobservable PR set could hide a leaked PR. Fail closed: rc=1.
+        def fake_run(argv, **kwargs):
+            if argv[:2] == ["git", "for-each-ref"]:
+                return CommandResult(True, 0, "main\n")
+            if argv[:3] == ["gh", "pr", "list"]:
+                return CommandResult(False, 1, "gh offline")
+            return CommandResult(False, 1, "unexpected")
+
+        with tempfile.TemporaryDirectory() as d:
+            before = Path(d) / "before.json"
+            before.write_text(
+                json.dumps({"branches": ["main"], "pr_numbers": []}), encoding="utf-8"
+            )
+            with patch("keel.cli.run_argv", side_effect=fake_run), \
+                    patch("keel.git.run_argv", side_effect=fake_run), \
+                    patch("keel.github.run_argv", side_effect=fake_run):
+                rc, _, err = run([
+                    "dryrun-verify", str(PROJECTS / "example-android.yaml"),
+                    "--root", d, "--run-id", "dry-8", "--issue", "8",
+                    "--before-json", str(before), "--json",
+                ])
+        self.assertEqual(rc, 1)
+        self.assertIn("after snapshot incomplete", err)
+        self.assertIn("gh PR listing failed", err)
+
+    def test_live_branch_transport_failure_fails_closed(self):
+        # Symmetric to the gh case: a git branch-listing failure on the AFTER
+        # snapshot must fail closed, not report clean.
+        def fake_run(argv, **kwargs):
+            if argv[:2] == ["git", "for-each-ref"]:
+                return CommandResult(False, 1, "git offline")
+            return CommandResult(False, 1, "unexpected")
+
+        with tempfile.TemporaryDirectory() as d:
+            before = Path(d) / "before.json"
+            before.write_text(
+                json.dumps({"branches": ["main"], "pr_numbers": []}), encoding="utf-8"
+            )
+            with patch("keel.cli.run_argv", side_effect=fake_run), \
+                    patch("keel.git.run_argv", side_effect=fake_run), \
+                    patch("keel.github.run_argv", side_effect=fake_run):
+                rc, _, err = run([
+                    "dryrun-verify", str(PROJECTS / "example-android.yaml"),
+                    "--root", d, "--run-id", "dry-8", "--issue", "8",
+                    "--before-json", str(before), "--json",
+                ])
+        self.assertEqual(rc, 1)
+        self.assertIn("after snapshot incomplete", err)
+        self.assertIn("git branch listing failed", err)
+
+    def test_live_pr_list_skips_malformed_entries(self):
+        def fake_run(argv, **kwargs):
+            if argv[:2] == ["git", "for-each-ref"]:
+                return CommandResult(True, 0, "main\n")
+            if argv[:3] == ["gh", "pr", "list"]:
+                return CommandResult(True, 0, json.dumps(
+                    ["nope", {"number": "x", "headRefName": "feature/issue-8"},
+                     {"number": 42, "headRefName": "feature/issue-8"}]
+                ))
+            return CommandResult(False, 1, "unexpected")
+
+        with tempfile.TemporaryDirectory() as d:
+            before = Path(d) / "before.json"
+            before.write_text(
+                json.dumps({"branches": ["main"], "pr_numbers": [42]}), encoding="utf-8"
+            )
+            with patch("keel.cli.run_argv", side_effect=fake_run), \
+                    patch("keel.git.run_argv", side_effect=fake_run), \
+                    patch("keel.github.run_argv", side_effect=fake_run):
+                rc, out, _ = run([
+                    "dryrun-verify", str(PROJECTS / "example-android.yaml"),
+                    "--root", d, "--run-id", "dry-8", "--issue", "8",
+                    "--before-json", str(before), "--json",
+                ])
+        data = json.loads(out)
+        # Only the well-formed PR #42 is observed, and it pre-existed → clean.
+        self.assertEqual(rc, 0)
+        self.assertEqual(data["reconcile"]["verdict"], "clean")
+
+
 class TestVerifyBranch(unittest.TestCase):
     BASE = [
         "verify-branch", str(PROJECTS / "example-android.yaml"),
