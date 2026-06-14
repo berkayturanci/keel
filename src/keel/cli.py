@@ -26,6 +26,7 @@ from . import (
     classify,
     closure,
     consent,
+    consentverify,
     contracts,
     doctor,
     evidence,
@@ -1125,6 +1126,101 @@ def _cmd_capture_verify(args: argparse.Namespace) -> int:
             if reconcile_report["ok"]:
                 print("  reconcile: ok")
     return 0 if base_ok and reconcile_ok else 1
+
+
+def _cmd_consent_verify(args: argparse.Namespace) -> int:
+    try:
+        config = cfg.load_config(args.path)
+    except FileNotFoundError:
+        print(f"no such config: {args.path}", file=sys.stderr)
+        return 1
+    except cfg.ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    try:
+        record = _consent_ledger_record(args, config)
+    except ledger.LedgerError as exc:
+        print(f"invalid run ledger: {exc}", file=sys.stderr)
+        return 1
+    try:
+        observed = _consent_observed_effects(args, config)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    has_record, approved_scopes = consentverify.consent_record_from_ledger(record)
+    report = consentverify.reconcile(
+        observed, approved_scopes, has_consent_record=has_record
+    )
+    payload = {
+        "schema_version": consentverify.SCHEMA_VERSION,
+        "pull_request": args.pr,
+        "scope_effect_table": consentverify.scope_effect_table(),
+        "reconcile": report,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"keel consent-verify — {report['verdict']}  PR #{args.pr}")
+        print(f"  consent record : {'present' if has_record else 'absent (advisory)'}")
+        print(f"  approved scopes: {', '.join(report['approved_scopes']) or 'none'}")
+        print(f"  observed       : {', '.join(report['observed_effects']) or 'none'}")
+        for finding in report["uncovered"]:
+            print(f"  FAIL  {finding['message']}")
+        if report["verdict"] == consentverify.VERDICT_PASS:
+            print("  all observed mutations covered by approved scopes")
+    return 0 if report["ok"] else 1
+
+
+def _consent_ledger_record(
+    args: argparse.Namespace,
+    config: cfg.ProjectConfig,
+) -> dict[str, object] | None:
+    """Load the latest ship_run ledger record for the PR under consent-verify.
+
+    Reads the run ledger (offline fixture via ``--ledger-jsonl`` or the configured
+    path under ``--root``) and returns the most recent matching ship_run record,
+    or ``None`` when no record matches — the advisory back-compat path.
+    """
+    fixture = getattr(args, "ledger_jsonl", None)
+    if fixture is not None:
+        records = ledger.parse_records(Path(fixture).read_text(encoding="utf-8"))
+    else:
+        records = ledger.read_records(ledger.resolve_path(args.root, config))
+    return ledger.latest_ship_run_for_pr(records, args.pr)
+
+
+def _consent_observed_effects(
+    args: argparse.Namespace,
+    config: cfg.ProjectConfig,
+) -> consentverify.ObservedEffects:
+    """Observe the mutating side effects on the PR for consent reconciliation.
+
+    Offline (``--offline``): the effect flags are taken straight from the
+    ``--pr-exists``/``--commented``/``--merged``/``--labeled`` switches, so tests
+    are deterministic with no transport. Live: the PR state is read via the thin
+    ``gh`` wrappers, fail-soft — a transport failure raises so the operator sees
+    the fetch error rather than a silently-empty observation.
+    """
+    if args.offline:
+        return consentverify.ObservedEffects(
+            pr_exists=args.pr_exists,
+            commented=args.commented,
+            merged=args.merged,
+            labeled=args.labeled,
+        )
+    owner_repo = _owner_repo(config)
+    pr = _gh_json(["repos", owner_repo, "pulls", str(args.pr)], cwd=args.root)
+    comments = _gh_json_list(
+        ["repos", owner_repo, "issues", str(args.pr), "comments"], cwd=args.root
+    )
+    return consentverify.ObservedEffects(
+        pr_exists=True,
+        commented=bool(comments),
+        merged=pr.get("merged") is True,
+        labeled=bool(_label_names(pr.get("labels"))),
+    )
 
 
 def _reconcile_inputs_active(args: argparse.Namespace) -> bool:
@@ -3661,6 +3757,31 @@ def build_parser() -> argparse.ArgumentParser:
                            help="evidence-side review-verdict count for a PR (offline fixture)")
     p_capture.add_argument("--json", action="store_true", help="emit structured JSON")
     p_capture.set_defaults(func=_cmd_capture_verify)
+
+    p_consent = sub.add_parser(
+        "consent-verify",
+        help="reconcile observed PR side effects against approved consent scopes",
+    )
+    p_consent.add_argument("path", help="path to project.yaml")
+    p_consent.add_argument("--root", default=".",
+                           help="repo root for live gh observation and the ledger path")
+    p_consent.add_argument("--pr", type=_positive_int, required=True,
+                           help="pull request number to reconcile")
+    p_consent.add_argument("--ledger-jsonl", default=None,
+                           help="offline run-ledger JSONL fixture; otherwise the configured "
+                                "ledger under --root is read for the consent record")
+    p_consent.add_argument("--offline", action="store_true",
+                           help="use only the supplied observed-effect flags; make no gh calls")
+    p_consent.add_argument("--pr-exists", action="store_true",
+                           help="offline: the PR exists (implies git push + gh pr create)")
+    p_consent.add_argument("--commented", action="store_true",
+                           help="offline: comments were posted on the PR")
+    p_consent.add_argument("--merged", action="store_true",
+                           help="offline: the PR was merged")
+    p_consent.add_argument("--labeled", action="store_true",
+                           help="offline: labels were written on the PR")
+    p_consent.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_consent.set_defaults(func=_cmd_consent_verify)
 
     p_reconcile = sub.add_parser(
         "capture-reconcile",

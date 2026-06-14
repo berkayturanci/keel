@@ -2502,6 +2502,219 @@ class TestScopeVerify(unittest.TestCase):
         self.assertIn("owner and repo", err)
 
 
+def _consent_ledger(*, status="approved", scopes, pr=300):
+    record = {
+        "schema_version": "keel.run-ledger.v1",
+        "record_type": "ship_run",
+        "pull_request": {"number": pr},
+        "run_context": {"consent": {"status": status, "scopes": list(scopes)}},
+    }
+    return ledger.encode_record(record)
+
+
+class TestConsentVerify(unittest.TestCase):
+    def _run_offline(self, *, ledger_text, effects, json_out=True):
+        with tempfile.TemporaryDirectory() as d:
+            ledger_jsonl = Path(d) / "ledger.jsonl"
+            ledger_jsonl.write_text(ledger_text, encoding="utf-8")
+            argv = [
+                "consent-verify", str(PROJECTS / "example-android.yaml"),
+                "--root", str(REPO_ROOT), "--pr", "300", "--offline",
+                "--ledger-jsonl", str(ledger_jsonl),
+            ]
+            argv += effects
+            if json_out:
+                argv += ["--json"]
+            return run(argv)
+
+    def test_merged_pr_with_only_git_scope_fails_naming_merge(self):
+        rc, out, _ = self._run_offline(
+            ledger_text=_consent_ledger(scopes=["git"]),
+            effects=["--pr-exists", "--merged"],
+        )
+        data = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertEqual(data["reconcile"]["verdict"], "fail")
+        effects = {finding["effect"] for finding in data["reconcile"]["uncovered"]}
+        self.assertIn("merged", effects)
+        merged = next(f for f in data["reconcile"]["uncovered"] if f["effect"] == "merged")
+        self.assertIn(
+            "mutation merged not covered by approved consent scopes", merged["message"]
+        )
+
+    def test_merged_pr_with_git_and_github_passes(self):
+        rc, out, _ = self._run_offline(
+            ledger_text=_consent_ledger(scopes=["git", "github"]),
+            effects=["--pr-exists", "--merged", "--commented", "--labeled"],
+        )
+        data = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertEqual(data["reconcile"]["verdict"], "pass")
+        self.assertEqual(data["reconcile"]["uncovered"], [])
+
+    def test_no_consent_record_is_advisory(self):
+        rc, out, _ = self._run_offline(
+            ledger_text="", effects=["--pr-exists", "--merged"]
+        )
+        data = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertEqual(data["reconcile"]["verdict"], "advisory")
+        self.assertFalse(data["reconcile"]["has_consent_record"])
+
+    def test_json_payload_includes_scope_effect_table(self):
+        rc, out, _ = self._run_offline(
+            ledger_text=_consent_ledger(scopes=["git", "github"]),
+            effects=["--pr-exists"],
+        )
+        data = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertEqual(data["scope_effect_table"]["pr_exists"], ["git", "github"])
+        self.assertEqual(data["scope_effect_table"]["merged"], ["github"])
+
+    def test_human_output_fail_lists_uncovered(self):
+        rc, out, _ = self._run_offline(
+            ledger_text=_consent_ledger(scopes=["git"]),
+            effects=["--pr-exists", "--merged"],
+            json_out=False,
+        )
+        self.assertEqual(rc, 1)
+        self.assertIn("keel consent-verify — fail", out)
+        self.assertIn("consent record : present", out)
+        self.assertIn("mutation merged not covered", out)
+
+    def test_human_output_pass(self):
+        rc, out, _ = self._run_offline(
+            ledger_text=_consent_ledger(scopes=["git", "github"]),
+            effects=["--pr-exists", "--merged"],
+            json_out=False,
+        )
+        self.assertEqual(rc, 0)
+        self.assertIn("keel consent-verify — pass", out)
+        self.assertIn("all observed mutations covered", out)
+
+    def test_human_output_advisory(self):
+        rc, out, _ = self._run_offline(
+            ledger_text="", effects=["--pr-exists"], json_out=False
+        )
+        self.assertEqual(rc, 0)
+        self.assertIn("keel consent-verify — advisory", out)
+        self.assertIn("consent record : absent (advisory)", out)
+
+    def test_reads_configured_ledger_under_root_when_no_fixture(self):
+        # No --ledger-jsonl: reads the configured ledger under --root; a fresh
+        # root has no ledger → advisory.
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run([
+                "consent-verify", str(PROJECTS / "example-android.yaml"),
+                "--root", d, "--pr", "300", "--offline", "--pr-exists",
+                "--merged", "--json",
+            ])
+        data = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertEqual(data["reconcile"]["verdict"], "advisory")
+
+    def test_live_transport_observation_fails_on_uncovered_merge(self):
+        def fake_run(argv, **kwargs):
+            endpoint = argv[-1]
+            if endpoint.endswith("/pulls/300"):
+                return CommandResult(True, 0, json.dumps(
+                    {"merged": True, "labels": [{"name": "keel:ship"}]}
+                ))
+            if endpoint.endswith("/issues/300/comments"):
+                return CommandResult(True, 0, json.dumps([[{"body": "hi"}]]))
+            return CommandResult(False, 1, "unexpected endpoint")
+
+        with tempfile.TemporaryDirectory() as d:
+            ledger_jsonl = Path(d) / "ledger.jsonl"
+            ledger_jsonl.write_text(_consent_ledger(scopes=["git"]), encoding="utf-8")
+            with patch("keel.cli.run_argv", side_effect=fake_run):
+                rc, out, _ = run([
+                    "consent-verify", str(PROJECTS / "example-android.yaml"),
+                    "--root", d, "--pr", "300",
+                    "--ledger-jsonl", str(ledger_jsonl), "--json",
+                ])
+        data = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertEqual(data["reconcile"]["verdict"], "fail")
+        self.assertEqual(
+            set(data["reconcile"]["observed_effects"]),
+            {"pr_exists", "comment", "merged", "label"},
+        )
+
+    def test_live_transport_observation_passes_with_full_scopes(self):
+        def fake_run(argv, **kwargs):
+            endpoint = argv[-1]
+            if endpoint.endswith("/pulls/300"):
+                return CommandResult(True, 0, json.dumps({"merged": False, "labels": []}))
+            if endpoint.endswith("/issues/300/comments"):
+                return CommandResult(True, 0, json.dumps([[]]))
+            return CommandResult(False, 1, "unexpected endpoint")
+
+        with tempfile.TemporaryDirectory() as d:
+            ledger_jsonl = Path(d) / "ledger.jsonl"
+            ledger_jsonl.write_text(
+                _consent_ledger(scopes=["git", "github"]), encoding="utf-8"
+            )
+            with patch("keel.cli.run_argv", side_effect=fake_run):
+                rc, out, _ = run([
+                    "consent-verify", str(PROJECTS / "example-android.yaml"),
+                    "--root", d, "--pr", "300",
+                    "--ledger-jsonl", str(ledger_jsonl), "--json",
+                ])
+        data = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertEqual(data["reconcile"]["verdict"], "pass")
+        self.assertEqual(data["reconcile"]["observed_effects"], ["pr_exists"])
+
+    def test_live_transport_failure_surfaces_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            with patch("keel.cli.run_argv",
+                       return_value=CommandResult(False, 1, "gh offline")):
+                rc, _, err = run([
+                    "consent-verify", str(PROJECTS / "example-android.yaml"),
+                    "--root", d, "--pr", "300", "--json",
+                ])
+        self.assertEqual(rc, 1)
+        self.assertIn("gh api", err)
+
+    def test_invalid_ledger_reports_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            bad = Path(d) / "ledger.jsonl"
+            bad.write_text("{not json", encoding="utf-8")
+            rc, _, err = run([
+                "consent-verify", str(PROJECTS / "example-android.yaml"),
+                "--root", str(REPO_ROOT), "--pr", "300", "--offline",
+                "--ledger-jsonl", str(bad), "--pr-exists", "--json",
+            ])
+        self.assertEqual(rc, 1)
+        self.assertIn("invalid run ledger", err)
+
+    def test_missing_config_reports_error(self):
+        rc, _, err = run([
+            "consent-verify", "no-such.yaml", "--pr", "300", "--offline", "--pr-exists",
+        ])
+        self.assertEqual(rc, 1)
+        self.assertIn("no such config", err)
+
+    def test_invalid_config_reports_error(self):
+        bad = _write_raw("extends: keel\nbase_branch: main\ngates: [build]\n")
+        rc, _, err = run([
+            "consent-verify", bad, "--pr", "300", "--offline", "--pr-exists",
+        ])
+        self.assertEqual(rc, 1)
+
+    def test_live_observation_missing_owner_repo_reports(self):
+        bad = _write_raw(
+            "extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
+            "repo: tmp\ngates: [build]\nknobs:\n  build_gate_cmd: \"true\"\n"
+        )
+        rc, _, err = run([
+            "consent-verify", bad, "--root", str(REPO_ROOT), "--pr", "300", "--json",
+        ])
+        self.assertEqual(rc, 1)
+        self.assertIn("owner and repo", err)
+
+
 class TestVerifyBranch(unittest.TestCase):
     BASE = [
         "verify-branch", str(PROJECTS / "example-android.yaml"),

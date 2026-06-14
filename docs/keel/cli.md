@@ -519,6 +519,57 @@ scope creep for a single run, mirroring `keel evidence-verify --deferral`. Tests
 CI harnesses can supply the diff and ledger offline with `--dry-run --changed-file <path>`
 and `--ledger-jsonl <fixture>`; the same pure verifier path is used either way.
 
+## `keel consent-verify <project.yaml> --pr <N> [--root DIR] [--offline] [--json]`
+
+Close keel's consent-boundary gap (audit GAP-12). keel's consent scopes gate the CLI
+*contract* an agent renders before a live run — they do not gate the side effects
+themselves. Every real mutation (git push, `gh pr create`/`comment`/`merge`, label writes)
+is executed by the agent directly and never passes a consent check, and the consent
+`status`/`scopes` recorded on the ledger are whatever the agent passed. `consent-verify` is
+the deterministic post-hoc reconcile that checks the side effects actually **observed** on a
+PR against the scopes that were **approved**.
+
+The reconcile is pure (`keel.consentverify.reconcile`). It maps each observed effect to its
+required consent scopes through `keel.consent.side_effect_scopes` (reusing the canonical
+scope vocabulary, not a parallel one):
+
+| observed effect | required scopes | rationale |
+| --- | --- | --- |
+| `pr_exists` | `git`, `github` | the PR existing means a branch was pushed (`git`) and a PR opened (`github`) |
+| `comment` | `github` | a comment was posted |
+| `merged` | `github` | the PR was merged |
+| `label` | `github` | labels were written |
+
+Any observed mutation whose required scope is **not** in the ledger's approved consent
+scopes is flagged as `mutation <kind> not covered by approved consent scopes`, and the
+command exits non-zero.
+
+The verdict has three states, fail-closed only on a real boundary breach:
+
+- **advisory** (exit 0) — no consent record exists for the PR (a pre-consent or
+  agent-self-reported PR). There is nothing to reconcile against, so back-compat is
+  preserved and nothing fails.
+- **pass** (exit 0) — a consent record exists and every observed mutation is covered.
+- **fail** (exit 1) — a consent record exists but an observed mutation exceeds it.
+
+A consent record is considered to exist only when the ledger's
+`run_context.consent.status` is a non-blank string; the approved scopes come from
+`run_context.consent.scopes`.
+
+```bash
+# A merged PR whose consent record only approved git → fails, naming the uncovered merge.
+keel consent-verify .keel/project.yaml --root . --pr 456 --json
+```
+
+The CLI does the I/O (observing PR state, comments, merged, and labels through `gh`,
+fail-soft; the ledger consent record via `latest_ship_run_for_pr`) and feeds the pure
+reconcile. Offline CI harnesses and tests supply the observed effects and ledger directly:
+`--offline` with `--pr-exists`/`--commented`/`--merged`/`--labeled` flags and
+`--ledger-jsonl <fixture>` exercise the same pure verifier path with no transport.
+
+A live `gh`/`git` consent proxy that gates the side effects *as they happen* (rather than
+reconciling after the fact) is a separate, heavier follow-up and is out of scope here.
+
 ## `keel verify-branch <project.yaml> --pr N [--root DIR] [--tolerance N] [--allow-stale-base] [--offline] [--json]`
 
 Enforce keel's **s2 branch contract**: cut the work branch off an up-to-date

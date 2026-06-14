@@ -28,6 +28,24 @@ on the adapter** (or orchestrator) honoring the emitted contract before it acts.
 fail closed on its own preflight (refusing to proceed when required scopes are unapproved),
 but it cannot police a downstream agent that ignores the contract.
 
+### Post-hoc consent reconciliation (audit GAP-12)
+
+Because consent gates the *contract* and not the side effects themselves, a downstream agent
+that ignores the contract can still push, open, comment, merge, and label without any scope
+check — and the `status`/`scopes` recorded on the ledger are whatever the agent passed.
+`keel consent-verify <project.yaml> --pr <N>` is the deterministic, core-pure check that
+closes this gap after the fact: it reconciles the side effects actually **observed** on a PR
+(the PR exists → `git`+`github`; comments → `github`; merged → `github`; labels →
+`github`, all mapped through `keel.consent.side_effect_scopes`) against the **approved**
+scopes in the ledger's consent record (`run_context.consent.scopes`). An observed mutation
+not covered by an approved scope is flagged `mutation <kind> not covered by approved consent
+scopes` and fails the check. When no consent record exists for the PR the verdict is
+**advisory** (back-compat for pre-consent PRs); when a record exists and an observed effect
+exceeds it the verdict is **fail**. A live `gh`/`git` proxy that gates side effects as they
+happen is a separate, heavier follow-up. See
+[cli.md](cli.md#keel-consent-verify-projectyaml---pr-n---root-dir---offline---json) and
+[command-contracts.md](command-contracts.md#consent-boundary-reconciliation-audit-gap-12).
+
 ## Contract behavior
 
 Every structured command contract includes `operator_consent`.

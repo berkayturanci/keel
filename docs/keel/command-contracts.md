@@ -114,6 +114,43 @@ always gates; repeated retry, conflicting sources, and large diffs gate; low-ris
 be sampled by a deterministic bucket; and the risk/trust matrix is based on risk tier plus
 trust signal, not model confidence alone. Unknown risk or trust values fail closed.
 
+## Consent-boundary reconciliation (audit GAP-12)
+
+The `operator_consent` block gates the command *contract* an agent renders before a live
+run — it does not gate the side effects themselves. Every real mutation (git push, `gh pr
+create`/`comment`/`merge`, label writes) is executed by the agent directly and never passes
+a consent check, and the consent `status`/`scopes` recorded on the ledger are whatever the
+agent passed. `keel consent-verify <project.yaml> --pr <N>` is the deterministic post-hoc
+reconcile that closes this gap: it checks the side effects actually **observed** on a PR
+against the scopes that were **approved** in the ledger's consent record.
+
+The reconcile is pure (`keel.consentverify.reconcile`). Each observed effect maps to its
+required consent scopes through `keel.consent.side_effect_scopes` — the same canonical scope
+vocabulary as `operator_consent`, not a parallel one:
+
+| observed effect | required scopes |
+|---|---|
+| `pr_exists` (the PR exists → branch push + `gh pr create`) | `git`, `github` |
+| `comment` (a comment was posted) | `github` |
+| `merged` (the PR was merged) | `github` |
+| `label` (labels were written) | `github` |
+
+Any observed mutation whose required scope is not in the ledger's approved scopes is flagged
+as `mutation <kind> not covered by approved consent scopes`. The verdict is fail-closed only
+on a real breach:
+
+- **advisory** (exit 0) — no consent record exists for the PR (`run_context.consent.status`
+  is blank): a pre-consent or agent-self-reported PR, nothing to reconcile against, so
+  back-compat is preserved;
+- **pass** (exit 0) — a consent record exists and every observed mutation is covered;
+- **fail** (exit non-zero) — a consent record exists but an observed mutation exceeds it.
+
+The approved scopes come from `run_context.consent.scopes` on the latest ship-run record.
+The CLI observes PR state, comments, merged, and labels through `gh` (fail-soft); offline
+fixtures (`--offline` with the observed-effect flags, `--ledger-jsonl`) drive the same pure
+path. A live `gh`/`git` proxy that gates side effects as they happen is a separate,
+heavier follow-up and is out of scope.
+
 ## Core-owned merge execution
 
 Ship-style adapters must route s10 through `keel merge`; raw `gh pr merge` calls bypass
