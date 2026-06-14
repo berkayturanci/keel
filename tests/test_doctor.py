@@ -269,6 +269,13 @@ class TestFetchLatestPypi(unittest.TestCase):
         )
         self.assertIsNone(result)
 
+    def test_invalid_scheme_returns_none(self):
+        result = cli._fetch_latest_pypi_version(
+            url="file:///etc/passwd",
+            _open=lambda url, timeout: self._FakeResponse(b"")
+        )
+        self.assertIsNone(result)
+
 
 class TestScanAdapterMarkers(unittest.TestCase):
     def test_reads_keel_version_markers(self):
