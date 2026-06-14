@@ -88,21 +88,37 @@ def cmd_render(args: argparse.Namespace) -> int:
     return 0
 
 
-def _run_state_for(args: argparse.Namespace) -> dict | tuple[int, str]:
-    """Resolve the RunState for a terminal command, or ``(code, message)`` on error."""
+def _resolve_config(args: argparse.Namespace) -> cfg.ProjectConfig | tuple[int, str]:
+    """Load the project config, or ``(code, message)`` for a *fatal* config error.
+
+    A bad config path is permanent (it won't fix itself mid-run), so it is fatal
+    for every caller — unlike a transient ledger read, which ``--follow`` tolerates.
+    """
     try:
-        config = cfg.load_config(args.path)
+        return cfg.load_config(args.path)
     except FileNotFoundError:
         return 1, f"no such config: {args.path}"
     except cfg.ConfigError as exc:
         return 1, str(exc)
-    try:
-        record = _resolve_record(args, config)
-    except ledger.LedgerError as exc:
-        return 1, f"invalid run ledger: {exc}"
+
+
+def _state_from_config(args: argparse.Namespace, config: cfg.ProjectConfig) -> dict:
+    """Build the RunState from an already-loaded config; may raise ``LedgerError``."""
+    record = _resolve_record(args, config)
     return runstate.build_run_state(
         record, checkpoint_step=_resolve_checkpoint_step(args, config), command=args.command,
     )
+
+
+def _run_state_for(args: argparse.Namespace) -> dict | tuple[int, str]:
+    """Resolve the RunState for a one-shot terminal command, or ``(code, message)``."""
+    config = _resolve_config(args)
+    if isinstance(config, tuple):
+        return config
+    try:
+        return _state_from_config(args, config)
+    except ledger.LedgerError as exc:
+        return 1, f"invalid run ledger: {exc}"
 
 
 def _resolve_color(args: argparse.Namespace, out) -> bool:
@@ -160,19 +176,33 @@ def _render_pass(args, state, order, *, color, out, sleep, clear_first) -> None:
 
 
 def _play_follow(args, *, sleep, out, max_cycles: int | None) -> int:
-    """Live mode: re-resolve the run-state each interval and redraw the current step."""
+    """Live mode: re-resolve the run-state each interval and redraw the current step.
+
+    Fail-soft against *transient* read errors: a live run appends to the ledger
+    concurrently, so an unlucky tick can read a half-written line
+    (``LedgerError``). That must not kill the follower — the tick is skipped and
+    the last good frame is held (or a "waiting" line shown until the first
+    success). Only a *fatal* config error (resolved once up front) exits.
+    """
+    config = _resolve_config(args)
+    if isinstance(config, tuple):
+        print(config[1], file=sys.stderr)
+        return config[0]
     color = _resolve_color(args, out)
+    last_frame: str | None = None
     cycle = 0
     try:
         while max_cycles is None or cycle < max_cycles:
-            state = _run_state_for(args)
-            if isinstance(state, tuple):
-                print(state[1], file=sys.stderr)
-                return state[0]
+            try:
+                state = _state_from_config(args, config)
+                last_frame = terminal.frame(
+                    state, state["active_index"], style=args.style, color=color
+                )
+            except ledger.LedgerError:
+                pass  # transient: hold the last good frame and keep polling
             if not args.no_clear:
                 out.write(_CLEAR)
-            frame = terminal.frame(state, state["active_index"], style=args.style, color=color)
-            out.write(frame + "\n")
+            out.write((last_frame or "keel-visual — waiting for run state…") + "\n")
             out.flush()
             cycle += 1
             sleep(max(0.0, args.interval))

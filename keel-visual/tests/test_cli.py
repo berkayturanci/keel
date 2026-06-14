@@ -238,10 +238,23 @@ class TestLoopAndFollow(unittest.TestCase):
         self.assertEqual(out.getvalue().count("\x1b[2J"), 3)
         self.assertEqual(len(calls), 3)
 
-    def test_follow_error_returns_code(self):
+    def test_follow_fatal_config_error_returns_code(self):
         rc = cli.cmd_play(_args(follow=True, path="no-such.yaml"),
                           sleep=lambda s: None, out=io.StringIO(), max_cycles=2)
         self.assertEqual(rc, 1)
+
+    def test_follow_transient_ledger_error_keeps_polling(self):
+        # A live run can leave a half-written ledger line; the follower must not
+        # die — it skips the tick and shows a waiting line until a good read.
+        import tempfile
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as d:
+            bad = Path(d) / "bad.jsonl"
+            bad.write_text("{half-written", encoding="utf-8")
+            rc = cli.cmd_play(_args(follow=True, ledger_jsonl=str(bad)),
+                              sleep=lambda s: None, out=out, max_cycles=2)
+        self.assertEqual(rc, 0)  # survived, did not exit on the bad read
+        self.assertIn("waiting for run state", out.getvalue())
 
     def test_follow_keyboard_interrupt_exits_clean(self):
         out = io.StringIO()
