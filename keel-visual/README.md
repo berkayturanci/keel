@@ -19,7 +19,9 @@ no second source of truth — the visualizer shows exactly what the ledger says.
 The flow animates right in the terminal while a command runs:
 
 ```
-keel-visual play .keel/project.yaml --pr 361              # animate the run
+keel-visual play .keel/project.yaml --pr 361              # animate the run once
+keel-visual play .keel/project.yaml --pr 361 --loop       # replay continuously (demo / wall display)
+keel-visual play .keel/project.yaml --follow              # LIVE: show where the run is right now
 keel-visual play .keel/project.yaml --pr 361 --style wave # sine "ribbon" with a light trail
 keel-visual play .keel/project.yaml --pr 361 --step 8     # a single frame (e.g. the test gate)
 ```
@@ -28,8 +30,17 @@ keel-visual play .keel/project.yaml --pr 361 --step 8     # a single frame (e.g.
   red when blocked), a regression bar, and a "where are we" pointer.
 - `wave` — the run drawn on a sine ribbon with a light trail up to the active
   step (the terminal's take on the 3D ribbon).
+- **`--follow`** — live mode: every `--interval` seconds it re-reads the run's
+  ledger + checkpoint (`position.current_step`) and redraws where the run
+  *actually* is now. Point it at a running keel command and watch the playhead
+  move in real time. Ctrl-C to stop.
+- **`--loop`** — replay the animation continuously (demo / always-on display).
 
-Colour is `--color auto` (only on a tty), `always`, or `never`.
+`render` and `play` both pick up the live checkpoint automatically when you
+don't pass `--checkpoint-step`. Colour is `--color auto` (only on a tty),
+`always`, or `never`. See
+[`screenshots/keel-visual-play.gif`](screenshots/keel-visual-play.gif) for the
+animation in motion.
 
 ### 2. Web — `keel-visual render` (the alternative)
 

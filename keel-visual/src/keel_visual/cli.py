@@ -16,10 +16,12 @@ import time
 from importlib import resources
 from pathlib import Path
 
+from keel import checkpoint, ledger
 from keel import config as cfg
-from keel import ledger
 
 from . import render, runstate, terminal
+
+_CLEAR = "\x1b[2J\x1b[H"
 
 
 def load_template() -> str:
@@ -42,6 +44,24 @@ def _resolve_record(args: argparse.Namespace, config: cfg.ProjectConfig) -> dict
     return ship_runs[-1] if ship_runs else None
 
 
+def _resolve_checkpoint_step(args: argparse.Namespace, config: cfg.ProjectConfig) -> str | None:
+    """Resolve the live current step: explicit ``--checkpoint-step``, else the checkpoint.
+
+    When the operator does not pin a step, read the run's checkpoint file under
+    ``--root`` and take its ``position.current_step`` — this is what makes
+    ``--follow`` (and a plain ``render``) reflect where the run actually is.
+    Fail-soft: a missing or malformed checkpoint yields ``None`` so position
+    falls back to inference from the ledger.
+    """
+    if args.checkpoint_step is not None:
+        return args.checkpoint_step
+    try:
+        record = checkpoint.read_checkpoint(checkpoint.resolve_path(args.root, config))
+    except checkpoint.CheckpointError:
+        return None
+    return runstate.current_step_from_checkpoint(record)
+
+
 def cmd_render(args: argparse.Namespace) -> int:
     try:
         config = cfg.load_config(args.path)
@@ -59,7 +79,7 @@ def cmd_render(args: argparse.Namespace) -> int:
         return 1
 
     state = runstate.build_run_state(
-        record, checkpoint_step=args.checkpoint_step, command=args.command,
+        record, checkpoint_step=_resolve_checkpoint_step(args, config), command=args.command,
     )
     title = f"{args.command} · issue #{state['issue']}" if state["issue"] else args.command
     html = render.render_html(load_template(), state, title=title)
@@ -81,28 +101,83 @@ def _run_state_for(args: argparse.Namespace) -> dict | tuple[int, str]:
     except ledger.LedgerError as exc:
         return 1, f"invalid run ledger: {exc}"
     return runstate.build_run_state(
-        record, checkpoint_step=args.checkpoint_step, command=args.command,
+        record, checkpoint_step=_resolve_checkpoint_step(args, config), command=args.command,
     )
 
 
-def cmd_play(args: argparse.Namespace, *, sleep=time.sleep, out=sys.stdout) -> int:
+def _resolve_color(args: argparse.Namespace, out) -> bool:
+    if args.color == "auto":
+        return hasattr(out, "isatty") and out.isatty()
+    return args.color == "always"
+
+
+def cmd_play(
+    args: argparse.Namespace, *, sleep=time.sleep, out=sys.stdout, max_cycles: int | None = None,
+) -> int:
+    """Render the run in the terminal.
+
+    Default: animate once through the run's steps. ``--loop`` replays it
+    continuously; ``--follow`` re-reads the live ledger + checkpoint each
+    ``--interval`` and redraws where the run actually is now. ``max_cycles``
+    bounds the otherwise-unbounded loop/follow for tests; ``None`` means run
+    until interrupted.
+    """
+    if args.follow:
+        return _play_follow(args, sleep=sleep, out=out, max_cycles=max_cycles)
+
     state = _run_state_for(args)
     if isinstance(state, tuple):
         print(state[1], file=sys.stderr)
         return state[0]
-    color = sys.stdout.isatty() if args.color == "auto" else (args.color == "always")
+    color = _resolve_color(args, out)
     order = terminal.exercised_indices(state) or [state["active_index"]]
     if args.step is not None:
         order = [max(0, min(args.step, len(state["steps"]) - 1))]
     elif args.once:
         order = [state["active_index"]]
+
+    cycle = 0
+    try:
+        while max_cycles is None or cycle < max_cycles:
+            _render_pass(args, state, order, color=color, out=out, sleep=sleep,
+                         clear_first=cycle > 0 or not args.once)
+            cycle += 1
+            if not args.loop:
+                break
+    except KeyboardInterrupt:
+        out.write("\n")
+    return 0
+
+
+def _render_pass(args, state, order, *, color, out, sleep, clear_first) -> None:
     for i, active in enumerate(order):
-        if not args.no_clear and (i > 0 or not args.once):
-            out.write("\x1b[2J\x1b[H")
+        if not args.no_clear and (clear_first or i > 0):
+            out.write(_CLEAR)
         out.write(terminal.frame(state, active, style=args.style, color=color) + "\n")
         out.flush()
         if len(order) > 1 and i < len(order) - 1:
             sleep(max(0.0, 1.0 / max(1, args.fps)))
+
+
+def _play_follow(args, *, sleep, out, max_cycles: int | None) -> int:
+    """Live mode: re-resolve the run-state each interval and redraw the current step."""
+    color = _resolve_color(args, out)
+    cycle = 0
+    try:
+        while max_cycles is None or cycle < max_cycles:
+            state = _run_state_for(args)
+            if isinstance(state, tuple):
+                print(state[1], file=sys.stderr)
+                return state[0]
+            if not args.no_clear:
+                out.write(_CLEAR)
+            frame = terminal.frame(state, state["active_index"], style=args.style, color=color)
+            out.write(frame + "\n")
+            out.flush()
+            cycle += 1
+            sleep(max(0.0, args.interval))
+    except KeyboardInterrupt:
+        out.write("\n")
     return 0
 
 
@@ -132,6 +207,10 @@ def build_parser() -> argparse.ArgumentParser:
     pl.add_argument("--fps", type=int, default=2, help="frames per second during playback")
     pl.add_argument("--step", type=int, default=None, help="render a single step frame and exit")
     pl.add_argument("--once", action="store_true", help="render current frame once (no animation)")
+    pl.add_argument("--loop", action="store_true", help="replay continuously (Ctrl-C to stop)")
+    pl.add_argument("--follow", action="store_true",
+                    help="live: re-read ledger + checkpoint each interval, show where the run is")
+    pl.add_argument("--interval", type=float, default=1.0, help="--follow poll interval in seconds")
     pl.add_argument("--no-clear", action="store_true", help="keep frames (no screen clear)")
     pl.add_argument("--color", default="auto", choices=("auto", "always", "never"),
                     help="ANSI colour (auto = only on a tty)")

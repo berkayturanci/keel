@@ -64,6 +64,22 @@ def _int_or_none(value: Any) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
+def current_step_from_checkpoint(record: dict[str, Any] | None) -> str | None:
+    """Extract the live ``current_step`` id from a keel checkpoint record.
+
+    keel writes the run's position to ``position.current_step`` at each step (see
+    :func:`keel.checkpoint.build_checkpoint_record`). This is what ``--follow``
+    reads to show where a run *actually* is, in real time. Returns ``None`` for a
+    missing/malformed record so the caller degrades to inferring position from
+    the ledger. Pure — reads only its argument.
+    """
+    if not isinstance(record, dict):
+        return None
+    position = record.get("position")
+    step = position.get("current_step") if isinstance(position, dict) else None
+    return step if isinstance(step, str) and step.strip() else None
+
+
 def step_index(step_id: str | None) -> int | None:
     """Return the backbone index of ``step_id`` (``None`` when unknown/missing)."""
     if not isinstance(step_id, str):

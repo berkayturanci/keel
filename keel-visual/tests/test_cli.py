@@ -17,6 +17,7 @@ def _args(**kw):
         path=PROJECT, root=str(FIX), pr=361, ledger_jsonl=SAMPLE,
         checkpoint_step=None, command="ship", out=None,
         style="flow", fps=2, step=None, once=False, no_clear=True, color="never",
+        loop=False, follow=False, interval=1.0,
     )
     base.update(kw)
     return Namespace(**base)
@@ -154,6 +155,108 @@ class TestPlay(unittest.TestCase):
                               sleep=lambda s: None, out=out)
         self.assertEqual(rc, 0)
         self.assertIn("s0 · config", out.getvalue())
+
+
+class _TTY(io.StringIO):
+    def isatty(self):
+        return True
+
+
+class TestCheckpointResolve(unittest.TestCase):
+    def _config(self):
+        from keel import config as cfg
+        return cfg.load_config(PROJECT)
+
+    def test_explicit_step_wins(self):
+        self.assertEqual(
+            cli._resolve_checkpoint_step(_args(checkpoint_step="s5"), self._config()), "s5"
+        )
+
+    def test_missing_checkpoint_is_none(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            self.assertIsNone(
+                cli._resolve_checkpoint_step(_args(root=d, checkpoint_step=None), self._config())
+            )
+
+    def test_corrupt_checkpoint_is_none(self):
+        import tempfile
+
+        from keel import checkpoint
+        config = self._config()
+        with tempfile.TemporaryDirectory() as d:
+            cp = checkpoint.resolve_path(d, config)
+            cp.parent.mkdir(parents=True, exist_ok=True)
+            cp.write_text("{not json", encoding="utf-8")  # parse -> CheckpointError
+            self.assertIsNone(
+                cli._resolve_checkpoint_step(_args(root=d, checkpoint_step=None), config)
+            )
+
+    def test_reads_current_step_from_checkpoint_file(self):
+        import tempfile
+
+        from keel import checkpoint
+        config = self._config()
+        record = checkpoint.build_checkpoint_record(
+            run_id="r1", command="ship", current_step="s6", base_branch="main",
+        )
+        with tempfile.TemporaryDirectory() as d:
+            cp = checkpoint.resolve_path(d, config)
+            cp.parent.mkdir(parents=True, exist_ok=True)
+            cp.write_text(checkpoint.encode_checkpoint(record), encoding="utf-8")
+            step = cli._resolve_checkpoint_step(_args(root=d, checkpoint_step=None), config)
+        self.assertEqual(step, "s6")
+
+
+class TestLoopAndFollow(unittest.TestCase):
+    def test_loop_replays_until_max_cycles(self):
+        out = io.StringIO()
+        rc = cli.cmd_play(_args(command="review", loop=True), sleep=lambda s: None,
+                          out=out, max_cycles=2)
+        self.assertEqual(rc, 0)
+        # the s0 pointer ("▲ s0 · config") renders once per cycle -> 2 cycles.
+        self.assertEqual(out.getvalue().count("s0 · config"), 2)
+
+    def test_loop_keyboard_interrupt_exits_clean(self):
+        out = io.StringIO()
+
+        def boom(_):
+            raise KeyboardInterrupt
+
+        rc = cli.cmd_play(_args(command="review", loop=True), sleep=boom, out=out, max_cycles=None)
+        self.assertEqual(rc, 0)
+        self.assertTrue(out.getvalue().endswith("\n"))
+
+    def test_follow_bounded_redraws_current_step(self):
+        out = io.StringIO()
+        calls = []
+        rc = cli.cmd_play(_args(follow=True, no_clear=False), sleep=lambda s: calls.append(s),
+                          out=out, max_cycles=3)
+        self.assertEqual(rc, 0)
+        # merged sample sits at s12; each tick clears + redraws that frame.
+        self.assertEqual(out.getvalue().count("s12 · close"), 3)
+        self.assertEqual(out.getvalue().count("\x1b[2J"), 3)
+        self.assertEqual(len(calls), 3)
+
+    def test_follow_error_returns_code(self):
+        rc = cli.cmd_play(_args(follow=True, path="no-such.yaml"),
+                          sleep=lambda s: None, out=io.StringIO(), max_cycles=2)
+        self.assertEqual(rc, 1)
+
+    def test_follow_keyboard_interrupt_exits_clean(self):
+        out = io.StringIO()
+
+        def boom(_):
+            raise KeyboardInterrupt
+
+        rc = cli.cmd_play(_args(follow=True), sleep=boom, out=out, max_cycles=None)
+        self.assertEqual(rc, 0)
+        self.assertTrue(out.getvalue().endswith("\n"))
+
+    def test_color_auto_on_tty_stream(self):
+        out = _TTY()
+        cli.cmd_play(_args(step=8, color="auto"), sleep=lambda s: None, out=out)
+        self.assertIn("\x1b[38;5;", out.getvalue())
 
 
 class TestMain(unittest.TestCase):

@@ -42,6 +42,20 @@ class TestHelpers(unittest.TestCase):
         )
 
 
+class TestCurrentStepFromCheckpoint(unittest.TestCase):
+    def test_reads_current_step(self):
+        self.assertEqual(
+            rs.current_step_from_checkpoint({"position": {"current_step": "s6"}}), "s6"
+        )
+
+    def test_none_and_malformed(self):
+        self.assertIsNone(rs.current_step_from_checkpoint(None))
+        self.assertIsNone(rs.current_step_from_checkpoint("nope"))
+        self.assertIsNone(rs.current_step_from_checkpoint({"position": "x"}))
+        self.assertIsNone(rs.current_step_from_checkpoint({"position": {"current_step": ""}}))
+        self.assertIsNone(rs.current_step_from_checkpoint({"position": {"current_step": 5}}))
+
+
 class TestBuildRunState(unittest.TestCase):
     def test_none_record_starts_at_s0(self):
         st = rs.build_run_state(None)
