@@ -112,6 +112,13 @@ merge state, capture state, close state, and stop reason. The checkpoint is the 
 resume point, not run history. Do not delete or overwrite project extensions while writing
 or resuming from it.
 
+When checkpointing is configured (`policy_pack.reports.checkpoint`), `keel merge` enforces a
+**checkpoint gate** at s10 (audit GAP-13): write a checkpoint for the run at `--step s10`
+before calling `keel merge`, or the merge is refused with
+`no current checkpoint for run <id> at step s10`. Projects without checkpoint config are
+unaffected (the gate is advisory). The audited escape is `keel merge --no-checkpoint-gate`
+with a named `--operator`.
+
 **GitHub transport.** Prefer the `gh` CLI when present (richer JSON, `--watch`); detect
 once at session start (`command -v gh`) and, when absent, fall back to an equivalent
 GitHub MCP/API transport for the same operations (issue read/list/comment/close/label,
@@ -185,16 +192,20 @@ recorded operator escape for an intentionally stale base.
 
 ### s3 guard
 Refuse if the working tree is dirty or the branch already has an open PR. **Blocker
-auto-detection** (any rule promotes the issue to a window-bypassing blocker — see s10):
-an explicit `--hotfix`/blocker flag; an alert/escalation label; a title/body match on a
-**word-boundary, case-insensitive** blocker regex (CI breakage, data loss, security fix,
-breaking change, crash, critical regression); a high-priority label plus an urgent-keyword
-title (`critical|urgent|blocker`); or `base_branch` currently red on a **gating**
-`ci_workflow` whose paths this PR touches. These are heuristics — humans override by
-passing or omitting the blocker flag. Word-bounded regexes still match negated phrasings
-("no crashes on…") — bounded false-positive risk, accepted. When the branch-scoped
-red-`base_branch` signal is unavailable on the fallback transport, treat that rule as
-no-fire and log it.
+auto-detection** is deterministic and core-owned — run `keel guard .keel/project.yaml
+--issue <N>` (or `--issue-title`/`--issue-labels` offline). It evaluates the issue against
+the configured blocker ruleset (`policy_pack.blocker_rules`, or built-in defaults) and
+returns the matched rule id(s): word-boundary, case-insensitive title regexes
+(`\bhotfix\b`, `\bsecurity\b`, `\bblocker\b`) and `blocker`/`hotfix`/`security` labels.
+A non-empty match promotes the issue to a window-bypassing blocker — and the matched rule
+id is what s10 requires as justification for `--hotfix` (see s10). Do **not** hand-wave a
+blocker: if `keel guard` returns no match, the issue is not a blocker. Run `make plugin`
+after editing this contract so the rendered adapters stay in sync.
+
+Additional live signals the agent may still weigh (not part of the deterministic ruleset):
+an alert/escalation label, or `base_branch` currently red on a **gating** `ci_workflow`
+whose paths this PR touches. When the branch-scoped red-`base_branch` signal is unavailable
+on the fallback transport, treat that rule as no-fire and log it.
 
 ### s4 implement *(agent)*
 Resolve the implementer: `implementer_agents` by the issue's role label, **overridden by
@@ -439,7 +450,14 @@ gates-pass check must run deterministically inside core, not as adapter prose.
   ship with `--append-ledger`) against the head and retry; on a denied claim, treat it as
   lock contention (mark the issue blocked, comment, continue). For a blocker issue, pass
   `--hotfix` — the audited bypass of both the window and the gates-SHA requirement; it still
-  requires the approved consent scopes and is recorded in the ledger.
+  requires the approved consent scopes and is recorded in the ledger. **The `--hotfix`
+  bypass is refused without a justification** (audit GAP-11): pass
+  `--blocker-rule <id>` where `<id>` is the rule `keel guard` returned for this issue
+  (s3) — `keel merge` re-validates it against the issue's title/labels and refuses an
+  unknown or non-matching rule — or, for a genuine emergency no rule covers,
+  `--operator-override` with a named `--operator`. The chosen justification
+  (`hotfix_justification: {kind: matched-rule|operator-override, …}`) is recorded in the
+  ledger.
 - **Outcome:** treat the **PR state (`MERGED`)** as authoritative. A non-zero exit after a
   successful server-side squash is a local-cleanup failure — proceed to capture/close; a
   real non-MERGED state aborts the closure block and blocks the issue.
@@ -569,4 +587,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=skills command=ship keel_version=1.2.3 source_sha256=89a1d6cbef66a1faba3d29d6cb1b46088917511ee9014ef0a43fe1a66905119c generated_sha256=873b900df5eca3304a57bb603cc3b911c64c8b2a53c1e8f1f032d241d66e89af -->
+<!-- keel-generated: surface=skills command=ship keel_version=1.3.0 source_sha256=f246e482af1eba930311a13651952eceacd0a901b83c6b5c17d23b5757866353 generated_sha256=be2e2cc2fcb13647a6028598795ff57db7261de36b28a7cf4beeac030fcab3dc -->
