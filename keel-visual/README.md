@@ -105,9 +105,30 @@ The page reads its run-state from `window.KEEL_RUN`, and honours
 
 ## Install
 
+keel-visual needs **keel core ≥ 1.3.0** (it reads `keel.flows`, the ledger, and
+the checkpoint). Until both packages are published to PyPI, install from this
+repo — installing the repo's core first guarantees a matching version:
+
 ```
-pip install keel-visual        # pulls in keel-workflow (core)
+# from the repo root
+pip install ./              # keel-workflow (core), ≥ 1.3.0
+pip install ./keel-visual   # keel-visual
+keel-visual --help
 ```
+
+Editable (development):
+
+```
+pip install -e ./ -e ./keel-visual
+```
+
+Once both are on PyPI, this becomes a one-liner:
+
+```
+pipx install keel-visual    # pulls in keel-workflow (core) automatically
+```
+
+See [`RELEASING.md`](RELEASING.md) for building and publishing keel-visual.
 
 ## Develop
 
