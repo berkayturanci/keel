@@ -108,6 +108,45 @@ class TestLiveCheckpointInBuild(unittest.TestCase):
         self.assertIsNone(st["merge_state"])
 
 
+class TestJury(unittest.TestCase):
+    def test_active_modes(self):
+        for mode in ("gating", "advisory"):
+            j = rs.jury_from_record({"run_context": {"jury_mode": mode}})
+            self.assertEqual(j, {"mode": mode, "active": True})
+
+    def test_inactive_modes(self):
+        for mode in ("off", "none", "disabled", ""):
+            self.assertFalse(rs.jury_from_record({"run_context": {"jury_mode": mode}})["active"])
+
+    def test_missing_or_malformed(self):
+        self.assertEqual(rs.jury_from_record(None), {"mode": None, "active": False})
+        self.assertEqual(rs.jury_from_record({}), {"mode": None, "active": False})
+        self.assertEqual(
+            rs.jury_from_record({"run_context": "x"}), {"mode": None, "active": False})
+        self.assertEqual(
+            rs.jury_from_record({"run_context": {"jury_mode": 5}}), {"mode": None, "active": False})
+
+    def test_build_run_state_includes_active_jury(self):
+        rec = {
+            "record_type": "ship_run",
+            "assessment": {"tier": 3, "merge": {"action": "defer"}},
+            "run_context": {"jury_mode": "gating"},
+        }
+        st = rs.build_run_state(rec, checkpoint_step="s7")
+        self.assertTrue(st["jury"]["active"])
+        self.assertEqual(st["jury"]["mode"], "gating")
+
+    def test_non_ship_command_has_no_jury(self):
+        st = rs.build_run_state(
+            {"record_type": "ship_run", "run_context": {"jury_mode": "gating"}},
+            command="overnight",
+        )
+        self.assertEqual(st["jury"], {"mode": None, "active": False})
+
+    def test_no_record_no_jury(self):
+        self.assertEqual(rs.build_run_state(None)["jury"], {"mode": None, "active": False})
+
+
 class TestBuildRunState(unittest.TestCase):
     def test_none_record_starts_at_s0(self):
         st = rs.build_run_state(None)

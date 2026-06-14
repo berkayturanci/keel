@@ -167,6 +167,32 @@ def live_state_from_checkpoint(record: dict[str, Any] | None) -> dict[str, Any]:
     return out
 
 
+# jury_mode values that mean the cross-vendor jury actually ran (see
+# keel.ship.resolve_jury: "off" disabled, "advisory"/"gating" enabled).
+_JURY_INACTIVE = {"off", "none", "disabled", ""}
+
+# The backbone step the jury attaches to (s7 review).
+REVIEW_STEP_ID = "s7"
+
+
+def jury_from_record(record: dict[str, Any] | None) -> dict[str, Any]:
+    """Extract the cross-vendor jury state from a ship_run ``record``.
+
+    keel records ``run_context.jury_mode`` (``off`` / ``advisory`` / ``gating``)
+    when a ship run resolves the jury — tier-3 auto-enables it, ``--jury`` forces
+    it; the actual jury (``ai-jury`` when installed) is fail-soft, so this is read
+    from *keel's own ledger*, never from ai-jury. Returns ``{"mode", "active"}``;
+    ``active`` is true only when the jury was enabled (mode not in the inactive
+    set). Pure — reads only its argument.
+    """
+    rec = record if isinstance(record, dict) else None
+    run_context = rec.get("run_context") if rec else None
+    mode = run_context.get("jury_mode") if isinstance(run_context, dict) else None
+    mode = mode if isinstance(mode, str) and mode.strip() else None
+    active = mode is not None and mode.lower() not in _JURY_INACTIVE
+    return {"mode": mode, "active": active}
+
+
 # Checkpoint merge_state -> merge-gate outcome shown by the visualizer.
 _MERGE_STATE_OUTCOME = {
     "merged": "pass", "pending": "pending", "failed": "fail",
@@ -269,6 +295,7 @@ def build_run_state(
 
     issue = rec.get("issue") if rec else None
     pr = rec.get("pull_request") if rec else None
+    jury = jury_from_record(rec) if is_ship else {"mode": None, "active": False}
     return {
         "schema_version": SCHEMA_VERSION,
         "command": command,
@@ -278,6 +305,7 @@ def build_run_state(
         "active_id": flow[active].id,
         "merged": merged,
         "merge_state": live_merge if isinstance(live_merge, str) else None,
+        "jury": jury,
         "steps": steps,
         "regression": _regression(flow, active, counts, is_ship=is_ship),
     }

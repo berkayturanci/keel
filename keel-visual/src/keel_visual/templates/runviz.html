@@ -162,6 +162,7 @@
   if(RUN.issue) chips.push('<span class="chip">issue <b>#'+RUN.issue+'</b></span>');
   if(RUN.pr) chips.push('<span class="chip">PR <b>#'+RUN.pr+'</b></span>');
   chips.push('<span class="chip">'+(RUN.merged?'<b style="color:var(--ok)">merged</b>':'in progress')+'</span>');
+  if(RUN.jury && RUN.jury.active) chips.push('<span class="chip">jury <b style="color:var(--info)">'+(RUN.jury.mode||'on')+'</b></span>');
   meta.innerHTML = chips.join('');
 
   // build 2D nodes

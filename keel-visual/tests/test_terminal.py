@@ -6,7 +6,7 @@ from keel_visual import runstate as rs
 from keel_visual import terminal as t
 
 
-def _state(*, action="defer", checkpoint=None, minor=0, major=0, critical=0):
+def _state(*, action="defer", checkpoint=None, minor=0, major=0, critical=0, jury_mode=None):
     rec = {
         "record_type": "ship_run",
         "issue": {"number": 351},
@@ -14,6 +14,8 @@ def _state(*, action="defer", checkpoint=None, minor=0, major=0, critical=0):
         "assessment": {"merge": {"action": action, "reason": "r"}},
         "verdict": {"counts": {"critical": critical, "major": major, "minor": minor, "nit": 0}},
     }
+    if jury_mode is not None:
+        rec["run_context"] = {"jury_mode": jury_mode}
     return rs.build_run_state(rec, checkpoint_step=checkpoint)
 
 
@@ -126,6 +128,23 @@ class TestHeaderAndHelpers(unittest.TestCase):
     def test_header_minimal(self):
         out = t._header({}, enable=False)
         self.assertIn("keel-visual", out)
+
+    def test_header_jury_chip(self):
+        run = {"command": "ship", "jury": {"mode": "gating", "active": True}}
+        self.assertIn("[jury]", t._header(run, enable=False))
+
+    def test_header_no_jury_chip_when_inactive(self):
+        out = t._header({"command": "ship", "jury": {"active": False}}, enable=False)
+        self.assertNotIn("[jury]", out)
+
+    def test_flow_jury_on_review_step(self):
+        out = t.frame(_state(checkpoint="s7", jury_mode="gating"), 7, style="flow", color=False)
+        self.assertIn("s7 · review", out)
+        self.assertIn("jury: gating", out)
+
+    def test_flow_no_jury_marker_off_review(self):
+        out = t.frame(_state(checkpoint="s4", jury_mode="gating"), 4, style="flow", color=False)
+        self.assertNotIn("jury: gating", out)
 
     def test_bar_fraction(self):
         out = t._bar(0.5, 10, "green", enable=False)
