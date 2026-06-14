@@ -167,9 +167,12 @@ def live_state_from_checkpoint(record: dict[str, Any] | None) -> dict[str, Any]:
     return out
 
 
-# jury_mode values that mean the cross-vendor jury actually ran (see
-# keel.ship.resolve_jury: "off" disabled, "advisory"/"gating" enabled).
+# The cross-vendor jury vocabulary keel writes (see keel.ship.resolve_jury):
+# "off" disabled; "advisory"/"gating" enabled. Recognised modes are the ONLY
+# values ever surfaced — an unrecognised mode is normalised to a safe literal so
+# no arbitrary record string reaches the DOM (mirrors how `command` falls back).
 _JURY_INACTIVE = {"off", "none", "disabled", ""}
+_JURY_KNOWN = {"off", "advisory", "gating", "none", "disabled"}
 
 # The backbone step the jury attaches to (s7 review).
 REVIEW_STEP_ID = "s7"
@@ -181,15 +184,19 @@ def jury_from_record(record: dict[str, Any] | None) -> dict[str, Any]:
     keel records ``run_context.jury_mode`` (``off`` / ``advisory`` / ``gating``)
     when a ship run resolves the jury — tier-3 auto-enables it, ``--jury`` forces
     it; the actual jury (``ai-jury`` when installed) is fail-soft, so this is read
-    from *keel's own ledger*, never from ai-jury. Returns ``{"mode", "active"}``;
-    ``active`` is true only when the jury was enabled (mode not in the inactive
-    set). Pure — reads only its argument.
+    from *keel's own ledger*, never from ai-jury. Returns ``{"mode", "active"}``:
+    ``active`` is true unless the mode is in the inactive set, and ``mode`` is
+    always a recognised token (``on`` for an unknown-but-enabled value) so no
+    untrusted record string is ever surfaced. Pure — reads only its argument.
     """
     rec = record if isinstance(record, dict) else None
     run_context = rec.get("run_context") if rec else None
-    mode = run_context.get("jury_mode") if isinstance(run_context, dict) else None
-    mode = mode if isinstance(mode, str) and mode.strip() else None
-    active = mode is not None and mode.lower() not in _JURY_INACTIVE
+    raw = run_context.get("jury_mode") if isinstance(run_context, dict) else None
+    norm = raw.strip().lower() if isinstance(raw, str) and raw.strip() else None
+    if norm is None:
+        return {"mode": None, "active": False}
+    active = norm not in _JURY_INACTIVE
+    mode = norm if norm in _JURY_KNOWN else ("on" if active else "off")
     return {"mode": mode, "active": active}
 
 

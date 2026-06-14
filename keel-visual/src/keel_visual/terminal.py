@@ -20,6 +20,8 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from .runstate import REVIEW_STEP_ID
+
 RESET = "\x1b[0m"
 _CODES = {
     "dim": "\x1b[38;5;245m",
@@ -159,7 +161,7 @@ def _flow_body(
     elif cur.get("kind") == "loop":
         word = f"  [{paint('fix loop ↩', 'amber', enable=color)}]"
     jury = run.get("jury") or {}
-    if cur.get("id") == "s7" and jury.get("active"):
+    if cur.get("id") == REVIEW_STEP_ID and jury.get("active"):
         word += f"  [{paint('jury: ' + str(jury.get('mode', 'on')), 'cyan', enable=color)}]"
     caret = paint("▲", "cyan", enable=color)
     pointer = f"{pointer_pad}{caret} {cur.get('id')} · {cur.get('name')}{word}"

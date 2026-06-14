@@ -118,6 +118,18 @@ class TestJury(unittest.TestCase):
         for mode in ("off", "none", "disabled", ""):
             self.assertFalse(rs.jury_from_record({"run_context": {"jury_mode": mode}})["active"])
 
+    def test_unknown_mode_is_normalised_to_safe_token(self):
+        # An unrecognised / attacker-crafted mode must never surface as-is (it
+        # would reach the web chip's innerHTML). Enabled-but-unknown -> "on".
+        j = rs.jury_from_record({"run_context": {"jury_mode": "<img src=x onerror=alert(1)>"}})
+        self.assertTrue(j["active"])
+        self.assertEqual(j["mode"], "on")
+        self.assertNotIn("<", j["mode"])
+
+    def test_mode_is_normalised_lowercase(self):
+        self.assertEqual(rs.jury_from_record({"run_context": {"jury_mode": "  GATING "}})["mode"],
+                         "gating")
+
     def test_missing_or_malformed(self):
         self.assertEqual(rs.jury_from_record(None), {"mode": None, "active": False})
         self.assertEqual(rs.jury_from_record({}), {"mode": None, "active": False})
