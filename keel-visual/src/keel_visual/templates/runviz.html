@@ -18,7 +18,8 @@
   a{color:var(--info)}
   header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:20px}
   .brand{display:flex;align-items:center;gap:10px;font-size:18px;font-weight:600;letter-spacing:.01em}
-  .brand .mark{width:26px;height:26px;border-radius:7px;background:linear-gradient(135deg,var(--info),var(--ok));box-shadow:0 0 18px rgba(73,182,255,.5)}
+  .brand .mark{width:30px;height:30px;border-radius:9px;background:#0c1118;border:1.5px solid var(--ok);box-shadow:0 0 16px rgba(122,209,74,.45);display:inline-flex;align-items:center;justify-content:center;overflow:hidden}
+  .brand .mark svg{width:100%;height:100%;display:block}
   .meta{display:flex;gap:8px;flex-wrap:wrap;margin-left:auto;align-items:center}
   .chip{font-size:12px;color:var(--mut);background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:5px 11px}
   .chip b{color:var(--txt);font-weight:600}
@@ -84,10 +85,15 @@
   .jury2d.anim .jverdict{animation:jpulse 1.7s ease-in-out infinite;animation-delay:.9s}
   @keyframes jpulse{0%,100%{opacity:.55}50%{opacity:1;text-shadow:0 0 11px currentColor}}
   /* 3D */
-  #scene{position:relative;height:380px;border-radius:var(--r);overflow:hidden;background:radial-gradient(120% 100% at 50% 0%,#10182e 0%,#080c16 70%)}
+  #scene{position:relative;height:clamp(440px,60vh,600px);border-radius:var(--r);overflow:hidden;background:radial-gradient(120% 100% at 50% 0%,#10182e 0%,#080c16 70%)}
   #c3{display:block;width:100%;height:100%}
-  .hud{position:absolute;left:16px;bottom:13px;font-size:12px;color:var(--dim);letter-spacing:.03em}
+  .hud{position:absolute;right:16px;bottom:13px;font-size:12px;color:var(--dim);letter-spacing:.03em}
   .hud3{position:absolute;right:16px;top:14px;font-size:13px;font-weight:600;color:var(--txt);background:rgba(10,14,26,.6);border:1px solid var(--line);border-radius:999px;padding:5px 13px}
+  .detail3{position:absolute;left:16px;bottom:13px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;max-width:70%;font-size:12.5px;background:rgba(10,14,26,.55);border:1px solid var(--line);border-radius:11px;padding:7px 12px}
+  .detail3 .d3step{font-weight:600;color:var(--txt)}
+  .detail3 .d3desc{color:var(--mut)}
+  .detail3 .d3jury{color:var(--info);font-weight:600;background:rgba(73,182,255,.14);border:1px solid var(--line);border-radius:999px;padding:2px 9px}
+  .detail3 .d3jury.gating{color:var(--warn);background:rgba(240,160,32,.14)}
   .seg3d{position:absolute;left:14px;top:13px;display:flex;gap:3px;flex-wrap:wrap;max-width:60%;background:rgba(10,14,26,.55);border:1px solid var(--line);border-radius:10px;padding:3px;z-index:2}
   .seg3d button{border:0;background:transparent;color:var(--mut);font-size:11px;padding:4px 9px;border-radius:7px;cursor:pointer;box-shadow:none}
   .seg3d button:hover{color:var(--txt);box-shadow:none;border-color:transparent}
@@ -100,7 +106,7 @@
 </head>
 <body>
 <header>
-  <div class="brand"><span class="mark"></span> keel-visual</div>
+  <div class="brand"><span class="mark" aria-hidden="true"><svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><line x1="12" y1="40" x2="32" y2="40" stroke="#2a3744" stroke-width="3" stroke-linecap="round"></line><circle cx="12" cy="40" r="3.2" fill="#6366f1"></circle><circle cx="20" cy="40" r="3.2" fill="#6366f1"></circle><circle cx="28" cy="40" r="3.2" fill="#6366f1"></circle><circle cx="32" cy="40" r="3.8" fill="#f5a524"></circle><path d="M32 40 Q44 34 52 19" stroke="#10b981" stroke-width="5.5" fill="none" stroke-linecap="round"></path><circle cx="52" cy="19" r="4.5" fill="#10b981"></circle></svg></span> keel-visual</div>
   <div class="meta" id="meta"></div>
 </header>
 
@@ -163,6 +169,11 @@
     <canvas id="c3"></canvas>
     <div class="seg3d" id="seg3d"></div>
     <div class="hud3" id="hud3">s0 · config</div>
+    <div class="detail3" id="detail3">
+      <span class="d3step" id="d3step">s0 · config</span>
+      <span class="d3desc" id="d3desc">resolve config + plan</span>
+      <span class="d3jury gating" id="d3jury" hidden>jury · gating</span>
+    </div>
     <div class="hud">drag to orbit · light runs to where the run is</div>
   </div>
 </section>
@@ -441,7 +452,12 @@
     update3D(); resize3D();
   }
   function update3D(){ if(!renderer) return; if(cur3) cur3.recolor();
-    const s=steps[active]||{id:'s0',name:'config'}; document.getElementById('hud3').textContent=s.id+' · '+s.name; }
+    const s=steps[active]||{id:'s0',name:'config'};
+    document.getElementById('hud3').textContent=s.id+' · '+s.name;
+    document.getElementById('d3step').textContent=s.id+' · '+s.name;
+    document.getElementById('d3desc').textContent=STEP_DESC[s.id]||'';
+    const jchip=document.getElementById('d3jury'), atRev=(s.id===REVIEW_STEP&&juryActive);
+    if(atRev){ jchip.textContent='jury · '+juryMode; jchip.classList.toggle('gating',juryMode==='gating'); jchip.hidden=false; } else { jchip.hidden=true; } }
   function resize3D(){ if(!renderer) return; const wrap=document.getElementById('scene'); const w=wrap.clientWidth,h=wrap.clientHeight; renderer.setPixelRatio(Math.min(2,window.devicePixelRatio||1)); renderer.setSize(w,h,false); camera.aspect=w/h; camera.updateProjectionMatrix(); }
   window.addEventListener('resize',resize3D);
 
