@@ -64,7 +64,7 @@ keel-visual play .keel/project.yaml --pr 361 --step 8     # a single frame (e.g.
 - `flow` — a pipeline of `s0…s12` with a playhead, gate colours (amber gate,
   red when blocked), a regression bar, and a "where are we" pointer.
 - `wave` — the run drawn on a sine ribbon with a light trail up to the active
-  step (the terminal's take on the 3D ribbon).
+  step (the terminal's take on the 3D `line` style).
 - **`--follow`** — live mode: every `--interval` seconds it re-reads the run's
   ledger + checkpoint (`position.current_step` *and* the `state` block, so merge
   progress shows live — pending / merged / failed — not just position) and
@@ -81,8 +81,9 @@ animation in motion.
 ### 2. Web — `keel-visual render` (the alternative)
 
 The same run as a single self-contained HTML page with a **2D flow** view and a
-**3D flowing-light ribbon** (Three.js): the light runs to where the run is, gates
-glow, and reaching merge turns the whole ribbon green.
+**3D scene** (Three.js): the light runs to where the run is, gates glow, the
+cross-vendor jury orbits the review step, and reaching merge turns everything
+green.
 
 ```
 keel-visual render .keel/project.yaml --pr 361 --out keel-run.html
@@ -90,7 +91,32 @@ open keel-run.html
 ```
 
 The page reads its run-state from `window.KEEL_RUN`, and honours
-`?mode=2d|3d`, `?step=N`, `?play=1` URL params (used by the screenshot harness).
+`?mode=2d|3d`, `?step=N`, `?play=1`, and `?s3d=<style>` URL params.
+
+#### Selectable 3D styles
+
+The 3D view offers a **style selector** (top-left of the scene). All styles share
+one run-semantics layer — progress colours, the s7 jury, the light running to the
+head, merged→green — and differ only in how the run is drawn:
+
+| style | look | how it reads the run |
+| --- | --- | --- |
+| `plexus` *(default)* | an interweaving web of drifting points + fading links | the web breathes; nodes track each step, colours follow progress |
+| `comet` | three interweaving particle streams with fading tails | streams flow to the running head, then dissolve |
+| `aurora` | interweaving translucent ribbons with a soft fade | a wash that fades past the head |
+| `combined` | the `plexus` web **and** the `comet` streams together | the richest variant |
+| `line` | the original flowing-light ribbon | a single tube; the light runs along it |
+
+**Configure the style two ways:**
+
+- **In the page** — click `plexus · comet · aurora · combo · line` in the
+  selector at the top-left of the 3D scene.
+- **By URL** — append `?mode=3d&s3d=<style>` (e.g.
+  `keel-run.html?mode=3d&s3d=combined`). Unknown values fall back to `plexus`.
+  This is also how the screenshot harness pins a style.
+
+Every style honours the same [colour language](#colour-language); switching
+styles never changes what a colour means, only the geometry it is painted on.
 
 ## Colour language
 
@@ -146,5 +172,7 @@ template is excluded from coverage (it is exercised by the screenshot harness).
 ## Screenshots
 
 See [`screenshots/`](screenshots/): `terminal-cli.png` (the `play` output),
-`2d-s8-test.png` (a blocked test gate), `3d-s10-merge.png` (the 3D ribbon), and
-`2d-s12-merged.png` (a merged, all-green run).
+`2d-s8-test.png` (a blocked test gate), `3d-s6-run.png` (the default `plexus` 3D
+style mid-run), `3d-styles.png` (the `combined` style with the style selector and
+the s7 jury), `3d-s10-merge.png` (the `line` style, merged and all-green), and
+`2d-s12-merged.png` (a merged, all-green 2D run).
