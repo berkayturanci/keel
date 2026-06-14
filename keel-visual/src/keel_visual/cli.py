@@ -184,6 +184,22 @@ def _render_pass(args, state, order, *, color, out, sleep, clear_first) -> None:
             sleep(max(0.0, 1.0 / max(1, args.fps)))
 
 
+def _live_pr(args, config) -> int | None:
+    """The **live** run's PR from the checkpoint identifiers, or None.
+
+    Theater is triggered by the live checkpoint (position + jury), so its PR must
+    come from the *same* source — not the ledger's ``state["pr"]``, which can be a
+    stale prior run's number in the exact window theater fires (a live run at the
+    review step before its own ship_run record lands). Fail-soft: a
+    missing/malformed checkpoint yields None so callers fall back to ledger/--pr.
+    """
+    try:
+        record = checkpoint.read_checkpoint(checkpoint.resolve_path(args.root, config))
+    except (checkpoint.CheckpointError, OSError):
+        return None
+    return dash.identity_from_checkpoint(record).get("pr")
+
+
 def _theater_available(_which=None) -> bool:
     """True if ai-jury's ``jury`` CLI is on PATH. keel-visual never imports ai-jury."""
     which = _which or shutil.which
@@ -273,7 +289,9 @@ def _play_follow(args, *, sleep, out, max_cycles: int | None,
                     theater_done = False
                 if _theater_due(state, enabled=theater, done=theater_done,
                                 interactive=interactive):
-                    pr = state.get("pr") or getattr(args, "pr", None)
+                    # PR identity from the same live source that triggered the
+                    # handoff (checkpoint), else the ledger/--pr fallback.
+                    pr = _live_pr(args, config) or state.get("pr") or getattr(args, "pr", None)
                     if pr and theater_available():
                         theater_run(int(pr), cwd=args.root)  # hands off the screen, then resumes
                     theater_done = True  # one-shot per approach, even if jury was absent

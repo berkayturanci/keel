@@ -385,6 +385,28 @@ class TestTheaterHandoff(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(calls, [(42, d)])  # one-shot, even across three ticks
 
+    def test_pr_from_live_checkpoint_not_stale_ledger(self):
+        # The trigger comes from the live checkpoint, so the PR must too: a live
+        # run on PR 99 whose ship_run record hasn't landed must not open the
+        # stale ledger's PR 42.
+        import tempfile
+
+        from keel import checkpoint as ckpt
+        from keel import config as cfg
+        out, calls = _TTY(), []
+        with tempfile.TemporaryDirectory() as d:
+            config = cfg.load_config(PROJECT)
+            rec = ckpt.build_checkpoint_record(
+                run_id="R", command="ship", current_step="s7", base_branch="main",
+                pull_request=99, jury_mode="gating")
+            ckpt.write_checkpoint(ckpt.resolve_path(d, config), rec)
+            args = _args(follow=True, theater=True, ledger_jsonl=_jury_ledger(d, pr=42),
+                         pr=42, checkpoint_step=None, root=d)
+            cli._play_follow(args, sleep=lambda s: None, out=out, max_cycles=2,
+                             theater_run=lambda pr, cwd: calls.append(pr) or True,
+                             theater_available=lambda: True)
+        self.assertEqual(calls, [99])  # live checkpoint PR wins over the stale ledger
+
     def test_skips_when_jury_cli_absent(self):
         import tempfile
         out, calls = _TTY(), []
@@ -409,9 +431,17 @@ class TestTheaterHandoff(unittest.TestCase):
 
     def test_skips_when_no_pr_resolvable(self):
         import tempfile
+
+        from keel import checkpoint as ckpt
+        from keel import config as cfg
         out, calls = _TTY(), []
         with tempfile.TemporaryDirectory() as d:
-            # jury active but pull_request absent and --pr None -> nothing to hand to
+            # jury active but pull_request absent and --pr None -> nothing to hand to.
+            # Also make the checkpoint path a directory so _live_pr hits its
+            # fail-soft OSError branch and yields None.
+            ckpt_path = ckpt.resolve_path(d, cfg.load_config(PROJECT))
+            ckpt_path.parent.mkdir(parents=True, exist_ok=True)
+            ckpt_path.mkdir()
             led = _jury_ledger(d)
             Path(led).write_text(
                 '{"schema_version":"keel.run-ledger.v1","record_type":"ship_run",'
