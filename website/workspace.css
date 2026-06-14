@@ -132,6 +132,10 @@ body { padding-top: 0; overflow: hidden; }
 .ov-badges img { height: 20px; display: block; border-radius: 3px; }
 .ov-badges a { display: block; transition: transform .15s; }
 .ov-badges a:hover { transform: translateY(-1px); }
+.ov-companion { margin: 1.1rem 0 0; max-width: 52ch; color: var(--muted); font-size: .92rem; line-height: 1.6; }
+.ov-companion-ic { color: var(--accent-2); margin-right: .4rem; }
+.ov-companion a { color: var(--accent-2); font-weight: 600; }
+.ov-companion code { font-family: var(--font-mono); font-size: .85rem; color: var(--text); }
 
 /* ---- live ship-queue board ------------------------------------------ */
 .queue { display: grid; grid-template-columns: 1.25fr .9fr; gap: 1rem; margin-top: 1.6rem; }

@@ -12,9 +12,9 @@ window.KEEL = {
     tagline: "Turn coding agents into work owners.",
     blurb:
       "A project-neutral, multi-agent workflow backbone that drives a GitHub issue from intake to done — projects set values and snap in their own Lego.",
-    version: "v1.2.3",
+    version: "v1.3.0",
     install: "pip install keel-workflow",
-    installAlt: "pip install \"git+https://github.com/berkayturanci/keel@v1.2.3\"",
+    installAlt: "pip install \"git+https://github.com/berkayturanci/keel@v1.3.0\"",
     pluginAdd: "/plugin marketplace add berkayturanci/keel",
     pluginInstall: "/plugin install keel",
     repo: "https://github.com/berkayturanci/keel",
@@ -290,7 +290,7 @@ window.KEEL = {
       summary: "pip install keel-workflow (Python ≥3.11, one runtime dep: PyYAML), or pin a git tag.",
       body:
         "<p>keel is a Python (≥3.11) package with one runtime dependency (PyYAML).</p>" +
-        "<pre class='doc-pre' tabindex='0' role='region' aria-label='Install commands'><code>pip install keel-workflow                                       <span class='cm'># from PyPI (provides the `keel` command)</span>\npip install \"git+https://github.com/berkayturanci/keel@v1.2.3\"  <span class='cm'># or pin an existing git tag</span></code></pre>" +
+        "<pre class='doc-pre' tabindex='0' role='region' aria-label='Install commands'><code>pip install keel-workflow                                       <span class='cm'># from PyPI (provides the `keel` command)</span>\npip install \"git+https://github.com/berkayturanci/keel@v1.3.0\"  <span class='cm'># or pin an existing git tag</span></code></pre>" +
         "<p>In a cloud agent session, install it from a <code>SessionStart</code> hook (or add keel to the session's repo scope) so the selected core ref is available before a run.</p>",
       source: "https://github.com/berkayturanci/keel/blob/main/README.md",
     },
