@@ -2715,6 +2715,220 @@ class TestConsentVerify(unittest.TestCase):
         self.assertIn("owner and repo", err)
 
 
+def _close_ledger(*, action="merge", issue=8):
+    record = {
+        "schema_version": "keel.run-ledger.v1",
+        "record_type": "ship_run",
+        "issue": {"number": issue},
+        "pull_request": {"number": 300},
+        "assessment": {"merge": {"action": action, "reason": "r"}},
+    }
+    return ledger.encode_record(record)
+
+
+class TestCloseReconcile(unittest.TestCase):
+    def _run_offline(self, *, ledger_text, flags, issues=("8",), json_out=True):
+        with tempfile.TemporaryDirectory() as d:
+            ledger_jsonl = Path(d) / "ledger.jsonl"
+            ledger_jsonl.write_text(ledger_text, encoding="utf-8")
+            argv = [
+                "close-reconcile", str(PROJECTS / "example-android.yaml"),
+                "--root", str(REPO_ROOT), "--offline",
+                "--ledger-jsonl", str(ledger_jsonl),
+            ]
+            for number in issues:
+                argv += ["--issue", number]
+            argv += flags
+            if json_out:
+                argv += ["--json"]
+            return run(argv)
+
+    def test_premature_close_is_flagged(self):
+        rc, out, _ = self._run_offline(
+            ledger_text=_close_ledger(action="defer"), flags=["--closed"],
+        )
+        data = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertEqual(data["reconcile"]["verdict"], "flagged")
+        self.assertEqual(
+            data["reconcile"]["findings"][0]["finding"], "premature-close"
+        )
+
+    def test_premature_status_done_is_flagged(self):
+        rc, out, _ = self._run_offline(
+            ledger_text="", flags=["--status-done"],
+        )
+        data = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertEqual(
+            data["reconcile"]["findings"][0]["finding"], "premature-status-done"
+        )
+
+    def test_consistent_closed_with_merge_record(self):
+        rc, out, _ = self._run_offline(
+            ledger_text=_close_ledger(action="merge"),
+            flags=["--closed", "--status-done"],
+        )
+        data = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertEqual(data["reconcile"]["verdict"], "ok")
+        self.assertEqual(data["reconcile"]["findings"], [])
+
+    def test_open_not_done_is_ok(self):
+        rc, out, _ = self._run_offline(ledger_text="", flags=[])
+        data = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertEqual(data["reconcile"]["verdict"], "ok")
+
+    def test_json_payload_includes_done_label(self):
+        rc, out, _ = self._run_offline(
+            ledger_text=_close_ledger(action="merge"), flags=["--closed"],
+        )
+        data = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertEqual(data["done_label"], "status:done")
+
+    def test_human_output_flag_lists_findings(self):
+        rc, out, _ = self._run_offline(
+            ledger_text=_close_ledger(action="defer"),
+            flags=["--closed"], json_out=False,
+        )
+        self.assertEqual(rc, 1)
+        self.assertIn("keel close-reconcile — flagged", out)
+        self.assertIn("FLAG", out)
+        self.assertIn("closed but no ship_run", out)
+
+    def test_human_output_ok(self):
+        rc, out, _ = self._run_offline(
+            ledger_text=_close_ledger(action="merge"),
+            flags=["--closed"], json_out=False,
+        )
+        self.assertEqual(rc, 0)
+        self.assertIn("keel close-reconcile — ok", out)
+        self.assertIn("all observed issues consistent", out)
+
+    def test_reads_configured_ledger_under_root_when_no_fixture(self):
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run([
+                "close-reconcile", str(PROJECTS / "example-android.yaml"),
+                "--root", d, "--offline", "--issue", "8", "--closed", "--json",
+            ])
+        data = json.loads(out)
+        # Fresh root has no ledger → no record → premature-close flagged.
+        self.assertEqual(rc, 1)
+        self.assertEqual(data["reconcile"]["verdict"], "flagged")
+
+    def test_live_observation_flags_premature_close(self):
+        def fake_run(argv, **kwargs):
+            endpoint = argv[-1]
+            if endpoint.endswith("/issues/8"):
+                return CommandResult(True, 0, json.dumps(
+                    {"state": "closed", "labels": [{"name": "status:done"}]}
+                ))
+            return CommandResult(False, 1, "unexpected endpoint")
+
+        with tempfile.TemporaryDirectory() as d:
+            ledger_jsonl = Path(d) / "ledger.jsonl"
+            ledger_jsonl.write_text(_close_ledger(action="defer"), encoding="utf-8")
+            with patch("keel.cli.run_argv", side_effect=fake_run):
+                rc, out, _ = run([
+                    "close-reconcile", str(PROJECTS / "example-android.yaml"),
+                    "--root", d, "--issue", "8",
+                    "--ledger-jsonl", str(ledger_jsonl), "--json",
+                ])
+        data = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertEqual(data["reconcile"]["verdict"], "flagged")
+        self.assertTrue(data["reconcile"]["issues"][0]["closed"])
+        self.assertTrue(data["reconcile"]["issues"][0]["status_done"])
+
+    def test_live_observation_passes_with_merge_record(self):
+        def fake_run(argv, **kwargs):
+            endpoint = argv[-1]
+            if endpoint.endswith("/issues/8"):
+                return CommandResult(True, 0, json.dumps(
+                    {"state": "open", "labels": []}
+                ))
+            return CommandResult(False, 1, "unexpected endpoint")
+
+        with tempfile.TemporaryDirectory() as d:
+            ledger_jsonl = Path(d) / "ledger.jsonl"
+            ledger_jsonl.write_text(_close_ledger(action="merge"), encoding="utf-8")
+            with patch("keel.cli.run_argv", side_effect=fake_run):
+                rc, out, _ = run([
+                    "close-reconcile", str(PROJECTS / "example-android.yaml"),
+                    "--root", d, "--issue", "8",
+                    "--ledger-jsonl", str(ledger_jsonl), "--json",
+                ])
+        data = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertEqual(data["reconcile"]["verdict"], "ok")
+
+    def test_live_transport_failure_surfaces_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            with patch("keel.cli.run_argv",
+                       return_value=CommandResult(False, 1, "gh offline")):
+                rc, _, err = run([
+                    "close-reconcile", str(PROJECTS / "example-android.yaml"),
+                    "--root", d, "--issue", "8", "--json",
+                ])
+        self.assertEqual(rc, 1)
+        self.assertIn("gh api", err)
+
+    def test_invalid_ledger_reports_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            bad = Path(d) / "ledger.jsonl"
+            bad.write_text("{not json", encoding="utf-8")
+            rc, _, err = run([
+                "close-reconcile", str(PROJECTS / "example-android.yaml"),
+                "--root", str(REPO_ROOT), "--offline",
+                "--ledger-jsonl", str(bad), "--issue", "8", "--closed", "--json",
+            ])
+        self.assertEqual(rc, 1)
+        self.assertIn("invalid run ledger", err)
+
+    def test_missing_config_reports_error(self):
+        rc, _, err = run([
+            "close-reconcile", "no-such.yaml", "--offline", "--issue", "8",
+        ])
+        self.assertEqual(rc, 1)
+        self.assertIn("no such config", err)
+
+    def test_invalid_config_reports_error(self):
+        bad = _write_raw("extends: keel\nbase_branch: main\ngates: [build]\n")
+        rc, _, _ = run([
+            "close-reconcile", bad, "--offline", "--issue", "8",
+        ])
+        self.assertEqual(rc, 1)
+
+    def test_live_observation_missing_owner_repo_reports(self):
+        bad = _write_raw(
+            "extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
+            "repo: tmp\ngates: [build]\nknobs:\n  build_gate_cmd: \"true\"\n"
+        )
+        rc, _, err = run([
+            "close-reconcile", bad, "--root", str(REPO_ROOT), "--issue", "8", "--json",
+        ])
+        self.assertEqual(rc, 1)
+        self.assertIn("owner and repo", err)
+
+    def test_default_done_label_when_config_lacks_transition(self):
+        # A config whose policy_pack has no status_transitions.done falls back to
+        # the module default so the reconcile still has a label to check.
+        raw = _write_raw(
+            "extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
+            "owner: o\nrepo: r\ngates: [build]\nknobs:\n  build_gate_cmd: \"true\"\n"
+        )
+        rc, out, _ = run([
+            "close-reconcile", raw, "--root", str(REPO_ROOT), "--offline",
+            "--issue", "8", "--status-done", "--json",
+        ])
+        data = json.loads(out)
+        self.assertEqual(data["done_label"], "status:done")
+        # status:done label present, no record → flagged.
+        self.assertEqual(rc, 1)
+
+
 class TestVerifyBranch(unittest.TestCase):
     BASE = [
         "verify-branch", str(PROJECTS / "example-android.yaml"),

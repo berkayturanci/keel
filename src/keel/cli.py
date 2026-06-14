@@ -24,6 +24,7 @@ from . import (
     captureverify,
     checkpoint,
     classify,
+    closeorder,
     closure,
     consent,
     consentverify,
@@ -1221,6 +1222,107 @@ def _consent_observed_effects(
         merged=pr.get("merged") is True,
         labeled=bool(_label_names(pr.get("labels"))),
     )
+
+
+def _cmd_close_reconcile(args: argparse.Namespace) -> int:
+    try:
+        config = cfg.load_config(args.path)
+    except FileNotFoundError:
+        print(f"no such config: {args.path}", file=sys.stderr)
+        return 1
+    except cfg.ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    done_label = _done_label(config)
+    try:
+        records = _close_ledger_records(args, config)
+    except ledger.LedgerError as exc:
+        print(f"invalid run ledger: {exc}", file=sys.stderr)
+        return 1
+    try:
+        observed = _close_observed_issues(args, config, records, done_label)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    report = closeorder.reconcile(observed, done_label=done_label)
+    payload = {
+        "schema_version": closeorder.SCHEMA_VERSION,
+        "done_label": done_label,
+        "reconcile": report,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        observed_count = report["summary"]["observed"]
+        print(f"keel close-reconcile — {report['verdict']}  ({observed_count} issue(s))")
+        for finding in report["findings"]:
+            print(f"  FLAG  {finding['message']}")
+        if report["ok"]:
+            print("  all observed issues consistent with the ledger")
+    return 0 if report["ok"] else 1
+
+
+def _done_label(config: cfg.ProjectConfig) -> str:
+    """Resolve the done-marking label from ``policy_pack.status_transitions.done``.
+
+    Falls back to :data:`keel.closeorder.DEFAULT_DONE_LABEL` when a project does
+    not configure a done transition, so the reconcile still has a label to check.
+    """
+    policy = config.policy_pack if isinstance(config.policy_pack, dict) else {}
+    transitions = policy.get("status_transitions")
+    done = transitions.get("done") if isinstance(transitions, dict) else None
+    return done if isinstance(done, str) and done.strip() else closeorder.DEFAULT_DONE_LABEL
+
+
+def _close_ledger_records(
+    args: argparse.Namespace,
+    config: cfg.ProjectConfig,
+) -> list[dict[str, object]]:
+    """Load the ship_run ledger records for close-ordering reconciliation.
+
+    Reads the run ledger (offline fixture via ``--ledger-jsonl`` or the configured
+    path under ``--root``) and returns every record; the per-issue lookup is done
+    by :func:`keel.closeorder.latest_record_for_issue`.
+    """
+    fixture = getattr(args, "ledger_jsonl", None)
+    if fixture is not None:
+        return ledger.parse_records(Path(fixture).read_text(encoding="utf-8"))
+    return ledger.read_records(ledger.resolve_path(args.root, config))
+
+
+def _close_observed_issues(
+    args: argparse.Namespace,
+    config: cfg.ProjectConfig,
+    records: list[dict[str, object]],
+    done_label: str,
+) -> list[closeorder.ObservedIssue]:
+    """Observe each issue's lifecycle state for close-ordering reconciliation.
+
+    Offline (``--offline``): the ``--closed``/``--status-done`` switches apply to
+    every ``--issue`` so tests are deterministic with no transport. Live: each
+    issue's state and labels are read via ``gh``; a transport failure raises so
+    the operator sees the fetch error rather than a silently-empty observation.
+    """
+    observed: list[closeorder.ObservedIssue] = []
+    for number in args.issue:
+        record = closeorder.latest_record_for_issue(records, number)
+        if args.offline:
+            labels = (done_label,) if args.status_done else ()
+            observed.append(closeorder.ObservedIssue(
+                number=number, closed=args.closed, labels=labels, record=record,
+            ))
+            continue
+        owner_repo = _owner_repo(config)
+        issue = _gh_json(["repos", owner_repo, "issues", str(number)], cwd=args.root)
+        observed.append(closeorder.ObservedIssue(
+            number=number,
+            closed=issue.get("state") == "closed",
+            labels=tuple(_label_names(issue.get("labels"))),
+            record=record,
+        ))
+    return observed
 
 
 def _reconcile_inputs_active(args: argparse.Namespace) -> bool:
@@ -3782,6 +3884,29 @@ def build_parser() -> argparse.ArgumentParser:
                            help="offline: labels were written on the PR")
     p_consent.add_argument("--json", action="store_true", help="emit structured JSON")
     p_consent.set_defaults(func=_cmd_consent_verify)
+
+    p_close = sub.add_parser(
+        "close-reconcile",
+        help="flag issues closed or status-done without a merge-attesting ledger record",
+    )
+    p_close.add_argument("path", help="path to project.yaml")
+    p_close.add_argument("--root", default=".",
+                         help="repo root for live gh observation and the ledger path")
+    p_close.add_argument("--issue", type=_positive_int, action="append", required=True,
+                         help="issue number to reconcile (repeat for several)")
+    p_close.add_argument("--ledger-jsonl", default=None,
+                         help="offline run-ledger JSONL fixture; otherwise the configured "
+                              "ledger under --root is read for the ship_run records")
+    p_close.add_argument("--offline", action="store_true",
+                         help="use only the supplied lifecycle flags; make no gh calls "
+                              "(test/back-compat; live mode reads host-authoritative state)")
+    p_close.add_argument("--closed", action="store_true",
+                         help="offline only: treat every --issue as closed (ignored when live)")
+    p_close.add_argument("--status-done", action="store_true",
+                         help="offline only: treat every --issue as carrying the done label "
+                              "(ignored when live)")
+    p_close.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_close.set_defaults(func=_cmd_close_reconcile)
 
     p_reconcile = sub.add_parser(
         "capture-reconcile",
