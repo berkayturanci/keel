@@ -69,6 +69,20 @@
   .folder .ico{font-size:30px;width:34px;text-align:center;color:var(--mut)}
   .msg{font-size:12px;margin-top:7px;color:var(--mut)}
   .merge{display:flex;align-items:center;gap:9px;color:var(--ok);font-size:14px;font-weight:600}
+  /* jury — static by default; .anim only while the run is animating */
+  .jury2d{display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:4px 2px}
+  .jurors{display:flex;gap:12px}
+  .juror{width:34px;height:34px;border-radius:50%;border:2px solid var(--line2);background:var(--panel2);display:flex;align-items:center;justify-content:center;font-size:14px;color:var(--mut);transition:.3s}
+  .jury2d.anim .juror{animation:jvote 1.7s ease-in-out infinite}
+  .jury2d.anim .juror:nth-child(2){animation-delay:.28s}
+  .jury2d.anim .juror:nth-child(3){animation-delay:.56s}
+  .jury2d.anim .juror:nth-child(4){animation-delay:.84s}
+  @keyframes jvote{0%,100%{border-color:var(--line2);color:var(--mut);box-shadow:none}45%{border-color:var(--info);color:var(--info);box-shadow:0 0 14px rgba(73,182,255,.55)}}
+  .jarrow{color:var(--dim);font-size:16px}
+  .jverdict{display:flex;align-items:center;gap:7px;font-size:13px;font-weight:600;color:var(--info)}
+  .jverdict.gating{color:var(--warn)}
+  .jury2d.anim .jverdict{animation:jpulse 1.7s ease-in-out infinite;animation-delay:.9s}
+  @keyframes jpulse{0%,100%{opacity:.55}50%{opacity:1;text-shadow:0 0 11px currentColor}}
   /* 3D */
   #scene{position:relative;height:380px;border-radius:var(--r);overflow:hidden;background:radial-gradient(120% 100% at 50% 0%,#10182e 0%,#080c16 70%)}
   #c3{display:block;width:100%;height:100%}
@@ -121,6 +135,14 @@
         </div>
       </div>
     </div>
+    <div class="sub" id="jurywrap">
+      <div class="lbl">cross-vendor jury · <span id="jurymode">advisory</span></div>
+      <div class="jury2d" id="jury2d">
+        <div class="jurors" id="jurors"></div>
+        <span class="jarrow">→</span>
+        <div class="jverdict" id="jverdict">⚖ <span id="jverdicttxt">deliberating…</span></div>
+      </div>
+    </div>
     <div class="sub" id="mergewrap"><div class="merge">◆ <span id="mergemsg">merged — run is green</span></div></div>
     <div class="legend">
       <span><i style="background:var(--info)"></i>active</span>
@@ -146,6 +168,7 @@
   const RUN = window.KEEL_RUN || {steps:[],active_index:0,merged:false,regression:{}};
   const STEP_DESC = {s0:"resolve config + plan",s1:"pick the issue(s)",s2:"worktree off base",s3:"blocker preconditions",s4:"agent writes the change",s5:"risk tier + reviewers",s6:"poll CI workflows",s7:"N reviewer verdicts",s8:"run the gate suite",s9:"address findings",s10:"lock + window + merge",s11:"compound capture",s12:"close + finalize"};
   const GLYPH = {s0:"⚙",s1:"☑",s2:"⎇",s3:"⛨",s4:"</>",s5:"▤",s6:"⟳",s7:"◉",s8:"⚗",s9:"↻",s10:"⑃",s11:"◳",s12:"✓"};
+  const REVIEW_STEP = "s7";   // jury attaches to the review step (keel.runstate.REVIEW_STEP_ID)
   const steps = RUN.steps||[];
   const N = steps.length||13;
   const params = new URLSearchParams(location.search);
@@ -175,6 +198,25 @@
   });
   const nodeEls=[...nodesEl.children];
   const scrub=document.getElementById('scrub'); scrub.max=N-1;
+
+  // jury (2D) — populate juror seats + verdict once; reflects RUN.jury (post-run state)
+  const juryActive = !!(RUN.jury && RUN.jury.active);
+  const juryMode = (RUN.jury && RUN.jury.mode) || 'on';
+  const JURY_SEATS = 3;   // cross-vendor panel — same count in 2D and 3D
+  if(juryActive){
+    const seats = JURY_SEATS;
+    const jurorsEl = document.getElementById('jurors');
+    for(let k=0;k<seats;k++){ const d=document.createElement('div'); d.className='juror'; d.textContent='§'; jurorsEl.appendChild(d); }
+    document.getElementById('jurymode').textContent = juryMode;
+    const gating = juryMode==='gating';
+    const jv = document.getElementById('jverdict'); jv.classList.toggle('gating', gating);
+    document.getElementById('jverdicttxt').textContent = gating ? 'gating verdict' : 'advisory verdict';
+  }
+  function syncJuryAnim(){
+    const jw=document.getElementById('jury2d'); if(!jw) return;
+    const atReview = (steps[active]||{}).id===REVIEW_STEP;
+    jw.classList.toggle('anim', playing && juryActive && atReview);
+  }
 
   function gateOutcome(s){ return s.gate ? s.gate.outcome : null; }
 
@@ -214,7 +256,7 @@
     document.getElementById('sdesc').textContent=STEP_DESC[s.id]||'';
     document.getElementById('badge').textContent=GLYPH[s.id]||'●';
     const pill=document.getElementById('pill');
-    show('gatewrap',false); show('regwrap',false); show('mergewrap',false);
+    show('gatewrap',false); show('regwrap',false); show('mergewrap',false); show('jurywrap',false);
     const badge=document.getElementById('badge');
 
     function setPill(t,cls){ pill.textContent=t; pill.className='pill'+(cls?' '+cls:''); }
@@ -233,8 +275,10 @@
     } else if(s.kind==='loop'){
       setPill('loop ↩','warn');
     } else {
-      setPill(idx2done(active)?'done':'active', idx2done(active)?'ok':'');
+      if(s.id===REVIEW_STEP && juryActive){ setPill('jury · '+juryMode, juryMode==='gating'?'warn':''); show('jurywrap',true); }
+      else setPill(idx2done(active)?'done':'active', idx2done(active)?'ok':'');
     }
+    syncJuryAnim();
   }
   function idx2done(i){ return false; }
 
@@ -262,8 +306,8 @@
 
   // playback
   function step(){ let n=active+1; while(n<N && steps[n] && !steps[n].exercised) n++; if(n>=N){pause();return;} active=n; paint(); update3D(); }
-  function play(){ playing=true; lbl('pause'); if(active>=N-1) active=0; loop(); }
-  function pause(){ playing=false; lbl('play'); clearTimeout(timer); }
+  function play(){ playing=true; lbl('pause'); if(active>=N-1) active=0; syncJuryAnim(); loop(); }
+  function pause(){ playing=false; lbl('play'); clearTimeout(timer); syncJuryAnim(); }
   function loop(){ if(!playing) return; const g=steps[active]&&(steps[active].kind!=='normal'); timer=setTimeout(()=>{step();loop();}, g?1700:1050); }
   function lbl(t){ document.getElementById('playlbl').textContent=t; document.querySelector('#play .i').textContent= t==='pause'?'❚❚':'▶'; }
   document.getElementById('play').addEventListener('click',()=>playing?pause():play());
@@ -281,7 +325,7 @@
   seg.addEventListener('click',e=>{ const b=e.target.closest('button'); if(b) setMode(b.dataset.m); });
 
   // ---- 3D ----
-  let renderer,scene,camera,nodes3=[],runners=[],curve,glowMat,tubeMat;
+  let renderer,scene,camera,nodes3=[],runners=[],jurors3=[],curve,glowMat,tubeMat;
   function init3D(){
     if(!window.THREE){ document.getElementById('hud3').textContent='3D unavailable'; return; }
     const canvas=document.getElementById('c3'), wrap=document.getElementById('scene');
@@ -304,6 +348,15 @@
     }
     const rgeo=new THREE.SphereGeometry(0.09,10,10);
     for(let k=0;k<22;k++){ const m=new THREE.Mesh(rgeo,new THREE.MeshBasicMaterial({color:0x49b6ff,transparent:true,opacity:.9,blending:THREE.AdditiveBlending})); scene.add(m); runners.push({m,off:k/22}); }
+    // jury (3D) — juror lights that orbit the review node when the jury was active
+    const s7idx = steps.findIndex(s=>s.id===REVIEW_STEP);
+    if(juryActive && s7idx>=0){
+      const base=curve.getPointAt(s7idx/(N-1));
+      const seats = JURY_SEATS;
+      const jgeo=new THREE.SphereGeometry(0.13,14,14);
+      const jcol = juryMode==='gating' ? 0xf0a020 : 0x49b6ff;
+      for(let k=0;k<seats;k++){ const m=new THREE.Mesh(jgeo,new THREE.MeshBasicMaterial({color:jcol,transparent:true,opacity:0,blending:THREE.AdditiveBlending})); scene.add(m); jurors3.push({m,base,off:k/seats}); }
+    }
     let drag=false,px=0,py=0,yaw=0,pitch=0.14,auto=0;
     canvas.addEventListener('pointerdown',e=>{drag=true;px=e.clientX;py=e.clientY;});
     window.addEventListener('pointerup',()=>drag=false);
@@ -318,6 +371,10 @@
       runners.forEach(rn=>{ let tt=(rn.off+t*0.00012)%1; tt=Math.min(tt,headT+0.02); const p=curve.getPointAt(Math.max(0.0001,tt)); rn.m.position.copy(p); const past=tt<=headT+0.001; rn.m.material.color.setHex(mergedNow?0x7ad14a:(past?0x49b6ff:0x2a3550)); rn.m.material.opacity=past?0.9:0.1; });
       const pulse=0.5+0.5*Math.sin(t*0.006);
       nodes3.forEach(nd=>{ nd.halo.material.opacity=nd.hi?(0.3+pulse*0.5):0.1; nd.halo.scale.setScalar(nd.hi?(1+pulse*0.35):1); });
+      if(jurors3.length){ const atRev=steps[active]&&steps[active].id===REVIEW_STEP;
+        jurors3.forEach((j,ix)=>{ const ang=t*0.0022+j.off*Math.PI*2; const rad=0.78;
+          j.m.position.set(j.base.x+Math.cos(ang)*rad, j.base.y+Math.sin(ang*1.4)*0.42, j.base.z+Math.sin(ang)*rad);
+          j.m.material.opacity = atRev ? (0.45+0.45*Math.sin(t*0.005+ix*2)) : 0; }); }
       glowMat.opacity=0.12+pulse*0.06;
       renderer.render(scene,camera);
       requestAnimationFrame(f);
