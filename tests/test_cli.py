@@ -4819,6 +4819,7 @@ class TestCoreMerge(unittest.TestCase):
                 "--completed-step", "s0",
                 "--completed-step", "s1",
                 "--last-check", "ci",
+                "--jury-mode", "gating",
                 "--stop-reason", "waiting on CI",
             ])
             checkpoint_path = Path(d) / "state" / "checkpoint.json"
@@ -4838,6 +4839,7 @@ class TestCoreMerge(unittest.TestCase):
         read = json.loads(out_read)
         self.assertEqual(read["status"], "present")
         self.assertEqual(read["checkpoint"]["run_id"], "RUN-149")
+        self.assertEqual(read["checkpoint"]["state"]["jury_mode"], "gating")
         self.assertEqual(rc_resume, 0)
         plan = json.loads(out_resume)["resume_plan"]
         self.assertEqual(plan["status"], "waiting-on-ci")

@@ -107,6 +107,16 @@ class TestCheckpointRecords(unittest.TestCase):
             self.assertEqual(checkpoint.parse_checkpoint(checkpoint.encode_checkpoint(record)),
                              record)
 
+    def test_jury_mode_recorded_in_state(self):
+        self.assertIsNone(_record()["state"]["jury_mode"])
+        record = _record(jury_mode="gating", current_step="s8")
+        self.assertEqual(record["state"]["jury_mode"], "gating")
+        # survives the JSON round-trip (live consumers read it from the file)
+        self.assertEqual(
+            checkpoint.parse_checkpoint(checkpoint.encode_checkpoint(record))["state"]["jury_mode"],
+            "gating",
+        )
+
     def test_validation_errors(self):
         with self.assertRaisesRegex(checkpoint.CheckpointError, "invalid JSON"):
             checkpoint.parse_checkpoint("{")
