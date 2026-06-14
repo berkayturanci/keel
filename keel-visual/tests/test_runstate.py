@@ -17,11 +17,12 @@ def _record(*, action="merge", critical=0, major=0, minor=0, nit=0, issue=351, p
 
 
 class TestHelpers(unittest.TestCase):
-    def test_step_index_known_and_unknown(self):
-        self.assertEqual(rs.step_index("s0"), 0)
-        self.assertEqual(rs.step_index("s10"), 10)
-        self.assertIsNone(rs.step_index("sX"))
-        self.assertIsNone(rs.step_index(None))
+    def test_phase_index_known_and_unknown(self):
+        ship = rs.flows.flow_for("ship")
+        self.assertEqual(rs._phase_index(ship, "s0"), 0)
+        self.assertEqual(rs._phase_index(ship, "s10"), 10)
+        self.assertIsNone(rs._phase_index(ship, "sX"))
+        self.assertIsNone(rs._phase_index(ship, None))
 
     def test_worst_finding_precedence(self):
         self.assertEqual(rs.worst_finding({"critical": 1}), "critical")
@@ -171,15 +172,33 @@ class TestBuildRunState(unittest.TestCase):
         s4 = next(s for s in st["steps"] if s["id"] == "s4")
         self.assertIsNone(s4["gate"])
 
-    def test_command_exercised_flags(self):
-        st = rs.build_run_state(None, command="review")
-        ex = {s["id"]: s["exercised"] for s in st["steps"]}
-        self.assertTrue(ex["s7"])
-        self.assertFalse(ex["s3"])
+    def test_command_renders_its_own_flow(self):
+        # A non-ship command renders its own phases (not the ship backbone), all
+        # exercised, with the flow's kinds.
+        st = rs.build_run_state(None, command="overnight")
+        self.assertEqual(st["command"], "overnight")
+        ids = [s["id"] for s in st["steps"]]
+        self.assertEqual(ids, ["config", "preflight", "queue", "loop", "report"])
+        self.assertTrue(all(s["exercised"] for s in st["steps"]))
+        loop = next(s for s in st["steps"] if s["id"] == "loop")
+        self.assertEqual(loop["kind"], "loop")
+
+    def test_non_ship_command_has_no_merge_or_regression(self):
+        st = rs.build_run_state(None, command="deps-audit")
+        self.assertFalse(st["merged"])
+        self.assertFalse(st["regression"]["reached"])
+        self.assertTrue(all(s["gate"] is None for s in st["steps"]))
+
+    def test_non_ship_gate_has_neutral_outcome(self):
+        # wrap has a 'gates' gate phase but no ship finding data -> neutral.
+        st = rs.build_run_state(None, command="wrap", checkpoint_step="gates")
+        gate = next(s for s in st["steps"] if s["id"] == "gates")
+        self.assertEqual(gate["gate"], {"kind": "gate", "outcome": "pending"})
 
     def test_unknown_command_falls_back_to_ship(self):
         st = rs.build_run_state(None, command="bogus")
         self.assertEqual(st["command"], "ship")
+        self.assertEqual([s["id"] for s in st["steps"]], [f"s{i}" for i in range(13)])
 
     def test_non_dict_record_treated_as_empty(self):
         st = rs.build_run_state("nope")

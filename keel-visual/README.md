@@ -10,9 +10,22 @@ depends on keel-visual, so installing it is purely additive.
 ## Two surfaces, one source of truth
 
 Both outputs are fed by a single **pure** adapter,
-`runstate.build_run_state(record, …)`, which projects a keel ship_run ledger
-record onto the fixed backbone (`keel.model.BACKBONE`). No parallel data model,
-no second source of truth — the visualizer shows exactly what the ledger says.
+`runstate.build_run_state(record, …)`, which projects a keel run onto its
+**command flow** — the canonical phase list each command has in keel core
+(`keel.flows.flow_for`). No parallel data model, no second source of truth.
+
+## Every command, not just ship
+
+`--command` accepts **all 16 keel commands** (ci-check, coverage, deps-audit,
+flake-audit, implement, morning, overnight, pr-loop, regression, review-all-day,
+review-cycle, ship, stale-prs, triage, work-block, wrap). Each renders its own
+flow — e.g. `overnight` shows `config → preflight → queue → work-block loop →
+report`; `triage` shows `find → tier → classify → rank → apply → summary`.
+
+`ship` is the full s0–s12 backbone with live merge/test-gate and regression
+detail. The other commands render their phase structure (animatable via
+`--step`/`play`); live `--follow`/`dash` position stays accurate for the
+checkpoint-writing commands (ship / work-block / overnight).
 
 ### Parallel runs — `keel-visual dash`
 

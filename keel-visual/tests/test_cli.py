@@ -109,10 +109,10 @@ class TestPlay(unittest.TestCase):
     def test_play_full_animation_calls_sleep(self):
         out = io.StringIO()
         calls = []
-        rc = cli.cmd_play(_args(command="review", no_clear=False),
+        rc = cli.cmd_play(_args(command="overnight", no_clear=False),
                           sleep=lambda s: calls.append(s), out=out)
         self.assertEqual(rc, 0)
-        # review exercises 5 steps -> 4 inter-frame sleeps, and clears between frames.
+        # overnight's flow is 5 phases -> 4 inter-frame sleeps, and clears between.
         self.assertEqual(len(calls), 4)
         self.assertIn("\x1b[2J", out.getvalue())
 
@@ -228,11 +228,11 @@ class TestCheckpointResolve(unittest.TestCase):
 class TestLoopAndFollow(unittest.TestCase):
     def test_loop_replays_until_max_cycles(self):
         out = io.StringIO()
-        rc = cli.cmd_play(_args(command="review", loop=True), sleep=lambda s: None,
+        rc = cli.cmd_play(_args(command="overnight", loop=True), sleep=lambda s: None,
                           out=out, max_cycles=2)
         self.assertEqual(rc, 0)
-        # the s0 pointer ("▲ s0 · config") renders once per cycle -> 2 cycles.
-        self.assertEqual(out.getvalue().count("s0 · config"), 2)
+        # the first-phase pointer renders once per cycle -> 2 cycles.
+        self.assertEqual(out.getvalue().count("config · config"), 2)
 
     def test_loop_keyboard_interrupt_exits_clean(self):
         out = io.StringIO()
@@ -240,7 +240,8 @@ class TestLoopAndFollow(unittest.TestCase):
         def boom(_):
             raise KeyboardInterrupt
 
-        rc = cli.cmd_play(_args(command="review", loop=True), sleep=boom, out=out, max_cycles=None)
+        rc = cli.cmd_play(_args(command="overnight", loop=True), sleep=boom, out=out,
+                          max_cycles=None)
         self.assertEqual(rc, 0)
         self.assertTrue(out.getvalue().endswith("\n"))
 

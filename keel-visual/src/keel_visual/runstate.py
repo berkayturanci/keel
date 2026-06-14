@@ -3,8 +3,10 @@
 ``keel-visual`` is an *optional* companion to keel core — it renders a run, it
 never drives one. This module is the bridge: it reads the exact record shapes
 keel core already produces (a ship_run ledger record, an optional checkpoint
-step id) and projects them onto the fixed backbone (:data:`keel.model.BACKBONE`)
-as a flat, JSON-serialisable ``RunState`` the front-end can animate.
+step id) and projects them onto the run's **command flow**
+(:func:`keel.flows.flow_for`) as a flat, JSON-serialisable ``RunState`` the
+front-end can animate. ``ship`` is the s0–s12 backbone with rich merge/test-gate
+detail; every other keel command renders its own phases.
 
 It is pure by the same contract as keel core: data in, structured data out, no
 network/subprocess/clock/random. The CLI does the I/O (reads the ledger and
@@ -24,7 +26,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from keel.model import BACKBONE
+from keel import flows
 
 SCHEMA_VERSION = "keel.visual.run-state.v1"
 
@@ -34,18 +36,10 @@ STATUS_DONE = "done"
 STATUS_GATE = "gate"
 STATUS_LOOP = "loop"
 
-# Backbone steps that carry special visual semantics.
-GATE_STEP_IDS = ("s8", "s10")
-LOOP_STEP_ID = "s9"
+# Ship backbone steps with ship-specific outcome data (merge gate, test gate).
+SHIP_COMMAND = "ship"
 MERGE_STEP_ID = "s10"
 TEST_STEP_ID = "s8"
-
-# Which backbone steps each command actually exercises (others render dimmed).
-COMMAND_STEPS: dict[str, tuple[str, ...]] = {
-    "ship": tuple(s.id for s in BACKBONE),
-    "regression": ("s0", "s6", "s8", "s9", "s12"),
-    "review": ("s0", "s1", "s7", "s8", "s12"),
-}
 
 # Human labels for the regression folder's worst-finding state -> colour band.
 WORST_NONE = "none"
@@ -78,16 +72,6 @@ def current_step_from_checkpoint(record: dict[str, Any] | None) -> str | None:
     position = record.get("position")
     step = position.get("current_step") if isinstance(position, dict) else None
     return step if isinstance(step, str) and step.strip() else None
-
-
-def step_index(step_id: str | None) -> int | None:
-    """Return the backbone index of ``step_id`` (``None`` when unknown/missing)."""
-    if not isinstance(step_id, str):
-        return None
-    for idx, step in enumerate(BACKBONE):
-        if step.id == step_id:
-            return idx
-    return None
 
 
 def _merge_action(record: dict[str, Any]) -> str | None:
@@ -124,27 +108,40 @@ def worst_finding(counts: dict[str, int]) -> str:
     return WORST_NONE
 
 
+def _phase_index(flow: tuple[Any, ...], phase_id: str | None) -> int | None:
+    """Return the index of the phase whose id is ``phase_id`` (``None`` if absent)."""
+    if not isinstance(phase_id, str):
+        return None
+    for idx, phase in enumerate(flow):
+        if phase.id == phase_id:
+            return idx
+    return None
+
+
 def _active_index(
+    flow: tuple[Any, ...],
     record: dict[str, Any] | None,
     checkpoint_step: str | None,
     *,
     merged: bool,
+    is_ship: bool,
 ) -> int:
-    """Resolve which backbone index the run is currently on.
+    """Resolve which phase index the run is currently on, for any command flow.
 
-    Priority: an explicit checkpoint step (authoritative — keel writes it at each
-    step) wins; otherwise a merged run is shown at ``close`` (the final step) and
-    an un-merged run with a record sits at ``merge``; with nothing to go on the
-    run is at the start.
+    Priority: a checkpoint step that names a phase in this flow wins (for ship the
+    checkpoint's ``s0..s12`` ids are the flow ids; other commands' checkpoints —
+    when they exist — are ship-backbone ids and won't match, so they fall back).
+    For ship, a merged run shows ``close`` and an un-merged record sits at
+    ``merge``. With nothing to go on, the run is at the start.
     """
-    idx = step_index(checkpoint_step)
+    idx = _phase_index(flow, checkpoint_step)
     if idx is not None:
         return idx
-    if record is None:
-        return 0
-    if merged:
-        return len(BACKBONE) - 1
-    return step_index(MERGE_STEP_ID) or 0
+    if is_ship and record is not None:
+        if merged:
+            return len(flow) - 1
+        return _phase_index(flow, MERGE_STEP_ID) or 0
+    return 0
 
 
 def live_state_from_checkpoint(record: dict[str, Any] | None) -> dict[str, Any]:
@@ -184,43 +181,41 @@ def _merge_outcome(*, merged: bool, live_merge: str | None) -> str:
     return "pass" if merged else "pending"
 
 
-def _gate_for(
-    step_id: str, *, counts: dict[str, int], merge_outcome: str,
+def _gate_for_phase(
+    phase: Any, *, counts: dict[str, int], merge_outcome: str, is_ship: bool,
 ) -> dict[str, Any] | None:
-    """Build the gate block for a gate step, or ``None`` for a non-gate step."""
-    if step_id not in GATE_STEP_IDS:
-        return None
-    if step_id == MERGE_STEP_ID:
+    """Build the gate block for a gate/merge phase, or ``None`` otherwise.
+
+    Ship's merge and test gates carry rich outcome data (merge state, finding
+    counts). A gate phase in any other command flow has no such data available,
+    so it renders as a gate with a neutral ``pending`` outcome — the structure is
+    shown without a fabricated pass/fail.
+    """
+    if phase.kind == "merge":
         return {"kind": "merge", "outcome": merge_outcome}
-    blocked = bool(counts.get("critical") or counts.get("major"))
-    return {
-        "kind": "test",
-        "outcome": "fail" if blocked else "pass",
-        "counts": dict(counts),
-        "worst": worst_finding(counts),
-    }
+    if phase.kind != "gate":
+        return None
+    if is_ship and phase.id == TEST_STEP_ID:
+        blocked = bool(counts.get("critical") or counts.get("major"))
+        return {
+            "kind": "test",
+            "outcome": "fail" if blocked else "pass",
+            "counts": dict(counts),
+            "worst": worst_finding(counts),
+        }
+    return {"kind": "gate", "outcome": "pending"}
 
 
-def _status(idx: int, active: int, step_id: str) -> str:
+def _status(idx: int, active: int, kind: str) -> str:
     if idx < active:
         return STATUS_DONE
     if idx > active:
         return STATUS_PENDING
-    if step_id in GATE_STEP_IDS:
+    if kind in ("gate", "merge"):
         return STATUS_GATE
-    if step_id == LOOP_STEP_ID:
+    if kind == "loop":
         return STATUS_LOOP
     return STATUS_ACTIVE
-
-
-def _kind(step_id: str) -> str:
-    if step_id == MERGE_STEP_ID:
-        return "merge"
-    if step_id in GATE_STEP_IDS:
-        return "gate"
-    if step_id == LOOP_STEP_ID:
-        return "loop"
-    return "normal"
 
 
 def build_run_state(
@@ -230,39 +225,46 @@ def build_run_state(
     checkpoint_state: dict[str, Any] | None = None,
     command: str = "ship",
 ) -> dict[str, Any]:
-    """Project a keel ship_run ``record`` onto the backbone as a ``RunState``.
+    """Project a keel ``record`` onto its command flow as a ``RunState``.
 
     ``record`` is a ship_run ledger record (or ``None`` for an empty/just-started
     run). ``checkpoint_step`` is the current step id from the keel checkpoint;
     ``checkpoint_state`` is its live ``state`` block (see
-    :func:`live_state_from_checkpoint`). Both take priority over the ledger so a
-    run *in progress* shows live position and merge progress before any ship_run
-    record exists. ``command`` selects which steps are highlighted vs dimmed.
+    :func:`live_state_from_checkpoint`). ``command`` selects the flow
+    (:func:`keel.flows.flow_for`) — ``ship`` carries rich merge/test-gate and
+    regression detail; every other command renders its own phases (position +
+    kinds), since only ship-style runs expose that data.
 
     Returns a flat JSON-serialisable dict the front-end animates. Pure — reads
     only its arguments.
     """
+    flow = flows.flow_for(command)
+    command = command if flows.is_known(command) else SHIP_COMMAND
+    is_ship = command == SHIP_COMMAND
     rec = record if isinstance(record, dict) else None
     live = checkpoint_state if isinstance(checkpoint_state, dict) else {}
     live_merge = live.get("merge")
-    ledger_merged = _merge_action(rec) == "merge" if rec else False
-    merged = live_merge == "merged" or ledger_merged
-    merge_outcome = _merge_outcome(merged=merged, live_merge=live_merge)
-    counts = _verdict_counts(rec) if rec else {"critical": 0, "major": 0, "minor": 0, "nit": 0}
-    active = _active_index(rec, checkpoint_step, merged=merged)
-    active = max(0, min(active, len(BACKBONE) - 1))
-    command = command if command in COMMAND_STEPS else "ship"
-    exercised = set(COMMAND_STEPS[command])
+    ledger_merged = (_merge_action(rec) == "merge" if rec else False) if is_ship else False
+    merged = (live_merge == "merged" or ledger_merged) if is_ship else False
+    merge_outcome = _merge_outcome(merged=merged, live_merge=live_merge if is_ship else None)
+    counts = (
+        _verdict_counts(rec) if (rec and is_ship)
+        else {"critical": 0, "major": 0, "minor": 0, "nit": 0}
+    )
+    active = _active_index(flow, rec, checkpoint_step, merged=merged, is_ship=is_ship)
+    active = max(0, min(active, len(flow) - 1))
 
     steps: list[dict[str, Any]] = []
-    for idx, step in enumerate(BACKBONE):
+    for idx, phase in enumerate(flow):
         steps.append({
-            "id": step.id,
-            "name": step.name,
-            "kind": _kind(step.id),
-            "status": _status(idx, active, step.id),
-            "exercised": step.id in exercised,
-            "gate": _gate_for(step.id, counts=counts, merge_outcome=merge_outcome),
+            "id": phase.id,
+            "name": phase.name,
+            "kind": phase.kind,
+            "status": _status(idx, active, phase.kind),
+            "exercised": True,
+            "gate": _gate_for_phase(
+                phase, counts=counts, merge_outcome=merge_outcome, is_ship=is_ship,
+            ),
         })
 
     issue = rec.get("issue") if rec else None
@@ -273,27 +275,27 @@ def build_run_state(
         "issue": _int_or_none(issue.get("number")) if isinstance(issue, dict) else None,
         "pr": _int_or_none(pr.get("number")) if isinstance(pr, dict) else None,
         "active_index": active,
-        "active_id": BACKBONE[active].id,
+        "active_id": flow[active].id,
         "merged": merged,
         "merge_state": live_merge if isinstance(live_merge, str) else None,
         "steps": steps,
-        "regression": _regression(active, counts),
+        "regression": _regression(flow, active, counts, is_ship=is_ship),
     }
 
 
-def _regression(active: int, counts: dict[str, int]) -> dict[str, Any]:
-    """Build the regression-folder model shown while the test gate is active.
+def _regression(
+    flow: tuple[Any, ...], active: int, counts: dict[str, int], *, is_ship: bool,
+) -> dict[str, Any]:
+    """Build the regression-folder model shown while the ship test gate is active.
 
-    Coverage is a presentation value: a passed/blocked test gate reports 100%
-    observed coverage; before the run reaches the test step there is nothing to
-    show yet (0%). The worst finding drives the folder colour band.
+    Ship-only: keyed off the test step's position. For any other command there is
+    no regression folder, so it reports ``reached=False`` (the panel stays hidden).
     """
-    test_idx = step_index(TEST_STEP_ID) or 0
-    reached = active >= test_idx
-    coverage = 100 if reached else 0
+    test_idx = _phase_index(flow, TEST_STEP_ID)
+    reached = is_ship and test_idx is not None and active >= test_idx
     return {
         "reached": reached,
-        "coverage": coverage,
+        "coverage": 100 if reached else 0,
         "counts": dict(counts),
         "worst": worst_finding(counts),
     }

@@ -125,6 +125,9 @@ def _flow_body(
     steps: list[dict[str, Any]], active: int, *, run: dict[str, Any], color: bool
 ) -> str:
     merged_now = bool(run.get("merged")) and active >= 10
+    # Cell width adapts to the longest phase id so word-length ids (config,
+    # preflight, …) align under their nodes instead of colliding.
+    cell_w = max(4, max((len(step.get("id", "")) for step in steps), default=4) + 1)
     cells, labels = [], []
     for idx, step in enumerate(steps):
         status = display_status(step, idx, active)
@@ -136,13 +139,13 @@ def _flow_body(
             cglyph = "red"
         cells.append(paint(glyph, cglyph, enable=color))
         lab = step.get("id", "")
-        labels.append(paint(f"{lab:<4}", "white" if idx == active else "dim", enable=color))
-    connector = paint("───", "dim", enable=color)
+        labels.append(paint(lab.ljust(cell_w), "white" if idx == active else "dim", enable=color))
+    connector = paint("─" * (cell_w - 1), "dim", enable=color)
     pipeline = connector.join(cells)
     label_line = "".join(labels)
 
     cur = steps[active] if steps else {"id": "s0", "name": "?"}
-    pointer_pad = " " * (active * 4)
+    pointer_pad = " " * (active * cell_w)
     word = ""
     if cur.get("kind") in ("gate", "merge"):
         gw = _gate_word(cur)

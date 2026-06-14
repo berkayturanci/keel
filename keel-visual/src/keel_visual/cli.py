@@ -16,7 +16,7 @@ import time
 from importlib import resources
 from pathlib import Path
 
-from keel import checkpoint, git, ledger
+from keel import checkpoint, flows, git, ledger
 from keel import config as cfg
 
 from . import dash, render, runstate, terminal
@@ -296,7 +296,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--pr", type=int, default=None, help="PR number (default: latest ship_run)")
     p.add_argument("--ledger-jsonl", default=None, help="offline run-ledger JSONL fixture")
     p.add_argument("--checkpoint-step", default=None, help="current step id (e.g. s8)")
-    p.add_argument("--command", default="ship", choices=sorted(runstate.COMMAND_STEPS),
+    p.add_argument("--command", default="ship", choices=flows.command_names(),
                    help="which command's steps to highlight")
     p.add_argument("--out", default="keel-run.html", help="output HTML path")
     p.set_defaults(func=cmd_render)
@@ -307,7 +307,7 @@ def build_parser() -> argparse.ArgumentParser:
     pl.add_argument("--pr", type=int, default=None, help="PR number (default: latest ship_run)")
     pl.add_argument("--ledger-jsonl", default=None, help="offline run-ledger JSONL fixture")
     pl.add_argument("--checkpoint-step", default=None, help="current step id (e.g. s8)")
-    pl.add_argument("--command", default="ship", choices=sorted(runstate.COMMAND_STEPS),
+    pl.add_argument("--command", default="ship", choices=flows.command_names(),
                     help="which command's steps to play")
     pl.add_argument("--style", default="flow", choices=("flow", "wave"), help="render style")
     pl.add_argument("--fps", type=int, default=2, help="frames per second during playback")

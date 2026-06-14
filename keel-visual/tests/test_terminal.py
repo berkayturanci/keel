@@ -121,9 +121,10 @@ class TestHeaderAndHelpers(unittest.TestCase):
         self.assertEqual(out.count("░"), 5)
 
     def test_exercised_indices(self):
-        st = rs.build_run_state(None, command="review")
+        # Every phase of a command's own flow is exercised.
+        st = rs.build_run_state(None, command="overnight")
         idxs = t.exercised_indices(st)
-        self.assertEqual(idxs, [0, 1, 7, 8, 12])
+        self.assertEqual(idxs, [0, 1, 2, 3, 4])
 
     def test_exercised_defaults_true(self):
         self.assertEqual(t.exercised_indices({"steps": [{"id": "s0"}]}), [0])
