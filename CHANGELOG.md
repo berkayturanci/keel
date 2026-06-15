@@ -18,6 +18,14 @@ All notable changes to keel are documented here. The format follows
   (using the same `--run-id` as the checkpoint), exactly like the other 15 commands,
   so every ship run shows live. keel-visual de-duplicates the activity record against
   the checkpoint by run-id, preferring the checkpoint's detail.
+- **`ship` adapter hardened against review-less merges.** The s10 merge step now opens
+  with an explicit, mandatory `keel evidence-verify` self-check that runs on *every*
+  merge path (including a raw `gh`/REST merge) and tells the agent to **STOP, not
+  merge**, when the s7 review verdict is not posted on the PR for the current head. s7
+  now forbids carrying a review forward across runs/sessions and forbids closure
+  attributions for verdicts not actually posted on the PR (the exact gap that let a
+  `keel:ship` run merge with the review step skipped and a fabricated "reviewed in a
+  prior session" closure line).
 
 ### Changed
 - **`keel activity` emission is now a required, up-front adapter step.** In 1.6.0/1.6.1

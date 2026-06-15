@@ -357,6 +357,12 @@ reviewer still emits a posted verdict comment/review for the current PR head.
 Local/chat-only review output does not satisfy the step, a rich PR body is not a substitute
 for this s7 evidence, and the automated `keel ship` CI assessment block is not a substitute
 for the operator-posted review verdict.
+**Never carry a review forward across runs or sessions.** If you believe the change was
+"already reviewed," that is not evidence: you must still confirm the verdict marker is posted
+on **this** PR for the **current** head, and re-run s7 if it is not. The s11 closure
+attribution must name only verdicts actually posted on this PR — never an unverifiable
+"reviewed in a prior session" claim. If you cannot point to the posted verdict, the review
+did not happen for s10's purposes.
 When available, use `result.artifact_bodies.review_verdict_template` as the canonical
 comment shape: keep `keel.review-verdict.v1`, `reviewer: <stable-id>`, and `head: <sha>`
 intact, then fill in the reviewer-specific verdict, scope, findings, and testing notes.
@@ -448,6 +454,17 @@ calls and hand-rolled lock shells are **spec violations** for ship-style flows �
 lock, window re-check, CI rollup read, evidence verification, and the SHA-stamped
 gates-pass check must run deterministically inside core, not as adapter prose.
 
+- **Evidence gate — do this first, on every path (audit GAP-REV):** before *any*
+  merge — including a raw `gh`/REST merge you might be tempted to use — run
+  `keel evidence-verify .keel/project.yaml --root . --pr <PR>` and confirm it
+  **exits 0**. It fails when the s7 review verdict (a posted PR comment/review
+  carrying `keel.review-verdict.v1` for the **current head**) is not on the PR. A
+  prior session's summary, a chat-only review, the rich PR body, and the `keel
+  ship` assessment block do **not** satisfy it. If it fails, **STOP — do not
+  merge**: go back to s7 and post the review verdict for the current head, then
+  re-verify. The only disarm is an operator-applied `keel:evidence-waived` label;
+  **never self-apply it.** Cite the `evidence-verify` pass (PR + head SHA) in the
+  s11 summary as the merge's authorization.
 - **Pre-merge prep:** re-assert mergeability; if behind/dirty, integrate `base_branch`
   (merge, not rebase), re-green CI, run a single focused merge-conflict review (max 2
   integration iterations, then blocked + morning queue). Run any `pre-merge` Lego. Then

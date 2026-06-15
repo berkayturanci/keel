@@ -288,4 +288,4 @@ writes. Hand ready items to `/keel:ship`.
   priority/status families) must exist in the repo. If any label is missing, fix
   the repo labels (not this command) before invoking.
 
-<!-- keel-generated: surface=plugin command=triage keel_version=1.6.2 source_sha256=11f13596a4347f6c02ed8f45ee21e844271ed251ffa9cdfd71617f63caeb072f generated_sha256=11f13596a4347f6c02ed8f45ee21e844271ed251ffa9cdfd71617f63caeb072f -->
+<!-- keel-generated: surface=plugin command=triage keel_version=1.6.3 source_sha256=11f13596a4347f6c02ed8f45ee21e844271ed251ffa9cdfd71617f63caeb072f generated_sha256=11f13596a4347f6c02ed8f45ee21e844271ed251ffa9cdfd71617f63caeb072f -->
