@@ -6,6 +6,12 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **CI now exercises the `keel-visual` companion too.** A `test-visual` job runs the
+  keel-visual suite (with its own 100% coverage gate) and ruff across the full
+  ubuntu/macos/windows × Python 3.11–3.13 matrix; previously only the core `tests/`
+  ran in CI.
+
 ## [1.5.0] — 2026-06-15
 
 ### Added
