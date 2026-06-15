@@ -185,4 +185,20 @@ When stopped, write the session report immediately, even if partial.
 Never merge outside the window · merge lock · fail-soft per issue (one failure
 never aborts the loop) · attribute the effective agents (vendor + base model).
 
-<!-- keel-generated: surface=plugin command=overnight keel_version=1.5.0 source_sha256=ae1c729a954f1881963e222406d6d7e55c8f217cb40e241282216585b2cb9d64 generated_sha256=ae1c729a954f1881963e222406d6d7e55c8f217cb40e241282216585b2cb9d64 -->
+
+## Live progress (best-effort)
+
+Surface this run on `keel-visual`'s board by stamping the active phase as you reach
+it. This command's flow phases are: `config` → `preflight` → `queue` → `loop` → `report`. Choose one stable `--run-id` for the
+whole run (e.g. `overnight-<issue-or-pr>`), and as you enter each phase run:
+
+```bash
+keel activity .keel/project.yaml --root . --command overnight --run-id "$RUN" --phase config
+# … repeat with --phase preflight, … as you advance through the flow …
+keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the run finishes
+```
+
+Strictly **best-effort and fail-soft**: it needs keel core ≥ 1.6.0; if `keel activity`
+is unavailable, skip it silently and never block the command on it.
+
+<!-- keel-generated: surface=plugin command=overnight keel_version=1.5.0 source_sha256=d4735e7aa249717b0917fa1ff49c22e59759185ae6dea45ec07628b6d2625274 generated_sha256=d4735e7aa249717b0917fa1ff49c22e59759185ae6dea45ec07628b6d2625274 -->

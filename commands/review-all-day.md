@@ -253,4 +253,20 @@ Always print the final report on exit, even if partial.
 - Fail-soft (a missing tool/gate degrades to a skipped check, never aborts) · deterministic
   ordering (same commits ⇒ same findings ⇒ same issues).
 
-<!-- keel-generated: surface=plugin command=review-all-day keel_version=1.5.0 source_sha256=8e4b1f2652a13d57d558324fceb8da61ad8a29f744fd0e1a922c8542e57992bd generated_sha256=8e4b1f2652a13d57d558324fceb8da61ad8a29f744fd0e1a922c8542e57992bd -->
+
+## Live progress (best-effort)
+
+Surface this run on `keel-visual`'s board by stamping the active phase as you reach
+it. This command's flow phases are: `config` → `parse` → `commits` → `decide` → `classify` → `open` → `report`. Choose one stable `--run-id` for the
+whole run (e.g. `review-all-day-<issue-or-pr>`), and as you enter each phase run:
+
+```bash
+keel activity .keel/project.yaml --root . --command review-all-day --run-id "$RUN" --phase config
+# … repeat with --phase parse, … as you advance through the flow …
+keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the run finishes
+```
+
+Strictly **best-effort and fail-soft**: it needs keel core ≥ 1.6.0; if `keel activity`
+is unavailable, skip it silently and never block the command on it.
+
+<!-- keel-generated: surface=plugin command=review-all-day keel_version=1.5.0 source_sha256=ba2b5587137c33adeac52ca1a5cfac5083c4db0d5acba09dfb6809dc88debc12 generated_sha256=ba2b5587137c33adeac52ca1a5cfac5083c4db0d5acba09dfb6809dc88debc12 -->

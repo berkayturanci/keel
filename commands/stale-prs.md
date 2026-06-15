@@ -153,4 +153,20 @@ Print a summary table: PR · title · bucket · action, where action is one of `
 - **Never modify a PR's tree** beyond the merge commit that brings in `base_branch`.
 - Fail-soft per PR; deterministic ordering.
 
-<!-- keel-generated: surface=plugin command=stale-prs keel_version=1.5.0 source_sha256=d2784174b2a25febccd6a6eada629d6d2abfd7020b4faa6dab1efbc5ee5007e3 generated_sha256=d2784174b2a25febccd6a6eada629d6d2abfd7020b4faa6dab1efbc5ee5007e3 -->
+
+## Live progress (best-effort)
+
+Surface this run on `keel-visual`'s board by stamping the active phase as you reach
+it. This command's flow phases are: `orient` → `list` → `classify` → `triage` → `post` → `rebase` → `summary`. Choose one stable `--run-id` for the
+whole run (e.g. `stale-prs-<issue-or-pr>`), and as you enter each phase run:
+
+```bash
+keel activity .keel/project.yaml --root . --command stale-prs --run-id "$RUN" --phase orient
+# … repeat with --phase list, … as you advance through the flow …
+keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the run finishes
+```
+
+Strictly **best-effort and fail-soft**: it needs keel core ≥ 1.6.0; if `keel activity`
+is unavailable, skip it silently and never block the command on it.
+
+<!-- keel-generated: surface=plugin command=stale-prs keel_version=1.5.0 source_sha256=867be176686e230ec3e6b8dabb68bf09a7c82bd548104d78ae1552fe6200a63d generated_sha256=867be176686e230ec3e6b8dabb68bf09a7c82bd548104d78ae1552fe6200a63d -->

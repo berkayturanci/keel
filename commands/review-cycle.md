@@ -213,4 +213,20 @@ Do every read plus `keel validate` / `keel plan` / `keel run-gates` and the revi
 but redirect every state-changing `gh` write (comments, label) to a logged
 `DRY-RUN: <action>` line.
 
-<!-- keel-generated: surface=plugin command=review-cycle keel_version=1.5.0 source_sha256=950f8d2ef9d84e486405a88aac1934713643bc41204254b978c5f49d27b11e25 generated_sha256=950f8d2ef9d84e486405a88aac1934713643bc41204254b978c5f49d27b11e25 -->
+
+## Live progress (best-effort)
+
+Surface this run on `keel-visual`'s board by stamping the active phase as you reach
+it. This command's flow phases are: `config` → `validate` → `loop` → `reviewers` → `post` → `fixloop` → `report`. Choose one stable `--run-id` for the
+whole run (e.g. `review-cycle-<issue-or-pr>`), and as you enter each phase run:
+
+```bash
+keel activity .keel/project.yaml --root . --command review-cycle --run-id "$RUN" --phase config
+# … repeat with --phase validate, … as you advance through the flow …
+keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the run finishes
+```
+
+Strictly **best-effort and fail-soft**: it needs keel core ≥ 1.6.0; if `keel activity`
+is unavailable, skip it silently and never block the command on it.
+
+<!-- keel-generated: surface=plugin command=review-cycle keel_version=1.5.0 source_sha256=f55768121b9a63c29838eab8e9b274198aeeffff5829d7b9d7a90852fe8892b7 generated_sha256=f55768121b9a63c29838eab8e9b274198aeeffff5829d7b9d7a90852fe8892b7 -->

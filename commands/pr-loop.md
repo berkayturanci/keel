@@ -189,4 +189,20 @@ Do every read plus `keel validate` / `keel plan` / `keel run-gates`, but redirec
 state-changing `git`/`gh` write to a logged `DRY-RUN: <action>` line. No push, no PR, no
 merge.
 
-<!-- keel-generated: surface=plugin command=pr-loop keel_version=1.5.0 source_sha256=c0543e98390a3c6cfab487ef0c9f06ef6340be0a0208dfcc49bf9b2da18ee0a1 generated_sha256=c0543e98390a3c6cfab487ef0c9f06ef6340be0a0208dfcc49bf9b2da18ee0a1 -->
+
+## Live progress (best-effort)
+
+Surface this run on `keel-visual`'s board by stamping the active phase as you reach
+it. This command's flow phases are: `config` → `find` → `open` → `read` → `categorize` → `fix` → `review` → `post` → `recheck` → `collect` → `handoff`. Choose one stable `--run-id` for the
+whole run (e.g. `pr-loop-<issue-or-pr>`), and as you enter each phase run:
+
+```bash
+keel activity .keel/project.yaml --root . --command pr-loop --run-id "$RUN" --phase config
+# … repeat with --phase find, … as you advance through the flow …
+keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the run finishes
+```
+
+Strictly **best-effort and fail-soft**: it needs keel core ≥ 1.6.0; if `keel activity`
+is unavailable, skip it silently and never block the command on it.
+
+<!-- keel-generated: surface=plugin command=pr-loop keel_version=1.5.0 source_sha256=0de2e43a0656f6f5cd054be947317f356a330f6db64041e806aa3acddf16774e generated_sha256=0de2e43a0656f6f5cd054be947317f356a330f6db64041e806aa3acddf16774e -->

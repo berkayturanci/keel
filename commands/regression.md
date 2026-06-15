@@ -193,4 +193,20 @@ section for the dropped low-confidence findings.
   findings ⇒ same issues) · `/keel:regression` never edits code, pushes, or merges — fixes go
   through `/keel:ship`'s backbone (window + lock + review).
 
-<!-- keel-generated: surface=plugin command=regression keel_version=1.5.0 source_sha256=9e74e0d77be89e88ce1aaff098d2eff04510107b476fa79ce8694978f9859fe1 generated_sha256=9e74e0d77be89e88ce1aaff098d2eff04510107b476fa79ce8694978f9859fe1 -->
+
+## Live progress (best-effort)
+
+Surface this run on `keel-visual`'s board by stamping the active phase as you reach
+it. This command's flow phases are: `orient` → `preflight` → `fanout` → `aggregate` → `dedupe` → `open` → `report`. Choose one stable `--run-id` for the
+whole run (e.g. `regression-<issue-or-pr>`), and as you enter each phase run:
+
+```bash
+keel activity .keel/project.yaml --root . --command regression --run-id "$RUN" --phase orient
+# … repeat with --phase preflight, … as you advance through the flow …
+keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the run finishes
+```
+
+Strictly **best-effort and fail-soft**: it needs keel core ≥ 1.6.0; if `keel activity`
+is unavailable, skip it silently and never block the command on it.
+
+<!-- keel-generated: surface=plugin command=regression keel_version=1.5.0 source_sha256=7c4f22c06825d01ca98d8691046c32db1aa49273f7c94ec4f4d0f47178555841 generated_sha256=7c4f22c06825d01ca98d8691046c32db1aa49273f7c94ec4f4d0f47178555841 -->

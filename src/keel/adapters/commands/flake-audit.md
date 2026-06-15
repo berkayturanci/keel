@@ -164,3 +164,19 @@ the operator to spelunk the tracker after the fact.
 - **No silent dry-run mutations** — each create is printed as `would create: <title>` and
   skipped.
 - Fail-soft · deterministic for identical inputs.
+
+
+## Live progress (best-effort)
+
+Surface this run on `keel-visual`'s board by stamping the active phase as you reach
+it. This command's flow phases are: `orient` → `evidence` → `aggregate` → `classify` → `dedupe` → `report` → `open`. Choose one stable `--run-id` for the
+whole run (e.g. `flake-audit-<issue-or-pr>`), and as you enter each phase run:
+
+```bash
+keel activity .keel/project.yaml --root . --command flake-audit --run-id "$RUN" --phase orient
+# … repeat with --phase evidence, … as you advance through the flow …
+keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the run finishes
+```
+
+Strictly **best-effort and fail-soft**: it needs keel core ≥ 1.6.0; if `keel activity`
+is unavailable, skip it silently and never block the command on it.

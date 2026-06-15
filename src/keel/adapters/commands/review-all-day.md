@@ -252,3 +252,19 @@ Always print the final report on exit, even if partial.
   a timezone or offset, and keep it in lockstep with `/keel:ship`'s window resolution.
 - Fail-soft (a missing tool/gate degrades to a skipped check, never aborts) · deterministic
   ordering (same commits ⇒ same findings ⇒ same issues).
+
+
+## Live progress (best-effort)
+
+Surface this run on `keel-visual`'s board by stamping the active phase as you reach
+it. This command's flow phases are: `config` → `parse` → `commits` → `decide` → `classify` → `open` → `report`. Choose one stable `--run-id` for the
+whole run (e.g. `review-all-day-<issue-or-pr>`), and as you enter each phase run:
+
+```bash
+keel activity .keel/project.yaml --root . --command review-all-day --run-id "$RUN" --phase config
+# … repeat with --phase parse, … as you advance through the flow …
+keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the run finishes
+```
+
+Strictly **best-effort and fail-soft**: it needs keel core ≥ 1.6.0; if `keel activity`
+is unavailable, skip it silently and never block the command on it.

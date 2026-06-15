@@ -151,4 +151,20 @@ review / CI / merge.
 Fail over to the host agent on delegate quota errors; attribute the **effective**
 agent.
 
-<!-- keel-generated: surface=plugin command=implement keel_version=1.5.0 source_sha256=0195f50fbd70f3c6c8ee189d62e69494ab4e2eee72f1fa061d2f824d38aa9474 generated_sha256=0195f50fbd70f3c6c8ee189d62e69494ab4e2eee72f1fa061d2f824d38aa9474 -->
+
+## Live progress (best-effort)
+
+Surface this run on `keel-visual`'s board by stamping the active phase as you reach
+it. This command's flow phases are: `config` → `fetch` → `branch` → `resolve` → `codename` → `delegate` → `report`. Choose one stable `--run-id` for the
+whole run (e.g. `implement-<issue-or-pr>`), and as you enter each phase run:
+
+```bash
+keel activity .keel/project.yaml --root . --command implement --run-id "$RUN" --phase config
+# … repeat with --phase fetch, … as you advance through the flow …
+keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the run finishes
+```
+
+Strictly **best-effort and fail-soft**: it needs keel core ≥ 1.6.0; if `keel activity`
+is unavailable, skip it silently and never block the command on it.
+
+<!-- keel-generated: surface=plugin command=implement keel_version=1.5.0 source_sha256=180c4230cc7d6b1e09ec5d341c0a731303c574e4176fefeaef5e9121f8e6ce5d generated_sha256=180c4230cc7d6b1e09ec5d341c0a731303c574e4176fefeaef5e9121f8e6ce5d -->

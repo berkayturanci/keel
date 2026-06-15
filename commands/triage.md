@@ -273,4 +273,20 @@ writes. Hand ready items to `/keel:ship`.
   priority/status families) must exist in the repo. If any label is missing, fix
   the repo labels (not this command) before invoking.
 
-<!-- keel-generated: surface=plugin command=triage keel_version=1.5.0 source_sha256=1d4d48f86d8e01839e4b3ed9198259897070eed16d776cc1bf7acafa2b061305 generated_sha256=1d4d48f86d8e01839e4b3ed9198259897070eed16d776cc1bf7acafa2b061305 -->
+
+## Live progress (best-effort)
+
+Surface this run on `keel-visual`'s board by stamping the active phase as you reach
+it. This command's flow phases are: `config` → `find` → `tier` → `classify` → `rank` → `apply` → `summary`. Choose one stable `--run-id` for the
+whole run (e.g. `triage-<issue-or-pr>`), and as you enter each phase run:
+
+```bash
+keel activity .keel/project.yaml --root . --command triage --run-id "$RUN" --phase config
+# … repeat with --phase find, … as you advance through the flow …
+keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the run finishes
+```
+
+Strictly **best-effort and fail-soft**: it needs keel core ≥ 1.6.0; if `keel activity`
+is unavailable, skip it silently and never block the command on it.
+
+<!-- keel-generated: surface=plugin command=triage keel_version=1.5.0 source_sha256=542f97f501a4e66ef814c152fff46b26189d9d5931bdf6e572ebb4cbcb314556 generated_sha256=542f97f501a4e66ef814c152fff46b26189d9d5931bdf6e572ebb4cbcb314556 -->

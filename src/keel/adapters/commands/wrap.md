@@ -110,3 +110,19 @@ skips, deferred capture, and missing markers. If `capture_health.status` is
 `needs-reconcile`, list the dry-run-safe commands from
 `capture_health.reconcile_actions` and hand the gap to the morning queue; do not mutate the
 ledger, GitHub, or project capture destinations from this reporting step.
+
+
+## Live progress (best-effort)
+
+Surface this run on `keel-visual`'s board by stamping the active phase as you reach
+it. This command's flow phases are: `config` → `sanity` → `gates` → `commit` → `push` → `recap`. Choose one stable `--run-id` for the
+whole run (e.g. `wrap-<issue-or-pr>`), and as you enter each phase run:
+
+```bash
+keel activity .keel/project.yaml --root . --command wrap --run-id "$RUN" --phase config
+# … repeat with --phase sanity, … as you advance through the flow …
+keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the run finishes
+```
+
+Strictly **best-effort and fail-soft**: it needs keel core ≥ 1.6.0; if `keel activity`
+is unavailable, skip it silently and never block the command on it.

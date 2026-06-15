@@ -143,3 +143,19 @@ print the would-be issues and route nothing.
 - **No silent dry-run mutations** — every comment/label/issue write is printed as `DRY-RUN: …`
   and skipped.
 - Deterministic for identical coverage data.
+
+
+## Live progress (best-effort)
+
+Surface this run on `keel-visual`'s board by stamping the active phase as you reach
+it. This command's flow phases are: `orient` → `areas` → `baseline` → `head` → `delta` → `hotspots` → `post`. Choose one stable `--run-id` for the
+whole run (e.g. `coverage-<issue-or-pr>`), and as you enter each phase run:
+
+```bash
+keel activity .keel/project.yaml --root . --command coverage --run-id "$RUN" --phase orient
+# … repeat with --phase areas, … as you advance through the flow …
+keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the run finishes
+```
+
+Strictly **best-effort and fail-soft**: it needs keel core ≥ 1.6.0; if `keel activity`
+is unavailable, skip it silently and never block the command on it.

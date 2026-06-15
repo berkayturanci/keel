@@ -102,3 +102,19 @@ must include the fixed queue snapshot and these buckets:
 - Needs-input
 
 Also include open questions, consent gaps, and the next 1–3 operator actions.
+
+
+## Live progress (best-effort)
+
+Surface this run on `keel-visual`'s board by stamping the active phase as you reach
+it. This command's flow phases are: `config` → `snapshot` → `loop` → `report`. Choose one stable `--run-id` for the
+whole run (e.g. `work-block-<issue-or-pr>`), and as you enter each phase run:
+
+```bash
+keel activity .keel/project.yaml --root . --command work-block --run-id "$RUN" --phase config
+# … repeat with --phase snapshot, … as you advance through the flow …
+keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the run finishes
+```
+
+Strictly **best-effort and fail-soft**: it needs keel core ≥ 1.6.0; if `keel activity`
+is unavailable, skip it silently and never block the command on it.

@@ -150,3 +150,19 @@ review / CI / merge.
 
 Fail over to the host agent on delegate quota errors; attribute the **effective**
 agent.
+
+
+## Live progress (best-effort)
+
+Surface this run on `keel-visual`'s board by stamping the active phase as you reach
+it. This command's flow phases are: `config` → `fetch` → `branch` → `resolve` → `codename` → `delegate` → `report`. Choose one stable `--run-id` for the
+whole run (e.g. `implement-<issue-or-pr>`), and as you enter each phase run:
+
+```bash
+keel activity .keel/project.yaml --root . --command implement --run-id "$RUN" --phase config
+# … repeat with --phase fetch, … as you advance through the flow …
+keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the run finishes
+```
+
+Strictly **best-effort and fail-soft**: it needs keel core ≥ 1.6.0; if `keel activity`
+is unavailable, skip it silently and never block the command on it.

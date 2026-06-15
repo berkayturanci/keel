@@ -83,4 +83,20 @@ Route by the Step 2 classification — never merge here:
 - **Deterministic** for identical CI state.
 - **Fail-soft** — a missing CLI degrades to the Step 0 clean-exit note, not a crash.
 
-<!-- keel-generated: surface=plugin command=ci-check keel_version=1.5.0 source_sha256=a9515465d188c9db8ab6ce3badfcd87837ac61abaaff5396946992af9f677fd7 generated_sha256=a9515465d188c9db8ab6ce3badfcd87837ac61abaaff5396946992af9f677fd7 -->
+
+## Live progress (best-effort)
+
+Surface this run on `keel-visual`'s board by stamping the active phase as you reach
+it. This command's flow phases are: `poll` → `report`. Choose one stable `--run-id` for the
+whole run (e.g. `ci-check-<issue-or-pr>`), and as you enter each phase run:
+
+```bash
+keel activity .keel/project.yaml --root . --command ci-check --run-id "$RUN" --phase poll
+# … repeat with --phase report, … as you advance through the flow …
+keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the run finishes
+```
+
+Strictly **best-effort and fail-soft**: it needs keel core ≥ 1.6.0; if `keel activity`
+is unavailable, skip it silently and never block the command on it.
+
+<!-- keel-generated: surface=plugin command=ci-check keel_version=1.5.0 source_sha256=044899fc5f11b0455c95a1ed5e0cf7ddb06fc217ad06ced9b5a09dd6d7717746 generated_sha256=044899fc5f11b0455c95a1ed5e0cf7ddb06fc217ad06ced9b5a09dd6d7717746 -->
