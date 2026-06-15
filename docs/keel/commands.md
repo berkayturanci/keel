@@ -1,6 +1,7 @@
 # keel commands (`/keel:<command>`)
 
-keel ships **17** agentic workflow commands with the package. Install them with
+keel ships **16** `/keel:<command>` agentic workflows with the package (plus the
+`keel status` progress command described below). Install them with
 [`keel install-adapter`](cli.md#keel-install-adapter-target---root-dir---force):
 
 ```bash
@@ -50,7 +51,6 @@ queued issue without parsing free-form logs.
 | command | what it does |
 |---|---|
 | **`/keel:ship`** | Drive a GitHub issue end-to-end through the keel backbone (select → branch → implement → CI → review → test → merge → close → capture). The full flow: per-round review, inline `file:line` comments, `--delegate` / `--review-delegate`, `--review-comments inline\|summary`, `--reviewers N`, the `jury` gate, the timezone-aware merge window + `mkdir` merge lock, and vendor+model attribution. `--compound` (`--profile compound`) selects the compound-engineering profile: the same backbone, gates, and safety primitives, with `workflow_profile` marking `implement`, `review`, `fixloop`, and `capture` (s4/s7/s9/s11) as compound step overrides. |
-| `keel status` | Read checkpoint + run ledger state and print a concise active/recent progress snapshot for long-running work blocks. Use `--json` for the machine-readable `keel.progress-status.v1` surface. |
 | `keel status` | Read checkpoint + run ledger state and print a concise active/recent progress snapshot for long-running work blocks. Use `--json` for the machine-readable `keel.progress-status.v1` surface. |
 
 ## Per-step (standalone slices of the backbone)

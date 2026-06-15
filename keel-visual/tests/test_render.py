@@ -44,5 +44,20 @@ class TestRenderHtml(unittest.TestCase):
         self.assertIn("\\u0026", out)
 
 
+class TestRenderBoardHtml(unittest.TestCase):
+    def test_substitutes_board_and_title(self):
+        tmpl = "<title>__TITLE__</title><script>window.KEEL_BOARD = __KEEL_BOARD__;</script>"
+        out = render.render_board_html(tmpl, [{"project": "a", "label": "#1"}], title="board")
+        self.assertIn("<title>board</title>", out)
+        self.assertIn('window.KEEL_BOARD = [{"label": "#1", "project": "a"}];', out)
+
+    def test_default_title_and_script_safe(self):
+        self.assertEqual(render.render_board_html("__TITLE__", []), "keel board")
+        out = render.render_board_html("<script>__KEEL_BOARD__</script>",
+                                       [{"project": "</script>"}])
+        self.assertNotIn("</script></script>", out)
+        self.assertIn("\\u003c", out)
+
+
 if __name__ == "__main__":
     unittest.main()

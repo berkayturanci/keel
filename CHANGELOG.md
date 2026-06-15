@@ -16,6 +16,30 @@ All notable changes to keel are documented here. The format follows
   Two tests were made cross-OS: the state-path rejection tests build an OS-absolute path
   (a leading-slash path is not absolute on Windows), and the POSIX-shell codex deny-hook
   execution test is skipped on Windows.
+- **PR description lint.** A new `pr-lint` workflow rejects PRs whose body is empty,
+  left as the template, or missing an issue reference — enforcing a real **Summary**
+  plus a **Related issues** line (`Closes #N` / `Relates to #N` / `no issue`). The PR
+  template gains a dedicated **Related issues** section and `CONTRIBUTING.md` documents
+  the rule. The check reads the PR body from the event payload via `env:` (no shell
+  interpolation of untrusted PR text).
+
+## [1.4.0] — 2026-06-15
+
+### Added
+- **Live jury mode in the run checkpoint.** `keel checkpoint` records
+  `state.jury_mode` (off/advisory/gating) so an observer can read the jury's
+  *live* mode mid-run from the checkpoint, not only post-run from the ledger
+  `run_context`. `keel-visual --follow` uses this to surface the jury as it
+  resolves (#397).
+
+### Security
+- **`urllib.request.urlopen` restricted to safe schemes.** Guard against
+  `file:`/other non-HTTP(S) schemes reaching `urlopen`, closing a MEDIUM
+  scheme-confusion vector (#393).
+
+### Changed
+- **Faster unique-collection helpers.** Replaced O(N²) membership scans with
+  set-backed dedup in the collection utilities (#396).
 
 ## [1.3.0] — 2026-06-14
 
