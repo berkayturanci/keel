@@ -103,7 +103,7 @@
   .bb-figure { padding: 1rem .8rem .8rem; }
 }
 .bb-figure .bbf-hit { cursor: pointer; }
-.bbf-tip { position: absolute; transform: translate(-50%, -100%); width: 250px; background: var(--surface-3); border: 1px solid var(--border); border-radius: 10px; padding: .55rem .75rem; box-shadow: var(--shadow-md); opacity: 0; pointer-events: none; transition: opacity .15s; z-index: 5; }
+.bbf-tip { position: fixed; transform: translate(-50%, -100%); width: 250px; background: var(--surface-3); border: 1px solid var(--border); border-radius: 10px; padding: .55rem .75rem; box-shadow: var(--shadow-md); opacity: 0; pointer-events: none; transition: opacity .15s; z-index: 90; }
 .bbf-tip.show { opacity: 1; }
 .bbf-tip b { display: block; font-family: var(--font-mono); font-size: .74rem; color: var(--accent-2); margin-bottom: .15rem; }
 .bbf-tip span { display: block; font-size: .78rem; color: var(--muted); line-height: 1.45; }

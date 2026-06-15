@@ -121,19 +121,21 @@
       saf.appendChild(d);
     });
     canvas.appendChild(saf);
-    /* hover tooltips: step name + what it does + its slots */
+    /* hover tooltips: step name + what it does + its slots.
+       The tip is fixed-positioned on <body> so it floats above everything and is
+       never clipped by the figure/section; it flips below the dot near the top. */
     var tip = el("div", "bbf-tip");
-    canvas.appendChild(tip);
+    document.body.appendChild(tip);
     fig.querySelectorAll(".bbf-hit").forEach(function (c) {
       function show() {
         var b = st[+c.dataset.i];
         var slots = b.slots && b.slots.length ? '<span class="slots">' + b.slots.map(function (h) { return '<code class="' + (BLOCKING[h] ? "block" : PRIMARY[h] ? "primary" : "") + '">' + h + (BLOCKING[h] ? " ⊘" : "") + "</code>"; }).join("") + "</span>" : "";
         tip.innerHTML = "<b>" + b.id + " " + b.name + (b.agent ? ' · agent' : '') + (b.block ? ' · can block' : '') + "</b><span>" + b.blurb + "</span>" + slots;
-        var fr = canvas.getBoundingClientRect(), cr = c.getBoundingClientRect();
-        var cx = cr.left - fr.left + cr.width / 2;
-        tip.style.left = Math.min(Math.max(cx, 130), fr.width - 130) + "px";
-        tip.style.top = (cr.top - fr.top - 10) + "px";
         tip.classList.add("show");
+        var cr = c.getBoundingClientRect();
+        tip.style.left = Math.min(Math.max(cr.left + cr.width / 2, 130), window.innerWidth - 130) + "px";
+        if ((cr.top - 12 - tip.offsetHeight) >= 8) { tip.style.top = (cr.top - 12) + "px"; tip.style.transform = "translate(-50%, -100%)"; }
+        else { tip.style.top = (cr.bottom + 12) + "px"; tip.style.transform = "translate(-50%, 0)"; }
       }
       c.addEventListener("mouseenter", show);
       c.addEventListener("click", show);
