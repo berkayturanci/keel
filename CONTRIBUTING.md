@@ -40,6 +40,10 @@ By participating you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 5. Update docs (`docs/keel/`, README) and `CHANGELOG.md` (`[Unreleased]`) when behaviour
    changes. If you change the `/keel:<command>` adapters, re-install with
    `keel install-adapter all --force`.
+6. Write a real PR description: a **Summary** in your own prose plus a **Related issues**
+   reference (`Closes #N` / `Relates to #N`, or `no issue` for a pure chore). The
+   [PR description lint](.github/workflows/pr-lint.yml) check enforces this — a PR template
+   only pre-fills the body, it can't stop an empty PR.
 
 ## Dependency and tooling updates
 
