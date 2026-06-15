@@ -925,6 +925,26 @@ class TestActivityBoard(unittest.TestCase):
         with patch("keel_visual.cli.activity", None):
             self.assertEqual(cli._activity_records_in_repo(".", object()), [])
 
+    def test_activity_in_a_non_root_worktree_is_found(self):
+        # An agent runs a non-ship command in its own worktree and stamps the
+        # activity there — the board must read every worktree, not just root.
+        import tempfile
+        from unittest.mock import patch
+
+        from keel.runner import CommandResult
+        with tempfile.TemporaryDirectory() as root:
+            config = self._project(root)
+            wt = Path(root) / "wt"
+            (wt / ".keel").mkdir(parents=True)
+            self._write(str(wt), config, command="stale-prs",
+                        run_id="stale-prs-20260615", phase="triage")
+            porcelain = CommandResult(
+                True, 0, f"worktree {root}\nHEAD a\n\nworktree {wt}\nHEAD b\n\n")
+            with patch("keel_visual.cli.git.worktree_list", return_value=porcelain):
+                pairs = cli._run_records_in_repo(root, config)
+            cmds = [ident.get("command") for _, ident in pairs]
+            self.assertIn("stale-prs", cmds)
+
 
 if __name__ == "__main__":
     unittest.main()

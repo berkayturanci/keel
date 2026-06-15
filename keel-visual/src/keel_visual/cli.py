@@ -359,7 +359,11 @@ def _run_records_in_repo(root: str, config: cfg.ProjectConfig) -> list[tuple[dic
             command=identity.get("command") or "ship",
         )
         pairs.append((run_state, identity))
-    pairs.extend(_activity_records_in_repo(root, config))
+    # Activity records live per worktree too — an agent runs a non-ship command
+    # in its own worktree and stamps .keel/activity/ there, not in the main
+    # checkout — so read every worktree, exactly like checkpoints above.
+    for worktree in paths:
+        pairs.extend(_activity_records_in_repo(worktree, config))
     return pairs
 
 

@@ -6,6 +6,15 @@ All notable changes to keel-visual are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-06-15
+
+### Fixed
+- **Activity records in worktrees were missed.** Agents run non-ship commands in
+  their own git worktree and stamp `.keel/activity/` there — but the board read
+  the activity channel only from the project root, so those runs never appeared.
+  Read activity from **every worktree** (exactly like checkpoints), not just the
+  root.
+
 ## [0.4.0] — 2026-06-15
 
 ### Added
