@@ -56,7 +56,7 @@
   .legend span{display:inline-flex;align-items:center;gap:6px}
   .legend i{width:10px;height:10px;border-radius:50%;display:inline-block}
 </style>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js" integrity="sha512-dLxUelApnYxpLt6K2iomGngnHO83iUvZytA3YjDUCjT0HDOHKXnVYdf3hU4JjM8uEhxf9nD1/ey98U3t2vZ0qQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 </head>
 <body>
 <header>
@@ -81,12 +81,15 @@
 (function(){
   const BOARD = Array.isArray(window.KEEL_BOARD) ? window.KEEL_BOARD : [];
   const nproj = new Set(BOARD.map(r => r.project || '')).size;
-  document.getElementById('count').innerHTML =
-    '<b>'+BOARD.length+'</b> run'+(BOARD.length===1?'':'s')+' across <b>'+nproj+'</b> project'+(nproj===1?'':'s');
 
   function el(tag, cls){ const n=document.createElement(tag); if(cls) n.className=cls; return n; }
+  function bold(n){ const b=el('b'); b.textContent=String(n); return b; }
+  // counts only — never user data — but built via DOM so no string ever reaches innerHTML
+  const count = document.getElementById('count');
+  count.append(bold(BOARD.length), ' run'+(BOARD.length===1?'':'s')+' across ',
+               bold(nproj), ' project'+(nproj===1?'':'s'));
   const GATE_KINDS = {gate:1, merge:1};
-  const COL = {done:0x7ad14a, active:0x49b6ff, gate:0xf0a020, fail:0xff5468, idle:0x223052};
+  const COL = {done:0x7ad14a, active:0x49b6ff, gate:0xf0a020, fail:0xff5468, idle:0x2a3550};
 
   // colour token for a step at index idx given the run's active/merged state
   function stepTone(idx, active, merged, s){
