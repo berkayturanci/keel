@@ -10,4 +10,4 @@
 
 ## 2024-05-18 - yaml.CSafeLoader
 **Learning:** `yaml.safe_load` uses the pure Python loader which is quite slow. When called many times (e.g. during config loading, extension parsing, test suites), this builds up. `yaml.load(..., Loader=yaml.CSafeLoader)` is around 10x faster (180ms vs 1500ms for 100 loads) because it uses the C implementation.
-**Action:** Replace `yaml.safe_load` with a wrapper or direct call to `yaml.load(..., Loader=yaml.CSafeLoader)`. Since `PyYAML` might fall back to Python loader if C extensions are not available (e.g., depending on install), we should attempt to import `CSafeLoader` and fall back to `SafeLoader`.
+**Action:** Replace `yaml.safe_load` with a wrapper or direct call to `yaml.load(..., Loader=yaml.CSafeLoader)`. Since `PyYAML` might fall back to Python loader if C extensions are not available (e.g., depending on install), we should attempt to import `CSafeLoader` and fall back to `SafeLoader`. Ensure not to duplicate import blocks.
