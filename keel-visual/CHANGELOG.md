@@ -8,6 +8,11 @@ All notable changes to keel-visual are documented here. The format follows
 
 ## [0.5.4] — 2026-06-16
 
+### Added
+- **Favicon on the board pages.** The `serve` dashboard and the `render` board now
+  carry the keel mark as an inline SVG favicon, so the browser tab shows the brand
+  glyph instead of a blank icon (self-contained data URI — no extra file to serve).
+
 ### Fixed
 - **A finished run is no longer mislabelled "merged".** The board mapped a `done`
   activity record straight to `merged`, so any closed-out run — a `morning`/`triage`
