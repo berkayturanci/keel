@@ -139,25 +139,28 @@
   if (window.KEEL) stampVersion(KEEL.meta.version);
   document.querySelectorAll("[data-year]").forEach(function (el) { el.textContent = new Date().getFullYear(); });
 
-  /* ---- Auto-fetch the latest release version ------------------------
-     The cached value is shown immediately (no flicker), but we ALWAYS
-     re-fetch in the background and update if a newer release exists. */
+  /* ---- Keep the version fresh between deploys ----------------------
+     The build-time KEEL.meta.version (stamped above) is the reliable
+     baseline. We re-fetch only the **core** release line (the v1.x tags;
+     the keel-visual-v* tags are a separate series and are ignored) and
+     update if found. No localStorage cache — a stale cache used to revert
+     a correct build version, and a keel-visual tag could mask the core one. */
   (function () {
-    var KEY = "keel-version";
-    try {
-      var cached = JSON.parse(localStorage.getItem(KEY) || "null");
-      if (cached && cached.v) stampVersion(cached.v);
-    } catch (e) {}
+    try { localStorage.removeItem("keel-version"); } catch (e) {}
     function apply(tag) {
-      if (!tag || !/^v?\d/.test(tag)) return;
+      if (!tag || !/^v\d/.test(tag)) return;        // core tags only (v1.6.2 …)
       var v = tag[0] === "v" ? tag : "v" + tag;
       stampVersion(v);
       if (window.KEEL) KEEL.meta.version = v;
-      try { localStorage.setItem(KEY, JSON.stringify({ v: v, t: Date.now() })); } catch (e) {}
     }
-    fetch("https://api.github.com/repos/berkayturanci/keel/releases/latest")
+    fetch("https://api.github.com/repos/berkayturanci/keel/releases?per_page=30")
       .then(function (r) { if (!r.ok) throw 0; return r.json(); })
-      .then(function (j) { apply(j.tag_name); })
+      .then(function (list) {
+        var rel = (list || []).find(function (x) {
+          return x && !x.draft && !x.prerelease && /^v\d/.test(x.tag_name || "");
+        });
+        if (rel) apply(rel.tag_name); else throw 0;
+      })
       .catch(function () {
         fetch("https://pypi.org/pypi/keel-workflow/json")
           .then(function (r) { if (!r.ok) throw 0; return r.json(); })
