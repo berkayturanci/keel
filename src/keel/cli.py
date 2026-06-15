@@ -2430,6 +2430,7 @@ def _cmd_checkpoint(args: argparse.Namespace) -> int:
                 last_gate=args.last_gate,
                 last_review=args.last_review,
                 last_check=args.last_check,
+                jury_mode=args.jury_mode,
                 merge_state=args.merge_state,
                 capture_state=args.capture_state,
                 close_state=args.close_state,
@@ -4367,6 +4368,9 @@ def build_parser() -> argparse.ArgumentParser:
                               help="last completed review marker")
     p_checkpoint.add_argument("--last-check", default=None,
                               help="last completed CI/check marker")
+    p_checkpoint.add_argument("--jury-mode", default=None,
+                              help="resolved jury mode at this step (off/advisory/gating); "
+                                   "lets a live consumer show jury status before run end")
     p_checkpoint.add_argument("--merge-state", choices=checkpoint.MERGE_STATES,
                               default="not-started")
     p_checkpoint.add_argument("--capture-state", choices=checkpoint.CAPTURE_STATES,

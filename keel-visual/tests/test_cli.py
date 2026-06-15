@@ -308,6 +308,176 @@ class TestLoopAndFollow(unittest.TestCase):
         self.assertIn("\x1b[38;5;", out.getvalue())
 
 
+def _jury_ledger(d, *, pr=42, mode="gating"):
+    import json
+    led = Path(d) / "l.jsonl"
+    rec = {"schema_version": "keel.run-ledger.v1", "record_type": "ship_run",
+           "command": "ship", "pull_request": {"number": pr},
+           "run_context": {"jury_mode": mode}}
+    led.write_text(json.dumps(rec) + "\n", encoding="utf-8")
+    return str(led)
+
+
+class TestTheaterSeams(unittest.TestCase):
+    def test_theater_available(self):
+        self.assertTrue(cli._theater_available(_which=lambda n: "/usr/bin/jury"))
+        self.assertFalse(cli._theater_available(_which=lambda n: None))
+
+    def test_is_interactive(self):
+        self.assertTrue(cli._is_interactive(_TTY()))
+        self.assertFalse(cli._is_interactive(io.StringIO()))
+
+    def test_review_index(self):
+        self.assertEqual(cli._review_index({"steps": [{"id": "s6"}, {"id": "s7"}]}), 1)
+        self.assertIsNone(cli._review_index({"steps": [{"id": "poll"}]}))
+        self.assertIsNone(cli._review_index({}))
+
+    def test_theater_due_matrix(self):
+        at = {"steps": [{"id": "s7"}], "active_index": 0, "jury": {"active": True}}
+        self.assertTrue(cli._theater_due(at, enabled=True, done=False, interactive=True))
+        self.assertFalse(cli._theater_due(at, enabled=False, done=False, interactive=True))
+        self.assertFalse(cli._theater_due(at, enabled=True, done=True, interactive=True))
+        self.assertFalse(cli._theater_due(at, enabled=True, done=False, interactive=False))
+        self.assertFalse(cli._theater_due(
+            {"steps": [{"id": "s7"}], "active_index": 0, "jury": {"active": False}},
+            enabled=True, done=False, interactive=True))
+        self.assertFalse(cli._theater_due(
+            {"steps": [{"id": "s6"}], "active_index": 0, "jury": {"active": True}},
+            enabled=True, done=False, interactive=True))
+        self.assertFalse(cli._theater_due(
+            {"steps": [], "active_index": 5, "jury": {"active": True}},
+            enabled=True, done=False, interactive=True))
+
+    def test_run_theater_success_and_failsoft(self):
+        calls = []
+        self.assertTrue(cli._run_theater(
+            42, cwd="/x", _spawn=lambda a, c: calls.append((a, c)) or True))
+        self.assertEqual(calls[0][0], ["jury", "--pr", "42", "--theater"])
+
+        def boom(_a, _c):
+            raise OSError("no jury")
+        self.assertFalse(cli._run_theater(42, cwd="/x", _spawn=boom))
+
+    def test_spawn_theater_returncode(self):
+        class _R:
+            def __init__(self, rc):
+                self.returncode = rc
+        orig = cli.subprocess.run
+        try:
+            cli.subprocess.run = lambda *a, **k: _R(0)
+            self.assertTrue(cli._spawn_theater(["jury"], None))
+            cli.subprocess.run = lambda *a, **k: _R(1)
+            self.assertFalse(cli._spawn_theater(["jury"], None))
+        finally:
+            cli.subprocess.run = orig
+
+
+class TestTheaterHandoff(unittest.TestCase):
+    def test_hands_off_once_at_review_step(self):
+        import tempfile
+        out, calls = _TTY(), []
+        with tempfile.TemporaryDirectory() as d:
+            args = _args(follow=True, theater=True, ledger_jsonl=_jury_ledger(d),
+                         pr=42, checkpoint_step="s7", root=d)
+            rc = cli._play_follow(args, sleep=lambda s: None, out=out, max_cycles=3,
+                                  theater_run=lambda pr, cwd: calls.append((pr, cwd)) or True,
+                                  theater_available=lambda: True)
+        self.assertEqual(rc, 0)
+        self.assertEqual(calls, [(42, d)])  # one-shot, even across three ticks
+
+    def test_pr_from_live_checkpoint_not_stale_ledger(self):
+        # The trigger comes from the live checkpoint, so the PR must too: a live
+        # run on PR 99 whose ship_run record hasn't landed must not open the
+        # stale ledger's PR 42.
+        import tempfile
+
+        from keel import checkpoint as ckpt
+        from keel import config as cfg
+        out, calls = _TTY(), []
+        with tempfile.TemporaryDirectory() as d:
+            config = cfg.load_config(PROJECT)
+            rec = ckpt.build_checkpoint_record(
+                run_id="R", command="ship", current_step="s7", base_branch="main",
+                pull_request=99, jury_mode="gating")
+            ckpt.write_checkpoint(ckpt.resolve_path(d, config), rec)
+            args = _args(follow=True, theater=True, ledger_jsonl=_jury_ledger(d, pr=42),
+                         pr=42, checkpoint_step=None, root=d)
+            cli._play_follow(args, sleep=lambda s: None, out=out, max_cycles=2,
+                             theater_run=lambda pr, cwd: calls.append(pr) or True,
+                             theater_available=lambda: True)
+        self.assertEqual(calls, [99])  # live checkpoint PR wins over the stale ledger
+
+    def test_skips_when_jury_cli_absent(self):
+        import tempfile
+        out, calls = _TTY(), []
+        with tempfile.TemporaryDirectory() as d:
+            args = _args(follow=True, theater=True, ledger_jsonl=_jury_ledger(d),
+                         pr=42, checkpoint_step="s7", root=d)
+            cli._play_follow(args, sleep=lambda s: None, out=out, max_cycles=2,
+                             theater_run=lambda pr, cwd: calls.append(pr),
+                             theater_available=lambda: False)
+        self.assertEqual(calls, [])  # absent jury -> no handoff, no error
+
+    def test_skips_when_not_interactive(self):
+        import tempfile
+        out, calls = io.StringIO(), []  # not a tty
+        with tempfile.TemporaryDirectory() as d:
+            args = _args(follow=True, theater=True, ledger_jsonl=_jury_ledger(d),
+                         pr=42, checkpoint_step="s7", root=d)
+            cli._play_follow(args, sleep=lambda s: None, out=out, max_cycles=2,
+                             theater_run=lambda pr, cwd: calls.append(pr),
+                             theater_available=lambda: True)
+        self.assertEqual(calls, [])
+
+    def test_skips_when_no_pr_resolvable(self):
+        import tempfile
+
+        from keel import checkpoint as ckpt
+        from keel import config as cfg
+        out, calls = _TTY(), []
+        with tempfile.TemporaryDirectory() as d:
+            # jury active but pull_request absent and --pr None -> nothing to hand to.
+            # Also make the checkpoint path a directory so _live_pr hits its
+            # fail-soft OSError branch and yields None.
+            ckpt_path = ckpt.resolve_path(d, cfg.load_config(PROJECT))
+            ckpt_path.parent.mkdir(parents=True, exist_ok=True)
+            ckpt_path.mkdir()
+            led = _jury_ledger(d)
+            Path(led).write_text(
+                '{"schema_version":"keel.run-ledger.v1","record_type":"ship_run",'
+                '"command":"ship","run_context":{"jury_mode":"gating"}}\n',
+                encoding="utf-8")
+            args = _args(follow=True, theater=True, ledger_jsonl=led,
+                         pr=None, checkpoint_step="s7", root=d)
+            cli._play_follow(args, sleep=lambda s: None, out=out, max_cycles=2,
+                             theater_run=lambda pr, cwd: calls.append(pr),
+                             theater_available=lambda: True)
+        self.assertEqual(calls, [])
+
+    def test_rearms_before_review_then_no_handoff(self):
+        import tempfile
+        out, calls = _TTY(), []
+        with tempfile.TemporaryDirectory() as d:
+            # parked before s7 (s4): re-arm branch runs, theater not due
+            args = _args(follow=True, theater=True, ledger_jsonl=_jury_ledger(d),
+                         pr=42, checkpoint_step="s4", root=d)
+            cli._play_follow(args, sleep=lambda s: None, out=out, max_cycles=2,
+                             theater_run=lambda pr, cwd: calls.append(pr),
+                             theater_available=lambda: True)
+        self.assertEqual(calls, [])
+
+    def test_command_without_review_step_no_handoff(self):
+        import tempfile
+        out, calls = _TTY(), []
+        with tempfile.TemporaryDirectory() as d:
+            args = _args(follow=True, theater=True, ledger_jsonl=_jury_ledger(d),
+                         pr=42, checkpoint_step=None, command="ci-check", root=d)
+            cli._play_follow(args, sleep=lambda s: None, out=out, max_cycles=2,
+                             theater_run=lambda pr, cwd: calls.append(pr),
+                             theater_available=lambda: True)
+        self.assertEqual(calls, [])
+
+
 def _dash_args(**kw):
     base = dict(path=PROJECT, root=".", interval=2.0, once=True, no_clear=True, color="never")
     base.update(kw)
