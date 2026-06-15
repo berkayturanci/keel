@@ -712,6 +712,33 @@ hazard (a PR/branch keel has no covering state for). This is **advisory**: orpha
 reported but never block. The decision is pure
 ([`keel.checkpoint.find_orphans`](../../src/keel/checkpoint.py)).
 
+## `keel activity <project.yaml> [--root DIR] [--write|--done|--clear] [--command CMD] [--run-id ID] [--phase PHASE] [--status running|done] [--issue N] [--pull-request N] [--note TEXT] [--json]`
+
+Read or stamp the **additive command-activity** channel — a lightweight, checkpoint-free
+record per run under `.keel/activity/<run-id>.json` (path resolved under `--root DIR`,
+overridable via `policy_pack.reports.activity`). The resumable checkpoint is ship-shaped
+(`s0`–`s12`); most commands run in the main checkout, never checkpoint, and so are invisible
+to `keel-visual`'s live board. This channel lets any command stamp its **own** `keel.flows`
+phase as it advances, so non-ship runs (`triage`, `morning`, `pr-loop`, …) show up live. It
+**never touches the checkpoint contract**.
+
+```bash
+# stamp the active phase as the command advances (one stable --run-id per run)
+keel activity .keel/project.yaml --root . --command triage --run-id triage-2260 --phase classify --issue 2260
+# … repeat --phase as you move through the flow …
+keel activity .keel/project.yaml --root . --run-id triage-2260 --done   # mark finished
+keel activity .keel/project.yaml --root . --clear --run-id triage-2260  # remove the record
+keel activity .keel/project.yaml --root . --json                        # read all records
+```
+
+`--write` validates that `--command` is a known `keel.flows` command and `--phase` one of
+that command's phase ids (`build_activity_record`); records are keyed by `--run-id` (one file
+each), so two commands in the same repo never clobber one another, and the run-id is slugged
+to a safe filename. `--done` flips an existing record's status (the board fades / last-sorts /
+filters it like any finished run); `--clear` removes it. With no flag, it lists every readable
+record (malformed files are skipped, fail-soft). The stepped command adapters emit this
+best-effort — a missing `keel activity` is skipped silently and never blocks the command.
+
 ## `keel morning <project.yaml> [--root DIR] [--since WHEN] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--json]`
 
 Render the standalone daily-brief contract for a project. The core owns the generic

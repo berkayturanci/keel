@@ -46,6 +46,12 @@ not a daemon: it reads the last safe checkpoint plus the structured run ledger a
 the current issue/step, PR/branch/worktree, wait reason, completed item counts, and next
 queued issue without parsing free-form logs.
 
+Every **stepped non-ship command** also stamps its own `keel.flows` phase as it runs through
+the additive [`keel activity`](cli.md) channel (`.keel/activity/`), so non-ship runs
+(`triage`, `morning`, `pr-loop`, …) appear **live** on `keel-visual`'s board, each with its
+own phases — not just `ship`. It's additive and never touches the resumable checkpoint
+contract.
+
 ## Flagship
 
 | command | what it does |
