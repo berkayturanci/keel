@@ -214,6 +214,11 @@ head, merged→green — and differ only in how the run is drawn:
 Every style honours the same [colour language](#colour-language); switching
 styles never changes what a colour means, only the geometry it is painted on.
 
+> The 3D views (both `render` and the `render --all` board) load Three.js from
+> cdnjs with a **Subresource Integrity** hash + `crossorigin`, so the browser
+> refuses the script if the CDN ever serves altered bytes. The 2D views never
+> touch the network.
+
 ## Colour language
 
 | colour | meaning |
@@ -259,26 +264,21 @@ The handoff runs ai-jury with its own configured style, so set
 ## Install
 
 keel-visual needs **keel core ≥ 1.3.0** (it reads `keel.flows`, the ledger, and
-the checkpoint). Until both packages are published to PyPI, install from this
-repo — installing the repo's core first guarantees a matching version:
+the checkpoint). Both packages are on PyPI — [`keel-visual`](https://pypi.org/project/keel-visual/)
+pulls in [`keel-workflow`](https://pypi.org/project/keel-workflow/) automatically:
 
 ```
-# from the repo root
-pip install ./              # keel-workflow (core), ≥ 1.3.0
-pip install ./keel-visual   # keel-visual
+pipx install keel-visual    # or: pip install keel-visual
 keel-visual --help
 ```
 
-Editable (development):
+To run the latest unreleased features (or to develop), install from this repo —
+installing the repo's core first guarantees a matching version:
 
 ```
-pip install -e ./ -e ./keel-visual
-```
-
-Once both are on PyPI, this becomes a one-liner:
-
-```
-pipx install keel-visual    # pulls in keel-workflow (core) automatically
+# from the repo root
+pip install -e ./ -e ./keel-visual   # editable: core + companion
+keel-visual --help
 ```
 
 See [`RELEASING.md`](RELEASING.md) for building and publishing keel-visual.
