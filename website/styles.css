@@ -323,3 +323,4 @@ section[id], [id="top"] { scroll-margin-top: 84px; }
 .sec-kicker.brass { color: var(--brass-2); }
 .sec-head p { font-size: 1.06rem; }
 .sec-head.wide p { font-size: 1.12rem; }
+a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
