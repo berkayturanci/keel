@@ -6,6 +6,21 @@ allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Read, Edit
 
 # /keel:stale-prs
 
+## Live progress — stamp this run (required)
+
+So this run shows live on `keel-visual`'s board, record it with `keel activity` **as you
+go**. This command's phases are: `orient` → `list` → `classify` → `triage` → `post` → `rebase` → `summary`. Pick one stable `--run-id` for the whole run
+(e.g. `stale-prs-<issue-or-pr>`):
+
+- **Right now, before the work below**, stamp the first phase:
+  `keel activity .keel/project.yaml --root . --write --command stale-prs --run-id "$RUN" --phase orient`
+- Re-run with the next `--phase` (`list`, …) **as you advance** through the flow.
+- At the end: `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
+
+Treat this like any other contractual step — do not skip it. The one allowed exception is a
+core too old to ship `keel activity` (keel < 1.6.0): then skip it silently and never block
+the command.
+
 ## Command step evidence
 
 Every numbered step in this command is contractual. Complete the step, record the
@@ -153,20 +168,4 @@ Print a summary table: PR · title · bucket · action, where action is one of `
 - **Never modify a PR's tree** beyond the merge commit that brings in `base_branch`.
 - Fail-soft per PR; deterministic ordering.
 
-
-## Live progress (best-effort)
-
-Surface this run on `keel-visual`'s board by stamping the active phase as you reach
-it. This command's flow phases are: `orient` → `list` → `classify` → `triage` → `post` → `rebase` → `summary`. Choose one stable `--run-id` for the
-whole run (e.g. `stale-prs-<issue-or-pr>`), and as you enter each phase run:
-
-```bash
-keel activity .keel/project.yaml --root . --write --command stale-prs --run-id "$RUN" --phase orient
-# … repeat with --phase list, … as you advance through the flow …
-keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the run finishes
-```
-
-Strictly **best-effort and fail-soft**: it needs keel core ≥ 1.6.0; if `keel activity`
-is unavailable, skip it silently and never block the command on it.
-
-<!-- keel-generated: surface=plugin command=stale-prs keel_version=1.6.1 source_sha256=8f07eac4020187718ac31c18efca10a621d83e70d3d1d14261d5a15b754f711b generated_sha256=8f07eac4020187718ac31c18efca10a621d83e70d3d1d14261d5a15b754f711b -->
+<!-- keel-generated: surface=plugin command=stale-prs keel_version=1.6.2 source_sha256=c38026730f14278d6bb7c41bc9ee38d2b1ed30b9c9ca370c079291613c0dd67a generated_sha256=c38026730f14278d6bb7c41bc9ee38d2b1ed30b9c9ca370c079291613c0dd67a -->

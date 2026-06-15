@@ -6,6 +6,21 @@ allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Bash(jury:*), Read, Edit, 
 
 # /keel:review-cycle
 
+## Live progress — stamp this run (required)
+
+So this run shows live on `keel-visual`'s board, record it with `keel activity` **as you
+go**. This command's phases are: `config` → `validate` → `loop` → `reviewers` → `post` → `fixloop` → `report`. Pick one stable `--run-id` for the whole run
+(e.g. `review-cycle-<issue-or-pr>`):
+
+- **Right now, before the work below**, stamp the first phase:
+  `keel activity .keel/project.yaml --root . --write --command review-cycle --run-id "$RUN" --phase config`
+- Re-run with the next `--phase` (`validate`, …) **as you advance** through the flow.
+- At the end: `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
+
+Treat this like any other contractual step — do not skip it. The one allowed exception is a
+core too old to ship `keel activity` (keel < 1.6.0): then skip it silently and never block
+the command.
+
 ## Command step evidence
 
 Every numbered step in this command is contractual. Complete the step, record the
@@ -212,19 +227,3 @@ Always print the final report on exit, even if partial.
 Do every read plus `keel validate` / `keel plan` / `keel run-gates` and the reviewer fan-out,
 but redirect every state-changing `gh` write (comments, label) to a logged
 `DRY-RUN: <action>` line.
-
-
-## Live progress (best-effort)
-
-Surface this run on `keel-visual`'s board by stamping the active phase as you reach
-it. This command's flow phases are: `config` → `validate` → `loop` → `reviewers` → `post` → `fixloop` → `report`. Choose one stable `--run-id` for the
-whole run (e.g. `review-cycle-<issue-or-pr>`), and as you enter each phase run:
-
-```bash
-keel activity .keel/project.yaml --root . --write --command review-cycle --run-id "$RUN" --phase config
-# … repeat with --phase validate, … as you advance through the flow …
-keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the run finishes
-```
-
-Strictly **best-effort and fail-soft**: it needs keel core ≥ 1.6.0; if `keel activity`
-is unavailable, skip it silently and never block the command on it.

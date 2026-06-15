@@ -6,6 +6,21 @@ allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Read, Edit, Agent
 
 # /keel:regression
 
+## Live progress — stamp this run (required)
+
+So this run shows live on `keel-visual`'s board, record it with `keel activity` **as you
+go**. This command's phases are: `orient` → `preflight` → `fanout` → `aggregate` → `dedupe` → `open` → `report`. Pick one stable `--run-id` for the whole run
+(e.g. `regression-<issue-or-pr>`):
+
+- **Right now, before the work below**, stamp the first phase:
+  `keel activity .keel/project.yaml --root . --write --command regression --run-id "$RUN" --phase orient`
+- Re-run with the next `--phase` (`preflight`, …) **as you advance** through the flow.
+- At the end: `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
+
+Treat this like any other contractual step — do not skip it. The one allowed exception is a
+core too old to ship `keel activity` (keel < 1.6.0): then skip it silently and never block
+the command.
+
 ## Command step evidence
 
 Every numbered step in this command is contractual. Complete the step, record the
@@ -193,20 +208,4 @@ section for the dropped low-confidence findings.
   findings ⇒ same issues) · `/keel:regression` never edits code, pushes, or merges — fixes go
   through `/keel:ship`'s backbone (window + lock + review).
 
-
-## Live progress (best-effort)
-
-Surface this run on `keel-visual`'s board by stamping the active phase as you reach
-it. This command's flow phases are: `orient` → `preflight` → `fanout` → `aggregate` → `dedupe` → `open` → `report`. Choose one stable `--run-id` for the
-whole run (e.g. `regression-<issue-or-pr>`), and as you enter each phase run:
-
-```bash
-keel activity .keel/project.yaml --root . --write --command regression --run-id "$RUN" --phase orient
-# … repeat with --phase preflight, … as you advance through the flow …
-keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the run finishes
-```
-
-Strictly **best-effort and fail-soft**: it needs keel core ≥ 1.6.0; if `keel activity`
-is unavailable, skip it silently and never block the command on it.
-
-<!-- keel-generated: surface=plugin command=regression keel_version=1.6.1 source_sha256=8742c81549c682b97e58f748a7288685ae88d1d826e9f811aa5f02f1d01806c7 generated_sha256=8742c81549c682b97e58f748a7288685ae88d1d826e9f811aa5f02f1d01806c7 -->
+<!-- keel-generated: surface=plugin command=regression keel_version=1.6.2 source_sha256=148d0e8ebc7bc6cbcc8105de5617725b5abdb69818754f5c4ed4445a43543dfb generated_sha256=148d0e8ebc7bc6cbcc8105de5617725b5abdb69818754f5c4ed4445a43543dfb -->

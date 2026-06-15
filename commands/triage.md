@@ -6,6 +6,21 @@ allowed-tools: Bash(keel:*), Bash(gh:*), Read, Agent
 
 # /keel:triage
 
+## Live progress — stamp this run (required)
+
+So this run shows live on `keel-visual`'s board, record it with `keel activity` **as you
+go**. This command's phases are: `config` → `find` → `tier` → `classify` → `rank` → `apply` → `summary`. Pick one stable `--run-id` for the whole run
+(e.g. `triage-<issue-or-pr>`):
+
+- **Right now, before the work below**, stamp the first phase:
+  `keel activity .keel/project.yaml --root . --write --command triage --run-id "$RUN" --phase config`
+- Re-run with the next `--phase` (`find`, …) **as you advance** through the flow.
+- At the end: `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
+
+Treat this like any other contractual step — do not skip it. The one allowed exception is a
+core too old to ship `keel activity` (keel < 1.6.0): then skip it silently and never block
+the command.
+
 ## Command step evidence
 
 Every numbered step in this command is contractual. Complete the step, record the
@@ -273,20 +288,4 @@ writes. Hand ready items to `/keel:ship`.
   priority/status families) must exist in the repo. If any label is missing, fix
   the repo labels (not this command) before invoking.
 
-
-## Live progress (best-effort)
-
-Surface this run on `keel-visual`'s board by stamping the active phase as you reach
-it. This command's flow phases are: `config` → `find` → `tier` → `classify` → `rank` → `apply` → `summary`. Choose one stable `--run-id` for the
-whole run (e.g. `triage-<issue-or-pr>`), and as you enter each phase run:
-
-```bash
-keel activity .keel/project.yaml --root . --write --command triage --run-id "$RUN" --phase config
-# … repeat with --phase find, … as you advance through the flow …
-keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the run finishes
-```
-
-Strictly **best-effort and fail-soft**: it needs keel core ≥ 1.6.0; if `keel activity`
-is unavailable, skip it silently and never block the command on it.
-
-<!-- keel-generated: surface=plugin command=triage keel_version=1.6.1 source_sha256=3ed92ecb82abf97b1d90d937bbc2755d670240d5822f161c45a3697d38b4979b generated_sha256=3ed92ecb82abf97b1d90d937bbc2755d670240d5822f161c45a3697d38b4979b -->
+<!-- keel-generated: surface=plugin command=triage keel_version=1.6.2 source_sha256=11f13596a4347f6c02ed8f45ee21e844271ed251ffa9cdfd71617f63caeb072f generated_sha256=11f13596a4347f6c02ed8f45ee21e844271ed251ffa9cdfd71617f63caeb072f -->

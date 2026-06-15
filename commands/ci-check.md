@@ -6,6 +6,21 @@ allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Read, Grep
 
 # /keel:ci-check
 
+## Live progress — stamp this run (required)
+
+So this run shows live on `keel-visual`'s board, record it with `keel activity` **as you
+go**. This command's phases are: `poll` → `report`. Pick one stable `--run-id` for the whole run
+(e.g. `ci-check-<issue-or-pr>`):
+
+- **Right now, before the work below**, stamp the first phase:
+  `keel activity .keel/project.yaml --root . --write --command ci-check --run-id "$RUN" --phase poll`
+- Re-run with the next `--phase` (`report`, …) **as you advance** through the flow.
+- At the end: `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
+
+Treat this like any other contractual step — do not skip it. The one allowed exception is a
+core too old to ship `keel activity` (keel < 1.6.0): then skip it silently and never block
+the command.
+
 ## Command step evidence
 
 Every numbered step in this command is contractual. Complete the step, record the
@@ -83,20 +98,4 @@ Route by the Step 2 classification — never merge here:
 - **Deterministic** for identical CI state.
 - **Fail-soft** — a missing CLI degrades to the Step 0 clean-exit note, not a crash.
 
-
-## Live progress (best-effort)
-
-Surface this run on `keel-visual`'s board by stamping the active phase as you reach
-it. This command's flow phases are: `poll` → `report`. Choose one stable `--run-id` for the
-whole run (e.g. `ci-check-<issue-or-pr>`), and as you enter each phase run:
-
-```bash
-keel activity .keel/project.yaml --root . --write --command ci-check --run-id "$RUN" --phase poll
-# … repeat with --phase report, … as you advance through the flow …
-keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the run finishes
-```
-
-Strictly **best-effort and fail-soft**: it needs keel core ≥ 1.6.0; if `keel activity`
-is unavailable, skip it silently and never block the command on it.
-
-<!-- keel-generated: surface=plugin command=ci-check keel_version=1.6.1 source_sha256=9d6ed9bdf883afbc5c8756a6fe01ac4f5395ff1d93dbe47cac1acb9fb6d67701 generated_sha256=9d6ed9bdf883afbc5c8756a6fe01ac4f5395ff1d93dbe47cac1acb9fb6d67701 -->
+<!-- keel-generated: surface=plugin command=ci-check keel_version=1.6.2 source_sha256=fb3c23e6e7427ca862f10aa6cdfa7bb625b0f4d2a94bac11d9653d2a8f163e50 generated_sha256=fb3c23e6e7427ca862f10aa6cdfa7bb625b0f4d2a94bac11d9653d2a8f163e50 -->

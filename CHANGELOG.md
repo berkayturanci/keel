@@ -6,6 +6,17 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.6.2] — 2026-06-15
+
+### Changed
+- **`keel activity` emission is now a required, up-front adapter step.** In 1.6.0/1.6.1
+  the "Live progress" stamping sat in a *best-effort* footer at the end of each stepped
+  command's adapter, so agents routinely skipped it and non-ship runs never reached
+  keel-visual's board. Relocate it to the top of every stepped adapter (right after the
+  `# /keel:<command>` title) and reframe it as a contractual step: stamp the first phase
+  **before the work**, re-stamp as you advance, `--done` at the end. The only allowed skip
+  is a core too old to ship `keel activity`.
+
 ## [1.6.1] — 2026-06-15
 
 ### Fixed
