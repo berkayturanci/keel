@@ -856,5 +856,75 @@ class TestMain(unittest.TestCase):
         self.assertEqual(rc, 0)
 
 
+class TestActivityBoard(unittest.TestCase):
+    """The additive command-activity channel surfaces non-ship runs on the board."""
+
+    def _project(self, parent):
+        import shutil
+
+        from keel import config as cfg
+        pdir = Path(parent)
+        (pdir / ".keel").mkdir(parents=True)
+        shutil.copy(PROJECT, pdir / ".keel" / "project.yaml")
+        return cfg.load_config(str(pdir / ".keel" / "project.yaml"))
+
+    def _write(self, root, config, **kw):
+        from keel import activity
+        rec = activity.build_activity_record(**kw)
+        activity.write_activity(
+            activity.record_path(root, config, kw["run_id"]), rec)
+
+    def test_running_and_done_records_become_runs(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            config = self._project(d)
+            self._write(d, config, command="triage", run_id="triage-2260",
+                        phase="classify", issue=2260)
+            self._write(d, config, command="morning", run_id="m-1",
+                        phase="output", status="done")
+            pairs = cli._activity_records_in_repo(d, config)
+            by_cmd = {ident["command"]: (rs, ident) for rs, ident in pairs}
+            self.assertEqual(set(by_cmd), {"triage", "morning"})
+            triage_rs, _ = by_cmd["triage"]
+            self.assertFalse(triage_rs["merged"])
+            self.assertEqual(triage_rs["steps"][triage_rs["active_index"]]["id"], "classify")
+            morning_rs, _ = by_cmd["morning"]
+            self.assertTrue(morning_rs["merged"])  # done → fades / filters as finished
+
+    def test_records_join_the_board(self):
+        import tempfile
+        from unittest.mock import patch
+
+        from keel.runner import CommandResult
+        with tempfile.TemporaryDirectory() as d:
+            config = self._project(d)
+            self._write(d, config, command="triage", run_id="triage-2260",
+                        phase="classify", issue=2260)
+            with patch("keel_visual.cli.git.worktree_list",
+                       return_value=CommandResult(False, 1, "")):
+                rows = cli._runs_in_repo(d, config)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["label"], "#2260")
+
+    def test_fail_soft_on_bad_activity_dir(self):
+        from keel import config as cfg
+        bad = cfg.ProjectConfig(
+            extends="keel", core_version="^0.7", base_branch="main",
+            knobs=cfg.Knobs(build_gate_cmd="true"),
+            policy_pack={"name": "t", "reports": {"activity": "/abs/escape"}})
+        self.assertEqual(cli._activity_records_in_repo(".", bad), [])
+
+    def test_board_row_label_falls_back_to_run_id(self):
+        from keel_visual import dash, runstate
+        rs = runstate.build_run_state(None, checkpoint_step="config", command="morning")
+        row = dash.board_row(rs, {"command": "morning", "run_id": "m-1"})
+        self.assertEqual(row["label"], "m-1")
+
+    def test_no_op_when_core_lacks_activity(self):
+        from unittest.mock import patch
+        with patch("keel_visual.cli.activity", None):
+            self.assertEqual(cli._activity_records_in_repo(".", object()), [])
+
+
 if __name__ == "__main__":
     unittest.main()

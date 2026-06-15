@@ -21,6 +21,11 @@ from pathlib import Path
 from keel import checkpoint, flows, git, ledger
 from keel import config as cfg
 
+try:  # the additive activity channel needs a core that ships keel.activity
+    from keel import activity
+except ImportError:  # pragma: no cover - exercised only against pre-activity cores
+    activity = None
+
 from . import dash, render, runstate, terminal
 
 _CLEAR = "\x1b[2J\x1b[H"
@@ -353,6 +358,41 @@ def _run_records_in_repo(root: str, config: cfg.ProjectConfig) -> list[tuple[dic
             checkpoint_state=runstate.live_state_from_checkpoint(record),
             command=identity.get("command") or "ship",
         )
+        pairs.append((run_state, identity))
+    pairs.extend(_activity_records_in_repo(root, config))
+    return pairs
+
+
+def _activity_records_in_repo(root: str, config: cfg.ProjectConfig) -> list[tuple[dict, dict]]:
+    """Non-ship command runs at ``root`` from the additive activity channel.
+
+    Commands that don't write a ship checkpoint (triage, morning, pr-loop …)
+    stamp ``.keel/activity/<run-id>.json`` as they move through their own
+    :mod:`keel.flows` phases. Each record becomes a ``(run_state, identity)``
+    pair projected onto its command flow. A ``done`` record is marked merged so
+    the board fades / filters it like any finished run. Fail-soft (and a no-op
+    against a core too old to ship ``keel.activity``)."""
+    if activity is None:
+        return []
+    try:
+        records = activity.read_all_activity(activity.resolve_dir(root, config))
+    except activity.ActivityError:
+        return []
+    pairs: list[tuple[dict, dict]] = []
+    for rec in records:
+        run_state = runstate.build_run_state(
+            None,
+            checkpoint_step=rec.get("phase"),
+            command=rec.get("command") or "ship",
+        )
+        if rec.get("status") == "done":
+            run_state["merged"] = True
+        identity = {
+            "issue": rec.get("issue"),
+            "pr": rec.get("pr"),
+            "command": rec.get("command"),
+            "run_id": rec.get("run_id"),
+        }
         pairs.append((run_state, identity))
     return pairs
 

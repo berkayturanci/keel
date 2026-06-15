@@ -28,7 +28,7 @@ omit = ["*/templates/*"]
 [tool.coverage.report]
 fail_under = 100
 show_missing = true
-exclude_lines = ["if __name__ == .__main__.:", "raise SystemExit"]
+exclude_lines = ["if __name__ == .__main__.:", "raise SystemExit", "pragma: no cover"]
 
 [tool.ruff]
 line-length = 100

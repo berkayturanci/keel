@@ -83,8 +83,9 @@ def board_row(run_state: dict[str, Any], identity: dict[str, Any]) -> dict[str, 
     step = steps[active] if 0 <= active < len(steps) else {"id": "s?", "name": "?"}
     pr = run_state.get("pr") or identity.get("pr")
     issue = run_state.get("issue") or identity.get("issue")
+    run_id = identity.get("run_id")
     return {
-        "label": f"#{pr}" if pr else (f"#{issue}" if issue else "?"),
+        "label": f"#{pr}" if pr else (f"#{issue}" if issue else (run_id or "?")),
         "active_index": active,
         "total": total,
         "active_id": step.get("id", "s?"),
