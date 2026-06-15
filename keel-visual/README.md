@@ -14,6 +14,37 @@ Both outputs are fed by a single **pure** adapter,
 **command flow** — the canonical phase list each command has in keel core
 (`keel.flows.flow_for`). No parallel data model, no second source of truth.
 
+## Watching a run (the observer model)
+
+keel-visual is a **separate observer**. It only ever *reads* the ledger and
+checkpoint that `keel ship` already writes — it never drives the run and is never
+in its call path. So it works **the same no matter how the run is launched**: by
+hand, from an agent (Claude Code, Codex, …), or in CI. The run writes its
+records; keel-visual reads them.
+
+That means the visualizer is a **separate process you point at the same repo**,
+not something the run prints itself. In particular:
+
+- **The live animations need a real terminal (tty).** `play --follow` clears and
+  redraws ANSI frames, and `--theater` hands the screen to `jury --theater` —
+  both only animate in an interactive terminal. In **captured/agent/CI output**
+  there is no live tty, so they **degrade gracefully**: `--theater` is skipped,
+  `--color auto` drops colour, and a blocking `--follow` isn't how you'd consume
+  it anyway. keel-visual never garbles a non-interactive stream.
+
+So when **an agent (e.g. Claude Code) is driving `keel ship`**, you don't watch
+the animation *inside* the agent's transcript — you watch it **alongside**, two
+ways:
+
+| want | run | needs a tty? |
+| --- | --- | --- |
+| **Watch live, in a terminal** | open your **own** terminal tab and run `keel-visual play --follow` (or `dash` for parallel runs) pointed at the same repo/worktrees. It reads the live checkpoint the agent's run writes, and the playhead moves as the run progresses. **Theater (`--theater`) triggers here, in your tty** — not in the agent's. | yes (your terminal) |
+| **Watch in a browser** | `keel-visual render .keel/project.yaml --pr <N> --out run.html` writes a self-contained page — open it during or after the run, anywhere. | no |
+| **A single frame / share** | `keel-visual play … --step <n>` or the web page screenshot. | no |
+
+In short: *agent runs ship → you watch beside it* (a second terminal or the web
+page), not *agent runs ship → animation in the agent's output*.
+
 ## Every command, not just ship
 
 `--command` accepts **all 16 keel commands** (ci-check, coverage, deps-audit,
