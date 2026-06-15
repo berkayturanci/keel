@@ -131,6 +131,16 @@ keel-visual render --all --root ~/code --out board.html && open board.html
 
 ![keel-visual board — render --all](screenshots/board.png)
 
+The web board has a **2D grid / 3D scene** toggle in its header (or open with
+`board.html?mode=3d`). The 3D scene packs every run into one perspective view —
+one lane per run, a sphere per step coloured the same way as the grid (green
+done/merged · cyan active · amber gate · red blocked · dim not-reached), the
+active node glowing where the run currently sits, each lane labelled
+`project #PR`. Drag to orbit; it auto-rotates otherwise. It needs Three.js from
+a CDN, so the 3D view (only) wants network; the 2D grid stays fully offline.
+
+![keel-visual board — 3D scene](screenshots/board-3d.png)
+
 ### 1. Terminal — `keel-visual play` (runs in the CLI)
 
 The flow animates right in the terminal while a command runs:
@@ -292,5 +302,6 @@ See [`screenshots/`](screenshots/): `terminal-cli.png` (the `play` output),
 `2d-s8-test.png` (a blocked test gate), `3d-s6-run.png` (the default `plexus` 3D
 style mid-run), `3d-styles.png` (the `combined` style with the style selector and
 the s7 jury), `3d-s10-merge.png` (the `line` style, merged and all-green),
-`2d-s12-merged.png` (a merged, all-green 2D run), and `board.png` (the
-`render --all` multi-project web board).
+`2d-s12-merged.png` (a merged, all-green 2D run), `board.png` (the
+`render --all` multi-project web board, 2D grid), and `board-3d.png` (the same
+board's 3D scene — one lane per run).
