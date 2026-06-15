@@ -131,6 +131,22 @@ keel-visual render --all --root ~/code --out board.html && open board.html
 
 ![keel-visual board — render --all](screenshots/board.png)
 
+#### Live web dashboard — `keel-visual serve`
+
+`render --all` writes a **static snapshot** — a run that starts afterwards won't
+appear. `serve` is the **live** web dashboard: a tiny localhost server whose page
+polls a `/board.json` endpoint that re-reads the records every ~0.5s, so the board
+updates itself. Open it on the side and watch runs appear and advance; click a run
+for a closable right-side **detail drawer** (its step flow + metadata; full-screen
+on mobile).
+
+```
+keel-visual serve --all --root ~/code        # http://127.0.0.1:8765 — Ctrl-C to stop
+```
+
+Localhost-only by default (`--host` / `--port` to change). It's the web counterpart
+of the live terminal `dash --all`.
+
 The web board has a **2D grid / 3D scene** toggle in its header (or open with
 `board.html?mode=3d`). The 3D scene packs every run into one perspective view —
 one lane per run, a sphere per step coloured the same way as the grid (green

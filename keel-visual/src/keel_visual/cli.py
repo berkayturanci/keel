@@ -26,7 +26,7 @@ try:  # the additive activity channel needs a core that ships keel.activity
 except ImportError:  # pragma: no cover - exercised only against pre-activity cores
     activity = None
 
-from . import dash, render, runstate, terminal
+from . import dash, render, runstate, serve, terminal
 
 _CLEAR = "\x1b[2J\x1b[H"
 
@@ -41,6 +41,13 @@ def load_template() -> str:
 def load_board_template() -> str:
     """Load the packaged multi-project board HTML template text."""
     return resources.files("keel_visual.templates").joinpath("board.html").read_text(
+        encoding="utf-8"
+    )
+
+
+def load_dashboard_template() -> str:
+    """Load the packaged live-dashboard HTML template (polls ``/board.json``)."""
+    return resources.files("keel_visual.templates").joinpath("dashboard.html").read_text(
         encoding="utf-8"
     )
 
@@ -489,6 +496,50 @@ def _aggregate_board(parent: str) -> list[dict]:
     return board
 
 
+def _single_repo_board(root: str, config: cfg.ProjectConfig) -> list[dict]:
+    """Web board entries for one repo (the non-``--all`` serve path). Fail-soft."""
+    project = config.repo or Path(root).resolve().name
+    return [
+        _board_entry(run_state, identity, project)
+        for run_state, identity in _run_records_in_repo(root, config)
+    ]
+
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    """Serve the **live** dashboard: the page polls ``/board.json``, which re-reads
+    the records on every request. Localhost-only."""
+    if getattr(args, "all", False):
+        def provider() -> list[dict]:
+            return _aggregate_board(args.root)
+    else:
+        if not args.path:
+            print("serve: provide a path to project.yaml, or use --all", file=sys.stderr)
+            return 1
+        try:
+            config = cfg.load_config(args.path)
+        except FileNotFoundError:
+            print(f"no such config: {args.path}", file=sys.stderr)
+            return 1
+        except cfg.ConfigError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+
+        def provider() -> list[dict]:
+            return _single_repo_board(args.root, config)
+
+    page = load_dashboard_template()
+    httpd = serve.make_server(provider, page, host=args.host, port=args.port)
+    host, port = httpd.server_address[0], httpd.server_address[1]
+    print(f"keel-visual — live dashboard on http://{host}:{port}  (Ctrl-C to stop)")
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print("\nkeel-visual — dashboard stopped")
+    finally:
+        httpd.server_close()
+    return 0
+
+
 def _dash_all(args, *, sleep, out, color: bool, max_cycles: int | None) -> int:
     """Live board aggregating every keel project under ``--root`` (the ``--all`` path)."""
     cycle = 0
@@ -599,6 +650,16 @@ def build_parser() -> argparse.ArgumentParser:
     pd.add_argument("--color", default="auto", choices=("auto", "always", "never"),
                     help="ANSI colour (auto = only on a tty)")
     pd.set_defaults(func=cmd_dash)
+
+    ps = sub.add_parser("serve", help="serve the live web dashboard (auto-refreshing, localhost)")
+    ps.add_argument("path", nargs="?", default=None,
+                    help="path to project.yaml (single repo; omit when using --all)")
+    ps.add_argument("--all", action="store_true",
+                    help="aggregate every keel project under --root into one board")
+    ps.add_argument("--root", default=".", help="repo root (or parent folder, with --all)")
+    ps.add_argument("--host", default="127.0.0.1", help="bind host (localhost-only by default)")
+    ps.add_argument("--port", type=int, default=8765, help="bind port")
+    ps.set_defaults(func=cmd_serve)
     return parser
 
 

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "keel-visual"
-version = "0.4.2"
+version = "0.5.0"
 description = "Optional animated 2D/3D run visualizer for keel core"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -19,6 +19,7 @@ packages = ["src/keel_visual"]
 [tool.hatch.build.targets.wheel.force-include]
 "src/keel_visual/templates/runviz.html" = "keel_visual/templates/runviz.html"
 "src/keel_visual/templates/board.html" = "keel_visual/templates/board.html"
+"src/keel_visual/templates/dashboard.html" = "keel_visual/templates/dashboard.html"
 
 [tool.coverage.run]
 branch = true

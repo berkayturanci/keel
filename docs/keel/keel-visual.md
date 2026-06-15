@@ -29,6 +29,7 @@ keel-visual.
 | `dash --all` | one terminal board across **every keel project** under a parent | yes |
 | `render` | a self-contained web page for one run (2D flow + 3D scene) | snapshot |
 | `render --all` | a self-contained web **board** across every project | snapshot |
+| `serve` / `serve --all` | a **live** web dashboard (localhost server, polls every ~0.5s) | yes |
 
 ### The board — `dash --all` (terminal, live)
 
@@ -52,6 +53,19 @@ the system **light/dark** theme, and has an **`all` / `active`** filter (or
 `?filter=active`) that fades finished runs and sorts them last — or hides them outright —
 so live work stays in focus. The 3D scene packs every run into one perspective, one lane
 per run. It's a **snapshot**: re-run `render --all` to refresh.
+
+### The live web dashboard — `keel-visual serve`
+
+```bash
+keel-visual serve --all --root ~/code        # http://127.0.0.1:8765 — Ctrl-C to stop
+```
+
+`serve` is the **live** web board: a tiny localhost HTTP server serves the dashboard once
+and a `/board.json` endpoint that re-reads the records on **every request**. The page polls
+every ~0.5s and updates itself — open it on the side and watch runs appear and advance.
+Click a run for a closable right-side **detail drawer** (its step flow + metadata;
+full-screen on mobile). Localhost-only by default (`--host` / `--port`). It's the web
+counterpart of the live terminal `dash --all`.
 
 ## What shows on the board
 

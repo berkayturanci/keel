@@ -946,5 +946,104 @@ class TestActivityBoard(unittest.TestCase):
             self.assertIn("stale-prs", cmds)
 
 
+class _FakeHTTPD:
+    server_address = ("127.0.0.1", 8765)
+
+    def serve_forever(self):
+        raise KeyboardInterrupt
+
+    def server_close(self):
+        pass
+
+
+class TestServeCli(unittest.TestCase):
+    def _run(self, argv):
+        import contextlib
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = cli.main(argv)
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_load_dashboard_template(self):
+        self.assertIn("board.json", cli.load_dashboard_template())
+
+    def test_single_repo_board(self):
+        import tempfile
+        from unittest.mock import patch
+
+        from keel import activity
+        from keel.runner import CommandResult
+        with tempfile.TemporaryDirectory() as d:
+            from keel import config as cfg
+            (Path(d) / ".keel").mkdir(parents=True)
+            import shutil
+            shutil.copy(PROJECT, Path(d) / ".keel" / "project.yaml")
+            config = cfg.load_config(str(Path(d) / ".keel" / "project.yaml"))
+            activity.write_activity(
+                activity.record_path(d, config, "m-1"),
+                activity.build_activity_record(command="morning", run_id="m-1", phase="config"))
+            with patch("keel_visual.cli.git.worktree_list",
+                       return_value=CommandResult(False, 1, "")):
+                board = cli._single_repo_board(d, config)
+            self.assertEqual(len(board), 1)
+            self.assertEqual(board[0]["command"], "morning")
+
+    def test_serve_all_runs_until_interrupt(self):
+        from unittest.mock import patch
+        captured = {}
+
+        def fake_make_server(provider, page, **kw):
+            captured["board"] = provider()  # exercise the provider closure
+            captured["page"] = page
+            return _FakeHTTPD()
+
+        with patch("keel_visual.cli.serve.make_server", side_effect=fake_make_server), \
+                patch("keel_visual.cli._aggregate_board", return_value=[{"project": "x"}]):
+            rc, out, _ = self._run(["serve", "--all", "--root", ".", "--port", "0"])
+        self.assertEqual(rc, 0)
+        self.assertIn("live dashboard", out)
+        self.assertEqual(captured["board"], [{"project": "x"}])
+        self.assertIn("board.json", captured["page"])
+
+    def test_serve_single_repo_success(self):
+        import tempfile
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as d:
+            import shutil
+            (Path(d) / ".keel").mkdir(parents=True)
+            shutil.copy(PROJECT, Path(d) / ".keel" / "project.yaml")
+            cfg_path = str(Path(d) / ".keel" / "project.yaml")
+            seen = {}
+
+            def fake(provider, page, **kw):
+                seen["board"] = provider()  # exercise the single-repo provider closure
+                return _FakeHTTPD()
+
+            with patch("keel_visual.cli.serve.make_server", side_effect=fake), \
+                    patch("keel_visual.cli._single_repo_board", return_value=[{"project": "p"}]):
+                rc, _, _ = self._run(["serve", cfg_path, "--root", d])
+            self.assertEqual(rc, 0)
+            self.assertEqual(seen["board"], [{"project": "p"}])
+
+    def test_serve_single_requires_path(self):
+        rc, _, err = self._run(["serve", "--root", "."])
+        self.assertEqual(rc, 1)
+        self.assertIn("provide a path", err)
+
+    def test_serve_missing_config(self):
+        rc, _, err = self._run(["serve", "no-such.yaml", "--root", "."])
+        self.assertEqual(rc, 1)
+        self.assertIn("no such config", err)
+
+    def test_serve_invalid_config(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            bad = Path(d) / "bad.yaml"
+            bad.write_text("extends: keel\n", encoding="utf-8")
+            rc, _, err = self._run(["serve", str(bad), "--root", d])
+            self.assertEqual(rc, 1)
+            self.assertTrue(err.strip())
+
+
 if __name__ == "__main__":
     unittest.main()

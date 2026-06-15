@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>keel · live dashboard</title>
+<style>
+  :root{
+    --bg:#0a0e1a; --panel:#111728; --panel2:#0e1422; --line:#1d2740; --line2:#2a3756;
+    --txt:#e7ecf7; --mut:#8ea0c6; --dim:#5b6b92;
+    --idle:#2a3550; --info:#49b6ff; --warn:#f0a020; --danger:#ff5468; --ok:#7ad14a;
+    --r:14px; --markbg:#0c1118;
+  }
+  @media (prefers-color-scheme: light){
+    :root{
+      --bg:#f4f7fc; --panel:#fff; --panel2:#eef2f9; --line:#dce3f0; --line2:#c6d1e5;
+      --txt:#1a2336; --mut:#55627d; --dim:#8694b1;
+      --idle:#cbd5e8; --info:#1f8fe6; --warn:#cf8410; --danger:#e0364f; --ok:#4ba322;
+      --markbg:#eef3fb;
+    }
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--txt);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+  body{padding:clamp(14px,2.4vw,30px);max-width:min(1680px,100%);margin:0 auto}
+  header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:18px}
+  .brand{display:flex;align-items:center;gap:10px;font-size:18px;font-weight:600}
+  .mark{width:30px;height:30px;border-radius:9px;background:var(--markbg);border:1.5px solid var(--ok);box-shadow:0 0 16px rgba(122,209,74,.45);display:inline-flex;align-items:center;justify-content:center;overflow:hidden}
+  .mark svg{width:100%;height:100%;display:block}
+  .live{display:flex;align-items:center;gap:7px;font-size:13px;color:var(--mut)}
+  .dotlive{width:9px;height:9px;border-radius:50%;background:var(--ok);animation:beat 1s ease-in-out infinite}
+  @keyframes beat{0%,100%{opacity:1}50%{opacity:.35}}
+  .seg{display:flex;background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .seg button{border:0;background:transparent;color:var(--mut);font:inherit;font-size:13px;padding:7px 13px;cursor:pointer}
+  .seg button.on{background:rgba(73,182,255,.16);color:var(--info)}
+  .count{margin-left:auto;font-size:13px;color:var(--mut)}
+  .count b{color:var(--txt)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(330px,100%),1fr));gap:14px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:15px 16px;cursor:pointer;transition:opacity .2s,border-color .15s}
+  .card:hover{border-color:var(--line2)}
+  .card.done{opacity:.5}
+  body.active-only .card.done{display:none}
+  .chead{display:flex;align-items:center;gap:9px;margin-bottom:12px}
+  .proj{font-weight:600;font-size:14px}
+  .lab{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:var(--mut);background:var(--panel2);border:1px solid var(--line);border-radius:999px;padding:2px 9px}
+  .badge{margin-left:auto;font-size:11px;font-weight:600;padding:3px 10px;border-radius:999px}
+  .badge.running,.badge.active{background:rgba(73,182,255,.16);color:var(--info)}
+  .badge.merged,.badge.done{background:rgba(122,209,74,.16);color:var(--ok)}
+  .badge.gate{background:rgba(240,160,32,.16);color:var(--warn)}
+  .badge.blocked{background:rgba(255,84,104,.18);color:var(--danger)}
+  .strip{display:flex;align-items:center;gap:0;margin:4px 0 11px}
+  .dot{width:13px;height:13px;border-radius:50%;background:var(--idle);flex:none;border:2px solid transparent}
+  .seg2{height:2px;flex:1;background:var(--line2);min-width:4px}
+  .dot.done{background:var(--ok)} .seg2.done{background:var(--ok)}
+  .dot.active{background:var(--info);box-shadow:0 0 0 4px rgba(73,182,255,.22);animation:pulse 1.3s ease-in-out infinite}
+  .dot.gate{background:var(--warn);box-shadow:0 0 0 4px rgba(240,160,32,.22);animation:pulse 1.3s ease-in-out infinite}
+  .dot.fail{background:var(--danger);box-shadow:0 0 0 4px rgba(255,84,104,.25)}
+  @keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.18)}}
+  .cfoot{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--mut)}
+  .cfoot .step{color:var(--txt);font-weight:600}
+  .jpill{margin-left:auto;font-size:11px;font-weight:600;color:var(--info);background:rgba(73,182,255,.12);border:1px solid var(--line);border-radius:999px;padding:2px 8px}
+  .jpill.gating{color:var(--warn);background:rgba(240,160,32,.12)}
+  .empty{color:var(--dim);padding:48px;text-align:center;border:1px dashed var(--line2);border-radius:var(--r)}
+  /* drawer */
+  #scrim{position:fixed;inset:0;background:rgba(4,8,16,.45);opacity:0;visibility:hidden;transition:opacity .2s;z-index:40}
+  #scrim.show{opacity:1;visibility:visible}
+  #drawer{position:fixed;top:0;right:0;height:100%;width:min(440px,92vw);background:var(--panel);border-left:1px solid var(--line);box-shadow:-18px 0 40px rgba(0,0,0,.28);transform:translateX(100%);transition:transform .24s cubic-bezier(.4,0,.2,1);z-index:50;overflow-y:auto;padding:20px}
+  #drawer.show{transform:none}
+  @media (max-width:560px){ #drawer{width:100vw;border-left:none} }
+  .dhead{display:flex;align-items:center;gap:10px;margin-bottom:16px}
+  .dhead .x{margin-left:auto;border:none;background:transparent;color:var(--mut);cursor:pointer;font-size:22px;line-height:1;padding:2px 6px}
+  .dhead .x:hover{color:var(--txt)}
+  .flow{display:flex;flex-direction:column;gap:1px;margin:6px 0 18px}
+  .frow{display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:9px;font-size:13px}
+  .frow.cur{background:rgba(73,182,255,.12)}
+  .frow .fi{width:11px;height:11px;border-radius:50%;background:var(--idle);flex:none}
+  .frow.don .fi{background:var(--ok)} .frow.cur .fi{background:var(--info)}
+  .frow.gat .fi{background:var(--warn)} .frow.fai .fi{background:var(--danger)}
+  .frow .fid{font-family:ui-monospace,Menlo,monospace;color:var(--mut);width:34px}
+  .frow.cur .fnm{font-weight:600;color:var(--txt)}
+  .meta{width:100%;font-size:13px;border-collapse:collapse}
+  .meta td{padding:6px 0;border-top:1px solid var(--line)}
+  .meta td:first-child{color:var(--mut)}
+  .meta td:last-child{text-align:right}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><span class="mark" aria-hidden="true"><svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><line x1="12" y1="40" x2="32" y2="40" stroke="#2a3744" stroke-width="3" stroke-linecap="round"></line><circle cx="12" cy="40" r="3.2" fill="#6366f1"></circle><circle cx="20" cy="40" r="3.2" fill="#6366f1"></circle><circle cx="28" cy="40" r="3.2" fill="#6366f1"></circle><circle cx="32" cy="40" r="3.8" fill="#f5a524"></circle><path d="M32 40 Q44 34 52 19" stroke="#10b981" stroke-width="5.5" fill="none" stroke-linecap="round"></path><circle cx="52" cy="19" r="4.5" fill="#10b981"></circle></svg></span> keel · dashboard</div>
+  <span class="live"><span class="dotlive" aria-hidden="true"></span><span id="livetxt">live</span></span>
+  <div class="seg" id="segf"><button data-f="all" class="on">all</button><button data-f="active">active</button></div>
+  <div class="count" id="count"></div>
+</header>
+
+<div id="grid" class="grid"></div>
+
+<div id="scrim"></div>
+<aside id="drawer" aria-label="run detail"></aside>
+
+<script>
+(function(){
+  const POLL_MS = 500;
+  const NAMES = {s0:"init",s1:"select",s2:"branch",s3:"guard",s4:"implement",s5:"classify",s6:"ci",s7:"review",s8:"test",s9:"fixloop",s10:"merge",s11:"capture",s12:"close"};
+  const GATE_KINDS = {gate:1, merge:1};
+  let BOARD = [], showDone = true, openKey = null;
+
+  const el=(t,c)=>{const n=document.createElement(t);if(c)n.className=c;return n;};
+  const isDone = r => !!r.merged;
+  const keyOf = r => (r.project||'')+'|'+(r.label||'')+'|'+(r.command||'');
+  const ordered = () => BOARD.map(r=>r).sort((a,b)=>(isDone(a)?1:0)-(isDone(b)?1:0));
+
+  function stepTone(idx, active, merged, s){
+    if(merged && idx<=active) return "done";
+    if(idx < active) return "done";
+    if(idx === active){
+      if(s && s.gate && s.gate.outcome === 'fail') return "fail";
+      if(s && GATE_KINDS[s.kind]) return "gate";
+      return "active";
+    }
+    return "idle";
+  }
+
+  const grid = document.getElementById('grid');
+  const count = document.getElementById('count');
+
+  function renderCount(){
+    const vis = showDone ? BOARD : BOARD.filter(r=>!isDone(r));
+    const np = new Set(vis.map(r=>r.project||'')).size, done = BOARD.filter(isDone).length;
+    count.textContent='';
+    const b1=el('b'); b1.textContent=vis.length; const b2=el('b'); b2.textContent=np;
+    count.append(b1,' run'+(vis.length===1?'':'s')+' across ',b2,' project'+(np===1?'':'s'));
+    if(showDone && done){ const m=el('span'); m.style.color='var(--dim)'; m.textContent=' · '+done+' done'; count.appendChild(m); }
+  }
+
+  function renderGrid(){
+    grid.textContent='';
+    if(!BOARD.length){ const e=el('div','empty'); e.textContent='no active runs found'; grid.appendChild(e); renderCount(); return; }
+    ordered().forEach(run=>{
+      const steps = Array.isArray(run.steps)?run.steps:[];
+      const active = run.active_index|0, merged=!!run.merged;
+      const card = el('div','card'+(merged?' done':''));
+      card.tabIndex=0;
+      const head = el('div','chead');
+      const proj=el('span','proj'); proj.textContent=run.project||'?';
+      const lab=el('span','lab'); lab.textContent=run.label||'?';
+      const badge=el('span','badge '+(run.status||'active')); badge.textContent=run.status||'active';
+      head.append(proj,lab,badge); card.appendChild(head);
+      const strip=el('div','strip');
+      steps.forEach((s,idx)=>{
+        if(idx>0) strip.appendChild(el('span','seg2'+((merged||idx<=active)?' done':'')));
+        const dot=el('span','dot'); const tone=stepTone(idx,active,merged,s);
+        if(tone!=='idle') dot.classList.add(tone);
+        dot.title=(s.id||'')+' · '+(s.name||''); strip.appendChild(dot);
+      });
+      card.appendChild(strip);
+      const foot=el('div','cfoot');
+      const step=el('span','step'); step.textContent=(run.active_id||'?')+' · '+(run.active_name||'?'); foot.appendChild(step);
+      const cmd=el('span'); cmd.textContent=run.command||'ship'; foot.appendChild(cmd);
+      const jury=run.jury||{};
+      if(jury.active){ const j=el('span','jpill'+(jury.mode==='gating'?' gating':'')); j.textContent='jury · '+(jury.mode||'on'); foot.appendChild(j); }
+      card.appendChild(foot);
+      card.onclick=()=>openDrawer(keyOf(run));
+      card.onkeydown=e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); openDrawer(keyOf(run)); } };
+      grid.appendChild(card);
+    });
+    renderCount();
+  }
+
+  // ---- drawer ----
+  const scrim=document.getElementById('scrim'), drawer=document.getElementById('drawer');
+  function runByKey(k){ return BOARD.find(r=>keyOf(r)===k) || null; }
+  function renderDrawer(){
+    const run = openKey && runByKey(openKey);
+    if(!run){ closeDrawer(); return; }
+    const steps=Array.isArray(run.steps)?run.steps:[];
+    const active=run.active_index|0, merged=!!run.merged, jury=run.jury||{};
+    drawer.textContent='';
+    const head=el('div','dhead');
+    const t=el('span'); t.style.fontWeight='600'; t.style.fontSize='15px'; t.textContent=(run.project||'?')+' '+(run.label||'');
+    const x=el('button','x'); x.setAttribute('aria-label','close'); x.textContent='×'; x.onclick=closeDrawer;
+    head.append(t,x); drawer.appendChild(head);
+    const flow=el('div','flow');
+    steps.forEach((s,idx)=>{
+      const tone=stepTone(idx,active,merged,s);
+      const cls = tone==='done'?'don':tone==='active'?'cur':tone==='gate'?'gat':tone==='fail'?'fai':'';
+      const row=el('div','frow '+cls);
+      const fi=el('span','fi'); const fid=el('span','fid'); fid.textContent=s.id||''; const fnm=el('span','fnm'); fnm.textContent=s.name||NAMES[s.id]||'';
+      row.append(fi,fid,fnm); flow.appendChild(row);
+    });
+    drawer.appendChild(flow);
+    const meta=el('table','meta'); const rows=[
+      ['command', run.command||'ship'],
+      ['phase', (run.active_id||'?')+' · '+(run.active_name||'?')+'  ('+(active+1)+'/'+(steps.length||1)+')'],
+      ['status', run.status||'active'],
+    ];
+    if(jury.active) rows.push(['jury', jury.mode||'on']);
+    rows.forEach(([k,v])=>{ const tr=el('tr'); const a=el('td'); a.textContent=k; const b=el('td'); b.textContent=v; tr.append(a,b); meta.appendChild(tr); });
+    drawer.appendChild(meta);
+  }
+  function openDrawer(k){ openKey=k; renderDrawer(); scrim.classList.add('show'); drawer.classList.add('show'); }
+  function closeDrawer(){ openKey=null; scrim.classList.remove('show'); drawer.classList.remove('show'); }
+  scrim.onclick=closeDrawer;
+  window.addEventListener('keydown',e=>{ if(e.key==='Escape') closeDrawer(); });
+
+  // ---- filter ----
+  const segf=document.getElementById('segf');
+  segf.addEventListener('click',e=>{ const b=e.target.closest('button'); if(!b) return;
+    showDone = b.dataset.f!=='active';
+    document.body.classList.toggle('active-only', !showDone);
+    [...segf.children].forEach(x=>x.classList.toggle('on',x.dataset.f===b.dataset.f));
+    renderCount();
+  });
+
+  // ---- live poll ----
+  const livetxt=document.getElementById('livetxt');
+  async function tick(){
+    try{
+      const res = await fetch('board.json', {cache:'no-store'});
+      BOARD = await res.json();
+      if(!Array.isArray(BOARD)) BOARD=[];
+      livetxt.textContent='live';
+      renderGrid();
+      if(openKey) renderDrawer();
+    }catch(err){ livetxt.textContent='reconnecting…'; }
+  }
+  tick(); setInterval(tick, POLL_MS);
+  window.__keelDashReady=true;
+})();
+</script>
+</body>
+</html>

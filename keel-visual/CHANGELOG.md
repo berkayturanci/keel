@@ -6,6 +6,17 @@ All notable changes to keel-visual are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-06-15
+
+### Added
+- **`keel-visual serve` — a live web dashboard.** Unlike `render --all` (a static
+  snapshot), `serve` runs a tiny localhost HTTP server: it serves the dashboard once
+  and a `/board.json` endpoint that **re-reads the records on every request**, so the
+  page polls (every 0.5s) and updates itself. Open it on the side and watch ship +
+  non-ship runs appear and advance live. Click a run to open a closable right-side
+  **detail drawer** (the run's step flow + metadata; full-screen on mobile). `--all`
+  spans every project under a parent; localhost-only by default (`--host`/`--port`).
+
 ## [0.4.2] — 2026-06-15
 
 ### Changed
