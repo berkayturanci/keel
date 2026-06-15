@@ -127,5 +127,42 @@ class TestRenderBoard(unittest.TestCase):
         self.assertIn("\x1b[", out)
 
 
+class TestRenderProjectBoard(unittest.TestCase):
+    def _row(self, project, **identity):
+        # build from None so the identity's pr/issue drive the label (no baked-in pr)
+        row = dash.board_row(rs.build_run_state(None, checkpoint_step="s8"), identity)
+        row["project"] = project
+        return row
+
+    def test_empty(self):
+        out = dash.render_project_board([], color=False)
+        self.assertIn("0 runs across 0 projects", out)
+        self.assertIn("no active runs found", out)
+
+    def test_singular_one_run_one_project(self):
+        out = dash.render_project_board([self._row("alpha", pr=42)], color=False)
+        self.assertIn("1 run across 1 project", out)
+        self.assertNotIn("1 runs", out)
+        self.assertIn("alpha", out)
+        self.assertIn("#42", out)
+
+    def test_grouped_across_projects_colored(self):
+        rows = [self._row("alpha", pr=42), self._row("beta", pr=7), self._row("alpha", issue=9)]
+        out = dash.render_project_board(rows, color=True)
+        self.assertIn("3 runs across 2 projects", out)  # alpha + beta
+        self.assertIn("alpha", out)
+        self.assertIn("beta", out)
+        self.assertIn("\x1b[", out)
+
+    def test_project_name_ansi_injection_stripped(self):
+        # a directory literally named with an escape sequence must not reach the
+        # terminal raw (no screen-clear / cursor spoof from a malicious dir name).
+        # The ESC byte is dropped; the leftover printable "[2J" is inert text.
+        rows = [self._row("ev\x1b[2Jil", pr=1)]
+        out = dash.render_project_board(rows, color=False)
+        self.assertNotIn("\x1b", out)       # the dangerous ESC is gone
+        self.assertIn("ev[2Jil", out)       # printable chars kept, just defanged
+
+
 if __name__ == "__main__":
     unittest.main()

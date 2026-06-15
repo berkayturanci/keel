@@ -96,6 +96,51 @@ A worktree with no live checkpoint is skipped; all per-run reads are fail-soft s
 one bad run never blanks the board. See
 [`screenshots/dash-board.png`](screenshots/dash-board.png).
 
+#### Across every project — `dash --all`
+
+Work across **several** keel projects? `dash --all` aggregates them into one
+board. Point `--root` at the parent folder; it scans the **immediate**
+subdirectories for keel projects (a dir with both `.git` and
+`.keel/project.yaml`), loads each project's own config, and groups the runs by
+project:
+
+```
+keel-visual dash --all --root ~/code        # every keel project under ~/code
+keel-visual dash --all                       # … under the current folder
+```
+
+```
+keel · 3 runs across 2 projects
+  alpha          #42  ████████░░░░  s8  test     gate
+  beta           #12  ██████████░░  s10 merge    gate
+  beta           #15  ███░░░░░░░░░  s3  guard
+```
+
+Fail-soft and one level deep: a subdir that isn't a git repo, has no keel config,
+or has a malformed one is skipped — it never blanks the board. The
+[same-filesystem limit](#watching-a-run-the-observer-model) still holds: this is
+**every project on this machine**, not remote/cloud runs.
+
+The same board as a **web page** — `render --all` writes a self-contained HTML
+grid of run cards (project · #PR · a colour-coded step strip · status, with the
+s7 jury surfaced), no tty needed:
+
+```
+keel-visual render --all --root ~/code --out board.html && open board.html
+```
+
+![keel-visual board — render --all](screenshots/board.png)
+
+The web board has a **2D grid / 3D scene** toggle in its header (or open with
+`board.html?mode=3d`). The 3D scene packs every run into one perspective view —
+one lane per run, a sphere per step coloured the same way as the grid (green
+done/merged · cyan active · amber gate · red blocked · dim not-reached), the
+active node glowing where the run currently sits, each lane labelled
+`project #PR`. Drag to orbit; it auto-rotates otherwise. It needs Three.js from
+a CDN, so the 3D view (only) wants network; the 2D grid stays fully offline.
+
+![keel-visual board — 3D scene](screenshots/board-3d.png)
+
 ### 1. Terminal — `keel-visual play` (runs in the CLI)
 
 The flow animates right in the terminal while a command runs:
@@ -169,6 +214,11 @@ head, merged→green — and differ only in how the run is drawn:
 Every style honours the same [colour language](#colour-language); switching
 styles never changes what a colour means, only the geometry it is painted on.
 
+> The 3D views (both `render` and the `render --all` board) load Three.js from
+> cdnjs with a **Subresource Integrity** hash + `crossorigin`, so the browser
+> refuses the script if the CDN ever serves altered bytes. The 2D views never
+> touch the network.
+
 ## Colour language
 
 | colour | meaning |
@@ -213,27 +263,22 @@ The handoff runs ai-jury with its own configured style, so set
 
 ## Install
 
-keel-visual needs **keel core ≥ 1.3.0** (it reads `keel.flows`, the ledger, and
-the checkpoint). Until both packages are published to PyPI, install from this
-repo — installing the repo's core first guarantees a matching version:
+keel-visual needs **keel core ≥ 1.4.0** (it reads `keel.flows`, the ledger, and
+the checkpoint). Both packages are on PyPI — [`keel-visual`](https://pypi.org/project/keel-visual/)
+pulls in [`keel-workflow`](https://pypi.org/project/keel-workflow/) automatically:
 
 ```
-# from the repo root
-pip install ./              # keel-workflow (core), ≥ 1.3.0
-pip install ./keel-visual   # keel-visual
+pipx install keel-visual    # or: pip install keel-visual
 keel-visual --help
 ```
 
-Editable (development):
+To run the latest unreleased features (or to develop), install from this repo —
+installing the repo's core first guarantees a matching version:
 
 ```
-pip install -e ./ -e ./keel-visual
-```
-
-Once both are on PyPI, this becomes a one-liner:
-
-```
-pipx install keel-visual    # pulls in keel-workflow (core) automatically
+# from the repo root
+pip install -e ./ -e ./keel-visual   # editable: core + companion
+keel-visual --help
 ```
 
 See [`RELEASING.md`](RELEASING.md) for building and publishing keel-visual.
@@ -256,5 +301,7 @@ template is excluded from coverage (it is exercised by the screenshot harness).
 See [`screenshots/`](screenshots/): `terminal-cli.png` (the `play` output),
 `2d-s8-test.png` (a blocked test gate), `3d-s6-run.png` (the default `plexus` 3D
 style mid-run), `3d-styles.png` (the `combined` style with the style selector and
-the s7 jury), `3d-s10-merge.png` (the `line` style, merged and all-green), and
-`2d-s12-merged.png` (a merged, all-green 2D run).
+the s7 jury), `3d-s10-merge.png` (the `line` style, merged and all-green),
+`2d-s12-merged.png` (a merged, all-green 2D run), `board.png` (the
+`render --all` multi-project web board, 2D grid), and `board-3d.png` (the same
+board's 3D scene — one lane per run).
