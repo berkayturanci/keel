@@ -6,6 +6,21 @@ All notable changes to keel-visual are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-06-15
+
+### Added
+- **Non-ship command runs on the board.** keel-visual now reads the additive
+  `.keel/activity/` records (the `keel activity` channel, core 1.6.0) alongside
+  ship checkpoints, so commands that never write a ship checkpoint — triage,
+  morning, pr-loop … — appear live with their own `keel.flows` phases. A finished
+  (`done`) record is faded and last-sorted like any merged run; the `all`/`active`
+  filter hides them. The `keel.activity` import is fail-soft, so keel-visual still
+  installs against an older core (the feature just no-ops).
+
+### Changed
+- **Dependency floor raised to `keel-workflow >= 1.6.0`** (the `keel activity`
+  channel landed in core 1.6.0).
+
 ## [0.3.0] — 2026-06-15
 
 ### Added

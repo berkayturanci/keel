@@ -252,13 +252,15 @@ Three surfaces:
   demo, live `--follow`; `--theater` hands off to [ai-jury](https://github.com/berkayturanci/ai-jury)'s
   deliberation theater at the review step, then resumes).
 - **`dash`** — a terminal board of every active run; **`dash --all`** aggregates every
-  keel project under a parent folder into one board.
+  keel project under a parent folder into one board. It shows `ship` runs *and*
+  non-ship commands (triage, morning, pr-loop …) live via the `keel activity`
+  channel — each with its own phases.
 - **`render`** — a self-contained web page: a **2D flow** and a **3D scene** with five
   selectable styles (`plexus`/`comet`/`aurora`/`combined`/`line`); **`render --all`**
   writes a multi-project board with a **2D grid / 3D scene** toggle, automatic
   **light/dark** theme, and an **all / active** filter that fades finished runs.
 
-Depends on this core (`keel-workflow >= 1.4.0`); the core never depends on it (it only
+Depends on this core (`keel-workflow >= 1.6.0`); the core never depends on it (it only
 reads records, and probes `shutil.which("jury")` — never imports ai-jury). See
 [`keel-visual/README.md`](keel-visual/README.md).
 

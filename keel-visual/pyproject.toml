@@ -4,11 +4,11 @@ build-backend = "hatchling.build"
 
 [project]
 name = "keel-visual"
-version = "0.3.0"
+version = "0.4.0"
 description = "Optional animated 2D/3D run visualizer for keel core"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = ["keel-workflow>=1.4.0"]
+dependencies = ["keel-workflow>=1.6.0"]
 
 [project.scripts]
 keel-visual = "keel_visual.cli:main"

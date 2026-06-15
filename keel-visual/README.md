@@ -150,6 +150,14 @@ finished runs are **sorted last and faded**, and an **`all` / `active`** filter
 in the header (or `?filter=active`) hides them entirely — in both the 2D grid and
 the 3D scene. Nothing is removed from disk; it's purely a view filter.
 
+**Not just `ship`.** The board reads ship checkpoints *and* the additive
+`.keel/activity/` records (the `keel activity` channel in keel core ≥ 1.6.0).
+Commands that don't write a ship checkpoint — `triage`, `morning`, `pr-loop` … —
+stamp their active phase as they run, so they appear live too, each with its own
+`keel.flows` phases and its command in the footer. (Short one-shots that never
+stamp simply don't show — render any command on its own with
+`play --command <name>`.)
+
 ![keel-visual board — 3D scene](screenshots/board-3d.png)
 
 ### 1. Terminal — `keel-visual play` (runs in the CLI)
@@ -274,7 +282,7 @@ The handoff runs ai-jury with its own configured style, so set
 
 ## Install
 
-keel-visual needs **keel core ≥ 1.4.0** (it reads `keel.flows`, the ledger, and
+keel-visual needs **keel core ≥ 1.6.0** (it reads `keel.flows`, the ledger, and
 the checkpoint). Both packages are on PyPI — [`keel-visual`](https://pypi.org/project/keel-visual/)
 pulls in [`keel-workflow`](https://pypi.org/project/keel-workflow/) automatically:
 
