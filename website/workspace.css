@@ -14,7 +14,7 @@ body { padding-top: 0; overflow: hidden; }
   linear-gradient(135deg, color-mix(in srgb, var(--accent) 12%, var(--bg)), var(--bg) 50%, color-mix(in srgb, var(--green) 10%, var(--bg))); }
 .app {
   flex: 1; min-width: 0; display: flex; flex-direction: column;
-  max-width: 1480px; width: 100%; margin: 0 auto;
+  max-width: 1760px; width: 100%; margin: 0 auto;
   background: var(--surface); border: 1px solid var(--border);
   border-radius: 14px; box-shadow: var(--shadow-lg); overflow: hidden;
 }
@@ -72,7 +72,7 @@ body { padding-top: 0; overflow: hidden; }
   background-position: 0 0, 0 0, 0 0;
   background-repeat: repeat, no-repeat, no-repeat; }
 @media (prefers-reduced-motion: reduce) { .main { scroll-behavior: auto; } }
-.view { display: block; padding: clamp(1.6rem, 3.4vw, 3rem) clamp(1.3rem, 3vw, 2.6rem); max-width: 1240px; scroll-margin-top: 8px; }
+.view { display: block; padding: clamp(1.6rem, 3.4vw, 3rem) clamp(1.3rem, 3vw, 2.6rem); max-width: 1480px; scroll-margin-top: 8px; }
 .view + .view { border-top: 1px solid var(--border-soft); }
 .view.pre { opacity: 0; transform: translateY(24px); }
 .view.seen { opacity: 1; transform: none; transition: opacity .7s cubic-bezier(.2,.7,.2,1), transform .7s cubic-bezier(.2,.7,.2,1); }
