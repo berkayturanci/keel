@@ -1,0 +1,46 @@
+# Changelog
+
+All notable changes to keel-visual are documented here. The format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/); keel-visual adheres to
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [0.2.0] — 2026-06-15
+
+### Added
+- **Multi-project boards — one view across every keel project.** `dash --all`
+  (terminal) and `render --all` (web) point at a parent folder and aggregate
+  every keel project one level under it into a single board, grouped by project.
+  Local-only, fail-soft, same-filesystem (#416, #419).
+- **Web board 2D grid / 3D scene toggle.** The `render --all` board gains a
+  header toggle (or `?mode=3d`). The 3D scene packs every run into one Three.js
+  perspective — one lane per run, a sphere per step in the shared colour
+  language, the active node glowing, each lane labelled `project #PR` (#421).
+- **Live jury status from the checkpoint.** `play --follow` surfaces the jury's
+  *live* mode (advisory/gating) read from the run checkpoint's `jury_mode`, not
+  only the post-run ledger — so the jury appears as it resolves. Requires keel
+  core ≥ 1.4.0, which writes `state.jury_mode` (#399).
+- **Cinematic theater handoff.** `play --follow --theater` hands the screen to
+  ai-jury's `jury --theater` at the review step when the jury is active, then
+  resumes from the live checkpoint. Fail-soft and dependency-free — keel-visual
+  never imports ai-jury; if the `jury` CLI is absent nothing animates and
+  nothing errors (#401).
+
+### Changed
+- **Three.js loaded with Subresource Integrity.** Both the per-run `render` and
+  the `render --all` board pin Three.js from cdnjs with a sha512 SRI hash +
+  `crossorigin`, so the browser refuses altered bytes. The 2D views never touch
+  the network (#421).
+- **Dependency floor raised to `keel-workflow >= 1.4.0`** for the live-jury
+  checkpoint field.
+
+## [0.1.0] — 2026-06-14
+
+### Added
+- Initial release: an optional animated 2D/3D run visualizer that *renders* a
+  keel run from its ledger and checkpoint (it never drives one). Terminal `play`
+  (flow + wave ribbon, `--loop`, live `--follow`), a parallel `dash` board, and a
+  web `render` (2D flow + selectable 3D styles: plexus, comet, aurora, combined,
+  line). Renders any of the 16 command flows via `keel.flows`. Depends on
+  `keel-workflow`; the core never depends on it.
