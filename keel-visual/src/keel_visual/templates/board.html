@@ -36,7 +36,10 @@
   .view{display:none}
   .view.show{display:block}
   .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:14px}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:15px 16px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:15px 16px;transition:opacity .2s}
+  .card.done{opacity:.5}
+  .card.done:hover{opacity:1}
+  body.active-only .card.done{display:none}
   .chead{display:flex;align-items:center;gap:9px;margin-bottom:12px}
   .proj{font-weight:600;font-size:14px}
   .lab{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:var(--mut);background:var(--panel2);border:1px solid var(--line);border-radius:999px;padding:2px 9px}
@@ -72,6 +75,7 @@
 <header>
   <div class="brand"><span class="mark" aria-hidden="true"><svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><line x1="12" y1="40" x2="32" y2="40" stroke="#2a3744" stroke-width="3" stroke-linecap="round"></line><circle cx="12" cy="40" r="3.2" fill="#6366f1"></circle><circle cx="20" cy="40" r="3.2" fill="#6366f1"></circle><circle cx="28" cy="40" r="3.2" fill="#6366f1"></circle><circle cx="32" cy="40" r="3.8" fill="#f5a524"></circle><path d="M32 40 Q44 34 52 19" stroke="#10b981" stroke-width="5.5" fill="none" stroke-linecap="round"></path><circle cx="52" cy="19" r="4.5" fill="#10b981"></circle></svg></span> keel-visual · board</div>
   <div class="seg3" id="seg3"><button data-m="2d" class="on">2D grid</button><button data-m="3d">3D scene</button></div>
+  <div class="seg3" id="segf" title="filter which runs show"><button data-f="all" class="on">all</button><button data-f="active">active</button></div>
   <div class="count" id="count"></div>
 </header>
 
@@ -90,14 +94,25 @@
 <script>
 (function(){
   const BOARD = Array.isArray(window.KEEL_BOARD) ? window.KEEL_BOARD : [];
-  const nproj = new Set(BOARD.map(r => r.project || '')).size;
 
   function el(tag, cls){ const n=document.createElement(tag); if(cls) n.className=cls; return n; }
   function bold(n){ const b=el('b'); b.textContent=String(n); return b; }
+  const isDone = run => !!run.merged;
+  // active (running/gate/blocked) runs first, finished ones last — stable within group
+  const orderedRuns = () => BOARD.map(r=>r).sort((a,b)=>(isDone(a)?1:0)-(isDone(b)?1:0));
+  let showDone = true;  // the active/all filter — finished runs are faded, not removed
+
   // counts only — never user data — but built via DOM so no string ever reaches innerHTML
   const count = document.getElementById('count');
-  count.append(bold(BOARD.length), ' run'+(BOARD.length===1?'':'s')+' across ',
-               bold(nproj), ' project'+(nproj===1?'':'s'));
+  function renderCount(){
+    const vis = showDone ? BOARD : BOARD.filter(r=>!isDone(r));
+    const np = new Set(vis.map(r=>r.project||'')).size;
+    const done = BOARD.filter(isDone).length;
+    count.textContent='';
+    count.append(bold(vis.length), ' run'+(vis.length===1?'':'s')+' across ', bold(np), ' project'+(np===1?'':'s'));
+    if(showDone && done){ const m=el('span'); m.style.color='var(--dim)'; m.textContent=' · '+done+' done'; count.appendChild(m); }
+  }
+  renderCount();
   const GATE_KINDS = {gate:1, merge:1};
   // 3D palette follows the system theme (the 2D grid theming is pure CSS). Read
   // once at init — prefers-color-scheme rarely flips mid-session, and the 3D
@@ -125,11 +140,11 @@
   if(!BOARD.length){
     const e=el('div','empty'); e.textContent='no active runs found'; grid.appendChild(e);
   }
-  BOARD.forEach(run => {
+  orderedRuns().forEach(run => {
     const steps = Array.isArray(run.steps) ? run.steps : [];
     const active = run.active_index|0;
     const merged = !!run.merged;
-    const card = el('div','card');
+    const card = el('div','card'+(merged?' done':''));
     const head = el('div','chead');
     const proj = el('span','proj'); proj.textContent = run.project || '?';
     const lab = el('span','lab'); lab.textContent = run.label || '?';
@@ -154,9 +169,13 @@
     card.appendChild(foot);
     grid.appendChild(card);
   });
+  // shown only when the active filter is on and nothing is active
+  const emptyActive = el('div','empty'); emptyActive.textContent='no active runs — all done';
+  emptyActive.style.display='none'; grid.appendChild(emptyActive);
+  const anyActive = BOARD.some(r=>!isDone(r));
 
-  // ---- 3D combined scene (lazy) ----
-  let renderer, scene, camera, started3d=false, actives=[];
+  // ---- 3D combined scene (lazy, rebuildable) ----
+  let renderer, scene, camera, started3d=false, actives=[], laneObjs=[], camR=18;
   function makeLabel(text){
     const c=document.createElement('canvas'); c.width=320; c.height=64;
     const ctx=c.getContext('2d');
@@ -167,48 +186,62 @@
     const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:tex,transparent:true,depthTest:false}));
     sp.scale.set(4.0, 0.8, 1); return sp;
   }
-  function init3D(){
-    if(started3d) return; started3d=true;
-    if(!window.THREE){ document.querySelector('.hud3').textContent='3D unavailable'; return; }
-    const canvas=document.getElementById('c3'), wrap=document.getElementById('scene3');
-    renderer=new THREE.WebGLRenderer({canvas,antialias:true,alpha:true}); renderer.setClearColor(0x000000,0);
-    scene=new THREE.Scene(); scene.fog=new THREE.Fog(FOG_COL,16,52);
-    camera=new THREE.PerspectiveCamera(50,2,0.1,200);
-    const n=Math.max(1,BOARD.length), laneW=11, gapZ=1.7, z0=-(n-1)*gapZ/2;
+  function clear3D(){
+    laneObjs.forEach(o=>{ scene.remove(o);
+      if(o.geometry) o.geometry.dispose();
+      if(o.material){ if(o.material.map) o.material.map.dispose(); o.material.dispose(); } });
+    laneObjs=[]; actives=[];
+  }
+  function build3D(){
+    // ordered (active first), filtered by the active/all toggle; finished lanes faded
+    const runs = orderedRuns().filter(run => showDone || !isDone(run));
+    const n=Math.max(1,runs.length), laneW=11, gapZ=1.7, z0=-(n-1)*gapZ/2;
     const sgeo=new THREE.SphereGeometry(0.17,16,16), hgeo=new THREE.SphereGeometry(0.34,16,16);
-    BOARD.forEach((run, i)=>{
+    runs.forEach((run, i)=>{
       const steps=Array.isArray(run.steps)?run.steps:[];
       const m=steps.length||1, active=run.active_index|0, merged=!!run.merged;
-      const z=z0 + i*gapZ;
-      // track line under the lane
+      const z=z0 + i*gapZ, fade = merged ? 0.42 : 1;
       const a=new THREE.Vector3(-laneW/2,0,z), b=new THREE.Vector3(laneW/2,0,z);
       const tube=new THREE.Mesh(new THREE.TubeGeometry(new THREE.LineCurve3(a,b),1,0.025,6,false),
-                                new THREE.MeshBasicMaterial({color:TUBE_COL,transparent:true,opacity:0.6}));
-      scene.add(tube);
+                                new THREE.MeshBasicMaterial({color:TUBE_COL,transparent:true,opacity:0.6*fade}));
+      scene.add(tube); laneObjs.push(tube);
       steps.forEach((s, idx)=>{
         const x=-laneW/2 + (m>1 ? idx/(m-1) : 0.5)*laneW;
         const hex=COL[stepTone(idx, active, merged, s)];
-        const core=new THREE.Mesh(sgeo,new THREE.MeshBasicMaterial({color:hex})); core.position.set(x,0,z); scene.add(core);
-        if(idx===active){
+        const core=new THREE.Mesh(sgeo,new THREE.MeshBasicMaterial({color:hex,transparent:true,opacity:fade}));
+        core.position.set(x,0,z); scene.add(core); laneObjs.push(core);
+        if(idx===active && !merged){
           const halo=new THREE.Mesh(hgeo,new THREE.MeshBasicMaterial({color:hex,transparent:true,opacity:0.4,blending:THREE.AdditiveBlending}));
-          halo.position.set(x,0,z); scene.add(halo); actives.push(halo);
+          halo.position.set(x,0,z); scene.add(halo); laneObjs.push(halo); actives.push(halo);
         }
       });
-      const label=makeLabel((run.project||'?')+'  '+(run.label||'')); label.position.set(-laneW/2-2.6,0,z); scene.add(label);
+      const label=makeLabel((run.project||'?')+'  '+(run.label||'')); label.material.opacity=fade;
+      label.position.set(-laneW/2-2.6,0,z); scene.add(label); laneObjs.push(label);
     });
+    camR = Math.max(laneW, n*gapZ)*0.95+6;
+  }
+  function setup3D(){
+    const canvas=document.getElementById('c3');
+    renderer=new THREE.WebGLRenderer({canvas,antialias:true,alpha:true}); renderer.setClearColor(0x000000,0);
+    scene=new THREE.Scene(); scene.fog=new THREE.Fog(FOG_COL,16,52);
+    camera=new THREE.PerspectiveCamera(50,2,0.1,200);
     let drag=false,px=0,py=0,yaw=0,pitch=0.5,auto=0,last=0;
     canvas.addEventListener('pointerdown',e=>{drag=true;px=e.clientX;py=e.clientY;});
     window.addEventListener('pointerup',()=>drag=false);
     window.addEventListener('pointermove',e=>{if(!drag)return;yaw+=(e.clientX-px)*0.006;pitch+=(e.clientY-py)*0.004;pitch=Math.max(0.1,Math.min(1.1,pitch));px=e.clientX;py=e.clientY;});
-    const span=Math.max(laneW, n*gapZ), r=span*0.95+6;
     function f(t){
       const dt=Math.min(0.05,(t-last)/1000); last=t; auto+= drag?0:dt*0.12; const ay=yaw+auto;
-      camera.position.set(Math.sin(ay)*r, 3+Math.sin(pitch)*r*0.7, Math.cos(ay)*r); camera.lookAt(0,0,0);
+      camera.position.set(Math.sin(ay)*camR, 3+Math.sin(pitch)*camR*0.7, Math.cos(ay)*camR); camera.lookAt(0,0,0);
       const pulse=0.4+0.4*Math.sin(t*0.005);
       actives.forEach(h=>{ h.material.opacity=0.25+pulse*0.5; h.scale.setScalar(1+pulse*0.5); });
       renderer.render(scene,camera); requestAnimationFrame(f);
     }
-    requestAnimationFrame(f); resize3D();
+    requestAnimationFrame(f);
+  }
+  function init3D(){
+    if(!window.THREE){ const h=document.querySelector('.hud3'); if(h) h.textContent='3D unavailable'; return; }
+    if(!started3d){ started3d=true; setup3D(); }
+    clear3D(); build3D(); resize3D();
   }
   function resize3D(){ if(!renderer) return; const w=document.getElementById('scene3'); renderer.setPixelRatio(Math.min(2,window.devicePixelRatio||1)); renderer.setSize(w.clientWidth,w.clientHeight,false); camera.aspect=w.clientWidth/w.clientHeight; camera.updateProjectionMatrix(); }
   window.addEventListener('resize',resize3D);
@@ -222,7 +255,22 @@
     if(m==='3d'){ try{ init3D(); resize3D(); }catch(err){ const h=document.querySelector('.hud3'); if(h) h.textContent='3D unavailable'; } }
   }
   seg.addEventListener('click',e=>{ const b=e.target.closest('button'); if(b) setMode(b.dataset.m); });
-  if(new URLSearchParams(location.search).get('mode')==='3d') setMode('3d');
+
+  // ---- active / all filter ----
+  const segf=document.getElementById('segf');
+  function setFilter(f){
+    showDone = f!=='active';
+    document.body.classList.toggle('active-only', !showDone);
+    [...segf.children].forEach(b=>b.classList.toggle('on',b.dataset.f===f));
+    emptyActive.style.display = (!showDone && !anyActive) ? 'block' : 'none';
+    renderCount();
+    if(started3d){ clear3D(); build3D(); resize3D(); }
+  }
+  segf.addEventListener('click',e=>{ const b=e.target.closest('button'); if(b) setFilter(b.dataset.f); });
+
+  const params=new URLSearchParams(location.search);
+  if(params.get('mode')==='3d') setMode('3d');
+  if(params.get('filter')==='active') setFilter('active');
 
   // The 2D grid re-themes live via CSS. The 3D scene baked its palette at init,
   // so if the system theme flips while the 3D scene is already built, reload to

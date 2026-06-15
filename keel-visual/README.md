@@ -144,6 +144,12 @@ Both views follow your **system light/dark theme** automatically
 theme on load (it reloads to re-theme if you flip the system theme while it's
 open). The screenshots above are the dark theme.
 
+Finished (merged) runs don't drop off the board — keel-visual only observes, so
+a run stays while its worktree + checkpoint exist. To keep active work in focus,
+finished runs are **sorted last and faded**, and an **`all` / `active`** filter
+in the header (or `?filter=active`) hides them entirely — in both the 2D grid and
+the 3D scene. Nothing is removed from disk; it's purely a view filter.
+
 ![keel-visual board — 3D scene](screenshots/board-3d.png)
 
 ### 1. Terminal — `keel-visual play` (runs in the CLI)
