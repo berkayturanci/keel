@@ -6963,5 +6963,90 @@ class TestGatherIssueFacts(unittest.TestCase):
         self.assertFalse(authoritative)
 
 
+class TestActivityCli(unittest.TestCase):
+    def _cfg(self):
+        return _write_config_with_checkpoint("'true'")
+
+    def test_write_read_done_clear_cycle(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            cfg_path = self._cfg()
+            rc, out, _ = run(["activity", cfg_path, "--root", d, "--write",
+                              "--command", "triage", "--run-id", "triage-2260",
+                              "--phase", "classify", "--issue", "2260"])
+            self.assertEqual(rc, 0)
+            self.assertIn("triage-2260", out)
+            self.assertIn("running", out)
+
+            rc, out, _ = run(["activity", cfg_path, "--root", d])
+            self.assertEqual(rc, 0)
+            self.assertIn("1 record(s)", out)
+
+            rc, out, _ = run(["activity", cfg_path, "--root", d, "--done",
+                              "--run-id", "triage-2260"])
+            self.assertEqual(rc, 0)
+            self.assertIn("done", out)
+
+            rc, out, _ = run(["activity", cfg_path, "--root", d, "--clear",
+                              "--run-id", "triage-2260"])
+            self.assertEqual(rc, 0)
+            self.assertIn("cleared", out)
+
+            rc, out, _ = run(["activity", cfg_path, "--root", d])
+            self.assertIn("0 record(s)", out)
+
+    def test_json_output(self):
+        import json as _json
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            cfg_path = self._cfg()
+            run(["activity", cfg_path, "--root", d, "--write", "--command",
+                 "morning", "--run-id", "m1", "--phase", "config"])
+            rc, out, _ = run(["activity", cfg_path, "--root", d, "--json"])
+            self.assertEqual(rc, 0)
+            payload = _json.loads(out)
+            self.assertEqual(len(payload["activity"]), 1)
+            self.assertFalse(payload["contract"]["touches_checkpoint"])
+
+    def test_done_missing_record(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, _, err = run(["activity", self._cfg(), "--root", d, "--done",
+                              "--run-id", "ghost"])
+            self.assertEqual(rc, 1)
+            self.assertIn("no activity record", err)
+
+    def test_clear_nothing(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["activity", self._cfg(), "--root", d, "--clear",
+                              "--run-id", "ghost"])
+            self.assertEqual(rc, 0)
+            self.assertIn("nothing to clear", out)
+
+    def test_bad_phase_is_friendly_error(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, _, err = run(["activity", self._cfg(), "--root", d, "--write",
+                              "--command", "triage", "--run-id", "x",
+                              "--phase", "nope"])
+            self.assertEqual(rc, 1)
+            self.assertIn("not a triage flow phase", err)
+
+    def test_missing_config(self):
+        rc, _, err = run(["activity", "no-such.yaml", "--root", "."])
+        self.assertEqual(rc, 1)
+        self.assertIn("no such config", err)
+
+    def test_invalid_config(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            bad = Path(d) / "bad.yaml"
+            bad.write_text("extends: keel\n", encoding="utf-8")
+            rc, _, err = run(["activity", str(bad), "--root", d])
+            self.assertEqual(rc, 1)
+            self.assertTrue(err.strip())
+
+
 if __name__ == "__main__":
     unittest.main()

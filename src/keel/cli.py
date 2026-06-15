@@ -18,6 +18,7 @@ from pathlib import Path
 
 from . import (
     __version__,
+    activity,
     artifacts,
     branchscope,
     capture,
@@ -32,6 +33,7 @@ from . import (
     doctor,
     dryrunverify,
     evidence,
+    flows,
     gates,
     git,
     github,
@@ -2464,6 +2466,72 @@ def _cmd_checkpoint(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_activity(args: argparse.Namespace) -> int:
+    """Read / write / finish / clear an additive command-activity record."""
+    try:
+        config = cfg.load_config(args.path)
+    except FileNotFoundError:
+        print(f"no such config: {args.path}", file=sys.stderr)
+        return 1
+    except cfg.ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    try:
+        if args.write:
+            path = activity.record_path(args.root, config, args.run_id)
+            record = activity.build_activity_record(
+                command=args.activity_command_name,
+                run_id=args.run_id,
+                phase=args.phase,
+                status=args.status,
+                issue=args.issue,
+                pr=args.pull_request,
+                note=args.note,
+            )
+            activity.write_activity(path, record)
+            _emit_activity(args, [record], path=str(path))
+            return 0
+        if args.done:
+            path = activity.record_path(args.root, config, args.run_id)
+            record = activity.read_activity(path)
+            if record is None:
+                print(f"no activity record for run {args.run_id}", file=sys.stderr)
+                return 1
+            record["status"] = "done"
+            activity.write_activity(path, record)
+            _emit_activity(args, [record], path=str(path))
+            return 0
+        if args.clear:
+            path = activity.record_path(args.root, config, args.run_id)
+            removed = activity.remove_activity(path)
+            _emit_activity(args, [], path=str(path), removed=removed)
+            return 0
+        records = activity.read_all_activity(activity.resolve_dir(args.root, config))
+        _emit_activity(args, records, path=str(activity.resolve_dir(args.root, config)))
+        return 0
+    except activity.ActivityError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+
+def _emit_activity(args, records, *, path, removed=None):
+    """Render activity output (JSON or a short line)."""
+    if args.json:
+        print(json.dumps(
+            {"contract": activity.activity_contract_as_dict(), "path": path,
+             "removed": removed, "activity": records},
+            indent=2, sort_keys=True))
+        return
+    if removed is not None:
+        print(f"keel activity — {'cleared' if removed else 'nothing to clear'}  {path}")
+        return
+    print(f"keel activity — {len(records)} record(s)  {path}")
+    for record in records:
+        print(f"  {record['command']:14} {record['run_id']:18} "
+              f"{record['phase']:12} {record['status']}")
+
+
 def _cmd_resume(args: argparse.Namespace) -> int:
     try:
         config = cfg.load_config(args.path)
@@ -4384,6 +4452,37 @@ def build_parser() -> argparse.ArgumentParser:
                               help="why the run stopped at this checkpoint")
     p_checkpoint.add_argument("--json", action="store_true", help="emit structured JSON")
     p_checkpoint.set_defaults(func=_cmd_checkpoint)
+
+    p_activity = sub.add_parser(
+        "activity",
+        help="read/write the additive command-activity records (live board for "
+             "non-ship commands)")
+    p_activity.add_argument("path", help="path to project.yaml")
+    p_activity.add_argument("--root", default=".",
+                            help="repo root for resolving the activity dir")
+    g_act = p_activity.add_mutually_exclusive_group()
+    g_act.add_argument("--write", action="store_true",
+                       help="write/update an activity record for --run-id")
+    g_act.add_argument("--done", action="store_true",
+                       help="mark --run-id's activity record finished")
+    g_act.add_argument("--clear", action="store_true",
+                       help="remove --run-id's activity record")
+    p_activity.add_argument("--command", dest="activity_command_name",
+                            choices=flows.command_names(), default="ship",
+                            help="workflow command the activity belongs to")
+    p_activity.add_argument("--run-id", default="run",
+                            help="run id keying the record (one file each)")
+    p_activity.add_argument("--phase", default=None,
+                            help="current flow phase id for the command (--write)")
+    p_activity.add_argument("--status", choices=activity.STATUSES, default="running",
+                            help="activity status for --write")
+    p_activity.add_argument("--issue", type=_positive_int, default=None,
+                            help="issue number to record")
+    p_activity.add_argument("--pull-request", type=_positive_int, default=None,
+                            help="pull request number to record")
+    p_activity.add_argument("--note", default=None, help="optional free-text note")
+    p_activity.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_activity.set_defaults(func=_cmd_activity)
 
     p_resume = sub.add_parser("resume", help="render a dry-run resume plan")
     p_resume.add_argument("path", help="path to project.yaml")
