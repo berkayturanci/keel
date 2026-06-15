@@ -263,7 +263,7 @@ The handoff runs ai-jury with its own configured style, so set
 
 ## Install
 
-keel-visual needs **keel core ≥ 1.3.0** (it reads `keel.flows`, the ledger, and
+keel-visual needs **keel core ≥ 1.4.0** (it reads `keel.flows`, the ledger, and
 the checkpoint). Both packages are on PyPI — [`keel-visual`](https://pypi.org/project/keel-visual/)
 pulls in [`keel-workflow`](https://pypi.org/project/keel-workflow/) automatically:
 

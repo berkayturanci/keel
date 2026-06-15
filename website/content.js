@@ -12,9 +12,9 @@ window.KEEL = {
     tagline: "Turn coding agents into work owners.",
     blurb:
       "A project-neutral, multi-agent workflow backbone that drives a GitHub issue from intake to done — projects set values and snap in their own Lego.",
-    version: "v1.3.0",
+    version: "v1.4.0",
     install: "pip install keel-workflow",
-    installAlt: "pip install \"git+https://github.com/berkayturanci/keel@v1.3.0\"",
+    installAlt: "pip install \"git+https://github.com/berkayturanci/keel@v1.4.0\"",
     pluginAdd: "/plugin marketplace add berkayturanci/keel",
     pluginInstall: "/plugin install keel",
     repo: "https://github.com/berkayturanci/keel",

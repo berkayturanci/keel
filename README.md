@@ -107,7 +107,7 @@ keel is a Python (≥3.11) package with one runtime dependency (PyYAML):
 
 ```bash
 pip install keel-workflow                                     # from PyPI (provides the `keel` command)
-pip install "git+https://github.com/berkayturanci/keel@v1.3.0"  # or pin an existing git tag
+pip install "git+https://github.com/berkayturanci/keel@v1.4.0"  # or pin an existing git tag
 ```
 
 In a cloud agent session, install it from a `SessionStart` hook (or add keel to the
@@ -243,7 +243,7 @@ animated run visualizer. It *renders* a keel run from the ledger/checkpoint it
 already writes — it never drives one. Terminal `play` (flow + wave ribbon,
 `--loop`, live `--follow`), a parallel `dash` board, and a web `render` (2D flow
 + 3D ribbon), for any of the 16 command flows. Depends on this core
-(`keel-workflow >= 1.3.0`); the core never depends on it. See
+(`keel-workflow >= 1.4.0`); the core never depends on it. See
 [`keel-visual/README.md`](keel-visual/README.md).
 
 ## Repo layout
