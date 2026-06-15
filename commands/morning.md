@@ -136,4 +136,4 @@ keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the r
 Strictly **best-effort and fail-soft**: it needs keel core ≥ 1.6.0; if `keel activity`
 is unavailable, skip it silently and never block the command on it.
 
-<!-- keel-generated: surface=plugin command=morning keel_version=1.5.0 source_sha256=d18a3a3c28289532062a5c8c574edcfa475a6df3345b9fabed52af6486152e25 generated_sha256=d18a3a3c28289532062a5c8c574edcfa475a6df3345b9fabed52af6486152e25 -->
+<!-- keel-generated: surface=plugin command=morning keel_version=1.6.0 source_sha256=d18a3a3c28289532062a5c8c574edcfa475a6df3345b9fabed52af6486152e25 generated_sha256=d18a3a3c28289532062a5c8c574edcfa475a6df3345b9fabed52af6486152e25 -->

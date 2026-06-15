@@ -6,6 +6,19 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.6.0] — 2026-06-15
+
+### Added
+- **Live board for non-ship commands — `keel activity`.** A new additive,
+  checkpoint-free channel: per-run JSON records under `.keel/activity/` that any
+  command's adapter stamps as it moves through its own `keel.flows` phases. The
+  `keel activity` CLI (`--write`/`--done`/`--clear`/read) writes them; records are
+  keyed by `run_id` so concurrent commands never clobber one another, and `phase`
+  is validated against the command's flow. It never touches the resumable ship
+  checkpoint contract (#437). Every stepped non-ship command adapter now emits it
+  best-effort, so `keel-visual` shows triage / morning / pr-loop / … live on the
+  board with their own phases (#439).
+
 ### Changed
 - **CI now exercises the `keel-visual` companion too.** A `test-visual` job runs the
   keel-visual suite (with its own 100% coverage gate) and ruff across the full
