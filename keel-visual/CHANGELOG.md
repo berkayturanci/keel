@@ -6,6 +6,15 @@ All notable changes to keel-visual are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.4] — 2026-06-16
+
+### Changed
+- **Board de-duplicates a ship run's activity record against its checkpoint.** As of
+  keel 1.6.3 the `ship` adapter stamps the activity channel too (so agent-driven ship
+  runs reliably show live). A worktree that has both a ship checkpoint and a ship
+  activity record for the same run now lists that run once — keyed by the shared
+  run-id — preferring the checkpoint's richer detail (merge gate, jury, test gate).
+
 ## [0.5.3] — 2026-06-16
 
 ### Fixed

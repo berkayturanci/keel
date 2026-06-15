@@ -26,6 +26,28 @@ All committed/published artifacts (commits, branch names, PR/issue titles + bodi
 comments, queue files) follow the project's language policy. Free-form chat with the user
 may stay in any language.
 
+## Live progress — stamp this run (required)
+
+So this run shows live on `keel-visual`'s board — exactly like every other keel command —
+record it with `keel activity` **as you go**. Ship's phases are the backbone:
+`s0` → `s1` → `s2` → `s3` → `s4` → `s5` → `s6` → `s7` → `s8` → `s9` → `s10` → `s11` → `s12`
+(config → select → branch → guard → implement → classify → ci → review → test → fixloop →
+merge → capture → close). Use **the same `--run-id`** you pass to `keel ship` / `keel
+checkpoint` (e.g. `ship-<issue-or-pr>`) so the board treats them as one run:
+
+- **Right now, before Step 0 below**, stamp the first phase:
+  `keel activity .keel/project.yaml --root . --write --command ship --run-id "$RUN_ID" --phase s0`
+- Re-run with the next `--phase` (`s1`, `s2`, …) **as you advance** through the backbone,
+  adding `--issue <N>` once the issue is selected (s1) and `--pull-request <PR>` once the PR
+  exists (s2+) so the board can pair this with the checkpoint/ledger records and never
+  double-list the same run.
+- At the end (after close): `keel activity .keel/project.yaml --root . --run-id "$RUN_ID" --done`
+
+This is in addition to the rich `keel checkpoint` / ledger records the steps below write;
+the board de-duplicates the two and prefers the checkpoint's detail. Treat it like any other
+contractual step — do not skip it. The one allowed exception is a core too old to ship
+`keel activity` (keel < 1.6.0): then skip it silently and never block the command.
+
 ## Step 0 (s0) — orient (deterministic, via the CLI)
 
 ```bash

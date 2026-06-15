@@ -6,7 +6,18 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
-## [1.6.2] — 2026-06-15
+## [1.6.3] — 2026-06-16
+
+### Changed
+- **`ship` now stamps the live activity channel too.** Ship was the only command
+  whose adapter didn't record `keel activity` as it ran — it relied on the richer
+  `keel checkpoint`/ledger records, which an agent that orchestrates the backbone by
+  hand often never writes (and which vanish when the merged run's worktree is
+  removed). So agent-driven ship runs never appeared on the `keel-visual` board. The
+  ship adapter now stamps `keel activity --command ship --phase s0…s12` as it advances
+  (using the same `--run-id` as the checkpoint), exactly like the other 15 commands,
+  so every ship run shows live. keel-visual de-duplicates the activity record against
+  the checkpoint by run-id, preferring the checkpoint's detail.
 
 ### Changed
 - **`keel activity` emission is now a required, up-front adapter step.** In 1.6.0/1.6.1
