@@ -6,6 +6,8 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.5.0] — 2026-06-15
+
 ### Added
 - **Windows support, proven in CI.** The test matrix adds `windows-latest` across Python
   3.11–3.13. The merge-window logic uses the stdlib `zoneinfo`, which has no IANA database
