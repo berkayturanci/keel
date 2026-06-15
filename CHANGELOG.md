@@ -6,6 +6,12 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **CI now runs on Windows.** The test matrix adds `windows-latest` across Python
+  3.11–3.13, proving the CLI's cross-OS subprocess/path behaviour. Config validation
+  runs there too (under bash so the `projects/*.yaml` glob expands); the make-based
+  dogfood gate step is skipped on Windows since `make` is unavailable on the runner.
+
 ## [1.3.0] — 2026-06-14
 
 ### Added

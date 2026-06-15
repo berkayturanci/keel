@@ -15,7 +15,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        # Full Python coverage on every OS, including Windows, to prove the CLI's
+        # cross-OS subprocess/path behaviour. The make-based dogfood step is skipped
+        # on Windows (no `make`); the unit suite + config validation still run there.
+        os: [ubuntu-latest, macos-latest, windows-latest]
         python: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
@@ -31,8 +34,15 @@ jobs:
           coverage run -m unittest discover -s tests
           coverage report
       - name: Validate seed configs and dogfood config
+        # bash so the projects/*.yaml glob expands the same way on every runner
+        # (PowerShell does not pass through an unexpanded glob to the program).
+        shell: bash
         run: python -m keel validate projects/*.yaml .keel/project.yaml
       - name: Dogfood — keel runs its own gates on keel-core
+        # The dogfood gates shell out to `make` (build_gate_cmd/lint_cmd), which is
+        # not available on the Windows runner; the unit suite already exercises the
+        # gate-running core on every OS.
+        if: runner.os != 'Windows'
         run: |
           python -m keel plan .keel/project.yaml --root .
           python -m keel run-gates .keel/project.yaml --root .
