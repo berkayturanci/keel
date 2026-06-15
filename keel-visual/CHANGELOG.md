@@ -6,6 +6,18 @@ All notable changes to keel-visual are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.3] — 2026-06-16
+
+### Fixed
+- **Dashboard step labels no longer overlap on custom flows.** In the `serve`
+  detail drawer the monospace step id sat in a fixed 34px box sized for the ship
+  ids (`s0`–`s12`); a custom command whose step ids are full words (`config`,
+  `enrichment`, …) overflowed that box and painted on top of the step name. The id
+  column now sizes to its content, and where a flow's id *is* its name the
+  redundant id is dropped so each step shows a single clean label. The same
+  `id · name` de-duplication is applied to the card footer, the drawer phase row,
+  and the step tooltip.
+
 ## [0.5.2] — 2026-06-16
 
 ### Added

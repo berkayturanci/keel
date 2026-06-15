@@ -93,7 +93,7 @@
   .frow .fi{width:11px;height:11px;border-radius:50%;background:var(--idle);flex:none}
   .frow.don .fi{background:var(--ok)} .frow.cur .fi{background:var(--info)}
   .frow.gat .fi{background:var(--warn)} .frow.fai .fi{background:var(--danger)}
-  .frow .fid{font-family:ui-monospace,Menlo,monospace;color:var(--mut);width:34px}
+  .frow .fid{font-family:ui-monospace,Menlo,monospace;color:var(--mut);min-width:34px;flex:none;white-space:nowrap}
   .frow.cur .fnm{font-weight:600;color:var(--txt)}
   .meta{width:100%;font-size:13px;border-collapse:collapse}
   .meta td{padding:6px 0;border-top:1px solid var(--line)}
@@ -127,6 +127,9 @@
   const isDone = r => !!r.merged;
   const keyOf = r => (r.project||'')+'|'+(r.label||'')+'|'+(r.command||'');
   const ordered = () => BOARD.map(r=>r).sort((a,b)=>(isDone(a)?1:0)-(isDone(b)?1:0));
+  // ship ids (s4) differ from their name (implement) → "s4 · implement"; custom flows
+  // where the id IS the name (health/health) would read "health · health" → collapse.
+  const idn = (id,nm) => (id&&nm&&id!==nm) ? id+' · '+nm : (nm||id||'?');
 
   function stepTone(idx, active, merged, s){
     if(merged && idx<=active) return "done";
@@ -156,8 +159,9 @@
     const steps = Array.isArray(run.steps)?run.steps:[], s = steps[idx]||{};
     const tone = stepTone(idx, run.active_index|0, !!run.merged, s);
     tip.textContent='';
-    const th=el('div','th'); const tid=el('span','tid'); tid.textContent=s.id||''; const tnm=el('span'); tnm.textContent=s.name||'';
-    th.append(tid,tnm);
+    const th=el('div','th');
+    if(s.id && s.name && s.id!==s.name){ const tid=el('span','tid'); tid.textContent=s.id; th.appendChild(tid); }
+    const tnm=el('span'); tnm.textContent=s.name||s.id||''; th.appendChild(tnm);
     if(s.kind && (s.kind==='gate'||s.kind==='merge')){ const k=el('span','tkind'); k.textContent=s.kind; th.appendChild(k); }
     const st=el('div','tst'); const si=el('i'); si.style.background=TONE_COL[tone]; const sl=el('span'); sl.textContent=TONE_LABEL[tone]; st.append(si,sl);
     const td=el('div','td'); td.textContent = SHIP_DESC[s.id] || ('Phase '+(idx+1)+' of '+(steps.length||1)+' in the '+(run.command||'?')+' flow.');
@@ -208,7 +212,7 @@
       });
       card.appendChild(strip);
       const foot=el('div','cfoot');
-      const step=el('span','step'); step.textContent=(run.active_id||'?')+' · '+(run.active_name||'?'); foot.appendChild(step);
+      const step=el('span','step'); step.textContent=idn(run.active_id,run.active_name); foot.appendChild(step);
       const cmd=el('span'); cmd.textContent=run.command||'ship'; foot.appendChild(cmd);
       const jury=run.jury||{};
       if(jury.active){ const j=el('span','jpill'+(jury.mode==='gating'?' gating':'')); j.textContent='jury · '+(jury.mode||'on'); foot.appendChild(j); }
@@ -238,13 +242,18 @@
       const tone=stepTone(idx,active,merged,s);
       const cls = tone==='done'?'don':tone==='active'?'cur':tone==='gate'?'gat':tone==='fail'?'fai':'';
       const row=el('div','frow '+cls);
-      const fi=el('span','fi'); const fid=el('span','fid'); fid.textContent=s.id||''; const fnm=el('span','fnm'); fnm.textContent=s.name||NAMES[s.id]||'';
-      row.append(fi,fid,fnm); flow.appendChild(row);
+      const id=s.id||'', nm=s.name||NAMES[s.id]||'';
+      const fi=el('span','fi'); row.append(fi);
+      // ship ids (s0..s12) differ from their name → show both; custom flows where the
+      // id IS the name (config/config) would overlap, so collapse to a single label.
+      if(id && nm && id!==nm){ const fid=el('span','fid'); fid.textContent=id; row.append(fid); }
+      const fnm=el('span','fnm'); fnm.textContent=nm||id; row.append(fnm);
+      flow.appendChild(row);
     });
     drawer.appendChild(flow);
     const meta=el('table','meta'); const rows=[
       ['command', run.command||'ship'],
-      ['phase', (run.active_id||'?')+' · '+(run.active_name||'?')+'  ('+(active+1)+'/'+(steps.length||1)+')'],
+      ['phase', idn(run.active_id,run.active_name)+'  ('+(active+1)+'/'+(steps.length||1)+')'],
       ['status', run.status||'active'],
     ];
     if(jury.active) rows.push(['jury', jury.mode||'on']);
