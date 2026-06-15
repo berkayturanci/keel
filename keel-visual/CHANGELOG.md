@@ -6,6 +6,14 @@ All notable changes to keel-visual are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-06-16
+
+### Added
+- **Hover a step dot to see which step it is.** The compact step strips on the
+  board/dashboard cards now show a styled tooltip (`sN · name`, e.g. `s8 · test`)
+  on hover — the dots were unlabeled before. Applies to both `render --all` and the
+  live `serve` dashboard.
+
 ## [0.5.0] — 2026-06-15
 
 ### Added

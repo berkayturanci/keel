@@ -49,7 +49,9 @@
   .badge.gate{background:rgba(240,160,32,.16);color:var(--warn)}
   .badge.blocked{background:rgba(255,84,104,.18);color:var(--danger)}
   .strip{display:flex;align-items:center;gap:0;margin:4px 0 11px}
-  .dot{width:13px;height:13px;border-radius:50%;background:var(--idle);flex:none;border:2px solid transparent}
+  .dot{width:13px;height:13px;border-radius:50%;background:var(--idle);flex:none;border:2px solid transparent;position:relative}
+  .dot[data-step]:hover::after{content:attr(data-step);position:absolute;bottom:170%;left:50%;transform:translateX(-50%);background:var(--panel2);color:var(--txt);border:1px solid var(--line2);font-size:11px;font-family:ui-monospace,Menlo,monospace;white-space:nowrap;padding:3px 8px;border-radius:7px;pointer-events:none;z-index:30;box-shadow:0 6px 16px rgba(0,0,0,.28)}
+  .dot[data-step]:hover::before{content:'';position:absolute;bottom:170%;left:50%;transform:translate(-50%,7px);border:5px solid transparent;border-top-color:var(--line2);z-index:30}
   .seg{height:2px;flex:1;background:var(--line2);min-width:4px}
   .dot.done{background:var(--ok)}
   .seg.done{background:var(--ok)}
@@ -156,7 +158,7 @@
       const dot = el('span','dot');
       const tone = stepTone(idx, active, merged, s);
       if(tone!=="idle") dot.classList.add(tone);
-      dot.title = (s.id||'')+' · '+(s.name||'');
+      dot.title = (s.id||'')+' · '+(s.name||''); dot.setAttribute('data-step', dot.title);
       strip.appendChild(dot);
     });
     card.appendChild(strip);
