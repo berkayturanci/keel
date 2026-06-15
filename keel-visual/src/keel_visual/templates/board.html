@@ -10,13 +10,23 @@
     --txt:#e7ecf7; --mut:#8ea0c6; --dim:#5b6b92;
     --idle:#2a3550; --info:#49b6ff; --warn:#f0a020; --minor:#e6c12e;
     --danger:#ff5468; --ok:#7ad14a; --r:14px;
+    --markbg:#0c1118; --scene-a:#10182e; --scene-b:#080c16;
+  }
+  @media (prefers-color-scheme: light){
+    :root{
+      --bg:#f4f7fc; --panel:#ffffff; --panel2:#eef2f9; --line:#dce3f0; --line2:#c6d1e5;
+      --txt:#1a2336; --mut:#55627d; --dim:#8694b1;
+      --idle:#cbd5e8; --info:#1f8fe6; --warn:#cf8410; --minor:#b8950f;
+      --danger:#e0364f; --ok:#4ba322;
+      --markbg:#eef3fb; --scene-a:#eef3fb; --scene-b:#dde6f4;
+    }
   }
   *{box-sizing:border-box}
   html,body{margin:0;background:var(--bg);color:var(--txt);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;-webkit-font-smoothing:antialiased}
   body{padding:26px;max-width:1280px;margin:0 auto}
   header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:20px}
   .brand{display:flex;align-items:center;gap:10px;font-size:18px;font-weight:600}
-  .brand .mark{width:30px;height:30px;border-radius:9px;background:#0c1118;border:1.5px solid var(--ok);box-shadow:0 0 16px rgba(122,209,74,.45);display:inline-flex;align-items:center;justify-content:center;overflow:hidden}
+  .brand .mark{width:30px;height:30px;border-radius:9px;background:var(--markbg);border:1.5px solid var(--ok);box-shadow:0 0 16px rgba(122,209,74,.45);display:inline-flex;align-items:center;justify-content:center;overflow:hidden}
   .brand .mark svg{width:100%;height:100%;display:block}
   .seg3{display:flex;background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
   .seg3 button{border:0;background:transparent;color:var(--mut);font:inherit;font-size:13px;padding:7px 13px;cursor:pointer}
@@ -49,7 +59,7 @@
   .jury{margin-left:auto;font-size:11px;font-weight:600;color:var(--info);background:rgba(73,182,255,.12);border:1px solid var(--line);border-radius:999px;padding:2px 8px}
   .jury.gating{color:var(--warn);background:rgba(240,160,32,.12)}
   .empty{color:var(--dim);padding:40px;text-align:center;border:1px dashed var(--line2);border-radius:var(--r)}
-  #scene3{position:relative;height:clamp(440px,64vh,640px);border-radius:var(--r);overflow:hidden;background:radial-gradient(120% 100% at 50% 0%,#10182e 0%,#080c16 70%);border:1px solid var(--line)}
+  #scene3{position:relative;height:clamp(440px,64vh,640px);border-radius:var(--r);overflow:hidden;background:radial-gradient(120% 100% at 50% 0%,var(--scene-a) 0%,var(--scene-b) 70%);border:1px solid var(--line)}
   #c3{display:block;width:100%;height:100%}
   .hud3{position:absolute;left:16px;bottom:13px;font-size:12px;color:var(--dim);letter-spacing:.03em}
   .legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--mut);margin-top:16px}
@@ -89,7 +99,14 @@
   count.append(bold(BOARD.length), ' run'+(BOARD.length===1?'':'s')+' across ',
                bold(nproj), ' project'+(nproj===1?'':'s'));
   const GATE_KINDS = {gate:1, merge:1};
-  const COL = {done:0x7ad14a, active:0x49b6ff, gate:0xf0a020, fail:0xff5468, idle:0x2a3550};
+  // 3D palette follows the system theme (the 2D grid theming is pure CSS). Read
+  // once at init — prefers-color-scheme rarely flips mid-session, and the 3D
+  // scene is built lazily; a change listener below rebuilds it if it does.
+  const LIGHT = !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches);
+  const COL = LIGHT
+    ? {done:0x4ba322, active:0x1f8fe6, gate:0xcf8410, fail:0xe0364f, idle:0xb9c4da}
+    : {done:0x7ad14a, active:0x49b6ff, gate:0xf0a020, fail:0xff5468, idle:0x2a3550};
+  const FOG_COL = LIGHT?0xeef3fb:0x080c16, TUBE_COL = LIGHT?0xc6d1e5:0x2a3756, LABEL_COL = LIGHT?'#1a2336':'#e7ecf7';
 
   // colour token for a step at index idx given the run's active/merged state
   function stepTone(idx, active, merged, s){
@@ -145,7 +162,7 @@
     const ctx=c.getContext('2d');
     ctx.font='600 30px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif';
     ctx.textBaseline='middle'; ctx.textAlign='right';
-    ctx.fillStyle='#e7ecf7'; ctx.fillText(String(text).slice(0,42), 314, 34);
+    ctx.fillStyle=LABEL_COL; ctx.fillText(String(text).slice(0,42), 314, 34);
     const tex=new THREE.CanvasTexture(c); tex.anisotropy=2;
     const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:tex,transparent:true,depthTest:false}));
     sp.scale.set(4.0, 0.8, 1); return sp;
@@ -154,8 +171,8 @@
     if(started3d) return; started3d=true;
     if(!window.THREE){ document.querySelector('.hud3').textContent='3D unavailable'; return; }
     const canvas=document.getElementById('c3'), wrap=document.getElementById('scene3');
-    renderer=new THREE.WebGLRenderer({canvas,antialias:true}); renderer.setClearColor(0x080c16,0);
-    scene=new THREE.Scene(); scene.fog=new THREE.Fog(0x080c16,16,52);
+    renderer=new THREE.WebGLRenderer({canvas,antialias:true,alpha:true}); renderer.setClearColor(0x000000,0);
+    scene=new THREE.Scene(); scene.fog=new THREE.Fog(FOG_COL,16,52);
     camera=new THREE.PerspectiveCamera(50,2,0.1,200);
     const n=Math.max(1,BOARD.length), laneW=11, gapZ=1.7, z0=-(n-1)*gapZ/2;
     const sgeo=new THREE.SphereGeometry(0.17,16,16), hgeo=new THREE.SphereGeometry(0.34,16,16);
@@ -166,7 +183,7 @@
       // track line under the lane
       const a=new THREE.Vector3(-laneW/2,0,z), b=new THREE.Vector3(laneW/2,0,z);
       const tube=new THREE.Mesh(new THREE.TubeGeometry(new THREE.LineCurve3(a,b),1,0.025,6,false),
-                                new THREE.MeshBasicMaterial({color:0x2a3756,transparent:true,opacity:0.6}));
+                                new THREE.MeshBasicMaterial({color:TUBE_COL,transparent:true,opacity:0.6}));
       scene.add(tube);
       steps.forEach((s, idx)=>{
         const x=-laneW/2 + (m>1 ? idx/(m-1) : 0.5)*laneW;
@@ -206,6 +223,16 @@
   }
   seg.addEventListener('click',e=>{ const b=e.target.closest('button'); if(b) setMode(b.dataset.m); });
   if(new URLSearchParams(location.search).get('mode')==='3d') setMode('3d');
+
+  // The 2D grid re-themes live via CSS. The 3D scene baked its palette at init,
+  // so if the system theme flips while the 3D scene is already built, reload to
+  // rebuild it cleanly (no-op if the user never opened 3D).
+  if(window.matchMedia){
+    const mq=window.matchMedia('(prefers-color-scheme: light)');
+    const onTheme=()=>{ if(started3d) location.reload(); };
+    if(mq.addEventListener) mq.addEventListener('change',onTheme);
+    else if(mq.addListener) mq.addListener(onTheme);
+  }
   window.__keelBoardReady=true;
 })();
 </script>

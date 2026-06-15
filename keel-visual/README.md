@@ -139,6 +139,11 @@ active node glowing where the run currently sits, each lane labelled
 `project #PR`. Drag to orbit; it auto-rotates otherwise. It needs Three.js from
 a CDN, so the 3D view (only) wants network; the 2D grid stays fully offline.
 
+Both views follow your **system light/dark theme** automatically
+(`prefers-color-scheme`) — the grid re-themes live, and the 3D scene picks up the
+theme on load (it reloads to re-theme if you flip the system theme while it's
+open). The screenshots above are the dark theme.
+
 ![keel-visual board — 3D scene](screenshots/board-3d.png)
 
 ### 1. Terminal — `keel-visual play` (runs in the CLI)
