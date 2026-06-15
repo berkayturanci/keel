@@ -6,6 +6,24 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-06-15
+
+### Added
+- **Live jury mode in the run checkpoint.** `keel checkpoint` records
+  `state.jury_mode` (off/advisory/gating) so an observer can read the jury's
+  *live* mode mid-run from the checkpoint, not only post-run from the ledger
+  `run_context`. `keel-visual --follow` uses this to surface the jury as it
+  resolves (#397).
+
+### Security
+- **`urllib.request.urlopen` restricted to safe schemes.** Guard against
+  `file:`/other non-HTTP(S) schemes reaching `urlopen`, closing a MEDIUM
+  scheme-confusion vector (#393).
+
+### Changed
+- **Faster unique-collection helpers.** Replaced O(N²) membership scans with
+  set-backed dedup in the collection utilities (#396).
+
 ## [1.3.0] — 2026-06-14
 
 ### Added
