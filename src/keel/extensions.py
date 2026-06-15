@@ -19,6 +19,12 @@ from typing import TYPE_CHECKING
 
 import yaml
 
+try:
+    from yaml import CSafeLoader as SafeLoader
+except ImportError:
+    from yaml import SafeLoader
+
+
 from .capabilities import validate_names
 from .model import SLOTS, slot_meta
 
@@ -60,7 +66,7 @@ def split_frontmatter(text: str) -> tuple[dict, str]:
         return {}, text
     for i in range(1, len(lines)):
         if lines[i].strip() == "---":
-            meta = yaml.safe_load("\n".join(lines[1:i])) or {}
+            meta = yaml.load("\n".join(lines[1:i]), Loader=SafeLoader) or {}
             body = "\n".join(lines[i + 1:])
             return meta, body
     raise ExtensionError("unterminated frontmatter (no closing '---')")
