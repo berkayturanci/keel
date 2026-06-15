@@ -45,6 +45,22 @@ ways:
 In short: *agent runs ship → you watch beside it* (a second terminal or the web
 page), not *agent runs ship → animation in the agent's output*.
 
+Two scope limits follow from "it reads the records":
+
+- **One repo at a time.** `dash` and `--follow` watch a **single** keel project —
+  `dash` enumerates that repo's worktrees via `git worktree list`, so it shows
+  every parallel run *of that repo* on one board. It does **not** aggregate
+  across separate repos: a parent folder that merely *contains* several projects
+  isn't a git repo or a keel project, so point keel-visual at each project and
+  run one instance per repo (a tab each). A cross-project board would be a
+  separate feature.
+- **Same machine / filesystem.** keel-visual reads the ledger and checkpoint
+  **files** directly, so it sees a run only when those files land on the **same
+  filesystem** it's reading. A run on *this* machine — your own `keel ship` or a
+  **local** agent (Claude Code) — is visible; a run executing on a **different**
+  machine (a remote/cloud session) writes its records *there*, so it won't appear
+  in a local keel-visual. Watch it from wherever the run actually writes.
+
 ## Every command, not just ship
 
 `--command` accepts **all 16 keel commands** (ci-check, coverage, deps-audit,
