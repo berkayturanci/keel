@@ -57,11 +57,13 @@ class TestDir(unittest.TestCase):
     def test_resolve_dir_ok(self):
         with tempfile.TemporaryDirectory() as d:
             resolved = activity.resolve_dir(d, _config())
-            self.assertTrue(str(resolved).endswith("/.keel/activity"))
+            self.assertEqual(resolved.parts[-2:], (".keel", "activity"))
 
     def test_resolve_dir_absolute_rejected(self):
+        # an OS-correct absolute path (a drive-rooted path on Windows)
+        absolute = str(Path(tempfile.gettempdir()).resolve())
         with self.assertRaises(activity.ActivityError):
-            activity.resolve_dir(".", _config(activity_dir="/abs/act"))
+            activity.resolve_dir(".", _config(activity_dir=absolute))
 
     def test_resolve_dir_escape_rejected(self):
         with self.assertRaises(activity.ActivityError):
@@ -87,7 +89,8 @@ class TestRunIdSlug(unittest.TestCase):
     def test_record_path_uses_slug(self):
         with tempfile.TemporaryDirectory() as d:
             p = activity.record_path(d, _config(), "Triage #2260")
-            self.assertTrue(str(p).endswith("/.keel/activity/triage-2260.json"))
+            self.assertEqual(p.name, "triage-2260.json")
+            self.assertEqual(p.parent.parts[-2:], (".keel", "activity"))
 
 
 class TestBuild(unittest.TestCase):
