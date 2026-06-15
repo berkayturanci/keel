@@ -184,6 +184,12 @@ keel-visual play .keel/project.yaml --follow            # live run + live jury s
 keel-visual play .keel/project.yaml --follow --theater  # + hand off to jury theater at s7
 ```
 
+ai-jury's theater has two looks — the default **flat** ANSI scene and a
+**pixel-art** deliberation room (`--theater-style pixel`, truecolor terminal).
+The handoff runs ai-jury with its own configured style, so set
+`theater_style = "pixel"` in `jury.toml` for the pixel room (or pass
+`--theater-style pixel` to `jury` directly in the two-pane mode).
+
 > The jury **gate** (keel's s8 `jury` built-in) always runs deterministically and
 > machine-readable — theater is a **human side channel** that never changes the
 > gate's verdict, the report, or CI. keel core stays neutral and tty-free; all
