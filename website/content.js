@@ -12,9 +12,9 @@ window.KEEL = {
     tagline: "Turn coding agents into work owners.",
     blurb:
       "A project-neutral, multi-agent workflow backbone that drives a GitHub issue from intake to done — projects set values and snap in their own Lego.",
-    version: "v1.4.0",
+    version: "v1.5.0",
     install: "pip install keel-workflow",
-    installAlt: "pip install \"git+https://github.com/berkayturanci/keel@v1.4.0\"",
+    installAlt: "pip install \"git+https://github.com/berkayturanci/keel@v1.5.0\"",
     pluginAdd: "/plugin marketplace add berkayturanci/keel",
     pluginInstall: "/plugin install keel",
     repo: "https://github.com/berkayturanci/keel",
@@ -239,7 +239,7 @@ window.KEEL = {
     ["What does a command actually read?", "Every command is project-neutral. It never hardcodes a branch, build/lint command, agent, glob, timezone or window — it references the knob by name and asks the keel CLI for the value, so the same /keel:ship behaves differently in each repo purely from that repo's .keel/project.yaml."],
     ["What's the jury gate?", "An opt-in review gate that runs the <a href='https://github.com/berkayturanci/ai-jury' target='_blank' rel='noopener'>ai-jury</a> multi-agent reviewer on the diff when it's installed, and is a fail-soft no-op otherwise. It snaps into the s7 review step."],
     ["Does keel use itself?", "Yes. keel drives itself: its config is .keel/project.yaml (Python, make test + make lint gates) and CI runs keel on keel-core on every push. If a gate fails, keel blocks its own merge — the same backbone every consumer gets."],
-    ["What do I need installed?", "Python 3.11+ and PyYAML — that's the one runtime dependency. The pure core is stdlib-first. Adapters install the /keel:&lt;command&gt; workflows into the surfaces your agents already read."],
+    ["What do I need installed?", "Python 3.11+ and PyYAML — that's the one runtime dependency (on Windows, also tzdata for the timezone database). It runs on Linux, macOS, and Windows. The pure core is stdlib-first. Adapters install the /keel:&lt;command&gt; workflows into the surfaces your agents already read."],
   ],
 
   /* ---- Coverage (pure core held at 100% line + branch) ----------- */
@@ -288,10 +288,10 @@ window.KEEL = {
     },
     {
       group: "Start here", title: "Install", slug: "install",
-      summary: "pip install keel-workflow (Python ≥3.11, one runtime dep: PyYAML), or pin a git tag.",
+      summary: "pip install keel-workflow (Python ≥3.11, Linux/macOS/Windows, one runtime dep: PyYAML), or pin a git tag.",
       body:
-        "<p>keel is a Python (≥3.11) package with one runtime dependency (PyYAML).</p>" +
-        "<pre class='doc-pre' tabindex='0' role='region' aria-label='Install commands'><code>pip install keel-workflow                                       <span class='cm'># from PyPI (provides the `keel` command)</span>\npip install \"git+https://github.com/berkayturanci/keel@v1.3.0\"  <span class='cm'># or pin an existing git tag</span></code></pre>" +
+        "<p>keel is a Python (≥3.11) package for Linux, macOS, and Windows, with one runtime dependency (PyYAML; on Windows it also installs <code>tzdata</code> for the timezone database).</p>" +
+        "<pre class='doc-pre' tabindex='0' role='region' aria-label='Install commands'><code>pip install keel-workflow                                       <span class='cm'># from PyPI (provides the `keel` command)</span>\npip install \"git+https://github.com/berkayturanci/keel@v1.5.0\"  <span class='cm'># or pin an existing git tag</span></code></pre>" +
         "<p>In a cloud agent session, install it from a <code>SessionStart</code> hook (or add keel to the session's repo scope) so the selected core ref is available before a run.</p>",
       source: "https://github.com/berkayturanci/keel/blob/main/README.md",
     },

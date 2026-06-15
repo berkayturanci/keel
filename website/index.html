@@ -332,7 +332,7 @@ keel ship     &lt;cfg&gt; --root .  <span class="cm"># dry assessment → decisi
 
         <!-- Security -->
         <section class="view" id="view-security" data-view="security">
-          <div class="view-head"><p class="view-kicker">Security</p><h1>No telemetry, no surprises</h1><p>keel's deterministic core makes <strong>no network calls</strong> of its own and ships a single runtime dependency (PyYAML). It collects and transmits <strong>no telemetry</strong> — the only outbound activity comes from the gate commands and agent CLIs <strong>you</strong> explicitly configure.</p></div>
+          <div class="view-head"><p class="view-kicker">Security</p><h1>No telemetry, no surprises</h1><p>keel's deterministic core makes <strong>no network calls</strong> of its own and ships a single runtime dependency (PyYAML; on Windows it also installs <code>tzdata</code> for the standard-library timezone database). It collects and transmits <strong>no telemetry</strong> — the only outbound activity comes from the gate commands and agent CLIs <strong>you</strong> explicitly configure.</p></div>
           <div class="invs">
             <div class="inv"><b>Gate commands run your shell</b><span><code style="font-family:var(--font-mono)">run-gates</code> / <code style="font-family:var(--font-mono)">ship</code> execute the build / lint / command Lego from your config. Review a config before running it on a sensitive repository — exactly as you would a Makefile or CI script.</span></div>
             <div class="inv"><b>Agent reach = agent auth</b><span>The /keel:&lt;command&gt; adapters drive coding agents that may receive diffs, push branches, comment and merge. Their reach is governed by your agent's own auth and permissions, not by keel.</span></div>

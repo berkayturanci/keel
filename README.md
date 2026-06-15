@@ -103,7 +103,9 @@ are suppressed by stable fingerprints so routine merges do not flood the learnin
 
 ## Install
 
-keel is a Python (≥3.11) package with one runtime dependency (PyYAML):
+keel runs on Linux, macOS, and Windows — a Python (≥3.11) package with one runtime
+dependency, PyYAML. (On Windows it also installs `tzdata`, which supplies the timezone
+database the standard library has no system source for there.)
 
 ```bash
 pip install keel-workflow                                     # from PyPI (provides the `keel` command)
