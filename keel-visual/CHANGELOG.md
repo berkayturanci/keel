@@ -9,6 +9,9 @@ All notable changes to keel-visual are documented here. The format follows
 ## [0.5.4] — 2026-06-16
 
 ### Added
+- **Filter box on the live dashboard.** A search field in the `serve` dashboard header
+  filters runs as you type — by project, label (`#PR`/issue/run-id), or command — and
+  composes with the all/active toggle. Useful when many projects' runs share the board.
 - **Favicon on the board pages.** The `serve` dashboard and the `render` board now
   carry the keel mark as an inline SVG favicon, so the browser tab shows the brand
   glyph instead of a blank icon (self-contained data URI — no extra file to serve).

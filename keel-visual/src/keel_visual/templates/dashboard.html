@@ -41,6 +41,9 @@
   .seg{display:flex;background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
   .seg button{border:0;background:transparent;color:var(--mut);font:inherit;font-size:13px;padding:7px 13px;cursor:pointer}
   .seg button.on{background:rgba(73,182,255,.16);color:var(--info)}
+  .search{background:var(--panel);border:1px solid var(--line);border-radius:10px;color:var(--txt);font:inherit;font-size:13px;padding:7px 12px;outline:none;width:170px}
+  .search:focus{border-color:var(--info)}
+  .search::placeholder{color:var(--mut)}
   .count{margin-left:auto;font-size:13px;color:var(--mut)}
   .count b{color:var(--txt)}
   .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(330px,100%),1fr));gap:14px}
@@ -107,6 +110,7 @@
 <header>
   <div class="brand"><span class="mark" aria-hidden="true"><svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><line x1="12" y1="40" x2="32" y2="40" stroke="#2a3744" stroke-width="3" stroke-linecap="round"></line><circle cx="12" cy="40" r="3.2" fill="#6366f1"></circle><circle cx="20" cy="40" r="3.2" fill="#6366f1"></circle><circle cx="28" cy="40" r="3.2" fill="#6366f1"></circle><circle cx="32" cy="40" r="3.8" fill="#f5a524"></circle><path d="M32 40 Q44 34 52 19" stroke="#10b981" stroke-width="5.5" fill="none" stroke-linecap="round"></path><circle cx="52" cy="19" r="4.5" fill="#10b981"></circle></svg></span> keel · dashboard</div>
   <span class="live"><span class="dotlive" aria-hidden="true"></span><span id="livetxt">live</span></span>
+  <input id="q" class="search" type="search" placeholder="filter by project…" aria-label="filter runs by project, label, or command" autocomplete="off" spellcheck="false">
   <div class="seg" id="segf"><button data-f="all" class="on">all</button><button data-f="active">active</button></div>
   <button class="tgl" id="tgl" title="theme: system / light / dark" aria-label="toggle theme">◐</button>
   <div class="count" id="count"></div>
@@ -123,7 +127,10 @@
   const POLL_MS = 500;
   const NAMES = {s0:"init",s1:"select",s2:"branch",s3:"guard",s4:"implement",s5:"classify",s6:"ci",s7:"review",s8:"test",s9:"fixloop",s10:"merge",s11:"capture",s12:"close"};
   const GATE_KINDS = {gate:1, merge:1};
-  let BOARD = [], showDone = true, openKey = null;
+  let BOARD = [], showDone = true, openKey = null, query = '';
+  // free-text filter: matches project, label (#PR/issue/run-id) or command
+  const matchesQuery = r => !query ||
+    ((r.project||'')+' '+(r.label||'')+' '+(r.command||'')).toLowerCase().includes(query);
 
   const el=(t,c)=>{const n=document.createElement(t);if(c)n.className=c;return n;};
   const isDone = r => !!r.merged || !!r.done;   // merged OR closed-out → finished
@@ -181,8 +188,8 @@
   const count = document.getElementById('count');
 
   function renderCount(){
-    const vis = showDone ? BOARD : BOARD.filter(r=>!isDone(r));
-    const np = new Set(vis.map(r=>r.project||'')).size, done = BOARD.filter(isDone).length;
+    const vis = (showDone ? BOARD : BOARD.filter(r=>!isDone(r))).filter(matchesQuery);
+    const np = new Set(vis.map(r=>r.project||'')).size, done = BOARD.filter(r=>isDone(r)&&matchesQuery(r)).length;
     count.textContent='';
     const b1=el('b'); b1.textContent=vis.length; const b2=el('b'); b2.textContent=np;
     count.append(b1,' run'+(vis.length===1?'':'s')+' across ',b2,' project'+(np===1?'':'s'));
@@ -191,8 +198,9 @@
 
   function renderGrid(){
     grid.textContent='';
-    if(!BOARD.length){ const e=el('div','empty'); e.textContent='no active runs found'; grid.appendChild(e); renderCount(); return; }
-    ordered().forEach(run=>{
+    const rows = ordered().filter(matchesQuery);
+    if(!rows.length){ const e=el('div','empty'); e.textContent = BOARD.length ? ('no runs match “'+query+'”') : 'no active runs found'; grid.appendChild(e); renderCount(); return; }
+    rows.forEach(run=>{
       const steps = Array.isArray(run.steps)?run.steps:[];
       const active = run.active_index|0, finished=!!run.merged||!!run.done;
       const card = el('div','card'+(finished?' done':''));
@@ -275,6 +283,8 @@
     [...segf.children].forEach(x=>x.classList.toggle('on',x.dataset.f===b.dataset.f));
     renderCount();
   });
+  const q=document.getElementById('q');
+  q.addEventListener('input',()=>{ query=q.value.trim().toLowerCase(); renderGrid(); });
 
   // ---- theme toggle (system → light → dark → system) ----
   const tgl=document.getElementById('tgl'), ICON={'':'◐',light:'☀',dark:'☾'};
