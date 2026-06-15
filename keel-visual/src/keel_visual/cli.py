@@ -303,15 +303,21 @@ def _play_follow(args, *, sleep, out, max_cycles: int | None,
 
 
 def _discover_runs(args: argparse.Namespace, config: cfg.ProjectConfig) -> list[dict]:
-    """Find every worktree with a live checkpoint and build its board row.
+    """Board rows for every active run of the single repo at ``args.root``."""
+    return _runs_in_repo(args.root, config)
+
+
+def _runs_in_repo(root: str, config: cfg.ProjectConfig) -> list[dict]:
+    """Find every worktree of the repo at ``root`` with a live checkpoint and build
+    its board row.
 
     Worktrees come from ``git worktree list`` (keel's own run isolation — each
     parallel ship runs in its own worktree). A worktree with no readable
     checkpoint is skipped (not an active run). All per-worktree reads are
     fail-soft so one bad run never blanks the board.
     """
-    result = git.worktree_list(cwd=args.root)
-    paths = dash.parse_worktrees(result.output) if result.ok else [args.root]
+    result = git.worktree_list(cwd=root)
+    paths = dash.parse_worktrees(result.output) if result.ok else [root]
     rows: list[dict] = []
     for worktree in paths:
         try:
@@ -345,15 +351,77 @@ def _latest_ship_record(worktree: str, config: cfg.ProjectConfig, pr: int | None
     return None
 
 
+def _discover_projects(parent: str) -> list[tuple[str, str]]:
+    """Immediate subdirectories of ``parent`` that are keel projects — a dir with
+    **both** ``.git`` and ``.keel/project.yaml``. Returns ``(name, path)`` sorted by
+    name. Fail-soft: an unreadable parent yields ``[]`` (one level deep only — no
+    recursion into the projects themselves)."""
+    try:
+        entries = sorted(p for p in Path(parent).iterdir() if p.is_dir())
+    except OSError:
+        return []
+    projects: list[tuple[str, str]] = []
+    for directory in entries:
+        if (directory / ".git").exists() and (directory / ".keel" / "project.yaml").is_file():
+            projects.append((directory.name, str(directory)))
+    return projects
+
+
+def _aggregate_runs(parent: str) -> list[dict]:
+    """Board rows across every keel project under ``parent``, each tagged with its
+    ``project`` name. Each project loads its **own** config; a project whose config
+    is missing/malformed is skipped so it never blanks the board. Fail-soft."""
+    rows: list[dict] = []
+    for name, project_dir in _discover_projects(parent):
+        try:
+            config = cfg.load_config(str(Path(project_dir) / ".keel" / "project.yaml"))
+        except Exception:  # noqa: BLE001
+            # Any unreadable/malformed project config (missing, bad schema, bad
+            # YAML, …) is skipped — one bad project must never blank the board.
+            continue
+        for row in _runs_in_repo(project_dir, config):
+            row["project"] = name
+            rows.append(row)
+    return rows
+
+
+def _dash_all(args, *, sleep, out, color: bool, max_cycles: int | None) -> int:
+    """Live board aggregating every keel project under ``--root`` (the ``--all`` path)."""
+    cycle = 0
+    try:
+        while max_cycles is None or cycle < max_cycles:
+            rows = _aggregate_runs(args.root)
+            if not args.no_clear:
+                out.write(_CLEAR)
+            out.write(dash.render_project_board(rows, color=color) + "\n")
+            out.flush()
+            cycle += 1
+            if args.once:
+                break
+            sleep(max(0.0, args.interval))
+    except KeyboardInterrupt:
+        out.write("\n")
+    return 0
+
+
 def cmd_dash(
     args: argparse.Namespace, *, sleep=time.sleep, out=sys.stdout, max_cycles: int | None = None,
 ) -> int:
-    """Live board of every active run across the project's worktrees."""
+    """Live board of every active run across the project's worktrees.
+
+    ``--all`` widens the board to **every keel project under ``--root``** (each with
+    its own config), instead of a single project.yaml.
+    """
+    color = _resolve_color(args, out)
+    if getattr(args, "all", False):
+        return _dash_all(args, sleep=sleep, out=out, color=color, max_cycles=max_cycles)
+    if not args.path:
+        print("dash: provide a path to project.yaml, or use --all", file=sys.stderr)
+        return 1
     config = _resolve_config(args)
     if isinstance(config, tuple):
         print(config[1], file=sys.stderr)
         return config[0]
-    color = _resolve_color(args, out)
     cycle = 0
     try:
         while max_cycles is None or cycle < max_cycles:
@@ -411,8 +479,12 @@ def build_parser() -> argparse.ArgumentParser:
     pl.set_defaults(func=cmd_play)
 
     pd = sub.add_parser("dash", help="live board of all active runs across the project's worktrees")
-    pd.add_argument("path", help="path to project.yaml")
-    pd.add_argument("--root", default=".", help="repo root to discover worktrees from")
+    pd.add_argument("path", nargs="?", default=None,
+                    help="path to project.yaml (single repo; omit when using --all)")
+    pd.add_argument("--all", action="store_true",
+                    help="aggregate every keel project under --root into one board "
+                         "(a subdir with both .git and .keel/project.yaml)")
+    pd.add_argument("--root", default=".", help="repo root (or parent folder, with --all)")
     pd.add_argument("--interval", type=float, default=2.0, help="refresh interval in seconds")
     pd.add_argument("--once", action="store_true", help="render the board once and exit")
     pd.add_argument("--no-clear", action="store_true", help="keep frames (no screen clear)")

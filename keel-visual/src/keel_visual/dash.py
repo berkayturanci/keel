@@ -93,6 +93,19 @@ def board_row(run_state: dict[str, Any], identity: dict[str, Any]) -> dict[str, 
     }
 
 
+def _row_cells(r: dict[str, Any], *, color: bool, width: int) -> tuple[str, str, str]:
+    """Shared per-run cells: the progress ``bar``, ``step`` text, and ``status``. Pure."""
+    frac = r["active_index"] / (r["total"] - 1) if r["total"] > 1 else 1.0
+    tone_label, tone_color = _TONE.get(r["status"], _TONE["running"])
+    filled = max(0, min(width, round(frac * width)))
+    bar = terminal.paint("█" * filled, tone_color, enable=color) + terminal.paint(
+        "░" * (width - filled), "dim", enable=color
+    )
+    step = f"{r['active_id']:<3} {r['active_name']}"
+    status = terminal.paint(tone_label, tone_color, enable=color)
+    return bar, step, status
+
+
 def render_board(rows: list[dict[str, Any]], *, color: bool = True, width: int = 12) -> str:
     """Render the multi-run board as a string (one line per run). Pure."""
     n = len(rows)
@@ -102,14 +115,33 @@ def render_board(rows: list[dict[str, Any]], *, color: bool = True, width: int =
     label_w = max(len(r["label"]) for r in rows)
     lines = [head]
     for r in rows:
-        frac = r["active_index"] / (r["total"] - 1) if r["total"] > 1 else 1.0
-        tone_label, tone_color = _TONE.get(r["status"], _TONE["running"])
-        filled = max(0, min(width, round(frac * width)))
-        bar = terminal.paint("█" * filled, tone_color, enable=color) + terminal.paint(
-            "░" * (width - filled), "dim", enable=color
-        )
+        bar, step, status = _row_cells(r, color=color, width=width)
         label = terminal.paint(r["label"].ljust(label_w), "white", enable=color)
-        step = f"{r['active_id']:<3} {r['active_name']}"
-        status = terminal.paint(tone_label, tone_color, enable=color)
         lines.append(f"  {label}  {bar}  {step:<16}  {status}")
+    return "\n".join(lines)
+
+
+def render_project_board(rows: list[dict[str, Any]], *, color: bool = True, width: int = 12) -> str:
+    """Render runs across multiple keel projects, each line prefixed by its project. Pure.
+
+    Each row carries a ``project`` label (see the multi-repo ``dash --all`` path).
+    Header counts both the runs and the distinct projects.
+    """
+    nruns = len(rows)
+    nproj = len({r.get("project", "") for r in rows})
+    head = terminal.paint(
+        f"keel · {nruns} run{'' if nruns == 1 else 's'} across "
+        f"{nproj} project{'' if nproj == 1 else 's'}",
+        "white", enable=color,
+    )
+    if not rows:
+        return head + "\n  " + terminal.paint("no active runs found", "dim", enable=color)
+    proj_w = max(len(r.get("project", "")) for r in rows)
+    label_w = max(len(r["label"]) for r in rows)
+    lines = [head]
+    for r in rows:
+        bar, step, status = _row_cells(r, color=color, width=width)
+        proj = terminal.paint(r.get("project", "").ljust(proj_w), "white", enable=color)
+        label = terminal.paint(r["label"].ljust(label_w), "dim", enable=color)
+        lines.append(f"  {proj}  {label}  {bar}  {step:<16}  {status}")
     return "\n".join(lines)

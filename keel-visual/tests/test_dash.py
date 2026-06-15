@@ -127,5 +127,33 @@ class TestRenderBoard(unittest.TestCase):
         self.assertIn("\x1b[", out)
 
 
+class TestRenderProjectBoard(unittest.TestCase):
+    def _row(self, project, **identity):
+        # build from None so the identity's pr/issue drive the label (no baked-in pr)
+        row = dash.board_row(rs.build_run_state(None, checkpoint_step="s8"), identity)
+        row["project"] = project
+        return row
+
+    def test_empty(self):
+        out = dash.render_project_board([], color=False)
+        self.assertIn("0 runs across 0 projects", out)
+        self.assertIn("no active runs found", out)
+
+    def test_singular_one_run_one_project(self):
+        out = dash.render_project_board([self._row("alpha", pr=42)], color=False)
+        self.assertIn("1 run across 1 project", out)
+        self.assertNotIn("1 runs", out)
+        self.assertIn("alpha", out)
+        self.assertIn("#42", out)
+
+    def test_grouped_across_projects_colored(self):
+        rows = [self._row("alpha", pr=42), self._row("beta", pr=7), self._row("alpha", issue=9)]
+        out = dash.render_project_board(rows, color=True)
+        self.assertIn("3 runs across 2 projects", out)  # alpha + beta
+        self.assertIn("alpha", out)
+        self.assertIn("beta", out)
+        self.assertIn("\x1b[", out)
+
+
 if __name__ == "__main__":
     unittest.main()

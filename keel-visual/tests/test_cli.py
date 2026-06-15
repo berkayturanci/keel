@@ -666,6 +666,120 @@ class TestDash(unittest.TestCase):
             rc = cli.main(["dash", PROJECT, "--root", ".", "--once", "--color", "never"])
         self.assertEqual(rc, 0)
 
+    # ---- dash --all (multi-project board) ----
+    def _make_keel_project(self, parent, name, *, step=None, pr=None):
+        """A fake keel project dir (has .git + .keel/project.yaml), optionally with a
+        live checkpoint. git.worktree_list is patched to fail in these tests, so a
+        run is read from the project dir itself (the worktree-list fallback)."""
+        import shutil
+
+        from keel import config as cfg
+        pdir = Path(parent) / name
+        (pdir / ".keel").mkdir(parents=True)
+        (pdir / ".git").mkdir()
+        shutil.copy(PROJECT, pdir / ".keel" / "project.yaml")
+        if step is not None:
+            _write_checkpoint(str(pdir), cfg.load_config(str(pdir / ".keel" / "project.yaml")),
+                              step=step, pr=pr)
+        return pdir
+
+    def test_all_aggregates_projects(self):
+        import tempfile
+        from unittest.mock import patch
+
+        from keel.runner import CommandResult
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as parent:
+            self._make_keel_project(parent, "alpha", step="s8", pr=42)
+            self._make_keel_project(parent, "beta", step="s12", pr=7)
+            (Path(parent) / "notkeel").mkdir()  # no .git/.keel -> skipped
+            with patch("keel_visual.cli.git.worktree_list",
+                       return_value=CommandResult(False, 1, "")):
+                rc = cli.cmd_dash(_dash_args(all=True, root=parent, path=None),
+                                  sleep=lambda s: None, out=out)
+        self.assertEqual(rc, 0)
+        text = out.getvalue()
+        self.assertIn("2 runs across 2 projects", text)
+        self.assertIn("alpha", text)
+        self.assertIn("beta", text)
+        self.assertIn("#42", text)
+        self.assertIn("#7", text)
+
+    def test_all_skips_malformed_project_config(self):
+        import tempfile
+        from unittest.mock import patch
+
+        from keel.runner import CommandResult
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as parent:
+            self._make_keel_project(parent, "good", step="s8", pr=42)
+            bad = Path(parent) / "bad"
+            (bad / ".keel").mkdir(parents=True)
+            (bad / ".git").mkdir()
+            (bad / ".keel" / "project.yaml").write_text("{not valid yaml", encoding="utf-8")
+            with patch("keel_visual.cli.git.worktree_list",
+                       return_value=CommandResult(False, 1, "")):
+                rc = cli.cmd_dash(_dash_args(all=True, root=parent, path=None),
+                                  sleep=lambda s: None, out=out)
+        self.assertEqual(rc, 0)
+        text = out.getvalue()
+        self.assertIn("1 run across 1 project", text)  # malformed 'bad' skipped
+        self.assertIn("good", text)
+
+    def test_discover_projects_filters_and_failsoft(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as parent:
+            self._make_keel_project(parent, "keelproj")
+            (Path(parent) / "justgit" / ".git").mkdir(parents=True)        # no .keel -> skip
+            (Path(parent) / "justkeel" / ".keel").mkdir(parents=True)      # no .git -> skip
+            (Path(parent) / "afile").write_text("x", encoding="utf-8")     # not a dir -> skip
+            found = cli._discover_projects(parent)
+        self.assertEqual(found, [("keelproj", str(Path(parent) / "keelproj"))])
+        # unreadable parent (a file, not a dir) -> [] (no crash)
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "afile"
+            f.write_text("x", encoding="utf-8")
+            self.assertEqual(cli._discover_projects(str(f)), [])
+
+    def test_dash_no_path_no_all_errors(self):
+        rc = cli.cmd_dash(_dash_args(path=None, all=False), sleep=lambda s: None,
+                          out=io.StringIO())
+        self.assertEqual(rc, 1)
+
+    def test_main_dash_all(self):
+        import tempfile
+        from unittest.mock import patch
+
+        from keel.runner import CommandResult
+        with tempfile.TemporaryDirectory() as parent:
+            self._make_keel_project(parent, "alpha", step="s8", pr=42)
+            with patch("keel_visual.cli.git.worktree_list",
+                       return_value=CommandResult(False, 1, "")):
+                rc = cli.main(["dash", "--all", "--root", parent, "--once", "--color", "never"])
+        self.assertEqual(rc, 0)
+
+    def test_all_bounded_refresh(self):
+        import tempfile
+        out, calls = io.StringIO(), []
+        with tempfile.TemporaryDirectory() as parent:
+            rc = cli.cmd_dash(_dash_args(all=True, root=parent, path=None, once=False),
+                              sleep=lambda s: calls.append(s), out=out, max_cycles=2)
+        self.assertEqual(rc, 0)
+        self.assertEqual(out.getvalue().count("keel ·"), 2)
+        self.assertEqual(len(calls), 2)  # slept between refreshes (no --once)
+
+    def test_all_keyboard_interrupt(self):
+        import tempfile
+
+        def boom(_):
+            raise KeyboardInterrupt
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as parent:
+            rc = cli.cmd_dash(_dash_args(all=True, root=parent, path=None, once=False),
+                              sleep=boom, out=out, max_cycles=None)
+        self.assertEqual(rc, 0)
+        self.assertTrue(out.getvalue().endswith("\n"))
+
 
 def ledger_path(root, config):
     from keel import ledger

@@ -96,6 +96,31 @@ A worktree with no live checkpoint is skipped; all per-run reads are fail-soft s
 one bad run never blanks the board. See
 [`screenshots/dash-board.png`](screenshots/dash-board.png).
 
+#### Across every project — `dash --all`
+
+Work across **several** keel projects? `dash --all` aggregates them into one
+board. Point `--root` at the parent folder; it scans the **immediate**
+subdirectories for keel projects (a dir with both `.git` and
+`.keel/project.yaml`), loads each project's own config, and groups the runs by
+project:
+
+```
+keel-visual dash --all --root ~/code        # every keel project under ~/code
+keel-visual dash --all                       # … under the current folder
+```
+
+```
+keel · 3 runs across 2 projects
+  alpha          #42  ████████░░░░  s8  test     gate
+  beta           #12  ██████████░░  s10 merge    gate
+  beta           #15  ███░░░░░░░░░  s3  guard
+```
+
+Fail-soft and one level deep: a subdir that isn't a git repo, has no keel config,
+or has a malformed one is skipped — it never blanks the board. The
+[same-filesystem limit](#watching-a-run-the-observer-model) still holds: this is
+**every project on this machine**, not remote/cloud runs.
+
 ### 1. Terminal — `keel-visual play` (runs in the CLI)
 
 The flow animates right in the terminal while a command runs:
