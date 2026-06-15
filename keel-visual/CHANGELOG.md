@@ -6,6 +6,19 @@ All notable changes to keel-visual are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-06-15
+
+### Added
+- **Automatic light/dark board theme.** The web board (2D grid + 3D scene)
+  follows the system `prefers-color-scheme`. The grid re-themes live; the 3D
+  scene picks the palette (fog, idle, labels, tracks) at load and reloads to
+  re-theme if the system flips while it's open (#432).
+- **`all` / `active` filter + faded finished runs.** Finished (merged) runs are
+  sorted last and rendered faded — dimmed cards in the 2D grid, dimmed lanes in
+  the 3D scene. A header `all` / `active` toggle (or `?filter=active`) hides them
+  entirely in both views; the 3D scene rebuilds and reframes. Purely a view
+  filter — nothing is removed from disk (#433).
+
 ## [0.2.0] — 2026-06-15
 
 ### Added
