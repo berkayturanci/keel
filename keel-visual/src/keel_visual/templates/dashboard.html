@@ -52,7 +52,8 @@
   .lab{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:var(--mut);background:var(--panel2);border:1px solid var(--line);border-radius:999px;padding:2px 9px}
   .badge{margin-left:auto;font-size:11px;font-weight:600;padding:3px 10px;border-radius:999px}
   .badge.running,.badge.active{background:rgba(73,182,255,.16);color:var(--info)}
-  .badge.merged,.badge.done{background:rgba(122,209,74,.16);color:var(--ok)}
+  .badge.merged{background:rgba(122,209,74,.16);color:var(--ok)}
+  .badge.done{background:var(--panel2);color:var(--mut)}
   .badge.gate{background:rgba(240,160,32,.16);color:var(--warn)}
   .badge.blocked{background:rgba(255,84,104,.18);color:var(--danger)}
   .strip{display:flex;align-items:center;gap:0;margin:4px 0 11px}
@@ -124,7 +125,7 @@
   let BOARD = [], showDone = true, openKey = null;
 
   const el=(t,c)=>{const n=document.createElement(t);if(c)n.className=c;return n;};
-  const isDone = r => !!r.merged;
+  const isDone = r => !!r.merged || !!r.done;   // merged OR closed-out → finished
   const keyOf = r => (r.project||'')+'|'+(r.label||'')+'|'+(r.command||'');
   const ordered = () => BOARD.map(r=>r).sort((a,b)=>(isDone(a)?1:0)-(isDone(b)?1:0));
   // ship ids (s4) differ from their name (implement) → "s4 · implement"; custom flows
@@ -157,7 +158,7 @@
   const tip = document.getElementById('tip');
   function showTip(dot, run, idx){
     const steps = Array.isArray(run.steps)?run.steps:[], s = steps[idx]||{};
-    const tone = stepTone(idx, run.active_index|0, !!run.merged, s);
+    const tone = stepTone(idx, run.active_index|0, !!run.merged||!!run.done, s);
     tip.textContent='';
     const th=el('div','th');
     if(s.id && s.name && s.id!==s.name){ const tid=el('span','tid'); tid.textContent=s.id; th.appendChild(tid); }
@@ -192,8 +193,8 @@
     if(!BOARD.length){ const e=el('div','empty'); e.textContent='no active runs found'; grid.appendChild(e); renderCount(); return; }
     ordered().forEach(run=>{
       const steps = Array.isArray(run.steps)?run.steps:[];
-      const active = run.active_index|0, merged=!!run.merged;
-      const card = el('div','card'+(merged?' done':''));
+      const active = run.active_index|0, finished=!!run.merged||!!run.done;
+      const card = el('div','card'+(finished?' done':''));
       card.tabIndex=0;
       const head = el('div','chead');
       const proj=el('span','proj'); proj.textContent=run.project||'?';
@@ -202,8 +203,8 @@
       head.append(proj,lab,badge); card.appendChild(head);
       const strip=el('div','strip');
       steps.forEach((s,idx)=>{
-        if(idx>0) strip.appendChild(el('span','seg2'+((merged||idx<=active)?' done':'')));
-        const dot=el('span','dot'); const tone=stepTone(idx,active,merged,s);
+        if(idx>0) strip.appendChild(el('span','seg2'+((finished||idx<=active)?' done':'')));
+        const dot=el('span','dot'); const tone=stepTone(idx,active,finished,s);
         if(tone!=='idle') dot.classList.add(tone);
         dot.title=(s.id||'')+' · '+(s.name||'');
         dot.addEventListener('mouseenter',()=>showTip(dot,run,idx));
@@ -231,7 +232,7 @@
     const run = openKey && runByKey(openKey);
     if(!run){ closeDrawer(); return; }
     const steps=Array.isArray(run.steps)?run.steps:[];
-    const active=run.active_index|0, merged=!!run.merged, jury=run.jury||{};
+    const active=run.active_index|0, finished=!!run.merged||!!run.done, jury=run.jury||{};
     drawer.textContent='';
     const head=el('div','dhead');
     const t=el('span'); t.style.fontWeight='600'; t.style.fontSize='15px'; t.textContent=(run.project||'?')+' '+(run.label||'');
@@ -239,7 +240,7 @@
     head.append(t,x); drawer.appendChild(head);
     const flow=el('div','flow');
     steps.forEach((s,idx)=>{
-      const tone=stepTone(idx,active,merged,s);
+      const tone=stepTone(idx,active,finished,s);
       const cls = tone==='done'?'don':tone==='active'?'cur':tone==='gate'?'gat':tone==='fail'?'fai':'';
       const row=el('div','frow '+cls);
       const id=s.id||'', nm=s.name||NAMES[s.id]||'';

@@ -58,6 +58,12 @@ class TestStatusOf(unittest.TestCase):
     def test_merged(self):
         self.assertEqual(dash._status_of(_run_state(action="merge")), "merged")
 
+    def test_done_is_not_merged(self):
+        # a closed-out activity run (status=done) is "done", never "merged"
+        self.assertEqual(dash._status_of({"done": True, "steps": [], "active_index": 0}), "done")
+        # an actual merge still wins over done if both are set
+        self.assertEqual(dash._status_of({"merged": True, "done": True}), "merged")
+
     def test_blocked_gate(self):
         st = rs.build_run_state(
             {"record_type": "ship_run", "assessment": {"merge": {"action": "defer"}},

@@ -19,6 +19,7 @@ from . import terminal
 # Per-run status -> (label, colour) shown on the board.
 _TONE = {
     "merged": ("merged", "green"),
+    "done": ("done", "dim"),
     "blocked": ("blocked", "red"),
     "gate": ("gate", "amber"),
     "running": ("running", "cyan"),
@@ -66,6 +67,8 @@ def _status_of(run_state: dict[str, Any]) -> str:
     """Reduce a run-state to a single board status key."""
     if run_state.get("merged"):
         return "merged"
+    if run_state.get("done"):
+        return "done"
     active = run_state.get("active_index", 0)
     steps = run_state.get("steps") or []
     if 0 <= active < len(steps):

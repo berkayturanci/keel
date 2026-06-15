@@ -407,7 +407,12 @@ def _activity_records_in_repo(root: str, config: cfg.ProjectConfig) -> list[tupl
             command=rec.get("command") or "ship",
         )
         if rec.get("status") == "done":
-            run_state["merged"] = True
+            # "done" means the command finished/closed out — NOT that anything
+            # merged. Most activity commands (morning, triage, …) never merge, and
+            # a ship that defers its merge to the next window also closes out as
+            # done. Mark it finished (fades/filters like a completed run) without
+            # claiming a merge it can't prove.
+            run_state["done"] = True
         identity = {
             "issue": rec.get("issue"),
             "pr": rec.get("pr"),
@@ -487,6 +492,7 @@ def _board_entry(run_state: dict, identity: dict, project: str) -> dict:
         "active_name": row["active_name"],
         "command": run_state.get("command", "ship"),
         "merged": bool(run_state.get("merged")),
+        "done": bool(run_state.get("done")),
         "jury": run_state.get("jury") or {"mode": None, "active": False},
         "steps": [
             {"id": s.get("id"), "name": s.get("name"), "kind": s.get("kind"),

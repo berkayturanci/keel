@@ -8,6 +8,16 @@ All notable changes to keel-visual are documented here. The format follows
 
 ## [0.5.4] — 2026-06-16
 
+### Fixed
+- **A finished run is no longer mislabelled "merged".** The board mapped a `done`
+  activity record straight to `merged`, so any closed-out run — a `morning`/`triage`
+  that never merges, or a `ship`/`pr-loop` that **deferred** its merge to the next
+  window — showed a green "merged" badge it hadn't earned. A finished-but-not-merged
+  run is now a distinct **"done"** state: it still fades/filters like a completed run,
+  but carries a muted "done" badge, and only a real merge (checkpoint/ledger) shows
+  the green "merged". Applies to the live `serve` dashboard and the `render` board
+  (2D + 3D).
+
 ### Changed
 - **Board de-duplicates a ship run's activity record against its checkpoint.** As of
   keel 1.6.3 the `ship` adapter stamps the activity channel too (so agent-driven ship
