@@ -780,6 +780,57 @@ class TestDash(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertTrue(out.getvalue().endswith("\n"))
 
+    # ---- render --all (web board) ----
+    def test_load_board_template(self):
+        self.assertIn("__KEEL_BOARD__", cli.load_board_template())
+
+    def test_board_entry_is_slim(self):
+        from keel_visual import runstate as rs
+        run_state = rs.build_run_state({"command": "ship", "pull_request": {"number": 9}},
+                                       checkpoint_step="s8")
+        e = cli._board_entry(run_state, {"pr": 9}, "myproj")
+        self.assertEqual(e["project"], "myproj")
+        self.assertEqual(e["label"], "#9")
+        self.assertEqual(e["active_id"], "s8")
+        self.assertTrue(e["steps"])
+        self.assertIn("status", e)
+
+    def test_render_all_writes_board(self):
+        import tempfile
+        from unittest.mock import patch
+
+        from keel.runner import CommandResult
+        with tempfile.TemporaryDirectory() as parent:
+            self._make_keel_project(parent, "alpha", step="s8", pr=42)
+            self._make_keel_project(parent, "beta", step="s12", pr=7)
+            out_html = Path(parent) / "board.html"
+            with patch("keel_visual.cli.git.worktree_list",
+                       return_value=CommandResult(False, 1, "")):
+                rc = cli.cmd_render(_args(all=True, root=parent, path=None, out=str(out_html)))
+            self.assertEqual(rc, 0)
+            html = out_html.read_text(encoding="utf-8")
+            self.assertIn("window.KEEL_BOARD", html)
+            self.assertIn("alpha", html)
+            self.assertIn("beta", html)
+
+    def test_render_no_path_no_all_errors(self):
+        rc = cli.cmd_render(_args(path=None, all=False))
+        self.assertEqual(rc, 1)
+
+    def test_main_render_all(self):
+        import tempfile
+        from unittest.mock import patch
+
+        from keel.runner import CommandResult
+        with tempfile.TemporaryDirectory() as parent:
+            self._make_keel_project(parent, "alpha", step="s8", pr=42)
+            out_html = Path(parent) / "b.html"
+            with patch("keel_visual.cli.git.worktree_list",
+                       return_value=CommandResult(False, 1, "")):
+                rc = cli.main(["render", "--all", "--root", parent, "--out", str(out_html)])
+            self.assertEqual(rc, 0)
+            self.assertTrue(out_html.exists())
+
 
 def ledger_path(root, config):
     from keel import ledger

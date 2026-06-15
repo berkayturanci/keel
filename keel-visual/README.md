@@ -121,6 +121,16 @@ or has a malformed one is skipped — it never blanks the board. The
 [same-filesystem limit](#watching-a-run-the-observer-model) still holds: this is
 **every project on this machine**, not remote/cloud runs.
 
+The same board as a **web page** — `render --all` writes a self-contained HTML
+grid of run cards (project · #PR · a colour-coded step strip · status, with the
+s7 jury surfaced), no tty needed:
+
+```
+keel-visual render --all --root ~/code --out board.html && open board.html
+```
+
+![keel-visual board — render --all](screenshots/board.png)
+
 ### 1. Terminal — `keel-visual play` (runs in the CLI)
 
 The flow animates right in the terminal while a command runs:
@@ -281,5 +291,6 @@ template is excluded from coverage (it is exercised by the screenshot harness).
 See [`screenshots/`](screenshots/): `terminal-cli.png` (the `play` output),
 `2d-s8-test.png` (a blocked test gate), `3d-s6-run.png` (the default `plexus` 3D
 style mid-run), `3d-styles.png` (the `combined` style with the style selector and
-the s7 jury), `3d-s10-merge.png` (the `line` style, merged and all-green), and
-`2d-s12-merged.png` (a merged, all-green 2D run).
+the s7 jury), `3d-s10-merge.png` (the `line` style, merged and all-green),
+`2d-s12-merged.png` (a merged, all-green 2D run), and `board.png` (the
+`render --all` multi-project web board).

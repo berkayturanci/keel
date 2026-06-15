@@ -33,6 +33,13 @@ def load_template() -> str:
     )
 
 
+def load_board_template() -> str:
+    """Load the packaged multi-project board HTML template text."""
+    return resources.files("keel_visual.templates").joinpath("board.html").read_text(
+        encoding="utf-8"
+    )
+
+
 def _resolve_record(args: argparse.Namespace, config: cfg.ProjectConfig) -> dict | None:
     """Load the ship_run record for the run to render (offline fixture or live ledger)."""
     fixture = getattr(args, "ledger_jsonl", None)
@@ -70,6 +77,16 @@ def _resolve_checkpoint(
 
 
 def cmd_render(args: argparse.Namespace) -> int:
+    if getattr(args, "all", False):
+        board = _aggregate_board(args.root)
+        nproj = len({e["project"] for e in board})
+        html = render.render_board_html(load_board_template(), board, title="keel board")
+        Path(args.out).write_text(html, encoding="utf-8")
+        print(f"keel-visual — wrote {args.out}  ({len(board)} run(s) across {nproj} project(s))")
+        return 0
+    if not args.path:
+        print("render: provide a path to project.yaml, or use --all", file=sys.stderr)
+        return 1
     try:
         config = cfg.load_config(args.path)
     except FileNotFoundError:
@@ -307,9 +324,9 @@ def _discover_runs(args: argparse.Namespace, config: cfg.ProjectConfig) -> list[
     return _runs_in_repo(args.root, config)
 
 
-def _runs_in_repo(root: str, config: cfg.ProjectConfig) -> list[dict]:
-    """Find every worktree of the repo at ``root`` with a live checkpoint and build
-    its board row.
+def _run_records_in_repo(root: str, config: cfg.ProjectConfig) -> list[tuple[dict, dict]]:
+    """Every worktree of the repo at ``root`` with a live checkpoint, as
+    ``(run_state, identity)`` pairs.
 
     Worktrees come from ``git worktree list`` (keel's own run isolation — each
     parallel ship runs in its own worktree). A worktree with no readable
@@ -318,7 +335,7 @@ def _runs_in_repo(root: str, config: cfg.ProjectConfig) -> list[dict]:
     """
     result = git.worktree_list(cwd=root)
     paths = dash.parse_worktrees(result.output) if result.ok else [root]
-    rows: list[dict] = []
+    pairs: list[tuple[dict, dict]] = []
     for worktree in paths:
         try:
             record = checkpoint.read_checkpoint(checkpoint.resolve_path(worktree, config))
@@ -336,8 +353,13 @@ def _runs_in_repo(root: str, config: cfg.ProjectConfig) -> list[dict]:
             checkpoint_state=runstate.live_state_from_checkpoint(record),
             command=identity.get("command") or "ship",
         )
-        rows.append(dash.board_row(run_state, identity))
-    return rows
+        pairs.append((run_state, identity))
+    return pairs
+
+
+def _runs_in_repo(root: str, config: cfg.ProjectConfig) -> list[dict]:
+    """Terminal board rows for every active run of the repo at ``root``."""
+    return [dash.board_row(rs, identity) for rs, identity in _run_records_in_repo(root, config)]
 
 
 def _latest_ship_record(worktree: str, config: cfg.ProjectConfig, pr: int | None) -> dict | None:
@@ -367,22 +389,60 @@ def _discover_projects(parent: str) -> list[tuple[str, str]]:
     return projects
 
 
-def _aggregate_runs(parent: str) -> list[dict]:
-    """Board rows across every keel project under ``parent``, each tagged with its
-    ``project`` name. Each project loads its **own** config; a project whose config
-    is missing/malformed is skipped so it never blanks the board. Fail-soft."""
-    rows: list[dict] = []
+def _each_project(parent: str):
+    """Yield ``(name, project_dir, config)`` for each **loadable** keel project under
+    ``parent``. Each project loads its **own** config; a project whose config is
+    missing/malformed (bad schema, bad YAML, unreadable) is skipped so one bad
+    project never blanks the board. Fail-soft."""
     for name, project_dir in _discover_projects(parent):
         try:
             config = cfg.load_config(str(Path(project_dir) / ".keel" / "project.yaml"))
         except Exception:  # noqa: BLE001
-            # Any unreadable/malformed project config (missing, bad schema, bad
-            # YAML, …) is skipped — one bad project must never blank the board.
             continue
+        yield name, project_dir, config
+
+
+def _aggregate_runs(parent: str) -> list[dict]:
+    """Terminal board rows across every keel project under ``parent``, each tagged
+    with its ``project`` name. Fail-soft."""
+    rows: list[dict] = []
+    for name, project_dir, config in _each_project(parent):
         for row in _runs_in_repo(project_dir, config):
             row["project"] = name
             rows.append(row)
     return rows
+
+
+def _board_entry(run_state: dict, identity: dict, project: str) -> dict:
+    """A slim per-run entry the **web** board renders: project + label + the step
+    strip + status/jury. The project name is sanitised before it reaches the page."""
+    row = dash.board_row(run_state, identity)
+    return {
+        "project": dash._safe_label(project),
+        "label": row["label"],
+        "status": row["status"],
+        "active_index": row["active_index"],
+        "active_id": row["active_id"],
+        "active_name": row["active_name"],
+        "command": run_state.get("command", "ship"),
+        "merged": bool(run_state.get("merged")),
+        "jury": run_state.get("jury") or {"mode": None, "active": False},
+        "steps": [
+            {"id": s.get("id"), "name": s.get("name"), "kind": s.get("kind"),
+             "gate": s.get("gate")}
+            for s in (run_state.get("steps") or [])
+        ],
+    }
+
+
+def _aggregate_board(parent: str) -> list[dict]:
+    """Web board entries across every keel project under ``parent``. Same discovery +
+    per-project config as :func:`_aggregate_runs`. Fail-soft."""
+    board: list[dict] = []
+    for name, project_dir, config in _each_project(parent):
+        for run_state, identity in _run_records_in_repo(project_dir, config):
+            board.append(_board_entry(run_state, identity, name))
+    return board
 
 
 def _dash_all(args, *, sleep, out, color: bool, max_cycles: int | None) -> int:
@@ -443,8 +503,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="keel-visual", description="visualize a keel run")
     sub = parser.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("render", help="render a ship_run as an animated HTML page")
-    p.add_argument("path", help="path to project.yaml")
-    p.add_argument("--root", default=".", help="repo root for the ledger path")
+    p.add_argument("path", nargs="?", default=None,
+                   help="path to project.yaml (single run; omit when using --all)")
+    p.add_argument("--all", action="store_true",
+                   help="render one web board across every keel project under --root "
+                        "(a subdir with both .git and .keel/project.yaml)")
+    p.add_argument("--root", default=".", help="repo root (or parent folder, with --all)")
     p.add_argument("--pr", type=int, default=None, help="PR number (default: latest ship_run)")
     p.add_argument("--ledger-jsonl", default=None, help="offline run-ledger JSONL fixture")
     p.add_argument("--checkpoint-step", default=None, help="current step id (e.g. s8)")

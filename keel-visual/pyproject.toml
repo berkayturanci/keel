@@ -18,6 +18,7 @@ packages = ["src/keel_visual"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "src/keel_visual/templates/runviz.html" = "keel_visual/templates/runviz.html"
+"src/keel_visual/templates/board.html" = "keel_visual/templates/board.html"
 
 [tool.coverage.run]
 branch = true
