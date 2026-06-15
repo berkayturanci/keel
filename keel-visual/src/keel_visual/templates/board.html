@@ -23,7 +23,7 @@
   }
   *{box-sizing:border-box}
   html,body{margin:0;background:var(--bg);color:var(--txt);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;-webkit-font-smoothing:antialiased}
-  body{padding:26px;max-width:1280px;margin:0 auto}
+  body{padding:clamp(14px,2.4vw,30px);max-width:min(1680px,100%);margin:0 auto}
   header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:20px}
   .brand{display:flex;align-items:center;gap:10px;font-size:18px;font-weight:600}
   .brand .mark{width:30px;height:30px;border-radius:9px;background:var(--markbg);border:1.5px solid var(--ok);box-shadow:0 0 16px rgba(122,209,74,.45);display:inline-flex;align-items:center;justify-content:center;overflow:hidden}
@@ -35,7 +35,7 @@
   .count b{color:var(--txt)}
   .view{display:none}
   .view.show{display:block}
-  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:14px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(330px,100%),1fr));gap:14px}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:15px 16px;transition:opacity .2s}
   .card.done{opacity:.5}
   .card.done:hover{opacity:1}
@@ -62,7 +62,7 @@
   .jury{margin-left:auto;font-size:11px;font-weight:600;color:var(--info);background:rgba(73,182,255,.12);border:1px solid var(--line);border-radius:999px;padding:2px 8px}
   .jury.gating{color:var(--warn);background:rgba(240,160,32,.12)}
   .empty{color:var(--dim);padding:40px;text-align:center;border:1px dashed var(--line2);border-radius:var(--r)}
-  #scene3{position:relative;height:clamp(440px,64vh,640px);border-radius:var(--r);overflow:hidden;background:radial-gradient(120% 100% at 50% 0%,var(--scene-a) 0%,var(--scene-b) 70%);border:1px solid var(--line)}
+  #scene3{position:relative;height:clamp(360px,68vh,780px);border-radius:var(--r);overflow:hidden;background:radial-gradient(120% 100% at 50% 0%,var(--scene-a) 0%,var(--scene-b) 70%);border:1px solid var(--line)}
   #c3{display:block;width:100%;height:100%}
   .hud3{position:absolute;left:16px;bottom:13px;font-size:12px;color:var(--dim);letter-spacing:.03em}
   .legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--mut);margin-top:16px}

@@ -6,6 +6,15 @@ All notable changes to keel-visual are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.2] — 2026-06-15
+
+### Changed
+- **The web board adapts to the screen.** Wider cap (`min(1680px, 100%)`) so wide
+  monitors fill with more columns instead of empty gutters; padding scales down on
+  small screens (`clamp(14px, 2.4vw, 30px)`); the grid drops to a single column on
+  narrow/mobile widths without cards overflowing (`minmax(min(330px, 100%), 1fr)`);
+  the 3D scene grows taller on large screens (`clamp(360px, 68vh, 780px)`).
+
 ## [0.4.1] — 2026-06-15
 
 ### Fixed
