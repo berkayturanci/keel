@@ -6,6 +6,21 @@ All notable changes to keel-visual are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.2] — 2026-06-16
+
+### Added
+- **Rich step tooltips.** Hovering a step dot now shows a detailed card — the step
+  id + name, a `gate`/`merge` kind chip, the live status (in progress / gate / blocked /
+  done / not reached), and a one-line description (the s0–s12 backbone has full
+  descriptions; other commands show the phase position). Replaces the bare title.
+- **Manual light/dark toggle.** A header button cycles **system → light → dark**
+  (remembered in `localStorage`), overriding `prefers-color-scheme`. On the board the
+  3D scene re-themes on switch. Applies to the board (`render --all`) and the live
+  `serve` dashboard.
+
+### Fixed
+- The dashboard drawer's drop-shadow no longer bleeds onto the page when it's closed.
+
 ## [0.5.1] — 2026-06-16
 
 ### Added
