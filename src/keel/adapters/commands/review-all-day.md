@@ -261,7 +261,7 @@ it. This command's flow phases are: `config` → `parse` → `commits` → `deci
 whole run (e.g. `review-all-day-<issue-or-pr>`), and as you enter each phase run:
 
 ```bash
-keel activity .keel/project.yaml --root . --command review-all-day --run-id "$RUN" --phase config
+keel activity .keel/project.yaml --root . --write --command review-all-day --run-id "$RUN" --phase config
 # … repeat with --phase parse, … as you advance through the flow …
 keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the run finishes
 ```

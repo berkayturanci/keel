@@ -152,7 +152,7 @@ it. This command's flow phases are: `orient` → `areas` → `baseline` → `hea
 whole run (e.g. `coverage-<issue-or-pr>`), and as you enter each phase run:
 
 ```bash
-keel activity .keel/project.yaml --root . --command coverage --run-id "$RUN" --phase orient
+keel activity .keel/project.yaml --root . --write --command coverage --run-id "$RUN" --phase orient
 # … repeat with --phase areas, … as you advance through the flow …
 keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the run finishes
 ```

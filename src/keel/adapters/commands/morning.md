@@ -128,7 +128,7 @@ it. This command's flow phases are: `config` → `deferrals` → `shipped` → `
 whole run (e.g. `morning-<issue-or-pr>`), and as you enter each phase run:
 
 ```bash
-keel activity .keel/project.yaml --root . --command morning --run-id "$RUN" --phase config
+keel activity .keel/project.yaml --root . --write --command morning --run-id "$RUN" --phase config
 # … repeat with --phase deferrals, … as you advance through the flow …
 keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the run finishes
 ```

@@ -197,7 +197,7 @@ it. This command's flow phases are: `config` → `find` → `open` → `read` �
 whole run (e.g. `pr-loop-<issue-or-pr>`), and as you enter each phase run:
 
 ```bash
-keel activity .keel/project.yaml --root . --command pr-loop --run-id "$RUN" --phase config
+keel activity .keel/project.yaml --root . --write --command pr-loop --run-id "$RUN" --phase config
 # … repeat with --phase find, … as you advance through the flow …
 keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the run finishes
 ```

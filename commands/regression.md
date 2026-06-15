@@ -201,7 +201,7 @@ it. This command's flow phases are: `orient` → `preflight` → `fanout` → `a
 whole run (e.g. `regression-<issue-or-pr>`), and as you enter each phase run:
 
 ```bash
-keel activity .keel/project.yaml --root . --command regression --run-id "$RUN" --phase orient
+keel activity .keel/project.yaml --root . --write --command regression --run-id "$RUN" --phase orient
 # … repeat with --phase preflight, … as you advance through the flow …
 keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the run finishes
 ```
@@ -209,4 +209,4 @@ keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the r
 Strictly **best-effort and fail-soft**: it needs keel core ≥ 1.6.0; if `keel activity`
 is unavailable, skip it silently and never block the command on it.
 
-<!-- keel-generated: surface=plugin command=regression keel_version=1.6.0 source_sha256=7c4f22c06825d01ca98d8691046c32db1aa49273f7c94ec4f4d0f47178555841 generated_sha256=7c4f22c06825d01ca98d8691046c32db1aa49273f7c94ec4f4d0f47178555841 -->
+<!-- keel-generated: surface=plugin command=regression keel_version=1.6.1 source_sha256=8742c81549c682b97e58f748a7288685ae88d1d826e9f811aa5f02f1d01806c7 generated_sha256=8742c81549c682b97e58f748a7288685ae88d1d826e9f811aa5f02f1d01806c7 -->

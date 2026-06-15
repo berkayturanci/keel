@@ -158,7 +158,7 @@ it. This command's flow phases are: `orient` → `tracking` → `scan` → `drif
 whole run (e.g. `deps-audit-<issue-or-pr>`), and as you enter each phase run:
 
 ```bash
-keel activity .keel/project.yaml --root . --command deps-audit --run-id "$RUN" --phase orient
+keel activity .keel/project.yaml --root . --write --command deps-audit --run-id "$RUN" --phase orient
 # … repeat with --phase tracking, … as you advance through the flow …
 keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the run finishes
 ```

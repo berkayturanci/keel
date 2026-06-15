@@ -159,7 +159,7 @@ it. This command's flow phases are: `config` → `fetch` → `branch` → `resol
 whole run (e.g. `implement-<issue-or-pr>`), and as you enter each phase run:
 
 ```bash
-keel activity .keel/project.yaml --root . --command implement --run-id "$RUN" --phase config
+keel activity .keel/project.yaml --root . --write --command implement --run-id "$RUN" --phase config
 # … repeat with --phase fetch, … as you advance through the flow …
 keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the run finishes
 ```

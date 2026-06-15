@@ -152,7 +152,7 @@ it. This command's flow phases are: `orient` → `areas` → `baseline` → `hea
 whole run (e.g. `coverage-<issue-or-pr>`), and as you enter each phase run:
 
 ```bash
-keel activity .keel/project.yaml --root . --command coverage --run-id "$RUN" --phase orient
+keel activity .keel/project.yaml --root . --write --command coverage --run-id "$RUN" --phase orient
 # … repeat with --phase areas, … as you advance through the flow …
 keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the run finishes
 ```
@@ -160,4 +160,4 @@ keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the r
 Strictly **best-effort and fail-soft**: it needs keel core ≥ 1.6.0; if `keel activity`
 is unavailable, skip it silently and never block the command on it.
 
-<!-- keel-generated: surface=plugin command=coverage keel_version=1.6.0 source_sha256=72011a74b6d7308acb35f1238165e922322d3a818c0a4c854560f8b014a06e9f generated_sha256=72011a74b6d7308acb35f1238165e922322d3a818c0a4c854560f8b014a06e9f -->
+<!-- keel-generated: surface=plugin command=coverage keel_version=1.6.1 source_sha256=22523a0341eb7d0c71c7228dee0f0a23d849d45599773c1ad4891a92f48118d6 generated_sha256=22523a0341eb7d0c71c7228dee0f0a23d849d45599773c1ad4891a92f48118d6 -->

@@ -119,7 +119,7 @@ it. This command's flow phases are: `config` → `sanity` → `gates` → `commi
 whole run (e.g. `wrap-<issue-or-pr>`), and as you enter each phase run:
 
 ```bash
-keel activity .keel/project.yaml --root . --command wrap --run-id "$RUN" --phase config
+keel activity .keel/project.yaml --root . --write --command wrap --run-id "$RUN" --phase config
 # … repeat with --phase sanity, … as you advance through the flow …
 keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the run finishes
 ```
@@ -127,4 +127,4 @@ keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the r
 Strictly **best-effort and fail-soft**: it needs keel core ≥ 1.6.0; if `keel activity`
 is unavailable, skip it silently and never block the command on it.
 
-<!-- keel-generated: surface=plugin command=wrap keel_version=1.6.0 source_sha256=343073279de7cde7a97c831975da6e3e5fd6faea3eb83cf204b7ea2df942adb4 generated_sha256=343073279de7cde7a97c831975da6e3e5fd6faea3eb83cf204b7ea2df942adb4 -->
+<!-- keel-generated: surface=plugin command=wrap keel_version=1.6.1 source_sha256=3d17768ad8234b9163beb5f5b5c076544b08ff4199b5e06ae2f1456cdc49b6f0 generated_sha256=3d17768ad8234b9163beb5f5b5c076544b08ff4199b5e06ae2f1456cdc49b6f0 -->

@@ -197,7 +197,7 @@ it. This command's flow phases are: `config` → `find` → `open` → `read` �
 whole run (e.g. `pr-loop-<issue-or-pr>`), and as you enter each phase run:
 
 ```bash
-keel activity .keel/project.yaml --root . --command pr-loop --run-id "$RUN" --phase config
+keel activity .keel/project.yaml --root . --write --command pr-loop --run-id "$RUN" --phase config
 # … repeat with --phase find, … as you advance through the flow …
 keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the run finishes
 ```
@@ -205,4 +205,4 @@ keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the r
 Strictly **best-effort and fail-soft**: it needs keel core ≥ 1.6.0; if `keel activity`
 is unavailable, skip it silently and never block the command on it.
 
-<!-- keel-generated: surface=plugin command=pr-loop keel_version=1.6.0 source_sha256=0de2e43a0656f6f5cd054be947317f356a330f6db64041e806aa3acddf16774e generated_sha256=0de2e43a0656f6f5cd054be947317f356a330f6db64041e806aa3acddf16774e -->
+<!-- keel-generated: surface=plugin command=pr-loop keel_version=1.6.1 source_sha256=0bb7729f18655cae611d0db9ff081b4ddfc1c701de39813a9779ef6c764d1857 generated_sha256=0bb7729f18655cae611d0db9ff081b4ddfc1c701de39813a9779ef6c764d1857 -->

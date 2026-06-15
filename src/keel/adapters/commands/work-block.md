@@ -111,7 +111,7 @@ it. This command's flow phases are: `config` → `snapshot` → `loop` → `repo
 whole run (e.g. `work-block-<issue-or-pr>`), and as you enter each phase run:
 
 ```bash
-keel activity .keel/project.yaml --root . --command work-block --run-id "$RUN" --phase config
+keel activity .keel/project.yaml --root . --write --command work-block --run-id "$RUN" --phase config
 # … repeat with --phase snapshot, … as you advance through the flow …
 keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the run finishes
 ```

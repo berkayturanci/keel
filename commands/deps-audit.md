@@ -158,7 +158,7 @@ it. This command's flow phases are: `orient` → `tracking` → `scan` → `drif
 whole run (e.g. `deps-audit-<issue-or-pr>`), and as you enter each phase run:
 
 ```bash
-keel activity .keel/project.yaml --root . --command deps-audit --run-id "$RUN" --phase orient
+keel activity .keel/project.yaml --root . --write --command deps-audit --run-id "$RUN" --phase orient
 # … repeat with --phase tracking, … as you advance through the flow …
 keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the run finishes
 ```
@@ -166,4 +166,4 @@ keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the r
 Strictly **best-effort and fail-soft**: it needs keel core ≥ 1.6.0; if `keel activity`
 is unavailable, skip it silently and never block the command on it.
 
-<!-- keel-generated: surface=plugin command=deps-audit keel_version=1.6.0 source_sha256=4643f6c4f2d4eacbf7211b0e3b2df15518c644a69100afb424374bdee4c875b7 generated_sha256=4643f6c4f2d4eacbf7211b0e3b2df15518c644a69100afb424374bdee4c875b7 -->
+<!-- keel-generated: surface=plugin command=deps-audit keel_version=1.6.1 source_sha256=59ebb6fce659fa4ed3166be2ba9733116ddd5762061bf4ada9e5e8df207a3754 generated_sha256=59ebb6fce659fa4ed3166be2ba9733116ddd5762061bf4ada9e5e8df207a3754 -->

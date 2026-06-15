@@ -159,7 +159,7 @@ it. This command's flow phases are: `config` → `fetch` → `branch` → `resol
 whole run (e.g. `implement-<issue-or-pr>`), and as you enter each phase run:
 
 ```bash
-keel activity .keel/project.yaml --root . --command implement --run-id "$RUN" --phase config
+keel activity .keel/project.yaml --root . --write --command implement --run-id "$RUN" --phase config
 # … repeat with --phase fetch, … as you advance through the flow …
 keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the run finishes
 ```
@@ -167,4 +167,4 @@ keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the r
 Strictly **best-effort and fail-soft**: it needs keel core ≥ 1.6.0; if `keel activity`
 is unavailable, skip it silently and never block the command on it.
 
-<!-- keel-generated: surface=plugin command=implement keel_version=1.6.0 source_sha256=180c4230cc7d6b1e09ec5d341c0a731303c574e4176fefeaef5e9121f8e6ce5d generated_sha256=180c4230cc7d6b1e09ec5d341c0a731303c574e4176fefeaef5e9121f8e6ce5d -->
+<!-- keel-generated: surface=plugin command=implement keel_version=1.6.1 source_sha256=8ab263e0675fae0c07079b57f2b87e3abce5d2ee306823a2852b228ae8c49dab generated_sha256=8ab263e0675fae0c07079b57f2b87e3abce5d2ee306823a2852b228ae8c49dab -->

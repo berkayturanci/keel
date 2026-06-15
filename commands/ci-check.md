@@ -91,7 +91,7 @@ it. This command's flow phases are: `poll` → `report`. Choose one stable `--ru
 whole run (e.g. `ci-check-<issue-or-pr>`), and as you enter each phase run:
 
 ```bash
-keel activity .keel/project.yaml --root . --command ci-check --run-id "$RUN" --phase poll
+keel activity .keel/project.yaml --root . --write --command ci-check --run-id "$RUN" --phase poll
 # … repeat with --phase report, … as you advance through the flow …
 keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the run finishes
 ```
@@ -99,4 +99,4 @@ keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the r
 Strictly **best-effort and fail-soft**: it needs keel core ≥ 1.6.0; if `keel activity`
 is unavailable, skip it silently and never block the command on it.
 
-<!-- keel-generated: surface=plugin command=ci-check keel_version=1.6.0 source_sha256=044899fc5f11b0455c95a1ed5e0cf7ddb06fc217ad06ced9b5a09dd6d7717746 generated_sha256=044899fc5f11b0455c95a1ed5e0cf7ddb06fc217ad06ced9b5a09dd6d7717746 -->
+<!-- keel-generated: surface=plugin command=ci-check keel_version=1.6.1 source_sha256=9d6ed9bdf883afbc5c8756a6fe01ac4f5395ff1d93dbe47cac1acb9fb6d67701 generated_sha256=9d6ed9bdf883afbc5c8756a6fe01ac4f5395ff1d93dbe47cac1acb9fb6d67701 -->

@@ -221,7 +221,7 @@ it. This command's flow phases are: `config` → `validate` → `loop` → `revi
 whole run (e.g. `review-cycle-<issue-or-pr>`), and as you enter each phase run:
 
 ```bash
-keel activity .keel/project.yaml --root . --command review-cycle --run-id "$RUN" --phase config
+keel activity .keel/project.yaml --root . --write --command review-cycle --run-id "$RUN" --phase config
 # … repeat with --phase validate, … as you advance through the flow …
 keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the run finishes
 ```
@@ -229,4 +229,4 @@ keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the r
 Strictly **best-effort and fail-soft**: it needs keel core ≥ 1.6.0; if `keel activity`
 is unavailable, skip it silently and never block the command on it.
 
-<!-- keel-generated: surface=plugin command=review-cycle keel_version=1.6.0 source_sha256=f55768121b9a63c29838eab8e9b274198aeeffff5829d7b9d7a90852fe8892b7 generated_sha256=f55768121b9a63c29838eab8e9b274198aeeffff5829d7b9d7a90852fe8892b7 -->
+<!-- keel-generated: surface=plugin command=review-cycle keel_version=1.6.1 source_sha256=c2f41a6dffa395fd00827878a102171f4197d1fea2967d17ba9e442f809beeb0 generated_sha256=c2f41a6dffa395fd00827878a102171f4197d1fea2967d17ba9e442f809beeb0 -->

@@ -119,7 +119,7 @@ it. This command's flow phases are: `config` → `sanity` → `gates` → `commi
 whole run (e.g. `wrap-<issue-or-pr>`), and as you enter each phase run:
 
 ```bash
-keel activity .keel/project.yaml --root . --command wrap --run-id "$RUN" --phase config
+keel activity .keel/project.yaml --root . --write --command wrap --run-id "$RUN" --phase config
 # … repeat with --phase sanity, … as you advance through the flow …
 keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the run finishes
 ```

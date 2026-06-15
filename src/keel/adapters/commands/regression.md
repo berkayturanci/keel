@@ -201,7 +201,7 @@ it. This command's flow phases are: `orient` → `preflight` → `fanout` → `a
 whole run (e.g. `regression-<issue-or-pr>`), and as you enter each phase run:
 
 ```bash
-keel activity .keel/project.yaml --root . --command regression --run-id "$RUN" --phase orient
+keel activity .keel/project.yaml --root . --write --command regression --run-id "$RUN" --phase orient
 # … repeat with --phase preflight, … as you advance through the flow …
 keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the run finishes
 ```

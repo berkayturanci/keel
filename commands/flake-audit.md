@@ -173,7 +173,7 @@ it. This command's flow phases are: `orient` → `evidence` → `aggregate` → 
 whole run (e.g. `flake-audit-<issue-or-pr>`), and as you enter each phase run:
 
 ```bash
-keel activity .keel/project.yaml --root . --command flake-audit --run-id "$RUN" --phase orient
+keel activity .keel/project.yaml --root . --write --command flake-audit --run-id "$RUN" --phase orient
 # … repeat with --phase evidence, … as you advance through the flow …
 keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the run finishes
 ```
@@ -181,4 +181,4 @@ keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the r
 Strictly **best-effort and fail-soft**: it needs keel core ≥ 1.6.0; if `keel activity`
 is unavailable, skip it silently and never block the command on it.
 
-<!-- keel-generated: surface=plugin command=flake-audit keel_version=1.6.0 source_sha256=0d9729a2f3e40cf865af04c0608c4397623902ec616cd6f80c3292388010c0d2 generated_sha256=0d9729a2f3e40cf865af04c0608c4397623902ec616cd6f80c3292388010c0d2 -->
+<!-- keel-generated: surface=plugin command=flake-audit keel_version=1.6.1 source_sha256=de1b4ff44f675e502be06eec00ec880c5c891a8e00dc9980b2e347670f268c78 generated_sha256=de1b4ff44f675e502be06eec00ec880c5c891a8e00dc9980b2e347670f268c78 -->

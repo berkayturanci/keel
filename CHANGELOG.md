@@ -6,6 +6,15 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.6.1] — 2026-06-15
+
+### Fixed
+- **`keel activity` adapter emission was a no-op.** The "Live progress" block added
+  to every stepped command in 1.6.0 invoked `keel activity … --command … --phase …`
+  **without `--write`**, so it only *read* the channel and never recorded the run —
+  non-ship commands stayed invisible on keel-visual's board. Add the missing
+  `--write` to the emission line in all 15 stepped adapters.
+
 ## [1.6.0] — 2026-06-15
 
 ### Added

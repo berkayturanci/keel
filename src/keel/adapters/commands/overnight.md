@@ -193,7 +193,7 @@ it. This command's flow phases are: `config` → `preflight` → `queue` → `lo
 whole run (e.g. `overnight-<issue-or-pr>`), and as you enter each phase run:
 
 ```bash
-keel activity .keel/project.yaml --root . --command overnight --run-id "$RUN" --phase config
+keel activity .keel/project.yaml --root . --write --command overnight --run-id "$RUN" --phase config
 # … repeat with --phase preflight, … as you advance through the flow …
 keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the run finishes
 ```

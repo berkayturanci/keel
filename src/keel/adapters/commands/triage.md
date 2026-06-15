@@ -281,7 +281,7 @@ it. This command's flow phases are: `config` → `find` → `tier` → `classify
 whole run (e.g. `triage-<issue-or-pr>`), and as you enter each phase run:
 
 ```bash
-keel activity .keel/project.yaml --root . --command triage --run-id "$RUN" --phase config
+keel activity .keel/project.yaml --root . --write --command triage --run-id "$RUN" --phase config
 # … repeat with --phase find, … as you advance through the flow …
 keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the run finishes
 ```

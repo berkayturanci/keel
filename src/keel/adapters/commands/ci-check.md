@@ -91,7 +91,7 @@ it. This command's flow phases are: `poll` → `report`. Choose one stable `--ru
 whole run (e.g. `ci-check-<issue-or-pr>`), and as you enter each phase run:
 
 ```bash
-keel activity .keel/project.yaml --root . --command ci-check --run-id "$RUN" --phase poll
+keel activity .keel/project.yaml --root . --write --command ci-check --run-id "$RUN" --phase poll
 # … repeat with --phase report, … as you advance through the flow …
 keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the run finishes
 ```

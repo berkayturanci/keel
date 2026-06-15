@@ -128,7 +128,7 @@ it. This command's flow phases are: `config` → `deferrals` → `shipped` → `
 whole run (e.g. `morning-<issue-or-pr>`), and as you enter each phase run:
 
 ```bash
-keel activity .keel/project.yaml --root . --command morning --run-id "$RUN" --phase config
+keel activity .keel/project.yaml --root . --write --command morning --run-id "$RUN" --phase config
 # … repeat with --phase deferrals, … as you advance through the flow …
 keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the run finishes
 ```
@@ -136,4 +136,4 @@ keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the r
 Strictly **best-effort and fail-soft**: it needs keel core ≥ 1.6.0; if `keel activity`
 is unavailable, skip it silently and never block the command on it.
 
-<!-- keel-generated: surface=plugin command=morning keel_version=1.6.0 source_sha256=d18a3a3c28289532062a5c8c574edcfa475a6df3345b9fabed52af6486152e25 generated_sha256=d18a3a3c28289532062a5c8c574edcfa475a6df3345b9fabed52af6486152e25 -->
+<!-- keel-generated: surface=plugin command=morning keel_version=1.6.1 source_sha256=c9e99615f1651a5ad119d72ddf29e3084df60f37b656f986994e6e008acba9e6 generated_sha256=c9e99615f1651a5ad119d72ddf29e3084df60f37b656f986994e6e008acba9e6 -->

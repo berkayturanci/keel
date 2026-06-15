@@ -261,7 +261,7 @@ it. This command's flow phases are: `config` → `parse` → `commits` → `deci
 whole run (e.g. `review-all-day-<issue-or-pr>`), and as you enter each phase run:
 
 ```bash
-keel activity .keel/project.yaml --root . --command review-all-day --run-id "$RUN" --phase config
+keel activity .keel/project.yaml --root . --write --command review-all-day --run-id "$RUN" --phase config
 # … repeat with --phase parse, … as you advance through the flow …
 keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the run finishes
 ```
@@ -269,4 +269,4 @@ keel activity .keel/project.yaml --root . --run-id "$RUN" --done    # when the r
 Strictly **best-effort and fail-soft**: it needs keel core ≥ 1.6.0; if `keel activity`
 is unavailable, skip it silently and never block the command on it.
 
-<!-- keel-generated: surface=plugin command=review-all-day keel_version=1.6.0 source_sha256=ba2b5587137c33adeac52ca1a5cfac5083c4db0d5acba09dfb6809dc88debc12 generated_sha256=ba2b5587137c33adeac52ca1a5cfac5083c4db0d5acba09dfb6809dc88debc12 -->
+<!-- keel-generated: surface=plugin command=review-all-day keel_version=1.6.1 source_sha256=073bb4bb8c819a2918287043b318506f22595109944244fdece0fcba41ec6b8f generated_sha256=073bb4bb8c819a2918287043b318506f22595109944244fdece0fcba41ec6b8f -->
