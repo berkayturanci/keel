@@ -11,6 +11,8 @@ only renders one, so it depends on keel core but core never depends on it.
 from __future__ import annotations
 
 import argparse
+import shutil
+import subprocess
 import sys
 import time
 from importlib import resources
@@ -182,7 +184,72 @@ def _render_pass(args, state, order, *, color, out, sleep, clear_first) -> None:
             sleep(max(0.0, 1.0 / max(1, args.fps)))
 
 
-def _play_follow(args, *, sleep, out, max_cycles: int | None) -> int:
+def _live_pr(args, config) -> int | None:
+    """The **live** run's PR from the checkpoint identifiers, or None.
+
+    Theater is triggered by the live checkpoint (position + jury), so its PR must
+    come from the *same* source — not the ledger's ``state["pr"]``, which can be a
+    stale prior run's number in the exact window theater fires (a live run at the
+    review step before its own ship_run record lands). Fail-soft: a
+    missing/malformed checkpoint yields None so callers fall back to ledger/--pr.
+    """
+    try:
+        record = checkpoint.read_checkpoint(checkpoint.resolve_path(args.root, config))
+    except (checkpoint.CheckpointError, OSError):
+        return None
+    return dash.identity_from_checkpoint(record).get("pr")
+
+
+def _theater_available(_which=None) -> bool:
+    """True if ai-jury's ``jury`` CLI is on PATH. keel-visual never imports ai-jury."""
+    which = _which or shutil.which
+    return which("jury") is not None
+
+
+def _spawn_theater(argv: list[str], cwd: str | None) -> bool:
+    """Run ``jury --theater`` inheriting this terminal so theater owns the screen."""
+    return subprocess.run(argv, cwd=cwd, check=False).returncode == 0
+
+
+def _run_theater(pr: int, *, cwd: str | None, _spawn=None) -> bool:
+    """Hand the terminal to ``jury --pr <pr> --theater``. Fail-soft: any spawn error
+    (jury absent, crash) is swallowed and reported as ``False`` — the follow loop
+    continues. Never raises. keel does not depend on ai-jury."""
+    spawn = _spawn or _spawn_theater
+    try:
+        return bool(spawn(["jury", "--pr", str(pr), "--theater"], cwd))
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _is_interactive(out) -> bool:
+    """True only on a real tty — theater is meaningless when output is piped/captured."""
+    return bool(getattr(out, "isatty", lambda: False)())
+
+
+def _theater_due(state: dict, *, enabled: bool, done: bool, interactive: bool) -> bool:
+    """Pure: should we hand off to theater on this tick? True only when theater is
+    enabled, the output is interactive, we haven't already done it this approach, and
+    the live run sits on the review step with the jury active."""
+    if not (enabled and interactive) or done:
+        return False
+    steps = state.get("steps") or []
+    idx = state.get("active_index", 0)
+    cur = steps[idx] if 0 <= idx < len(steps) else {}
+    jury = state.get("jury") or {}
+    return cur.get("id") == runstate.REVIEW_STEP_ID and bool(jury.get("active"))
+
+
+def _review_index(state: dict) -> int | None:
+    """Index of the review step in this run's flow, or None if it has none."""
+    for i, step in enumerate(state.get("steps") or []):
+        if step.get("id") == runstate.REVIEW_STEP_ID:
+            return i
+    return None
+
+
+def _play_follow(args, *, sleep, out, max_cycles: int | None,
+                 theater_run=_run_theater, theater_available=_theater_available) -> int:
     """Live mode: re-resolve the run-state each interval and redraw the current step.
 
     Fail-soft against *transient* read errors: a live run appends to the ledger
@@ -196,7 +263,11 @@ def _play_follow(args, *, sleep, out, max_cycles: int | None) -> int:
         print(config[1], file=sys.stderr)
         return config[0]
     color = _resolve_color(args, out)
+    theater = getattr(args, "theater", False)
+    interactive = _is_interactive(out)
     last_frame: str | None = None
+    state: dict | None = None
+    theater_done = False
     cycle = 0
     try:
         while max_cycles is None or cycle < max_cycles:
@@ -206,11 +277,24 @@ def _play_follow(args, *, sleep, out, max_cycles: int | None) -> int:
                     state, state["active_index"], style=args.style, color=color
                 )
             except (ledger.LedgerError, OSError):
-                pass  # transient (bad content or path): hold last frame, keep polling
+                state = None  # transient (bad content or path): hold last frame, keep polling
             if not args.no_clear:
                 out.write(_CLEAR)
             out.write((last_frame or "keel-visual — waiting for run state…") + "\n")
             out.flush()
+            if theater and state is not None:
+                # re-arm the one-shot when a fresh run is still before the review step
+                rvi = _review_index(state)
+                if rvi is not None and state.get("active_index", 0) < rvi:
+                    theater_done = False
+                if _theater_due(state, enabled=theater, done=theater_done,
+                                interactive=interactive):
+                    # PR identity from the same live source that triggered the
+                    # handoff (checkpoint), else the ledger/--pr fallback.
+                    pr = _live_pr(args, config) or state.get("pr") or getattr(args, "pr", None)
+                    if pr and theater_available():
+                        theater_run(int(pr), cwd=args.root)  # hands off the screen, then resumes
+                    theater_done = True  # one-shot per approach, even if jury was absent
             cycle += 1
             sleep(max(0.0, args.interval))
     except KeyboardInterrupt:
@@ -317,6 +401,10 @@ def build_parser() -> argparse.ArgumentParser:
     pl.add_argument("--follow", action="store_true",
                     help="live: re-read ledger + checkpoint each interval, show where the run is")
     pl.add_argument("--interval", type=float, default=1.0, help="--follow poll interval in seconds")
+    pl.add_argument("--theater", action="store_true",
+                    help="with --follow on a tty: hand off to ai-jury's `jury --theater` "
+                         "at the review step when the jury is active, then resume "
+                         "(silently skipped if the jury CLI is absent)")
     pl.add_argument("--no-clear", action="store_true", help="keep frames (no screen clear)")
     pl.add_argument("--color", default="auto", choices=("auto", "always", "never"),
                     help="ANSI colour (auto = only on a tty)")

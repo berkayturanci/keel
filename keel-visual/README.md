@@ -14,6 +14,37 @@ Both outputs are fed by a single **pure** adapter,
 **command flow** — the canonical phase list each command has in keel core
 (`keel.flows.flow_for`). No parallel data model, no second source of truth.
 
+## Watching a run (the observer model)
+
+keel-visual is a **separate observer**. It only ever *reads* the ledger and
+checkpoint that `keel ship` already writes — it never drives the run and is never
+in its call path. So it works **the same no matter how the run is launched**: by
+hand, from an agent (Claude Code, Codex, …), or in CI. The run writes its
+records; keel-visual reads them.
+
+That means the visualizer is a **separate process you point at the same repo**,
+not something the run prints itself. In particular:
+
+- **The live animations need a real terminal (tty).** `play --follow` clears and
+  redraws ANSI frames, and `--theater` hands the screen to `jury --theater` —
+  both only animate in an interactive terminal. In **captured/agent/CI output**
+  there is no live tty, so they **degrade gracefully**: `--theater` is skipped,
+  `--color auto` drops colour, and a blocking `--follow` isn't how you'd consume
+  it anyway. keel-visual never garbles a non-interactive stream.
+
+So when **an agent (e.g. Claude Code) is driving `keel ship`**, you don't watch
+the animation *inside* the agent's transcript — you watch it **alongside**, two
+ways:
+
+| want | run | needs a tty? |
+| --- | --- | --- |
+| **Watch live, in a terminal** | open your **own** terminal tab and run `keel-visual play --follow` (or `dash` for parallel runs) pointed at the same repo/worktrees. It reads the live checkpoint the agent's run writes, and the playhead moves as the run progresses. **Theater (`--theater`) triggers here, in your tty** — not in the agent's. | yes (your terminal) |
+| **Watch in a browser** | `keel-visual render .keel/project.yaml --pr <N> --out run.html` writes a self-contained page — open it during or after the run, anywhere. | no |
+| **A single frame / share** | `keel-visual play … --step <n>` or the web page screenshot. | no |
+
+In short: *agent runs ship → you watch beside it* (a second terminal or the web
+page), not *agent runs ship → animation in the agent's output*.
+
 ## Every command, not just ship
 
 `--command` accepts **all 16 keel commands** (ci-check, coverage, deps-audit,
@@ -67,10 +98,14 @@ keel-visual play .keel/project.yaml --pr 361 --step 8     # a single frame (e.g.
   step (the terminal's take on the 3D `line` style).
 - **`--follow`** — live mode: every `--interval` seconds it re-reads the run's
   ledger + checkpoint (`position.current_step` *and* the `state` block, so merge
-  progress shows live — pending / merged / failed — not just position) and
-  redraws where the run *actually* is now. Point it at a running keel command and
-  watch the playhead move in real time. Ctrl-C to stop.
+  progress *and the live jury status* show — pending / merged / failed, jury
+  off / advisory / gating — not just position) and redraws where the run
+  *actually* is now. Point it at a running keel command and watch the playhead
+  move in real time. Ctrl-C to stop.
 - **`--loop`** — replay the animation continuously (demo / always-on display).
+- **`--theater`** — with `--follow` on a tty: hand the screen to ai-jury's
+  `jury --theater` at the review step when the jury is active, then resume (see
+  [With ai-jury](#with-ai-jury--theater-mode)).
 
 `render` and `play` both pick up the live checkpoint automatically when you
 don't pass `--checkpoint-step`. Colour is `--color auto` (only on a tty),
@@ -128,6 +163,31 @@ styles never changes what a colour means, only the geometry it is painted on.
 | yellow | regression `minor` finding |
 | red | a blocked gate · regression `critical` finding |
 | dim | a step the run has not reached yet |
+
+## With ai-jury — theater mode
+
+keel runs an optional **cross-vendor jury** on the review step (s7) — when
+[ai-jury](https://github.com/berkayturanci/ai-jury) is installed and the run is
+tier-3 or `--jury` is passed. ai-jury can render that deliberation as an animated
+**theater** (`jury --theater`). keel-visual composes with it three ways — all of
+them **fail-soft and dependency-free**: keel-visual never imports ai-jury, and if
+the `jury` CLI is absent, the jury simply doesn't animate and nothing errors.
+
+| # | combination | how |
+| --- | --- | --- |
+| **Live jury** | the run visual shows the jury **live** | `keel-visual play --follow` — the jury status (off / advisory / gating) is read from the live checkpoint at the review step, not just after the run. |
+| **Theater handoff** | one screen, full flow | `keel-visual play --follow --theater` — when the live run reaches s7 with the jury active, the follower hands the terminal to `jury --theater`, then **resumes from the live checkpoint** (no position lost). One-shot per run; silently skipped if the `jury` CLI is absent, output is piped, or no PR resolves. |
+| **Two panes** | side by side, zero coupling | run `keel-visual play --follow` in one pane and `jury --pr <N> --theater` in another. Both are pure side channels; neither touches keel's gate. |
+
+```
+keel-visual play .keel/project.yaml --follow            # live run + live jury status
+keel-visual play .keel/project.yaml --follow --theater  # + hand off to jury theater at s7
+```
+
+> The jury **gate** (keel's s8 `jury` built-in) always runs deterministically and
+> machine-readable — theater is a **human side channel** that never changes the
+> gate's verdict, the report, or CI. keel core stays neutral and tty-free; all
+> theater orchestration lives here in keel-visual.
 
 ## Install
 

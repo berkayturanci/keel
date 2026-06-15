@@ -160,7 +160,7 @@ def live_state_from_checkpoint(record: dict[str, Any] | None) -> dict[str, Any]:
     if not isinstance(state, dict):
         return {}
     out: dict[str, Any] = {}
-    for key in ("merge", "capture", "close", "last_gate"):
+    for key in ("merge", "capture", "close", "last_gate", "jury_mode"):
         value = state.get(key)
         if isinstance(value, str) and value.strip():
             out[key] = value
@@ -178,26 +178,49 @@ _JURY_KNOWN = {"off", "advisory", "gating", "none", "disabled"}
 REVIEW_STEP_ID = "s7"
 
 
-def jury_from_record(record: dict[str, Any] | None) -> dict[str, Any]:
-    """Extract the cross-vendor jury state from a ship_run ``record``.
+def _normalize_jury(raw: Any) -> dict[str, Any]:
+    """Normalise a raw ``jury_mode`` token into ``{"mode", "active"}``.
 
-    keel records ``run_context.jury_mode`` (``off`` / ``advisory`` / ``gating``)
-    when a ship run resolves the jury — tier-3 auto-enables it, ``--jury`` forces
-    it; the actual jury (``ai-jury`` when installed) is fail-soft, so this is read
-    from *keel's own ledger*, never from ai-jury. Returns ``{"mode", "active"}``:
-    ``active`` is true unless the mode is in the inactive set, and ``mode`` is
-    always a recognised token (``on`` for an unknown-but-enabled value) so no
-    untrusted record string is ever surfaced. Pure — reads only its argument.
+    ``active`` is true unless the mode is in the inactive set; ``mode`` is always a
+    recognised token (``on`` for an unknown-but-enabled value) so no untrusted
+    record string is ever surfaced. A blank/missing value yields the inactive
+    default. Pure — reads only its argument.
     """
-    rec = record if isinstance(record, dict) else None
-    run_context = rec.get("run_context") if rec else None
-    raw = run_context.get("jury_mode") if isinstance(run_context, dict) else None
     norm = raw.strip().lower() if isinstance(raw, str) and raw.strip() else None
     if norm is None:
         return {"mode": None, "active": False}
     active = norm not in _JURY_INACTIVE
     mode = norm if norm in _JURY_KNOWN else ("on" if active else "off")
     return {"mode": mode, "active": active}
+
+
+def jury_from_record(record: dict[str, Any] | None) -> dict[str, Any]:
+    """Extract the cross-vendor jury state from a ship_run ``record`` (the ledger).
+
+    keel records ``run_context.jury_mode`` (``off`` / ``advisory`` / ``gating``)
+    when a ship run resolves the jury — tier-3 auto-enables it, ``--jury`` forces
+    it; the actual jury (``ai-jury`` when installed) is fail-soft, so this is read
+    from *keel's own ledger*, never from ai-jury. This is the **post-run** source;
+    for the live mid-run view see :func:`jury_from_checkpoint`. Pure.
+    """
+    rec = record if isinstance(record, dict) else None
+    run_context = rec.get("run_context") if rec else None
+    raw = run_context.get("jury_mode") if isinstance(run_context, dict) else None
+    return _normalize_jury(raw)
+
+
+def jury_from_checkpoint(state: dict[str, Any] | None) -> dict[str, Any]:
+    """Extract the **live** jury state from a checkpoint ``state`` block.
+
+    keel writes ``state.jury_mode`` at the review/test steps (see
+    :func:`keel.checkpoint.build_checkpoint_record`), so a run *in progress* —
+    which has no ledger ship_run record yet — exposes the jury here for
+    ``--follow``. Same vocabulary/normalisation as :func:`jury_from_record`; a
+    missing key yields the inactive default so callers fall back to the ledger.
+    Pure — reads only its argument.
+    """
+    raw = state.get("jury_mode") if isinstance(state, dict) else None
+    return _normalize_jury(raw)
 
 
 # Checkpoint merge_state -> merge-gate outcome shown by the visualizer.
@@ -302,7 +325,13 @@ def build_run_state(
 
     issue = rec.get("issue") if rec else None
     pr = rec.get("pull_request") if rec else None
-    jury = jury_from_record(rec) if is_ship else {"mode": None, "active": False}
+    # Jury: prefer the live checkpoint (mid-run, for --follow); fall back to the
+    # ledger (post-run). Both read only keel's own records, never ai-jury.
+    if not is_ship:
+        jury = {"mode": None, "active": False}
+    else:
+        live_jury = jury_from_checkpoint(live)
+        jury = live_jury if live_jury["mode"] is not None else jury_from_record(rec)
     return {
         "schema_version": SCHEMA_VERSION,
         "command": command,
