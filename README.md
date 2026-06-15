@@ -240,12 +240,26 @@ runs in CI.
 
 ## Companion: keel-visual
 
-[`keel-visual/`](keel-visual/README.md) is an **optional, separately installable**
-animated run visualizer. It *renders* a keel run from the ledger/checkpoint it
-already writes — it never drives one. Terminal `play` (flow + wave ribbon,
-`--loop`, live `--follow`), a parallel `dash` board, and a web `render` (2D flow
-+ 3D ribbon), for any of the 16 command flows. Depends on this core
-(`keel-workflow >= 1.4.0`); the core never depends on it. See
+[`keel-visual`](https://pypi.org/project/keel-visual/) is an **optional, separately
+installable** animated run visualizer (`pipx install keel-visual`). It *renders* a
+keel run from the ledger/checkpoint keel already writes — it never drives one — for
+**any of the 16 command flows** (`ship` is the s0–s12 backbone; every other command
+renders its own phases).
+
+Three surfaces:
+
+- **`play`** — the run animates in the terminal (flow + wave ribbon, `--loop` for a
+  demo, live `--follow`; `--theater` hands off to [ai-jury](https://github.com/berkayturanci/ai-jury)'s
+  deliberation theater at the review step, then resumes).
+- **`dash`** — a terminal board of every active run; **`dash --all`** aggregates every
+  keel project under a parent folder into one board.
+- **`render`** — a self-contained web page: a **2D flow** and a **3D scene** with five
+  selectable styles (`plexus`/`comet`/`aurora`/`combined`/`line`); **`render --all`**
+  writes a multi-project board with a **2D grid / 3D scene** toggle, automatic
+  **light/dark** theme, and an **all / active** filter that fades finished runs.
+
+Depends on this core (`keel-workflow >= 1.4.0`); the core never depends on it (it only
+reads records, and probes `shutil.which("jury")` — never imports ai-jury). See
 [`keel-visual/README.md`](keel-visual/README.md).
 
 ## Repo layout
