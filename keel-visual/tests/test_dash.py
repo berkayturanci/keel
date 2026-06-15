@@ -154,6 +154,15 @@ class TestRenderProjectBoard(unittest.TestCase):
         self.assertIn("beta", out)
         self.assertIn("\x1b[", out)
 
+    def test_project_name_ansi_injection_stripped(self):
+        # a directory literally named with an escape sequence must not reach the
+        # terminal raw (no screen-clear / cursor spoof from a malicious dir name).
+        # The ESC byte is dropped; the leftover printable "[2J" is inert text.
+        rows = [self._row("ev\x1b[2Jil", pr=1)]
+        out = dash.render_project_board(rows, color=False)
+        self.assertNotIn("\x1b", out)       # the dangerous ESC is gone
+        self.assertIn("ev[2Jil", out)       # printable chars kept, just defanged
+
 
 if __name__ == "__main__":
     unittest.main()

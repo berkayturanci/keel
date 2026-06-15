@@ -121,14 +121,23 @@ def render_board(rows: list[dict[str, Any]], *, color: bool = True, width: int =
     return "\n".join(lines)
 
 
+def _safe_label(text: str) -> str:
+    """Drop non-printable characters so an attacker-named directory can't inject
+    terminal control/ANSI sequences into the board (``dash --all`` scans a parent
+    folder whose subdir names you may not fully control). Pure."""
+    return "".join(c for c in str(text) if c.isprintable())
+
+
 def render_project_board(rows: list[dict[str, Any]], *, color: bool = True, width: int = 12) -> str:
     """Render runs across multiple keel projects, each line prefixed by its project. Pure.
 
     Each row carries a ``project`` label (see the multi-repo ``dash --all`` path).
-    Header counts both the runs and the distinct projects.
+    Header counts both the runs and the distinct projects. Project names are
+    sanitised (they come from directory names) before they reach the terminal.
     """
     nruns = len(rows)
-    nproj = len({r.get("project", "") for r in rows})
+    projects = [_safe_label(r.get("project", "")) for r in rows]
+    nproj = len(set(projects))
     head = terminal.paint(
         f"keel · {nruns} run{'' if nruns == 1 else 's'} across "
         f"{nproj} project{'' if nproj == 1 else 's'}",
@@ -136,12 +145,12 @@ def render_project_board(rows: list[dict[str, Any]], *, color: bool = True, widt
     )
     if not rows:
         return head + "\n  " + terminal.paint("no active runs found", "dim", enable=color)
-    proj_w = max(len(r.get("project", "")) for r in rows)
+    proj_w = max(len(p) for p in projects)
     label_w = max(len(r["label"]) for r in rows)
     lines = [head]
-    for r in rows:
+    for r, pname in zip(rows, projects, strict=True):
         bar, step, status = _row_cells(r, color=color, width=width)
-        proj = terminal.paint(r.get("project", "").ljust(proj_w), "white", enable=color)
+        proj = terminal.paint(pname.ljust(proj_w), "white", enable=color)
         label = terminal.paint(r["label"].ljust(label_w), "dim", enable=color)
         lines.append(f"  {proj}  {label}  {bar}  {step:<16}  {status}")
     return "\n".join(lines)
