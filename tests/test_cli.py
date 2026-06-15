@@ -3,6 +3,7 @@
 import contextlib
 import io
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -277,6 +278,18 @@ def _write_config_with_state_paths(
     )
 
 
+def _abs_state_path(name):
+    """An absolute path on the current OS, forward-slashed.
+
+    A leading-slash path like ``/tmp/x`` is absolute on POSIX but *not* on Windows
+    (which needs a drive), so it would trip the "escapes the project root" branch
+    there instead of "must be relative". Building the path with ``os.path.abspath``
+    keeps it absolute on every OS; replacing the separator with ``/`` keeps it
+    YAML-safe (single-quoted backslashes would double).
+    """
+    return os.path.abspath(name).replace(os.sep, "/")
+
+
 def _run_git(root: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=root, check=True, capture_output=True, text=True)
 
@@ -346,7 +359,7 @@ class TestStatePathErrors(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             bad_ledger = _write_config_with_state_paths(
                 "'true'",
-                ledger_path="/tmp/runs.jsonl",
+                ledger_path=_abs_state_path("runs.jsonl"),
             )
             self.assertFriendlyStateError(
                 ["plan", bad_ledger, "--root", d, "--json"],
@@ -355,7 +368,7 @@ class TestStatePathErrors(unittest.TestCase):
 
             bad_checkpoint = _write_config_with_state_paths(
                 "'true'",
-                checkpoint_path="/tmp/checkpoint.json",
+                checkpoint_path=_abs_state_path("checkpoint.json"),
             )
             self.assertFriendlyStateError(
                 ["plan", bad_checkpoint, "--root", d, "--json"],
@@ -367,7 +380,7 @@ class TestStatePathErrors(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             config = _write_config_with_state_paths(
                 "'true'",
-                ledger_path="/tmp/runs.jsonl",
+                ledger_path=_abs_state_path("runs.jsonl"),
             )
             cases = [
                 ["ledger", config, "--root", d],
@@ -391,7 +404,7 @@ class TestStatePathErrors(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             config = _write_config_with_state_paths(
                 "'true'",
-                checkpoint_path="/tmp/checkpoint.json",
+                checkpoint_path=_abs_state_path("checkpoint.json"),
             )
             cases = [
                 ["checkpoint", config, "--root", d],

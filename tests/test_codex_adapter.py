@@ -6,6 +6,7 @@ import json
 import os
 import stat
 import subprocess
+import sys
 import tomllib
 import unittest
 from pathlib import Path
@@ -47,6 +48,10 @@ class TestCodexAdapter(unittest.TestCase):
         self.assertIn("keel plan --command <cmd>", readme)
         self.assertIn("operator_consent", readme)
 
+    @unittest.skipIf(
+        sys.platform == "win32",
+        "the deny hook is a POSIX shell script; Windows cannot exec it directly",
+    )
     def test_deny_hook_blocks_dangerous_shell_and_allows_safe_read(self):
         env = {**os.environ, "PATH": os.environ.get("PATH", "")}
         blocked_command = "git reset " + "--hard"

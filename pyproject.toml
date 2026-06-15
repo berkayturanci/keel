@@ -28,6 +28,11 @@ classifiers = [
 ]
 dependencies = [
     "PyYAML>=6",
+    # Windows ships no system zoneinfo database; the stdlib `zoneinfo` used by the
+    # merge-window logic needs the IANA data from this pure-data package there. It is
+    # never installed on Linux/macOS, so the "one runtime dependency" rule still holds
+    # on those platforms. See AGENTS.md (Stdlib-first).
+    "tzdata; sys_platform == 'win32'",
 ]
 
 [project.urls]

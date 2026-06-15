@@ -7,10 +7,15 @@ All notable changes to keel are documented here. The format follows
 ## [Unreleased]
 
 ### Added
-- **CI now runs on Windows.** The test matrix adds `windows-latest` across Python
-  3.11–3.13, proving the CLI's cross-OS subprocess/path behaviour. Config validation
-  runs there too (under bash so the `projects/*.yaml` glob expands); the make-based
-  dogfood gate step is skipped on Windows since `make` is unavailable on the runner.
+- **Windows support, proven in CI.** The test matrix adds `windows-latest` across Python
+  3.11–3.13. The merge-window logic uses the stdlib `zoneinfo`, which has no IANA database
+  on Windows, so `tzdata` is now a Windows-only runtime dependency
+  (`tzdata; sys_platform == 'win32'`) — Linux/macOS stay at the single PyYAML dependency.
+  Config validation runs on Windows under bash so the `projects/*.yaml` glob expands; the
+  make-based dogfood gate step is skipped there since `make` is unavailable on the runner.
+  Two tests were made cross-OS: the state-path rejection tests build an OS-absolute path
+  (a leading-slash path is not absolute on Windows), and the POSIX-shell codex deny-hook
+  execution test is skipped on Windows.
 
 ## [1.3.0] — 2026-06-14
 

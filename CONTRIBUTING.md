@@ -17,8 +17,10 @@ By participating you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
   subprocess/network/prompting in a thin wrapper with an injectable `_run` seam.
 - **Add-only backbone.** Extensions snap into named slots; they never remove, reorder, or
   replace a backbone step. `on_fail: block` is valid only in the `pre-merge` slot.
-- **Single runtime dependency.** PyYAML only. Dev-only tools (`ruff`, `coverage`, `build`)
-  live in the `dev` extra.
+- **Single runtime dependency.** PyYAML only on Linux/macOS. Dev-only tools (`ruff`,
+  `coverage`, `build`) live in the `dev` extra. The one platform exception is `tzdata` on
+  Windows (`sys_platform == 'win32'`), where the stdlib `zoneinfo` has no system IANA
+  database to read; it is never installed on Linux/macOS.
 - **Python ≥ 3.11.** `requires-python` in `pyproject.toml` is the source of truth.
 
 ## Pull Requests

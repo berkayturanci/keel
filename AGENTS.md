@@ -26,9 +26,12 @@ The rules you will hit most often. Details follow below.
 - **Coverage bar is non-negotiable.** The pure core is held at **100 % line + branch**;
   the CI gate is `fail_under = 100` (`pyproject.toml`). New core code ships with tests
   that keep it at 100 %.
-- **Stdlib-first.** Exactly one runtime dependency: **PyYAML**. Do not add another
-  runtime dep without an explicit, discussed reason — `jsonschema_min` is a hand-rolled
-  validator precisely to avoid pulling `jsonschema`.
+- **Stdlib-first.** Exactly one runtime dependency on Linux/macOS: **PyYAML**. Do not add
+  another runtime dep without an explicit, discussed reason — `jsonschema_min` is a
+  hand-rolled validator precisely to avoid pulling `jsonschema`. The sole platform
+  exception is **`tzdata` on Windows only** (`sys_platform == 'win32'`): Windows has no
+  system IANA zoneinfo database, so the stdlib `zoneinfo` used by the merge-window logic
+  needs that pure-data package there. It is never installed on Linux/macOS.
 - **Determinism.** No wall-clock or randomness in the pure core. Plans, `config_hash`,
   and ship decisions must be reproducible for identical inputs.
 - **Operator consent is emit-only in core.** keel core only **emits** the operator-consent
