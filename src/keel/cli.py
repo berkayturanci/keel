@@ -3481,7 +3481,7 @@ def _fetch_latest_pypi_version(
     the parsing is unit-tested offline; the live ``urlopen`` boundary is excluded.
     """
     if not url.startswith(("http://", "https://")):
-        return None  # pragma: no cover - defensive scheme boundary
+        return None  # restrict to http(s): no file://, ftp://, or custom schemes
 
     if _open is None:  # pragma: no cover - live network boundary
         from urllib.request import urlopen
