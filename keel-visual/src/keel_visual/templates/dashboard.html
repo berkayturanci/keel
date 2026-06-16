@@ -101,6 +101,10 @@
   .d3 canvas{width:100%;height:100%;display:block;touch-action:none;cursor:grab}
   .d3 canvas:active{cursor:grabbing}
   .dhud{position:absolute;left:11px;right:11px;bottom:9px;font-size:11px;color:var(--mut);pointer-events:none;text-align:center}
+  .seg3dd{position:absolute;left:10px;top:10px;display:flex;gap:2px;background:rgba(10,14,26,.5);border:1px solid var(--line);border-radius:8px;padding:2px}
+  .seg3dd button{border:0;background:transparent;color:var(--mut);font:inherit;font-size:11px;padding:3px 9px;border-radius:6px;cursor:pointer}
+  .seg3dd button.on{background:rgba(73,182,255,.2);color:var(--info)}
+  .seg3dd button:hover{color:var(--txt)}
   .flow{display:flex;flex-direction:column;gap:1px;margin:6px 0 18px}
   .frow{display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:9px;font-size:13px}
   .frow.cur{background:rgba(73,182,255,.12)}
@@ -264,7 +268,11 @@
     drawer.appendChild(seg);
     const d2=el('div'); d2.id='d2d'; drawer.appendChild(d2);
     const d3w=el('div'); d3w.id='d3d'; const sc=el('div','d3'); const cv=el('canvas');
-    const hud=el('div','dhud'); sc.append(cv,hud); d3w.appendChild(sc); drawer.appendChild(d3w);
+    const styleBar=el('div','seg3dd');                       // 3D-style picker (curve/helix/ring/line)
+    D3_STYLES.forEach(name=>{ const b=el('button'); b.dataset.s=name; b.textContent=D3_LABEL[name];
+      if(name===d3style) b.className='on';
+      b.addEventListener('click',()=>setD3Style(name)); styleBar.appendChild(b); });
+    const hud=el('div','dhud'); sc.append(cv,styleBar,hud); d3w.appendChild(sc); drawer.appendChild(d3w);
     d3.canvas=cv;
   }
   function renderDrawer(){
@@ -331,6 +339,25 @@
   }
   const d3={ren:null,scene:null,cam:null,raf:0,objs:[],actives:[],camR:12,canvas:null,
             yaw:0,pitch:0.5,auto:0,last:0,drag:false,px:0,py:0};
+  // selectable 3D arrangements of the same step markers (active step glows in each)
+  const D3_STYLES=['curve','helix','ring','line'];
+  const D3_LABEL={curve:'curve',helix:'helix',ring:'ring',line:'line'};
+  let d3style='curve'; try{ d3style=localStorage.getItem('keel-3dstyle')||'curve'; }catch(e){}
+  if(D3_STYLES.indexOf(d3style)<0) d3style='curve';
+  function d3Pos(style,W,m){
+    const TAU=Math.PI*2, R=Math.max(2.4,W/3.4);
+    if(style==='helix') return t=>new THREE.Vector3((t-0.5)*W, Math.sin(t*2.6*TAU)*1.6, Math.cos(t*2.6*TAU)*1.6);
+    if(style==='ring')  return t=>{ const a=t*TAU-Math.PI/2; return new THREE.Vector3(Math.cos(a)*R, (t-0.5)*1.4, Math.sin(a)*R); };
+    if(style==='line')  return t=>new THREE.Vector3(-W/2+t*W, 0, 0);
+    return t=>new THREE.Vector3(-W/2+t*W, Math.sin(t*Math.PI*0.5)*2.4-0.4, 0);   // curve (default)
+  }
+  function setD3Style(name){
+    if(D3_STYLES.indexOf(name)<0) return; d3style=name;
+    try{ localStorage.setItem('keel-3dstyle',name); }catch(e){}
+    drawer.querySelectorAll('.seg3dd button').forEach(b=>b.classList.toggle('on',b.dataset.s===name));
+    const run = openKey && runByKey(openKey);
+    if(run && d3.ren){ d3.yaw=0; d3.auto=0; d3Build(run); d3Resize(); }   // rebuild geometry for the new arrangement
+  }
   function d3Pal(){
     const a=document.documentElement.getAttribute('data-theme');
     const light = a==='light' || (!a && window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches);
@@ -364,8 +391,7 @@
     const P=d3Pal(); if(d3.scene.fog) d3.scene.fog.color.setHex(P.fog);
     const steps=Array.isArray(run.steps)?run.steps:[]; const m=Math.max(1,steps.length);
     const active=run.active_index|0, finished=!!run.merged||!!run.done, W=Math.min(12,1.5*m);
-    // steps follow a gently rising curve (echoes the keel mark); active step pulses
-    const pos=t=>new THREE.Vector3(-W/2+t*W, Math.sin(t*Math.PI*0.5)*2.4-0.4, 0);
+    const pos=d3Pos(d3style,W,m);   // chosen 3D arrangement of the step markers
     const sgeo=new THREE.SphereGeometry(0.23,18,18), hgeo=new THREE.SphereGeometry(0.44,18,18);
     if(m>1){
       const pts=steps.map((_,i)=>pos(i/(m-1)));
@@ -382,7 +408,8 @@
         halo.position.copy(p); d3.scene.add(halo); d3.objs.push(halo); d3.actives.push(halo);
       }
     });
-    d3.camR=Math.max(W,5)*0.92+4;
+    let maxR=2.5; for(let i=0;i<m;i++){ const p=pos(m>1?i/(m-1):0.5); maxR=Math.max(maxR,p.length()); }
+    d3.camR=maxR*1.75+4;   // frame whatever arrangement the chosen style produced
   }
   function d3Resize(){
     if(!d3.ren) return; const wrap=d3.canvas.parentElement;
