@@ -136,16 +136,27 @@ keel-visual render --all --root ~/code --out board.html && open board.html
 `render --all` writes a **static snapshot** — a run that starts afterwards won't
 appear. `serve` is the **live** web dashboard: a tiny localhost server whose page
 polls a `/board.json` endpoint that re-reads the records every ~0.5s, so the board
-updates itself. Open it on the side and watch runs appear and advance; click a run
-for a closable right-side **detail drawer** (its step flow + metadata; full-screen
-on mobile).
+updates itself. Open it on the side and watch runs appear and advance.
 
 ```
 keel-visual serve --all --root ~/code        # http://127.0.0.1:8765 — Ctrl-C to stop
 ```
 
 Localhost-only by default (`--host` / `--port` to change). It's the web counterpart
-of the live terminal `dash --all`.
+of the live terminal `dash --all`. The header has a **filter box** (project / `#PR` /
+command), the **all / active** toggle, and a **light / dark** toggle.
+
+Click a run for a closable right-side **detail drawer** (full-screen on mobile):
+
+- a **2D / 3D** switch — 2D is the step list; **3D** is a live per-run scene (drag to
+  orbit, scroll / pinch to zoom) with a **style picker**: `curve · helix · ring · line`
+  (geometric arrangements) plus `plexus · aurora · comet` (particle scenes). Theme-aware;
+  Three.js lazy-loads on first 3D use.
+- **command / phase / status** under both views.
+
+A run that truly **merged** shows a green `merged` badge; one that just **closed out** (a
+`morning`/`triage` that never merges, or a ship that deferred its merge) shows a muted
+`done` badge — it isn't claimed as merged.
 
 The web board has a **2D grid / 3D scene** toggle in its header (or open with
 `board.html?mode=3d`). The 3D scene packs every run into one perspective view —

@@ -50,7 +50,7 @@ keel validate projects/*.yaml                 # schema only
 keel validate .claude/project.yaml --root .   # schema + extensions (use in CI)
 ```
 
-## `keel plan <project.yaml> [--root DIR] [--command COMMAND] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--target TARGET] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--json]`
+## `keel plan <project.yaml> [--root DIR] [--command COMMAND] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--target TARGET] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--run-id ID] [--issue N] [--pull-request N] [--json]`
 
 Render the backbone plan for a project: the fixed steps with the project's built-in gates
 and extensions slotted in. This is the dry-run view — what an actual run would execute.
@@ -58,6 +58,14 @@ and extensions slotted in. This is the dry-run view — what an actual run would
 `--root DIR` (default `.`) is where extension files are resolved. Extensions that can't be
 loaded are reported as warnings on stderr (fail-soft) and the plan still renders with the
 built-in gates.
+
+**Activity auto-stamp (1.6.4+).** Pass `--run-id ID` (with optional `--issue`/`--pull-request`)
+and `plan` also writes the run's `keel.flows` first phase to `.keel/activity/<run-id>.json`,
+so the run shows up on the [keel-visual](keel-visual.md) board **the moment it plans** —
+without depending on the agent's per-phase `keel activity` calls. Every command runs `keel
+plan` at Step 0, so this makes runs reliably visible. `run-gates` and `merge` advance the
+same record (s8, s10). Fail-soft and opt-in: a plain `keel plan` with no `--run-id` stays a
+pure read.
 
 ```bash
 keel plan .claude/project.yaml
@@ -739,6 +747,13 @@ filters it like any finished run); `--clear` removes it. With no flag, it lists 
 record (malformed files are skipped, fail-soft). The stepped command adapters emit this
 best-effort — a missing `keel activity` is skipped silently and never blocks the command.
 
+**As of 1.6.4 you rarely call this by hand for ship.** The deterministic backbone commands
+auto-stamp the board when given a `--run-id`: `keel plan` (Step 0 → first phase), `keel
+run-gates` (s8), and `keel merge` (s10) — so a run shows up and advances **start → test →
+merge** even if the per-phase `keel activity` calls never run. Use `keel activity` directly
+to fill in the **middle** phases (s1–s7, s9, s11–s12) or for the non-ship flows that stamp
+every phase as they go.
+
 ## `keel morning <project.yaml> [--root DIR] [--since WHEN] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--json]`
 
 Render the standalone daily-brief contract for a project. The core owns the generic
@@ -874,11 +889,16 @@ keel plan — example-flutter
     ...
 ```
 
-## `keel run-gates <project.yaml> [--root DIR]`
+## `keel run-gates <project.yaml> [--root DIR] [--run-id ID] [--command CMD] [--phase PHASE] [--issue N] [--pull-request N]`
 
 Run the project's **command gates** (the `command`/`build`/`lint` Lego) under `--root DIR`
 (default `.`) and report each as a structured finding. Agentic gates (review, design
 parity) are not run here — this is the deterministic, runnable slice of the test step (s8).
+
+**Activity auto-stamp (1.6.4+).** Pass `--run-id` and `run-gates` advances the
+[keel-visual](keel-visual.md) board to the test phase (`--phase`, default `s8`; `--command`
+default `ship`) — so a run moves forward on the board without the agent's per-phase
+`keel activity` calls. Fail-soft and opt-in (see `keel plan`).
 
 Each gate runs its configured shell command; a non-zero exit becomes a blocking finding
 (`gate:<name>`), a zero exit a pass. The command's output tail is captured for context.
