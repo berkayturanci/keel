@@ -1,7 +1,9 @@
 """Unit tests for the keel CLI."""
 
+import atexit
 import contextlib
 import io
+import itertools
 import json
 import os
 import subprocess
@@ -13,6 +15,13 @@ from unittest.mock import patch
 
 from keel import cli, install, ledger, runtime, ship, stepverifier
 from keel.runner import CommandResult
+
+# Module-level scratch directory backing the path-returning helpers below.
+# Everything written here vanishes when the process exits, so the test suite
+# leaves no stray temp files behind.
+_TMP = tempfile.TemporaryDirectory()
+atexit.register(_TMP.cleanup)
+_TMP_COUNTER = itertools.count()
 
 
 def _ok_result(output):
@@ -68,10 +77,10 @@ class TestValidate(unittest.TestCase):
         self.assertIn("MISSING", out)
 
     def test_invalid_config(self):
-        import tempfile
         with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
             f.write("extends: keel\n")  # missing required keys
             bad = f.name
+        self.addCleanup(os.unlink, bad)
         rc, out, _ = run(["validate", bad])
         self.assertEqual(rc, 1)
         self.assertIn("INVALID", out)
@@ -214,21 +223,19 @@ class TestPlan(unittest.TestCase):
         self.assertIn("extension not loaded", err)
 
     def test_plan_invalid_config(self):
-        import tempfile
         with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
             f.write("extends: keel\n")
             bad = f.name
+        self.addCleanup(os.unlink, bad)
         rc, _, err = run(["plan", bad])
         self.assertEqual(rc, 1)
         self.assertIn("invalid keel config", err)
 
 
 def _write_raw(text):
-    import tempfile
-    fd = tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False)
-    fd.write(text)
-    fd.close()
-    return fd.name
+    path = Path(_TMP.name) / f"cfg-{next(_TMP_COUNTER)}.yaml"
+    path.write_text(text)
+    return str(path)
 
 
 def _write_config(build_cmd):
@@ -3956,6 +3963,7 @@ class TestCoreMerge(unittest.TestCase):
         with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
             f.write("extends: keel\n")
             bad = f.name
+        self.addCleanup(os.unlink, bad)
         rc_bad, _, err_bad = run([
             "merge", bad, "--pr", "1", "--approve-scope", "filesystem,git,github",
         ])
@@ -4335,6 +4343,7 @@ class TestCoreMerge(unittest.TestCase):
                 "  build_gate_cmd: make test\n"
             )
             path = f.name
+        self.addCleanup(os.unlink, path)
         with (
             patch("keel.cli.runtime.detect", return_value=fake_report),
             patch("keel.cli.github.pr_merge_snapshot",
@@ -6583,6 +6592,7 @@ class TestPostComment(unittest.TestCase):
         with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
             f.write("extends: keel\n")
             bad_config = f.name
+        self.addCleanup(os.unlink, bad_config)
         body = _body_file("<!-- keel.issue-update.v1 -->\n")
 
         rc_missing, _, err_missing = run([
@@ -6904,9 +6914,9 @@ def _merge_capability_report():
 
 
 def _body_file(text: str) -> str:
-    with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:
-        f.write(text)
-        return f.name
+    path = Path(_TMP.name) / f"body-{next(_TMP_COUNTER)}.md"
+    path.write_text(text)
+    return str(path)
 
 
 def _merge_args(*, root: str | None = None, json_out: bool = False, dry_run: bool = False):

@@ -1,8 +1,11 @@
 """Unit tests for the pure ``keel review`` orchestration module and CLI wiring."""
 
+import atexit
 import contextlib
 import io
+import itertools
 import json
+import os
 import tempfile
 import unittest
 from argparse import Namespace
@@ -13,6 +16,12 @@ from keel import cli, closure, evidence, review, runtime
 
 PROJECTS = Path(__file__).resolve().parent.parent / "projects"
 ANDROID = str(PROJECTS / "example-android.yaml")
+
+# Module-level scratch directory backing the path-returning ``_write`` helper.
+# Cleaned at process exit so the suite leaves no stray temp files behind.
+_TMP = tempfile.TemporaryDirectory()
+atexit.register(_TMP.cleanup)
+_TMP_COUNTER = itertools.count()
 
 
 def run(argv):
@@ -31,10 +40,9 @@ def _capable_report():
 
 
 def _write(value) -> str:
-    fh = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
-    json.dump(value, fh)
-    fh.close()
-    return fh.name
+    path = Path(_TMP.name) / f"reviews-{next(_TMP_COUNTER)}.json"
+    path.write_text(json.dumps(value))
+    return str(path)
 
 
 def _two_reviews():
@@ -316,6 +324,7 @@ class TestReviewCli(unittest.TestCase):
         with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
             f.write("extends: keel\n")
             bad = f.name
+        self.addCleanup(os.unlink, bad)
         rc, _, err = run(["review", bad, "--pr", "1", "--reviews", reviews])
         self.assertEqual(rc, 1)
         self.assertIn("missing required", err)
@@ -346,6 +355,7 @@ class TestReviewCli(unittest.TestCase):
         path = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
         path.write("{not json")
         path.close()
+        self.addCleanup(os.unlink, path.name)
         with patch("keel.cli.runtime.detect", return_value=_capable_report()):
             rc, _, err = run([
                 "review", ANDROID, "--pr", "1", "--reviews", path.name,
@@ -525,6 +535,7 @@ class TestReviewCli(unittest.TestCase):
         with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
             f.write(_config_without_owner())
             cfg_path = f.name
+        self.addCleanup(os.unlink, cfg_path)
 
         with patch("keel.cli.runtime.detect", return_value=_capable_report()):
             rc, _, err = run([

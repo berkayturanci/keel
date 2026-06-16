@@ -7,8 +7,10 @@ stdout/stderr, plus ``_write_raw`` for ad-hoc configs).
 
 from __future__ import annotations
 
+import atexit
 import contextlib
 import io
+import itertools
 import json
 import os
 import shutil
@@ -22,6 +24,12 @@ from keel import cli, consent, contracts, install, runtime
 PROJECTS = Path(__file__).resolve().parent.parent / "projects"
 REPO_ROOT = PROJECTS.parent
 
+# Module-level scratch directory backing the path-returning ``_write_raw``
+# helper. Cleaned at process exit so the suite leaves no stray temp files.
+_TMP = tempfile.TemporaryDirectory()
+atexit.register(_TMP.cleanup)
+_TMP_COUNTER = itertools.count()
+
 
 def run(argv):
     out, err = io.StringIO(), io.StringIO()
@@ -31,10 +39,9 @@ def run(argv):
 
 
 def _write_raw(text):
-    fd = tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False)
-    fd.write(text)
-    fd.close()
-    return fd.name
+    path = Path(_TMP.name) / f"cfg-{next(_TMP_COUNTER)}.yaml"
+    path.write_text(text)
+    return str(path)
 
 
 def _mcp_only_report() -> runtime.CapabilityReport:

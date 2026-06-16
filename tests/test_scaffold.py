@@ -1,5 +1,7 @@
 """Unit tests for the `keel init` scaffolder (detection + template validity)."""
 
+import atexit
+import itertools
 import tempfile
 import unittest
 from pathlib import Path
@@ -7,12 +9,19 @@ from pathlib import Path
 from keel import config as cfg
 from keel import scaffold
 
+# Module-level scratch directory holding the per-call root dirs created by
+# ``_root_with``. Cleaned at process exit so the suite leaves no stray temp dirs.
+_TMP = tempfile.TemporaryDirectory()
+atexit.register(_TMP.cleanup)
+_TMP_COUNTER = itertools.count()
+
 
 def _root_with(*markers):
-    d = tempfile.mkdtemp()
+    d = Path(_TMP.name) / f"root-{next(_TMP_COUNTER)}"
+    d.mkdir()
     for m in markers:
-        (Path(d) / m).write_text("x", encoding="utf-8")
-    return d
+        (d / m).write_text("x", encoding="utf-8")
+    return str(d)
 
 
 class TestDetectStack(unittest.TestCase):
