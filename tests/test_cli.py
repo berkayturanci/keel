@@ -290,6 +290,114 @@ def _abs_state_path(name):
     return os.path.abspath(name).replace(os.sep, "/")
 
 
+class TestAutoStamp(unittest.TestCase):
+    """plan/run-gates/merge auto-stamp the activity board with no agent dependence."""
+
+    def _config(self):
+        from keel import config as cfg
+        return cfg.load_config(str(PROJECTS / "example-android.yaml"))
+
+    def _rec(self, d, run_id):
+        from keel import activity
+        return activity.read_activity(activity.record_path(d, self._config(), run_id))
+
+    def _put(self, d, run_id, phase, status="running", command="ship"):
+        from keel import activity
+        rec = activity.build_activity_record(
+            command=command, run_id=run_id, phase=phase, status=status)
+        activity.write_activity(activity.record_path(d, self._config(), run_id), rec)
+
+    def test_writes_at_phase(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            cli._autostamp(self._config(), d, "ship", "r1", "s4", issue=4, pr=8)
+            r = self._rec(d, "r1")
+            self.assertEqual((r["phase"], r["issue"], r["pr"]), ("s4", 4, 8))
+
+    def test_no_run_id(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            cli._autostamp(self._config(), d, "ship", None, "s0")
+            self.assertIsNone(self._rec(d, "x"))
+
+    def test_unknown_command(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            cli._autostamp(self._config(), d, "nope", "r", "s0")
+            self.assertIsNone(self._rec(d, "r"))
+
+    def test_unknown_phase(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            cli._autostamp(self._config(), d, "ship", "r", "s99")
+            self.assertIsNone(self._rec(d, "r"))
+
+    def test_advances_forward(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            self._put(d, "r", "s0")
+            cli._autostamp(self._config(), d, "ship", "r", "s8")
+            self.assertEqual(self._rec(d, "r")["phase"], "s8")
+
+    def test_does_not_regress(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            self._put(d, "r", "s10")
+            cli._autostamp(self._config(), d, "ship", "r", "s8")   # earlier → ignored
+            self.assertEqual(self._rec(d, "r")["phase"], "s10")
+
+    def test_overwrites_when_existing_phase_off_flow(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            self._put(d, "r", "health", command="morning")   # other command's phase
+            cli._autostamp(self._config(), d, "ship", "r", "s8")
+            r = self._rec(d, "r")
+            self.assertEqual((r["command"], r["phase"]), ("ship", "s8"))
+
+    def test_fail_soft_on_write_error(self):
+        import tempfile
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as d:
+            with patch("keel.cli.activity.write_activity", side_effect=OSError("x")):
+                cli._autostamp(self._config(), d, "ship", "r", "s0")   # no raise
+            self.assertIsNone(self._rec(d, "r"))
+
+    def test_stamps_merged_status(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            self._put(d, "r", "s10")   # running at merge phase
+            cli._autostamp(self._config(), d, "ship", "r", "s10", status="merged")
+            r = self._rec(d, "r")
+            self.assertEqual((r["phase"], r["status"]), ("s10", "merged"))
+
+    def test_merged_is_terminal(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            self._put(d, "r", "s10", status="merged")
+            cli._autostamp(self._config(), d, "ship", "r", "s0")   # re-run start → ignored
+            r = self._rec(d, "r")
+            self.assertEqual((r["phase"], r["status"]), ("s10", "merged"))
+
+    def test_plan_cli_stamps_the_run(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, _out, _err = run([
+                "plan", str(PROJECTS / "example-android.yaml"), "--root", d,
+                "--command", "ship", "--run-id", "ship-7", "--issue", "7"])
+            self.assertEqual(rc, 0)
+            r = self._rec(d, "ship-7")
+            self.assertEqual((r["command"], r["phase"], r["issue"]), ("ship", "s0", 7))
+
+    def test_plan_wrapper_skips_unknown_command(self):
+        import tempfile
+        import types
+        with tempfile.TemporaryDirectory() as d:
+            args = types.SimpleNamespace(command_contract="nope", run_id="r",
+                                         issue=None, pull_request=None, root=d)
+            cli._plan_stamp_activity(args, self._config())
+            self.assertIsNone(self._rec(d, "r"))
+
+
 def _run_git(root: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=root, check=True, capture_output=True, text=True)
 

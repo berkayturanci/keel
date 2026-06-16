@@ -33,6 +33,7 @@ class TestContract(unittest.TestCase):
         self.assertTrue(c["additive"])
         self.assertFalse(c["touches_checkpoint"])
         self.assertEqual(c["keyed_by"], "run_id")
+        self.assertIn("merged", c["statuses"])
 
 
 class TestDir(unittest.TestCase):
@@ -111,6 +112,9 @@ class TestBuild(unittest.TestCase):
     def test_build_done_status(self):
         self.assertEqual(_record(status="done")["status"], "done")
 
+    def test_build_merged_status(self):
+        self.assertEqual(_record(status="merged")["status"], "merged")
+
     def test_build_unknown_command(self):
         with self.assertRaises(activity.ActivityError):
             activity.build_activity_record(command="nope", run_id="x", phase="config")
@@ -128,6 +132,9 @@ class TestBuild(unittest.TestCase):
 class TestValidate(unittest.TestCase):
     def test_ok(self):
         activity.validate_activity(_record())
+
+    def test_merged_ok(self):
+        activity.validate_activity(_record(status="merged"))
 
     def test_not_dict(self):
         with self.assertRaises(activity.ActivityError):

@@ -106,6 +106,54 @@ def _cmd_validate(args: argparse.Namespace) -> int:
     return rc
 
 
+def _autostamp(config: cfg.ProjectConfig, root: str, command: str, run_id: str | None,
+               phase: str, *, status: str = "running",
+               issue: int | None = None, pr: int | None = None) -> None:
+    """Record a run on keel-visual's board at ``phase`` from a deterministic core call.
+
+    The agent orchestrates the backbone but reliably **skips** the per-phase
+    ``keel activity`` calls, so runs (real ``keel ship`` included) went invisible.
+    Instead, the commands the backbone *always* runs do the stamping: ``keel plan``
+    (Step 0 → first phase), ``keel run-gates`` (s8 test), and ``keel merge`` (s10,
+    stamped ``merged`` — a real merge landed, distinct from a soft ``done``).
+    A run therefore shows up **and advances** — start → test → merged — independent of
+    agent discipline. Opt-in via ``--run-id``. Fail-soft: no run-id / unknown command /
+    unknown phase / write error / pre-activity core is a no-op, never an aborted command.
+    Never moves a run backward (a re-run of an earlier step won't undo later progress);
+    ``merged`` is terminal and is never overwritten by a later stamp.
+    """
+    if not run_id or not flows.is_known(command):
+        return
+    order = [p.id for p in flows.flow_for(command)]
+    if phase not in order:
+        return
+    try:
+        path = activity.record_path(root, config, run_id)
+        existing = activity.read_activity(path)
+        if existing and existing.get("status") == "merged":
+            return   # merged is terminal; never overwrite a landed run
+        if (status == "running" and existing and existing.get("status") == "running"
+                and existing.get("phase") in order
+                and order.index(existing["phase"]) > order.index(phase)):
+            return   # don't regress a more-advanced still-running run
+        record = activity.build_activity_record(
+            command=command, run_id=run_id, phase=phase, status=status,
+            issue=issue, pr=pr)
+        activity.write_activity(path, record)
+    except (activity.ActivityError, OSError):
+        return
+
+
+def _plan_stamp_activity(args: argparse.Namespace, config: cfg.ProjectConfig) -> None:
+    """Stamp the run from the Step 0 ``keel plan`` call (first phase). See :func:`_autostamp`."""
+    command = args.command_contract
+    if not flows.is_known(command):
+        return
+    _autostamp(config, args.root, command, getattr(args, "run_id", None),
+               flows.flow_for(command)[0].id,
+               issue=getattr(args, "issue", None), pr=getattr(args, "pull_request", None))
+
+
 def _cmd_plan(args: argparse.Namespace) -> int:
     try:
         config = cfg.load_config(args.path)
@@ -194,6 +242,7 @@ def _cmd_plan(args: argparse.Namespace) -> int:
     if not consent_ok:
         print(consent_message, file=sys.stderr)
         return 1
+    _plan_stamp_activity(args, config)   # surface the run on the board from Step 0
     return 0
 
 
@@ -228,6 +277,9 @@ def _cmd_run_gates(args: argparse.Namespace) -> int:
 
     diff_text = git.diff(config.base_branch, "HEAD", cwd=args.root)
     outcomes = gates.run_gates(specs, _gate_runner(args.root, diff_text, jury_mode="gating"))
+    _autostamp(config, args.root, args.gate_command, getattr(args, "run_id", None),
+               args.gate_phase, issue=getattr(args, "issue", None),
+               pr=getattr(args, "pull_request", None))   # the run reached the test gate (s8)
     for o in outcomes:
         status = "ok" if o.ok else "FAIL"
         print(f"  {status:>4}  {o.gate}")
@@ -727,6 +779,9 @@ def _cmd_merge(args: argparse.Namespace) -> int:
         payload["merge_output"] = merged.output
         if not merged.ok:
             return _finish_merge(args, payload, "gh merge failed", code=1)
+        _autostamp(config, args.root, "ship", getattr(args, "run_id", None), "s10",
+                   status="merged",   # real merge landed → green "merged", not soft "done"
+                   issue=getattr(args, "issue", None), pr=args.pr)
         return _finish_merge(args, payload, "merged", code=0)
     finally:
         lock.release_resource(_lock_root(args.root), "merge", owner=owner, best_effort=True)
@@ -3914,12 +3969,28 @@ def build_parser() -> argparse.ArgumentParser:
                         help="disable the cross-vendor jury contract")
     p_plan.add_argument("--jury-advisory", action="store_true",
                         help="run jury in advisory mode when enabled")
+    p_plan.add_argument("--run-id", default=None,
+                        help="stamp the activity record for this run id (board visibility)")
+    p_plan.add_argument("--issue", type=_positive_int, default=None,
+                        help="issue number to record on the activity stamp")
+    p_plan.add_argument("--pull-request", type=_positive_int, default=None,
+                        help="pull request number to record on the activity stamp")
     p_plan.add_argument("--json", action="store_true", help="emit structured JSON")
     p_plan.set_defaults(func=_cmd_plan)
 
     p_run = sub.add_parser("run-gates", help="run a project's command gates")
     p_run.add_argument("path", help="path to project.yaml")
     p_run.add_argument("--root", default=".", help="repo root for commands + extensions")
+    p_run.add_argument("--run-id", default=None,
+                       help="stamp the activity record for this run id (board visibility)")
+    p_run.add_argument("--command", dest="gate_command", default="ship",
+                       help="command flow the gates belong to (for the activity stamp)")
+    p_run.add_argument("--phase", dest="gate_phase", default="s8",
+                       help="flow phase to stamp when the gates run (default the test step)")
+    p_run.add_argument("--issue", type=_positive_int, default=None,
+                       help="issue number to record on the activity stamp")
+    p_run.add_argument("--pull-request", type=_positive_int, default=None,
+                       help="pull request number to record on the activity stamp")
     p_run.set_defaults(func=_cmd_run_gates)
 
     p_window = sub.add_parser("window", help="is the merge window open now?")

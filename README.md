@@ -109,7 +109,7 @@ database the standard library has no system source for there.)
 
 ```bash
 pip install keel-workflow                                     # from PyPI (provides the `keel` command)
-pip install "git+https://github.com/berkayturanci/keel@v1.6.2"  # or pin an existing git tag
+pip install "git+https://github.com/berkayturanci/keel@v1.6.5"  # or pin an existing git tag
 ```
 
 In a cloud agent session, install it from a `SessionStart` hook (or add keel to the
@@ -207,7 +207,7 @@ If a step's gate fails, keel blocks its own merge — the same backbone every co
 - [`docs/keel/configuration.md`](docs/keel/configuration.md) — `project.yaml` reference
 - [`docs/keel/parameter-reference.md`](docs/keel/parameter-reference.md) — exhaustive per-flag reference for every CLI command and the `/keel:ship` adapter arguments
 - [`docs/keel/onboarding.md`](docs/keel/onboarding.md) — one-command consumer setup and follow-up checks
-- [`docs/keel/keel-visual.md`](docs/keel/keel-visual.md) — the live run board (`dash`/`render`, `--all` multi-project, the `keel activity` channel)
+- [`docs/keel/keel-visual.md`](docs/keel/keel-visual.md) — the live run board (`dash`/`render`/`serve`, the per-run 2D/3D drawer, `--all` multi-project, the auto-stamped `keel activity` channel)
 - [`docs/keel/extensions.md`](docs/keel/extensions.md) — authoring Lego extensions
 - [`docs/keel/consumer-neutrality.md`](docs/keel/consumer-neutrality.md) — core vs project policy boundary
 - [`docs/keel/parity-matrix.md`](docs/keel/parity-matrix.md) — legacy-to-keel command parity status and owning issues
@@ -247,7 +247,7 @@ keel run from the ledger/checkpoint keel already writes — it never drives one 
 **any of the 16 command flows** (`ship` is the s0–s12 backbone; every other command
 renders its own phases).
 
-Three surfaces:
+Four surfaces:
 
 - **`play`** — the run animates in the terminal (flow + wave ribbon, `--loop` for a
   demo, live `--follow`; `--theater` hands off to [ai-jury](https://github.com/berkayturanci/ai-jury)'s
@@ -260,6 +260,18 @@ Three surfaces:
   selectable styles (`plexus`/`comet`/`aurora`/`combined`/`line`); **`render --all`**
   writes a multi-project board with a **2D grid / 3D scene** toggle, automatic
   **light/dark** theme, and an **all / active** filter that fades finished runs.
+- **`serve` / `serve --all`** — a **live** localhost web dashboard (polls every ~0.5s):
+  a filterable board, and per-run a detail drawer with a **2D / 3D switch** (a live
+  per-run scene with `curve · helix · ring · line · plexus · aurora · comet` styles,
+  drag-orbit + scroll/pinch zoom, theme-aware) and the run's command / phase / status.
+
+As of **keel 1.6.4**, the deterministic backbone commands (`keel plan` at Step 0, `keel
+run-gates` at s8, `keel merge` at s10) auto-stamp the `keel activity` board when given a
+`--run-id`, so a run shows up **and advances** even if the agent skips the per-phase
+`keel activity` calls. Since **1.6.5**, `keel merge` stamps the run `merged` (a real merge
+landed) rather than a soft `done`, so the board distinguishes a green confirmed-merge from
+a closed-out run; runs whose `--run-id` ends in their issue/PR (`ship-585`) are labelled
+`#585` even when no explicit issue is passed.
 
 Depends on this core (`keel-workflow >= 1.6.0`); the core never depends on it (it only
 reads records, and probes `shutil.which("jury")` — never imports ai-jury). See

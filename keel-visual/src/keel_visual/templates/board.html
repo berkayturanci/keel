@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>__TITLE__ · keel-visual</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHJlY3QgeD0iMiIgeT0iMiIgd2lkdGg9IjYwIiBoZWlnaHQ9IjYwIiByeD0iMTQiIGZpbGw9IiMwYzExMTgiIHN0cm9rZT0iIzEwYjk4MSIgc3Ryb2tlLXdpZHRoPSIyLjUiLz48bGluZSB4MT0iMTIiIHkxPSI0MCIgeDI9IjMyIiB5Mj0iNDAiIHN0cm9rZT0iIzNhNGE1YyIgc3Ryb2tlLXdpZHRoPSIzIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz48Y2lyY2xlIGN4PSIxMiIgY3k9IjQwIiByPSIzLjIiIGZpbGw9IiM2MzY2ZjEiLz48Y2lyY2xlIGN4PSIyMCIgY3k9IjQwIiByPSIzLjIiIGZpbGw9IiM2MzY2ZjEiLz48Y2lyY2xlIGN4PSIyOCIgY3k9IjQwIiByPSIzLjIiIGZpbGw9IiM2MzY2ZjEiLz48Y2lyY2xlIGN4PSIzMiIgY3k9IjQwIiByPSIzLjgiIGZpbGw9IiNmNWE1MjQiLz48cGF0aCBkPSJNMzIgNDAgUTQ0IDM0IDUyIDE5IiBzdHJva2U9IiMxMGI5ODEiIHN0cm9rZS13aWR0aD0iNS41IiBmaWxsPSJub25lIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz48Y2lyY2xlIGN4PSI1MiIgY3k9IjE5IiByPSI0LjUiIGZpbGw9IiMxMGI5ODEiLz48L3N2Zz4=">
 <style>
   :root{
     --bg:#0a0e1a; --panel:#111728; --panel2:#0e1422; --line:#1d2740; --line2:#2a3756;
@@ -53,7 +54,8 @@
   .proj{font-weight:600;font-size:14px}
   .lab{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:var(--mut);background:var(--panel2);border:1px solid var(--line);border-radius:999px;padding:2px 9px}
   .badge{margin-left:auto;font-size:11px;font-weight:600;padding:3px 10px;border-radius:999px}
-  .badge.done{background:rgba(122,209,74,.16);color:var(--ok)}
+  .badge.merged{background:rgba(122,209,74,.16);color:var(--ok)}
+  .badge.done{background:var(--panel2);color:var(--mut)}
   .badge.active{background:rgba(73,182,255,.16);color:var(--info)}
   .badge.gate{background:rgba(240,160,32,.16);color:var(--warn)}
   .badge.blocked{background:rgba(255,84,104,.18);color:var(--danger)}
@@ -118,7 +120,7 @@
 
   function el(tag, cls){ const n=document.createElement(tag); if(cls) n.className=cls; return n; }
   function bold(n){ const b=el('b'); b.textContent=String(n); return b; }
-  const isDone = run => !!run.merged;
+  const isDone = run => !!run.merged || !!run.done;   // merged OR closed-out → finished
   // active (running/gate/blocked) runs first, finished ones last — stable within group
   const orderedRuns = () => BOARD.map(r=>r).sort((a,b)=>(isDone(a)?1:0)-(isDone(b)?1:0));
   let showDone = true;  // the active/all filter — finished runs are faded, not removed
@@ -174,7 +176,7 @@
   const tip = document.getElementById('tip');
   function showTip(dot, run, idx){
     const steps = Array.isArray(run.steps)?run.steps:[], s = steps[idx]||{};
-    const tone = stepTone(idx, run.active_index|0, !!run.merged, s);
+    const tone = stepTone(idx, run.active_index|0, !!run.merged||!!run.done, s);
     tip.textContent='';
     const th=el('div','th'); const tid=el('span','tid'); tid.textContent=s.id||''; const tnm=el('span'); tnm.textContent=s.name||'';
     th.append(tid,tnm);
@@ -199,8 +201,8 @@
   orderedRuns().forEach(run => {
     const steps = Array.isArray(run.steps) ? run.steps : [];
     const active = run.active_index|0;
-    const merged = !!run.merged;
-    const card = el('div','card'+(merged?' done':''));
+    const finished = !!run.merged || !!run.done;
+    const card = el('div','card'+(finished?' done':''));
     const head = el('div','chead');
     const proj = el('span','proj'); proj.textContent = run.project || '?';
     const lab = el('span','lab'); lab.textContent = run.label || '?';
@@ -208,9 +210,9 @@
     head.append(proj, lab, badge); card.appendChild(head);
     const strip = el('div','strip');
     steps.forEach((s, idx) => {
-      if(idx>0){ strip.appendChild(el('span','seg'+((merged || idx<=active)?' done':''))); }
+      if(idx>0){ strip.appendChild(el('span','seg'+((finished || idx<=active)?' done':''))); }
       const dot = el('span','dot');
-      const tone = stepTone(idx, active, merged, s);
+      const tone = stepTone(idx, active, finished, s);
       if(tone!=="idle") dot.classList.add(tone);
       dot.title = (s.id||'')+' · '+(s.name||'');
       dot.addEventListener('mouseenter',()=>showTip(dot,run,idx));
@@ -257,18 +259,18 @@
     const sgeo=new THREE.SphereGeometry(0.17,16,16), hgeo=new THREE.SphereGeometry(0.34,16,16);
     runs.forEach((run, i)=>{
       const steps=Array.isArray(run.steps)?run.steps:[];
-      const m=steps.length||1, active=run.active_index|0, merged=!!run.merged;
-      const z=z0 + i*gapZ, fade = merged ? 0.42 : 1;
+      const m=steps.length||1, active=run.active_index|0, finished=!!run.merged||!!run.done;
+      const z=z0 + i*gapZ, fade = finished ? 0.42 : 1;
       const a=new THREE.Vector3(-laneW/2,0,z), b=new THREE.Vector3(laneW/2,0,z);
       const tube=new THREE.Mesh(new THREE.TubeGeometry(new THREE.LineCurve3(a,b),1,0.025,6,false),
                                 new THREE.MeshBasicMaterial({color:TUBE_COL,transparent:true,opacity:0.6*fade}));
       scene.add(tube); laneObjs.push(tube);
       steps.forEach((s, idx)=>{
         const x=-laneW/2 + (m>1 ? idx/(m-1) : 0.5)*laneW;
-        const hex=COL[stepTone(idx, active, merged, s)];
+        const hex=COL[stepTone(idx, active, finished, s)];
         const core=new THREE.Mesh(sgeo,new THREE.MeshBasicMaterial({color:hex,transparent:true,opacity:fade}));
         core.position.set(x,0,z); scene.add(core); laneObjs.push(core);
-        if(idx===active && !merged){
+        if(idx===active && !finished){
           const halo=new THREE.Mesh(hgeo,new THREE.MeshBasicMaterial({color:hex,transparent:true,opacity:0.4,blending:THREE.AdditiveBlending}));
           halo.position.set(x,0,z); scene.add(halo); laneObjs.push(halo); actives.push(halo);
         }

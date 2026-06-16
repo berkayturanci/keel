@@ -889,7 +889,20 @@ class TestActivityBoard(unittest.TestCase):
             self.assertFalse(triage_rs["merged"])
             self.assertEqual(triage_rs["steps"][triage_rs["active_index"]]["id"], "classify")
             morning_rs, _ = by_cmd["morning"]
-            self.assertTrue(morning_rs["merged"])  # done → fades / filters as finished
+            self.assertTrue(morning_rs["done"])         # done → fades / filters as finished
+            self.assertFalse(morning_rs.get("merged"))  # but NOT a merge claim
+
+    def test_merged_record_marks_merged(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            config = self._project(d)
+            self._write(d, config, command="ship", run_id="ship-585",
+                        phase="s10", status="merged", pr=585)
+            pairs = cli._activity_records_in_repo(d, config)
+            self.assertEqual(len(pairs), 1)
+            ship_rs, _ = pairs[0]
+            self.assertTrue(ship_rs["merged"])   # real merge → green "merged"
+            self.assertFalse(ship_rs.get("done"))
 
     def test_records_join_the_board(self):
         import tempfile
@@ -944,6 +957,57 @@ class TestActivityBoard(unittest.TestCase):
                 pairs = cli._run_records_in_repo(root, config)
             cmds = [ident.get("command") for _, ident in pairs]
             self.assertIn("stale-prs", cmds)
+
+    def test_ship_activity_deduped_against_checkpoint(self):
+        # ship now stamps the activity channel AND writes a checkpoint for the same
+        # run — the board must show that run once (the richer checkpoint), keyed by
+        # the shared run-id, not twice.
+        import tempfile
+        from unittest.mock import patch
+
+        from keel import checkpoint
+        from keel.runner import CommandResult
+        with tempfile.TemporaryDirectory() as d:
+            config = self._project(d)
+            rec = checkpoint.build_checkpoint_record(
+                run_id="ship-7", command="ship", current_step="s8",
+                base_branch="main", pull_request=7, merge_state="pending")
+            cp = checkpoint.resolve_path(d, config)
+            cp.parent.mkdir(parents=True, exist_ok=True)
+            cp.write_text(checkpoint.encode_checkpoint(rec), encoding="utf-8")
+            self._write(d, config, command="ship", run_id="ship-7",
+                        phase="s8", pr=7)
+            porcelain = CommandResult(True, 0, f"worktree {d}\nHEAD x\n\n")
+            with patch("keel_visual.cli.git.worktree_list", return_value=porcelain):
+                pairs = cli._run_records_in_repo(d, config)
+            self.assertEqual(len(pairs), 1)               # one card, not two
+            _rs, identity = pairs[0]
+            self.assertIsNone(identity.get("run_id"))     # the checkpoint pair won
+            self.assertEqual(identity.get("pr"), 7)
+
+    def test_checkpoint_without_run_id_cannot_dedup(self):
+        # A checkpoint with no usable run-id can't pair with an activity record, so
+        # both still list (and the missing-run-id guard is exercised).
+        import tempfile
+        from unittest.mock import patch
+
+        from keel import checkpoint
+        from keel.runner import CommandResult
+        with tempfile.TemporaryDirectory() as d:
+            config = self._project(d)
+            rec = checkpoint.build_checkpoint_record(
+                run_id="ship-9", command="ship", current_step="s4",
+                base_branch="main", pull_request=9)
+            rec["run_id"] = ""        # no usable run-id (validate ignores run_id)
+            cp = checkpoint.resolve_path(d, config)
+            cp.parent.mkdir(parents=True, exist_ok=True)
+            cp.write_text(checkpoint.encode_checkpoint(rec), encoding="utf-8")
+            self._write(d, config, command="triage", run_id="triage-1",
+                        phase="classify", issue=1)
+            porcelain = CommandResult(True, 0, f"worktree {d}\nHEAD x\n\n")
+            with patch("keel_visual.cli.git.worktree_list", return_value=porcelain):
+                pairs = cli._run_records_in_repo(d, config)
+            self.assertEqual(len(pairs), 2)               # nothing deduped
 
 
 class _FakeHTTPD:

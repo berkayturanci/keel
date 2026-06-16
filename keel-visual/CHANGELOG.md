@@ -6,6 +6,90 @@ All notable changes to keel-visual are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.9] — 2026-06-16
+
+### Added
+- **Confirmed merges read as green `merged`, not muted `done`.** An activity record
+  stamped `merged` (by core ≥ 1.6.5's `keel merge`) sets `run_state["merged"]`, so the
+  board shows a real merge in green instead of folding it into the closed-out `done` tone.
+
+### Changed
+- **Auto-stamped runs are labelled by their issue/PR number.** A run whose id is its
+  command name followed by the number (`ship-585`, `pr-loop-2253`) now shows `#585` /
+  `#2253` even when no explicit `--issue` reached the record — the per-phase backbone
+  stamps don't all carry one. Opaque counters (a `morning` run's `m-1`) stay raw.
+
+## [0.5.8] — 2026-06-16
+
+### Changed
+- **Particle 3D styles are now light/dark aware.** plexus/aurora/comet used additive
+  blending on a forced-dark scene (invisible on light). They now switch to normal
+  blending on a light scene in light mode (and keep the additive glow on dark), so the
+  whole 3D view follows the theme like the geometric styles already did. The open scene
+  rebuilds when you toggle the theme.
+
+### Added
+- **Particle 3D styles in the drawer.** The drawer's 3D style picker now also offers
+  runviz's interweaving particle scenes — **plexus** (a flowing node web), **aurora**
+  (strand ribbons), and **comet** (orbiting trails) — alongside the geometric
+  `curve · helix · ring · line`. The 3D engine was unified onto runviz's
+  build-once / recolor-per-poll / update-per-frame model, so all seven styles share one
+  set of live step markers (the active step glows in every style). Particle styles
+  render on a dark scene (additive blending) and the geometric styles stay on the
+  theme-aware transparent scene; switching flips the background automatically.
+
+## [0.5.6] — 2026-06-16
+
+### Added
+- **A 3D-style switch inside the drawer's 3D view.** The per-run 3D scene now has a
+  `curve · helix · ring · line` picker — four distinct 3D arrangements of the same step
+  markers (the active step glows in each): the rising **curve**, a **helix** spiral, a
+  **ring**, and a flat **line**. The choice is remembered in `localStorage` and the
+  scene re-frames itself for whichever layout you pick. (runviz's particle styles —
+  plexus/aurora/comet — remain a heavier optional port for a future release.)
+- **Zoom in the drawer 3D** — scroll to zoom on desktop, pinch on touch (dolly, clamped).
+- **command / phase / status under the 3D too.** The run meta table moved out of the 2D
+  body into a shared footer, so it shows under both the 2D step list and the 3D scene.
+
+## [0.5.5] — 2026-06-16
+
+### Added
+- **Per-run 3D scene inside the live dashboard drawer.** Clicking a run on the `serve`
+  dashboard now opens a detail drawer with a **2D / 3D** switch. 2D is the step list;
+  3D is a live WebGL scene of that one run's backbone as a gently rising curve — done
+  steps green, the active step a pulsing glow, gates amber, idle steps muted — that you
+  can drag to orbit. THREE.js is **lazy-loaded** only on the first 3D switch (the base
+  dashboard stays dependency-free), the scene tracks the 0.5s poll, re-themes with the
+  light/dark toggle, and the renderer + animation loop are disposed when the drawer
+  closes. Falls back to "3D unavailable" if THREE can't load (offline).
+
+## [0.5.4] — 2026-06-16
+
+### Added
+- **Filter box on the live dashboard.** A search field in the `serve` dashboard header
+  filters runs as you type — by project, label (`#PR`/issue/run-id), or command — and
+  composes with the all/active toggle. Useful when many projects' runs share the board.
+- **Favicon on the board pages.** The `serve` dashboard and the `render` board now
+  carry the keel mark as an inline SVG favicon, so the browser tab shows the brand
+  glyph instead of a blank icon (self-contained data URI — no extra file to serve).
+
+### Fixed
+- **A finished run is no longer mislabelled "merged".** The board mapped a `done`
+  activity record straight to `merged`, so any closed-out run — a `morning`/`triage`
+  that never merges, or a `ship`/`pr-loop` that **deferred** its merge to the next
+  window — showed a green "merged" badge it hadn't earned. A finished-but-not-merged
+  run is now a distinct **"done"** state: it still fades/filters like a completed run,
+  but carries a muted "done" badge, and only a real merge (checkpoint/ledger) shows
+  the green "merged". Applies to the live `serve` dashboard and the `render` board
+  (2D + 3D).
+
+### Changed
+- **Board de-duplicates a ship run's activity record against its checkpoint.** As of
+  keel 1.6.3 the `ship` adapter stamps the activity channel too (so agent-driven ship
+  runs reliably show live). A worktree that has both a ship checkpoint and a ship
+  activity record for the same run now lists that run once — keyed by the shared
+  run-id — preferring the checkpoint's richer detail (merge gate, jury, test gate).
+
 ## [0.5.3] — 2026-06-16
 
 ### Fixed

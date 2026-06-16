@@ -58,6 +58,12 @@ class TestStatusOf(unittest.TestCase):
     def test_merged(self):
         self.assertEqual(dash._status_of(_run_state(action="merge")), "merged")
 
+    def test_done_is_not_merged(self):
+        # a closed-out activity run (status=done) is "done", never "merged"
+        self.assertEqual(dash._status_of({"done": True, "steps": [], "active_index": 0}), "done")
+        # an actual merge still wins over done if both are set
+        self.assertEqual(dash._status_of({"merged": True, "done": True}), "merged")
+
     def test_blocked_gate(self):
         st = rs.build_run_state(
             {"record_type": "ship_run", "assessment": {"merge": {"action": "defer"}},
@@ -100,6 +106,25 @@ class TestBoardRow(unittest.TestCase):
         st = rs.build_run_state(None, checkpoint_step="s4")
         row = dash.board_row(st, {"pr": None, "issue": None})
         self.assertEqual(row["label"], "?")
+
+    def test_row_derives_number_from_run_id(self):
+        st = rs.build_run_state(None, checkpoint_step="s4")
+        row = dash.board_row(
+            st, {"pr": None, "issue": None, "run_id": "ship-585", "command": "ship"})
+        self.assertEqual(row["label"], "#585")
+
+    def test_row_derives_number_for_multiword_command(self):
+        st = rs.build_run_state(None, checkpoint_step="s4", command="pr-loop")
+        row = dash.board_row(
+            st, {"pr": None, "issue": None, "run_id": "pr-loop-2253", "command": "pr-loop"})
+        self.assertEqual(row["label"], "#2253")
+
+    def test_row_counter_run_id_kept_raw(self):
+        # an opaque counter (command name is not the run_id prefix) stays raw
+        st = rs.build_run_state(None, checkpoint_step="config", command="morning")
+        row = dash.board_row(
+            st, {"pr": None, "issue": None, "run_id": "m-1", "command": "morning"})
+        self.assertEqual(row["label"], "m-1")
 
 
 class TestRenderBoard(unittest.TestCase):

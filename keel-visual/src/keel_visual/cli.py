@@ -348,6 +348,7 @@ def _run_records_in_repo(root: str, config: cfg.ProjectConfig) -> list[tuple[dic
     result = git.worktree_list(cwd=root)
     paths = dash.parse_worktrees(result.output) if result.ok else [root]
     pairs: list[tuple[dict, dict]] = []
+    checkpoint_run_ids: set[str] = set()
     for worktree in paths:
         try:
             record = checkpoint.read_checkpoint(checkpoint.resolve_path(worktree, config))
@@ -357,6 +358,9 @@ def _run_records_in_repo(root: str, config: cfg.ProjectConfig) -> list[tuple[dic
             record = None
         if record is None:
             continue
+        run_id = record.get("run_id")
+        if isinstance(run_id, str) and run_id:
+            checkpoint_run_ids.add(run_id)
         identity = dash.identity_from_checkpoint(record)
         ship_record = _latest_ship_record(worktree, config, identity.get("pr"))
         run_state = runstate.build_run_state(
@@ -366,11 +370,17 @@ def _run_records_in_repo(root: str, config: cfg.ProjectConfig) -> list[tuple[dic
             command=identity.get("command") or "ship",
         )
         pairs.append((run_state, identity))
-    # Activity records live per worktree too — an agent runs a non-ship command
-    # in its own worktree and stamps .keel/activity/ there, not in the main
-    # checkout — so read every worktree, exactly like checkpoints above.
+    # Activity records live per worktree too — an agent runs a command in its own
+    # worktree and stamps .keel/activity/ there, not in the main checkout — so read
+    # every worktree, exactly like checkpoints above. ship stamps activity too now
+    # (for reliable board presence), so drop any activity record whose run already
+    # appears as a richer ship checkpoint — same run, keyed by the shared run-id.
     for worktree in paths:
-        pairs.extend(_activity_records_in_repo(worktree, config))
+        for run_state, identity in _activity_records_in_repo(worktree, config):
+            run_id = identity.get("run_id")
+            if isinstance(run_id, str) and run_id in checkpoint_run_ids:
+                continue
+            pairs.append((run_state, identity))
     return pairs
 
 
@@ -396,8 +406,18 @@ def _activity_records_in_repo(root: str, config: cfg.ProjectConfig) -> list[tupl
             checkpoint_step=rec.get("phase"),
             command=rec.get("command") or "ship",
         )
-        if rec.get("status") == "done":
+        status = rec.get("status")
+        if status == "merged":
+            # A real merge landed (stamped by `keel merge`). Distinct from "done":
+            # this run actually merged, so it reads as a confirmed green "merged".
             run_state["merged"] = True
+        elif status == "done":
+            # "done" means the command finished/closed out — NOT that anything
+            # merged. Most activity commands (morning, triage, …) never merge, and
+            # a ship that defers its merge to the next window also closes out as
+            # done. Mark it finished (fades/filters like a completed run) without
+            # claiming a merge it can't prove.
+            run_state["done"] = True
         identity = {
             "issue": rec.get("issue"),
             "pr": rec.get("pr"),
@@ -477,6 +497,7 @@ def _board_entry(run_state: dict, identity: dict, project: str) -> dict:
         "active_name": row["active_name"],
         "command": run_state.get("command", "ship"),
         "merged": bool(run_state.get("merged")),
+        "done": bool(run_state.get("done")),
         "jury": run_state.get("jury") or {"mode": None, "active": False},
         "steps": [
             {"id": s.get("id"), "name": s.get("name"), "kind": s.get("kind"),

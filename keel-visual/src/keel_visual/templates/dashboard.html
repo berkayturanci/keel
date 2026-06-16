@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>keel · live dashboard</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHJlY3QgeD0iMiIgeT0iMiIgd2lkdGg9IjYwIiBoZWlnaHQ9IjYwIiByeD0iMTQiIGZpbGw9IiMwYzExMTgiIHN0cm9rZT0iIzEwYjk4MSIgc3Ryb2tlLXdpZHRoPSIyLjUiLz48bGluZSB4MT0iMTIiIHkxPSI0MCIgeDI9IjMyIiB5Mj0iNDAiIHN0cm9rZT0iIzNhNGE1YyIgc3Ryb2tlLXdpZHRoPSIzIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz48Y2lyY2xlIGN4PSIxMiIgY3k9IjQwIiByPSIzLjIiIGZpbGw9IiM2MzY2ZjEiLz48Y2lyY2xlIGN4PSIyMCIgY3k9IjQwIiByPSIzLjIiIGZpbGw9IiM2MzY2ZjEiLz48Y2lyY2xlIGN4PSIyOCIgY3k9IjQwIiByPSIzLjIiIGZpbGw9IiM2MzY2ZjEiLz48Y2lyY2xlIGN4PSIzMiIgY3k9IjQwIiByPSIzLjgiIGZpbGw9IiNmNWE1MjQiLz48cGF0aCBkPSJNMzIgNDAgUTQ0IDM0IDUyIDE5IiBzdHJva2U9IiMxMGI5ODEiIHN0cm9rZS13aWR0aD0iNS41IiBmaWxsPSJub25lIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz48Y2lyY2xlIGN4PSI1MiIgY3k9IjE5IiByPSI0LjUiIGZpbGw9IiMxMGI5ODEiLz48L3N2Zz4=">
 <style>
   :root{
     --bg:#0a0e1a; --panel:#111728; --panel2:#0e1422; --line:#1d2740; --line2:#2a3756;
@@ -40,6 +41,9 @@
   .seg{display:flex;background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
   .seg button{border:0;background:transparent;color:var(--mut);font:inherit;font-size:13px;padding:7px 13px;cursor:pointer}
   .seg button.on{background:rgba(73,182,255,.16);color:var(--info)}
+  .search{background:var(--panel);border:1px solid var(--line);border-radius:10px;color:var(--txt);font:inherit;font-size:13px;padding:7px 12px;outline:none;width:170px}
+  .search:focus{border-color:var(--info)}
+  .search::placeholder{color:var(--mut)}
   .count{margin-left:auto;font-size:13px;color:var(--mut)}
   .count b{color:var(--txt)}
   .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(330px,100%),1fr));gap:14px}
@@ -52,7 +56,8 @@
   .lab{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:var(--mut);background:var(--panel2);border:1px solid var(--line);border-radius:999px;padding:2px 9px}
   .badge{margin-left:auto;font-size:11px;font-weight:600;padding:3px 10px;border-radius:999px}
   .badge.running,.badge.active{background:rgba(73,182,255,.16);color:var(--info)}
-  .badge.merged,.badge.done{background:rgba(122,209,74,.16);color:var(--ok)}
+  .badge.merged{background:rgba(122,209,74,.16);color:var(--ok)}
+  .badge.done{background:var(--panel2);color:var(--mut)}
   .badge.gate{background:rgba(240,160,32,.16);color:var(--warn)}
   .badge.blocked{background:rgba(255,84,104,.18);color:var(--danger)}
   .strip{display:flex;align-items:center;gap:0;margin:4px 0 11px}
@@ -84,9 +89,22 @@
   #drawer{position:fixed;top:0;right:0;height:100%;width:min(440px,92vw);background:var(--panel);border-left:1px solid var(--line);transform:translateX(100%);transition:transform .24s cubic-bezier(.4,0,.2,1),box-shadow .24s;z-index:50;overflow-y:auto;padding:20px}
   #drawer.show{transform:none;box-shadow:-18px 0 40px rgba(0,0,0,.28)}
   @media (max-width:560px){ #drawer{width:100vw;border-left:none} }
-  .dhead{display:flex;align-items:center;gap:10px;margin-bottom:16px}
+  .dhead{display:flex;align-items:center;gap:10px;margin-bottom:14px}
   .dhead .x{margin-left:auto;border:none;background:transparent;color:var(--mut);cursor:pointer;font-size:22px;line-height:1;padding:2px 6px}
   .dhead .x:hover{color:var(--txt)}
+  .seg3{display:flex;background:var(--panel2);border:1px solid var(--line);border-radius:9px;overflow:hidden;margin:0 0 14px;width:fit-content}
+  .seg3 button{border:0;background:transparent;color:var(--mut);font:inherit;font-size:12px;padding:5px 13px;cursor:pointer}
+  .seg3 button.on{background:rgba(73,182,255,.16);color:var(--info)}
+  #d2d.hide{display:none}
+  #d3d{display:none} #d3d.show{display:block}
+  .d3{position:relative;height:248px;border:1px solid var(--line);border-radius:10px;background:var(--panel2);overflow:hidden;margin:0 0 18px}
+  .d3 canvas{width:100%;height:100%;display:block;touch-action:none;cursor:grab}
+  .d3 canvas:active{cursor:grabbing}
+  .dhud{position:absolute;left:11px;right:11px;bottom:9px;font-size:11px;color:var(--mut);pointer-events:none;text-align:center}
+  .seg3dd{position:absolute;left:10px;top:10px;right:10px;display:flex;flex-wrap:wrap;gap:2px;background:rgba(10,14,26,.5);border:1px solid var(--line);border-radius:8px;padding:2px;max-width:max-content}
+  .seg3dd button{border:0;background:transparent;color:var(--mut);font:inherit;font-size:11px;padding:3px 9px;border-radius:6px;cursor:pointer}
+  .seg3dd button.on{background:rgba(73,182,255,.2);color:var(--info)}
+  .seg3dd button:hover{color:var(--txt)}
   .flow{display:flex;flex-direction:column;gap:1px;margin:6px 0 18px}
   .frow{display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:9px;font-size:13px}
   .frow.cur{background:rgba(73,182,255,.12)}
@@ -105,6 +123,7 @@
 <header>
   <div class="brand"><span class="mark" aria-hidden="true"><svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><line x1="12" y1="40" x2="32" y2="40" stroke="#2a3744" stroke-width="3" stroke-linecap="round"></line><circle cx="12" cy="40" r="3.2" fill="#6366f1"></circle><circle cx="20" cy="40" r="3.2" fill="#6366f1"></circle><circle cx="28" cy="40" r="3.2" fill="#6366f1"></circle><circle cx="32" cy="40" r="3.8" fill="#f5a524"></circle><path d="M32 40 Q44 34 52 19" stroke="#10b981" stroke-width="5.5" fill="none" stroke-linecap="round"></path><circle cx="52" cy="19" r="4.5" fill="#10b981"></circle></svg></span> keel · dashboard</div>
   <span class="live"><span class="dotlive" aria-hidden="true"></span><span id="livetxt">live</span></span>
+  <input id="q" class="search" type="search" placeholder="filter by project…" aria-label="filter runs by project, label, or command" autocomplete="off" spellcheck="false">
   <div class="seg" id="segf"><button data-f="all" class="on">all</button><button data-f="active">active</button></div>
   <button class="tgl" id="tgl" title="theme: system / light / dark" aria-label="toggle theme">◐</button>
   <div class="count" id="count"></div>
@@ -121,10 +140,13 @@
   const POLL_MS = 500;
   const NAMES = {s0:"init",s1:"select",s2:"branch",s3:"guard",s4:"implement",s5:"classify",s6:"ci",s7:"review",s8:"test",s9:"fixloop",s10:"merge",s11:"capture",s12:"close"};
   const GATE_KINDS = {gate:1, merge:1};
-  let BOARD = [], showDone = true, openKey = null;
+  let BOARD = [], showDone = true, openKey = null, query = '';
+  // free-text filter: matches project, label (#PR/issue/run-id) or command
+  const matchesQuery = r => !query ||
+    ((r.project||'')+' '+(r.label||'')+' '+(r.command||'')).toLowerCase().includes(query);
 
   const el=(t,c)=>{const n=document.createElement(t);if(c)n.className=c;return n;};
-  const isDone = r => !!r.merged;
+  const isDone = r => !!r.merged || !!r.done;   // merged OR closed-out → finished
   const keyOf = r => (r.project||'')+'|'+(r.label||'')+'|'+(r.command||'');
   const ordered = () => BOARD.map(r=>r).sort((a,b)=>(isDone(a)?1:0)-(isDone(b)?1:0));
   // ship ids (s4) differ from their name (implement) → "s4 · implement"; custom flows
@@ -157,7 +179,7 @@
   const tip = document.getElementById('tip');
   function showTip(dot, run, idx){
     const steps = Array.isArray(run.steps)?run.steps:[], s = steps[idx]||{};
-    const tone = stepTone(idx, run.active_index|0, !!run.merged, s);
+    const tone = stepTone(idx, run.active_index|0, !!run.merged||!!run.done, s);
     tip.textContent='';
     const th=el('div','th');
     if(s.id && s.name && s.id!==s.name){ const tid=el('span','tid'); tid.textContent=s.id; th.appendChild(tid); }
@@ -179,8 +201,8 @@
   const count = document.getElementById('count');
 
   function renderCount(){
-    const vis = showDone ? BOARD : BOARD.filter(r=>!isDone(r));
-    const np = new Set(vis.map(r=>r.project||'')).size, done = BOARD.filter(isDone).length;
+    const vis = (showDone ? BOARD : BOARD.filter(r=>!isDone(r))).filter(matchesQuery);
+    const np = new Set(vis.map(r=>r.project||'')).size, done = BOARD.filter(r=>isDone(r)&&matchesQuery(r)).length;
     count.textContent='';
     const b1=el('b'); b1.textContent=vis.length; const b2=el('b'); b2.textContent=np;
     count.append(b1,' run'+(vis.length===1?'':'s')+' across ',b2,' project'+(np===1?'':'s'));
@@ -189,11 +211,12 @@
 
   function renderGrid(){
     grid.textContent='';
-    if(!BOARD.length){ const e=el('div','empty'); e.textContent='no active runs found'; grid.appendChild(e); renderCount(); return; }
-    ordered().forEach(run=>{
+    const rows = ordered().filter(matchesQuery);
+    if(!rows.length){ const e=el('div','empty'); e.textContent = BOARD.length ? ('no runs match “'+query+'”') : 'no active runs found'; grid.appendChild(e); renderCount(); return; }
+    rows.forEach(run=>{
       const steps = Array.isArray(run.steps)?run.steps:[];
-      const active = run.active_index|0, merged=!!run.merged;
-      const card = el('div','card'+(merged?' done':''));
+      const active = run.active_index|0, finished=!!run.merged||!!run.done;
+      const card = el('div','card'+(finished?' done':''));
       card.tabIndex=0;
       const head = el('div','chead');
       const proj=el('span','proj'); proj.textContent=run.project||'?';
@@ -202,8 +225,8 @@
       head.append(proj,lab,badge); card.appendChild(head);
       const strip=el('div','strip');
       steps.forEach((s,idx)=>{
-        if(idx>0) strip.appendChild(el('span','seg2'+((merged||idx<=active)?' done':'')));
-        const dot=el('span','dot'); const tone=stepTone(idx,active,merged,s);
+        if(idx>0) strip.appendChild(el('span','seg2'+((finished||idx<=active)?' done':'')));
+        const dot=el('span','dot'); const tone=stepTone(idx,active,finished,s);
         if(tone!=='idle') dot.classList.add(tone);
         dot.title=(s.id||'')+' · '+(s.name||'');
         dot.addEventListener('mouseenter',()=>showTip(dot,run,idx));
@@ -224,22 +247,46 @@
     renderCount();
   }
 
-  // ---- drawer ----
+  // ---- drawer (2D step list + an optional per-run 3D scene) ----
   const scrim=document.getElementById('scrim'), drawer=document.getElementById('drawer');
+  let dMode='2d';
   function runByKey(k){ return BOARD.find(r=>keyOf(r)===k) || null; }
+
+  // The poll re-renders the open drawer every tick, so only the 2D body (#d2d) is
+  // rebuilt; the 3D canvas (#d3d) is a persistent sibling the rebuild never touches.
+  function buildShell(run){
+    drawer.textContent='';
+    const head=el('div','dhead');
+    const t=el('span','dtitle'); t.style.fontWeight='600'; t.style.fontSize='15px';
+    t.textContent=(run.project||'?')+' '+(run.label||'');
+    const x=el('button','x'); x.setAttribute('aria-label','close'); x.textContent='×'; x.onclick=closeDrawer;
+    head.append(t,x); drawer.appendChild(head);
+    const seg=el('div','seg3');
+    const b2=el('button'); b2.dataset.m='2d'; b2.textContent='2D'; b2.className='on';
+    const b3=el('button'); b3.dataset.m='3d'; b3.textContent='3D';
+    seg.append(b2,b3); seg.addEventListener('click',e=>{ const b=e.target.closest('button'); if(b) setDrawerMode(b.dataset.m); });
+    drawer.appendChild(seg);
+    const d2=el('div'); d2.id='d2d'; drawer.appendChild(d2);
+    const d3w=el('div'); d3w.id='d3d'; const sc=el('div','d3'); const cv=el('canvas');
+    const styleBar=el('div','seg3dd');                       // 3D-style picker (curve/helix/ring/line)
+    D3_STYLES.forEach(name=>{ const b=el('button'); b.dataset.s=name; b.textContent=D3_LABEL[name];
+      if(name===d3style) b.className='on';
+      b.addEventListener('click',()=>setD3Style(name)); styleBar.appendChild(b); });
+    const hud=el('div','dhud'); sc.append(cv,styleBar,hud); d3w.appendChild(sc); drawer.appendChild(d3w);
+    const dm=el('div'); dm.id='dmeta'; drawer.appendChild(dm);   // command/phase/status — shown under 2D AND 3D
+    d3.canvas=cv;
+  }
   function renderDrawer(){
     const run = openKey && runByKey(openKey);
     if(!run){ closeDrawer(); return; }
+    if(!document.getElementById('d2d')) buildShell(run);
     const steps=Array.isArray(run.steps)?run.steps:[];
-    const active=run.active_index|0, merged=!!run.merged, jury=run.jury||{};
-    drawer.textContent='';
-    const head=el('div','dhead');
-    const t=el('span'); t.style.fontWeight='600'; t.style.fontSize='15px'; t.textContent=(run.project||'?')+' '+(run.label||'');
-    const x=el('button','x'); x.setAttribute('aria-label','close'); x.textContent='×'; x.onclick=closeDrawer;
-    head.append(t,x); drawer.appendChild(head);
+    const active=run.active_index|0, finished=!!run.merged||!!run.done, jury=run.jury||{};
+    const ttl=drawer.querySelector('.dtitle'); if(ttl) ttl.textContent=(run.project||'?')+' '+(run.label||'');
+    const d2=document.getElementById('d2d'); d2.textContent='';
     const flow=el('div','flow');
     steps.forEach((s,idx)=>{
-      const tone=stepTone(idx,active,merged,s);
+      const tone=stepTone(idx,active,finished,s);
       const cls = tone==='done'?'don':tone==='active'?'cur':tone==='gate'?'gat':tone==='fail'?'fai':'';
       const row=el('div','frow '+cls);
       const id=s.id||'', nm=s.name||NAMES[s.id]||'';
@@ -250,7 +297,8 @@
       const fnm=el('span','fnm'); fnm.textContent=nm||id; row.append(fnm);
       flow.appendChild(row);
     });
-    drawer.appendChild(flow);
+    d2.appendChild(flow);
+    const dm=document.getElementById('dmeta'); dm.textContent='';   // meta lives outside #d2d so 3D shows it too
     const meta=el('table','meta'); const rows=[
       ['command', run.command||'ship'],
       ['phase', idn(run.active_id,run.active_name)+'  ('+(active+1)+'/'+(steps.length||1)+')'],
@@ -258,12 +306,191 @@
     ];
     if(jury.active) rows.push(['jury', jury.mode||'on']);
     rows.forEach(([k,v])=>{ const tr=el('tr'); const a=el('td'); a.textContent=k; const b=el('td'); b.textContent=v; tr.append(a,b); meta.appendChild(tr); });
-    drawer.appendChild(meta);
+    dm.appendChild(meta);
+    const hud=drawer.querySelector('.dhud');
+    if(hud) hud.textContent='drag to orbit · scroll / pinch to zoom · '+idn(run.active_id,run.active_name)+'  ('+(active+1)+'/'+(steps.length||1)+')';
+    if(dMode==='3d' && d3.ren) d3Poll(run);   // keep the live scene in step with the poll
   }
-  function openDrawer(k){ openKey=k; renderDrawer(); scrim.classList.add('show'); drawer.classList.add('show'); }
-  function closeDrawer(){ openKey=null; scrim.classList.remove('show'); drawer.classList.remove('show'); }
+  function setDrawerMode(m){
+    dMode=m;
+    document.getElementById('d2d').classList.toggle('hide', m!=='2d');
+    document.getElementById('d3d').classList.toggle('show', m==='3d');
+    drawer.querySelectorAll('.seg3 button').forEach(b=>b.classList.toggle('on', b.dataset.m===m));
+    const run = openKey && runByKey(openKey);
+    if(m==='3d' && run){ d3Start(run); requestAnimationFrame(d3Resize); }
+    else if(d3.raf){ cancelAnimationFrame(d3.raf); d3.raf=0; }   // pause the loop while in 2D
+  }
+  function openDrawer(k){ d3Dispose(); openKey=k; dMode='2d'; const run=runByKey(k); if(!run) return;
+    buildShell(run); renderDrawer(); scrim.classList.add('show'); drawer.classList.add('show'); }
+  function closeDrawer(){ openKey=null; d3Dispose(); scrim.classList.remove('show'); drawer.classList.remove('show'); }
   scrim.onclick=closeDrawer;
   window.addEventListener('keydown',e=>{ if(e.key==='Escape') closeDrawer(); });
+
+  // ---- per-run 3D scene (lazy THREE, rebuilt on every poll, disposed on close) ----
+  let threeLoading=null;
+  function ensureThree(cb){
+    if(window.THREE) return cb();
+    if(!threeLoading){
+      threeLoading=new Promise((res,rej)=>{ const s=document.createElement('script');
+        s.src='https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
+        s.integrity='sha512-dLxUelApnYxpLt6K2iomGngnHO83iUvZytA3YjDUCjT0HDOHKXnVYdf3hU4JjM8uEhxf9nD1/ey98U3t2vZ0qQ==';
+        s.crossOrigin='anonymous'; s.referrerPolicy='no-referrer';
+        s.onload=()=>res(); s.onerror=()=>rej(); document.head.appendChild(s); });
+    }
+    threeLoading.then(cb).catch(()=>{ const h=drawer.querySelector('.dhud'); if(h) h.textContent='3D unavailable (offline?)'; });
+  }
+  const d3={ren:null,scene:null,cam:null,raf:0,canvas:null,styles:{},cur:null,builtN:0,camR:14,
+            yaw:0,pitch:0.5,auto:0,last:0,drag:false,px:0,py:0,zoom:1,pinch:0,ptrs:null,
+            steps:[],N:1,active:0,finished:false};
+  // Geometric arrangements + runviz's particle styles, one shared step-marker semantics.
+  const D3_STYLES=['curve','helix','ring','line','plexus','aurora','comet'];
+  const D3_LABEL={curve:'curve',helix:'helix',ring:'ring',line:'line',plexus:'plexus',aurora:'aurora',comet:'comet'};
+  const PARTICLE=new Set(['plexus','aurora','comet']);   // additive-blending → need a dark scene
+  const TAU=Math.PI*2, SPAN=12, COL3={done:0x7ad14a,act:0x49b6ff,gate:0xf0a020,fail:0xff5468,idle:0x223052};
+  let d3style='curve'; try{ d3style=localStorage.getItem('keel-3dstyle')||'curve'; }catch(e){}
+  if(D3_STYLES.indexOf(d3style)<0) d3style='curve';
+  // ---- live run semantics the engine reads (updated on open + every poll) ----
+  function d3SetRun(run){ d3.steps=Array.isArray(run.steps)?run.steps:[]; d3.N=Math.max(1,d3.steps.length);
+    d3.active=run.active_index|0; d3.finished=!!run.merged||!!run.done; }
+  function mergedNow(){ return d3.finished; }
+  function headT(){ return d3.N>1 ? d3.active/(d3.N-1) : 0; }
+  function headX(){ return (headT()-0.5)*SPAN; }
+  function gOut(s){ return (s.gate&&s.gate.outcome)||'pending'; }
+  function stepHex3(k){ const s=d3.steps[k]||{};
+    if(mergedNow() && k<=d3.active) return COL3.done;
+    if(k<d3.active) return COL3.done;
+    if(k===d3.active){ if(s.kind==='gate'||s.kind==='merge') return gOut(s)==='fail'?COL3.fail:COL3.gate; return COL3.act; }
+    return COL3.idle; }
+  function rgb3(h){ return [(h>>16&255)/255,(h>>8&255)/255,(h&255)/255]; }
+  function progCol(x,b,out,o){ let h; if(mergedNow())h=COL3.done; else if(Math.abs(x-headX())<1.1)h=COL3.act; else if(x<headX())h=COL3.done; else h=COL3.idle;
+    const c=rgb3(h); out[o]=c[0]*b; out[o+1]=c[1]*b; out[o+2]=c[2]*b; }
+  function strand3(t,ph,rad){ const a=t*2.6*TAU+ph; return new THREE.Vector3((t-0.5)*SPAN,Math.sin(a)*rad,Math.cos(a)*rad); }
+  const seed3=i=>((Math.sin(i*127.1)*43758.5453)%1+1)%1;
+  function posFn(style){ const W=SPAN, R=Math.max(2.4,W/3.4);
+    if(style==='helix'||style==='aurora') return t=>strand3(t,0,1.6);
+    if(style==='ring')  return t=>{ const a=t*TAU-Math.PI/2; return new THREE.Vector3(Math.cos(a)*R,(t-0.5)*1.4,Math.sin(a)*R); };
+    if(style==='curve') return t=>new THREE.Vector3((t-0.5)*W, Math.sin(t*Math.PI*0.5)*2.4-0.4, 0);
+    return t=>new THREE.Vector3((t-0.5)*W, 0, 0);   // line / plexus / comet — centred lane
+  }
+  // ---- shared step markers (each style owns a copy, positioned for its geometry) ----
+  function d3Light(){ const a=document.documentElement.getAttribute('data-theme');
+    return a==='light' || (!a && window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches); }
+  function d3Blend(light){ return light?THREE.NormalBlending:THREE.AdditiveBlending; }   // additive only reads on dark
+  function buildMarkers(group,pos,light){ const arr=[]; for(let k=0;k<d3.N;k++){ const p=pos(d3.N>1?k/(d3.N-1):0.5);
+      const core=new THREE.Mesh(new THREE.SphereGeometry(0.22,18,18),new THREE.MeshBasicMaterial({color:0x223052,transparent:true,opacity:.95})); core.position.copy(p); group.add(core);
+      const halo=new THREE.Mesh(new THREE.SphereGeometry(0.47,16,16),new THREE.MeshBasicMaterial({color:0x49b6ff,transparent:true,opacity:0,blending:d3Blend(light)})); halo.position.copy(p); group.add(halo);
+      arr.push({core,halo,k,hi:false}); } return arr; }
+  function recolorMarkers(arr){ arr.forEach(nd=>{ const c=stepHex3(nd.k); nd.core.material.color.setHex(c); nd.halo.material.color.setHex(c); nd.hi=(nd.k===d3.active && !d3.finished); }); }
+  function animMarkers(arr,t){ const pulse=0.5+0.5*Math.sin(t*0.006); arr.forEach(nd=>{ nd.halo.material.opacity=nd.hi?(0.3+pulse*0.5):0.08; nd.halo.scale.setScalar(nd.hi?(1+pulse*0.4):1); }); }
+  // ---- runviz's interweaving particle systems (ported verbatim) ----
+  function addComet(group,light){ const phs=[0,TAU/3,2*TAU/3],RAD=1.3,NP=120,part=[];
+    for(let s=0;s<3;s++)for(let i=0;i<NP;i++)part.push({ph:phs[s],u0:i/NP,sp:0.05+0.02*(s%2)});
+    const pos=new Float32Array(part.length*3),col=new Float32Array(part.length*3);
+    const g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.BufferAttribute(pos,3)); g.setAttribute('color',new THREE.BufferAttribute(col,3));
+    group.add(new THREE.Points(g,new THREE.PointsMaterial({size:0.16,vertexColors:true,transparent:true,opacity:light?1:.95,blending:d3Blend(light),depthWrite:false})));
+    return t=>{ const hT=headT(); for(let i=0;i<part.length;i++){ const p=part[i]; let u=(p.u0+t*0.00008*(p.sp*10))%1; const v=strand3(u,p.ph,RAD); pos[i*3]=v.x;pos[i*3+1]=v.y;pos[i*3+2]=v.z;
+        let b; const dd=u-hT; if(dd>0.005)b=Math.max(0,0.12-dd*0.6); else b=Math.max(0.12,0.5+0.5*Math.cos((hT-u)*7.0)); b*=0.6+0.4*Math.sin(t*0.004+i); progCol(v.x,b,col,i*3); }
+      g.attributes.position.needsUpdate=true; g.attributes.color.needsUpdate=true; }; }
+  function addPlexus(group,light){ const BAND=3.2,M=48,THR=2.6,P=[];
+    for(let i=0;i<M;i++)P.push({base:new THREE.Vector3((seed3(i)-0.5)*SPAN,(seed3(i+9)-0.5)*BAND,(seed3(i+99)-0.5)*BAND),ph:seed3(i+5)*6.28,sp:0.6+seed3(i+3)});
+    const maxSeg=M*8,pos=new Float32Array(maxSeg*2*3),col=new Float32Array(maxSeg*2*3);
+    const g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.BufferAttribute(pos,3)); g.setAttribute('color',new THREE.BufferAttribute(col,3));
+    group.add(new THREE.LineSegments(g,new THREE.LineBasicMaterial({vertexColors:true,transparent:true,opacity:light?.92:.7,blending:d3Blend(light),depthWrite:false})));
+    const cur=[]; for(let i=0;i<M;i++)cur.push(new THREE.Vector3());
+    return t=>{ for(let i=0;i<M;i++){ const p=P[i]; cur[i].set(p.base.x,p.base.y+Math.sin(t*0.0009*p.sp+p.ph)*0.9,p.base.z+Math.cos(t*0.0011*p.sp+p.ph)*0.9); }
+      let c=0; for(let i=0;i<M&&c<maxSeg;i++)for(let j=i+1;j<M&&c<maxSeg;j++){ const d=cur[i].distanceTo(cur[j]); if(d<THR){ const b=(1-d/THR)*(0.5+0.4*Math.sin(t*0.003+i+j)); const o=c*6;
+        pos[o]=cur[i].x;pos[o+1]=cur[i].y;pos[o+2]=cur[i].z; pos[o+3]=cur[j].x;pos[o+4]=cur[j].y;pos[o+5]=cur[j].z; const mx=(cur[i].x+cur[j].x)/2; progCol(mx,b,col,o); progCol(mx,b,col,o+3); c++; } }
+      g.setDrawRange(0,c*2); g.attributes.position.needsUpdate=true; g.attributes.color.needsUpdate=true; }; }
+  function addAurora(group,light){ const phs=[0,Math.PI*0.66,Math.PI*1.33],RAD=1.6,W=120,ribs=[];
+    phs.forEach((ph,si)=>{ const segs=W,pos=new Float32Array((segs+1)*2*3),col=new Float32Array((segs+1)*2*3),idx=[];
+      for(let i=0;i<segs;i++){ const a=i*2; idx.push(a,a+1,a+2, a+1,a+3,a+2); }
+      const g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.BufferAttribute(pos,3)); g.setAttribute('color',new THREE.BufferAttribute(col,3)); g.setIndex(idx);
+      group.add(new THREE.Mesh(g,new THREE.MeshBasicMaterial({vertexColors:true,transparent:true,opacity:light?.62:.5,side:THREE.DoubleSide,blending:d3Blend(light),depthWrite:false}))); ribs.push({g,pos,col,segs,ph,si}); });
+    return t=>{ const hT=headT(); ribs.forEach(rb=>{ for(let i=0;i<=rb.segs;i++){ const tt=i/rb.segs,c=strand3(tt,rb.ph+t*0.0004,RAD),wob=0.55+0.2*Math.sin(t*0.002+tt*8+rb.si),o=i*6;
+        rb.pos[o]=c.x;rb.pos[o+1]=c.y+wob;rb.pos[o+2]=c.z; rb.pos[o+3]=c.x;rb.pos[o+4]=c.y-wob;rb.pos[o+5]=c.z;
+        let b; const dd=tt-hT; if(dd>0.01)b=Math.max(0,0.1-dd*0.5); else b=0.35+0.25*Math.sin(t*0.003+tt*6); b=Math.max(0.04,b)*(0.6+0.4*Math.sin(t*0.0016+rb.si*2)); progCol(c.x,b,rb.col,o); progCol(c.x,b*0.4,rb.col,o+3); }
+      rb.g.attributes.position.needsUpdate=true; rb.g.attributes.color.needsUpdate=true; }); }; }
+  // ---- one style = {group, camR, recolor, update} ----
+  function buildStyle(name){
+    const group=new THREE.Group(), pos=posFn(name), light=d3Light();
+    let adders=[]; if(name==='plexus')adders=[addPlexus]; else if(name==='comet')adders=[addComet]; else if(name==='aurora')adders=[addAurora];
+    const ups=adders.map(fn=>fn(group,light));
+    if(!PARTICLE.has(name) && d3.N>1){ const pts=[]; for(let k=0;k<d3.N;k++) pts.push(pos(k/(d3.N-1)));
+      const tube=new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts),Math.max(12,d3.N*4),0.03,6,false),
+                                new THREE.MeshBasicMaterial({color:light?0xc6d1e5:0x2f3c5e,transparent:true,opacity:0.5})); group.add(tube); }
+    const nodes=buildMarkers(group,pos,light);
+    let maxR=2.5; for(let k=0;k<d3.N;k++) maxR=Math.max(maxR,pos(d3.N>1?k/(d3.N-1):0.5).length());
+    return {group,camR:maxR*1.7+4,recolor(){ recolorMarkers(nodes); },update(t){ ups.forEach(u=>u(t)); animMarkers(nodes,t); }};
+  }
+  function disposeGroup(g){ if(!g) return; g.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material){ if(o.material.map)o.material.map.dispose(); o.material.dispose(); } }); if(d3.scene) d3.scene.remove(g); }
+  function d3BuildAll(){
+    Object.keys(d3.styles).forEach(k=>disposeGroup(d3.styles[k].group)); d3.styles={};
+    D3_STYLES.forEach(name=>{ const st=buildStyle(name); st.group.visible=false; d3.scene.add(st.group); d3.styles[name]=st; });
+    d3.builtN=d3.N; applyStyle();
+  }
+  function fogHex(){ const light=d3Light();
+    if(PARTICLE.has(d3style)) return light?0xf4f7fc:0x080c16;   // particle scene: light/dark, opaque
+    return light?0xeef3fb:0x0e1422; }
+  function applyStyle(){
+    Object.keys(d3.styles).forEach(k=>{ d3.styles[k].group.visible=(k===d3style); });
+    d3.cur=d3.styles[d3style]||null; if(d3.cur){ d3.cur.recolor(); d3.camR=d3.cur.camR; }
+    if(d3.ren){ const light=d3Light();
+      if(PARTICLE.has(d3style)) d3.ren.setClearColor(light?0xf4f7fc:0x080c16, 1);   // opaque, theme-aware
+      else d3.ren.setClearColor(0x000000, 0); }                                     // transparent → page theme shows
+    if(d3.scene&&d3.scene.fog) d3.scene.fog.color.setHex(fogHex());
+  }
+  function setD3Style(name){
+    if(D3_STYLES.indexOf(name)<0) return; d3style=name;
+    try{ localStorage.setItem('keel-3dstyle',name); }catch(e){}
+    drawer.querySelectorAll('.seg3dd button').forEach(b=>b.classList.toggle('on',b.dataset.s===name));
+    if(d3.ren){ d3.yaw=0; d3.auto=0; d3.zoom=1; applyStyle(); }
+  }
+  function d3Loop(t){
+    if(!d3.ren){ d3.raf=0; return; }
+    const dt=Math.min(0.05,(t-d3.last)/1000); d3.last=t; d3.auto+= d3.drag?0:dt*0.16; const ay=d3.yaw+d3.auto;
+    const r=d3.camR*d3.zoom;   // wheel / pinch dolly zoom
+    d3.cam.position.set(Math.sin(ay)*r, 0.3+(1.8+Math.sin(d3.pitch)*d3.camR*0.6)*d3.zoom, Math.cos(ay)*r); d3.cam.lookAt(0,0.3,0);
+    if(d3.cur) d3.cur.update(t);
+    d3.ren.render(d3.scene,d3.cam); d3.raf=requestAnimationFrame(d3Loop);
+  }
+  function d3Setup(){
+    const C=d3.canvas;
+    d3.ren=new THREE.WebGLRenderer({canvas:C,antialias:true,alpha:true}); d3.ren.setClearColor(0x000000,0);
+    d3.scene=new THREE.Scene(); d3.scene.fog=new THREE.Fog(fogHex(),12,46);
+    d3.cam=new THREE.PerspectiveCamera(50,2,0.1,200);
+    d3.ptrs=new Map();
+    const clampZoom=()=>{ d3.zoom=Math.max(0.4,Math.min(3,d3.zoom)); };
+    C.addEventListener('pointerdown',e=>{ d3.ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});
+      d3.drag=d3.ptrs.size===1; d3.px=e.clientX; d3.py=e.clientY; try{C.setPointerCapture(e.pointerId);}catch(_){}
+      if(d3.ptrs.size===2){ const p=[...d3.ptrs.values()]; d3.pinch=Math.hypot(p[0].x-p[1].x,p[0].y-p[1].y); d3.drag=false; } });
+    const ptrUp=e=>{ d3.ptrs.delete(e.pointerId); if(d3.ptrs.size<2) d3.pinch=0;
+      d3.drag=d3.ptrs.size===1; if(d3.drag){ const p=[...d3.ptrs.values()][0]; d3.px=p.x; d3.py=p.y; } };
+    C.addEventListener('pointerup',ptrUp); C.addEventListener('pointercancel',ptrUp);
+    C.addEventListener('pointermove',e=>{ if(d3.ptrs.has(e.pointerId)) d3.ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});
+      if(d3.ptrs.size>=2){ const p=[...d3.ptrs.values()]; const dist=Math.hypot(p[0].x-p[1].x,p[0].y-p[1].y);
+        if(d3.pinch>0 && dist>0){ d3.zoom*=d3.pinch/dist; clampZoom(); } d3.pinch=dist; return; }
+      if(!d3.drag)return; d3.yaw+=(e.clientX-d3.px)*0.007; d3.pitch+=(e.clientY-d3.py)*0.005; d3.pitch=Math.max(0.15,Math.min(1.2,d3.pitch)); d3.px=e.clientX; d3.py=e.clientY; });
+    C.addEventListener('wheel',e=>{ e.preventDefault(); d3.zoom*=(e.deltaY>0?1.08:0.925); clampZoom(); }, {passive:false});
+  }
+  function d3Poll(run){   // called each poll while the drawer is open in 3D
+    if(!d3.ren) return; const prevN=d3.N; d3SetRun(run);
+    if(d3.N!==d3.builtN || prevN!==d3.N) d3BuildAll(); else if(d3.cur) d3.cur.recolor();
+  }
+  function d3Resize(){
+    if(!d3.ren) return; const wrap=d3.canvas.parentElement;
+    d3.ren.setPixelRatio(Math.min(2,window.devicePixelRatio||1));
+    d3.ren.setSize(wrap.clientWidth,wrap.clientHeight,false);
+    d3.cam.aspect=wrap.clientWidth/Math.max(1,wrap.clientHeight); d3.cam.updateProjectionMatrix();
+  }
+  function d3Start(run){ ensureThree(()=>{ if(!d3.canvas) return; if(!d3.ren) d3Setup(); d3SetRun(run); d3BuildAll(); d3Resize(); if(!d3.raf) d3.raf=requestAnimationFrame(d3Loop); }); }
+  function d3Dispose(){
+    if(d3.raf){ cancelAnimationFrame(d3.raf); d3.raf=0; }
+    Object.keys(d3.styles).forEach(k=>disposeGroup(d3.styles[k].group)); d3.styles={}; d3.cur=null; d3.builtN=0;
+    if(d3.ren){ try{ d3.ren.dispose(); }catch(_){} }
+    d3.ren=null; d3.scene=null; d3.cam=null; d3.canvas=null; d3.yaw=0; d3.pitch=0.5; d3.auto=0; d3.drag=false;
+    d3.zoom=1; d3.pinch=0; if(d3.ptrs) d3.ptrs.clear();
+  }
+  window.addEventListener('resize',()=>{ if(d3.ren) d3Resize(); });
 
   // ---- filter ----
   const segf=document.getElementById('segf');
@@ -273,6 +500,8 @@
     [...segf.children].forEach(x=>x.classList.toggle('on',x.dataset.f===b.dataset.f));
     renderCount();
   });
+  const q=document.getElementById('q');
+  q.addEventListener('input',()=>{ query=q.value.trim().toLowerCase(); renderGrid(); });
 
   // ---- theme toggle (system → light → dark → system) ----
   const tgl=document.getElementById('tgl'), ICON={'':'◐',light:'☀',dark:'☾'};
@@ -285,7 +514,9 @@
   }
   let theme=''; try{ theme=localStorage.getItem('keel-theme')||''; }catch(e){}
   applyTheme(theme);
-  tgl.addEventListener('click',()=>{ theme = theme===''?'light':theme==='light'?'dark':''; applyTheme(theme); });
+  tgl.addEventListener('click',()=>{ theme = theme===''?'light':theme==='light'?'dark':''; applyTheme(theme);
+    if(dMode==='3d' && d3.ren){ d3BuildAll(); }   // rebuild: particle blending + scene bg depend on the theme
+  });
 
   // ---- live poll ----
   const livetxt=document.getElementById('livetxt');
