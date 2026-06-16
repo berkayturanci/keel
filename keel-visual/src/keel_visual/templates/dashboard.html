@@ -89,9 +89,18 @@
   #drawer{position:fixed;top:0;right:0;height:100%;width:min(440px,92vw);background:var(--panel);border-left:1px solid var(--line);transform:translateX(100%);transition:transform .24s cubic-bezier(.4,0,.2,1),box-shadow .24s;z-index:50;overflow-y:auto;padding:20px}
   #drawer.show{transform:none;box-shadow:-18px 0 40px rgba(0,0,0,.28)}
   @media (max-width:560px){ #drawer{width:100vw;border-left:none} }
-  .dhead{display:flex;align-items:center;gap:10px;margin-bottom:16px}
+  .dhead{display:flex;align-items:center;gap:10px;margin-bottom:14px}
   .dhead .x{margin-left:auto;border:none;background:transparent;color:var(--mut);cursor:pointer;font-size:22px;line-height:1;padding:2px 6px}
   .dhead .x:hover{color:var(--txt)}
+  .seg3{display:flex;background:var(--panel2);border:1px solid var(--line);border-radius:9px;overflow:hidden;margin:0 0 14px;width:fit-content}
+  .seg3 button{border:0;background:transparent;color:var(--mut);font:inherit;font-size:12px;padding:5px 13px;cursor:pointer}
+  .seg3 button.on{background:rgba(73,182,255,.16);color:var(--info)}
+  #d2d.hide{display:none}
+  #d3d{display:none} #d3d.show{display:block}
+  .d3{position:relative;height:248px;border:1px solid var(--line);border-radius:10px;background:var(--panel2);overflow:hidden;margin:0 0 18px}
+  .d3 canvas{width:100%;height:100%;display:block;touch-action:none;cursor:grab}
+  .d3 canvas:active{cursor:grabbing}
+  .dhud{position:absolute;left:11px;right:11px;bottom:9px;font-size:11px;color:var(--mut);pointer-events:none;text-align:center}
   .flow{display:flex;flex-direction:column;gap:1px;margin:6px 0 18px}
   .frow{display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:9px;font-size:13px}
   .frow.cur{background:rgba(73,182,255,.12)}
@@ -234,19 +243,38 @@
     renderCount();
   }
 
-  // ---- drawer ----
+  // ---- drawer (2D step list + an optional per-run 3D scene) ----
   const scrim=document.getElementById('scrim'), drawer=document.getElementById('drawer');
+  let dMode='2d';
   function runByKey(k){ return BOARD.find(r=>keyOf(r)===k) || null; }
+
+  // The poll re-renders the open drawer every tick, so only the 2D body (#d2d) is
+  // rebuilt; the 3D canvas (#d3d) is a persistent sibling the rebuild never touches.
+  function buildShell(run){
+    drawer.textContent='';
+    const head=el('div','dhead');
+    const t=el('span','dtitle'); t.style.fontWeight='600'; t.style.fontSize='15px';
+    t.textContent=(run.project||'?')+' '+(run.label||'');
+    const x=el('button','x'); x.setAttribute('aria-label','close'); x.textContent='×'; x.onclick=closeDrawer;
+    head.append(t,x); drawer.appendChild(head);
+    const seg=el('div','seg3');
+    const b2=el('button'); b2.dataset.m='2d'; b2.textContent='2D'; b2.className='on';
+    const b3=el('button'); b3.dataset.m='3d'; b3.textContent='3D';
+    seg.append(b2,b3); seg.addEventListener('click',e=>{ const b=e.target.closest('button'); if(b) setDrawerMode(b.dataset.m); });
+    drawer.appendChild(seg);
+    const d2=el('div'); d2.id='d2d'; drawer.appendChild(d2);
+    const d3w=el('div'); d3w.id='d3d'; const sc=el('div','d3'); const cv=el('canvas');
+    const hud=el('div','dhud'); sc.append(cv,hud); d3w.appendChild(sc); drawer.appendChild(d3w);
+    d3.canvas=cv;
+  }
   function renderDrawer(){
     const run = openKey && runByKey(openKey);
     if(!run){ closeDrawer(); return; }
+    if(!document.getElementById('d2d')) buildShell(run);
     const steps=Array.isArray(run.steps)?run.steps:[];
     const active=run.active_index|0, finished=!!run.merged||!!run.done, jury=run.jury||{};
-    drawer.textContent='';
-    const head=el('div','dhead');
-    const t=el('span'); t.style.fontWeight='600'; t.style.fontSize='15px'; t.textContent=(run.project||'?')+' '+(run.label||'');
-    const x=el('button','x'); x.setAttribute('aria-label','close'); x.textContent='×'; x.onclick=closeDrawer;
-    head.append(t,x); drawer.appendChild(head);
+    const ttl=drawer.querySelector('.dtitle'); if(ttl) ttl.textContent=(run.project||'?')+' '+(run.label||'');
+    const d2=document.getElementById('d2d'); d2.textContent='';
     const flow=el('div','flow');
     steps.forEach((s,idx)=>{
       const tone=stepTone(idx,active,finished,s);
@@ -260,7 +288,7 @@
       const fnm=el('span','fnm'); fnm.textContent=nm||id; row.append(fnm);
       flow.appendChild(row);
     });
-    drawer.appendChild(flow);
+    d2.appendChild(flow);
     const meta=el('table','meta'); const rows=[
       ['command', run.command||'ship'],
       ['phase', idn(run.active_id,run.active_name)+'  ('+(active+1)+'/'+(steps.length||1)+')'],
@@ -268,12 +296,108 @@
     ];
     if(jury.active) rows.push(['jury', jury.mode||'on']);
     rows.forEach(([k,v])=>{ const tr=el('tr'); const a=el('td'); a.textContent=k; const b=el('td'); b.textContent=v; tr.append(a,b); meta.appendChild(tr); });
-    drawer.appendChild(meta);
+    d2.appendChild(meta);
+    const hud=drawer.querySelector('.dhud');
+    if(hud) hud.textContent='drag to orbit · '+idn(run.active_id,run.active_name)+'  ('+(active+1)+'/'+(steps.length||1)+')';
+    if(dMode==='3d' && d3.ren) d3Build(run);   // keep the live scene in step with the poll
   }
-  function openDrawer(k){ openKey=k; renderDrawer(); scrim.classList.add('show'); drawer.classList.add('show'); }
-  function closeDrawer(){ openKey=null; scrim.classList.remove('show'); drawer.classList.remove('show'); }
+  function setDrawerMode(m){
+    dMode=m;
+    document.getElementById('d2d').classList.toggle('hide', m!=='2d');
+    document.getElementById('d3d').classList.toggle('show', m==='3d');
+    drawer.querySelectorAll('.seg3 button').forEach(b=>b.classList.toggle('on', b.dataset.m===m));
+    const run = openKey && runByKey(openKey);
+    if(m==='3d' && run){ d3Start(run); requestAnimationFrame(d3Resize); }
+    else if(d3.raf){ cancelAnimationFrame(d3.raf); d3.raf=0; }   // pause the loop while in 2D
+  }
+  function openDrawer(k){ d3Dispose(); openKey=k; dMode='2d'; const run=runByKey(k); if(!run) return;
+    buildShell(run); renderDrawer(); scrim.classList.add('show'); drawer.classList.add('show'); }
+  function closeDrawer(){ openKey=null; d3Dispose(); scrim.classList.remove('show'); drawer.classList.remove('show'); }
   scrim.onclick=closeDrawer;
   window.addEventListener('keydown',e=>{ if(e.key==='Escape') closeDrawer(); });
+
+  // ---- per-run 3D scene (lazy THREE, rebuilt on every poll, disposed on close) ----
+  let threeLoading=null;
+  function ensureThree(cb){
+    if(window.THREE) return cb();
+    if(!threeLoading){
+      threeLoading=new Promise((res,rej)=>{ const s=document.createElement('script');
+        s.src='https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
+        s.integrity='sha512-dLxUelApnYxpLt6K2iomGngnHO83iUvZytA3YjDUCjT0HDOHKXnVYdf3hU4JjM8uEhxf9nD1/ey98U3t2vZ0qQ==';
+        s.crossOrigin='anonymous'; s.referrerPolicy='no-referrer';
+        s.onload=()=>res(); s.onerror=()=>rej(); document.head.appendChild(s); });
+    }
+    threeLoading.then(cb).catch(()=>{ const h=drawer.querySelector('.dhud'); if(h) h.textContent='3D unavailable (offline?)'; });
+  }
+  const d3={ren:null,scene:null,cam:null,raf:0,objs:[],actives:[],camR:12,canvas:null,
+            yaw:0,pitch:0.5,auto:0,last:0,drag:false,px:0,py:0};
+  function d3Pal(){
+    const a=document.documentElement.getAttribute('data-theme');
+    const light = a==='light' || (!a && window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches);
+    return light ? {done:0x4ba322,active:0x1f8fe6,gate:0xcf8410,fail:0xe0364f,idle:0xb9c4da,fog:0xeef3fb,tube:0xc6d1e5}
+                 : {done:0x7ad14a,active:0x49b6ff,gate:0xf0a020,fail:0xff5468,idle:0x2a3550,fog:0x0e1422,tube:0x2a3756};
+  }
+  function d3Loop(t){
+    if(!d3.ren){ d3.raf=0; return; }
+    const dt=Math.min(0.05,(t-d3.last)/1000); d3.last=t; d3.auto+= d3.drag?0:dt*0.18; const ay=d3.yaw+d3.auto;
+    d3.cam.position.set(Math.sin(ay)*d3.camR, 2.4+Math.sin(d3.pitch)*d3.camR*0.62, Math.cos(ay)*d3.camR); d3.cam.lookAt(0,0.6,0);
+    const pulse=0.4+0.4*Math.sin(t*0.005);
+    d3.actives.forEach(h=>{ h.material.opacity=0.25+pulse*0.5; h.scale.setScalar(1+pulse*0.5); });
+    d3.ren.render(d3.scene,d3.cam); d3.raf=requestAnimationFrame(d3Loop);
+  }
+  function d3Setup(){
+    const C=d3.canvas, P=d3Pal();
+    d3.ren=new THREE.WebGLRenderer({canvas:C,antialias:true,alpha:true}); d3.ren.setClearColor(0x000000,0);
+    d3.scene=new THREE.Scene(); d3.scene.fog=new THREE.Fog(P.fog,12,46);
+    d3.cam=new THREE.PerspectiveCamera(50,2,0.1,200);
+    C.addEventListener('pointerdown',e=>{ d3.drag=true; d3.px=e.clientX; d3.py=e.clientY; try{C.setPointerCapture(e.pointerId);}catch(_){} });
+    C.addEventListener('pointerup',()=>{ d3.drag=false; });
+    C.addEventListener('pointermove',e=>{ if(!d3.drag)return; d3.yaw+=(e.clientX-d3.px)*0.007; d3.pitch+=(e.clientY-d3.py)*0.005; d3.pitch=Math.max(0.15,Math.min(1.2,d3.pitch)); d3.px=e.clientX; d3.py=e.clientY; });
+  }
+  function d3Clear(){
+    d3.objs.forEach(o=>{ d3.scene.remove(o); if(o.geometry)o.geometry.dispose();
+      if(o.material){ if(o.material.map)o.material.map.dispose(); o.material.dispose(); } });
+    d3.objs=[]; d3.actives=[];
+  }
+  function d3Build(run){
+    if(!d3.scene) return; d3Clear();
+    const P=d3Pal(); if(d3.scene.fog) d3.scene.fog.color.setHex(P.fog);
+    const steps=Array.isArray(run.steps)?run.steps:[]; const m=Math.max(1,steps.length);
+    const active=run.active_index|0, finished=!!run.merged||!!run.done, W=Math.min(12,1.5*m);
+    // steps follow a gently rising curve (echoes the keel mark); active step pulses
+    const pos=t=>new THREE.Vector3(-W/2+t*W, Math.sin(t*Math.PI*0.5)*2.4-0.4, 0);
+    const sgeo=new THREE.SphereGeometry(0.23,18,18), hgeo=new THREE.SphereGeometry(0.44,18,18);
+    if(m>1){
+      const pts=steps.map((_,i)=>pos(i/(m-1)));
+      const tube=new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts),Math.max(12,m*4),0.03,6,false),
+                                new THREE.MeshBasicMaterial({color:P.tube,transparent:true,opacity:0.6}));
+      d3.scene.add(tube); d3.objs.push(tube);
+    }
+    steps.forEach((s,idx)=>{
+      const p=pos(m>1?idx/(m-1):0.5), tone=stepTone(idx,active,finished,s), hex=P[tone]||P.idle;
+      const core=new THREE.Mesh(sgeo,new THREE.MeshBasicMaterial({color:hex,transparent:true,opacity:finished?0.6:1}));
+      core.position.copy(p); d3.scene.add(core); d3.objs.push(core);
+      if(idx===active && !finished){
+        const halo=new THREE.Mesh(hgeo,new THREE.MeshBasicMaterial({color:hex,transparent:true,opacity:0.4,blending:THREE.AdditiveBlending}));
+        halo.position.copy(p); d3.scene.add(halo); d3.objs.push(halo); d3.actives.push(halo);
+      }
+    });
+    d3.camR=Math.max(W,5)*0.92+4;
+  }
+  function d3Resize(){
+    if(!d3.ren) return; const wrap=d3.canvas.parentElement;
+    d3.ren.setPixelRatio(Math.min(2,window.devicePixelRatio||1));
+    d3.ren.setSize(wrap.clientWidth,wrap.clientHeight,false);
+    d3.cam.aspect=wrap.clientWidth/Math.max(1,wrap.clientHeight); d3.cam.updateProjectionMatrix();
+  }
+  function d3Start(run){ ensureThree(()=>{ if(!d3.canvas) return; if(!d3.ren) d3Setup(); d3Build(run); d3Resize(); if(!d3.raf) d3.raf=requestAnimationFrame(d3Loop); }); }
+  function d3Dispose(){
+    if(d3.raf){ cancelAnimationFrame(d3.raf); d3.raf=0; }
+    if(d3.scene) d3Clear();
+    if(d3.ren){ try{ d3.ren.dispose(); }catch(_){} }
+    d3.ren=null; d3.scene=null; d3.cam=null; d3.canvas=null; d3.yaw=0; d3.pitch=0.5; d3.auto=0; d3.drag=false;
+  }
+  window.addEventListener('resize',()=>{ if(d3.ren) d3Resize(); });
 
   // ---- filter ----
   const segf=document.getElementById('segf');
@@ -297,7 +421,9 @@
   }
   let theme=''; try{ theme=localStorage.getItem('keel-theme')||''; }catch(e){}
   applyTheme(theme);
-  tgl.addEventListener('click',()=>{ theme = theme===''?'light':theme==='light'?'dark':''; applyTheme(theme); });
+  tgl.addEventListener('click',()=>{ theme = theme===''?'light':theme==='light'?'dark':''; applyTheme(theme);
+    if(dMode==='3d' && d3.ren && openKey){ d3Build(runByKey(openKey)); }   // recolor the open 3D scene
+  });
 
   // ---- live poll ----
   const livetxt=document.getElementById('livetxt');

@@ -6,6 +6,18 @@ All notable changes to keel-visual are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.5] — 2026-06-16
+
+### Added
+- **Per-run 3D scene inside the live dashboard drawer.** Clicking a run on the `serve`
+  dashboard now opens a detail drawer with a **2D / 3D** switch. 2D is the step list;
+  3D is a live WebGL scene of that one run's backbone as a gently rising curve — done
+  steps green, the active step a pulsing glow, gates amber, idle steps muted — that you
+  can drag to orbit. THREE.js is **lazy-loaded** only on the first 3D switch (the base
+  dashboard stays dependency-free), the scene tracks the 0.5s poll, re-themes with the
+  light/dark toggle, and the renderer + animation loop are disposed when the drawer
+  closes. Falls back to "3D unavailable" if THREE can't load (offline).
+
 ## [0.5.4] — 2026-06-16
 
 ### Added
