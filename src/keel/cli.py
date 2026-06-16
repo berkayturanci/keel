@@ -106,6 +106,38 @@ def _cmd_validate(args: argparse.Namespace) -> int:
     return rc
 
 
+def _plan_stamp_activity(args: argparse.Namespace, config: cfg.ProjectConfig) -> None:
+    """Record the run on keel-visual's board from the (mandatory) Step 0 plan call.
+
+    Every command adapter runs ``keel plan`` at Step 0, so stamping the additive
+    activity record here makes a run **show up on the board the moment it plans** —
+    even if the agent never gets around to the per-phase ``keel activity`` calls
+    (the exact gap that left real ``keel ship`` runs invisible). Opt-in via
+    ``--run-id`` so a plain ``keel plan`` stays a pure read. Fail-soft: a write
+    error, an unknown command, or a core without :mod:`keel.activity` is a no-op,
+    never an aborted plan. Does not regress a run the adapter already advanced past
+    its first phase.
+    """
+    run_id = getattr(args, "run_id", None)
+    command = args.command_contract
+    if not run_id or not flows.is_known(command):
+        return
+    try:
+        phase = flows.flow_for(command)[0].id
+        path = activity.record_path(args.root, config, run_id)
+        existing = activity.read_activity(path)
+        if (existing and existing.get("status") == "running"
+                and existing.get("phase") != phase):
+            return
+        record = activity.build_activity_record(
+            command=command, run_id=run_id, phase=phase, status="running",
+            issue=getattr(args, "issue", None), pr=getattr(args, "pull_request", None),
+        )
+        activity.write_activity(path, record)
+    except (activity.ActivityError, OSError):
+        return
+
+
 def _cmd_plan(args: argparse.Namespace) -> int:
     try:
         config = cfg.load_config(args.path)
@@ -194,6 +226,7 @@ def _cmd_plan(args: argparse.Namespace) -> int:
     if not consent_ok:
         print(consent_message, file=sys.stderr)
         return 1
+    _plan_stamp_activity(args, config)   # surface the run on the board from Step 0
     return 0
 
 
@@ -3914,6 +3947,12 @@ def build_parser() -> argparse.ArgumentParser:
                         help="disable the cross-vendor jury contract")
     p_plan.add_argument("--jury-advisory", action="store_true",
                         help="run jury in advisory mode when enabled")
+    p_plan.add_argument("--run-id", default=None,
+                        help="stamp the activity record for this run id (board visibility)")
+    p_plan.add_argument("--issue", type=_positive_int, default=None,
+                        help="issue number to record on the activity stamp")
+    p_plan.add_argument("--pull-request", type=_positive_int, default=None,
+                        help="pull request number to record on the activity stamp")
     p_plan.add_argument("--json", action="store_true", help="emit structured JSON")
     p_plan.set_defaults(func=_cmd_plan)
 

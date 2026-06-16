@@ -53,9 +53,15 @@ contractual step — do not skip it. The one allowed exception is a core too old
 ```bash
 keel validate .keel/project.yaml --root .     # config + extensions must be valid
 keel plan     .keel/project.yaml --root .     # the backbone + this project's gates/Lego
-keel plan     .keel/project.yaml --root . --command ship --live --json
+keel plan     .keel/project.yaml --root . --command ship --live --json \
+              --run-id "$RUN_ID" --issue <N>  # ALSO stamps the activity board (run shows live)
 keel window   .keel/project.yaml              # is the merge window open right now?
 ```
+
+Passing `--run-id`/`--issue` to this Step 0 plan makes core write the activity record
+itself, so the run appears on `keel-visual`'s board the moment it plans — you do not
+depend on the per-phase `keel activity` calls below for the run to *show up* (they still
+advance it). Use the same `$RUN_ID` as the rest of the run (`ship-<issue-or-pr>`).
 
 The live plan is the operator-consent preflight. Before s1 and before any branch,
 worktree, GitHub write, delegation, secret, release, or production-adjacent access, parse

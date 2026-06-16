@@ -53,9 +53,15 @@ contractual step — do not skip it. The one allowed exception is a core too old
 ```bash
 keel validate .keel/project.yaml --root .     # config + extensions must be valid
 keel plan     .keel/project.yaml --root .     # the backbone + this project's gates/Lego
-keel plan     .keel/project.yaml --root . --command ship --live --json
+keel plan     .keel/project.yaml --root . --command ship --live --json \
+              --run-id "$RUN_ID" --issue <N>  # ALSO stamps the activity board (run shows live)
 keel window   .keel/project.yaml              # is the merge window open right now?
 ```
+
+Passing `--run-id`/`--issue` to this Step 0 plan makes core write the activity record
+itself, so the run appears on `keel-visual`'s board the moment it plans — you do not
+depend on the per-phase `keel activity` calls below for the run to *show up* (they still
+advance it). Use the same `$RUN_ID` as the rest of the run (`ship-<issue-or-pr>`).
 
 The live plan is the operator-consent preflight. Before s1 and before any branch,
 worktree, GitHub write, delegation, secret, release, or production-adjacent access, parse
@@ -623,4 +629,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=plugin command=ship keel_version=1.6.3 source_sha256=95279db488977b7c20db037aefbb565374529fdb02608bdcd98079f7ac9fcd50 generated_sha256=95279db488977b7c20db037aefbb565374529fdb02608bdcd98079f7ac9fcd50 -->
+<!-- keel-generated: surface=plugin command=ship keel_version=1.6.4 source_sha256=7e485919b9c2f6318c034540e945446833f4d480323588ecd7e8aabf1143a70f generated_sha256=7e485919b9c2f6318c034540e945446833f4d480323588ecd7e8aabf1143a70f -->
