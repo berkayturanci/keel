@@ -118,4 +118,4 @@ must include the fixed queue snapshot and these buckets:
 
 Also include open questions, consent gaps, and the next 1–3 operator actions.
 
-<!-- keel-generated: surface=plugin command=work-block keel_version=1.6.4 source_sha256=1a267f0138cefb0bbdef978ad56f2df3753a9c6f7aeb76d0c247ac76f477301d generated_sha256=1a267f0138cefb0bbdef978ad56f2df3753a9c6f7aeb76d0c247ac76f477301d -->
+<!-- keel-generated: surface=plugin command=work-block keel_version=1.6.5 source_sha256=1a267f0138cefb0bbdef978ad56f2df3753a9c6f7aeb76d0c247ac76f477301d generated_sha256=1a267f0138cefb0bbdef978ad56f2df3753a9c6f7aeb76d0c247ac76f477301d -->

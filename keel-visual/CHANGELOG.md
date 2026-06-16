@@ -6,6 +6,19 @@ All notable changes to keel-visual are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.9] — 2026-06-16
+
+### Added
+- **Confirmed merges read as green `merged`, not muted `done`.** An activity record
+  stamped `merged` (by core ≥ 1.6.5's `keel merge`) sets `run_state["merged"]`, so the
+  board shows a real merge in green instead of folding it into the closed-out `done` tone.
+
+### Changed
+- **Auto-stamped runs are labelled by their issue/PR number.** A run whose id is its
+  command name followed by the number (`ship-585`, `pr-loop-2253`) now shows `#585` /
+  `#2253` even when no explicit `--issue` reached the record — the per-phase backbone
+  stamps don't all carry one. Opaque counters (a `morning` run's `m-1`) stay raw.
+
 ## [0.5.8] — 2026-06-16
 
 ### Changed

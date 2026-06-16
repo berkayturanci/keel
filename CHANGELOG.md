@@ -6,6 +6,17 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.6.5] — 2026-06-16
+
+### Added
+- **A real merge stamps the activity board `merged`, distinct from a soft `done`.** The
+  new terminal `merged` status joins `running`/`done` in `keel.activity.STATUSES`, and
+  `keel merge` auto-stamps it (s10) once the merge actually lands — so the board shows a
+  confirmed green **merged** for runs that merged, not the muted **done** it uses for a
+  command that merely closed out (a deferred-window ship, a non-merging `morning`/`triage`).
+  `_autostamp` gained a `status` keyword and treats `merged` as terminal: a later stamp
+  (e.g. a re-run's start phase) never overwrites a landed run.
+
 ## [1.6.4] — 2026-06-16
 
 ### Added

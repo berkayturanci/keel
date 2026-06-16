@@ -362,6 +362,22 @@ class TestAutoStamp(unittest.TestCase):
                 cli._autostamp(self._config(), d, "ship", "r", "s0")   # no raise
             self.assertIsNone(self._rec(d, "r"))
 
+    def test_stamps_merged_status(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            self._put(d, "r", "s10")   # running at merge phase
+            cli._autostamp(self._config(), d, "ship", "r", "s10", status="merged")
+            r = self._rec(d, "r")
+            self.assertEqual((r["phase"], r["status"]), ("s10", "merged"))
+
+    def test_merged_is_terminal(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            self._put(d, "r", "s10", status="merged")
+            cli._autostamp(self._config(), d, "ship", "r", "s0")   # re-run start → ignored
+            r = self._rec(d, "r")
+            self.assertEqual((r["phase"], r["status"]), ("s10", "merged"))
+
     def test_plan_cli_stamps_the_run(self):
         import tempfile
         with tempfile.TemporaryDirectory() as d:

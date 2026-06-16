@@ -109,7 +109,7 @@ database the standard library has no system source for there.)
 
 ```bash
 pip install keel-workflow                                     # from PyPI (provides the `keel` command)
-pip install "git+https://github.com/berkayturanci/keel@v1.6.4"  # or pin an existing git tag
+pip install "git+https://github.com/berkayturanci/keel@v1.6.5"  # or pin an existing git tag
 ```
 
 In a cloud agent session, install it from a `SessionStart` hook (or add keel to the
@@ -268,7 +268,10 @@ Four surfaces:
 As of **keel 1.6.4**, the deterministic backbone commands (`keel plan` at Step 0, `keel
 run-gates` at s8, `keel merge` at s10) auto-stamp the `keel activity` board when given a
 `--run-id`, so a run shows up **and advances** even if the agent skips the per-phase
-`keel activity` calls.
+`keel activity` calls. Since **1.6.5**, `keel merge` stamps the run `merged` (a real merge
+landed) rather than a soft `done`, so the board distinguishes a green confirmed-merge from
+a closed-out run; runs whose `--run-id` ends in their issue/PR (`ship-585`) are labelled
+`#585` even when no explicit issue is passed.
 
 Depends on this core (`keel-workflow >= 1.6.0`); the core never depends on it (it only
 reads records, and probes `shutil.which("jury")` — never imports ai-jury). See

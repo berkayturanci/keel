@@ -107,17 +107,20 @@ def _cmd_validate(args: argparse.Namespace) -> int:
 
 
 def _autostamp(config: cfg.ProjectConfig, root: str, command: str, run_id: str | None,
-               phase: str, *, issue: int | None = None, pr: int | None = None) -> None:
+               phase: str, *, status: str = "running",
+               issue: int | None = None, pr: int | None = None) -> None:
     """Record a run on keel-visual's board at ``phase`` from a deterministic core call.
 
     The agent orchestrates the backbone but reliably **skips** the per-phase
     ``keel activity`` calls, so runs (real ``keel ship`` included) went invisible.
     Instead, the commands the backbone *always* runs do the stamping: ``keel plan``
-    (Step 0 → first phase), ``keel run-gates`` (s8 test), and ``keel merge`` (s10).
-    A run therefore shows up **and advances** — start → test → merge — independent of
+    (Step 0 → first phase), ``keel run-gates`` (s8 test), and ``keel merge`` (s10,
+    stamped ``merged`` — a real merge landed, distinct from a soft ``done``).
+    A run therefore shows up **and advances** — start → test → merged — independent of
     agent discipline. Opt-in via ``--run-id``. Fail-soft: no run-id / unknown command /
     unknown phase / write error / pre-activity core is a no-op, never an aborted command.
-    Never moves a run backward (a re-run of an earlier step won't undo later progress).
+    Never moves a run backward (a re-run of an earlier step won't undo later progress);
+    ``merged`` is terminal and is never overwritten by a later stamp.
     """
     if not run_id or not flows.is_known(command):
         return
@@ -127,12 +130,14 @@ def _autostamp(config: cfg.ProjectConfig, root: str, command: str, run_id: str |
     try:
         path = activity.record_path(root, config, run_id)
         existing = activity.read_activity(path)
-        if (existing and existing.get("status") == "running"
+        if existing and existing.get("status") == "merged":
+            return   # merged is terminal; never overwrite a landed run
+        if (status == "running" and existing and existing.get("status") == "running"
                 and existing.get("phase") in order
                 and order.index(existing["phase"]) > order.index(phase)):
-            return   # don't regress a more-advanced run
+            return   # don't regress a more-advanced still-running run
         record = activity.build_activity_record(
-            command=command, run_id=run_id, phase=phase, status="running",
+            command=command, run_id=run_id, phase=phase, status=status,
             issue=issue, pr=pr)
         activity.write_activity(path, record)
     except (activity.ActivityError, OSError):
@@ -775,7 +780,8 @@ def _cmd_merge(args: argparse.Namespace) -> int:
         if not merged.ok:
             return _finish_merge(args, payload, "gh merge failed", code=1)
         _autostamp(config, args.root, "ship", getattr(args, "run_id", None), "s10",
-                   issue=getattr(args, "issue", None), pr=args.pr)   # advanced to merge
+                   status="merged",   # real merge landed → green "merged", not soft "done"
+                   issue=getattr(args, "issue", None), pr=args.pr)
         return _finish_merge(args, payload, "merged", code=0)
     finally:
         lock.release_resource(_lock_root(args.root), "merge", owner=owner, best_effort=True)

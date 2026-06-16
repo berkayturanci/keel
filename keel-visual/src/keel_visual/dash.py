@@ -78,6 +78,34 @@ def _status_of(run_state: dict[str, Any]) -> str:
     return "running"
 
 
+def _issue_from_run_id(run_id: str | None, command: str | None) -> str | None:
+    """The issue/PR number a run_id encodes, or ``None``.
+
+    Auto-stamped run_ids are shaped ``<command>-<number>`` (``ship-585``,
+    ``pr-loop-2253``), where the number is the issue/PR the run is about — those
+    per-phase stamps don't all carry an explicit issue. Recover it *only* when the
+    run_id is that command name followed by the number, so an opaque counter like a
+    ``morning`` run's ``m-1`` is left alone rather than mislabelled ``#1``."""
+    if not run_id or not command or not run_id.startswith(command):
+        return None
+    rest = run_id[len(command):].lstrip("-_.")
+    return rest if rest.isdigit() else None
+
+
+def _row_label(pr: int | None, issue: int | None,
+               run_id: str | None, command: str | None) -> str:
+    """Pick the board label: PR number, else issue number, else the issue a
+    ``<command>-<number>`` run_id encodes, else the raw run_id, else ``?``."""
+    if pr:
+        return f"#{pr}"
+    if issue:
+        return f"#{issue}"
+    if run_id:
+        derived = _issue_from_run_id(run_id, command)
+        return f"#{derived}" if derived else run_id
+    return "?"
+
+
 def board_row(run_state: dict[str, Any], identity: dict[str, Any]) -> dict[str, Any]:
     """Build the display row for one run from its run-state + checkpoint identity."""
     steps = run_state.get("steps") or []
@@ -88,7 +116,7 @@ def board_row(run_state: dict[str, Any], identity: dict[str, Any]) -> dict[str, 
     issue = run_state.get("issue") or identity.get("issue")
     run_id = identity.get("run_id")
     return {
-        "label": f"#{pr}" if pr else (f"#{issue}" if issue else (run_id or "?")),
+        "label": _row_label(pr, issue, run_id, identity.get("command")),
         "active_index": active,
         "total": total,
         "active_id": step.get("id", "s?"),

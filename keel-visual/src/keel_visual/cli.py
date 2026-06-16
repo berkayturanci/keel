@@ -406,7 +406,12 @@ def _activity_records_in_repo(root: str, config: cfg.ProjectConfig) -> list[tupl
             checkpoint_step=rec.get("phase"),
             command=rec.get("command") or "ship",
         )
-        if rec.get("status") == "done":
+        status = rec.get("status")
+        if status == "merged":
+            # A real merge landed (stamped by `keel merge`). Distinct from "done":
+            # this run actually merged, so it reads as a confirmed green "merged".
+            run_state["merged"] = True
+        elif status == "done":
             # "done" means the command finished/closed out — NOT that anything
             # merged. Most activity commands (morning, triage, …) never merge, and
             # a ship that defers its merge to the next window also closes out as

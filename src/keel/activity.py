@@ -29,7 +29,7 @@ from . import flows
 ACTIVITY_SCHEMA_VERSION = "keel.activity.v1"
 RECORD_TYPE_ACTIVITY = "command_activity"
 DEFAULT_ACTIVITY_DIR = ".keel/activity"
-STATUSES = ("running", "done")
+STATUSES = ("running", "done", "merged")
 
 # A run_id reduces to this slug for its filename; anything else is rejected so a
 # crafted run_id can never escape the activity directory.
@@ -111,7 +111,8 @@ def build_activity_record(
     """Build one deterministic activity record, validating command + phase.
 
     ``command`` must be a known :mod:`keel.flows` command and ``phase`` one of
-    that command's flow phase ids. ``status`` is ``running`` or ``done``.
+    that command's flow phase ids. ``status`` is ``running``, ``done`` or
+    ``merged`` (a real merge landed, distinct from a soft ``done``).
     """
     if not flows.is_known(command):
         raise ActivityError(f"unknown command: {command!r}")

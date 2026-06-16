@@ -892,6 +892,18 @@ class TestActivityBoard(unittest.TestCase):
             self.assertTrue(morning_rs["done"])         # done → fades / filters as finished
             self.assertFalse(morning_rs.get("merged"))  # but NOT a merge claim
 
+    def test_merged_record_marks_merged(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            config = self._project(d)
+            self._write(d, config, command="ship", run_id="ship-585",
+                        phase="s10", status="merged", pr=585)
+            pairs = cli._activity_records_in_repo(d, config)
+            self.assertEqual(len(pairs), 1)
+            ship_rs, _ = pairs[0]
+            self.assertTrue(ship_rs["merged"])   # real merge → green "merged"
+            self.assertFalse(ship_rs.get("done"))
+
     def test_records_join_the_board(self):
         import tempfile
         from unittest.mock import patch
