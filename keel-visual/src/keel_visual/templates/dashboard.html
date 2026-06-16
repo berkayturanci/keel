@@ -101,7 +101,7 @@
   .d3 canvas{width:100%;height:100%;display:block;touch-action:none;cursor:grab}
   .d3 canvas:active{cursor:grabbing}
   .dhud{position:absolute;left:11px;right:11px;bottom:9px;font-size:11px;color:var(--mut);pointer-events:none;text-align:center}
-  .seg3dd{position:absolute;left:10px;top:10px;display:flex;gap:2px;background:rgba(10,14,26,.5);border:1px solid var(--line);border-radius:8px;padding:2px}
+  .seg3dd{position:absolute;left:10px;top:10px;right:10px;display:flex;flex-wrap:wrap;gap:2px;background:rgba(10,14,26,.5);border:1px solid var(--line);border-radius:8px;padding:2px;max-width:max-content}
   .seg3dd button{border:0;background:transparent;color:var(--mut);font:inherit;font-size:11px;padding:3px 9px;border-radius:6px;cursor:pointer}
   .seg3dd button.on{background:rgba(73,182,255,.2);color:var(--info)}
   .seg3dd button:hover{color:var(--txt)}
@@ -309,7 +309,7 @@
     dm.appendChild(meta);
     const hud=drawer.querySelector('.dhud');
     if(hud) hud.textContent='drag to orbit · scroll / pinch to zoom · '+idn(run.active_id,run.active_name)+'  ('+(active+1)+'/'+(steps.length||1)+')';
-    if(dMode==='3d' && d3.ren) d3Build(run);   // keep the live scene in step with the poll
+    if(dMode==='3d' && d3.ren) d3Poll(run);   // keep the live scene in step with the poll
   }
   function setDrawerMode(m){
     dMode=m;
@@ -339,46 +339,119 @@
     }
     threeLoading.then(cb).catch(()=>{ const h=drawer.querySelector('.dhud'); if(h) h.textContent='3D unavailable (offline?)'; });
   }
-  const d3={ren:null,scene:null,cam:null,raf:0,objs:[],actives:[],camR:12,canvas:null,
-            yaw:0,pitch:0.5,auto:0,last:0,drag:false,px:0,py:0,zoom:1,pinch:0,ptrs:null};
-  // selectable 3D arrangements of the same step markers (active step glows in each)
-  const D3_STYLES=['curve','helix','ring','line'];
-  const D3_LABEL={curve:'curve',helix:'helix',ring:'ring',line:'line'};
+  const d3={ren:null,scene:null,cam:null,raf:0,canvas:null,styles:{},cur:null,builtN:0,camR:14,
+            yaw:0,pitch:0.5,auto:0,last:0,drag:false,px:0,py:0,zoom:1,pinch:0,ptrs:null,
+            steps:[],N:1,active:0,finished:false};
+  // Geometric arrangements + runviz's particle styles, one shared step-marker semantics.
+  const D3_STYLES=['curve','helix','ring','line','plexus','aurora','comet'];
+  const D3_LABEL={curve:'curve',helix:'helix',ring:'ring',line:'line',plexus:'plexus',aurora:'aurora',comet:'comet'};
+  const PARTICLE=new Set(['plexus','aurora','comet']);   // additive-blending → need a dark scene
+  const TAU=Math.PI*2, SPAN=12, COL3={done:0x7ad14a,act:0x49b6ff,gate:0xf0a020,fail:0xff5468,idle:0x223052};
   let d3style='curve'; try{ d3style=localStorage.getItem('keel-3dstyle')||'curve'; }catch(e){}
   if(D3_STYLES.indexOf(d3style)<0) d3style='curve';
-  function d3Pos(style,W,m){
-    const TAU=Math.PI*2, R=Math.max(2.4,W/3.4);
-    if(style==='helix') return t=>new THREE.Vector3((t-0.5)*W, Math.sin(t*2.6*TAU)*1.6, Math.cos(t*2.6*TAU)*1.6);
-    if(style==='ring')  return t=>{ const a=t*TAU-Math.PI/2; return new THREE.Vector3(Math.cos(a)*R, (t-0.5)*1.4, Math.sin(a)*R); };
-    if(style==='line')  return t=>new THREE.Vector3(-W/2+t*W, 0, 0);
-    return t=>new THREE.Vector3(-W/2+t*W, Math.sin(t*Math.PI*0.5)*2.4-0.4, 0);   // curve (default)
+  // ---- live run semantics the engine reads (updated on open + every poll) ----
+  function d3SetRun(run){ d3.steps=Array.isArray(run.steps)?run.steps:[]; d3.N=Math.max(1,d3.steps.length);
+    d3.active=run.active_index|0; d3.finished=!!run.merged||!!run.done; }
+  function mergedNow(){ return d3.finished; }
+  function headT(){ return d3.N>1 ? d3.active/(d3.N-1) : 0; }
+  function headX(){ return (headT()-0.5)*SPAN; }
+  function gOut(s){ return (s.gate&&s.gate.outcome)||'pending'; }
+  function stepHex3(k){ const s=d3.steps[k]||{};
+    if(mergedNow() && k<=d3.active) return COL3.done;
+    if(k<d3.active) return COL3.done;
+    if(k===d3.active){ if(s.kind==='gate'||s.kind==='merge') return gOut(s)==='fail'?COL3.fail:COL3.gate; return COL3.act; }
+    return COL3.idle; }
+  function rgb3(h){ return [(h>>16&255)/255,(h>>8&255)/255,(h&255)/255]; }
+  function progCol(x,b,out,o){ let h; if(mergedNow())h=COL3.done; else if(Math.abs(x-headX())<1.1)h=COL3.act; else if(x<headX())h=COL3.done; else h=COL3.idle;
+    const c=rgb3(h); out[o]=c[0]*b; out[o+1]=c[1]*b; out[o+2]=c[2]*b; }
+  function strand3(t,ph,rad){ const a=t*2.6*TAU+ph; return new THREE.Vector3((t-0.5)*SPAN,Math.sin(a)*rad,Math.cos(a)*rad); }
+  const seed3=i=>((Math.sin(i*127.1)*43758.5453)%1+1)%1;
+  function posFn(style){ const W=SPAN, R=Math.max(2.4,W/3.4);
+    if(style==='helix'||style==='aurora') return t=>strand3(t,0,1.6);
+    if(style==='ring')  return t=>{ const a=t*TAU-Math.PI/2; return new THREE.Vector3(Math.cos(a)*R,(t-0.5)*1.4,Math.sin(a)*R); };
+    if(style==='curve') return t=>new THREE.Vector3((t-0.5)*W, Math.sin(t*Math.PI*0.5)*2.4-0.4, 0);
+    return t=>new THREE.Vector3((t-0.5)*W, 0, 0);   // line / plexus / comet — centred lane
+  }
+  // ---- shared step markers (each style owns a copy, positioned for its geometry) ----
+  function buildMarkers(group,pos){ const arr=[]; for(let k=0;k<d3.N;k++){ const p=pos(d3.N>1?k/(d3.N-1):0.5);
+      const core=new THREE.Mesh(new THREE.SphereGeometry(0.22,18,18),new THREE.MeshBasicMaterial({color:0x223052,transparent:true,opacity:.95})); core.position.copy(p); group.add(core);
+      const halo=new THREE.Mesh(new THREE.SphereGeometry(0.47,16,16),new THREE.MeshBasicMaterial({color:0x49b6ff,transparent:true,opacity:0,blending:THREE.AdditiveBlending})); halo.position.copy(p); group.add(halo);
+      arr.push({core,halo,k,hi:false}); } return arr; }
+  function recolorMarkers(arr){ arr.forEach(nd=>{ const c=stepHex3(nd.k); nd.core.material.color.setHex(c); nd.halo.material.color.setHex(c); nd.hi=(nd.k===d3.active && !d3.finished); }); }
+  function animMarkers(arr,t){ const pulse=0.5+0.5*Math.sin(t*0.006); arr.forEach(nd=>{ nd.halo.material.opacity=nd.hi?(0.3+pulse*0.5):0.08; nd.halo.scale.setScalar(nd.hi?(1+pulse*0.4):1); }); }
+  // ---- runviz's interweaving particle systems (ported verbatim) ----
+  function addComet(group){ const phs=[0,TAU/3,2*TAU/3],RAD=1.3,NP=120,part=[];
+    for(let s=0;s<3;s++)for(let i=0;i<NP;i++)part.push({ph:phs[s],u0:i/NP,sp:0.05+0.02*(s%2)});
+    const pos=new Float32Array(part.length*3),col=new Float32Array(part.length*3);
+    const g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.BufferAttribute(pos,3)); g.setAttribute('color',new THREE.BufferAttribute(col,3));
+    group.add(new THREE.Points(g,new THREE.PointsMaterial({size:0.16,vertexColors:true,transparent:true,opacity:.95,blending:THREE.AdditiveBlending,depthWrite:false})));
+    return t=>{ const hT=headT(); for(let i=0;i<part.length;i++){ const p=part[i]; let u=(p.u0+t*0.00008*(p.sp*10))%1; const v=strand3(u,p.ph,RAD); pos[i*3]=v.x;pos[i*3+1]=v.y;pos[i*3+2]=v.z;
+        let b; const dd=u-hT; if(dd>0.005)b=Math.max(0,0.12-dd*0.6); else b=Math.max(0.12,0.5+0.5*Math.cos((hT-u)*7.0)); b*=0.6+0.4*Math.sin(t*0.004+i); progCol(v.x,b,col,i*3); }
+      g.attributes.position.needsUpdate=true; g.attributes.color.needsUpdate=true; }; }
+  function addPlexus(group){ const BAND=3.2,M=48,THR=2.6,P=[];
+    for(let i=0;i<M;i++)P.push({base:new THREE.Vector3((seed3(i)-0.5)*SPAN,(seed3(i+9)-0.5)*BAND,(seed3(i+99)-0.5)*BAND),ph:seed3(i+5)*6.28,sp:0.6+seed3(i+3)});
+    const maxSeg=M*8,pos=new Float32Array(maxSeg*2*3),col=new Float32Array(maxSeg*2*3);
+    const g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.BufferAttribute(pos,3)); g.setAttribute('color',new THREE.BufferAttribute(col,3));
+    group.add(new THREE.LineSegments(g,new THREE.LineBasicMaterial({vertexColors:true,transparent:true,opacity:.7,blending:THREE.AdditiveBlending,depthWrite:false})));
+    const cur=[]; for(let i=0;i<M;i++)cur.push(new THREE.Vector3());
+    return t=>{ for(let i=0;i<M;i++){ const p=P[i]; cur[i].set(p.base.x,p.base.y+Math.sin(t*0.0009*p.sp+p.ph)*0.9,p.base.z+Math.cos(t*0.0011*p.sp+p.ph)*0.9); }
+      let c=0; for(let i=0;i<M&&c<maxSeg;i++)for(let j=i+1;j<M&&c<maxSeg;j++){ const d=cur[i].distanceTo(cur[j]); if(d<THR){ const b=(1-d/THR)*(0.5+0.4*Math.sin(t*0.003+i+j)); const o=c*6;
+        pos[o]=cur[i].x;pos[o+1]=cur[i].y;pos[o+2]=cur[i].z; pos[o+3]=cur[j].x;pos[o+4]=cur[j].y;pos[o+5]=cur[j].z; const mx=(cur[i].x+cur[j].x)/2; progCol(mx,b,col,o); progCol(mx,b,col,o+3); c++; } }
+      g.setDrawRange(0,c*2); g.attributes.position.needsUpdate=true; g.attributes.color.needsUpdate=true; }; }
+  function addAurora(group){ const phs=[0,Math.PI*0.66,Math.PI*1.33],RAD=1.6,W=120,ribs=[];
+    phs.forEach((ph,si)=>{ const segs=W,pos=new Float32Array((segs+1)*2*3),col=new Float32Array((segs+1)*2*3),idx=[];
+      for(let i=0;i<segs;i++){ const a=i*2; idx.push(a,a+1,a+2, a+1,a+3,a+2); }
+      const g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.BufferAttribute(pos,3)); g.setAttribute('color',new THREE.BufferAttribute(col,3)); g.setIndex(idx);
+      group.add(new THREE.Mesh(g,new THREE.MeshBasicMaterial({vertexColors:true,transparent:true,opacity:.5,side:THREE.DoubleSide,blending:THREE.AdditiveBlending,depthWrite:false}))); ribs.push({g,pos,col,segs,ph,si}); });
+    return t=>{ const hT=headT(); ribs.forEach(rb=>{ for(let i=0;i<=rb.segs;i++){ const tt=i/rb.segs,c=strand3(tt,rb.ph+t*0.0004,RAD),wob=0.55+0.2*Math.sin(t*0.002+tt*8+rb.si),o=i*6;
+        rb.pos[o]=c.x;rb.pos[o+1]=c.y+wob;rb.pos[o+2]=c.z; rb.pos[o+3]=c.x;rb.pos[o+4]=c.y-wob;rb.pos[o+5]=c.z;
+        let b; const dd=tt-hT; if(dd>0.01)b=Math.max(0,0.1-dd*0.5); else b=0.35+0.25*Math.sin(t*0.003+tt*6); b=Math.max(0.04,b)*(0.6+0.4*Math.sin(t*0.0016+rb.si*2)); progCol(c.x,b,rb.col,o); progCol(c.x,b*0.4,rb.col,o+3); }
+      rb.g.attributes.position.needsUpdate=true; rb.g.attributes.color.needsUpdate=true; }); }; }
+  // ---- one style = {group, camR, recolor, update} ----
+  function buildStyle(name){
+    const group=new THREE.Group(), pos=posFn(name);
+    let adders=[]; if(name==='plexus')adders=[addPlexus]; else if(name==='comet')adders=[addComet]; else if(name==='aurora')adders=[addAurora];
+    const ups=adders.map(fn=>fn(group));
+    if(!PARTICLE.has(name) && d3.N>1){ const pts=[]; for(let k=0;k<d3.N;k++) pts.push(pos(k/(d3.N-1)));
+      const tube=new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts),Math.max(12,d3.N*4),0.03,6,false),
+                                new THREE.MeshBasicMaterial({color:0x2f3c5e,transparent:true,opacity:0.5})); group.add(tube); }
+    const nodes=buildMarkers(group,pos);
+    let maxR=2.5; for(let k=0;k<d3.N;k++) maxR=Math.max(maxR,pos(d3.N>1?k/(d3.N-1):0.5).length());
+    return {group,camR:maxR*1.7+4,recolor(){ recolorMarkers(nodes); },update(t){ ups.forEach(u=>u(t)); animMarkers(nodes,t); }};
+  }
+  function disposeGroup(g){ if(!g) return; g.traverse(o=>{ if(o.geometry)o.geometry.dispose(); if(o.material){ if(o.material.map)o.material.map.dispose(); o.material.dispose(); } }); if(d3.scene) d3.scene.remove(g); }
+  function d3BuildAll(){
+    Object.keys(d3.styles).forEach(k=>disposeGroup(d3.styles[k].group)); d3.styles={};
+    D3_STYLES.forEach(name=>{ const st=buildStyle(name); st.group.visible=false; d3.scene.add(st.group); d3.styles[name]=st; });
+    d3.builtN=d3.N; applyStyle();
+  }
+  function fogHex(){ const a=document.documentElement.getAttribute('data-theme');
+    const light=a==='light'||(!a&&window.matchMedia&&matchMedia('(prefers-color-scheme: light)').matches);
+    return PARTICLE.has(d3style) ? 0x080c16 : (light?0xeef3fb:0x0e1422); }
+  function applyStyle(){
+    Object.keys(d3.styles).forEach(k=>{ d3.styles[k].group.visible=(k===d3style); });
+    d3.cur=d3.styles[d3style]||null; if(d3.cur){ d3.cur.recolor(); d3.camR=d3.cur.camR; }
+    if(d3.ren) d3.ren.setClearColor(PARTICLE.has(d3style)?0x080c16:0x000000, PARTICLE.has(d3style)?1:0);
+    if(d3.scene&&d3.scene.fog) d3.scene.fog.color.setHex(fogHex());
   }
   function setD3Style(name){
     if(D3_STYLES.indexOf(name)<0) return; d3style=name;
     try{ localStorage.setItem('keel-3dstyle',name); }catch(e){}
     drawer.querySelectorAll('.seg3dd button').forEach(b=>b.classList.toggle('on',b.dataset.s===name));
-    const run = openKey && runByKey(openKey);
-    if(run && d3.ren){ d3.yaw=0; d3.auto=0; d3Build(run); d3Resize(); }   // rebuild geometry for the new arrangement
-  }
-  function d3Pal(){
-    const a=document.documentElement.getAttribute('data-theme');
-    const light = a==='light' || (!a && window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches);
-    return light ? {done:0x4ba322,active:0x1f8fe6,gate:0xcf8410,fail:0xe0364f,idle:0xb9c4da,fog:0xeef3fb,tube:0xc6d1e5}
-                 : {done:0x7ad14a,active:0x49b6ff,gate:0xf0a020,fail:0xff5468,idle:0x2a3550,fog:0x0e1422,tube:0x2a3756};
+    if(d3.ren){ d3.yaw=0; d3.auto=0; d3.zoom=1; applyStyle(); }
   }
   function d3Loop(t){
     if(!d3.ren){ d3.raf=0; return; }
-    const dt=Math.min(0.05,(t-d3.last)/1000); d3.last=t; d3.auto+= d3.drag?0:dt*0.18; const ay=d3.yaw+d3.auto;
+    const dt=Math.min(0.05,(t-d3.last)/1000); d3.last=t; d3.auto+= d3.drag?0:dt*0.16; const ay=d3.yaw+d3.auto;
     const r=d3.camR*d3.zoom;   // wheel / pinch dolly zoom
-    d3.cam.position.set(Math.sin(ay)*r, 0.6+(1.8+Math.sin(d3.pitch)*d3.camR*0.62)*d3.zoom, Math.cos(ay)*r); d3.cam.lookAt(0,0.6,0);
-    const pulse=0.4+0.4*Math.sin(t*0.005);
-    d3.actives.forEach(h=>{ h.material.opacity=0.25+pulse*0.5; h.scale.setScalar(1+pulse*0.5); });
+    d3.cam.position.set(Math.sin(ay)*r, 0.3+(1.8+Math.sin(d3.pitch)*d3.camR*0.6)*d3.zoom, Math.cos(ay)*r); d3.cam.lookAt(0,0.3,0);
+    if(d3.cur) d3.cur.update(t);
     d3.ren.render(d3.scene,d3.cam); d3.raf=requestAnimationFrame(d3Loop);
   }
   function d3Setup(){
-    const C=d3.canvas, P=d3Pal();
+    const C=d3.canvas;
     d3.ren=new THREE.WebGLRenderer({canvas:C,antialias:true,alpha:true}); d3.ren.setClearColor(0x000000,0);
-    d3.scene=new THREE.Scene(); d3.scene.fog=new THREE.Fog(P.fog,12,46);
+    d3.scene=new THREE.Scene(); d3.scene.fog=new THREE.Fog(fogHex(),12,46);
     d3.cam=new THREE.PerspectiveCamera(50,2,0.1,200);
     d3.ptrs=new Map();
     const clampZoom=()=>{ d3.zoom=Math.max(0.4,Math.min(3,d3.zoom)); };
@@ -394,35 +467,9 @@
       if(!d3.drag)return; d3.yaw+=(e.clientX-d3.px)*0.007; d3.pitch+=(e.clientY-d3.py)*0.005; d3.pitch=Math.max(0.15,Math.min(1.2,d3.pitch)); d3.px=e.clientX; d3.py=e.clientY; });
     C.addEventListener('wheel',e=>{ e.preventDefault(); d3.zoom*=(e.deltaY>0?1.08:0.925); clampZoom(); }, {passive:false});
   }
-  function d3Clear(){
-    d3.objs.forEach(o=>{ d3.scene.remove(o); if(o.geometry)o.geometry.dispose();
-      if(o.material){ if(o.material.map)o.material.map.dispose(); o.material.dispose(); } });
-    d3.objs=[]; d3.actives=[];
-  }
-  function d3Build(run){
-    if(!d3.scene) return; d3Clear();
-    const P=d3Pal(); if(d3.scene.fog) d3.scene.fog.color.setHex(P.fog);
-    const steps=Array.isArray(run.steps)?run.steps:[]; const m=Math.max(1,steps.length);
-    const active=run.active_index|0, finished=!!run.merged||!!run.done, W=Math.min(12,1.5*m);
-    const pos=d3Pos(d3style,W,m);   // chosen 3D arrangement of the step markers
-    const sgeo=new THREE.SphereGeometry(0.23,18,18), hgeo=new THREE.SphereGeometry(0.44,18,18);
-    if(m>1){
-      const pts=steps.map((_,i)=>pos(i/(m-1)));
-      const tube=new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts),Math.max(12,m*4),0.03,6,false),
-                                new THREE.MeshBasicMaterial({color:P.tube,transparent:true,opacity:0.6}));
-      d3.scene.add(tube); d3.objs.push(tube);
-    }
-    steps.forEach((s,idx)=>{
-      const p=pos(m>1?idx/(m-1):0.5), tone=stepTone(idx,active,finished,s), hex=P[tone]||P.idle;
-      const core=new THREE.Mesh(sgeo,new THREE.MeshBasicMaterial({color:hex,transparent:true,opacity:finished?0.6:1}));
-      core.position.copy(p); d3.scene.add(core); d3.objs.push(core);
-      if(idx===active && !finished){
-        const halo=new THREE.Mesh(hgeo,new THREE.MeshBasicMaterial({color:hex,transparent:true,opacity:0.4,blending:THREE.AdditiveBlending}));
-        halo.position.copy(p); d3.scene.add(halo); d3.objs.push(halo); d3.actives.push(halo);
-      }
-    });
-    let maxR=2.5; for(let i=0;i<m;i++){ const p=pos(m>1?i/(m-1):0.5); maxR=Math.max(maxR,p.length()); }
-    d3.camR=maxR*1.75+4;   // frame whatever arrangement the chosen style produced
+  function d3Poll(run){   // called each poll while the drawer is open in 3D
+    if(!d3.ren) return; const prevN=d3.N; d3SetRun(run);
+    if(d3.N!==d3.builtN || prevN!==d3.N) d3BuildAll(); else if(d3.cur) d3.cur.recolor();
   }
   function d3Resize(){
     if(!d3.ren) return; const wrap=d3.canvas.parentElement;
@@ -430,10 +477,10 @@
     d3.ren.setSize(wrap.clientWidth,wrap.clientHeight,false);
     d3.cam.aspect=wrap.clientWidth/Math.max(1,wrap.clientHeight); d3.cam.updateProjectionMatrix();
   }
-  function d3Start(run){ ensureThree(()=>{ if(!d3.canvas) return; if(!d3.ren) d3Setup(); d3Build(run); d3Resize(); if(!d3.raf) d3.raf=requestAnimationFrame(d3Loop); }); }
+  function d3Start(run){ ensureThree(()=>{ if(!d3.canvas) return; if(!d3.ren) d3Setup(); d3SetRun(run); d3BuildAll(); d3Resize(); if(!d3.raf) d3.raf=requestAnimationFrame(d3Loop); }); }
   function d3Dispose(){
     if(d3.raf){ cancelAnimationFrame(d3.raf); d3.raf=0; }
-    if(d3.scene) d3Clear();
+    Object.keys(d3.styles).forEach(k=>disposeGroup(d3.styles[k].group)); d3.styles={}; d3.cur=null; d3.builtN=0;
     if(d3.ren){ try{ d3.ren.dispose(); }catch(_){} }
     d3.ren=null; d3.scene=null; d3.cam=null; d3.canvas=null; d3.yaw=0; d3.pitch=0.5; d3.auto=0; d3.drag=false;
     d3.zoom=1; d3.pinch=0; if(d3.ptrs) d3.ptrs.clear();
@@ -463,7 +510,7 @@
   let theme=''; try{ theme=localStorage.getItem('keel-theme')||''; }catch(e){}
   applyTheme(theme);
   tgl.addEventListener('click',()=>{ theme = theme===''?'light':theme==='light'?'dark':''; applyTheme(theme);
-    if(dMode==='3d' && d3.ren && openKey){ d3Build(runByKey(openKey)); }   // recolor the open 3D scene
+    if(dMode==='3d' && d3.ren){ applyStyle(); }   // re-fog the open 3D scene for the new theme
   });
 
   // ---- live poll ----

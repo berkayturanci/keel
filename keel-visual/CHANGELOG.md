@@ -6,6 +6,18 @@ All notable changes to keel-visual are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.7] — 2026-06-16
+
+### Added
+- **Particle 3D styles in the drawer.** The drawer's 3D style picker now also offers
+  runviz's interweaving particle scenes — **plexus** (a flowing node web), **aurora**
+  (strand ribbons), and **comet** (orbiting trails) — alongside the geometric
+  `curve · helix · ring · line`. The 3D engine was unified onto runviz's
+  build-once / recolor-per-poll / update-per-frame model, so all seven styles share one
+  set of live step markers (the active step glows in every style). Particle styles
+  render on a dark scene (additive blending) and the geometric styles stay on the
+  theme-aware transparent scene; switching flips the background automatically.
+
 ## [0.5.6] — 2026-06-16
 
 ### Added
