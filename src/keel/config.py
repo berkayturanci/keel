@@ -16,6 +16,12 @@ from typing import Any
 
 import yaml
 
+try:
+    # ⚡ Bolt optimization: CSafeLoader is significantly faster (~8x) for parsing YAML
+    from yaml import CSafeLoader as YamlSafeLoader
+except ImportError:
+    from yaml import SafeLoader as YamlSafeLoader
+
 from . import jsonschema_min
 from .capabilities import validate_names
 from .model import SLOTS  # single source of truth for the named slots (re-exported)
@@ -171,7 +177,7 @@ def parse_config(data: Any, *, source: str = "<dict>", schema: dict | None = Non
 def load_config(path: str | Path) -> ProjectConfig:
     """Read + validate a ``project.yaml`` from disk."""
     path = Path(path)
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    data = yaml.load(path.read_text(encoding="utf-8"), Loader=YamlSafeLoader)
     return parse_config(data, source=str(path))
 
 
