@@ -273,6 +273,7 @@
       if(name===d3style) b.className='on';
       b.addEventListener('click',()=>setD3Style(name)); styleBar.appendChild(b); });
     const hud=el('div','dhud'); sc.append(cv,styleBar,hud); d3w.appendChild(sc); drawer.appendChild(d3w);
+    const dm=el('div'); dm.id='dmeta'; drawer.appendChild(dm);   // command/phase/status — shown under 2D AND 3D
     d3.canvas=cv;
   }
   function renderDrawer(){
@@ -297,6 +298,7 @@
       flow.appendChild(row);
     });
     d2.appendChild(flow);
+    const dm=document.getElementById('dmeta'); dm.textContent='';   // meta lives outside #d2d so 3D shows it too
     const meta=el('table','meta'); const rows=[
       ['command', run.command||'ship'],
       ['phase', idn(run.active_id,run.active_name)+'  ('+(active+1)+'/'+(steps.length||1)+')'],
@@ -304,9 +306,9 @@
     ];
     if(jury.active) rows.push(['jury', jury.mode||'on']);
     rows.forEach(([k,v])=>{ const tr=el('tr'); const a=el('td'); a.textContent=k; const b=el('td'); b.textContent=v; tr.append(a,b); meta.appendChild(tr); });
-    d2.appendChild(meta);
+    dm.appendChild(meta);
     const hud=drawer.querySelector('.dhud');
-    if(hud) hud.textContent='drag to orbit · '+idn(run.active_id,run.active_name)+'  ('+(active+1)+'/'+(steps.length||1)+')';
+    if(hud) hud.textContent='drag to orbit · scroll / pinch to zoom · '+idn(run.active_id,run.active_name)+'  ('+(active+1)+'/'+(steps.length||1)+')';
     if(dMode==='3d' && d3.ren) d3Build(run);   // keep the live scene in step with the poll
   }
   function setDrawerMode(m){
@@ -338,7 +340,7 @@
     threeLoading.then(cb).catch(()=>{ const h=drawer.querySelector('.dhud'); if(h) h.textContent='3D unavailable (offline?)'; });
   }
   const d3={ren:null,scene:null,cam:null,raf:0,objs:[],actives:[],camR:12,canvas:null,
-            yaw:0,pitch:0.5,auto:0,last:0,drag:false,px:0,py:0};
+            yaw:0,pitch:0.5,auto:0,last:0,drag:false,px:0,py:0,zoom:1,pinch:0,ptrs:null};
   // selectable 3D arrangements of the same step markers (active step glows in each)
   const D3_STYLES=['curve','helix','ring','line'];
   const D3_LABEL={curve:'curve',helix:'helix',ring:'ring',line:'line'};
@@ -367,7 +369,8 @@
   function d3Loop(t){
     if(!d3.ren){ d3.raf=0; return; }
     const dt=Math.min(0.05,(t-d3.last)/1000); d3.last=t; d3.auto+= d3.drag?0:dt*0.18; const ay=d3.yaw+d3.auto;
-    d3.cam.position.set(Math.sin(ay)*d3.camR, 2.4+Math.sin(d3.pitch)*d3.camR*0.62, Math.cos(ay)*d3.camR); d3.cam.lookAt(0,0.6,0);
+    const r=d3.camR*d3.zoom;   // wheel / pinch dolly zoom
+    d3.cam.position.set(Math.sin(ay)*r, 0.6+(1.8+Math.sin(d3.pitch)*d3.camR*0.62)*d3.zoom, Math.cos(ay)*r); d3.cam.lookAt(0,0.6,0);
     const pulse=0.4+0.4*Math.sin(t*0.005);
     d3.actives.forEach(h=>{ h.material.opacity=0.25+pulse*0.5; h.scale.setScalar(1+pulse*0.5); });
     d3.ren.render(d3.scene,d3.cam); d3.raf=requestAnimationFrame(d3Loop);
@@ -377,9 +380,19 @@
     d3.ren=new THREE.WebGLRenderer({canvas:C,antialias:true,alpha:true}); d3.ren.setClearColor(0x000000,0);
     d3.scene=new THREE.Scene(); d3.scene.fog=new THREE.Fog(P.fog,12,46);
     d3.cam=new THREE.PerspectiveCamera(50,2,0.1,200);
-    C.addEventListener('pointerdown',e=>{ d3.drag=true; d3.px=e.clientX; d3.py=e.clientY; try{C.setPointerCapture(e.pointerId);}catch(_){} });
-    C.addEventListener('pointerup',()=>{ d3.drag=false; });
-    C.addEventListener('pointermove',e=>{ if(!d3.drag)return; d3.yaw+=(e.clientX-d3.px)*0.007; d3.pitch+=(e.clientY-d3.py)*0.005; d3.pitch=Math.max(0.15,Math.min(1.2,d3.pitch)); d3.px=e.clientX; d3.py=e.clientY; });
+    d3.ptrs=new Map();
+    const clampZoom=()=>{ d3.zoom=Math.max(0.4,Math.min(3,d3.zoom)); };
+    C.addEventListener('pointerdown',e=>{ d3.ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});
+      d3.drag=d3.ptrs.size===1; d3.px=e.clientX; d3.py=e.clientY; try{C.setPointerCapture(e.pointerId);}catch(_){}
+      if(d3.ptrs.size===2){ const p=[...d3.ptrs.values()]; d3.pinch=Math.hypot(p[0].x-p[1].x,p[0].y-p[1].y); d3.drag=false; } });
+    const ptrUp=e=>{ d3.ptrs.delete(e.pointerId); if(d3.ptrs.size<2) d3.pinch=0;
+      d3.drag=d3.ptrs.size===1; if(d3.drag){ const p=[...d3.ptrs.values()][0]; d3.px=p.x; d3.py=p.y; } };
+    C.addEventListener('pointerup',ptrUp); C.addEventListener('pointercancel',ptrUp);
+    C.addEventListener('pointermove',e=>{ if(d3.ptrs.has(e.pointerId)) d3.ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});
+      if(d3.ptrs.size>=2){ const p=[...d3.ptrs.values()]; const dist=Math.hypot(p[0].x-p[1].x,p[0].y-p[1].y);
+        if(d3.pinch>0 && dist>0){ d3.zoom*=d3.pinch/dist; clampZoom(); } d3.pinch=dist; return; }
+      if(!d3.drag)return; d3.yaw+=(e.clientX-d3.px)*0.007; d3.pitch+=(e.clientY-d3.py)*0.005; d3.pitch=Math.max(0.15,Math.min(1.2,d3.pitch)); d3.px=e.clientX; d3.py=e.clientY; });
+    C.addEventListener('wheel',e=>{ e.preventDefault(); d3.zoom*=(e.deltaY>0?1.08:0.925); clampZoom(); }, {passive:false});
   }
   function d3Clear(){
     d3.objs.forEach(o=>{ d3.scene.remove(o); if(o.geometry)o.geometry.dispose();
@@ -423,6 +436,7 @@
     if(d3.scene) d3Clear();
     if(d3.ren){ try{ d3.ren.dispose(); }catch(_){} }
     d3.ren=null; d3.scene=null; d3.cam=null; d3.canvas=null; d3.yaw=0; d3.pitch=0.5; d3.auto=0; d3.drag=false;
+    d3.zoom=1; d3.pinch=0; if(d3.ptrs) d3.ptrs.clear();
   }
   window.addEventListener('resize',()=>{ if(d3.ren) d3Resize(); });
 
