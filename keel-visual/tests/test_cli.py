@@ -890,7 +890,7 @@ class TestActivityBoard(unittest.TestCase):
             self.assertEqual(triage_rs["steps"][triage_rs["active_index"]]["id"], "classify")
             morning_rs, _ = by_cmd["morning"]
             self.assertTrue(morning_rs["done"])         # done → fades / filters as finished
-            self.assertFalse(morning_rs.get("merged"))  # but NOT a merge claim (morning never merges)
+            self.assertFalse(morning_rs.get("merged"))  # but NOT a merge claim
 
     def test_records_join_the_board(self):
         import tempfile
