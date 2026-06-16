@@ -6,7 +6,14 @@ All notable changes to keel-visual are documented here. The format follows
 
 ## [Unreleased]
 
-## [0.5.7] — 2026-06-16
+## [0.5.8] — 2026-06-16
+
+### Changed
+- **Particle 3D styles are now light/dark aware.** plexus/aurora/comet used additive
+  blending on a forced-dark scene (invisible on light). They now switch to normal
+  blending on a light scene in light mode (and keep the additive glow on dark), so the
+  whole 3D view follows the theme like the geometric styles already did. The open scene
+  rebuilds when you toggle the theme.
 
 ### Added
 - **Particle 3D styles in the drawer.** The drawer's 3D style picker now also offers

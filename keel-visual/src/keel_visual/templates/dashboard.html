@@ -373,49 +373,52 @@
     return t=>new THREE.Vector3((t-0.5)*W, 0, 0);   // line / plexus / comet — centred lane
   }
   // ---- shared step markers (each style owns a copy, positioned for its geometry) ----
-  function buildMarkers(group,pos){ const arr=[]; for(let k=0;k<d3.N;k++){ const p=pos(d3.N>1?k/(d3.N-1):0.5);
+  function d3Light(){ const a=document.documentElement.getAttribute('data-theme');
+    return a==='light' || (!a && window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches); }
+  function d3Blend(light){ return light?THREE.NormalBlending:THREE.AdditiveBlending; }   // additive only reads on dark
+  function buildMarkers(group,pos,light){ const arr=[]; for(let k=0;k<d3.N;k++){ const p=pos(d3.N>1?k/(d3.N-1):0.5);
       const core=new THREE.Mesh(new THREE.SphereGeometry(0.22,18,18),new THREE.MeshBasicMaterial({color:0x223052,transparent:true,opacity:.95})); core.position.copy(p); group.add(core);
-      const halo=new THREE.Mesh(new THREE.SphereGeometry(0.47,16,16),new THREE.MeshBasicMaterial({color:0x49b6ff,transparent:true,opacity:0,blending:THREE.AdditiveBlending})); halo.position.copy(p); group.add(halo);
+      const halo=new THREE.Mesh(new THREE.SphereGeometry(0.47,16,16),new THREE.MeshBasicMaterial({color:0x49b6ff,transparent:true,opacity:0,blending:d3Blend(light)})); halo.position.copy(p); group.add(halo);
       arr.push({core,halo,k,hi:false}); } return arr; }
   function recolorMarkers(arr){ arr.forEach(nd=>{ const c=stepHex3(nd.k); nd.core.material.color.setHex(c); nd.halo.material.color.setHex(c); nd.hi=(nd.k===d3.active && !d3.finished); }); }
   function animMarkers(arr,t){ const pulse=0.5+0.5*Math.sin(t*0.006); arr.forEach(nd=>{ nd.halo.material.opacity=nd.hi?(0.3+pulse*0.5):0.08; nd.halo.scale.setScalar(nd.hi?(1+pulse*0.4):1); }); }
   // ---- runviz's interweaving particle systems (ported verbatim) ----
-  function addComet(group){ const phs=[0,TAU/3,2*TAU/3],RAD=1.3,NP=120,part=[];
+  function addComet(group,light){ const phs=[0,TAU/3,2*TAU/3],RAD=1.3,NP=120,part=[];
     for(let s=0;s<3;s++)for(let i=0;i<NP;i++)part.push({ph:phs[s],u0:i/NP,sp:0.05+0.02*(s%2)});
     const pos=new Float32Array(part.length*3),col=new Float32Array(part.length*3);
     const g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.BufferAttribute(pos,3)); g.setAttribute('color',new THREE.BufferAttribute(col,3));
-    group.add(new THREE.Points(g,new THREE.PointsMaterial({size:0.16,vertexColors:true,transparent:true,opacity:.95,blending:THREE.AdditiveBlending,depthWrite:false})));
+    group.add(new THREE.Points(g,new THREE.PointsMaterial({size:0.16,vertexColors:true,transparent:true,opacity:light?1:.95,blending:d3Blend(light),depthWrite:false})));
     return t=>{ const hT=headT(); for(let i=0;i<part.length;i++){ const p=part[i]; let u=(p.u0+t*0.00008*(p.sp*10))%1; const v=strand3(u,p.ph,RAD); pos[i*3]=v.x;pos[i*3+1]=v.y;pos[i*3+2]=v.z;
         let b; const dd=u-hT; if(dd>0.005)b=Math.max(0,0.12-dd*0.6); else b=Math.max(0.12,0.5+0.5*Math.cos((hT-u)*7.0)); b*=0.6+0.4*Math.sin(t*0.004+i); progCol(v.x,b,col,i*3); }
       g.attributes.position.needsUpdate=true; g.attributes.color.needsUpdate=true; }; }
-  function addPlexus(group){ const BAND=3.2,M=48,THR=2.6,P=[];
+  function addPlexus(group,light){ const BAND=3.2,M=48,THR=2.6,P=[];
     for(let i=0;i<M;i++)P.push({base:new THREE.Vector3((seed3(i)-0.5)*SPAN,(seed3(i+9)-0.5)*BAND,(seed3(i+99)-0.5)*BAND),ph:seed3(i+5)*6.28,sp:0.6+seed3(i+3)});
     const maxSeg=M*8,pos=new Float32Array(maxSeg*2*3),col=new Float32Array(maxSeg*2*3);
     const g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.BufferAttribute(pos,3)); g.setAttribute('color',new THREE.BufferAttribute(col,3));
-    group.add(new THREE.LineSegments(g,new THREE.LineBasicMaterial({vertexColors:true,transparent:true,opacity:.7,blending:THREE.AdditiveBlending,depthWrite:false})));
+    group.add(new THREE.LineSegments(g,new THREE.LineBasicMaterial({vertexColors:true,transparent:true,opacity:light?.92:.7,blending:d3Blend(light),depthWrite:false})));
     const cur=[]; for(let i=0;i<M;i++)cur.push(new THREE.Vector3());
     return t=>{ for(let i=0;i<M;i++){ const p=P[i]; cur[i].set(p.base.x,p.base.y+Math.sin(t*0.0009*p.sp+p.ph)*0.9,p.base.z+Math.cos(t*0.0011*p.sp+p.ph)*0.9); }
       let c=0; for(let i=0;i<M&&c<maxSeg;i++)for(let j=i+1;j<M&&c<maxSeg;j++){ const d=cur[i].distanceTo(cur[j]); if(d<THR){ const b=(1-d/THR)*(0.5+0.4*Math.sin(t*0.003+i+j)); const o=c*6;
         pos[o]=cur[i].x;pos[o+1]=cur[i].y;pos[o+2]=cur[i].z; pos[o+3]=cur[j].x;pos[o+4]=cur[j].y;pos[o+5]=cur[j].z; const mx=(cur[i].x+cur[j].x)/2; progCol(mx,b,col,o); progCol(mx,b,col,o+3); c++; } }
       g.setDrawRange(0,c*2); g.attributes.position.needsUpdate=true; g.attributes.color.needsUpdate=true; }; }
-  function addAurora(group){ const phs=[0,Math.PI*0.66,Math.PI*1.33],RAD=1.6,W=120,ribs=[];
+  function addAurora(group,light){ const phs=[0,Math.PI*0.66,Math.PI*1.33],RAD=1.6,W=120,ribs=[];
     phs.forEach((ph,si)=>{ const segs=W,pos=new Float32Array((segs+1)*2*3),col=new Float32Array((segs+1)*2*3),idx=[];
       for(let i=0;i<segs;i++){ const a=i*2; idx.push(a,a+1,a+2, a+1,a+3,a+2); }
       const g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.BufferAttribute(pos,3)); g.setAttribute('color',new THREE.BufferAttribute(col,3)); g.setIndex(idx);
-      group.add(new THREE.Mesh(g,new THREE.MeshBasicMaterial({vertexColors:true,transparent:true,opacity:.5,side:THREE.DoubleSide,blending:THREE.AdditiveBlending,depthWrite:false}))); ribs.push({g,pos,col,segs,ph,si}); });
+      group.add(new THREE.Mesh(g,new THREE.MeshBasicMaterial({vertexColors:true,transparent:true,opacity:light?.62:.5,side:THREE.DoubleSide,blending:d3Blend(light),depthWrite:false}))); ribs.push({g,pos,col,segs,ph,si}); });
     return t=>{ const hT=headT(); ribs.forEach(rb=>{ for(let i=0;i<=rb.segs;i++){ const tt=i/rb.segs,c=strand3(tt,rb.ph+t*0.0004,RAD),wob=0.55+0.2*Math.sin(t*0.002+tt*8+rb.si),o=i*6;
         rb.pos[o]=c.x;rb.pos[o+1]=c.y+wob;rb.pos[o+2]=c.z; rb.pos[o+3]=c.x;rb.pos[o+4]=c.y-wob;rb.pos[o+5]=c.z;
         let b; const dd=tt-hT; if(dd>0.01)b=Math.max(0,0.1-dd*0.5); else b=0.35+0.25*Math.sin(t*0.003+tt*6); b=Math.max(0.04,b)*(0.6+0.4*Math.sin(t*0.0016+rb.si*2)); progCol(c.x,b,rb.col,o); progCol(c.x,b*0.4,rb.col,o+3); }
       rb.g.attributes.position.needsUpdate=true; rb.g.attributes.color.needsUpdate=true; }); }; }
   // ---- one style = {group, camR, recolor, update} ----
   function buildStyle(name){
-    const group=new THREE.Group(), pos=posFn(name);
+    const group=new THREE.Group(), pos=posFn(name), light=d3Light();
     let adders=[]; if(name==='plexus')adders=[addPlexus]; else if(name==='comet')adders=[addComet]; else if(name==='aurora')adders=[addAurora];
-    const ups=adders.map(fn=>fn(group));
+    const ups=adders.map(fn=>fn(group,light));
     if(!PARTICLE.has(name) && d3.N>1){ const pts=[]; for(let k=0;k<d3.N;k++) pts.push(pos(k/(d3.N-1)));
       const tube=new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts),Math.max(12,d3.N*4),0.03,6,false),
-                                new THREE.MeshBasicMaterial({color:0x2f3c5e,transparent:true,opacity:0.5})); group.add(tube); }
-    const nodes=buildMarkers(group,pos);
+                                new THREE.MeshBasicMaterial({color:light?0xc6d1e5:0x2f3c5e,transparent:true,opacity:0.5})); group.add(tube); }
+    const nodes=buildMarkers(group,pos,light);
     let maxR=2.5; for(let k=0;k<d3.N;k++) maxR=Math.max(maxR,pos(d3.N>1?k/(d3.N-1):0.5).length());
     return {group,camR:maxR*1.7+4,recolor(){ recolorMarkers(nodes); },update(t){ ups.forEach(u=>u(t)); animMarkers(nodes,t); }};
   }
@@ -425,13 +428,15 @@
     D3_STYLES.forEach(name=>{ const st=buildStyle(name); st.group.visible=false; d3.scene.add(st.group); d3.styles[name]=st; });
     d3.builtN=d3.N; applyStyle();
   }
-  function fogHex(){ const a=document.documentElement.getAttribute('data-theme');
-    const light=a==='light'||(!a&&window.matchMedia&&matchMedia('(prefers-color-scheme: light)').matches);
-    return PARTICLE.has(d3style) ? 0x080c16 : (light?0xeef3fb:0x0e1422); }
+  function fogHex(){ const light=d3Light();
+    if(PARTICLE.has(d3style)) return light?0xf4f7fc:0x080c16;   // particle scene: light/dark, opaque
+    return light?0xeef3fb:0x0e1422; }
   function applyStyle(){
     Object.keys(d3.styles).forEach(k=>{ d3.styles[k].group.visible=(k===d3style); });
     d3.cur=d3.styles[d3style]||null; if(d3.cur){ d3.cur.recolor(); d3.camR=d3.cur.camR; }
-    if(d3.ren) d3.ren.setClearColor(PARTICLE.has(d3style)?0x080c16:0x000000, PARTICLE.has(d3style)?1:0);
+    if(d3.ren){ const light=d3Light();
+      if(PARTICLE.has(d3style)) d3.ren.setClearColor(light?0xf4f7fc:0x080c16, 1);   // opaque, theme-aware
+      else d3.ren.setClearColor(0x000000, 0); }                                     // transparent → page theme shows
     if(d3.scene&&d3.scene.fog) d3.scene.fog.color.setHex(fogHex());
   }
   function setD3Style(name){
@@ -510,7 +515,7 @@
   let theme=''; try{ theme=localStorage.getItem('keel-theme')||''; }catch(e){}
   applyTheme(theme);
   tgl.addEventListener('click',()=>{ theme = theme===''?'light':theme==='light'?'dark':''; applyTheme(theme);
-    if(dMode==='3d' && d3.ren){ applyStyle(); }   // re-fog the open 3D scene for the new theme
+    if(dMode==='3d' && d3.ren){ d3BuildAll(); }   // rebuild: particle blending + scene bg depend on the theme
   });
 
   // ---- live poll ----
