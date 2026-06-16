@@ -5,3 +5,6 @@
 ## 2026-06-13 - Screen Reader Context for Scrollable Code Blocks and Semantic Symbols
 **Learning:** Focusable scrollable code blocks need a specific accessible name; generic labels such as "Code snippet" make repeated regions hard to distinguish in screen-reader navigation.
 **Action:** Pair each focusable `<pre>` region with `role="region"` and a distinct `aria-label` that names the content or task. Hide decorative link glyphs with `aria-hidden="true"`, but keep semantic arrows exposed when they convey workflow order.
+## 2025-05-18 - Decorative link icons need aria-hidden
+**Learning:** External link icons (like ↗) used next to text are read aloud by screen readers. If they are purely decorative and don't provide additional semantic meaning beyond the text link itself, they can create noise for screen reader users.
+**Action:** Always add `aria-hidden="true"` to decorative icon elements, particularly those appended to text links, to ensure a cleaner audio experience for assistive technologies.
