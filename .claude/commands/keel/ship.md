@@ -26,14 +26,42 @@ All committed/published artifacts (commits, branch names, PR/issue titles + bodi
 comments, queue files) follow the project's language policy. Free-form chat with the user
 may stay in any language.
 
+## Live progress — stamp this run (required)
+
+So this run shows live on `keel-visual`'s board — exactly like every other keel command —
+record it with `keel activity` **as you go**. Ship's phases are the backbone:
+`s0` → `s1` → `s2` → `s3` → `s4` → `s5` → `s6` → `s7` → `s8` → `s9` → `s10` → `s11` → `s12`
+(config → select → branch → guard → implement → classify → ci → review → test → fixloop →
+merge → capture → close). Use **the same `--run-id`** you pass to `keel ship` / `keel
+checkpoint` (e.g. `ship-<issue-or-pr>`) so the board treats them as one run:
+
+- **Right now, before Step 0 below**, stamp the first phase:
+  `keel activity .keel/project.yaml --root . --write --command ship --run-id "$RUN_ID" --phase s0`
+- Re-run with the next `--phase` (`s1`, `s2`, …) **as you advance** through the backbone,
+  adding `--issue <N>` once the issue is selected (s1) and `--pull-request <PR>` once the PR
+  exists (s2+) so the board can pair this with the checkpoint/ledger records and never
+  double-list the same run.
+- At the end (after close): `keel activity .keel/project.yaml --root . --run-id "$RUN_ID" --done`
+
+This is in addition to the rich `keel checkpoint` / ledger records the steps below write;
+the board de-duplicates the two and prefers the checkpoint's detail. Treat it like any other
+contractual step — do not skip it. The one allowed exception is a core too old to ship
+`keel activity` (keel < 1.6.0): then skip it silently and never block the command.
+
 ## Step 0 (s0) — orient (deterministic, via the CLI)
 
 ```bash
 keel validate .keel/project.yaml --root .     # config + extensions must be valid
 keel plan     .keel/project.yaml --root .     # the backbone + this project's gates/Lego
-keel plan     .keel/project.yaml --root . --command ship --live --json
+keel plan     .keel/project.yaml --root . --command ship --live --json \
+              --run-id "$RUN_ID" --issue <N>  # ALSO stamps the activity board (run shows live)
 keel window   .keel/project.yaml              # is the merge window open right now?
 ```
+
+Passing `--run-id`/`--issue` to this Step 0 plan makes core write the activity record
+itself, so the run appears on `keel-visual`'s board the moment it plans — you do not
+depend on the per-phase `keel activity` calls below for the run to *show up* (they still
+advance it). Use the same `$RUN_ID` as the rest of the run (`ship-<issue-or-pr>`).
 
 The live plan is the operator-consent preflight. Before s1 and before any branch,
 worktree, GitHub write, delegation, secret, release, or production-adjacent access, parse
@@ -335,6 +363,12 @@ reviewer still emits a posted verdict comment/review for the current PR head.
 Local/chat-only review output does not satisfy the step, a rich PR body is not a substitute
 for this s7 evidence, and the automated `keel ship` CI assessment block is not a substitute
 for the operator-posted review verdict.
+**Never carry a review forward across runs or sessions.** If you believe the change was
+"already reviewed," that is not evidence: you must still confirm the verdict marker is posted
+on **this** PR for the **current** head, and re-run s7 if it is not. The s11 closure
+attribution must name only verdicts actually posted on this PR — never an unverifiable
+"reviewed in a prior session" claim. If you cannot point to the posted verdict, the review
+did not happen for s10's purposes.
 When available, use `result.artifact_bodies.review_verdict_template` as the canonical
 comment shape: keep `keel.review-verdict.v1`, `reviewer: <stable-id>`, and `head: <sha>`
 intact, then fill in the reviewer-specific verdict, scope, findings, and testing notes.
@@ -375,7 +409,8 @@ merge unless explicitly user-deferred), nit = advisory. The s9 loop-exit parser 
 reviewer's **returned findings**, not the comment shape, so it is mode-independent.
 
 ### s8 test (gates + jury)
-`keel run-gates .keel/project.yaml --root .` runs the project gates (`build_gate_cmd`,
+`keel run-gates .keel/project.yaml --root . --run-id "$RUN_ID" --command ship --phase s8 --issue <N>`
+runs the project gates (`build_gate_cmd`,
 `lint_cmd`, plus the `tester` Lego — the manual-test list, which may loop back to the
 implementer defensively without spending review budget unless it surfaces a blocking fix).
 When a gating or advisory jury is enabled and `result.artifact_bodies.jury_verdict_template`
@@ -426,6 +461,17 @@ calls and hand-rolled lock shells are **spec violations** for ship-style flows �
 lock, window re-check, CI rollup read, evidence verification, and the SHA-stamped
 gates-pass check must run deterministically inside core, not as adapter prose.
 
+- **Evidence gate — do this first, on every path (audit GAP-REV):** before *any*
+  merge — including a raw `gh`/REST merge you might be tempted to use — run
+  `keel evidence-verify .keel/project.yaml --root . --pr <PR>` and confirm it
+  **exits 0**. It fails when the s7 review verdict (a posted PR comment/review
+  carrying `keel.review-verdict.v1` for the **current head**) is not on the PR. A
+  prior session's summary, a chat-only review, the rich PR body, and the `keel
+  ship` assessment block do **not** satisfy it. If it fails, **STOP — do not
+  merge**: go back to s7 and post the review verdict for the current head, then
+  re-verify. The only disarm is an operator-applied `keel:evidence-waived` label;
+  **never self-apply it.** Cite the `evidence-verify` pass (PR + head SHA) in the
+  s11 summary as the merge's authorization.
 - **Pre-merge prep:** re-assert mergeability; if behind/dirty, integrate `base_branch`
   (merge, not rebase), re-green CI, run a single focused merge-conflict review (max 2
   integration iterations, then blocked + morning queue). Run any `pre-merge` Lego. Then
@@ -434,7 +480,8 @@ gates-pass check must run deterministically inside core, not as adapter prose.
   under the repo root and registered in `git worktree list` before removing (never call
   `git worktree remove --force` directly on an implementer-supplied path).
 - **Core-owned merge:** run
-  `keel merge .keel/project.yaml --root . --pr <PR> --approve-scope <scopes> --operator <operator>`.
+  `keel merge .keel/project.yaml --root . --pr <PR> --run-id "$RUN_ID" --approve-scope <scopes> --operator <operator>`.
+  (The `--run-id` lets the merge advance the activity board to the merge step.)
   The command acquires the merge resource claim (atomic `mkdir`, single-host), re-checks
   the **merge window inside the claim**, reads the live PR check rollup with
   failure-before-pending precedence, runs `evidence-verify` against the current PR
@@ -584,4 +631,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=claude command=ship keel_version=1.3.0 source_sha256=f246e482af1eba930311a13651952eceacd0a901b83c6b5c17d23b5757866353 generated_sha256=f246e482af1eba930311a13651952eceacd0a901b83c6b5c17d23b5757866353 -->
+<!-- keel-generated: surface=claude command=ship keel_version=1.6.5 source_sha256=2d915d456b6581a0936c66856a37a0c3d7a58f98b7e56f3dbbabadf5aa302918 generated_sha256=2d915d456b6581a0936c66856a37a0c3d7a58f98b7e56f3dbbabadf5aa302918 -->
