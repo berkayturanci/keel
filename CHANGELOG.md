@@ -9,17 +9,19 @@ All notable changes to keel are documented here. The format follows
 ## [1.6.4] — 2026-06-16
 
 ### Added
-- **`keel plan` auto-stamps the activity board (run shows up from Step 0).** Real
-  `keel ship` runs were going invisible on `keel-visual`'s board because the agent
-  orchestrates the backbone but skips the per-phase `keel activity` calls (and a project
-  without checkpoint config writes no checkpoint either). `keel plan` now writes the
-  additive activity record itself when given a `--run-id` (with optional `--issue` /
-  `--pull-request`) — and every command runs `keel plan` at Step 0 — so a run appears on
-  the board the moment it plans, independent of agent discipline. Fail-soft (a write
-  error / unknown command / pre-activity core is a no-op) and it never regresses a run
-  the adapter has already advanced past its first phase. The `ship` adapter's Step 0 plan
-  call now passes `--run-id`/`--issue`; the per-phase `keel activity` calls still advance
-  the run.
+- **The backbone auto-stamps the activity board — runs show up *and advance* with no
+  agent dependence.** Real `keel ship` runs were going invisible on `keel-visual`'s board
+  because the agent orchestrates the backbone but reliably skips the per-phase
+  `keel activity` calls (and a project without checkpoint config writes no checkpoint
+  either). Now the commands the backbone *always* runs do the stamping themselves when
+  given a `--run-id`: **`keel plan`** (Step 0 → first phase), **`keel run-gates`** (the s8
+  test gate), and **`keel merge`** (s10). So a run appears the moment it plans and then
+  advances **start → test → merge** without the agent. Fail-soft (no run-id / unknown
+  command / unknown phase / write error / pre-activity core is a no-op, never an aborted
+  command) and it never moves a run backward. `plan` and `run-gates` gained
+  `--run-id`/`--issue`/`--pull-request` (run-gates also `--command`/`--phase`); `merge`
+  already had `--run-id`. The `ship` adapter's Step 0 plan, s8 run-gates, and s10 merge
+  calls now pass these; the per-phase `keel activity` calls still fill in the middle steps.
 
 ### Changed
 - **`ship` now stamps the live activity channel too.** Ship was the only command
