@@ -109,7 +109,7 @@ database the standard library has no system source for there.)
 
 ```bash
 pip install keel-workflow                                     # from PyPI (provides the `keel` command)
-pip install "git+https://github.com/berkayturanci/keel@v1.6.2"  # or pin an existing git tag
+pip install "git+https://github.com/berkayturanci/keel@v1.6.3"  # or pin an existing git tag
 ```
 
 In a cloud agent session, install it from a `SessionStart` hook (or add keel to the
