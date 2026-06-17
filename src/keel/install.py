@@ -22,6 +22,11 @@ from pathlib import Path
 
 import yaml
 
+try:
+    from yaml import CSafeLoader as Loader
+except ImportError:
+    from yaml import SafeLoader as Loader
+
 from . import __version__
 
 ADAPTERS = Path(__file__).parent / "adapters" / "commands"
@@ -161,7 +166,7 @@ def _split_frontmatter(text: str) -> tuple[dict, str]:
     if text.startswith("---"):
         parts = text.split("---", 2)
         if len(parts) == 3:
-            meta = yaml.safe_load(parts[1])
+            meta = yaml.load(parts[1], Loader=Loader)
             return (meta if isinstance(meta, dict) else {}), parts[2].lstrip("\n")
     return {}, text
 

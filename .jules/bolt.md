@@ -7,3 +7,7 @@
 ## 2026-06-14 - Efficient Unique Lists and String Slugs
 **Learning:** In python, preserving list order while ensuring elements are unique using a generator over a standard `list` loop is vastly optimized through the use of `list(dict.fromkeys(iterator))`. Using C-level built-ins makes processing up to 300% faster compared to checking elements dynamically using sets.
 **Action:** When working on pure python codebases running computationally repetitive mapping tasks, use `dict.fromkeys` for sequence uniqueness mapping instead of naive iterations/comprehensions.
+
+## 2024-06-18 - Fast YAML Parsing
+**Learning:** PyYAML's default `yaml.safe_load()` is surprisingly slow and can be a silent bottleneck when parsing many files or large configurations.
+**Action:** Always prefer `yaml.load(data, Loader=CSafeLoader)` with a fallback to `yaml.SafeLoader`. The C extension is significantly faster for YAML parsing in Python.
