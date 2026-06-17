@@ -18,7 +18,7 @@ import yaml
 
 try:
     from yaml import CSafeLoader as Loader
-except ImportError:
+except ImportError:  # pragma: no cover
     from yaml import SafeLoader as Loader
 
 from . import jsonschema_min
