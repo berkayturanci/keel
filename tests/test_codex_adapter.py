@@ -27,6 +27,10 @@ class TestCodexAdapter(unittest.TestCase):
         self.assertNotEqual(config.get("sandbox"), "danger-full-access")
         self.assertNotEqual(config.get("approval"), "never")
 
+    @unittest.skipIf(
+        sys.platform == "win32",
+        "executable bit check is not reliable on Windows",
+    )
     def test_hooks_json_points_to_repo_local_deny_hook(self):
         hooks = json.loads((CODEX_DIR / "hooks.json").read_text(encoding="utf-8"))
         commands = [

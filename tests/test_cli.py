@@ -443,7 +443,7 @@ class TestRunGates(unittest.TestCase):
         p = _write_raw("extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: x\n"
                        "gates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
                        "extensions:\n  tester: [ghost.md]\nextensions_dir: .keel/extensions\n")
-        rc, out, err = run(["run-gates", p, "--root", "/tmp"])
+        rc, out, err = run(["run-gates", p, "--root", os.path.abspath("/tmp")])
         self.assertEqual(rc, 0)
         self.assertIn("extension not loaded", err)
 

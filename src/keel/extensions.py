@@ -21,7 +21,7 @@ import yaml
 
 try:
     from yaml import CSafeLoader as SafeLoader
-except ImportError:
+except ImportError:  # pragma: no cover
     from yaml import SafeLoader
 
 from .capabilities import validate_names

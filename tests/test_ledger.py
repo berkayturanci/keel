@@ -1,3 +1,4 @@
+import os
 """Tests for the structured run ledger."""
 
 import json
@@ -102,7 +103,7 @@ class TestLedgerContract(unittest.TestCase):
     def test_resolve_path_rejects_absolute_and_escaping_paths(self):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaisesRegex(ledger.LedgerError, "must be relative"):
-                ledger.resolve_path(directory, _config(run_ledger="/tmp/runs.jsonl"))
+                ledger.resolve_path(directory, _config(run_ledger=os.path.abspath("/tmp/runs.jsonl")))
 
             with self.assertRaisesRegex(ledger.LedgerError, "escapes"):
                 ledger.resolve_path(directory, _config(run_ledger="../runs.jsonl"))
