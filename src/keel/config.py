@@ -16,6 +16,11 @@ from typing import Any
 
 import yaml
 
+try:
+    from yaml import CSafeLoader as SafeLoader
+except ImportError:
+    from yaml import SafeLoader
+
 from . import jsonschema_min
 from .capabilities import validate_names
 from .model import SLOTS  # single source of truth for the named slots (re-exported)
@@ -171,7 +176,8 @@ def parse_config(data: Any, *, source: str = "<dict>", schema: dict | None = Non
 def load_config(path: str | Path) -> ProjectConfig:
     """Read + validate a ``project.yaml`` from disk."""
     path = Path(path)
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    # Use CSafeLoader for significant performance improvement over safe_load
+    data = yaml.load(path.read_text(encoding="utf-8"), Loader=SafeLoader)
     return parse_config(data, source=str(path))
 
 
