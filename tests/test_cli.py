@@ -6142,6 +6142,22 @@ class TestSetup(unittest.TestCase):
             self.assertTrue((Path(d) / ".keel/project.yaml").exists())
             self.assertTrue((Path(d) / ".claude/commands/keel/ship.md").exists())
             self.assertTrue((Path(d) / ".agents/skills/keel-ship/SKILL.md").exists())
+            # A fresh setup scaffolds the runtime gitignore and reports it.
+            self.assertIn("gitignore    : scaffolded", out)
+            self.assertTrue((Path(d) / ".keel/.gitignore").exists())
+
+    def test_existing_runtime_gitignore_is_not_reported_again(self):
+        import tempfile
+
+        from keel import workspace
+        with tempfile.TemporaryDirectory() as d:
+            keel = Path(d) / ".keel"
+            keel.mkdir()
+            # Pre-seed a complete runtime gitignore so setup leaves it untouched.
+            workspace.ensure_runtime_gitignore(keel)
+            rc, out, err = run(["setup", "--root", d, "--adapter-target", "claude"])
+            self.assertEqual(rc, 0, err)
+            self.assertNotIn("gitignore    :", out)
 
     def test_reuses_existing_config_without_force(self):
         import tempfile

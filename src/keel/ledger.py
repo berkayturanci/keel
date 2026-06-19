@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from . import capture, redaction
+from . import capture, redaction, workspace
 from . import config as cfg
 
 LEDGER_SCHEMA_VERSION = "keel.run-ledger.v1"
@@ -414,6 +414,7 @@ def append_record(path: str | Path, record: dict[str, Any]) -> None:
     """Append one validated JSONL record, creating parent directories as needed."""
     ledger_path = Path(path)
     ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    workspace.ensure_runtime_gitignore_for(ledger_path)
     with ledger_path.open("a", encoding="utf-8") as handle:
         handle.write(encode_record(record))
 

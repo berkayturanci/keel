@@ -30,6 +30,15 @@ PR, the side effect must be posted or written through the selected transport and
 the final summary. Never silently skip a step because the runtime, agent, or prompt feels
 obvious.
 
+## Artifact hygiene — never scribble in the consumer's checkout (required)
+
+The repo root is the consumer's, not your scratchpad. Any staging file you need — a PR diff
+(`gh pr diff > …`), a review/comment dump, draft prose, a one-off patch — goes in the
+keel-owned, gitignored scratch dir, **never** the repo root:
+`SCRATCH="$(keel scratch-dir --root .)"` (= `.keel/scratch`), then write under `$SCRATCH`.
+Prefer piping over temp files; honour an explicit operator `--output` path verbatim. Never
+leave `pr_<n>_review.md`, `pr<n>.diff`, `issue.md`, or similar at the root.
+
 The standalone review→fix loop (`s7` + `s9`) over one or more existing PRs. For each PR, a
 set of reviewers reviews the same diff **in parallel**, findings are posted per the chosen
 posting mode, blocking findings drive a capped fix loop, and the loop exits clean or at the
@@ -228,4 +237,4 @@ Do every read plus `keel validate` / `keel plan` / `keel run-gates` and the revi
 but redirect every state-changing `gh` write (comments, label) to a logged
 `DRY-RUN: <action>` line.
 
-<!-- keel-generated: surface=claude command=review-cycle keel_version=1.6.5 source_sha256=0b6ca8cb4fdb0b311a3302262a252c9d8541f4e9a18d3aa6c6a9c37159154d8c generated_sha256=0b6ca8cb4fdb0b311a3302262a252c9d8541f4e9a18d3aa6c6a9c37159154d8c -->
+<!-- keel-generated: surface=claude command=review-cycle keel_version=1.6.5 source_sha256=4df3a7da6602d4effaa5e8bc0b4d52e93afa9e749a174b9469f9df6a437ce0b3 generated_sha256=4df3a7da6602d4effaa5e8bc0b4d52e93afa9e749a174b9469f9df6a437ce0b3 -->

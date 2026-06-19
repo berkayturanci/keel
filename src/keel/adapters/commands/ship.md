@@ -48,6 +48,27 @@ the board de-duplicates the two and prefers the checkpoint's detail. Treat it li
 contractual step — do not skip it. The one allowed exception is a core too old to ship
 `keel activity` (keel < 1.6.0): then skip it silently and never block the command.
 
+## Artifact hygiene — never scribble in the consumer's checkout (required)
+
+The consumer's repo root is theirs, not your scratchpad. **Do not write transient files to it.**
+Any staging file you need — a PR diff (`gh pr diff > …`), an issue/body dump, draft review or
+closure prose, a `plan.json`/`ship.json` capture, a one-off patch or script — goes in the
+**keel-owned scratch directory**, which is gitignored so it never pollutes `git status` or
+Finder:
+
+```
+SCRATCH="$(keel scratch-dir --root .)"   # = .keel/scratch (created + gitignored on first call)
+gh pr diff "$PR" > "$SCRATCH/pr-$PR.diff"
+```
+
+Rules: (1) prefer piping/here-strings over temp files at all; (2) when a file is unavoidable,
+write it under `$SCRATCH` (or a true OS temp dir), **never** the repo root; (3) honour an
+explicit operator `--output`/`--debug` path verbatim when one is given. keel's own runtime
+state (`.keel/state/`, `.keel/activity/`, locks) is auto-written under `.keel/` and the
+`.keel/.gitignore` is scaffolded for you — leave it tracked. If you find yourself about to
+create `pr_<n>_review.md`, `pr<n>.diff`, `issue.md`, `plan.json`, or similar at the root —
+stop and redirect it into `$SCRATCH`.
+
 ## Step 0 (s0) — orient (deterministic, via the CLI)
 
 ```bash

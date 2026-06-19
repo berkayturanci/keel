@@ -17,6 +17,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from . import workspace
+
 SCHEMA_VERSION = "keel.resource-claim.v1"
 
 
@@ -129,6 +131,7 @@ def _claim_path(path: Path, *, resource: str, owner: str) -> ClaimResult:
             reason="resource-already-claimed",
             holder=_holder(path),
         )
+    workspace.ensure_runtime_gitignore_for(path)
     _write_owner(path, clean_owner)
     return ClaimResult(
         schema_version=SCHEMA_VERSION,

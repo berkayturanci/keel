@@ -209,6 +209,7 @@ If a step's gate fails, keel blocks its own merge — the same backbone every co
 - [`docs/keel/onboarding.md`](docs/keel/onboarding.md) — one-command consumer setup and follow-up checks
 - [`docs/keel/keel-visual.md`](docs/keel/keel-visual.md) — the live run board (`dash`/`render`/`serve`, the per-run 2D/3D drawer, `--all` multi-project, the auto-stamped `keel activity` channel)
 - [`docs/keel/extensions.md`](docs/keel/extensions.md) — authoring Lego extensions
+- [`docs/keel/artifacts.md`](docs/keel/artifacts.md) — where runtime state and agent scratch live (the `.keel/` dir, its auto-scaffolded `.gitignore`, and `keel scratch-dir`)
 - [`docs/keel/consumer-neutrality.md`](docs/keel/consumer-neutrality.md) — core vs project policy boundary
 - [`docs/keel/parity-matrix.md`](docs/keel/parity-matrix.md) — legacy-to-keel command parity status and owning issues
 - [`docs/keel/runtime-capabilities.md`](docs/keel/runtime-capabilities.md) — runtime capability detection and requirement declarations

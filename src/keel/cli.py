@@ -53,6 +53,7 @@ from . import (
     status,
     stepverifier,
     window,
+    workspace,
 )
 from . import config as cfg
 from . import findings as fnd
@@ -2587,6 +2588,18 @@ def _emit_activity(args, records, *, path, removed=None):
               f"{record['phase']:12} {record['status']}")
 
 
+def _cmd_scratch_dir(args: argparse.Namespace) -> int:
+    """Print the keel-owned scratch dir, creating it (and the gitignore) by default.
+
+    Adapters wire this as ``SCRATCH=$(keel scratch-dir)`` so every transient
+    artifact (PR diffs, issue dumps, draft prose) lands under ``.keel/scratch``
+    instead of the consumer's checkout.
+    """
+    scratch = workspace.scratch_dir(args.root, create=args.create)
+    print(scratch)
+    return 0
+
+
 def _cmd_resume(args: argparse.Namespace) -> int:
     try:
         config = cfg.load_config(args.path)
@@ -3526,6 +3539,7 @@ def _cmd_init(args: argparse.Namespace) -> int:
         return 1
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(text, encoding="utf-8")
+    workspace.ensure_runtime_gitignore(target.parent)
     if args.force:
         print(
             "warning: --force replaced .keel/project.yaml; .keel/extensions/ was not touched",
@@ -3725,6 +3739,10 @@ def _cmd_setup(args: argparse.Namespace) -> int:
         action = "overwrote" if existed else "wrote"
         print(f"  config       : {action} {target} (detected stack: {stack})")
         print("  extensions   : preserved (setup never deletes .keel/extensions/)")
+
+    if workspace.ensure_runtime_gitignore(target.parent):
+        print(f"  gitignore    : scaffolded {target.parent / workspace.GITIGNORE_NAME} "
+              "(keeps runtime state out of git)")
 
     agent = args.adapter_target
     if agent == "all":
@@ -4554,6 +4572,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_activity.add_argument("--note", default=None, help="optional free-text note")
     p_activity.add_argument("--json", action="store_true", help="emit structured JSON")
     p_activity.set_defaults(func=_cmd_activity)
+
+    p_scratch = sub.add_parser(
+        "scratch-dir",
+        help="print (and create) the keel-owned scratch dir for transient artifacts")
+    p_scratch.add_argument("--root", default=".",
+                           help="repo root under which .keel/scratch lives")
+    p_scratch.add_argument("--no-create", dest="create", action="store_false",
+                           help="print the path without creating it")
+    p_scratch.set_defaults(func=_cmd_scratch_dir, create=True)
 
     p_resume = sub.add_parser("resume", help="render a dry-run resume plan")
     p_resume.add_argument("path", help="path to project.yaml")

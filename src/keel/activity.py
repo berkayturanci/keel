@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from . import config as cfg
-from . import flows
+from . import flows, workspace
 
 ACTIVITY_SCHEMA_VERSION = "keel.activity.v1"
 RECORD_TYPE_ACTIVITY = "command_activity"
@@ -180,6 +180,7 @@ def write_activity(path: str | Path, record: dict[str, Any]) -> None:
     """Write one validated activity record."""
     activity_path = Path(path)
     activity_path.parent.mkdir(parents=True, exist_ok=True)
+    workspace.ensure_runtime_gitignore_for(activity_path)
     activity_path.write_text(encode_activity(record), encoding="utf-8")
 
 

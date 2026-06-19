@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from . import config as cfg
-from . import model
+from . import model, workspace
 
 CHECKPOINT_SCHEMA_VERSION = "keel.checkpoint.v1"
 DEFAULT_CHECKPOINT_PATH = ".keel/state/checkpoint.json"
@@ -190,6 +190,7 @@ def write_checkpoint(path: str | Path, record: dict[str, Any]) -> None:
     """Write one validated checkpoint, replacing the previous resume point."""
     checkpoint_path = Path(path)
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+    workspace.ensure_runtime_gitignore_for(checkpoint_path)
     checkpoint_path.write_text(encode_checkpoint(record), encoding="utf-8")
 
 

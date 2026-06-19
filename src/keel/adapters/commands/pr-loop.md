@@ -30,6 +30,15 @@ PR, the side effect must be posted or written through the selected transport and
 the final summary. Never silently skip a step because the runtime, agent, or prompt feels
 obvious.
 
+## Artifact hygiene — never scribble in the consumer's checkout (required)
+
+The repo root is the consumer's, not your scratchpad. Any staging file you need — a PR diff
+(`gh pr diff > …`), a comment/body dump, draft review prose, a one-off patch — goes in the
+keel-owned, gitignored scratch dir, **never** the repo root:
+`SCRATCH="$(keel scratch-dir --root .)"` (= `.keel/scratch`), then write under `$SCRATCH`.
+Prefer piping over temp files; honour an explicit operator `--output` path verbatim. Never
+leave `pr_<n>_review.md`, `pr<n>.diff`, `issue.md`, or similar at the root.
+
 Drive an already-implemented branch from open PR to merge-ready over the fixed keel
 backbone (`s6`–`s12`): open the PR, wait for CI, run the review+gate+fix loop, and hand a
 clean PR to the windowed, locked merge. **Project-neutral** — every project specific

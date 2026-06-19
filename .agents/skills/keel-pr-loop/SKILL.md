@@ -33,6 +33,15 @@ PR, the side effect must be posted or written through the selected transport and
 the final summary. Never silently skip a step because the runtime, agent, or prompt feels
 obvious.
 
+## Artifact hygiene — never scribble in the consumer's checkout (required)
+
+The repo root is the consumer's, not your scratchpad. Any staging file you need — a PR diff
+(`gh pr diff > …`), a comment/body dump, draft review prose, a one-off patch — goes in the
+keel-owned, gitignored scratch dir, **never** the repo root:
+`SCRATCH="$(keel scratch-dir --root .)"` (= `.keel/scratch`), then write under `$SCRATCH`.
+Prefer piping over temp files; honour an explicit operator `--output` path verbatim. Never
+leave `pr_<n>_review.md`, `pr<n>.diff`, `issue.md`, or similar at the root.
+
 Drive an already-implemented branch from open PR to merge-ready over the fixed keel
 backbone (`s6`–`s12`): open the PR, wait for CI, run the review+gate+fix loop, and hand a
 clean PR to the windowed, locked merge. **Project-neutral** — every project specific
@@ -207,4 +216,4 @@ Do every read plus `keel validate` / `keel plan` / `keel run-gates`, but redirec
 state-changing `git`/`gh` write to a logged `DRY-RUN: <action>` line. No push, no PR, no
 merge.
 
-<!-- keel-generated: surface=skills command=pr-loop keel_version=1.6.5 source_sha256=bd1c409c0142bb4b829563c0daba47704b80b348009100400a8d80fc40077c10 generated_sha256=c155feb758770d85c4a79353b03a55b4b8584f79fc9944dfedc5a8b75627a80c -->
+<!-- keel-generated: surface=skills command=pr-loop keel_version=1.6.5 source_sha256=15b97f49c1fc010ef7e08674409d3f4c38535b1cd5f33c79ed69bdd696e75f45 generated_sha256=ef9f621d0b4e12f7b002dafd2745f606fbedac7c284ba4525e358b8a27b9a435 -->
