@@ -13,6 +13,11 @@ from pathlib import Path
 
 import yaml
 
+try:
+    from yaml import CSafeDumper as Dumper
+except ImportError:
+    from yaml import SafeDumper as Dumper
+
 from . import consent
 
 #: marker file (checked in order) -> stack name.
@@ -87,8 +92,9 @@ def render_config(
 
 def _yaml_scalar(value: str) -> str:
     """Render a scalar as inline YAML so scaffolded values cannot inject new keys."""
-    return yaml.safe_dump(
+    return yaml.dump(
         str(value),
+        Dumper=Dumper,
         default_style='"',
         default_flow_style=True,
         width=10**6,

@@ -22,6 +22,13 @@ from pathlib import Path
 
 import yaml
 
+try:
+    from yaml import CSafeDumper as Dumper
+    from yaml import CSafeLoader as Loader
+except ImportError:
+    from yaml import SafeDumper as Dumper
+    from yaml import SafeLoader as Loader
+
 from . import __version__
 
 ADAPTERS = Path(__file__).parent / "adapters" / "commands"
@@ -161,7 +168,7 @@ def _split_frontmatter(text: str) -> tuple[dict, str]:
     if text.startswith("---"):
         parts = text.split("---", 2)
         if len(parts) == 3:
-            meta = yaml.safe_load(parts[1])
+            meta = yaml.load(parts[1], Loader=Loader)
             return (meta if isinstance(meta, dict) else {}), parts[2].lstrip("\n")
     return {}, text
 
@@ -175,8 +182,8 @@ def render_skill(adapter_text: str, command: str) -> str:
     meta, body = _split_frontmatter(adapter_text)
     desc = " ".join(str(meta.get("description", f"keel {command} workflow")).split())
     name = f"{SKILL_PREFIX}{command}"
-    front = yaml.safe_dump({"name": name, "description": desc},
-                           sort_keys=False, allow_unicode=True, width=10**9).strip()
+    front = yaml.dump({"name": name, "description": desc},
+                      Dumper=Dumper, sort_keys=False, allow_unicode=True, width=10**9).strip()
     intro = (
         f"Use this skill when the user asks to run the keel command `{command}` "
         f"(e.g. `keel {command} ...`, `{command} <args>`, or `/keel:{command}`). It reads every "
@@ -211,8 +218,8 @@ def render_legacy_skill_wrapper(legacy_command: str, keel_command: str) -> str:
         f"Compatibility wrapper for the legacy `{legacy_command}` command; delegates to "
         f"`/keel:{keel_command}` and the `keel-{keel_command}` skill without changing flags."
     )
-    front = yaml.safe_dump({"name": name, "description": desc},
-                           sort_keys=False, allow_unicode=True, width=10**9).strip()
+    front = yaml.dump({"name": name, "description": desc},
+                      Dumper=Dumper, sort_keys=False, allow_unicode=True, width=10**9).strip()
     return (
         f"---\n{front}\n---\n\n"
         f"# {name}\n\n"
