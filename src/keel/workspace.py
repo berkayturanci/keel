@@ -15,14 +15,22 @@ here — instead of the repo root — is why a consumer no longer sees
 ``plan.json``, ``pr_<n>.diff``, ``issue.md`` and friends accumulate in their
 checkout.
 
+Finally it owns **reclamation** of the disposable runtime trees so they do not
+grow without bound: :func:`clean_scratch` empties ``.keel/scratch`` and
+:func:`prune_activity` applies count-based retention to ``.keel/activity``.
+Reclamation is deliberately scoped to those two trees — it never touches the
+run ledger, checkpoint, or locks, which have their own bounded lifecycles and
+(for the ledger) are durable by design.
+
 Pure-core + thin I/O, mirroring :mod:`keel.checkpoint` and :mod:`keel.activity`:
-:func:`runtime_gitignore_body` is a deterministic pure function; only
-:func:`ensure_runtime_gitignore`, :func:`ensure_runtime_gitignore_for` and
-:func:`scratch_dir` touch the filesystem.
+:func:`runtime_gitignore_body` is a deterministic pure function; only the
+``ensure_*``, :func:`scratch_dir`, and the reclamation helpers touch the
+filesystem.
 """
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 KEEL_DIRNAME = ".keel"
@@ -107,3 +115,61 @@ def scratch_dir(root: str | Path = ".", *, create: bool = True) -> Path:
         scratch.mkdir(parents=True, exist_ok=True)
         ensure_runtime_gitignore(directory)
     return scratch
+
+
+def scratch_entries(root: str | Path = ".") -> list[str]:
+    """Sorted top-level names currently under ``.keel/scratch`` (``[]`` if none)."""
+    scratch = keel_dir(root) / SCRATCH_DIRNAME
+    if not scratch.is_dir():
+        return []
+    return sorted(p.name for p in scratch.iterdir())
+
+
+def clean_scratch(root: str | Path = ".") -> list[str]:
+    """Reclaim ``.keel/scratch`` entirely; return the entries that were removed.
+
+    Scratch is transient by definition, so this empties it wholesale. The
+    directory is recreated on the next :func:`scratch_dir` call. A no-op (``[]``)
+    when scratch does not exist.
+    """
+    entries = scratch_entries(root)
+    scratch = keel_dir(root) / SCRATCH_DIRNAME
+    if scratch.is_dir():
+        shutil.rmtree(scratch)
+    return entries
+
+
+def activity_prune_plan(activity_dir: str | Path, *, keep_last: int) -> list[str]:
+    """Names of activity records that exceed ``keep_last`` (oldest first removed).
+
+    Retention is count-based: the newest ``keep_last`` ``.json`` records (by
+    mtime, then name for a stable tiebreak) are kept; the rest are returned as
+    the prune plan. Only ``.json`` files are considered, so a stray file never
+    counts against — or gets caught by — retention. ``keep_last`` must be
+    non-negative. A no-op (``[]``) when the directory is absent or within budget.
+    """
+    if keep_last < 0:
+        raise ValueError("keep_last must be non-negative")
+    directory = Path(activity_dir)
+    if not directory.is_dir():
+        return []
+    records = [p for p in directory.iterdir() if p.is_file() and p.suffix == ".json"]
+    if len(records) <= keep_last:
+        return []
+    ordered = sorted(records, key=lambda p: (p.stat().st_mtime, p.name), reverse=True)
+    return sorted(p.name for p in ordered[keep_last:])
+
+
+def prune_activity(activity_dir: str | Path, *, keep_last: int) -> list[str]:
+    """Apply count-based retention to ``activity_dir``; return the names removed.
+
+    Removes exactly the records named by :func:`activity_prune_plan`. Never
+    touches non-``.json`` entries, and is only ever pointed at the activity
+    directory — the run ledger, checkpoint, and locks live elsewhere and are
+    out of reach by construction.
+    """
+    directory = Path(activity_dir)
+    doomed = activity_prune_plan(directory, keep_last=keep_last)
+    for name in doomed:
+        (directory / name).unlink()
+    return doomed

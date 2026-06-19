@@ -69,6 +69,12 @@ state (`.keel/state/`, `.keel/activity/`, locks) is auto-written under `.keel/` 
 create `pr_<n>_review.md`, `pr<n>.diff`, `issue.md`, `plan.json`, or similar at the root —
 stop and redirect it into `$SCRATCH`.
 
+**Reclaim at end of run (required).** Taking out the trash is also our job: after s12 (or on
+any early exit), run `keel gc .keel/project.yaml --root .` to empty `.keel/scratch` and prune
+old `.keel/activity` records so they do not accumulate. It is **fail-soft** (a cleanup error
+degrades to a no-op, never blocks the run) and **never** touches the durable run ledger,
+checkpoint, or locks. Tune retention with `--keep-activity <N>`; preview with `--dry-run`.
+
 ## Step 0 (s0) — orient (deterministic, via the CLI)
 
 ```bash
@@ -652,4 +658,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=claude command=ship keel_version=1.6.5 source_sha256=8c960c6b1869b31bc64116b647d1ac6e6b63ca80c536c8ca463e92f723456646 generated_sha256=8c960c6b1869b31bc64116b647d1ac6e6b63ca80c536c8ca463e92f723456646 -->
+<!-- keel-generated: surface=claude command=ship keel_version=1.6.5 source_sha256=2c3955ad008a3fb7369979024064461d21eb4b9752f0c04a79776a8fc0b8b5fa generated_sha256=2c3955ad008a3fb7369979024064461d21eb4b9752f0c04a79776a8fc0b8b5fa -->

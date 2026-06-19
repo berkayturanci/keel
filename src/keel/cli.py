@@ -2685,6 +2685,76 @@ def _cmd_scratch_dir(args: argparse.Namespace) -> int:
     return 0
 
 
+# Default activity records kept by `keel gc` — enough recent runs for the live
+# board to stay useful while bounding unbounded growth.
+DEFAULT_GC_KEEP_ACTIVITY = 50
+
+
+def _cmd_gc(args: argparse.Namespace) -> int:
+    """Reclaim disposable runtime artifacts: empty scratch, prune old activity.
+
+    Single, auditable entry point for taking out keel's own trash. The run
+    ledger, checkpoint, and locks are durable / self-bounded and are never
+    touched. Fail-soft: a failure on one tree degrades to a no-op and the other
+    still runs; the command never aborts a caller.
+    """
+    try:
+        config = cfg.load_config(args.path)
+    except FileNotFoundError:
+        print(f"no such config: {args.path}", file=sys.stderr)
+        return 1
+    except cfg.ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    scratch_removed: list[str] = []
+    activity_removed: list[str] = []
+    degraded: list[str] = []
+
+    if args.scratch:
+        try:
+            if args.dry_run:
+                scratch_removed = workspace.scratch_entries(args.root)
+            else:
+                scratch_removed = workspace.clean_scratch(args.root)
+        except OSError as exc:  # fail-soft: never abort the caller
+            degraded.append(f"scratch: {exc}")
+
+    if args.activity:
+        try:
+            activity_dir = activity.resolve_dir(args.root, config)
+            if args.dry_run:
+                activity_removed = workspace.activity_prune_plan(
+                    activity_dir, keep_last=args.keep_activity)
+            else:
+                activity_removed = workspace.prune_activity(
+                    activity_dir, keep_last=args.keep_activity)
+        except (OSError, activity.ActivityError) as exc:  # fail-soft
+            degraded.append(f"activity: {exc}")
+
+    if args.json:
+        print(json.dumps({
+            "dry_run": args.dry_run,
+            "scratch_removed": scratch_removed,
+            "activity_removed": activity_removed,
+            "keep_activity": args.keep_activity,
+            "degraded": degraded,
+        }, indent=2, sort_keys=True))
+        return 0
+
+    verb = "would remove" if args.dry_run else "removed"
+    print(f"keel gc — {args.path}")
+    if args.scratch:
+        plural = "y" if len(scratch_removed) == 1 else "ies"
+        print(f"  scratch   : {verb} {len(scratch_removed)} entr{plural}")
+    if args.activity:
+        print(f"  activity  : {verb} {len(activity_removed)} record(s) "
+              f"(kept newest {args.keep_activity})")
+    for note in degraded:
+        print(f"  ! degraded: {note}", file=sys.stderr)
+    return 0
+
+
 def _cmd_resume(args: argparse.Namespace) -> int:
     try:
         config = cfg.load_config(args.path)
@@ -4697,6 +4767,25 @@ def build_parser() -> argparse.ArgumentParser:
     p_scratch.add_argument("--no-create", dest="create", action="store_false",
                            help="print the path without creating it")
     p_scratch.set_defaults(func=_cmd_scratch_dir, create=True)
+
+    p_gc = sub.add_parser(
+        "gc",
+        help="reclaim disposable runtime artifacts (empty scratch, prune old activity)")
+    p_gc.add_argument("path", help="path to project.yaml")
+    p_gc.add_argument("--root", default=".",
+                      help="repo root under which .keel runtime artifacts live")
+    p_gc.add_argument("--keep-activity", type=_nonnegative_int,
+                      default=DEFAULT_GC_KEEP_ACTIVITY,
+                      help=f"activity records to keep, newest first "
+                           f"(default {DEFAULT_GC_KEEP_ACTIVITY})")
+    p_gc.add_argument("--no-scratch", dest="scratch", action="store_false",
+                      help="skip emptying .keel/scratch")
+    p_gc.add_argument("--no-activity", dest="activity", action="store_false",
+                      help="skip pruning .keel/activity")
+    p_gc.add_argument("--dry-run", action="store_true",
+                      help="report what would be reclaimed without removing anything")
+    p_gc.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_gc.set_defaults(func=_cmd_gc, scratch=True, activity=True)
 
     p_resume = sub.add_parser("resume", help="render a dry-run resume plan")
     p_resume.add_argument("path", help="path to project.yaml")
