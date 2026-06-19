@@ -651,6 +651,8 @@ def reporting_contract_as_dict(
             **base,
             "target": "pull_request",
             "codename_prefix": "COVERAGE-<PR>-",
+            "renderer": "keel.artifacts.render_coverage_delta",
+            "marker": artifacts.COVERAGE_DELTA_MARKER,
             "idempotency": {
                 "scope": "one-comment-per-pr",
                 "find_by_first_line_prefix": "COVERAGE-<PR>-",
@@ -674,6 +676,8 @@ def reporting_contract_as_dict(
             "target": "daily_tracking_issue",
             "tracking_issue_title": "deps-audit: <DATE>",
             "codename_prefix": "DEPS-AUDIT-<DATE>-",
+            "renderer": "keel.artifacts.render_deps_audit",
+            "marker": artifacts.DEPS_AUDIT_MARKER,
             "idempotency": {
                 "scope": "append-per-run",
                 "find_tracking_issue_by_exact_title": "deps-audit: <DATE>",
@@ -692,6 +696,8 @@ def reporting_contract_as_dict(
             **base,
             "target": "ci_history_or_local_runs",
             "codename_prefix": "FLAKE-AUDIT-<DATE>-",
+            "renderer": "keel.artifacts.render_flake_audit",
+            "marker": artifacts.FLAKE_AUDIT_MARKER,
             "idempotency": {
                 "scope": "one-issue-per-flake",
                 "dedupe_issue_title": "flaky test: <fully.qualified.name>",

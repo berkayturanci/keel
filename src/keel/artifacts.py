@@ -17,11 +17,17 @@ ISSUE_UPDATE_MARKER = "<!-- keel.issue-update.v1 -->"
 STEP_HANDOFF_MARKER = "<!-- keel.step-handoff.v1 -->"
 RUN_CONTROL_HALT_MARKER = "<!-- keel.run-control-halt.v1 -->"
 REVIEW_CYCLE_SUMMARY_MARKER = "keel.review-cycle-summary.v1"
+COVERAGE_DELTA_MARKER = "keel.coverage-delta.v1"
+DEPS_AUDIT_MARKER = "keel.deps-audit.v1"
+FLAKE_AUDIT_MARKER = "keel.flake-audit.v1"
 
 #: Severity buckets that drive the consolidated histogram + merge recommendation,
 #: in must-fix → advisory order. ``critical`` folds into ``blocker`` (must-fix).
 SEVERITY_ORDER = ("blocker", "major", "minor", "nit")
 _SEVERITY_ALIASES = {"critical": "blocker"}
+
+#: Dependency-advisory severity buckets, most → least severe.
+DEPS_SEVERITY_ORDER = ("critical", "high", "moderate", "low")
 
 
 def contract_as_dict() -> dict[str, Any]:
@@ -216,6 +222,258 @@ def render_review_cycle_summary(
     if isinstance(run_id, str) and run_id.strip():
         lines.extend(["", f"<!-- keel.run-id: {run_id.strip()} -->"])
     return "\n".join(lines) + "\n"
+
+
+def render_coverage_delta(
+    *,
+    codename: str,
+    base_sha: str | None = None,
+    head_sha: str | None = None,
+    areas: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
+) -> str:
+    """Render the deterministic per-PR coverage delta comment.
+
+    The literal first line is the caller-supplied ``codename`` (e.g.
+    ``COVERAGE-<PR>-<UTC>``) — the load-bearing anchor the adapter finds by prefix
+    to update the comment in place, so nothing precedes it. The adapter supplies
+    the timestamped codename, so the renderer stays pure and byte-stable for a
+    given input.
+    """
+    lines = [
+        codename,
+        "",
+        f"Coverage delta: base@{_value(base_sha, '<base>')} → head@{_value(head_sha, '<head>')}",
+    ]
+    for area in areas:
+        if isinstance(area, dict):
+            lines.extend(["", *_coverage_area_lines(area)])
+    lines.extend(["", f"<!-- {COVERAGE_DELTA_MARKER} -->"])
+    return "\n".join(lines) + "\n"
+
+
+def render_deps_audit(
+    *,
+    codename: str,
+    ecosystems: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
+    licences: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
+    skipped: list[str] | tuple[str, ...] = (),
+    security_only: bool = False,
+) -> str:
+    """Render the deterministic dependency-audit comment for the tracking issue.
+
+    The literal first line is the caller-supplied ``codename`` (e.g.
+    ``DEPS-AUDIT-<DATE>-<UTC>``); a fresh comment is appended per run, found later
+    by that prefix. Under ``security_only`` the licence-drift section is omitted.
+    """
+    counts = _deps_counts(ecosystems)
+    lines = [
+        codename,
+        "",
+        " | ".join(f"{severity}: {counts[severity]}" for severity in DEPS_SEVERITY_ORDER),
+    ]
+    for ecosystem in ecosystems:
+        if isinstance(ecosystem, dict):
+            lines.extend(["", *_deps_ecosystem_lines(ecosystem)])
+    if not security_only:
+        lines.extend(["", *_deps_licence_lines(licences)])
+    skipped_items = _string_list(skipped)
+    if skipped_items:
+        lines.extend(["", "## Skipped", ""])
+        lines.extend(f"- {item}" for item in skipped_items)
+    lines.extend(["", f"<!-- {DEPS_AUDIT_MARKER} -->"])
+    return "\n".join(lines) + "\n"
+
+
+def render_flake_audit(
+    *,
+    codename: str,
+    summary: dict[str, Any] | None = None,
+    new_flakes: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
+    tracked: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
+    limitations: list[str] | tuple[str, ...] = (),
+) -> str:
+    """Render the deterministic flake-audit report comment.
+
+    The literal first line is the caller-supplied ``codename`` (e.g.
+    ``FLAKE-AUDIT-<DATE>-<UTC>``). Newly-classified flakes render as a table (or a
+    single italic line when none cleared the threshold); already-tracked flakes
+    and honest limitations render only when present.
+    """
+    stats = summary if isinstance(summary, dict) else {}
+    lines = [
+        codename,
+        "",
+        (f"runs examined: {_count(stats.get('runs'))} · "
+         f"distinct failing tests: {_count(stats.get('distinct'))} · "
+         f"classified flakes: {_count(stats.get('classified'))} · "
+         f"newly-opened issues: {_count(stats.get('opened'))}"),
+        "",
+        "## Newly classified flakes",
+        "",
+    ]
+    flakes = _dict_list(new_flakes)
+    if flakes:
+        lines.append("| Test | Fail rate | Failures | Sample runs | Signature |")
+        lines.append("| --- | --- | --- | --- | --- |")
+        lines.extend(
+            _table_row([
+                _cell(_value(flake.get("test"), "—")),
+                _cell(_value(flake.get("fail_rate"), "—")),
+                _cell(str(_count(flake.get("failures")))),
+                _cell(", ".join(_string_list(flake.get("samples"))) or "—"),
+                _cell(_value(flake.get("signature"), "—")),
+            ])
+            for flake in flakes
+        )
+    else:
+        lines.append("_no new flakes above threshold_")
+    tracked_rows = _dict_list(tracked)
+    if tracked_rows:
+        lines.extend(["", "## Already tracked (deduped)", ""])
+        lines.extend(
+            f"- {_value(row.get('test'), '—')} — see {_issue_ref(row.get('issue'))}"
+            for row in tracked_rows
+        )
+    limitation_items = _string_list(limitations)
+    if limitation_items:
+        lines.extend(["", "## Limitations", ""])
+        lines.extend(f"- {item}" for item in limitation_items)
+    lines.extend(["", f"<!-- {FLAKE_AUDIT_MARKER} -->"])
+    return "\n".join(lines) + "\n"
+
+
+def _table_row(cells: list[str]) -> str:
+    return "| " + " | ".join(cells) + " |"
+
+
+def _dict_list(raw: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw, (list, tuple)):
+        return []
+    return [item for item in raw if isinstance(item, dict)]
+
+
+def _count(value: Any) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def _issue_ref(value: Any) -> str:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return f"#{value}"
+    return _value(value, "?")
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _fmt_pct(value: Any) -> str:
+    return f"{value:.1f}%" if _is_number(value) else "—"
+
+
+def _fmt_delta(base: Any, head: Any) -> tuple[str, bool]:
+    if _is_number(base) and _is_number(head):
+        delta = head - base
+        return f"{delta:+.1f}%", abs(delta) >= 0.5
+    return "—", False
+
+
+def _coverage_row(unit: str, base: Any, head: Any, files: Any, *, is_overall: bool = False) -> str:
+    delta_text, bold = _fmt_delta(base, head)
+    files_text = _cell(str(files)) if str(files).strip() else ""
+    cells = [_cell(unit), _fmt_pct(base), _fmt_pct(head), delta_text, files_text]
+    if bold:
+        cells = [f"**{cell}**" if cell else "" for cell in cells]
+    elif is_overall:
+        cells[0] = f"**{cells[0]}**"
+    return _table_row(cells)
+
+
+def _coverage_area_lines(area: dict[str, Any]) -> list[str]:
+    name = _value(area.get("name"), "area")
+    if area.get("skipped"):
+        return [f"_{name} coverage skipped: {_value(area.get('skip_reason'), 'not run')}_"]
+    lines = [
+        f"## {name}",
+        "",
+        "| Unit | Base % | Head % | Δ | Files |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    lines.extend(
+        _coverage_row(_value(row.get("unit"), "—"), row.get("base"), row.get("head"),
+                      row.get("files", ""))
+        for row in _dict_list(area.get("rows"))
+    )
+    overall = area.get("overall")
+    if isinstance(overall, dict):
+        lines.append(
+            _coverage_row("overall", overall.get("base"), overall.get("head"), "",
+                          is_overall=True)
+        )
+    return lines
+
+
+def _deps_sev_rank(severity: str) -> int:
+    lowered = severity.lower()
+    return DEPS_SEVERITY_ORDER.index(lowered) if lowered in DEPS_SEVERITY_ORDER \
+        else len(DEPS_SEVERITY_ORDER)
+
+
+def _deps_counts(ecosystems: Any) -> dict[str, int]:
+    counts = dict.fromkeys(DEPS_SEVERITY_ORDER, 0)
+    for ecosystem in _dict_list(ecosystems):
+        for finding in _dict_list(ecosystem.get("findings")):
+            severity = _value(finding.get("severity"), "low").lower()
+            if severity in counts:
+                counts[severity] += 1
+    return counts
+
+
+def _deps_ecosystem_lines(ecosystem: dict[str, Any]) -> list[str]:
+    name = _value(ecosystem.get("name"), "ecosystem")
+    findings = _dict_list(ecosystem.get("findings"))
+    if not findings:
+        threshold = _value(ecosystem.get("threshold"), "low")
+        return [f"_No {name} findings at or above {threshold} severity._"]
+    findings = sorted(findings, key=lambda f: _deps_sev_rank(_value(f.get("severity"), "low")))
+    lines = [
+        f"## {name}",
+        "",
+        "| Package | Version | Severity | Advisory | Fix available |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    lines.extend(
+        _table_row([
+            _cell(_value(finding.get("package"), "—")),
+            _cell(_value(finding.get("version"), "—")),
+            _cell(_value(finding.get("severity"), "low")),
+            _cell(_value(finding.get("advisory"), "—")),
+            _cell(_value(finding.get("fix_available"), "—")),
+        ])
+        for finding in findings
+    )
+    return lines
+
+
+def _deps_licence_lines(licences: Any) -> list[str]:
+    rows = _dict_list(licences)
+    if not rows:
+        return ["_licences: no drift_"]
+    lines = [
+        "## Licences",
+        "",
+        "| Status | Package | Baseline | Current |",
+        "| --- | --- | --- | --- |",
+    ]
+    lines.extend(
+        _table_row([
+            _cell(_value(row.get("status"), "—")),
+            _cell(_value(row.get("package"), "—")),
+            _cell(_value(row.get("baseline"), "—")),
+            _cell(_value(row.get("current"), "—")),
+        ])
+        for row in rows
+    )
+    return lines
 
 
 def render_extension_result(

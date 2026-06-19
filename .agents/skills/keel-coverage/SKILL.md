@@ -104,21 +104,33 @@ head, else a second worktree), reusing the task discovered in Step 2. Cache keye
 
 ## Step 4 — build the delta report
 
-A single markdown body whose **literal first line** is the codename
-`COVERAGE-<PR>-<UTC_TIMESTAMP>`. **Codename pin (load-bearing):** no blank line above it, no
-leading whitespace, no quoting, no Markdown prefix or surrounding formatting — Step 6 finds the
-existing comment by the `COVERAGE-<PR>-` prefix to update it in place, and any deviation makes
-it miss the prior comment and post a duplicate. The prefix here MUST match the literal first
-line emitted — change them together or find-and-update silently breaks.
+Do **not** hand-write the delta table. Assemble the structured coverage data and let the
+renderer own the layout — the `base@ → head@` header, per-area tables (unit · base % · head % ·
+signed Δ · files), the signed-Δ formatting (`+1.2%` / `-0.3%` / `+0.0%`), the **bold-whole-row
+when `|Δ| >= 0.5%`** rule, the bold overall row, and skipped-area italic lines — then post the
+rendered body **verbatim**:
 
-Body: a `base@<short> → head@<short>` header, then one section per touched area with rows
-(unit · base % · head % · signed Δ · files-in-diff) plus a bold **overall** summary row.
-Formatting rules:
-- One row per sub-area/module; one bold overall row per section that ran.
-- Show the absolute signed delta: `+1.2%`, `-0.3%`, `+0.0%`.
-- **Bold the whole row** when `|Δ| >= 0.5%` so reviewers' eyes catch it.
-- Omit a section entirely if its area was not touched.
-- A skipped area renders as a single italic line (`_<area> coverage skipped: …_`).
+```bash
+keel render-report --kind coverage --payload coverage.json > body.md
+```
+
+`coverage.json` is one object:
+
+```json
+{ "codename": "COVERAGE-<PR>-<UTC_TIMESTAMP>", "base_sha": "<short>", "head_sha": "<short>",
+  "areas": [
+    { "name": "<area>",
+      "rows": [{ "unit": "<module>", "base": 91.2, "head": 92.4, "files": 3 }],
+      "overall": { "base": 90.0, "head": 91.5 } },
+    { "name": "<area>", "skipped": true, "skip_reason": "<why>" }
+  ] }
+```
+
+**Codename pin (load-bearing):** the `codename` field becomes the rendered body's literal first
+line — `COVERAGE-<PR>-<UTC_TIMESTAMP>`, with no blank line, whitespace, quoting, or Markdown
+prefix above it — because Step 6 finds the existing comment by the `COVERAGE-<PR>-` prefix to
+update it in place. The prefix in Step 6 MUST match this codename; change them together or
+find-and-update silently breaks. Omit an untouched area entirely.
 
 ## Step 5 — flag hot spots (low coverage × high risk)
 
@@ -162,4 +174,4 @@ print the would-be issues and route nothing.
   and skipped.
 - Deterministic for identical coverage data.
 
-<!-- keel-generated: surface=skills command=coverage keel_version=1.6.5 source_sha256=10835f7876b936e5eea138503b73611a934949616db232c05e724beb333f633d generated_sha256=bfc6bd59da93a45a3da99d1cfb58e34289eb649b472d434dd88ee2a1aba56f8f -->
+<!-- keel-generated: surface=skills command=coverage keel_version=1.6.5 source_sha256=a833a58b527f757681a8e8de7f68330c468c9b2402661dcb8ee0c3365b0a7d51 generated_sha256=8277d804355ab209880009e15be843114f461deaa04253a48f7ad2fbdf49c8a1 -->

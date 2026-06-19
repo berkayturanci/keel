@@ -274,6 +274,118 @@ class TestReviewCycleSummaryRenderer(unittest.TestCase):
         self.assertEqual(first, second)
 
 
+class TestCoverageDeltaRenderer(unittest.TestCase):
+    def test_full_delta_with_bold_rows_skipped_area_and_missing_values(self):
+        body = artifacts.render_coverage_delta(
+            codename="COVERAGE-1-T", base_sha="aaa", head_sha="bbb",
+            areas=[
+                "junk",  # non-dict area is skipped
+                {"name": "core", "rows": [
+                    "junk",  # non-dict row is skipped
+                    {"unit": "a.py", "base": 90.0, "head": 90.9, "files": 2},   # +0.9 → bold
+                    {"unit": "b.py", "base": 80.0, "head": 80.1, "files": 1},   # +0.1 → plain
+                    {"unit": "new.py", "base": None, "head": 100.0, "files": 1},  # missing base
+                    {"unit": "wt.py", "base": 90.0, "head": True},  # boolean head → not a number
+                ], "overall": {"base": 88.0, "head": 88.2}},  # +0.2 → label-only bold
+                {"name": "empty", "overall": {"base": 50.0, "head": 50.0}},  # no rows key
+                {"name": "rows-only", "rows": [
+                    {"unit": "z.py", "base": 70.0, "head": 71.0, "files": 1}]},  # no overall
+                {"name": "docs", "skipped": True, "skip_reason": "untouched"},
+            ])
+        self.assertTrue(body.startswith("COVERAGE-1-T\n"))
+        self.assertIn("Coverage delta: base@aaa → head@bbb", body)
+        self.assertIn("| **a.py** | **90.0%** | **90.9%** | **+0.9%** | **2** |", body)
+        self.assertIn("| b.py | 80.0% | 80.1% | +0.1% | 1 |", body)
+        self.assertIn("| new.py | — | 100.0% | — | 1 |", body)
+        self.assertIn("| wt.py | 90.0% | — | — |  |", body)
+        self.assertIn("| **overall** | 88.0% | 88.2% | +0.2% |  |", body)
+        self.assertIn("| **overall** | 50.0% | 50.0% | +0.0% |  |", body)
+        self.assertIn("_docs coverage skipped: untouched_", body)
+        self.assertIn("<!-- keel.coverage-delta.v1 -->", body)
+
+    def test_defaults_when_shas_missing(self):
+        body = artifacts.render_coverage_delta(codename="C")
+        self.assertIn("base@<base> → head@<head>", body)
+
+
+class TestDepsAuditRenderer(unittest.TestCase):
+    def test_full_report_sorted_with_empty_ecosystem_and_skipped(self):
+        body = artifacts.render_deps_audit(
+            codename="DEPS-T",
+            ecosystems=[
+                "junk",  # non-dict ecosystem is skipped
+                {"name": "pip", "findings": [
+                    {"package": "p1", "version": "1", "severity": "low",
+                     "advisory": "A1", "fix_available": "yes"},
+                    {"package": "p2", "version": "2", "severity": "critical",
+                     "advisory": "A2", "fix_available": "no"},
+                    {"severity": "weird"},  # unknown severity: shown, not counted
+                ]},
+                {"name": "npm", "findings": [], "threshold": "moderate"},
+            ],
+            licences=[{"status": "changed", "package": "x",
+                       "baseline": "MIT", "current": "GPL"}],
+            skipped=["cargo"])
+        self.assertTrue(body.startswith("DEPS-T\n"))
+        self.assertIn("critical: 1 | high: 0 | moderate: 0 | low: 1", body)
+        self.assertLess(body.index("| p2 |"), body.index("| p1 |"))  # critical before low
+        self.assertIn("_No npm findings at or above moderate severity._", body)
+        self.assertIn("## Licences", body)
+        self.assertIn("| changed | x | MIT | GPL |", body)
+        self.assertIn("## Skipped\n\n- cargo", body)
+        self.assertIn("<!-- keel.deps-audit.v1 -->", body)
+
+    def test_security_only_omits_licences_and_skipped(self):
+        body = artifacts.render_deps_audit(
+            codename="D", ecosystems=[], licences=[{"status": "x"}], security_only=True)
+        self.assertNotIn("Licences", body)
+        self.assertNotIn("## Skipped", body)
+
+    def test_licence_no_drift_when_empty(self):
+        body = artifacts.render_deps_audit(codename="D", licences=[])
+        self.assertIn("_licences: no drift_", body)
+
+
+class TestFlakeAuditRenderer(unittest.TestCase):
+    def test_full_report(self):
+        body = artifacts.render_flake_audit(
+            codename="FLAKE-T",
+            summary={"runs": 10, "distinct": 2, "classified": 1, "opened": 1},
+            new_flakes=[
+                "junk",  # non-dict is skipped
+                {"test": "t1", "fail_rate": "3/10", "failures": 3,
+                 "samples": ["u1", "u2"], "signature": "Boom | x"}],
+            tracked=[{"test": "t2", "issue": 7}, {"test": "t3", "issue": "n/a"}],
+            limitations=["history partial"])
+        self.assertTrue(body.startswith("FLAKE-T\n"))
+        self.assertIn("runs examined: 10 · distinct failing tests: 2 · "
+                      "classified flakes: 1 · newly-opened issues: 1", body)
+        self.assertIn("| t1 | 3/10 | 3 | u1, u2 | Boom \\| x |", body)
+        self.assertIn("- t2 — see #7", body)
+        self.assertIn("- t3 — see n/a", body)
+        self.assertIn("## Limitations\n\n- history partial", body)
+        self.assertIn("<!-- keel.flake-audit.v1 -->", body)
+
+    def test_empty_report_omits_optional_sections(self):
+        body = artifacts.render_flake_audit(codename="F")
+        self.assertIn("runs examined: 0 · distinct failing tests: 0 · "
+                      "classified flakes: 0 · newly-opened issues: 0", body)
+        self.assertIn("_no new flakes above threshold_", body)
+        self.assertNotIn("## Already tracked", body)
+        self.assertNotIn("## Limitations", body)
+
+    def test_flake_without_samples_shows_placeholder(self):
+        body = artifacts.render_flake_audit(
+            codename="F",
+            new_flakes=[{"test": "t", "fail_rate": "3/9", "failures": 3, "signature": "s"}])
+        self.assertIn("| t | 3/9 | 3 | — | s |", body)
+
+    def test_count_ignores_boolean_noise(self):
+        body = artifacts.render_flake_audit(codename="F", summary={"runs": True, "classified": 2})
+        self.assertIn("runs examined: 0 ·", body)        # True is not a count
+        self.assertIn("classified flakes: 2 ·", body)
+
+
 class TestExtensionResultRenderer(unittest.TestCase):
     def test_extension_result_has_stable_shape(self):
         body = artifacts.render_extension_result(

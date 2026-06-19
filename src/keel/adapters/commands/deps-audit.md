@@ -121,24 +121,35 @@ tier label on any issue opened in Step 6.
 
 ## Step 5 — build the report comment
 
-A single markdown body whose **literal first line** is the codename
-`DEPS-AUDIT-<DATE>-<UTC_TIMESTAMP>`. **Codename pin (load-bearing):** no blank line above it,
-no leading whitespace, no quoting, no Markdown prefix or surrounding formatting — downstream
-consumers (briefing, future-run search anchors) locate the latest run by the
-`DEPS-AUDIT-<DATE>-` prefix, and any deviation makes them miss it.
+Do **not** hand-write the tables. Assemble the structured audit data and let the renderer own
+the layout — the `critical: n | high: n | moderate: n | low: n` summary line, the per-ecosystem
+tables (sorted most-severe-first, with the `_No <ecosystem> findings at or above <severity>
+severity._` line for an empty one), the licence-drift section (`_licences: no drift_` when
+empty), and the "Skipped" section — then post the rendered body **verbatim**:
 
-Body shape: a summary count line (`critical: n | high: n | moderate: n | low: n`, counting all
-ecosystems that ran, after threshold filtering); one section per in-scope ecosystem (package ·
-version · severity · advisory · fix-available); a licence-drift section (status · package ·
-baseline licence · current licence); and a "Skipped" section.
+```bash
+keel render-report --kind deps-audit --payload deps.json > body.md
+```
 
-Formatting rules:
-- Omit an ecosystem section entirely if it was out of scope.
-- An in-scope ecosystem with zero findings above threshold → a single italic line
-  `_No <ecosystem> findings at or above <severity> severity._` in place of the table.
-- Licence section ran with empty diff → `_licences: no drift_`.
-- Omit "Skipped" if nothing was skipped.
-- Under `--security-only`, omit the licence-drift section and any routine-update rows.
+`deps.json` is one object (pass `"security_only": true` under `--security-only` to drop the
+licence section):
+
+```json
+{ "codename": "DEPS-AUDIT-<DATE>-<UTC_TIMESTAMP>",
+  "ecosystems": [
+    { "name": "<ecosystem>", "threshold": "<severity>",
+      "findings": [{ "package": "<p>", "version": "<v>", "severity": "high",
+                     "advisory": "<id>", "fix_available": "<v|no>" }] }
+  ],
+  "licences": [{ "status": "<changed>", "package": "<p>", "baseline": "<lic>", "current": "<lic>" }],
+  "skipped": ["<ecosystem> (<why>)"],
+  "security_only": false }
+```
+
+**Codename pin (load-bearing):** the `codename` field becomes the rendered body's literal first
+line — `DEPS-AUDIT-<DATE>-<UTC_TIMESTAMP>`, nothing above it — because Step 6 and downstream
+consumers locate the latest run by the `DEPS-AUDIT-<DATE>-` prefix; any deviation makes them
+miss it. Omit an out-of-scope ecosystem by leaving it out of `ecosystems`.
 
 ## Step 6 — post / open issues + route to ship
 

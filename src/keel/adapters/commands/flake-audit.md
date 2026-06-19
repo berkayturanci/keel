@@ -122,24 +122,33 @@ schedule — do not weaken it.
 
 ## Step 5 — build the report
 
-A single markdown body whose **literal first line** is the codename
-`FLAKE-AUDIT-<DATE>-<UTC_TIMESTAMP>`. **Codename pin (load-bearing):** no blank line above it,
-no leading whitespace, no quoting, no Markdown prefix or surrounding formatting — downstream
-consumers locate the run by the `FLAKE-AUDIT-<DATE>-` prefix.
+Do **not** hand-write the tables. Assemble the structured flake data and let the renderer own
+the layout — the summary line, the newly-classified table (test · fail rate · failures · sample
+runs · signature, or `_no new flakes above threshold_` when empty), the already-tracked
+(deduped) list, and the Limitations section — then post the rendered body **verbatim**:
 
-Body: a summary line (runs examined · distinct failing tests · classified flakes ·
-newly-opened issues); a **newly-classified flakes** table (test · fail rate · failures · up to
-3 sample run URLs, most-recent first · first ~5 lines of the failure signature, fenced inline);
-an **already-tracked (deduped)** list (`<name> — see #<existing>`); and a **Limitations**
-section.
+```bash
+keel render-report --kind flake-audit --payload flake.json > body.md
+```
 
-Formatting rules:
-- Zero new flakes → render `_no new flakes above threshold_` instead of the table.
-- Omit "already-tracked" if nothing was deduped.
-- Omit "Limitations" if no degradation occurred; otherwise include every honest caveat (history
-  enumerated commit-by-commit, an artifact download that failed, degraded run-level mode, etc.).
-- Degraded run-level mode → replace the flakes table with a short list of failing runs (commit ·
-  workflow · URL) and add the Limitations bullet that test-level classification was skipped.
+`flake.json` is one object:
+
+```json
+{ "codename": "FLAKE-AUDIT-<DATE>-<UTC_TIMESTAMP>",
+  "summary": { "runs": 0, "distinct": 0, "classified": 0, "opened": 0 },
+  "new_flakes": [{ "test": "<fqn>", "fail_rate": "<f>/<t>", "failures": 3,
+                   "samples": ["<url>", "..."], "signature": "<first lines, inline>" }],
+  "tracked": [{ "test": "<fqn>", "issue": 123 }],
+  "limitations": ["<honest caveat>"] }
+```
+
+Build `new_flakes` most-recent-sample-first, up to 3 sample URLs each. Omit `tracked` /
+`limitations` (or pass `[]`) when empty; the renderer drops those sections. **Codename pin
+(load-bearing):** the `codename` field is the body's literal first line —
+`FLAKE-AUDIT-<DATE>-<UTC_TIMESTAMP>`, nothing above it — the `FLAKE-AUDIT-<DATE>-` anchor
+downstream consumers locate the run by. In **degraded run-level mode** (no per-test history),
+leave `new_flakes` empty and record the failing-run list plus the "test-level classification
+skipped" caveat under `limitations`.
 
 ## Step 6 — open issues per new flake + route to ship
 

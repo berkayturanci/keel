@@ -1979,6 +1979,52 @@ def _cmd_review_cycle_summary(args: argparse.Namespace) -> int:
     return 0
 
 
+_REPORT_RENDERERS = {
+    "coverage": artifacts.render_coverage_delta,
+    "deps-audit": artifacts.render_deps_audit,
+    "flake-audit": artifacts.render_flake_audit,
+}
+
+_REPORT_MARKERS = {
+    "coverage": artifacts.COVERAGE_DELTA_MARKER,
+    "deps-audit": artifacts.DEPS_AUDIT_MARKER,
+    "flake-audit": artifacts.FLAKE_AUDIT_MARKER,
+}
+
+
+def _cmd_render_report(args: argparse.Namespace) -> int:
+    try:
+        payload = json.loads(Path(args.payload).read_text(encoding="utf-8"))
+    except OSError as exc:
+        print(f"cannot read --payload {args.payload}: {exc}", file=sys.stderr)
+        return 1
+    except json.JSONDecodeError as exc:
+        print(f"--payload {args.payload} is not valid JSON: {exc}", file=sys.stderr)
+        return 1
+    if not isinstance(payload, dict):
+        print("--payload must be a JSON object of renderer fields", file=sys.stderr)
+        return 1
+    try:
+        body = _REPORT_RENDERERS[args.kind](**payload)
+    except TypeError as exc:
+        print(f"--payload does not match the {args.kind} report fields: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(
+            {
+                "schema_version": artifacts.SCHEMA_VERSION,
+                "kind": args.kind,
+                "marker": _REPORT_MARKERS[args.kind],
+                "body": body,
+            },
+            indent=2,
+            sort_keys=True,
+        ))
+    else:
+        print(body, end="")
+    return 0
+
+
 def _cmd_post_comment(args: argparse.Namespace) -> int:
     try:
         config = cfg.load_config(args.path)
@@ -4407,6 +4453,18 @@ def build_parser() -> argparse.ArgumentParser:
                        help="embed a run-id marker so an idempotent re-post edits in place")
     p_rcs.add_argument("--json", action="store_true", help="emit structured JSON")
     p_rcs.set_defaults(func=_cmd_review_cycle_summary)
+
+    p_report = sub.add_parser(
+        "render-report",
+        help="render a deterministic reporting comment (coverage / deps-audit / flake-audit)",
+    )
+    p_report.add_argument("--kind", required=True,
+                          choices=("coverage", "deps-audit", "flake-audit"),
+                          help="which reporting artifact to render")
+    p_report.add_argument("--payload", required=True,
+                          help="JSON object of renderer fields supplied by the host")
+    p_report.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_report.set_defaults(func=_cmd_render_report)
 
     p_evidence = sub.add_parser(
         "evidence-verify",

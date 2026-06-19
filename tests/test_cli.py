@@ -7182,5 +7182,59 @@ class TestActivityCli(unittest.TestCase):
             self.assertTrue(err.strip())
 
 
+class TestRenderReport(unittest.TestCase):
+    def _payload(self, value):
+        return _write_raw(json.dumps(value))
+
+    def test_renders_coverage_to_stdout(self):
+        path = self._payload({"codename": "COVERAGE-9-T",
+                              "areas": [{"name": "core", "overall": {"base": 90.0, "head": 91.0}}]})
+        rc, out, _ = run(["render-report", "--kind", "coverage", "--payload", path])
+        self.assertEqual(rc, 0)
+        self.assertTrue(out.startswith("COVERAGE-9-T\n"))
+        self.assertIn("<!-- keel.coverage-delta.v1 -->", out)
+
+    def test_deps_audit_json_carries_kind_and_marker(self):
+        path = self._payload({"codename": "DEPS-T", "ecosystems": [],
+                              "security_only": True})
+        rc, out, _ = run(["render-report", "--kind", "deps-audit", "--payload", path, "--json"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["kind"], "deps-audit")
+        self.assertEqual(data["marker"], "keel.deps-audit.v1")
+        self.assertIn("DEPS-T", data["body"])
+
+    def test_flake_audit_renders(self):
+        path = self._payload({"codename": "FLAKE-T", "new_flakes": []})
+        rc, out, _ = run(["render-report", "--kind", "flake-audit", "--payload", path])
+        self.assertEqual(rc, 0)
+        self.assertIn("_no new flakes above threshold_", out)
+
+    def test_payload_must_be_object(self):
+        path = self._payload(["not", "an", "object"])
+        rc, _, err = run(["render-report", "--kind", "coverage", "--payload", path])
+        self.assertEqual(rc, 1)
+        self.assertIn("must be a JSON object", err)
+
+    def test_missing_payload_file_errors(self):
+        rc, _, err = run(["render-report", "--kind", "coverage",
+                          "--payload", str(Path(_TMP.name) / "nope.json")])
+        self.assertEqual(rc, 1)
+        self.assertIn("cannot read --payload", err)
+
+    def test_invalid_json_errors(self):
+        path = Path(_TMP.name) / f"bad-report-{next(_TMP_COUNTER)}.json"
+        path.write_text("{not json", encoding="utf-8")
+        rc, _, err = run(["render-report", "--kind", "coverage", "--payload", str(path)])
+        self.assertEqual(rc, 1)
+        self.assertIn("is not valid JSON", err)
+
+    def test_mismatched_fields_error(self):
+        path = self._payload({"areas": []})  # missing required codename
+        rc, _, err = run(["render-report", "--kind", "coverage", "--payload", path])
+        self.assertEqual(rc, 1)
+        self.assertIn("does not match the coverage report fields", err)
+
+
 if __name__ == "__main__":
     unittest.main()
