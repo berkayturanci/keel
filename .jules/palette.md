@@ -5,3 +5,6 @@
 ## 2026-06-13 - Screen Reader Context for Scrollable Code Blocks and Semantic Symbols
 **Learning:** Focusable scrollable code blocks need a specific accessible name; generic labels such as "Code snippet" make repeated regions hard to distinguish in screen-reader navigation.
 **Action:** Pair each focusable `<pre>` region with `role="region"` and a distinct `aria-label` that names the content or task. Hide decorative link glyphs with `aria-hidden="true"`, but keep semantic arrows exposed when they convey workflow order.
+## 2024-05-18 - [Add aria-current="page" to active sidebar links]
+**Learning:** For a single-page app or static site with a sidebar, purely relying on a `.on` class for the active link is insufficient for screen readers. Explicitly managing the `aria-current="page"` attribute improves navigation for assistive technologies.
+**Action:** When adding active states to navigation elements in static HTML and JS-driven UIs, always include logic to set/remove `aria-current="page"`.
