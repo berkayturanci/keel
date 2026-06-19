@@ -9,10 +9,13 @@
 #                  (.claude/commands/keel/ + the shared .agents/skills/keel-* skill set)
 #   make plugin    regenerate the committed Claude Code plugin command files (commands/*.md)
 #                  from src/keel/adapters/commands/ — the drift test locks these byte-for-byte
+#   make release-bump VERSION=x.y.z
+#                  bump the version everywhere a release must touch (pyproject, __init__,
+#                  plugin manifest, pinned-install refs) and regenerate all adapter surfaces
 
 PY ?= python3
 
-.PHONY: test lint coverage validate site adapters plugin clean
+.PHONY: test lint coverage validate site adapters plugin release-bump clean
 
 test:
 	PYTHONPATH=src $(PY) -m unittest discover -s tests -v
@@ -38,6 +41,13 @@ adapters:
 
 plugin:
 	PYTHONPATH=src $(PY) -m keel install-adapter plugin --root . --force
+
+release-bump:
+	@test -n "$(VERSION)" || { echo "usage: make release-bump VERSION=x.y.z"; exit 1; }
+	$(PY) scripts/release_bump.py "$(VERSION)"
+	$(MAKE) plugin
+	$(MAKE) adapters
+	@echo "release-bump done. Add a CHANGELOG.md entry for $(VERSION), run the gates, then follow docs/keel/release.md to tag."
 
 clean:
 	rm -rf .coverage htmlcov **/__pycache__ src/**/__pycache__
