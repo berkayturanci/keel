@@ -7210,6 +7210,24 @@ class TestRenderReport(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("_no new flakes above threshold_", out)
 
+    def test_scan_finding_renders_issue_body(self):
+        path = self._payload({"problem": "boom", "location": "a.py:1",
+                              "severity": "major", "source": "regression"})
+        rc, out, _ = run(["render-report", "--kind", "scan-finding", "--payload", path])
+        self.assertEqual(rc, 0)
+        self.assertIn("## Problem\n\nboom", out)
+        self.assertIn("<!-- keel.scan-finding.v1 -->", out)
+
+    def test_triage_audit_json_carries_marker(self):
+        path = self._payload({"issue": 9, "role": "core", "tier": 2,
+                              "rationale": "core path"})
+        rc, out, _ = run(["render-report", "--kind", "triage-audit", "--payload", path, "--json"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["kind"], "triage-audit")
+        self.assertEqual(data["marker"], "keel.triage-audit.v1")
+        self.assertIn("keel triage — #9:", data["body"])
+
     def test_payload_must_be_object(self):
         path = self._payload(["not", "an", "object"])
         rc, _, err = run(["render-report", "--kind", "coverage", "--payload", path])

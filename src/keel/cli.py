@@ -1983,12 +1983,16 @@ _REPORT_RENDERERS = {
     "coverage": artifacts.render_coverage_delta,
     "deps-audit": artifacts.render_deps_audit,
     "flake-audit": artifacts.render_flake_audit,
+    "scan-finding": artifacts.render_scan_finding_issue,
+    "triage-audit": artifacts.render_triage_audit,
 }
 
 _REPORT_MARKERS = {
     "coverage": artifacts.COVERAGE_DELTA_MARKER,
     "deps-audit": artifacts.DEPS_AUDIT_MARKER,
     "flake-audit": artifacts.FLAKE_AUDIT_MARKER,
+    "scan-finding": artifacts.SCAN_FINDING_MARKER,
+    "triage-audit": artifacts.TRIAGE_AUDIT_MARKER,
 }
 
 
@@ -4459,7 +4463,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="render a deterministic reporting comment (coverage / deps-audit / flake-audit)",
     )
     p_report.add_argument("--kind", required=True,
-                          choices=("coverage", "deps-audit", "flake-audit"),
+                          choices=("coverage", "deps-audit", "flake-audit",
+                                   "scan-finding", "triage-audit"),
                           help="which reporting artifact to render")
     p_report.add_argument("--payload", required=True,
                           help="JSON object of renderer fields supplied by the host")

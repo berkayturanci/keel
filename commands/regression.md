@@ -174,12 +174,21 @@ runs cannot race and double-open. Run the whole span inside one shell invocation
 release trap stays alive across the sweep; recover a stale lock by checking the owner PID and
 reclaiming if dead. Area agents in Step 2 are read-only and need no lock.
 
-For each remaining candidate, open a GitHub issue with: a one-line problem statement, the
-`path:line` location, reproduction/evidence (the grep/snippet), the suggested fix, and a
-severity justification. Label by **severity** and by **tier** (tier-3 findings carry the
-tier label). For a promoted regression-of candidate, use the regression-of title and append
-the `regression-of: #N` line as the body's last line. Create labels idempotently. Capture each
-opened issue number.
+For each remaining candidate, render the issue **body** deterministically and open the issue
+with it **verbatim** — never hand-write the body:
+
+```bash
+keel render-report --kind scan-finding --payload finding.json > body.md
+```
+
+`finding.json` is one object: `{ "problem": <one-line statement>, "location": <path:line>,
+"severity": <sev>, "justification": <why this severity>, "evidence": <grep/snippet>,
+"suggested_fix": <fix>, "source": "regression", "regression_of": <N> }` (omit `regression_of`
+unless this is a promoted regression-of candidate). Label by **severity** and by **tier**
+(tier-3 findings carry the tier label). For a promoted candidate, use the `Possible regression
+of #N — <summary>` title and set `"regression_of": N` so the grep-able `regression-of: #N`
+line is the body's literal last line. Create labels idempotently. Capture each opened issue
+number.
 
 Hand each opened fix to **`/keel:ship`** (or a `--delegate` agent) — never auto-merge a fix
 here. `/keel:regression` is scan-and-file only.
@@ -208,4 +217,4 @@ section for the dropped low-confidence findings.
   findings ⇒ same issues) · `/keel:regression` never edits code, pushes, or merges — fixes go
   through `/keel:ship`'s backbone (window + lock + review).
 
-<!-- keel-generated: surface=plugin command=regression keel_version=1.6.5 source_sha256=148d0e8ebc7bc6cbcc8105de5617725b5abdb69818754f5c4ed4445a43543dfb generated_sha256=148d0e8ebc7bc6cbcc8105de5617725b5abdb69818754f5c4ed4445a43543dfb -->
+<!-- keel-generated: surface=plugin command=regression keel_version=1.6.5 source_sha256=0c293379fc0d500d0df8951d6b41a9b055590575b909e4582c23572ee90965fd generated_sha256=0c293379fc0d500d0df8951d6b41a9b055590575b909e4582c23572ee90965fd -->

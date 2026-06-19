@@ -206,9 +206,13 @@ For each surviving finding, open a GitHub issue:
   consistent `[review-all-day] ` prefix (with the trailing space) character-for-character.
 - **Labels**: a base `review-finding` label, plus a `bug` label when the category is
   `bug-insert`, `regression`, or `security`. Create labels idempotently.
-- **Body**: the source commit (SHA · branch(es) · authored date), the `path:line` location,
-  the problem (DESCRIPTION), the suggested fix, and a detection footer naming this command,
-  the codename, and the window `[SINCE, UNTIL]`.
+- **Body**: render it deterministically and post the rendered body **verbatim** — never
+  hand-write it: `keel render-report --kind scan-finding --payload finding.json > body.md`.
+  Build `finding.json` as one object: `{ "problem": <DESCRIPTION>, "location": <path:line>,
+  "severity": <SEVERITY>, "justification": <CATEGORY>, "evidence": <source commit SHA ·
+  branch(es) · authored date>, "suggested_fix": <fix>, "source": "review-all-day (window
+  [SINCE, UNTIL], <codename>)" }`. The renderer owns the section layout and the provenance
+  marker.
 
 If `gh issue create` fails (rate limit / network / auth), record the failure, continue with
 the rest, and report the failed count in Step 6 — do NOT abort the whole run on one hit.

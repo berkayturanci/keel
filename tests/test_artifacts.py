@@ -386,6 +386,56 @@ class TestFlakeAuditRenderer(unittest.TestCase):
         self.assertIn("classified flakes: 2 ·", body)
 
 
+class TestScanFindingRenderer(unittest.TestCase):
+    def test_full_issue_body_with_regression_of_as_last_line(self):
+        body = artifacts.render_scan_finding_issue(
+            problem="Null deref in parser", location="src/p.py:42", severity="major",
+            justification="crashes on empty input", evidence="if x:\n  y",
+            suggested_fix="guard x", source="regression", regression_of=120)
+        self.assertIn("## Problem\n\nNull deref in parser", body)
+        self.assertIn("## Location\n\n`src/p.py:42`", body)
+        self.assertIn("major — crashes on empty input", body)
+        self.assertIn("```\nif x:\n  y\n```", body)
+        self.assertIn("## Suggested fix\n\nguard x", body)
+        self.assertIn("Found by keel regression.", body)
+        self.assertIn("<!-- keel.scan-finding.v1 -->", body)
+        self.assertTrue(body.rstrip().endswith("regression-of: #120"))
+
+    def test_defaults_and_no_regression_line(self):
+        body = artifacts.render_scan_finding_issue()
+        self.assertIn("A scan finding was reported without a problem statement.", body)
+        self.assertIn("`unknown`", body)
+        self.assertIn("minor — no justification recorded", body)
+        self.assertIn("Found by keel scan.", body)
+        self.assertNotIn("regression-of:", body)
+        self.assertTrue(body.rstrip().endswith("<!-- keel.scan-finding.v1 -->"))
+
+
+class TestTriageAuditRenderer(unittest.TestCase):
+    def test_full_comment_with_run_id_and_numeric_tier(self):
+        body = artifacts.render_triage_audit(
+            issue=77, role="core", priority="priority:high", status="status:in-progress",
+            tier=3, rationale="Touches tier-3 orchestrator path.", run_id="run-9:triage-77")
+        self.assertTrue(body.startswith("keel.triage-audit.v1\n"))
+        self.assertIn("keel triage — #77: role: core · priority: priority:high · "
+                      "status: status:in-progress · tier: 3", body)
+        self.assertIn("Touches tier-3 orchestrator path.", body)
+        self.assertIn("<!-- keel.run-id: run-9:triage-77 -->", body)
+
+    def test_defaults_without_run_id(self):
+        body = artifacts.render_triage_audit(issue=5)
+        self.assertIn("keel triage — #5: role: unassigned · priority: unset · "
+                      "status: unset · tier: n/a", body)
+        self.assertIn("Classified from the existing label set.", body)
+        self.assertNotIn("keel.run-id", body)
+
+    def test_scalar_tier_handles_string_and_boolean(self):
+        string_tier = artifacts.render_triage_audit(issue=1, tier="2")
+        self.assertIn("tier: 2", string_tier)
+        boolean_tier = artifacts.render_triage_audit(issue=1, tier=True)  # bool → fallback
+        self.assertIn("tier: n/a", boolean_tier)
+
+
 class TestExtensionResultRenderer(unittest.TestCase):
     def test_extension_result_has_stable_shape(self):
         body = artifacts.render_extension_result(

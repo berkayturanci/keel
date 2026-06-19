@@ -241,10 +241,12 @@ DRY-RUN — proposed classification
 
 For each issue, in order:
 
-1. Post one audit comment:
-   `auto-triaged: <labels> (risk: <tier>) — <reasoning>`
-   where `<labels>` is the comma-joined set of labels actually being added (not
-   pre-existing ones) and `<reasoning>` is the classifier's one sentence.
+1. Render the audit comment deterministically and post it **verbatim** — never hand-write it:
+   `keel render-report --kind triage-audit --payload audit.json > comment.md`, with
+   `audit.json` = `{ "issue": <N>, "role": <role|->, "priority": <priority:*|->, "status":
+   <status:*|->, "tier": <tier>, "rationale": <classifier's one sentence>, "run_id":
+   "<RUN>:triage-<N>" }`. The renderer owns the layout + marker; the embedded run-id makes a
+   re-run **edit the existing comment in place** instead of posting a duplicate.
 2. Apply the labels additively (never remove a label; never pass a label outside
    the closed vocabulary). In MCP mode, write the explicit union of existing + new
    labels.
@@ -291,4 +293,4 @@ writes. Hand ready items to `/keel:ship`.
   priority/status families) must exist in the repo. If any label is missing, fix
   the repo labels (not this command) before invoking.
 
-<!-- keel-generated: surface=skills command=triage keel_version=1.6.5 source_sha256=11f13596a4347f6c02ed8f45ee21e844271ed251ffa9cdfd71617f63caeb072f generated_sha256=e938d4dd0534226f4b8271e7f375142b9e901c4aa7324ed822b90cd4a7d3438d -->
+<!-- keel-generated: surface=skills command=triage keel_version=1.6.5 source_sha256=5323541c69418c01b9fee083f7e4d79cdad44f030b23fadd538fc334ed2abf7e generated_sha256=db6420bc76dfaa7e46ff6b11cfac19ef366e0bec02ecd6620a7c7006c54a5070 -->

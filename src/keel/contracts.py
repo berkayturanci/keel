@@ -272,6 +272,13 @@ def build_command_contract(
             config=config,
             transport=transport,
         )
+    if command == "triage":
+        contract["triage_contract"] = {
+            "scope": "label-only-advisory",
+            "one_comment_per_issue": True,
+            "renderer": "keel.artifacts.render_triage_audit",
+            "marker": artifacts.TRIAGE_AUDIT_MARKER,
+        }
     if command in {"ship", "pr-loop", "review-cycle", "work-block", "overnight"}:
         contract["review_merge_contract"] = ship_decisions.resolve_review_contract(
             tier=review_tier,
@@ -1107,6 +1114,10 @@ def scan_contract_as_dict(
             if isinstance(paths, list)
         ],
         "risk_globs": list(config.knobs.tier3_globs),
+        "scan_finding": {
+            "renderer": "keel.artifacts.render_scan_finding_issue",
+            "marker": artifacts.SCAN_FINDING_MARKER,
+        },
         "issue_labels": {
             key: list(value)
             for key, value in sorted(issue_labels.items())

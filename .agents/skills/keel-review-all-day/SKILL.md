@@ -209,9 +209,13 @@ For each surviving finding, open a GitHub issue:
   consistent `[review-all-day] ` prefix (with the trailing space) character-for-character.
 - **Labels**: a base `review-finding` label, plus a `bug` label when the category is
   `bug-insert`, `regression`, or `security`. Create labels idempotently.
-- **Body**: the source commit (SHA · branch(es) · authored date), the `path:line` location,
-  the problem (DESCRIPTION), the suggested fix, and a detection footer naming this command,
-  the codename, and the window `[SINCE, UNTIL]`.
+- **Body**: render it deterministically and post the rendered body **verbatim** — never
+  hand-write it: `keel render-report --kind scan-finding --payload finding.json > body.md`.
+  Build `finding.json` as one object: `{ "problem": <DESCRIPTION>, "location": <path:line>,
+  "severity": <SEVERITY>, "justification": <CATEGORY>, "evidence": <source commit SHA ·
+  branch(es) · authored date>, "suggested_fix": <fix>, "source": "review-all-day (window
+  [SINCE, UNTIL], <codename>)" }`. The renderer owns the section layout and the provenance
+  marker.
 
 If `gh issue create` fails (rate limit / network / auth), record the failure, continue with
 the rest, and report the failed count in Step 6 — do NOT abort the whole run on one hit.
@@ -271,4 +275,4 @@ Always print the final report on exit, even if partial.
 - Fail-soft (a missing tool/gate degrades to a skipped check, never aborts) · deterministic
   ordering (same commits ⇒ same findings ⇒ same issues).
 
-<!-- keel-generated: surface=skills command=review-all-day keel_version=1.6.5 source_sha256=842cce774206617213e7abe7c71913873a7cf78c1bcfd8b65800440611f9b6c5 generated_sha256=080d00e9b5eb4e13b5e043d3f2b4a46b403e4e0d24820bf449c90b33a826f4e1 -->
+<!-- keel-generated: surface=skills command=review-all-day keel_version=1.6.5 source_sha256=a869b7917f756a31b726c0bff423cf44cbed7573cd4eaf66e3dfb2ab09cf28eb generated_sha256=f7807345c19b1d7b9b2c0816576d5cbd6b2a93e547d2c6dcc3008c6749adee2b -->

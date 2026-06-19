@@ -20,6 +20,8 @@ REVIEW_CYCLE_SUMMARY_MARKER = "keel.review-cycle-summary.v1"
 COVERAGE_DELTA_MARKER = "keel.coverage-delta.v1"
 DEPS_AUDIT_MARKER = "keel.deps-audit.v1"
 FLAKE_AUDIT_MARKER = "keel.flake-audit.v1"
+SCAN_FINDING_MARKER = "keel.scan-finding.v1"
+TRIAGE_AUDIT_MARKER = "keel.triage-audit.v1"
 
 #: Severity buckets that drive the consolidated histogram + merge recommendation,
 #: in must-fix → advisory order. ``critical`` folds into ``blocker`` (must-fix).
@@ -362,6 +364,14 @@ def _issue_ref(value: Any) -> str:
     return _value(value, "?")
 
 
+def _scalar(value: Any, fallback: str) -> str:
+    if isinstance(value, bool):
+        return fallback
+    if isinstance(value, int):
+        return str(value)
+    return _value(value, fallback)
+
+
 def _is_number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
@@ -474,6 +484,90 @@ def _deps_licence_lines(licences: Any) -> list[str]:
         for row in rows
     )
     return lines
+
+
+def render_scan_finding_issue(
+    *,
+    problem: str | None = None,
+    location: str | None = None,
+    severity: str | None = None,
+    justification: str | None = None,
+    evidence: str | None = None,
+    suggested_fix: str | None = None,
+    source: str | None = None,
+    regression_of: int | None = None,
+) -> str:
+    """Render the deterministic issue body for a scan finding.
+
+    Shared by ``regression`` and ``review-all-day`` — the body carries the
+    problem statement, ``path:line`` location, severity + justification, fenced
+    evidence, and suggested fix, plus a provenance marker. When ``regression_of``
+    is supplied the grep-able ``regression-of: #N`` cross-reference is the body's
+    literal last line.
+    """
+    lines = [
+        "## Problem",
+        "",
+        _value(problem, "A scan finding was reported without a problem statement."),
+        "",
+        "## Location",
+        "",
+        f"`{_value(location, 'unknown')}`",
+        "",
+        "## Severity",
+        "",
+        f"{_value(severity, 'minor')} — {_value(justification, 'no justification recorded')}",
+        "",
+        "## Evidence",
+        "",
+        "```",
+        _value(evidence, "none provided"),
+        "```",
+        "",
+        "## Suggested fix",
+        "",
+        _value(suggested_fix, "none proposed"),
+        "",
+        f"Found by keel {_value(source, 'scan')}.",
+        "",
+        f"<!-- {SCAN_FINDING_MARKER} -->",
+    ]
+    if isinstance(regression_of, int) and not isinstance(regression_of, bool):
+        lines.extend(["", f"regression-of: #{regression_of}"])
+    return "\n".join(lines) + "\n"
+
+
+def render_triage_audit(
+    *,
+    issue: int | None = None,
+    role: str | None = None,
+    priority: str | None = None,
+    status: str | None = None,
+    tier: int | str | None = None,
+    rationale: str | None = None,
+    run_id: str | None = None,
+) -> str:
+    """Render the deterministic, label-only triage audit comment.
+
+    One comment per triaged issue: the applied role / priority / status labels and
+    risk tier on one line, then the classifier's rationale. When ``run_id`` is
+    supplied an idempotent re-post edits the existing comment in place.
+    """
+    labels = " · ".join([
+        f"role: {_value(role, 'unassigned')}",
+        f"priority: {_value(priority, 'unset')}",
+        f"status: {_value(status, 'unset')}",
+        f"tier: {_scalar(tier, 'n/a')}",
+    ])
+    lines = [
+        TRIAGE_AUDIT_MARKER,
+        f"keel triage — {_issue_ref(issue)}: {labels}",
+        "",
+        _value(rationale, "Classified from the existing label set."),
+    ]
+    if isinstance(run_id, str) and run_id.strip():
+        lines.extend(["", f"<!-- keel.run-id: {run_id.strip()} -->"])
+    return "\n".join(lines) + "\n"
 
 
 def render_extension_result(

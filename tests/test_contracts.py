@@ -534,6 +534,21 @@ class TestBuildCommandContract(unittest.TestCase):
         self.assertTrue(review_all_day["workflow_profile"]["first_class_variant"])
         self.assertIn("scan_contract", review_all_day)
         self.assertIn("issue_prefix", review_all_day["workflow_profile"]["shared_primitives"])
+        self.assertEqual(
+            regression["scan_contract"]["scan_finding"]["marker"], "keel.scan-finding.v1")
+
+        triage = contracts.build_command_contract(
+            command="triage",
+            config=config,
+            loaded=loaded,
+            plan=plan,
+            requirement=requirement,
+            evaluation=runtime.evaluate(requirement, report),
+            transport=github_transport.resolve(report),
+        )
+        self.assertEqual(triage["triage_contract"]["marker"], "keel.triage-audit.v1")
+        self.assertEqual(
+            triage["triage_contract"]["renderer"], "keel.artifacts.render_triage_audit")
 
     def test_feedback_workflow_policy_preserves_command_specific_review_loops(self):
         config = cfg.ProjectConfig(
