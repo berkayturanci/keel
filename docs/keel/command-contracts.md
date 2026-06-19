@@ -371,6 +371,10 @@ Markdown verbatim when available.
   `evidence_require_distinct_vendors` check
 - `jury_verdict_template`: marker-based jury verdict carrying `keel.jury-verdict.v1` and
   `head: <sha>` when available
+- `review_cycle_summary`: marker-based multi-reviewer summary carrying
+  `keel.review-cycle-summary.v1` — one section per reviewer plus a Consolidated Summary whose
+  severity histogram drives the merge recommendation (rendered via
+  `keel review-cycle-summary`, used by `/keel:review-cycle` and `/keel:pr-loop`)
 - `extension_result_template`: stable `keel.extension-result.v1` shape for slot/extension
   status, mode, summary, artifacts, and follow-up references
 - `step_handoff`: stable `keel.step-handoff.v1` shape for step-to-step handoff status,
@@ -779,6 +783,15 @@ keel core:
 - `flake-audit` declares the `FLAKE-AUDIT-<DATE>-` run anchor, one-issue-per-flake
   dedupe title, across-run-disagreement-only classification, `fail_count >= 3`, consistent
   failure exclusion, degraded run-level limitations, and no auto-disable behavior.
+
+Each reporting contract also names the deterministic renderer + marker for its comment body —
+`render_coverage_delta`/`keel.coverage-delta.v1`, `render_deps_audit`/`keel.deps-audit.v1`,
+`render_flake_audit`/`keel.flake-audit.v1` — so the adapter renders via `keel render-report
+--kind <kind>` and posts verbatim instead of composing the tables in prose. The `scan_contract`
+(`regression`, `review-all-day`) likewise exposes a `scan_finding` renderer
+(`render_scan_finding_issue`/`keel.scan-finding.v1`) for per-finding issue bodies, and the
+`triage` command's `triage_contract` exposes `render_triage_audit`/`keel.triage-audit.v1` for
+its label-only audit comment.
 
 ## Workflow profiles
 

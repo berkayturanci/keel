@@ -239,7 +239,8 @@ keel post-comment .keel/project.yaml --root . \
 ```
 
 Supported artifacts are `closure-comment`, `issue-update`, `review-verdict`,
-`jury-verdict`, `extension-result`, `step-handoff`, and `run-control-halt`. When
+`jury-verdict`, `review-cycle-summary`, `extension-result`, `step-handoff`, and
+`run-control-halt`. When
 `--run-id` is supplied, the command edits the latest existing comment that has the same
 marker and run id; otherwise it posts a new comment. Bodies that are missing the expected
 marker, or that look like a literal `@/tmp/...` placeholder, are rejected before any
@@ -253,6 +254,50 @@ Raw adapter `gh issue comment`, `gh pr comment`, and hand-rolled comment API cal
 spec violation for ship evidence artifacts: adapters should delegate closure comments,
 issue updates, review verdicts, and jury verdicts to this command so marker validation,
 transport selection, and same-run idempotency are enforced in core.
+
+## `keel review-cycle-summary --findings FILE [--head-sha SHA] [--run-id ID] [--json]`
+
+Render the deterministic multi-reviewer review-cycle summary comment from a structured
+findings bundle, so `/keel:review-cycle` and `/keel:pr-loop` post a byte-stable consolidated
+comment instead of improvising the layout. `--findings` is a JSON array of reviewer objects
+(`{ "codename", "focus", "verdict", "findings": [{"severity","location","description",
+"suggested_fix"}], "clean_areas": [...] }`). The renderer emits one section per reviewer plus a
+Consolidated Summary whose severity histogram — not the verdict strings — drives the merge
+recommendation (`critical` folds into `blocker`). It prints the rendered body to stdout (or a
+`{marker, reviewers, body}` object under `--json`); post it with `keel post-comment --artifact
+review-cycle-summary`. When `--run-id` is supplied an invisible `keel.run-id` marker is embedded
+so an idempotent re-post edits the existing comment in place.
+
+```bash
+keel review-cycle-summary --findings cycle.json --head-sha "$SHA" \
+  --run-id "$RUN:cycle-summary" > summary.md
+keel post-comment .keel/project.yaml --root . --target pr:456 \
+  --artifact review-cycle-summary --body-file summary.md --run-id "$RUN:cycle-summary"
+```
+
+## `keel render-report --kind coverage|deps-audit|flake-audit|scan-finding|triage-audit --payload FILE [--json]`
+
+Render a deterministic reporting body from a structured JSON payload, so the audit/report
+adapters post byte-stable output instead of composing tables in prose. `--payload` is a JSON
+object of the selected renderer's fields; the command prints the rendered Markdown to stdout
+(or a `{kind, marker, body}` object under `--json`). The five kinds and their markers:
+
+| `--kind` | renderer | marker | used by |
+|---|---|---|---|
+| `coverage` | `render_coverage_delta` | `keel.coverage-delta.v1` | `/keel:coverage` |
+| `deps-audit` | `render_deps_audit` | `keel.deps-audit.v1` | `/keel:deps-audit` |
+| `flake-audit` | `render_flake_audit` | `keel.flake-audit.v1` | `/keel:flake-audit` |
+| `scan-finding` | `render_scan_finding_issue` | `keel.scan-finding.v1` | `/keel:regression`, `/keel:review-all-day` |
+| `triage-audit` | `render_triage_audit` | `keel.triage-audit.v1` | `/keel:triage` |
+
+The reporting kinds keep their load-bearing codename (`COVERAGE-<PR>-…` etc.) as the rendered
+body's first line so the adapter's find-by-prefix idempotency still works; the timestamped
+codename is supplied in the payload, so the renderer stays pure.
+
+```bash
+keel render-report --kind coverage --payload coverage.json > body.md
+keel render-report --kind triage-audit --payload audit.json --json
+```
 
 ## `keel review <project.yaml> --pr N --reviews FILE [--root DIR] [--issue N] [--closure FILE] [--reviewers 1|2|3] [--head-sha SHA] [--changed-file PATH] [--run-id ID] [--verify] [--dry-run] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--json]`
 
