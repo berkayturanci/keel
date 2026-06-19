@@ -616,5 +616,85 @@ def _config_without_owner() -> str:
     return "\n".join(kept) + "\n"
 
 
+class TestParseCycleReviewers(unittest.TestCase):
+    def test_parses_a_list_of_reviewer_objects(self):
+        reviewers = review.parse_cycle_reviewers([
+            {"codename": "Alpha", "verdict": "LGTM", "findings": []},
+            {"codename": "Beta", "verdict": "needs fixes"},
+        ])
+        self.assertEqual(len(reviewers), 2)
+        self.assertEqual(reviewers[0]["codename"], "Alpha")
+        self.assertEqual(reviewers[1]["verdict"], "needs fixes")
+
+    def test_copies_each_entry(self):
+        source = {"codename": "Alpha"}
+        reviewers = review.parse_cycle_reviewers([source])
+        self.assertIsNot(reviewers[0], source)
+
+    def test_rejects_non_list_payload(self):
+        with self.assertRaises(review.ReviewError) as ctx:
+            review.parse_cycle_reviewers({"codename": "Alpha"})
+        self.assertIn("JSON array", str(ctx.exception))
+
+    def test_rejects_non_object_entry(self):
+        with self.assertRaises(review.ReviewError) as ctx:
+            review.parse_cycle_reviewers(["nope"])
+        self.assertIn("reviewer #1 must be a JSON object", str(ctx.exception))
+
+
+class TestReviewCycleSummaryCli(unittest.TestCase):
+    def _findings(self):
+        return [{
+            "codename": "Alpha-2269",
+            "focus": "Security",
+            "verdict": "LGTM-with-suggestions",
+            "findings": [{"severity": "minor", "location": "a.js:1",
+                          "description": "d", "suggested_fix": "f"}],
+        }]
+
+    def test_renders_body_to_stdout(self):
+        path = _write(self._findings())
+        rc, out, _ = run([
+            "review-cycle-summary", "--findings", path,
+            "--head-sha", "abc123", "--run-id", "run-1:cycle-summary",
+        ])
+        self.assertEqual(rc, 0)
+        self.assertTrue(out.startswith("keel.review-cycle-summary.v1\n"))
+        self.assertIn("head: abc123", out)
+        self.assertIn("## Reviewer: Alpha-2269 (Focus: Security)", out)
+        self.assertIn("Merge recommendation: ⚠️ request changes", out)
+        self.assertIn("<!-- keel.run-id: run-1:cycle-summary -->", out)
+
+    def test_json_output_carries_marker_and_body(self):
+        path = _write(self._findings())
+        rc, out, _ = run(["review-cycle-summary", "--findings", path, "--json"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["marker"], "keel.review-cycle-summary.v1")
+        self.assertEqual(data["reviewers"], 1)
+        self.assertIn("## Consolidated Summary", data["body"])
+
+    def test_missing_findings_file_errors(self):
+        rc, _, err = run([
+            "review-cycle-summary", "--findings",
+            str(Path(_TMP.name) / "does-not-exist.json"),
+        ])
+        self.assertEqual(rc, 1)
+        self.assertIn("cannot read --findings", err)
+
+    def test_invalid_json_errors(self):
+        path = Path(_TMP.name) / f"bad-{next(_TMP_COUNTER)}.json"
+        path.write_text("{not json", encoding="utf-8")
+        rc, _, err = run(["review-cycle-summary", "--findings", str(path)])
+        self.assertEqual(rc, 1)
+        self.assertIn("is not valid JSON", err)
+
+    def test_malformed_payload_errors(self):
+        path = _write({"codename": "Alpha"})  # object, not the required array
+        rc, _, err = run(["review-cycle-summary", "--findings", path])
+        self.assertEqual(rc, 1)
+        self.assertIn("JSON array", err)
+
+
 if __name__ == "__main__":
     unittest.main()

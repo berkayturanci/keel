@@ -16,6 +16,12 @@ EXTENSION_RESULT_MARKER = "<!-- keel.extension-result.v1 -->"
 ISSUE_UPDATE_MARKER = "<!-- keel.issue-update.v1 -->"
 STEP_HANDOFF_MARKER = "<!-- keel.step-handoff.v1 -->"
 RUN_CONTROL_HALT_MARKER = "<!-- keel.run-control-halt.v1 -->"
+REVIEW_CYCLE_SUMMARY_MARKER = "keel.review-cycle-summary.v1"
+
+#: Severity buckets that drive the consolidated histogram + merge recommendation,
+#: in must-fix → advisory order. ``critical`` folds into ``blocker`` (must-fix).
+SEVERITY_ORDER = ("blocker", "major", "minor", "nit")
+_SEVERITY_ALIASES = {"critical": "blocker"}
 
 
 def contract_as_dict() -> dict[str, Any]:
@@ -29,6 +35,7 @@ def contract_as_dict() -> dict[str, Any]:
             "issue_update": "keel.artifacts.render_issue_update",
             "review_verdict": "keel.artifacts.render_review_verdict",
             "jury_verdict": "keel.artifacts.render_jury_verdict",
+            "review_cycle_summary": "keel.artifacts.render_review_cycle_summary",
             "extension_result": "keel.artifacts.render_extension_result",
             "step_handoff": "keel.artifacts.render_step_handoff",
             "run_control_halt": "keel.artifacts.render_run_control_halt",
@@ -36,6 +43,7 @@ def contract_as_dict() -> dict[str, Any]:
         "markers": {
             "review_verdict": evidence.REVIEW_VERDICT_MARKER,
             "jury_verdict": evidence.JURY_VERDICT_MARKER,
+            "review_cycle_summary": REVIEW_CYCLE_SUMMARY_MARKER,
             "issue_update": ISSUE_UPDATE_MARKER,
             "extension_result": EXTENSION_RESULT_MARKER,
             "step_handoff": STEP_HANDOFF_MARKER,
@@ -176,6 +184,40 @@ def render_jury_verdict(
     return "\n".join(lines) + "\n"
 
 
+def render_review_cycle_summary(
+    *,
+    reviewers: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
+    head_sha: str | None = None,
+    run_id: str | None = None,
+) -> str:
+    """Render the deterministic multi-reviewer review-cycle summary comment.
+
+    Emits one section per reviewer (codename · focus · verdict · a
+    ``Severity | File:Line | Description | Suggested Fix`` finding table) followed
+    by a consolidated summary whose severity histogram — not the verdict strings —
+    is the source of truth for the merge recommendation. The output is byte-stable
+    for a given input so the orchestrator posts it verbatim instead of improvising
+    a layout. When ``run_id`` is supplied an invisible ``keel.run-id`` marker is
+    appended so an idempotent re-post edits the existing comment in place.
+    """
+    clean = [reviewer for reviewer in reviewers if isinstance(reviewer, dict)]
+    lines = [
+        REVIEW_CYCLE_SUMMARY_MARKER,
+        f"head: {_value(head_sha, '<head-sha>')}",
+        "",
+    ]
+    for index, reviewer in enumerate(clean):
+        if index:
+            lines.extend(["", "---", ""])
+        lines.extend(_cycle_reviewer_lines(reviewer))
+    if clean:
+        lines.extend(["", "---", ""])
+    lines.extend(_cycle_summary_lines(clean))
+    if isinstance(run_id, str) and run_id.strip():
+        lines.extend(["", f"<!-- keel.run-id: {run_id.strip()} -->"])
+    return "\n".join(lines) + "\n"
+
+
 def render_extension_result(
     *,
     slot: str,
@@ -274,6 +316,130 @@ def _finding_lines(findings: list[dict[str, Any]] | tuple[dict[str, Any], ...]) 
 def _string_bullets(values: list[str] | tuple[str, ...]) -> list[str]:
     return [f"  - {value.strip()}" for value in values if isinstance(value, str)
             and value.strip()]
+
+
+def _string_list(values: Any) -> list[str]:
+    if not isinstance(values, (list, tuple)):
+        return []
+    return [value.strip() for value in values if isinstance(value, str) and value.strip()]
+
+
+def _canonical_severity(severity: str) -> str:
+    lowered = severity.strip().lower()
+    return _SEVERITY_ALIASES.get(lowered, lowered)
+
+
+def _severity_rank(severity: str) -> int:
+    canonical = _canonical_severity(severity)
+    return SEVERITY_ORDER.index(canonical) if canonical in SEVERITY_ORDER else len(SEVERITY_ORDER)
+
+
+def _cell(value: str) -> str:
+    """Escape a non-empty finding string for a Markdown table cell.
+
+    Callers pass values already normalised through ``_value`` (never blank), so
+    escaping the table delimiter and folding newlines keeps the row intact.
+    """
+    return value.replace("\n", " ").replace("|", "\\|")
+
+
+def _cycle_findings(raw: Any) -> list[dict[str, str]]:
+    if not isinstance(raw, (list, tuple)):
+        return []
+    findings = [
+        {
+            "severity": _value(item.get("severity"), "nit"),
+            "location": _value(item.get("location"), "—"),
+            "description": _value(item.get("description"), "—"),
+            "suggested_fix": _value(item.get("suggested_fix"), "—"),
+        }
+        for item in raw
+        if isinstance(item, dict)
+    ]
+    findings.sort(key=lambda finding: _severity_rank(finding["severity"]))
+    return findings
+
+
+def _cycle_reviewer_lines(reviewer: dict[str, Any]) -> list[str]:
+    lines = [
+        f"## Reviewer: {_value(reviewer.get('codename'), 'Reviewer')} "
+        f"(Focus: {_value(reviewer.get('focus'), 'general review')})",
+        "",
+        f"Verdict: {_value(reviewer.get('verdict'), 'LGTM')}",
+        "",
+    ]
+    findings = _cycle_findings(reviewer.get("findings"))
+    if findings:
+        lines.append("| Severity | File:Line | Description | Suggested Fix |")
+        lines.append("| --- | --- | --- | --- |")
+        lines.extend(
+            f"| {_cell(finding['severity'])} | {_cell(finding['location'])} | "
+            f"{_cell(finding['description'])} | {_cell(finding['suggested_fix'])} |"
+            for finding in findings
+        )
+    else:
+        lines.append("No findings.")
+    clean_areas = _string_list(reviewer.get("clean_areas"))
+    if clean_areas:
+        lines.extend(["", f"Clean areas: {', '.join(clean_areas)}"])
+    return lines
+
+
+def _cycle_histogram(reviewers: list[dict[str, Any]]) -> dict[str, int]:
+    histogram = dict.fromkeys(SEVERITY_ORDER, 0)
+    for reviewer in reviewers:
+        for finding in _cycle_findings(reviewer.get("findings")):
+            canonical = _canonical_severity(finding["severity"])
+            if canonical in histogram:
+                histogram[canonical] += 1
+    return histogram
+
+
+def _aggregate_clean_areas(reviewers: list[dict[str, Any]]) -> list[str]:
+    seen: list[str] = []
+    for reviewer in reviewers:
+        for area in _string_list(reviewer.get("clean_areas")):
+            if area not in seen:
+                seen.append(area)
+    return seen
+
+
+def _merge_recommendation(reviewers: list[dict[str, Any]], histogram: dict[str, int]) -> str:
+    needs_fixes = any(
+        not _value(reviewer.get("verdict"), "LGTM").lower().startswith("lgtm")
+        for reviewer in reviewers
+    )
+    if needs_fixes or histogram["blocker"] > 0:
+        return "❌ block"
+    if histogram["major"] + histogram["minor"] > 0:
+        return "⚠️ request changes"
+    if histogram["nit"] > 0:
+        return "✅ approve (cosmetic nits)"
+    return "✅ approve"
+
+
+def _cycle_summary_lines(reviewers: list[dict[str, Any]]) -> list[str]:
+    histogram = _cycle_histogram(reviewers)
+    lines = [
+        "## Consolidated Summary",
+        "",
+        "Severity Histogram: "
+        + " · ".join(f"{severity} {histogram[severity]}" for severity in SEVERITY_ORDER),
+        "",
+        "Reviewer verdicts:",
+    ]
+    if reviewers:
+        lines.extend(
+            f"- {_value(reviewer.get('codename'), 'Reviewer')}: "
+            f"{_value(reviewer.get('verdict'), 'LGTM')}"
+            for reviewer in reviewers
+        )
+    else:
+        lines.append("- none")
+    areas = _aggregate_clean_areas(reviewers)
+    lines.extend(["", f"Clean areas: {', '.join(areas) if areas else 'none reported'}"])
+    lines.extend(["", f"Merge recommendation: {_merge_recommendation(reviewers, histogram)}"])
+    return lines
 
 
 def _closing_reference(issue_number: int | None) -> str:

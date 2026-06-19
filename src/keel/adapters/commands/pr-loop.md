@@ -164,9 +164,24 @@ gate findings join the reviewer findings on the same severity scale.
 ## Step 9 — Post findings (per `--review-comments`, inline-hybrid default)
 
 - **inline** (default): anchor every **critical/major** finding as an inline comment on its
-  `file:line`, plus a single summary comment. critical/major = **block**; minor = **suggest**;
-  nit = **advisory**.
-- **summary**: post one consolidated comment with all findings in a severity table.
+  `file:line`, plus the single rendered summary comment below. critical/major = **block**;
+  minor = **suggest**; nit = **advisory**.
+- **summary**: post only the single rendered summary comment below.
+
+The consolidated comment is **not** hand-written. Collect the reviewer's findings into a
+structured array (one object: `codename` · `focus` · `verdict` · `findings[]` with
+`severity` / `location` / `description` / `suggested_fix` · `clean_areas`), then render and
+post it verbatim — the renderer owns the severity table, histogram, and merge recommendation:
+
+```bash
+keel review-cycle-summary --findings cycle.json --head-sha "$SHA" \
+  --run-id "$RUN:cycle-summary" > summary.md
+keel post-comment .keel/project.yaml --root . --target pr:<PR> \
+  --artifact review-cycle-summary --body-file summary.md --run-id "$RUN:cycle-summary"
+```
+
+The embedded `--run-id` makes a re-post **edit the existing summary in place** — so the
+per-push reviewer fan-out never appends duplicate summary comments.
 
 ## Step 10 — Re-check CI
 

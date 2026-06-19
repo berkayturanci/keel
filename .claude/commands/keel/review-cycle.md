@@ -133,11 +133,15 @@ the comment table and the returned counts use the same split, no parallel taxono
 ## Step 4 — Post findings (per `--review-comments`, inline-hybrid default)
 
 - **inline** (default, "inline-hybrid"): anchor every **critical/major** finding as an
-  inline comment on its `file:line`, plus one summary comment per reviewer. critical/major =
-  **block**; minor = **suggest**; nit = **advisory**.
-- **summary**: each reviewer posts a single consolidated comment with all its findings in a
-  severity table (`blocker / major / minor / nit` rows; omit empty rows; "No findings" if
-  clean).
+  inline comment on its `file:line`, plus the single rendered consolidated comment from
+  Step 4b (which carries each reviewer's own section). critical/major = **block**;
+  minor = **suggest**; nit = **advisory**.
+- **summary**: skip the inline anchors; every reviewer's findings land in the one rendered
+  consolidated comment from Step 4b.
+
+In both modes the per-reviewer finding tables and the summary are produced by the
+`keel review-cycle-summary` renderer (Step 4b) and posted verbatim — never hand-write the
+severity tables or the histogram.
 
 **Who posts** is a project policy knob (project-specific; stays in the project):
 
@@ -154,28 +158,50 @@ gate findings join the reviewer findings on the same severity scale.
 
 ## Step 4b — Consolidated summary
 
-After all reviewers finish (each posted, if reviewer-posts mode, and each returned its
-block), post **one** consolidated summary comment, ordered after the per-reviewer entries so
-the timeline reads top-down (reviewers → summary). Include:
+After all reviewers finish, collect each reviewer's returned block into **one** structured
+findings array — one object per reviewer — and write it to a file (e.g. `cycle.json`):
 
-- A **severity histogram** = column-wise sum of every reviewer's counts
-  (`blocker = ΣblockerᵢR`, likewise major / minor / nit).
-- Aggregated **clean areas**.
-- Per-reviewer verdicts (with codenames).
-- A **merge recommendation**:
+```json
+[
+  { "codename": "<reviewer codename>", "focus": "<focus>",
+    "verdict": "LGTM | LGTM-with-suggestions | needs fixes",
+    "findings": [
+      { "severity": "blocker|major|minor|nit", "location": "file:line",
+        "description": "...", "suggested_fix": "..." }
+    ],
+    "clean_areas": ["..."] }
+]
+```
 
-  | Condition | Recommendation |
-  |---|---|
-  | any verdict is "needs fixes" OR `blocker > 0` | ❌ block |
-  | `blocker == 0` AND `major + minor > 0` | ⚠️ request changes |
-  | `blocker + major + minor == 0` AND any "LGTM-with-suggestions" (nits only) | ✅ approve (cosmetic nits) |
-  | `blocker + major + minor == 0` AND all reviewers LGTM (no nits) | ✅ approve |
+Do **not** hand-write the per-reviewer tables, the severity histogram, or the merge
+recommendation. The renderer is the single source of truth for the layout; render the whole
+comment deterministically and post it **verbatim**:
 
-  The histogram — not the verdict strings — is the source of truth: a reviewer returning
-  LGTM while still emitting a `minor` finding downgrades the recommendation to ⚠️ via the
-  count clause. SUGGESTIONs (major/minor) are gated like blockers; a non-zero `major + minor`
-  is never an approve. This command is review-only, so resolution/deferral is the operator's
-  follow-up.
+```bash
+keel review-cycle-summary --findings cycle.json --head-sha "$SHA" \
+  --run-id "$RUN:cycle-summary" > summary.md
+keel post-comment .keel/project.yaml --root . --target pr:<PR> \
+  --artifact review-cycle-summary --body-file summary.md --run-id "$RUN:cycle-summary"
+```
+
+The rendered comment carries one section per reviewer (codename · focus · verdict · a
+`Severity | File:Line | Description | Suggested Fix` table) followed by the **Consolidated
+Summary**: a severity histogram (column-wise sum of every reviewer's findings; `critical`
+folds into `blocker`), aggregated clean areas, per-reviewer verdicts, and a merge
+recommendation the renderer derives from the histogram — not the verdict strings:
+
+| Histogram condition | Recommendation |
+|---|---|
+| any verdict not `LGTM*` OR `blocker > 0` | ❌ block |
+| `blocker == 0` AND `major + minor > 0` | ⚠️ request changes |
+| `blocker + major + minor == 0` AND `nit > 0` | ✅ approve (cosmetic nits) |
+| `blocker + major + minor + nit == 0` | ✅ approve |
+
+So a reviewer returning LGTM while still emitting a `minor` finding downgrades to ⚠️ via the
+count clause; a non-zero `major + minor` is never an approve. This command is review-only, so
+resolution/deferral is the operator's follow-up. Because `--run-id` is embedded in the
+rendered body, a re-post **edits the existing summary in place** instead of appending a
+duplicate.
 
 Then apply the project's "review-cycle-complete" marker (label) **only after** the summary
 is posted (project-specific label name; stays in the project) — never pre-apply it before
@@ -237,4 +263,4 @@ Do every read plus `keel validate` / `keel plan` / `keel run-gates` and the revi
 but redirect every state-changing `gh` write (comments, label) to a logged
 `DRY-RUN: <action>` line.
 
-<!-- keel-generated: surface=claude command=review-cycle keel_version=1.6.5 source_sha256=4df3a7da6602d4effaa5e8bc0b4d52e93afa9e749a174b9469f9df6a437ce0b3 generated_sha256=4df3a7da6602d4effaa5e8bc0b4d52e93afa9e749a174b9469f9df6a437ce0b3 -->
+<!-- keel-generated: surface=claude command=review-cycle keel_version=1.6.5 source_sha256=a700d3770e0754db53ca296a6918fd7bc2135f3fc25914ba64a422294952a10b generated_sha256=a700d3770e0754db53ca296a6918fd7bc2135f3fc25914ba64a422294952a10b -->

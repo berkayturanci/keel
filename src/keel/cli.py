@@ -1944,6 +1944,41 @@ def _cmd_review(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_review_cycle_summary(args: argparse.Namespace) -> int:
+    try:
+        raw = json.loads(Path(args.findings).read_text(encoding="utf-8"))
+    except OSError as exc:
+        print(f"cannot read --findings {args.findings}: {exc}", file=sys.stderr)
+        return 1
+    except json.JSONDecodeError as exc:
+        print(f"--findings {args.findings} is not valid JSON: {exc}", file=sys.stderr)
+        return 1
+    try:
+        reviewers = review.parse_cycle_reviewers(raw)
+    except review.ReviewError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    body = artifacts.render_review_cycle_summary(
+        reviewers=list(reviewers),
+        head_sha=args.head_sha,
+        run_id=args.run_id,
+    )
+    if args.json:
+        print(json.dumps(
+            {
+                "schema_version": artifacts.SCHEMA_VERSION,
+                "marker": artifacts.REVIEW_CYCLE_SUMMARY_MARKER,
+                "reviewers": len(reviewers),
+                "body": body,
+            },
+            indent=2,
+            sort_keys=True,
+        ))
+    else:
+        print(body, end="")
+    return 0
+
+
 def _cmd_post_comment(args: argparse.Namespace) -> int:
     try:
         config = cfg.load_config(args.path)
@@ -3158,6 +3193,7 @@ def _comment_artifact_marker(artifact: str) -> str:
         "issue-update": artifacts.ISSUE_UPDATE_MARKER,
         "review-verdict": evidence.REVIEW_VERDICT_MARKER,
         "jury-verdict": evidence.JURY_VERDICT_MARKER,
+        "review-cycle-summary": artifacts.REVIEW_CYCLE_SUMMARY_MARKER,
         "extension-result": artifacts.EXTENSION_RESULT_MARKER,
         "step-handoff": artifacts.STEP_HANDOFF_MARKER,
         "run-control-halt": artifacts.RUN_CONTROL_HALT_MARKER,
@@ -4302,6 +4338,7 @@ def build_parser() -> argparse.ArgumentParser:
             "issue-update",
             "review-verdict",
             "jury-verdict",
+            "review-cycle-summary",
             "extension-result",
             "step-handoff",
             "run-control-halt",
@@ -4354,6 +4391,22 @@ def build_parser() -> argparse.ArgumentParser:
                           help="override the project consent mode for this run")
     p_review.add_argument("--json", action="store_true", help="emit structured JSON")
     p_review.set_defaults(func=_cmd_review)
+
+    p_rcs = sub.add_parser(
+        "review-cycle-summary",
+        help="render the deterministic multi-reviewer review-cycle summary comment",
+    )
+    p_rcs.add_argument(
+        "--findings",
+        required=True,
+        help="JSON array of reviewer findings blocks supplied by the host",
+    )
+    p_rcs.add_argument("--head-sha", default=None,
+                       help="PR head SHA to pin the summary to")
+    p_rcs.add_argument("--run-id", default=None,
+                       help="embed a run-id marker so an idempotent re-post edits in place")
+    p_rcs.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_rcs.set_defaults(func=_cmd_review_cycle_summary)
 
     p_evidence = sub.add_parser(
         "evidence-verify",

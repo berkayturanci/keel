@@ -150,6 +150,24 @@ def _parse_findings(raw: object, index: int) -> tuple[dict[str, Any], ...]:
     return tuple(findings)
 
 
+def parse_cycle_reviewers(raw: object) -> tuple[dict[str, Any], ...]:
+    """Parse a review-cycle findings payload into reviewer records for rendering.
+
+    The payload is the host-supplied structured block each reviewer returns
+    (codename · focus · verdict · findings · clean areas). Validation is shallow
+    on purpose: the renderer applies per-field fallbacks, so this only enforces
+    the outer shape and surfaces a clear error when it is malformed.
+    """
+    if not isinstance(raw, list):
+        raise ReviewError("review-cycle findings must be a JSON array of reviewer objects")
+    reviewers: list[dict[str, Any]] = []
+    for index, entry in enumerate(raw):
+        if not isinstance(entry, dict):
+            raise ReviewError(f"reviewer #{index + 1} must be a JSON object")
+        reviewers.append(dict(entry))
+    return tuple(reviewers)
+
+
 def review_run_id(run_id: str, reviewer: str) -> str:
     """Stable per-reviewer run-id sub-key, e.g. ``<run-id>:rv-<reviewer-slug>``."""
     return f"{run_id}:rv-{artifacts.slug(reviewer)}"
