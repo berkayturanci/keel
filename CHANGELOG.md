@@ -6,6 +6,29 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.7.0] — 2026-06-19
+
+### Added
+- **`keel gc` — reclaim disposable runtime artifacts.** A single, auditable entry point that
+  empties `.keel/scratch` and prunes `.keel/activity` (count-based retention, newest
+  `--keep-activity` kept; default 50). It is **fail-soft** (a failure on one tree degrades to
+  a no-op and the other still runs) and **never** touches the durable run ledger, checkpoint,
+  or locks. Supports `--dry-run`, `--no-scratch`/`--no-activity`, and `--json`. The
+  `/keel:ship` adapter runs it at the end of every run so scratch/activity no longer
+  accumulate (#479).
+- **Deterministic report renderers for the remaining commands.** Pure, host-neutral
+  renderers for the review-cycle/pr-loop findings summary, the coverage/deps-audit/flake-audit
+  reports, and the regression/review-all-day/triage outputs, posted as rendered markdown
+  verbatim instead of hand-written prose (#480, #481, #482, #484).
+
+### Fixed
+- **Generated workflow artifacts stay out of consumer repo roots.** keel scaffolds a
+  committed `.keel/.gitignore` (ignoring `state/`, `activity/`, `scratch/`, `*.tmp`) on
+  `init`/`setup` and self-heals it on the first runtime write of any existing install, and
+  exposes `.keel/scratch` via `keel scratch-dir` as the sanctioned home for transient
+  artifacts — so a consumer checkout no longer accumulates `plan.json`, `pr_<n>.diff`,
+  `issue.md` and friends at its root (#473).
+
 ## [1.6.5] — 2026-06-16
 
 ### Added

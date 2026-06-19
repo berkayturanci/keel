@@ -171,4 +171,4 @@ print the would-be issues and route nothing.
   and skipped.
 - Deterministic for identical coverage data.
 
-<!-- keel-generated: surface=claude command=coverage keel_version=1.6.5 source_sha256=a833a58b527f757681a8e8de7f68330c468c9b2402661dcb8ee0c3365b0a7d51 generated_sha256=a833a58b527f757681a8e8de7f68330c468c9b2402661dcb8ee0c3365b0a7d51 -->
+<!-- keel-generated: surface=claude command=coverage keel_version=1.7.0 source_sha256=a833a58b527f757681a8e8de7f68330c468c9b2402661dcb8ee0c3365b0a7d51 generated_sha256=a833a58b527f757681a8e8de7f68330c468c9b2402661dcb8ee0c3365b0a7d51 -->
