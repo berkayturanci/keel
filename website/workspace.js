@@ -14,7 +14,15 @@
   var main = document.getElementById("main");
 
   function setActive(view) {
-    items.forEach(function (b) { b.classList.toggle("on", b.dataset.view === view); });
+    items.forEach(function (b) {
+      var isActive = b.dataset.view === view;
+      b.classList.toggle("on", isActive);
+      if (isActive) {
+        b.setAttribute("aria-current", "page");
+      } else {
+        b.removeAttribute("aria-current");
+      }
+    });
     try { history.replaceState(null, "", "#" + view); } catch (e) {}
     if (window.__keelCenterNav) window.__keelCenterNav();
   }
