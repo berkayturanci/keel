@@ -4,9 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import yaml
-
-from keel import install
+from keel import install, yaml_helper
 
 CONSUMER_SPECIFIC_TERMS = (
     "forbidden-consumer-a",
@@ -104,7 +102,7 @@ class TestInstallSkills(unittest.TestCase):
             sk = Path(d) / ".agents/skills/keel-ship/SKILL.md"
             self.assertTrue(sk.exists())
             body, marker = install._split_marker(sk.read_text(encoding="utf-8"))
-            meta = yaml.safe_load(body.split("---")[1])
+            meta = yaml_helper.load(body.split("---")[1])
             self.assertEqual(meta["name"], "keel-ship")
             self.assertEqual(marker["surface"], "skills")
             self.assertEqual(marker["command"], "ship")

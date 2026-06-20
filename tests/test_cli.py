@@ -6105,9 +6105,9 @@ class TestInit(unittest.TestCase):
                 rc, out, _ = run(["init", "--root", d, "--wizard"])
             self.assertEqual(rc, 0)
             written = (Path(d) / ".keel" / "project.yaml").read_text()
-            import yaml
+            from keel import yaml_helper
 
-            config = yaml.safe_load(written)
+            config = yaml_helper.load(written)
             self.assertEqual(config["base_branch"], "develop")
             self.assertEqual(config["merge_window"], "09:00-18:00")
             self.assertEqual(config["consent_mode"], "explicit")
@@ -6208,9 +6208,9 @@ class TestSetup(unittest.TestCase):
             self.assertEqual(rc, 0, err)
             self.assertIn("keel setup wizard", out)
             written = (Path(d) / ".keel/project.yaml").read_text()
-            import yaml
+            from keel import yaml_helper
 
-            config = yaml.safe_load(written)
+            config = yaml_helper.load(written)
             self.assertEqual(config["base_branch"], "develop")
             self.assertEqual(config["merge_window"], "09:00-18:00")
             self.assertEqual(config["consent_mode"], "explicit")

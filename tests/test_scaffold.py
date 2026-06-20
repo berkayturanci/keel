@@ -48,8 +48,8 @@ class TestDefaultConfig(unittest.TestCase):
     def test_every_stack_validates(self):
         for stack in ("flutter", "python", "node", "android", "generic"):
             text = scaffold.default_config(stack, repo="demo")
-            import yaml
-            data = yaml.safe_load(text)
+            from keel import yaml_helper
+            data = yaml_helper.load(text)
             # parse_config raises on any schema error
             config = cfg.parse_config(data, source=f"<{stack}>")
             self.assertEqual(config.extends, "keel")
@@ -70,7 +70,7 @@ class TestDefaultConfig(unittest.TestCase):
 
 class TestWizard(unittest.TestCase):
     def test_sets_window_and_validates(self):
-        import yaml
+        from keel import yaml_helper
         answers = iter([
             "develop",
             "Etc/GMT-3",
@@ -84,7 +84,7 @@ class TestWizard(unittest.TestCase):
             return next(answers)
 
         text = scaffold.wizard("python", ask, repo="demo")
-        config = cfg.parse_config(yaml.safe_load(text))
+        config = cfg.parse_config(yaml_helper.load(text))
         self.assertEqual(config.base_branch, "develop")
         self.assertEqual(config.timezone, "Etc/GMT-3")
         self.assertEqual(config.merge_window, "09:00-18:00")
@@ -93,7 +93,7 @@ class TestWizard(unittest.TestCase):
         self.assertIn("--wizard", text)
 
     def test_blank_answers_skip_optional(self):
-        import yaml
+        from keel import yaml_helper
 
         def ask(prompt, default):
             if any(k in prompt for k in ("Timezone", "Merge window", "Lint")):
@@ -101,7 +101,7 @@ class TestWizard(unittest.TestCase):
             return default
 
         text = scaffold.wizard("generic", ask, repo="demo")
-        config = cfg.parse_config(yaml.safe_load(text))
+        config = cfg.parse_config(yaml_helper.load(text))
         self.assertIsNone(config.timezone)
         self.assertIsNone(config.merge_window)
         self.assertEqual(config.gates, ("build",))
@@ -118,17 +118,17 @@ class TestWizard(unittest.TestCase):
 
 class TestRenderConfig(unittest.TestCase):
     def test_minimal_validates(self):
-        import yaml
+        from keel import yaml_helper
         text = scaffold.render_config(repo="x")
-        self.assertEqual(cfg.parse_config(yaml.safe_load(text)).repo, "x")
-        self.assertEqual(cfg.parse_config(yaml.safe_load(text)).consent_mode, "explicit")
+        self.assertEqual(cfg.parse_config(yaml_helper.load(text)).repo, "x")
+        self.assertEqual(cfg.parse_config(yaml_helper.load(text)).consent_mode, "explicit")
 
     def test_invalid_consent_mode_rejected(self):
         with self.assertRaises(ValueError):
             scaffold.render_config(repo="x", consent_mode="maybe")
 
     def test_interpolated_scalars_cannot_inject_yaml_keys(self):
-        import yaml
+        from keel import yaml_helper
 
         text = scaffold.render_config(
             repo="demo\nplatform: injected",
@@ -141,7 +141,7 @@ class TestRenderConfig(unittest.TestCase):
             tier3_globs=("src/**/*.py\nrepo: changed",),
             generator="keel init\nrepo: changed",
         )
-        data = yaml.safe_load(text)
+        data = yaml_helper.load(text)
 
         self.assertEqual(data["repo"], "demo\nplatform: injected")
         self.assertEqual(data["base_branch"], "main\nconsent_mode: standing")
