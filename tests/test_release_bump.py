@@ -57,17 +57,17 @@ class TestBump(unittest.TestCase):
                 "src/keel/__init__.py",
                 "website/index.html",
             ])
-            self.assertIn('version = "1.8.0"', (root / "pyproject.toml").read_text())
+            self.assertIn('version = "1.8.0"', (root / "pyproject.toml").read_text(encoding="utf-8"))
             self.assertIn('__version__ = "1.8.0"',
-                          (root / "src" / "keel" / "__init__.py").read_text())
+                          (root / "src" / "keel" / "__init__.py").read_text(encoding="utf-8"))
             self.assertIn('"version": "1.8.0"',
-                          (root / ".claude-plugin" / "plugin.json").read_text())
-            readme = (root / "README.md").read_text()
+                          (root / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
+            readme = (root / "README.md").read_text(encoding="utf-8")
             self.assertIn("keel@v1.8.0", readme)
             self.assertNotIn("keel@v1.7.0", readme)
             # Historical prose is untouched.
             self.assertIn("Since **1.7.0**", readme)
-            site = (root / "website" / "index.html").read_text()
+            site = (root / "website" / "index.html").read_text(encoding="utf-8")
             self.assertIn(">v1.8.0<", site)
             self.assertIn("keel@v1.8.0", site)
             self.assertNotIn("1.7.0", site)

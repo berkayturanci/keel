@@ -100,7 +100,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"release-bump: already at {args.version}; nothing to change")
         return 0
 
-    print(f"release-bump: {old} → {args.version}")
+    print(f"release-bump: {old} -> {args.version}")
     for rel in changed:
         print(f"  updated {rel}")
     print("Next: `make plugin && make adapters` (regenerate keel_version markers), "

@@ -46,7 +46,7 @@ class TestEnsureGitignore(unittest.TestCase):
             keel.mkdir()
             self.assertTrue(workspace.ensure_runtime_gitignore(keel))
             gitignore = keel / ".gitignore"
-            self.assertEqual(gitignore.read_text(), workspace.runtime_gitignore_body())
+            self.assertEqual(gitignore.read_text(encoding="utf-8"), workspace.runtime_gitignore_body())
 
     def test_idempotent_second_call_is_noop(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -66,7 +66,7 @@ class TestEnsureGitignore(unittest.TestCase):
             gitignore = keel / ".gitignore"
             gitignore.write_text("state/\n# my own rule\nbuild-cache/\n")
             self.assertTrue(workspace.ensure_runtime_gitignore(keel))
-            text = gitignore.read_text()
+            text = gitignore.read_text(encoding="utf-8")
             # Operator content preserved.
             self.assertIn("# my own rule", text)
             self.assertIn("build-cache/", text)
@@ -83,7 +83,7 @@ class TestEnsureGitignore(unittest.TestCase):
             gitignore = keel / ".gitignore"
             gitignore.write_text("state/")  # no trailing newline, missing others
             self.assertTrue(workspace.ensure_runtime_gitignore(keel))
-            lines = gitignore.read_text().splitlines()
+            lines = gitignore.read_text(encoding="utf-8").splitlines()
             self.assertIn("state/", lines)
             self.assertIn("activity/", lines)
 
@@ -94,7 +94,7 @@ class TestEnsureGitignore(unittest.TestCase):
             gitignore = keel / ".gitignore"
             gitignore.write_text("")
             self.assertTrue(workspace.ensure_runtime_gitignore(keel))
-            self.assertIn("scratch/", gitignore.read_text().splitlines())
+            self.assertIn("scratch/", gitignore.read_text(encoding="utf-8").splitlines())
 
 
 class TestEnsureGitignoreForArtifact(unittest.TestCase):
@@ -183,7 +183,7 @@ class TestRuntimeWritersStayUnderKeel(unittest.TestCase):
             self.assertEqual(self._root_entries(root), {".keel"})
 
             # The gitignore exists and ignores every runtime subtree we wrote.
-            gitignore = (root / ".keel" / ".gitignore").read_text().splitlines()
+            gitignore = (root / ".keel" / ".gitignore").read_text(encoding="utf-8").splitlines()
             self.assertIn("state/", gitignore)
             self.assertIn("activity/", gitignore)
             self.assertIn("scratch/", gitignore)

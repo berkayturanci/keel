@@ -6092,8 +6092,8 @@ class TestInit(unittest.TestCase):
             rc, _, err = run(["init", "--root", d, "--force"])
             self.assertEqual(rc, 0)
             self.assertIn("extensions/ was not touched", err)
-            self.assertIn("extends: keel", (keel / "project.yaml").read_text())
-            self.assertEqual(ext.read_text(), "extension\n")
+            self.assertIn("extends: keel", (keel / "project.yaml").read_text(encoding="utf-8"))
+            self.assertEqual(ext.read_text(encoding="utf-8"), "extension\n")
 
     def test_wizard_mode(self):
         import tempfile
@@ -6104,7 +6104,7 @@ class TestInit(unittest.TestCase):
             with patch("builtins.input", side_effect=answers):
                 rc, out, _ = run(["init", "--root", d, "--wizard"])
             self.assertEqual(rc, 0)
-            written = (Path(d) / ".keel" / "project.yaml").read_text()
+            written = (Path(d) / ".keel" / "project.yaml").read_text(encoding="utf-8")
             import yaml
 
             config = yaml.safe_load(written)
@@ -6173,7 +6173,7 @@ class TestSetup(unittest.TestCase):
             self.assertEqual(rc, 0, err)
             self.assertIn("using existing", out)
             self.assertIn("extensions   : preserved", out)
-            self.assertEqual(target.read_text(), text)
+            self.assertEqual(target.read_text(encoding="utf-8"), text)
             self.assertTrue((Path(d) / ".claude/commands/keel/ship.md").exists())
             self.assertFalse((Path(d) / ".agents/skills/keel-ship/SKILL.md").exists())
 
@@ -6194,9 +6194,9 @@ class TestSetup(unittest.TestCase):
             self.assertIn("overwrote", out)
             self.assertIn("extensions   : preserved", out)
             self.assertIn(".keel/extensions/ will not be touched", err)
-            self.assertIn("extends: keel", target.read_text())
-            self.assertEqual(ext.read_text(), "extension\n")
-            self.assertIn("keel-generated", adapter.read_text())
+            self.assertIn("extends: keel", target.read_text(encoding="utf-8"))
+            self.assertEqual(ext.read_text(encoding="utf-8"), "extension\n")
+            self.assertIn("keel-generated", adapter.read_text(encoding="utf-8"))
 
     def test_wizard_mode(self):
         import tempfile
@@ -6207,7 +6207,7 @@ class TestSetup(unittest.TestCase):
                 rc, out, err = run(["setup", "--root", d, "--wizard"])
             self.assertEqual(rc, 0, err)
             self.assertIn("keel setup wizard", out)
-            written = (Path(d) / ".keel/project.yaml").read_text()
+            written = (Path(d) / ".keel/project.yaml").read_text(encoding="utf-8")
             import yaml
 
             config = yaml.safe_load(written)

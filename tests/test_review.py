@@ -610,7 +610,7 @@ def _live_fetch(argv, **_kw):
 
 
 def _config_without_owner() -> str:
-    lines = (PROJECTS / "example-android.yaml").read_text().splitlines()
+    lines = (PROJECTS / "example-android.yaml").read_text(encoding="utf-8").splitlines()
     kept = [line for line in lines
             if not line.startswith("owner:") and not line.startswith("repo:")]
     return "\n".join(kept) + "\n"
