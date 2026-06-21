@@ -11,9 +11,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
-import yaml
-
 from . import consent
+from . import yaml_helper as yaml
 
 #: marker file (checked in order) -> stack name.
 _MARKERS: tuple[tuple[str, str], ...] = (
@@ -87,7 +86,7 @@ def render_config(
 
 def _yaml_scalar(value: str) -> str:
     """Render a scalar as inline YAML so scaffolded values cannot inject new keys."""
-    return yaml.safe_dump(
+    return yaml.dump(
         str(value),
         default_style='"',
         default_flow_style=True,
