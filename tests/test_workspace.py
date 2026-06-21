@@ -46,7 +46,10 @@ class TestEnsureGitignore(unittest.TestCase):
             keel.mkdir()
             self.assertTrue(workspace.ensure_runtime_gitignore(keel))
             gitignore = keel / ".gitignore"
-            self.assertEqual(gitignore.read_text(encoding="utf-8"), workspace.runtime_gitignore_body())
+            self.assertEqual(
+                gitignore.read_text(encoding="utf-8"),
+                workspace.runtime_gitignore_body()
+            )
 
     def test_idempotent_second_call_is_noop(self):
         with tempfile.TemporaryDirectory() as tmp:
