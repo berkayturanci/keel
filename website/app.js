@@ -105,8 +105,14 @@
     var so = new IntersectionObserver(function (ents) {
       ents.forEach(function (en) {
         if (en.isIntersecting) {
-          navLinks.forEach(function (l) { l.classList.remove("active"); });
-          if (map[en.target.id]) map[en.target.id].classList.add("active");
+          navLinks.forEach(function (l) {
+            l.classList.remove("active");
+            l.removeAttribute("aria-current");
+          });
+          if (map[en.target.id]) {
+            map[en.target.id].classList.add("active");
+            map[en.target.id].setAttribute("aria-current", "page");
+          }
         }
       });
     }, { rootMargin: "-45% 0px -50% 0px" });

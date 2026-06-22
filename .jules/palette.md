@@ -9,3 +9,6 @@
 ## 2024-06-21 - Syncing aria-current with active classes
 **Learning:** When building single-page/client-side navigation that toggles an `on` or `active` visual class via JavaScript, relying solely on CSS classes means screen readers miss the update.
 **Action:** Always sync the `aria-current="page"` attribute synchronously with the active class changes in JS to ensure robust accessibility for navigation items.
+## 2024-06-22 - Sync aria-current with single-page navigation active view state
+**Learning:** In custom single-page applications, updating visual `.active` or `.on` classes for navigation links is insufficient for screen readers. The `aria-current="page"` attribute must be added or removed dynamically alongside visual cues for navigation links managed by JavaScript (e.g. IntersectionObserver or click handlers).
+**Action:** When updating active view states dynamically in JavaScript, always add or remove the `aria-current="page"` attribute in sync with the visual class change to maintain full screen reader accessibility.

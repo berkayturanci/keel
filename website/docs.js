@@ -66,8 +66,12 @@
       var a = el("a", null, d.title);
       a.href = "#" + d.slug; a.dataset.slug = d.slug; a.dataset.text = (d.title + " " + d.summary + " " + d.group).toLowerCase();
       a.addEventListener("click", function () {
-        document.querySelectorAll("#docs-nav a").forEach(function (x) { x.classList.remove("active"); });
+        document.querySelectorAll("#docs-nav a").forEach(function (x) {
+          x.classList.remove("active");
+          x.removeAttribute("aria-current");
+        });
         a.classList.add("active");
+        a.setAttribute("aria-current", "page");
       });
       sec.appendChild(a);
     });
@@ -135,8 +139,14 @@
     var spy = new IntersectionObserver(function (ents) {
       ents.forEach(function (en) {
         if (en.isIntersecting) {
-          Object.keys(links).forEach(function (k) { links[k].classList.remove("active"); });
-          if (links[en.target.id]) links[en.target.id].classList.add("active");
+          Object.keys(links).forEach(function (k) {
+            links[k].classList.remove("active");
+            links[k].removeAttribute("aria-current");
+          });
+          if (links[en.target.id]) {
+            links[en.target.id].classList.add("active");
+            links[en.target.id].setAttribute("aria-current", "page");
+          }
         }
       });
     }, { rootMargin: "-12% 0px -75% 0px" });
