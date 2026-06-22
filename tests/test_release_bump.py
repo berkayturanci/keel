@@ -57,14 +57,10 @@ class TestBump(unittest.TestCase):
                 "src/keel/__init__.py",
                 "website/index.html",
             ])
-            self.assertIn(
-                'version = "1.8.0"',
-                (root / "pyproject.toml").read_text(encoding="utf-8")
-            )
-            self.assertIn(
-                '__version__ = "1.8.0"',
-                (root / "src" / "keel" / "__init__.py").read_text(encoding="utf-8")
-            )
+            self.assertIn('version = "1.8.0"',
+                          (root / "pyproject.toml").read_text(encoding="utf-8"))
+            self.assertIn('__version__ = "1.8.0"',
+                          (root / "src" / "keel" / "__init__.py").read_text(encoding="utf-8"))
             self.assertIn('"version": "1.8.0"',
                           (root / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
             readme = (root / "README.md").read_text(encoding="utf-8")
