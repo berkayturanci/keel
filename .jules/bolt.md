@@ -13,3 +13,7 @@
 **Learning:** Parsing and serializing YAML files using `yaml.safe_load` and `yaml.safe_dump` can be quite slow in Python, especially for large files. `PyYAML` provides C-extension implementations `CSafeLoader` and `CSafeDumper` which offer significantly faster performance (up to 8x speedup in our benchmarks).
 
 **Action:** Whenever `PyYAML` is used for deserialization or serialization, use a custom wrapper module that falls back to the pure Python implementation only when the C-extensions are unavailable. This avoids performance bottlenecks when parsing large configuration files or extensive frontmatter.
+
+## 2024-06-21 - Premature YAML parse optimization
+**Learning:** While using `yaml.CSafeLoader` and `yaml.CSafeDumper` over pure Python equivalents yields significantly better raw parse/serialize times for large documents (e.g. ~8x faster), replacing standard library functions should only be done when the bottleneck is confirmed. Small configuration or frontmatter reads that take sub-milliseconds don't benefit from this micro-optimization on application startup, and introducing C-extension fallbacks can cause unexpected discrepancies in exception handling that break CI coverage and documentation invariants.
+**Action:** Do not preemptively optimize low-cost operations (like parsing a single tiny config file) and focus performance optimization on provable bottlenecks or loops that are known to run frequently. Always verify the overall system impact vs pure benchmark speedup and adhere to existing security and test coverage invariants.
