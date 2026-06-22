@@ -63,6 +63,22 @@ Use explicit issue numbers in the order provided. If none are provided, resolve 
 through the project policy or GitHub query and sort deterministically by configured
 priority, then issue number. Apply `--max` to the snapshot, not to a live re-poll.
 
+**Make the whole queue visible on the board up front (deterministic).** As soon as the
+snapshot is fixed — before any child ship handoff — stamp each child ship's `s0` on the
+`keel-visual` board, so every queued run appears immediately, even one whose child agent
+never reaches its own per-phase `keel activity` calls. For each issue `N` in the snapshot:
+
+```bash
+keel activity .keel/project.yaml --root . --write \
+  --command ship --run-id "ship-$N" --phase s0 --issue "$N"
+```
+
+This is the parent's job, not the child's, and runs once per snapshot. Use the canonical
+`ship-<N>` run id so the child ship's own advances (`keel plan`/`run-gates`/`merge
+--run-id "ship-$N"`) update the **same** board row; a child that never stamps still shows as
+`s0` instead of vanishing. Same fail-soft exception as the run-stamp above (skip silently on
+keel < 1.6.0).
+
 Write or update the checkpoint with `--checkpoint-command overnight` only when resuming an
 overnight run; otherwise use the daytime command name `work-block`. Store the issue queue,
 active issue, current child branch/worktree/PR when known, and stop reason at each safe

@@ -231,6 +231,21 @@ and feed them into the issue intake preflight described in s0. In work-block/wat
 non-ready issues are skipped with their readiness reason and concrete questions recorded,
 then the run continues with the next ready issue if one exists.
 
+**More than one issue selected? Make the whole batch visible up front (deterministic).** Ship
+processes issues one branch/worktree at a time, so an issue not yet reached would be invisible
+on the `keel-visual` board until its turn. The moment the queue is snapshotted — before s2 for
+the first item — stamp every selected issue's `s0` so the whole batch appears at once:
+
+```bash
+keel activity .keel/project.yaml --root . --write \
+  --command ship --run-id "ship-$N" --phase s0 --issue "$N"
+```
+
+Use the canonical `ship-<N>` run id (the same one you carry through this run's per-phase
+stamps) so each issue's later advances update the **same** row. This is the deterministic
+dispatch stamp; do not leave board presence to whether a later per-phase call happens to run.
+Same fail-soft exception as the run-stamp above (skip silently on keel < 1.6.0).
+
 ### s2 branch
 Cut a work branch off `base_branch`. A **git worktree per issue** is the isolation
 contract: never mutate the user's primary checkout. Create it under a gitignored,

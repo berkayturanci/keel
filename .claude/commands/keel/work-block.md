@@ -63,6 +63,22 @@ Use explicit issue numbers in the order provided. If none are provided, resolve 
 through the project policy or GitHub query and sort deterministically by configured
 priority, then issue number. Apply `--max` to the snapshot, not to a live re-poll.
 
+**Make the whole queue visible on the board up front (deterministic).** As soon as the
+snapshot is fixed — before any child ship handoff — stamp each child ship's `s0` on the
+`keel-visual` board, so every queued run appears immediately, even one whose child agent
+never reaches its own per-phase `keel activity` calls. For each issue `N` in the snapshot:
+
+```bash
+keel activity .keel/project.yaml --root . --write \
+  --command ship --run-id "ship-$N" --phase s0 --issue "$N"
+```
+
+This is the parent's job, not the child's, and runs once per snapshot. Use the canonical
+`ship-<N>` run id so the child ship's own advances (`keel plan`/`run-gates`/`merge
+--run-id "ship-$N"`) update the **same** board row; a child that never stamps still shows as
+`s0` instead of vanishing. Same fail-soft exception as the run-stamp above (skip silently on
+keel < 1.6.0).
+
 Write or update the checkpoint with `--checkpoint-command overnight` only when resuming an
 overnight run; otherwise use the daytime command name `work-block`. Store the issue queue,
 active issue, current child branch/worktree/PR when known, and stop reason at each safe
@@ -118,4 +134,4 @@ must include the fixed queue snapshot and these buckets:
 
 Also include open questions, consent gaps, and the next 1–3 operator actions.
 
-<!-- keel-generated: surface=claude command=work-block keel_version=1.7.0 source_sha256=1a267f0138cefb0bbdef978ad56f2df3753a9c6f7aeb76d0c247ac76f477301d generated_sha256=1a267f0138cefb0bbdef978ad56f2df3753a9c6f7aeb76d0c247ac76f477301d -->
+<!-- keel-generated: surface=claude command=work-block keel_version=1.7.0 source_sha256=9ac541b04fd4df257005468d50f4b3827d75d98b6ad3a0bdf3a2c060bb2aac21 generated_sha256=9ac541b04fd4df257005468d50f4b3827d75d98b6ad3a0bdf3a2c060bb2aac21 -->
