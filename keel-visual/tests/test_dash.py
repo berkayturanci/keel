@@ -91,11 +91,21 @@ class TestStatusOf(unittest.TestCase):
 
 
 class TestBoardRow(unittest.TestCase):
-    def test_row_uses_pr_label(self):
+    def test_row_shows_issue_and_pr(self):
+        # a run carrying both renders #<issue>→#<PR> so the row is unambiguous
         row = dash.board_row(_run_state(action="merge"), {"pr": 361, "issue": 351})
-        self.assertEqual(row["label"], "#361")
+        self.assertEqual(row["label"], "#351→#361")
+        self.assertEqual(row["issue"], 351)
+        self.assertEqual(row["pr"], 361)
         self.assertEqual(row["status"], "merged")
         self.assertEqual(row["total"], 13)
+
+    def test_row_pr_only(self):
+        st = rs.build_run_state(None, checkpoint_step="s10")
+        row = dash.board_row(st, {"pr": 361, "issue": None})
+        self.assertEqual(row["label"], "#361")
+        self.assertEqual(row["pr"], 361)
+        self.assertIsNone(row["issue"])
 
     def test_row_falls_back_to_issue(self):
         st = rs.build_run_state(None, checkpoint_step="s4")

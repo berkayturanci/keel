@@ -559,7 +559,8 @@ class TestDash(unittest.TestCase):
             with patch("keel_visual.cli.git.worktree_list", return_value=self._porcelain(d)):
                 rows = cli._discover_runs(_dash_args(root=d), config)
         self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]["label"], "#361")
+        # SAMPLE ledger carries both issue #351 and PR #361 → combined label
+        self.assertEqual(rows[0]["label"], "#351→#361")
 
     def test_latest_ship_record_by_pr(self):
         import tempfile
@@ -791,9 +792,20 @@ class TestDash(unittest.TestCase):
         e = cli._board_entry(run_state, {"pr": 9}, "myproj")
         self.assertEqual(e["project"], "myproj")
         self.assertEqual(e["label"], "#9")
+        self.assertEqual(e["pr"], 9)
+        self.assertIsNone(e["issue"])
         self.assertEqual(e["active_id"], "s8")
         self.assertTrue(e["steps"])
         self.assertIn("status", e)
+
+    def test_board_entry_exposes_issue_and_pr(self):
+        from keel_visual import runstate as rs
+        run_state = rs.build_run_state({"command": "ship", "pull_request": {"number": 9}},
+                                       checkpoint_step="s8")
+        e = cli._board_entry(run_state, {"pr": 9, "issue": 7}, "myproj")
+        self.assertEqual(e["label"], "#7→#9")
+        self.assertEqual(e["issue"], 7)
+        self.assertEqual(e["pr"], 9)
 
     def test_render_all_writes_board(self):
         import tempfile

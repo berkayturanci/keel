@@ -491,6 +491,8 @@ def _board_entry(run_state: dict, identity: dict, project: str) -> dict:
     return {
         "project": dash._safe_label(project),
         "label": row["label"],
+        "issue": row["issue"],
+        "pr": row["pr"],
         "status": row["status"],
         "active_index": row["active_index"],
         "active_id": row["active_id"],

@@ -159,9 +159,11 @@ A run that truly **merged** shows a green `merged` badge; one that just **closed
 `done` badge — it isn't claimed as merged. As of **keel 1.6.5** the merge step stamps the
 activity channel `merged` directly, so the green badge no longer needs a checkpoint.
 
-Each run is **labelled** by its PR (`#PR`), else its issue (`#issue`), else the number its
-run-id ends in — `ship-585` → `#585`, `pr-loop-2253` → `#2253` (the auto-stamps don't all
-carry an explicit issue). An opaque counter like a `morning` run's `m-1` is left as-is.
+Each run is **labelled** by its issue **and** PR when it carries both — `#<issue>→#<PR>`
+(e.g. `#500→#501`) so a row is unambiguous — else by its PR (`#PR`), else its issue
+(`#issue`), else the number its run-id ends in — `ship-585` → `#585`, `pr-loop-2253` →
+`#2253` (the auto-stamps don't all carry an explicit issue). An opaque counter like a
+`morning` run's `m-1` is left as-is.
 
 The web board has a **2D grid / 3D scene** toggle in its header (or open with
 `board.html?mode=3d`). The 3D scene packs every run into one perspective view —

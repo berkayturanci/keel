@@ -99,10 +99,11 @@ filesystem**. Two sources feed it:
    agent runs a command in its own worktree and stamps activity there), keyed by run-id,
    with the command in the footer.
 
-   Each run is **labelled** by its PR (`#PR`), else its issue (`#issue`), else the number
-   its run-id ends in — `ship-585` → `#585`, `pr-loop-2253` → `#2253` (keel 1.6.5; the
-   per-phase stamps don't all carry an explicit issue). An opaque counter such as a
-   `morning` run's `m-1` is left as-is.
+   Each run is **labelled** by its issue **and** PR when it carries both —
+   `#<issue>→#<PR>` (e.g. `#500→#501`) so a row is unambiguous — else by its PR (`#PR`),
+   else its issue (`#issue`), else the number its run-id ends in — `ship-585` → `#585`,
+   `pr-loop-2253` → `#2253` (keel 1.6.5; the per-phase stamps don't all carry an explicit
+   issue). An opaque counter such as a `morning` run's `m-1` is left as-is.
 2. **Ship checkpoints** (richer, optional). With checkpoint config, `keel ship` also writes
    a resumable checkpoint (`s0`–`s12`) carrying the merge gate / jury / test-gate detail.
    The board reads the checkpoint of **every worktree** and, when a run has both, prefers

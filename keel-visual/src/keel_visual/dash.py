@@ -94,8 +94,11 @@ def _issue_from_run_id(run_id: str | None, command: str | None) -> str | None:
 
 def _row_label(pr: int | None, issue: int | None,
                run_id: str | None, command: str | None) -> str:
-    """Pick the board label: PR number, else issue number, else the issue a
+    """Pick the board label: ``#<issue>→#<PR>`` when a run carries both (so a row is
+    unambiguous), else the PR number, else the issue number, else the issue a
     ``<command>-<number>`` run_id encodes, else the raw run_id, else ``?``."""
+    if pr and issue and pr != issue:
+        return f"#{issue}→#{pr}"
     if pr:
         return f"#{pr}"
     if issue:
@@ -117,6 +120,8 @@ def board_row(run_state: dict[str, Any], identity: dict[str, Any]) -> dict[str, 
     run_id = identity.get("run_id")
     return {
         "label": _row_label(pr, issue, run_id, identity.get("command")),
+        "issue": issue,
+        "pr": pr,
         "active_index": active,
         "total": total,
         "active_id": step.get("id", "s?"),
