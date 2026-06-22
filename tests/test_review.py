@@ -532,7 +532,9 @@ class TestReviewCli(unittest.TestCase):
 
     def test_live_owner_repo_missing(self):
         reviews = _write([{"reviewer": "Solo", "verdict": "LGTM"}])
-        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".yaml", delete=False, encoding="utf-8"
+        ) as f:
             f.write(_config_without_owner())
             cfg_path = f.name
         self.addCleanup(os.unlink, cfg_path)
