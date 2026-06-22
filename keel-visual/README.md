@@ -165,6 +165,12 @@ Each run is **labelled** by its issue **and** PR when it carries both — `#<iss
 `#2253` (the auto-stamps don't all carry an explicit issue). An opaque counter like a
 `morning` run's `m-1` is left as-is.
 
+The **web** card shows more than the label: a status icon, the live **issue/PR title**, the
+**branch → base**, and the **author**. Branch / base / author come from the ledger record
+keel already writes (no new field, never stale); the title is fetched **live** from `gh` and
+cached per process (a renamed issue shows correctly next start). Best-effort throughout — an
+activity-only run, or no `gh`, just shows the number(s); the card never blanks.
+
 The web board has a **2D grid / 3D scene** toggle in its header (or open with
 `board.html?mode=3d`). The 3D scene packs every run into one perspective view —
 one lane per run, a sphere per step coloured the same way as the grid (green

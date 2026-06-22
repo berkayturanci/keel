@@ -104,6 +104,14 @@ filesystem**. Two sources feed it:
    else its issue (`#issue`), else the number its run-id ends in — `ship-585` → `#585`,
    `pr-loop-2253` → `#2253` (keel 1.6.5; the per-phase stamps don't all carry an explicit
    issue). An opaque counter such as a `morning` run's `m-1` is left as-is.
+
+   The **web** card carries more than the label: a status icon, the live **issue/PR
+   title**, the **branch → base**, and the **author**. Branch / base / author come from the
+   ledger `ship_run` record keel already writes (no new field, never stale); the title is
+   fetched **live** from `gh` and cached per process, so a renamed issue shows correctly on
+   the next start. All of it is best-effort — a run with only an activity record (no ledger),
+   or a machine without `gh`, simply shows its number(s); the card never blanks. The terminal
+   `dash` board stays a compact one-line-per-run view.
 2. **Ship checkpoints** (richer, optional). With checkpoint config, `keel ship` also writes
    a resumable checkpoint (`s0`–`s12`) carrying the merge gate / jury / test-gate detail.
    The board reads the checkpoint of **every worktree** and, when a run has both, prefers

@@ -1,6 +1,7 @@
 """Tests for the keel-visual CLI (I/O thin layer)."""
 
 import io
+import types
 import unittest
 from argparse import Namespace
 from pathlib import Path
@@ -806,6 +807,86 @@ class TestDash(unittest.TestCase):
         self.assertEqual(e["label"], "#7→#9")
         self.assertEqual(e["issue"], 7)
         self.assertEqual(e["pr"], 9)
+        # branch/base/author come from the ledger record; absent here → None, key present
+        self.assertIsNone(e["branch"])
+        self.assertIsNone(e["author"])
+        self.assertIsNone(e["title"])
+
+    def test_board_entry_carries_branch_and_author(self):
+        from keel_visual import runstate as rs
+        rec = {"command": "ship", "pull_request": {"number": 9},
+               "git": {"branch": "feat/x", "base_branch": "main"},
+               "actors": {"implementer": "claude (opus)"}}
+        run_state = rs.build_run_state(rec, checkpoint_step="s8")
+        e = cli._board_entry(run_state, {"pr": 9}, "myproj")
+        self.assertEqual(e["branch"], "feat/x")
+        self.assertEqual(e["base"], "main")
+        self.assertEqual(e["author"], "claude (opus)")
+
+    def test_fetch_title_success_and_cache(self):
+        cli._TITLE_CACHE.clear()
+        calls = []
+
+        def run(argv, **kw):
+            calls.append(argv)
+            return types.SimpleNamespace(stdout="My Title\n", stderr="", returncode=0)
+        self.assertEqual(cli._fetch_title("issue", 500, root=".", _run=run), "My Title")
+        # second lookup is served from the per-process cache — no second gh call
+        self.assertEqual(cli._fetch_title("issue", 500, root=".", _run=run), "My Title")
+        self.assertEqual(len(calls), 1)
+
+    def test_fetch_title_failsoft(self):
+        cli._TITLE_CACHE.clear()
+
+        def run(argv, **kw):
+            return types.SimpleNamespace(stdout="", stderr="no gh", returncode=1)
+        self.assertIsNone(cli._fetch_title("pr", 999, root=".", _run=run))
+
+    def test_enrich_title_issue_then_pr_then_none(self):
+        cli._TITLE_CACHE.clear()
+
+        def run(argv, **kw):  # argv[3] is the issue/PR number
+            return types.SimpleNamespace(stdout="T-" + argv[3], stderr="", returncode=0)
+        e_issue = {"issue": 500, "pr": 501, "title": None}
+        cli._enrich_title(e_issue, root=".", _run=run)
+        self.assertEqual(e_issue["title"], "T-500")        # issue title preferred
+        e_pr = {"issue": None, "pr": 501, "title": None}
+        cli._enrich_title(e_pr, root=".", _run=run)
+        self.assertEqual(e_pr["title"], "T-501")           # falls back to PR
+        e_none = {"issue": None, "pr": None, "title": None}
+        cli._enrich_title(e_none, root=".", _run=run)
+        self.assertIsNone(e_none["title"])                 # neither → untouched
+
+    def test_single_repo_board_enriches_title(self):
+        import tempfile
+        from unittest.mock import patch
+        cli._TITLE_CACHE.clear()
+        config = self._config()
+
+        def run(argv, **kw):
+            return types.SimpleNamespace(stdout="Some Issue Title", stderr="", returncode=0)
+        with tempfile.TemporaryDirectory() as d:
+            _write_checkpoint(d, config, step="s12", pr=361, merge_state="merged")
+            led = ledger_path(d, config)
+            led.parent.mkdir(parents=True, exist_ok=True)
+            led.write_text(Path(SAMPLE).read_text(encoding="utf-8"), encoding="utf-8")
+            with patch("keel_visual.cli.git.worktree_list", return_value=self._porcelain(d)):
+                board = cli._single_repo_board(d, config, _run=run)
+        self.assertEqual(board[0]["title"], "Some Issue Title")
+        self.assertIn("branch", board[0])
+
+    def test_aggregate_board_without_run_skips_titles(self):
+        import tempfile
+        from unittest.mock import patch
+
+        from keel.runner import CommandResult
+        with tempfile.TemporaryDirectory() as parent:
+            self._make_keel_project(parent, "alpha", step="s8", pr=42)
+            with patch("keel_visual.cli.git.worktree_list",
+                       return_value=CommandResult(False, 1, "")):
+                board = cli._aggregate_board(parent)   # no _run → no gh, titles left None
+        self.assertTrue(board)
+        self.assertIsNone(board[0]["title"])
 
     def test_render_all_writes_board(self):
         import tempfile

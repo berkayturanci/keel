@@ -45,14 +45,25 @@
   .count b{color:var(--txt)}
   .view{display:none}
   .view.show{display:block}
-  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(330px,100%),1fr));gap:14px}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:15px 16px;transition:opacity .2s}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(390px,100%),1fr));gap:16px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:18px 20px;transition:opacity .2s}
   .card.done{opacity:.5}
   .card.done:hover{opacity:1}
   body.active-only .card.done{display:none}
-  .chead{display:flex;align-items:center;gap:9px;margin-bottom:12px}
-  .proj{font-weight:600;font-size:14px}
+  .chead{display:flex;align-items:center;gap:9px;margin-bottom:9px}
+  .cicon{flex:none;width:22px;height:22px;border-radius:7px;display:inline-flex;align-items:center;justify-content:center;background:var(--panel2);border:1px solid var(--line);color:var(--mut)}
+  .cicon.running,.cicon.active{color:var(--info)}
+  .cicon.merged{color:var(--ok)}
+  .cicon.gate{color:var(--warn)}
+  .cicon.blocked{color:var(--danger)}
+  .cicon svg{display:block}
+  .proj{font-weight:600;font-size:15px}
   .lab{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:var(--mut);background:var(--panel2);border:1px solid var(--line);border-radius:999px;padding:2px 9px}
+  .ctitle{font-size:13.5px;line-height:1.4;color:var(--txt);margin:0 0 11px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .cmeta{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;margin:11px 0 0;font-size:12px;color:var(--mut)}
+  .cmeta .mi{display:inline-flex;align-items:center;gap:5px;min-width:0}
+  .cmeta .mi svg{flex:none;opacity:.85}
+  .cmeta .br{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:230px}
   .badge{margin-left:auto;font-size:11px;font-weight:600;padding:3px 10px;border-radius:999px}
   .badge.merged{background:rgba(122,209,74,.16);color:var(--ok)}
   .badge.done{background:var(--panel2);color:var(--mut)}
@@ -119,6 +130,9 @@
   const BOARD = Array.isArray(window.KEEL_BOARD) ? window.KEEL_BOARD : [];
 
   function el(tag, cls){ const n=document.createElement(tag); if(cls) n.className=cls; return n; }
+  const ICON_BRANCH='<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="4" cy="3.2" r="1.5"/><circle cx="4" cy="12.8" r="1.5"/><circle cx="12" cy="3.2" r="1.5"/><path d="M4 4.7v6.6M12 4.7v1.3a3 3 0 0 1-3 3H5.5"/></svg>';
+  const ICON_USER='<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="5" r="2.5"/><path d="M3.2 13.2a4.8 4.8 0 0 1 9.6 0"/></svg>';
+  const STATUS_ICON={running:'▸',active:'▸',merged:'✓',done:'✓',gate:'‖',blocked:'✕'};
   function bold(n){ const b=el('b'); b.textContent=String(n); return b; }
   const isDone = run => !!run.merged || !!run.done;   // merged OR closed-out → finished
   // active (running/gate/blocked) runs first, finished ones last — stable within group
@@ -204,10 +218,13 @@
     const finished = !!run.merged || !!run.done;
     const card = el('div','card'+(finished?' done':''));
     const head = el('div','chead');
+    const st = run.status || 'active';
+    const icon = el('span','cicon '+st); icon.textContent = STATUS_ICON[st] || '▸';
     const proj = el('span','proj'); proj.textContent = run.project || '?';
     const lab = el('span','lab'); lab.textContent = run.label || '?';
-    const badge = el('span','badge '+(run.status||'active')); badge.textContent = run.status || 'active';
-    head.append(proj, lab, badge); card.appendChild(head);
+    const badge = el('span','badge '+st); badge.textContent = st;
+    head.append(icon, proj, lab, badge); card.appendChild(head);
+    if(run.title){ const ti=el('div','ctitle'); ti.textContent=run.title; card.appendChild(ti); }
     const strip = el('div','strip');
     steps.forEach((s, idx) => {
       if(idx>0){ strip.appendChild(el('span','seg'+((finished || idx<=active)?' done':''))); }
@@ -220,6 +237,15 @@
       strip.appendChild(dot);
     });
     card.appendChild(strip);
+    if(run.branch||run.author){
+      const meta=el('div','cmeta');
+      if(run.branch){ const mb=el('span','mi'); const bi=el('span'); bi.innerHTML=ICON_BRANCH;
+        const bt=el('span','br'); bt.textContent=run.base?(run.branch+' → '+run.base):run.branch;
+        mb.append(bi,bt); meta.appendChild(mb); }
+      if(run.author){ const ma=el('span','mi ar'); const ai=el('span'); ai.innerHTML=ICON_USER;
+        const at=el('span'); at.textContent=run.author; ma.append(ai,at); meta.appendChild(ma); }
+      card.appendChild(meta);
+    }
     const foot = el('div','cfoot');
     const step = el('span','step'); step.textContent = (run.active_id||'?')+' · '+(run.active_name||'?');
     foot.appendChild(step);

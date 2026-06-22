@@ -325,6 +325,14 @@ def build_run_state(
 
     issue = rec.get("issue") if rec else None
     pr = rec.get("pull_request") if rec else None
+    # Branch / base / author come straight from the ledger ship_run record keel
+    # already writes — fixed for the life of the run, so never stale, and no new
+    # core field is needed. Activity-only runs (no ledger record) leave them None.
+    git_block = rec.get("git") if rec else None
+    actors = rec.get("actors") if rec else None
+    branch = git_block.get("branch") if isinstance(git_block, dict) else None
+    base = git_block.get("base_branch") if isinstance(git_block, dict) else None
+    author = actors.get("implementer") if isinstance(actors, dict) else None
     # Jury: prefer the live checkpoint (mid-run, for --follow); fall back to the
     # ledger (post-run). Both read only keel's own records, never ai-jury.
     if not is_ship:
@@ -337,6 +345,9 @@ def build_run_state(
         "command": command,
         "issue": _int_or_none(issue.get("number")) if isinstance(issue, dict) else None,
         "pr": _int_or_none(pr.get("number")) if isinstance(pr, dict) else None,
+        "branch": branch if isinstance(branch, str) and branch else None,
+        "base": base if isinstance(base, str) and base else None,
+        "author": author if isinstance(author, str) and author else None,
         "active_index": active,
         "active_id": flow[active].id,
         "merged": merged,

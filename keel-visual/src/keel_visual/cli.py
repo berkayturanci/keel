@@ -18,7 +18,7 @@ import time
 from importlib import resources
 from pathlib import Path
 
-from keel import checkpoint, flows, git, ledger
+from keel import checkpoint, flows, git, ledger, runner
 from keel import config as cfg
 
 try:  # the additive activity channel needs a core that ships keel.activity
@@ -90,7 +90,7 @@ def _resolve_checkpoint(
 
 def cmd_render(args: argparse.Namespace) -> int:
     if getattr(args, "all", False):
-        board = _aggregate_board(args.root)
+        board = _aggregate_board(args.root, _run=subprocess.run)
         nproj = len({e["project"] for e in board})
         html = render.render_board_html(load_board_template(), board, title="keel board")
         Path(args.out).write_text(html, encoding="utf-8")
@@ -484,15 +484,51 @@ def _aggregate_runs(parent: str) -> list[dict]:
     return rows
 
 
+_TITLE_CACHE: dict[tuple[str, int], str | None] = {}
+
+
+def _fetch_title(kind: str, number: int, *, root: str, _run=subprocess.run) -> str | None:
+    """Best-effort GitHub title for an issue/PR via ``gh``, cached for the process.
+
+    Fail-soft: missing ``gh`` / no auth / offline / API error → ``None`` (the card
+    shows its number only, never blanks). keel-visual takes **no hard dependency** on
+    ``gh`` — the call is optional and guarded, exactly like its ``git worktree list``
+    use. Cached by ``(kind, number)`` so ``serve``'s ~0.5s polling never re-hits the
+    API for a run it has already resolved. The title is fetched **live**, so a renamed
+    issue/PR is reflected on the next process start — nothing is stamped into a record."""
+    key = (kind, number)
+    if key in _TITLE_CACHE:
+        return _TITLE_CACHE[key]
+    result = runner.run_argv(
+        ["gh", kind, "view", str(number), "--json", "title", "--jq", ".title"],
+        cwd=root, _run=_run)
+    title = result.output.strip() if result.ok else ""
+    _TITLE_CACHE[key] = title or None
+    return _TITLE_CACHE[key]
+
+
+def _enrich_title(entry: dict, *, root: str, _run=subprocess.run) -> None:
+    """Attach the live GitHub ``title`` to a board entry — issue title preferred, else PR."""
+    if entry.get("issue"):
+        entry["title"] = _fetch_title("issue", entry["issue"], root=root, _run=_run)
+    elif entry.get("pr"):
+        entry["title"] = _fetch_title("pr", entry["pr"], root=root, _run=_run)
+
+
 def _board_entry(run_state: dict, identity: dict, project: str) -> dict:
     """A slim per-run entry the **web** board renders: project + label + the step
-    strip + status/jury. The project name is sanitised before it reaches the page."""
+    strip + status/jury, plus branch/base/author (from the ledger record) and an
+    optional live ``title``. Project/branch/author are sanitised before the page."""
     row = dash.board_row(run_state, identity)
     return {
         "project": dash._safe_label(project),
         "label": row["label"],
         "issue": row["issue"],
         "pr": row["pr"],
+        "branch": dash._safe_label(row["branch"]) if row["branch"] else None,
+        "base": dash._safe_label(row["base"]) if row["base"] else None,
+        "author": dash._safe_label(row["author"]) if row["author"] else None,
+        "title": None,
         "status": row["status"],
         "active_index": row["active_index"],
         "active_id": row["active_id"],
@@ -509,23 +545,35 @@ def _board_entry(run_state: dict, identity: dict, project: str) -> dict:
     }
 
 
-def _aggregate_board(parent: str) -> list[dict]:
+def _aggregate_board(parent: str, *, _run=None) -> list[dict]:
     """Web board entries across every keel project under ``parent``. Same discovery +
-    per-project config as :func:`_aggregate_runs`. Fail-soft."""
+    per-project config as :func:`_aggregate_runs`. Fail-soft.
+
+    When ``_run`` is supplied (the live ``serve`` / ``render`` paths pass
+    ``subprocess.run``), each entry is enriched with its live ``gh`` title, fetched in
+    the entry's own project dir. Left ``None`` (tests, pure callers) → no ``gh`` calls."""
     board: list[dict] = []
     for name, project_dir, config in _each_project(parent):
         for run_state, identity in _run_records_in_repo(project_dir, config):
-            board.append(_board_entry(run_state, identity, name))
+            entry = _board_entry(run_state, identity, name)
+            if _run is not None:
+                _enrich_title(entry, root=project_dir, _run=_run)
+            board.append(entry)
     return board
 
 
-def _single_repo_board(root: str, config: cfg.ProjectConfig) -> list[dict]:
-    """Web board entries for one repo (the non-``--all`` serve path). Fail-soft."""
+def _single_repo_board(root: str, config: cfg.ProjectConfig, *, _run=None) -> list[dict]:
+    """Web board entries for one repo (the non-``--all`` serve path). Fail-soft.
+
+    ``_run`` enables live ``gh`` title enrichment exactly as in :func:`_aggregate_board`."""
     project = config.repo or Path(root).resolve().name
-    return [
-        _board_entry(run_state, identity, project)
-        for run_state, identity in _run_records_in_repo(root, config)
-    ]
+    board: list[dict] = []
+    for run_state, identity in _run_records_in_repo(root, config):
+        entry = _board_entry(run_state, identity, project)
+        if _run is not None:
+            _enrich_title(entry, root=root, _run=_run)
+        board.append(entry)
+    return board
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
@@ -533,7 +581,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
     the records on every request. Localhost-only."""
     if getattr(args, "all", False):
         def provider() -> list[dict]:
-            return _aggregate_board(args.root)
+            return _aggregate_board(args.root, _run=subprocess.run)
     else:
         if not args.path:
             print("serve: provide a path to project.yaml, or use --all", file=sys.stderr)
@@ -548,7 +596,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
             return 1
 
         def provider() -> list[dict]:
-            return _single_repo_board(args.root, config)
+            return _single_repo_board(args.root, config, _run=subprocess.run)
 
     page = load_dashboard_template()
     httpd = serve.make_server(provider, page, host=args.host, port=args.port)
