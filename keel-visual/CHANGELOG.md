@@ -6,6 +6,20 @@ All notable changes to keel-visual are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Richer, larger board cards (web).** Each card now shows a status-icon chip, the live
+  **issue/PR title**, the **branch → base**, and the **author**. Branch / base / author are
+  read from the ledger `ship_run` record keel already writes (fixed per run, never stale —
+  no new core field); titles are fetched **live** from `gh` and cached per process (a renamed
+  issue/PR reflects on next start). Best-effort throughout: an activity-only run, or a machine
+  without `gh`, simply shows the number(s) — the card never blanks. Both the live `serve` and
+  static `render` boards. (#505)
+
+### Changed
+- **Board label shows both issue and PR.** A run carrying both now reads `#<issue>→#<PR>`
+  (e.g. `#500→#501`) instead of only the PR, so rows are unambiguous; `issue` and `pr` are
+  also exposed as separate board-entry fields for the web drawer. (#503)
+
 ## [0.5.9] — 2026-06-16
 
 ### Added

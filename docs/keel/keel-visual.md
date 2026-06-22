@@ -97,7 +97,10 @@ filesystem**. Two sources feed it:
    `done` of a run that merely closed out. Non-ship commands (`triage`, `morning`,
    `pr-loop`, …) stamp every phase as they go. The board reads these **per worktree** (an
    agent runs a command in its own worktree and stamps activity there), keyed by run-id,
-   with the command in the footer.
+   with the command in the footer. A **multi-issue** `/keel:ship` or `/keel:work-block`
+   stamps every selected issue's `ship-<N>` at `s0` **at dispatch** (in the parent, before
+   any child handoff), so the whole batch appears at once — not just the issue currently being
+   worked, and even if a child agent never reaches its own per-phase `keel activity` calls.
 
    Each run is **labelled** by its issue **and** PR when it carries both —
    `#<issue>→#<PR>` (e.g. `#500→#501`) so a row is unambiguous — else by its PR (`#PR`),

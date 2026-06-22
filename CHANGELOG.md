@@ -6,6 +6,15 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Deterministic Step-0 activity stamp at multi-issue dispatch.** A multi-issue `/keel:ship`
+  or `/keel:work-block` now stamps every selected issue's canonical `ship-<N>` run at `s0` up
+  front (in the parent, at dispatch), so each run shows on the `keel-visual` board immediately
+  rather than only after a child agent happens to call `keel activity`. Each child's later
+  `keel plan`/`run-gates`/`merge --run-id ship-<N>` advances the same board row; a child that
+  never stamps still shows as `s0` instead of vanishing. Adapter-level change (`ship.md` s1
+  select, `work-block.md` Step 1); fail-soft on keel < 1.6.0. (#501)
+
 ## [1.7.0] — 2026-06-19
 
 ### Added
