@@ -240,8 +240,14 @@ class TestFetchLatestPypi(unittest.TestCase):
         def __exit__(self, *exc):
             return False
 
-        def read(self):
-            return self._body
+        def read(self, size=-1):
+            if size == -1 or size >= len(self._body):
+                res = self._body
+                self._body = b""
+                return res
+            res = self._body[:size]
+            self._body = self._body[size:]
+            return res
 
     def test_parses_version(self):
         payload = json.dumps({"info": {"version": "1.4.0"}}).encode("utf-8")
