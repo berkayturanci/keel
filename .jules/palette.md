@@ -12,3 +12,7 @@
 ## 2024-06-22 - Sync aria-current with single-page navigation active view state
 **Learning:** In custom single-page applications, updating visual `.active` or `.on` classes for navigation links is insufficient for screen readers. The `aria-current="page"` attribute must be added or removed dynamically alongside visual cues for navigation links managed by JavaScript (e.g. IntersectionObserver or click handlers).
 **Action:** When updating active view states dynamically in JavaScript, always add or remove the `aria-current="page"` attribute in sync with the visual class change to maintain full screen reader accessibility.
+
+## 2026-06-15 - ARIA Labels on Buttons with Generic Text
+**Learning:** Copy buttons that just contain generic text like "copy" lack context for screen reader users when navigating interactively. Adding an `aria-label` provides a much more descriptive string.
+**Action:** Always add descriptive `aria-label`s to action buttons that rely solely on generic text strings (like "copy", "read more"), especially in technical documentation.

@@ -273,7 +273,7 @@
         <section class="view" id="view-cli" data-view="cli">
           <div class="view-head"><p class="view-kicker">The deterministic core</p><h1>The <code style="font-family:var(--font-mono)">keel</code> CLI</h1><p>The CLI does the deterministic work — config resolution, gate planning &amp; execution, risk-tier classification, merge window + lock, the fail-closed <code style="font-family:var(--font-mono)">keel merge</code> pipeline, evidence verification, checkpoint / resume and run controls. The workflow commands above are the agentic flows layered on top. Every flag is documented in the <a href="docs.html#parameter-reference">parameter reference</a>.</p></div>
           <div class="codewrap" style="margin-bottom:1.4rem">
-            <button class="code-copy" type="button" data-copy="keel setup --root ." data-copy-target="#code-quick"><span>copy</span></button>
+            <button class="code-copy" type="button" data-copy="keel setup --root ." data-copy-target="#code-quick" aria-label="Copy code snippet"><span>copy</span></button>
             <pre class="code" id="code-quick" tabindex="0" role="region" aria-label="Quickstart CLI commands"><code>keel setup --root .           <span class="cm"># one command: init + adapters + validate + plan</span>
 keel validate &lt;cfg&gt;           <span class="cm"># check against the schema</span>
 keel plan     &lt;cfg&gt;           <span class="cm"># render the backbone</span>
@@ -288,7 +288,7 @@ keel ship     &lt;cfg&gt; --root .  <span class="cm"># dry assessment → decisi
           <div class="split">
             <div class="cfg-keys" id="cfg-keys"></div>
             <div class="codewrap">
-              <button class="code-copy" type="button" data-copy="see docs" data-copy-target="#code-yaml"><span>copy</span></button>
+              <button class="code-copy" type="button" data-copy="see docs" data-copy-target="#code-yaml" aria-label="Copy YAML example"><span>copy</span></button>
               <pre class="code" id="code-yaml" tabindex="0" role="region" aria-label="Project YAML configuration example"><code><span class="k">core</span>: <span class="s">"^1.0"</span>
 <span class="k">base_branch</span>: <span class="s">main</span>
 <span class="k">timezone</span>: <span class="s">Europe/Istanbul</span>
