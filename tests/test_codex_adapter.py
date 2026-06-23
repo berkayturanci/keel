@@ -35,8 +35,9 @@ class TestCodexAdapter(unittest.TestCase):
             for hook in block["hooks"]
         ]
         self.assertIn("./.codex/hooks/deny-dangerous-shell.sh", commands)
-        mode = HOOK.stat().st_mode
-        self.assertTrue(mode & stat.S_IXUSR)
+        if sys.platform != "win32":
+            mode = HOOK.stat().st_mode
+            self.assertTrue(mode & stat.S_IXUSR)
 
     def test_readme_maps_every_packaged_adapter_to_a_skill(self):
         readme = (CODEX_DIR / "README.md").read_text(encoding="utf-8")

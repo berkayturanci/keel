@@ -441,7 +441,7 @@ class TestRunGates(unittest.TestCase):
 
     def test_reports_extension_problem(self):
         p = _write_raw("extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: x\n"
-                       "gates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+                       "gates: [jury]\nknobs:\n  build_gate_cmd: 'true'\n"
                        "extensions:\n  tester: [ghost.md]\nextensions_dir: .keel/extensions\n")
         rc, out, err = run(["run-gates", p, "--root", "/tmp"])
         self.assertEqual(rc, 0)
@@ -4040,7 +4040,7 @@ class TestCoreMerge(unittest.TestCase):
             rc_ext, _, err_ext = run(_merge_args())
         with (
             patch("keel.cli.runtime.detect", return_value=fake_report),
-            patch.dict("os.environ", {"KEEL_APPROVE_SCOPE": "filesystem,git,github"}, clear=True),
+            patch.dict("os.environ", {"KEEL_APPROVE_SCOPE": "filesystem,git,github"}, clear=False),
         ):
             rc_env, _, err_env = run([
                 "merge", str(PROJECTS / "keel.yaml"), "--pr", "123",

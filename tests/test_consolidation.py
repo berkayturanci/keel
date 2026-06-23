@@ -99,7 +99,7 @@ class TestCliPlanConsent(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d, patch.dict(
             os.environ,
             {"KEEL_APPROVE_SCOPE": "filesystem,git,github"},
-            clear=True,
+            clear=False,
         ):
             rc, _, err = run([
                 "plan", p, "--root", d, "--command", "ship", "--live", "--json",
@@ -117,7 +117,7 @@ class TestCliPlanConsent(unittest.TestCase):
             "  operator: automation:nightly\n"
             "gates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
         )
-        with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {}, clear=True):
+        with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {}, clear=False):
             rc, out, err = run([
                 "plan", p, "--root", d, "--command", "ship", "--live", "--json",
                 "--target", "nightly queue",
@@ -140,7 +140,7 @@ class TestCliPlanConsent(unittest.TestCase):
             "  approved_scopes: [filesystem, git, github]\n"
             "gates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
         )
-        with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {}, clear=True):
+        with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {}, clear=False):
             rc, _, err = run([
                 "plan", p, "--root", d, "--command", "ship", "--live", "--json",
             ])
@@ -178,7 +178,7 @@ class TestCliPlanConsent(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d, patch.dict(
             os.environ,
             {"KEEL_APPROVE_SCOPE": "bogus"},
-            clear=True,
+            clear=False,
         ):
             rc, out, err = run(["plan", p, "--root", d, "--command", "ship", "--json"])
         self.assertEqual(rc, 0, err)
@@ -207,7 +207,7 @@ class TestCliPlanConsent(unittest.TestCase):
             "repo: tmp\nconsent_mode: agent\n"
             "gates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
         )
-        with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {}, clear=True):
+        with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {}, clear=False):
             rc, out, err = run(["plan", p, "--root", d, "--command", "ship", "--live", "--json"])
         self.assertEqual(rc, 0, err)
         consent_block = json.loads(out)["contract"]["operator_consent"]
@@ -226,7 +226,7 @@ class TestCliPlanConsent(unittest.TestCase):
                 "KEEL_APPROVE_SCOPE": "filesystem,git,github",
                 "KEEL_OPERATOR": "automation:cron",
             },
-            clear=True,
+            clear=False,
         ):
             rc, out, err = run([
                 "plan", p, "--root", d, "--command", "ship", "--live", "--json",
@@ -241,7 +241,7 @@ class TestCliPlanConsent(unittest.TestCase):
             "extends: keel\ncore_version: '^0.6'\nbase_branch: main\n"
             "repo: tmp\ngates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
         )
-        with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {}, clear=True):
+        with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {}, clear=False):
             rc, out, _ = run([
                 "plan", p, "--root", d, "--command", "ship", "--live", "--json",
                 "--consent-mode", "standing",
@@ -258,7 +258,7 @@ class TestCliPlanConsent(unittest.TestCase):
             "repo: tmp\ngates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
         )
         with tempfile.TemporaryDirectory() as d, patch.dict(
-            os.environ, {"KEEL_CONSENT_MODE": "maybe"}, clear=True,
+            os.environ, {"KEEL_CONSENT_MODE": "maybe"}, clear=False,
         ):
             rc, _, err = run([
                 "plan", p, "--root", d, "--command", "ship", "--live", "--json",
@@ -274,7 +274,7 @@ class TestCliPlanConsent(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d, patch.dict(
             os.environ,
             {"KEEL_APPROVE_SCOPE": "bogus"},
-            clear=True,
+            clear=False,
         ):
             rc, out, err = run(["ci-check", p, "--root", d, "--json"])
         self.assertEqual(rc, 0, err)
@@ -289,7 +289,7 @@ class TestCliPlanConsent(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d, patch.dict(
             os.environ,
             {"KEEL_CONSENT_MODE": "standing", "KEEL_APPROVE_SCOPE": "bogus"},
-            clear=True,
+            clear=False,
         ):
             rc, out, err = run([
                 "plan", p, "--root", d, "--command", "ci-check", "--live", "--json",
@@ -308,7 +308,7 @@ class TestCliPlanConsent(unittest.TestCase):
             "  operator: automation:nightly\n"
             "gates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
         )
-        with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {}, clear=True):
+        with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {}, clear=False):
             rc, out, err = run([
                 "plan", p, "--root", d, "--command", "ci-check", "--live", "--json",
             ])
@@ -326,7 +326,7 @@ class TestCliPlanConsent(unittest.TestCase):
             "  operator: automation:nightly\n"
             "gates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
         )
-        with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {}, clear=True):
+        with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {}, clear=False):
             rc, _, err = run(["plan", p, "--root", d, "--command", "ship", "--live", "--json"])
         self.assertEqual(rc, 1)
         self.assertIn("unknown consent scope", err)
@@ -338,8 +338,8 @@ class TestCliPlanConsent(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as d, patch.dict(
             os.environ,
-            {"KEEL_APPROVE_SCOPE": "filesystem,git,github", "KEEL_OPERATOR": "automation:cron"},
-            clear=True,
+            {"KEEL_APPROVE_SCOPE": "filesystem,git,github", "KEEL_OPERATOR": "automation:cron", "PATH": os.environ.get("PATH", "")},
+            clear=False,
         ):
             rc, out, err = run([
                 "overnight", p, "--root", d, "--live", "--json",

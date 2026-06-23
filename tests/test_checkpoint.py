@@ -66,9 +66,10 @@ class TestCheckpointContract(unittest.TestCase):
             )
 
     def test_resolve_path_rejects_absolute_and_escaping_paths(self):
+        import os
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaisesRegex(checkpoint.CheckpointError, "must be relative"):
-                checkpoint.resolve_path(directory, _config(checkpoint_path="/tmp/resume.json"))
+                checkpoint.resolve_path(directory, _config(checkpoint_path=os.path.abspath("/tmp/resume.json")))
 
             with self.assertRaisesRegex(checkpoint.CheckpointError, "escapes"):
                 checkpoint.resolve_path(directory, _config(checkpoint_path="../resume.json"))

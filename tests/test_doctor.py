@@ -256,6 +256,13 @@ class TestFetchLatestPypi(unittest.TestCase):
         )
         self.assertEqual(result, "1.4.0")
 
+    def test_aborts_on_massive_payload(self):
+        payload = b"x" * (2 * 1024 * 1024 + 10)
+        result = cli._fetch_latest_pypi_version(
+            _open=lambda url, timeout: self._FakeResponse(payload)
+        )
+        self.assertIsNone(result)
+
     def test_non_string_version_is_none(self):
         payload = json.dumps({"info": {"version": 14}}).encode("utf-8")
         result = cli._fetch_latest_pypi_version(
