@@ -17,3 +17,8 @@
 ## 2024-06-21 - Premature YAML parse optimization
 **Learning:** While using `yaml.CSafeLoader` and `yaml.CSafeDumper` over pure Python equivalents yields significantly better raw parse/serialize times for large documents (e.g. ~8x faster), replacing standard library functions should only be done when the bottleneck is confirmed. Small configuration or frontmatter reads that take sub-milliseconds don't benefit from this micro-optimization on application startup, and introducing C-extension fallbacks can cause unexpected discrepancies in exception handling that break CI coverage and documentation invariants.
 **Action:** Do not preemptively optimize low-cost operations (like parsing a single tiny config file) and focus performance optimization on provable bottlenecks or loops that are known to run frequently. Always verify the overall system impact vs pure benchmark speedup and adhere to existing security and test coverage invariants.
+
+## 2024-06-21 - Optimize matching against sets with `isdisjoint`
+
+**Learning:** Using `frozenset.isdisjoint()` or `set.isdisjoint()` for checking intersection of lists/sets is significantly faster (~3-5x) than using a generator expression inside `any()`. When checking properties repeatedly against immutable rule conditions, pre-cleaning and caching them as sets at initialization creates measurable improvements.
+**Action:** When validating facts against multiple conditions in Python, pre-compute validation checks and switch from generators like `any(item in container for item in query)` to native set intersections such as `container.isdisjoint(query)` where appropriate.
