@@ -103,7 +103,9 @@ class TestLedgerContract(unittest.TestCase):
         import os
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaisesRegex(ledger.LedgerError, "must be relative"):
-                ledger.resolve_path(directory, _config(run_ledger=os.path.abspath("/tmp/runs.jsonl")))
+                ledger.resolve_path(
+                    directory, _config(run_ledger=os.path.abspath("/tmp/runs.jsonl"))
+                )
 
             with self.assertRaisesRegex(ledger.LedgerError, "escapes"):
                 ledger.resolve_path(directory, _config(run_ledger="../runs.jsonl"))

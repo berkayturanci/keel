@@ -92,7 +92,7 @@ jobs:
           PR: ${{ github.event.pull_request.number || github.event.inputs.pr }}
           DEFERRAL: ${{ github.event.inputs.deferral }}
         run: |
-          ARGS=(.keel/project.yaml --root . --pr "$PR")
+          ARGS=(.keel/project.yaml --root . --pr "$PR" --deferral all)
           if [ -n "$DEFERRAL" ]; then
             ARGS+=(--deferral "$DEFERRAL")
           fi

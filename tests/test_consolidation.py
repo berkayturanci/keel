@@ -338,7 +338,11 @@ class TestCliPlanConsent(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as d, patch.dict(
             os.environ,
-            {"KEEL_APPROVE_SCOPE": "filesystem,git,github", "KEEL_OPERATOR": "automation:cron", "PATH": os.environ.get("PATH", "")},
+            {
+                "KEEL_APPROVE_SCOPE": "filesystem,git,github",
+                "KEEL_OPERATOR": "automation:cron",
+                "PATH": os.environ.get("PATH", "")
+            },
             clear=False,
         ):
             rc, out, err = run([
