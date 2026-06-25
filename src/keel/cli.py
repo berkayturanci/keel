@@ -3389,13 +3389,9 @@ def _read_json_object(path: str) -> dict[str, object]:
 
 
 def _dedupe_ints(values: list[int]) -> list[int]:
-    seen: set[int] = set()
-    out: list[int] = []
-    for value in values:
-        if value not in seen:
-            seen.add(value)
-            out.append(value)
-    return out
+    # Optimization: using dict.fromkeys() is faster than a loop with a seen set
+    # while still preserving the original insertion order.
+    return list(dict.fromkeys(values))
 
 
 def _read_json_list(path: str, *, missing_ok: bool = False) -> list[dict[str, object]]:
