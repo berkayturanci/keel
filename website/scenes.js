@@ -452,7 +452,11 @@
       if (i === active) return;
       active = i;
       var c = featured[i];
-      rail.querySelectorAll(".show-tab").forEach(function (b, j) { b.classList.toggle("on", j === i); });
+      rail.querySelectorAll(".show-tab").forEach(function (b, j) {
+        var isOn = j === i;
+        b.classList.toggle("on", isOn);
+        b.setAttribute("aria-selected", isOn ? "true" : "false");
+      });
       if (cmdEl) cmdEl.textContent = c.name;
       if (grpEl) grpEl.textContent = c.group;
       if (detail) {
