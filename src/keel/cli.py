@@ -3389,13 +3389,12 @@ def _read_json_object(path: str) -> dict[str, object]:
 
 
 def _dedupe_ints(values: list[int]) -> list[int]:
-    seen: set[int] = set()
-    out: list[int] = []
-    for value in values:
-        if value not in seen:
-            seen.add(value)
-            out.append(value)
-    return out
+    """Deduplicate a list of ints while preserving order.
+
+    Optimized implementation using dict.fromkeys which is significantly
+    faster in Python 3.7+ than manual loops with a seen set.
+    """
+    return list(dict.fromkeys(values))
 
 
 def _read_json_list(path: str, *, missing_ok: bool = False) -> list[dict[str, object]]:
