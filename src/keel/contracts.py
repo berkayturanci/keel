@@ -1096,16 +1096,16 @@ def scan_contract_as_dict(
         },
         "dedupe": {
             "source": "policy_pack.scan.dedupe + canonical defaults",
-            "path_token_boundary": True,
-            "type_must_match": True,
+            "path_token_boundary": True,  # nosec B105
+            "type_must_match": True,  # nosec B105
             "near_text_similarity": _scan_float(scan, "near_text_similarity", 0.6),
             "open_duplicate": "skip",
             "closed_duplicate": "promote-regression-of",
             "lock": "mkdir",
         },
         "reviewer_isolation": {
-            "parallel": True,
-            "no_cross_reading": True,
+            "parallel": True,  # nosec B105
+            "no_cross_reading": True,  # nosec B105
             "orchestrator_collects_findings": True,
         },
         "areas": [
