@@ -12,3 +12,6 @@
 ## 2024-06-22 - Sync aria-current with single-page navigation active view state
 **Learning:** In custom single-page applications, updating visual `.active` or `.on` classes for navigation links is insufficient for screen readers. The `aria-current="page"` attribute must be added or removed dynamically alongside visual cues for navigation links managed by JavaScript (e.g. IntersectionObserver or click handlers).
 **Action:** When updating active view states dynamically in JavaScript, always add or remove the `aria-current="page"` attribute in sync with the visual class change to maintain full screen reader accessibility.
+## 2026-10-27 - [Dynamic active state toggles required explicit ARIA synchronization]
+**Learning:** Pure class-based visual states (`.on`) do not expose interactive states to screen readers. We must dynamically toggle `aria-pressed` for segmented buttons and `aria-selected` for tab-list buttons whenever the `.on` class is modified.
+**Action:** When creating or dynamically updating interactive toggles/tabs, ensure ARIA attributes are updated in sync with the visual classes within the event listener/update function.

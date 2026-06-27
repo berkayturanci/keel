@@ -19,7 +19,9 @@
     store.set(key, val);
     // reflect into any matching segmented control
     document.querySelectorAll('[data-seg="' + key + '"] button').forEach(function (b) {
-      b.classList.toggle("on", b.dataset.val === val);
+      var isActive = b.dataset.val === val;
+      b.classList.toggle("on", isActive);
+      b.setAttribute("aria-pressed", isActive ? "true" : "false");
     });
   }
   function wireSeg() {
@@ -27,7 +29,9 @@
       var key = seg.dataset.seg;
       var attr = key === "theme" ? "data-theme" : key === "motion" ? "data-motion" : "data-type";
       seg.querySelectorAll("button").forEach(function (b) {
-        b.classList.toggle("on", b.dataset.val === root.getAttribute(attr));
+        var isActive = b.dataset.val === root.getAttribute(attr);
+        b.classList.toggle("on", isActive);
+        b.setAttribute("aria-pressed", isActive ? "true" : "false");
         b.addEventListener("click", function () { setAttr(attr, key, b.dataset.val); });
       });
     });

@@ -452,7 +452,11 @@
       if (i === active) return;
       active = i;
       var c = featured[i];
-      rail.querySelectorAll(".show-tab").forEach(function (b, j) { b.classList.toggle("on", j === i); });
+      rail.querySelectorAll(".show-tab").forEach(function (b, j) {
+        var isSelected = j === i;
+        b.classList.toggle("on", isSelected);
+        b.setAttribute("aria-selected", isSelected ? "true" : "false");
+      });
       if (cmdEl) cmdEl.textContent = c.name;
       if (grpEl) grpEl.textContent = c.group;
       if (detail) {
@@ -484,6 +488,8 @@
       if (c.group !== lastGroup) { rail.appendChild(el("div", "st-group", c.group)); lastGroup = c.group; }
       var b = el("button", "show-tab", '<span class="st-name">' + c.name + (c.flagship ? ' <span class="st-flag">flagship</span>' : "") + '</span><span class="st-one">' + c.one + "</span>");
       b.type = "button";
+      b.setAttribute("role", "tab");
+      b.setAttribute("aria-selected", "false");
       b.addEventListener("click", function () { activate(i); });
       rail.appendChild(b);
     });
