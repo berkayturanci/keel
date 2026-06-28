@@ -3779,10 +3779,10 @@ def _fetch_latest_pypi_version(
 
     if _open is None:  # pragma: no cover - live network boundary
         from urllib.request import urlopen
-        _open = lambda u, t: urlopen(u, timeout=t)  # noqa: E731
+        _open = lambda u, t: urlopen(u, timeout=t)  # nosec B310 # noqa: E731
     try:
         with _open(url, timeout) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+            payload = json.loads(response.read(50 * 1024 * 1024).decode("utf-8"))
         version = payload["info"]["version"]
         return version if isinstance(version, str) else None
     except Exception:
