@@ -7,3 +7,7 @@
 **Vulnerability:** `startswith` used for URL scheme validation in `src/keel/cli.py` is insufficient and flagged by Bandit.
 **Learning:** String matching like `startswith((http://, https://))` is fragile and can be bypassed or fail edge cases.
 **Prevention:** Always use explicit URL parsing with `urllib.parse.urlparse(url).scheme.lower() in ('http', 'https')` for secure scheme validation.
+## 2024-07-01 - Bounding External Payload Reads
+**Vulnerability:** Unbounded read() on external HTTP responses can lead to DoS via memory exhaustion.
+**Learning:** Python's urlopen response.read() without a size limit is dangerous even for expected JSON payloads.
+**Prevention:** Always enforce a maximum byte limit (e.g., read(50 * 1024 * 1024)) when reading external responses.
