@@ -7,3 +7,7 @@
 **Vulnerability:** `startswith` used for URL scheme validation in `src/keel/cli.py` is insufficient and flagged by Bandit.
 **Learning:** String matching like `startswith((http://, https://))` is fragile and can be bypassed or fail edge cases.
 **Prevention:** Always use explicit URL parsing with `urllib.parse.urlparse(url).scheme.lower() in ('http', 'https')` for secure scheme validation.
+## 2026-07-02 - DoS Vulnerability via Memory Exhaustion from External API Request
+**Vulnerability:** In `cli.py`, the code fetched PyPI version information using `response.read().decode("utf-8")` without providing a size limit, potentially leading to memory exhaustion if an external server returns an unexpectedly large payload.
+**Learning:** External API responses must always have bounds to prevent DoS. Furthermore, test mocks that simulate these requests (such as `_FakeResponse`) must support the `size` parameter natively to prevent test failures when limits are enforced.
+**Prevention:** Enforce a maximum byte limit on `read()` calls associated with external APIs (e.g. `response.read(50 * 1024 * 1024)` for large but safe payloads), and ensure mock read methods specify `def read(self, size=-1):`.
