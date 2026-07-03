@@ -6,6 +6,8 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.8.0] — 2026-07-03
+
 ### Added
 - **Deterministic Step-0 activity stamp at multi-issue dispatch.** A multi-issue `/keel:ship`
   or `/keel:work-block` now stamps every selected issue's canonical `ship-<N>` run at `s0` up
@@ -14,6 +16,23 @@ All notable changes to keel are documented here. The format follows
   `keel plan`/`run-gates`/`merge --run-id ship-<N>` advances the same board row; a child that
   never stamps still shows as `s0` instead of vanishing. Adapter-level change (`ship.md` s1
   select, `work-block.md` Step 1); fail-soft on keel < 1.6.0. (#501)
+
+### Fixed
+- **DoS via unbounded PyPI payload read.** `_fetch_latest_pypi_version` read the entire HTTP
+  response body with no size cap; a misbehaving or maliciously oversized response could exhaust
+  memory. `response.read()` is now capped at 50MB. (#515)
+
+### Changed
+- **Faster, allocation-light deduplication.** `_dedupe_ints` (`cli.py`) and `_added`
+  (`dryrunverify.py`) now use `dict.fromkeys()` instead of a manual seen-set loop — same
+  order-preserving behavior, fewer allocations. (#526)
+- **`_aggregate_clean_areas` (`artifacts.py`) dedup rewritten with `dict.fromkeys()`** for the
+  same O(n) win. (#524)
+- **`Rule.matches` (`guard.py`) label matching now uses a cached `frozenset` + `isdisjoint()`**
+  instead of a per-call generator/`any()` scan — no behavior change, faster on repeated rule
+  evaluation. (#527)
+- **`_is_doc` (`closure.py`) now uses a native `in` check** instead of an `any(...)` generator
+  expression for the same result. (#509)
 
 ## [1.7.0] — 2026-06-19
 

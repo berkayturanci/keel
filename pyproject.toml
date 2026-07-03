@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "keel-workflow"
-version = "1.7.0"
+version = "1.8.0"
 description = "Project-neutral, multi-agent workflow core: a fixed backbone of steps that drives an issue from backlog to done, customised per project via config + add-only Lego extensions."
 readme = "README.md"
 requires-python = ">=3.11"
