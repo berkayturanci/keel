@@ -6,6 +6,8 @@ All notable changes to keel-visual are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-07-03
+
 ### Added
 - **Richer, larger board cards (web).** Each card now shows a status-icon chip, the live
   **issue/PR title**, the **branch → base**, and the **author**. Branch / base / author are
