@@ -176,11 +176,5 @@ def _added(after: tuple[Any, ...], before: tuple[Any, ...]) -> list[Any]:
     Order-preserving and de-duplicated so the report is deterministic regardless
     of how the CLI gathered the snapshots.
     """
-    seen = set(before)
-    out: list[Any] = []
-    emitted: set[Any] = set()
-    for item in after:
-        if item not in seen and item not in emitted:
-            out.append(item)
-            emitted.add(item)
-    return out
+    seen = frozenset(before)
+    return list(dict.fromkeys(item for item in after if item not in seen))

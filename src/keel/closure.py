@@ -151,7 +151,7 @@ def _is_doc(file: Any) -> bool:
     if not isinstance(file, str):
         return False
     lowered = file.lower()
-    if any(part == "docs" for part in lowered.replace("\\", "/").split("/")):
+    if "docs" in lowered.replace("\\", "/").split("/"):
         return True
     return lowered.endswith(_DOC_SUFFIXES_TUPLE)
 

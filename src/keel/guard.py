@@ -28,7 +28,7 @@ and a configurable blocker label.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from . import config as cfg
@@ -57,12 +57,23 @@ class Rule:
     kind: str  # "label" | "title-regex"
     labels: tuple[str, ...] = ()
     pattern: str | None = None
+    _frozenset_labels: frozenset[str] = field(
+        init=False, repr=False, compare=False, hash=False, default=frozenset()
+    )
+
+    def __post_init__(self):
+        if self.kind == "label":
+            object.__setattr__(
+                self,
+                "_frozenset_labels",
+                frozenset(want.strip().casefold() for want in self.labels),
+            )
 
     def matches(self, title: str, labels: tuple[str, ...]) -> bool:
         """True if this rule fires for the given issue facts (pure)."""
         if self.kind == "label":
             present = {label.strip().casefold() for label in labels}
-            return any(want.strip().casefold() in present for want in self.labels)
+            return not self._frozenset_labels.isdisjoint(present)
         # title-regex — ``pattern`` is guaranteed non-empty by :func:`resolve_rules`.
         return re.search(self.pattern or "", title, re.IGNORECASE) is not None
 
