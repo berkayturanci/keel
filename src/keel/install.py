@@ -462,7 +462,7 @@ def adapter_status(
 ) -> dict[str, list[AdapterFileStatus]]:
     """Report installed adapter freshness for one surface or ``all`` surfaces."""
     targets = STATUS_TARGETS if agent == "all" else (agent,)
-    if any(t not in STATUS_TARGETS for t in targets):
+    if not frozenset(STATUS_TARGETS).issuperset(targets):
         raise KeyError(agent)
     root_path = Path(root)
     expected = _expected_files(_src)
@@ -653,7 +653,7 @@ def update_adapters(
     Locally-modified or unknown files are reported and left untouched.
     """
     targets = TARGETS if agent == "all" else (agent,)
-    if any(t not in TARGETS for t in targets):
+    if not frozenset(TARGETS).issuperset(targets):
         raise KeyError(agent)
     root_path = Path(root)
     expected = _expected_files(_src)

@@ -21,3 +21,7 @@
 ## 2024-07-01 - Optimizing Rule evaluation with frozensets
 **Learning:** Checking for intersections between list of strings iteratively with generator expressions and `any` method can be slow. Pre-computing frozensets and using `.isdisjoint()` drastically speeds up the checks. Specifically, replacing `any(want.strip().casefold() in present for want in self.labels)` with `not self._frozenset_labels.isdisjoint(present)` provides more than 3x speedup.
 **Action:** Use pre-computed `frozensets` and `.isdisjoint()` when dealing with list/set inclusion checks that are called frequently.
+
+## 2024-07-28 - Optimizing deduplication and subset checking in hot paths
+**Learning:** Using `frozenset.issuperset()` is considerably faster than a generator expression within `any(item not in frozenset for item in items)`. Furthermore, when deduplicating strings, manual iteration using a `seen` set in a list comprehension can be faster than using `dict.fromkeys()` for sequences containing many duplicates.
+**Action:** Use `frozenset.issuperset()` for fast checking if all elements of a list belong to a target set instead of `any()`. When unique-ifying lists in Python, benchmark the standard `seen` set against `dict.fromkeys` instead of blindly assuming `dict.fromkeys` is faster in all scenarios.

@@ -250,4 +250,8 @@ def _required_docs_tests(combined: str, acceptance: list[str]) -> dict[str, Any]
 
 
 def _unique(items) -> list[str]:
-    return list(dict.fromkeys(v for item in items if (v := str(item).strip())))
+    seen: set[str] = set()
+    return [
+        v for item in items
+        if (v := str(item).strip()) and not (v in seen or seen.add(v))
+    ]
