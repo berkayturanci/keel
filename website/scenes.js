@@ -455,7 +455,7 @@
       rail.querySelectorAll(".show-tab").forEach(function (b, j) {
         var isOn = j === i;
         b.classList.toggle("on", isOn);
-        b.setAttribute("aria-selected", isOn ? "true" : "false");
+        b.setAttribute("aria-pressed", isOn ? "true" : "false");
       });
       if (cmdEl) cmdEl.textContent = c.name;
       if (grpEl) grpEl.textContent = c.group;

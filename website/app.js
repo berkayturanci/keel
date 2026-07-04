@@ -126,6 +126,7 @@
   /* ---- Copy buttons ------------------------------------------------ */
   function flashCopy(btn) {
     var label = btn.querySelector("span");
+    if (label && !label.hasAttribute("aria-live")) label.setAttribute("aria-live", "polite");
     var prev = label ? label.textContent : "";
     btn.classList.add("done");
     if (label) label.textContent = "copied";
