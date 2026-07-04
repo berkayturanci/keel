@@ -54,7 +54,7 @@ def run_command(
     try:
         # Intentional shell boundary: cmd must come only from operator-controlled
         # project config or extension YAML, never from PR content or agent output.
-        proc = _run(cmd, shell=True, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+        proc = _run(cmd, shell=True, cwd=cwd, capture_output=True, text=True, timeout=timeout)  # nosec B604
     except subprocess.TimeoutExpired:
         return CommandResult(False, 124, f"timed out after {timeout}s")
     except OSError as exc:

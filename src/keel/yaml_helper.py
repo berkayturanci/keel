@@ -15,7 +15,7 @@ except ImportError:
 
 def load(stream: str | bytes) -> Any:
     """Parse a YAML document using the C-extension if available."""
-    return yaml.load(stream, Loader=_SafeLoader)
+    return yaml.load(stream, Loader=_SafeLoader)  # nosec B506
 
 def dump(data: Any, **kwargs: Any) -> str:
     """Serialize a YAML document using the C-extension if available."""
