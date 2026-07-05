@@ -20,3 +20,7 @@
 ## 2026-06-15 - ARIA Labels on Buttons with Generic Text
 **Learning:** Copy buttons that just contain generic text like "copy" lack context for screen reader users when navigating interactively. Adding an `aria-label` provides a much more descriptive string.
 **Action:** Always add descriptive `aria-label`s to action buttons that rely solely on generic text strings (like "copy", "read more"), especially in technical documentation.
+
+## 2026-06-25 - ARIA Live regions on dynamic success text
+**Learning:** When interactive elements like copy buttons dynamically update their text to indicate success (e.g., from "copy" to "copied"), screen readers will not announce this change by default. The parent container or the element itself needs to have `aria-live="polite"` so the success state is properly announced.
+**Action:** When creating or modifying buttons that dynamically change text on success, always ensure `aria-live="polite"` is applied to the element or its container.
