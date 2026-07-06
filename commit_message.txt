@@ -1,9 +1,0 @@
-🛡️ Sentinel: [MEDIUM] Suppress false positive Bandit security warnings
-
-🚨 Severity: MEDIUM
-💡 Vulnerability: Bandit flagged B506 (`yaml.load` usage) and B604 (`shell=True` usage) as potential security issues.
-🎯 Impact: These false positives create noise in static analysis reports and may obscure real vulnerabilities.
-🔧 Fix: Added specific `# nosec B506` and `# nosec B604` directives to intentionally safe code blocks. `yaml_helper.py` explicitly uses safe C-extension loaders, and `runner.py` intentionally sets `shell=True` for operator-controlled config logic.
-✅ Verification: Ran `bandit -r src/` and verified that 0 Medium vulnerabilities remain. Ran `make test` and `make lint` to ensure no regressions.
-
-Closes #535
