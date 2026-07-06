@@ -748,14 +748,12 @@ def _cycle_histogram(reviewers: list[dict[str, Any]]) -> dict[str, int]:
 
 
 def _aggregate_clean_areas(reviewers: list[dict[str, Any]]) -> list[str]:
-    # Optimize deduplication: O(N) using a seen set is faster than C-level dict.fromkeys for strings
-    seen: set[str] = set()
-    return [
+    # Optimize deduplication: O(N) using C-level dict.fromkeys instead of O(N^2) list lookups
+    return list(dict.fromkeys(
         area
         for reviewer in reviewers
         for area in _string_list(reviewer.get("clean_areas"))
-        if not (area in seen or seen.add(area))
-    ]
+    ))
 
 
 def _merge_recommendation(reviewers: list[dict[str, Any]], histogram: dict[str, int]) -> str:
