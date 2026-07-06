@@ -124,12 +124,27 @@
   }
 
   /* ---- Copy buttons ------------------------------------------------ */
+  var a11yAnnouncer;
+  function getA11yAnnouncer() {
+    if (!a11yAnnouncer) {
+      a11yAnnouncer = document.createElement("div");
+      a11yAnnouncer.className = "sr-only";
+      a11yAnnouncer.setAttribute("aria-live", "polite");
+      document.body.appendChild(a11yAnnouncer);
+    }
+    return a11yAnnouncer;
+  }
+
   function flashCopy(btn) {
     var label = btn.querySelector("span");
-    if (label && !label.hasAttribute("aria-live")) label.setAttribute("aria-live", "polite");
     var prev = label ? label.textContent : "";
     btn.classList.add("done");
     if (label) label.textContent = "copied";
+
+    var announcer = getA11yAnnouncer();
+    announcer.textContent = "Copied to clipboard";
+    setTimeout(function () { announcer.textContent = ""; }, 3000);
+
     setTimeout(function () { btn.classList.remove("done"); if (label) label.textContent = prev; }, 1400);
   }
   document.querySelectorAll("[data-copy]").forEach(function (btn) {
