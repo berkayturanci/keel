@@ -157,6 +157,18 @@ class TestCheckpointRecords(unittest.TestCase):
         bad_completed["position"]["completed_steps"] = ["s99"]
         with self.assertRaisesRegex(checkpoint.CheckpointError, "unsupported completed_steps"):
             checkpoint.validate_checkpoint(bad_completed)
+        # A non-list completed_steps (e.g. a bare string) must be rejected.
+        not_a_list = _record()
+        not_a_list["position"]["completed_steps"] = "s0"
+        with self.assertRaisesRegex(checkpoint.CheckpointError, "unsupported completed_steps"):
+            checkpoint.validate_checkpoint(not_a_list)
+        # An unhashable entry (e.g. a nested list) passes the isinstance(list)
+        # guard but is not hashable, so the frozenset.issuperset() membership
+        # test raises TypeError — that must surface as CheckpointError, not crash.
+        unhashable_completed = _record()
+        unhashable_completed["position"]["completed_steps"] = [["s0"]]
+        with self.assertRaisesRegex(checkpoint.CheckpointError, "unsupported completed_steps"):
+            checkpoint.validate_checkpoint(unhashable_completed)
         bad_action = _record()
         bad_action["resume"]["action"] = "other"
         with self.assertRaisesRegex(checkpoint.CheckpointError, "resume action"):
