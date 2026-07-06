@@ -424,8 +424,13 @@ def validate_checkpoint(record: Any) -> None:
     if not isinstance(position, dict) or position.get("current_step") not in _IDEMPOTENT_STEPS:
         raise CheckpointError("unsupported current_step")
     completed = position.get("completed_steps")
-    if not isinstance(completed, list) or not _STEP_IDS_SET.issuperset(completed):
+    if not isinstance(completed, list):
         raise CheckpointError("unsupported completed_steps")
+    try:
+        if not _STEP_IDS_SET.issuperset(completed):
+            raise CheckpointError("unsupported completed_steps")
+    except TypeError as err:
+        raise CheckpointError("unsupported completed_steps") from err
     identifiers = record.get("identifiers")
     if not isinstance(identifiers, dict) or "base_branch" not in identifiers:
         raise CheckpointError("identifiers must include base_branch")
