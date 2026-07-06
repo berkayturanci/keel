@@ -1,15 +1,10 @@
-1. **Optimize `_is_doc` in `src/keel/closure.py`:**
-   - Change `any(part == "docs" for part in lowered.replace("\\", "/").split("/"))` to `"docs" in lowered.replace("\\", "/").split("/")`
-   - This native `in` operation avoids the overhead of a generator expression with `any()`.
-
-2. **Verify changes:**
-   - Ensure `make test` still passes fully.
-   - Run `pnpm lint` or associated Python lint (`make lint`) to verify codebase integrity.
-   - Run `pre_commit_instructions` before submitting.
-
-3. **Log learning (if applicable):**
-   - The learning about native Python set operations vs `any()` generator expressions is already in `.jules/bolt.md`. We are just applying it.
-
-4. **Submit PR:**
-   - Title: "⚡ Bolt: optimize `_is_doc` check to use native `in` operator"
-   - Description clearly defining what, why, impact, and measurement.
+1. **Add `_STEP_IDS_SET` to `src/keel/checkpoint.py`**:
+   - Create a frozenset of `STEP_IDS` named `_STEP_IDS_SET` right after `STEP_IDS` is defined. This allows for O(1) lookups instead of O(N) when checking if steps exist in the valid set.
+2. **Optimize subset validation in `src/keel/checkpoint.py`**:
+   - Replace the generator expression `any(step not in STEP_IDS for step in completed)` on line 426 with the significantly faster set operation `not _STEP_IDS_SET.issuperset(completed)`.
+3. **Verify and Run Tests**:
+   - Run `pip install -e .[dev]` if necessary.
+   - Run `make lint` and `make test` to ensure tests pass and code format is preserved.
+4. **Complete pre-commit steps to ensure proper testing, verification, review, and reflection are done.**
+5. **Submit changes**:
+   - Create a commit and PR titled `⚡ Bolt: Optimize completed steps validation using frozenset` explaining the `issuperset` optimization reducing generator overhead.

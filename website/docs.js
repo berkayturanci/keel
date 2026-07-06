@@ -105,6 +105,8 @@
       });
       function ok() {
         btn.classList.add("done");
+        var sr = document.getElementById("sr-live-region");
+        if (sr) { sr.textContent = "Copied to clipboard"; setTimeout(function() { sr.textContent = ""; }, 3000); }
         setTimeout(function () { btn.classList.remove("done"); }, 1400);
       }
     });

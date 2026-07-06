@@ -129,6 +129,8 @@
     var prev = label ? label.textContent : "";
     btn.classList.add("done");
     if (label) label.textContent = "copied";
+    var sr = document.getElementById("sr-live-region");
+    if (sr) { sr.textContent = "Copied to clipboard"; setTimeout(function() { sr.textContent = ""; }, 3000); }
     setTimeout(function () { btn.classList.remove("done"); if (label) label.textContent = prev; }, 1400);
   }
   document.querySelectorAll("[data-copy]").forEach(function (btn) {

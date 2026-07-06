@@ -15,6 +15,7 @@ RECORD_TYPE_RUN_CHECKPOINT = "run_checkpoint"
 
 COMMANDS = ("ship", "work-block", "overnight")
 STEP_IDS = tuple(step.id for step in model.BACKBONE)
+_STEP_IDS_SET = frozenset(STEP_IDS)
 MERGE_STATES = ("not-started", "pending", "merged", "failed", "skipped")
 CAPTURE_STATES = ("not-started", "applied", "deferred", "skipped", "failed")
 CLOSE_STATES = ("not-started", "closed", "failed")
@@ -423,8 +424,13 @@ def validate_checkpoint(record: Any) -> None:
     if not isinstance(position, dict) or position.get("current_step") not in _IDEMPOTENT_STEPS:
         raise CheckpointError("unsupported current_step")
     completed = position.get("completed_steps")
-    if not isinstance(completed, list) or any(step not in STEP_IDS for step in completed):
+    if not isinstance(completed, list):
         raise CheckpointError("unsupported completed_steps")
+    try:
+        if not _STEP_IDS_SET.issuperset(completed):
+            raise CheckpointError("unsupported completed_steps")
+    except TypeError as err:
+        raise CheckpointError("unsupported completed_steps") from err
     identifiers = record.get("identifiers")
     if not isinstance(identifiers, dict) or "base_branch" not in identifiers:
         raise CheckpointError("identifiers must include base_branch")
