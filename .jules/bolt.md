@@ -25,3 +25,8 @@
 ## 2024-07-15 - Optimizing Validation with frozenset.issuperset()
 **Learning:** Using a generator expression with `any(item not in TUPLE for item in items)` to check if all items in a list belong to an allowed set is significantly slower than converting the tuple to a `frozenset` at module level and using `frozenset.issuperset(items)`. The set operation reduces an O(N*M) lookup to O(M) and provided ~6x speedup in isolated benchmarks in the codebase for checking list subsets.
 **Action:** When validating if an unknown iterable sequence is a subset of a known collection of constants, prefer precomputing a `frozenset` and utilizing the `.issuperset()` method rather than generator comprehensions with `any` and `not in`.
+
+
+## 2024-07-25 - Early Return in text processing loops
+**Learning:** Splitting large text blocks into sentences to perform regex searches on each sentence can be expensive. Performing a quick global search on the combined text as an early exit avoids the parsing overhead entirely on cold paths.
+**Action:** When validating multi-sentence text with regular expressions inside a generator or loop, add an early return using a global regex search to skip unnecessary splitting and iteration.
