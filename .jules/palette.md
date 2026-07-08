@@ -24,3 +24,7 @@
 ## 2026-06-25 - Avoid ARIA Live on focusable elements
 **Learning:** Applying `aria-live="polite"` directly to interactive or focusable elements (like buttons) is an accessibility anti-pattern. It can cause duplicated or disrupted screen reader announcements. For instance, if a button with a static `aria-label` dynamically changes its inner text (e.g. from "Copy" to "Copied"), the accessible name often doesn't change, meaning the state update is missed anyway.
 **Action:** Instead of applying `aria-live` to the button, use a single, shared off-screen `.sr-only` container with `aria-live="polite"` to announce success states (e.g., "Copied to clipboard").
+
+## 2026-06-25 - Explicit Labels over aria-label for Search Inputs
+**Learning:** Using `aria-label` directly on a form input is technically accessible, but creating a visually hidden `<label class="sr-only">` explicitly associated with the input (`for="id"`) is the gold standard for screen readers and improves backwards compatibility. This is especially true for global elements like site search.
+**Action:** Always prefer `<label for="...">` with `.sr-only` class over `aria-label` for standalone form inputs like search bars to ensure robust screen reader support.
