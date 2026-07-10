@@ -199,8 +199,12 @@ def _bullets(text: str) -> list[str]:
     return items
 
 
+def _compact_text(text: str) -> str:
+    return " ".join(line.strip() for line in text.splitlines() if line.strip())
+
+
 def _sentences(text: str) -> list[str]:
-    compact = " ".join(line.strip() for line in text.splitlines() if line.strip())
+    compact = _compact_text(text)
     if not compact:
         return []
     parts = [part.strip() for part in re.split(r"(?<=[.!?])\s+", compact) if part.strip()]
@@ -216,9 +220,11 @@ def _is_out_of_scope(combined: str, labels: tuple[str, ...]) -> bool:
 def _is_blocked(combined: str, labels: tuple[str, ...]) -> bool:
     if not _BLOCKED_LABELS.isdisjoint(labels):
         return True
+
+    compact = _compact_text(combined)
     # Optimization: Early exit using a global regex search to avoid the overhead
     # of splitting the full issue body into sentences on the cold path.
-    if not _BLOCKED_RE.search(combined):
+    if not _BLOCKED_RE.search(compact):
         return False
     return any(_is_actionable_blocker(sentence) for sentence in _sentences(combined))
 

@@ -200,3 +200,17 @@ class TestIssueIntake(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    def test_multiline_blocker_is_detected(self):
+        record = intake.assess_issue(
+            title="Add multiline blocker",
+            body=(
+                "## Problem\nWe need this.\n\n"
+                "## Deliverable\nDo this.\n\n"
+                "## Acceptance criteria\n"
+                "- Yes.\n\n"
+                "This issue is blocked\nby #123."
+            ),
+        )
+
+        self.assertEqual(record["status"], intake.BLOCKED)
