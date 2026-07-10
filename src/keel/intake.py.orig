@@ -204,15 +204,11 @@ def _compact_text(text: str) -> str:
 
 
 def _sentences(text: str) -> list[str]:
-    return _sentences_from_compact(_compact_text(text))
-
-
-def _sentences_from_compact(compact: str) -> list[str]:
+    compact = _compact_text(text)
     if not compact:
         return []
     parts = [part.strip() for part in re.split(r"(?<=[.!?])\s+", compact) if part.strip()]
     return parts or [compact]
-
 
 
 def _is_out_of_scope(combined: str, labels: tuple[str, ...]) -> bool:
@@ -230,7 +226,7 @@ def _is_blocked(combined: str, labels: tuple[str, ...]) -> bool:
     # of splitting the full issue body into sentences on the cold path.
     if not _BLOCKED_RE.search(compact):
         return False
-    return any(_is_actionable_blocker(sentence) for sentence in _sentences_from_compact(compact))
+    return any(_is_actionable_blocker(sentence) for sentence in _sentences(combined))
 
 
 def _blocked_summary(combined: str) -> str:
