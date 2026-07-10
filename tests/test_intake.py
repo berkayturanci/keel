@@ -197,6 +197,23 @@ class TestIssueIntake(unittest.TestCase):
         self.assertEqual(record["questions"], [])
         self.assertFalse(record["can_mutate_code"])
 
+    def test_multi_word_blocker_across_newline(self):
+        record = intake.assess_issue(
+            title="Add plugin publishing",
+            body=(
+                "## Problem\nPlugins need publishing.\n\n"
+                "## Deliverable\nShip plugin publish flow.\n\n"
+                "## Acceptance criteria\n"
+                "- Publish command is documented.\n\n"
+                "This issue is blocked\n"
+                "by #120.\n"
+            ),
+        )
+
+        self.assertEqual(record["status"], intake.BLOCKED)
+        self.assertFalse(record["can_mutate_code"])
+        self.assertTrue(record["blockers"])
+        self.assertTrue(record["work_block_policy"]["skip_when_not_ready"])
 
 if __name__ == "__main__":
     unittest.main()
