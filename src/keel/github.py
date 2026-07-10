@@ -20,10 +20,25 @@ def open_pr(
 
 
 def ci_conclusion(pr: int | str, *, cwd: str | None = None, _run=None) -> str | None:
-    """Return the PR's check-rollup state (e.g. SUCCESS/FAILURE/PENDING), or ``None``."""
+    """Return the PR's check-rollup state (e.g. SUCCESS/FAILURE/PENDING), or ``None``.
+
+    ``statusCheckRollup`` retains every historical run of a check, not just the
+    latest — a check that failed once and was later rerun to green still carries
+    its old FAILURE conclusion in the raw list. The ``--jq`` filter dedupes by
+    check identity (``context`` for legacy commit statuses, ``name`` for check
+    runs) down to each check's most recent entry (by ``completedAt``, falling
+    back to ``startedAt``) before collecting conclusions, so a superseded
+    failure is not reported as still-current.
+    """
+    jq = (
+        "[.statusCheckRollup[]] "
+        "| group_by(.context // .name // \"\") "
+        "| map(max_by(.completedAt // .startedAt // \"\")) "
+        "| map(.conclusion // empty) "
+        "| unique | join(\",\")"
+    )
     result = run_argv(
-        ["gh", "pr", "view", str(pr), "--json", "statusCheckRollup",
-         "--jq", "[.statusCheckRollup[].conclusion] | unique | join(\",\")"],
+        ["gh", "pr", "view", str(pr), "--json", "statusCheckRollup", "--jq", jq],
         cwd=cwd, **_kw(_run),
     )
     if not result.ok:

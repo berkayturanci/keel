@@ -4665,6 +4665,57 @@ class TestCoreMerge(unittest.TestCase):
         self.assertTrue(ship.ci_passing("SKIPPED"))
         self.assertEqual(rollup["state"], "pass")
 
+    def test_ci_rollup_state_ignores_superseded_failure_from_rerun(self):
+        # Same check name reran to green; the stale FAILURE entry must not block.
+        rollup = [
+            {"name": "lint", "conclusion": "FAILURE", "completedAt": "2026-07-10T09:16:26Z"},
+            {"name": "lint", "conclusion": "SUCCESS", "completedAt": "2026-07-10T09:17:35Z"},
+        ]
+
+        self.assertEqual(cli._ci_rollup_state(rollup)["state"], "pass")
+
+    def test_ci_rollup_state_still_fails_on_current_failure(self):
+        rollup = [
+            {"name": "lint", "conclusion": "SUCCESS", "completedAt": "2026-07-10T09:16:26Z"},
+            {"name": "lint", "conclusion": "FAILURE", "completedAt": "2026-07-10T09:17:35Z"},
+        ]
+
+        self.assertEqual(cli._ci_rollup_state(rollup)["state"], "fail")
+
+    def test_dedupe_rollup_keys_by_context_and_skips_non_dicts(self):
+        rollup = [
+            "not-a-dict",
+            {
+                "context": "legacy-status", "conclusion": "FAILURE",
+                "startedAt": "2026-07-10T09:00:00Z",
+            },
+            {
+                "context": "legacy-status", "conclusion": "SUCCESS",
+                "startedAt": "2026-07-10T09:05:00Z",
+            },
+            {"name": "unrelated-check", "conclusion": "SUCCESS"},
+        ]
+
+        deduped = cli._dedupe_rollup(rollup)
+
+        by_key = {(item.get("context") or item.get("name")): item for item in deduped}
+        self.assertEqual(len(deduped), 2)
+        self.assertEqual(by_key["legacy-status"]["conclusion"], "SUCCESS")
+        self.assertEqual(by_key["unrelated-check"]["conclusion"], "SUCCESS")
+
+    def test_dedupe_rollup_keeps_latest_when_later_list_entry_is_older(self):
+        # Rollup order is not guaranteed chronological; an out-of-order older
+        # duplicate must not overwrite an already-newer entry for the same check.
+        rollup = [
+            {"name": "lint", "conclusion": "SUCCESS", "completedAt": "2026-07-10T09:17:35Z"},
+            {"name": "lint", "conclusion": "FAILURE", "completedAt": "2026-07-10T09:16:26Z"},
+        ]
+
+        deduped = cli._dedupe_rollup(rollup)
+
+        self.assertEqual(len(deduped), 1)
+        self.assertEqual(deduped[0]["conclusion"], "SUCCESS")
+
     def test_verify_merge_evidence_uses_live_artifacts_and_tier(self):
         config = cli.cfg.load_config(PROJECTS / "keel.yaml")
         args = Namespace(

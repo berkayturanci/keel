@@ -3063,6 +3063,29 @@ def _merge_snapshot(pr: int, *, cwd: str) -> dict[str, object]:
     }
 
 
+def _dedupe_rollup(rollup: list[object]) -> list[dict]:
+    """Keep only the most recent entry per check identity (``context``/``name``).
+
+    GitHub's ``statusCheckRollup`` retains every historical run of a check, not
+    just the latest — a check that failed once and was later rerun to green
+    still carries its old FAILURE conclusion in the list. Evaluating the raw
+    list would treat a superseded failure as still-current and block the merge.
+    """
+    latest: dict[str, dict] = {}
+    order: list[str] = []
+    for item in rollup:
+        if not isinstance(item, dict):
+            continue
+        key = item.get("context") or item.get("name") or ""
+        stamp = item.get("completedAt") or item.get("startedAt") or ""
+        if key not in latest:
+            order.append(key)
+            latest[key] = item
+        elif stamp >= (latest[key].get("completedAt") or latest[key].get("startedAt") or ""):
+            latest[key] = item
+    return [latest[key] for key in order]
+
+
 def _ci_rollup_state(rollup: list[object]) -> dict[str, object]:
     failures = {
         "ACTION_REQUIRED", "CANCELLED", "ERROR", "FAILURE",
@@ -3071,9 +3094,7 @@ def _ci_rollup_state(rollup: list[object]) -> dict[str, object]:
     pending_states = {"EXPECTED", "PENDING", "QUEUED", "REQUESTED", "WAITING", "IN_PROGRESS"}
     saw_pending = False
     saw_check = False
-    for item in rollup:
-        if not isinstance(item, dict):
-            continue
+    for item in _dedupe_rollup(rollup):
         saw_check = True
         conclusion = item.get("conclusion")
         conclusion = conclusion.upper() if isinstance(conclusion, str) else ""
