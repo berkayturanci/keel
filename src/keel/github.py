@@ -20,10 +20,47 @@ def open_pr(
 
 
 def ci_conclusion(pr: int | str, *, cwd: str | None = None, _run=None) -> str | None:
-    """Return the PR's check-rollup state (e.g. SUCCESS/FAILURE/PENDING), or ``None``."""
+    """Return the PR's check-rollup state (e.g. SUCCESS/FAILURE/PENDING), or ``None``.
+
+    ``statusCheckRollup`` retains every historical run of a check, not just the
+    latest — a check that failed once and was later rerun to green still carries
+    its old FAILURE conclusion in the raw list, and a freshly requeued rerun may
+    carry no timestamp at all yet. The ``--jq`` filter dedupes by check identity
+    (``context`` for legacy commit statuses, ``name`` for check runs — an empty
+    string is treated the same as absent, matching the Python-side dedupe used
+    by the merge gate) down to each check's most recent entry before collecting
+    conclusions. "Most recent" prefers an entry genuinely still in flight (no
+    ``conclusion`` yet *and* a recognized pending ``status``) over any
+    concluded one for the same check — a new run cannot be queued before the
+    previous one concluded — and otherwise compares ``completedAt``, falling
+    back to ``startedAt``. Requiring a recognized pending ``status`` (not
+    merely an absent ``conclusion``) means a malformed or unexpected payload
+    shape can never mask a genuine stale failure. This mirrors
+    :func:`keel.cli._rollup_recency`/``_PENDING_CHECK_STATES``, manually
+    verified against a real ``jq`` binary; jq output can't be exercised by
+    this module's offline unit tests (see the module docstring).
+    """
+    pending_states = (
+        "\"EXPECTED\",\"PENDING\",\"QUEUED\",\"REQUESTED\",\"WAITING\",\"IN_PROGRESS\""
+    )
+    jq = (
+        "[.statusCheckRollup[]] "
+        "| group_by("
+        "(.context | select(. != null and . != \"\")) "
+        "// (.name | select(. != null and . != \"\")) "
+        "// \"\""
+        ") "
+        "| map(max_by(["
+        "((.conclusion == null) and "
+        "((.status | if type == \"string\" then ascii_upcase else \"\" end) "
+        "| IN(" + pending_states + "))), "
+        "(.completedAt // .startedAt // \"\")"
+        "])) "
+        "| map(.conclusion // empty) "
+        "| unique | join(\",\")"
+    )
     result = run_argv(
-        ["gh", "pr", "view", str(pr), "--json", "statusCheckRollup",
-         "--jq", "[.statusCheckRollup[].conclusion] | unique | join(\",\")"],
+        ["gh", "pr", "view", str(pr), "--json", "statusCheckRollup", "--jq", jq],
         cwd=cwd, **_kw(_run),
     )
     if not result.ok:
