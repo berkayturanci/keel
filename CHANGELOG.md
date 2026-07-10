@@ -6,6 +6,34 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.8.1] — 2026-07-10
+
+### Fixed
+- **Stale CI check runs no longer confuse merge-readiness.** `statusCheckRollup` keeps every
+  historical run of a check, not just the latest — a check that failed once and was later
+  rerun to green still carried its old `FAILURE` conclusion in the raw list. `ci_conclusion`
+  (`github.py`) and `_ci_rollup_state` (`cli.py`) now dedupe by check identity (`context` for
+  legacy statuses, `name` for check runs) and keep only the most recent entry per check before
+  evaluating conclusions, so a superseded failure can't block a merge and a stale success can't
+  mask a genuine later failure. (#550)
+- **Blocked-issue detection missed blocker phrases split across a line break.** `_is_blocked`'s
+  fast-path early return matched a compiled blocker regex against raw issue text, but the
+  sentence-splitting it short-circuits normalizes newlines to spaces first. A multi-word
+  blocker phrase (e.g. "blocked by", "depends on") wrapped across a line — common in
+  hard-wrapped markdown — was silently missed, misclassifying a genuinely `BLOCKED` issue as
+  ready to mutate. The fast path now matches against the same normalized text. (#545)
+
+### Changed
+- **CI-state and check-list validation now use `frozenset.issuperset()`** instead of a
+  generator `all(...)`/`any(...)` scan (`ci_passing` in `ship.py`, adapter status checks in
+  `install.py`) — no behavior change, faster on repeated validation. (#539, #542)
+
+### Security
+- **CSP headers on the docs website.** `website/index.html`, `docs.html`, `coverage.html`, and
+  `404.html` now ship a `Content-Security-Policy` header restricting script/style/font/connect
+  sources to `'self'` plus the specific third-party origins actually used (Google Fonts,
+  Cloudflare Web Analytics), reducing the site's exposure to injected-script XSS. (#540)
+
 ## [1.8.0] — 2026-07-03
 
 ### Added
