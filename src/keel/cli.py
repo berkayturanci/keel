@@ -3063,13 +3063,27 @@ def _merge_snapshot(pr: int, *, cwd: str) -> dict[str, object]:
     }
 
 
+def _rollup_recency(entry: dict) -> tuple[bool, str]:
+    """Sort key: a check with no conclusion yet (still queued/running) is always
+    a more recent attempt than any concluded entry for the same check — a new
+    run cannot be queued before the previous one has concluded. Within the same
+    pending-ness, compare by ``completedAt``/``startedAt``.
+    """
+    pending = not entry.get("conclusion")
+    stamp = entry.get("completedAt") or entry.get("startedAt") or ""
+    return (pending, stamp)
+
+
 def _dedupe_rollup(rollup: list[object]) -> list[dict]:
     """Keep only the most recent entry per check identity (``context``/``name``).
 
     GitHub's ``statusCheckRollup`` retains every historical run of a check, not
     just the latest — a check that failed once and was later rerun to green
-    still carries its old FAILURE conclusion in the list. Evaluating the raw
-    list would treat a superseded failure as still-current and block the merge.
+    still carries its old FAILURE conclusion in the list, and a freshly
+    requeued rerun may carry no timestamp at all yet. Evaluating the raw list
+    would treat a superseded failure as still-current, or a stale completed
+    entry as more current than an in-flight rerun — either way blocking (or
+    wrongly clearing) the merge. See :func:`_rollup_recency` for the ordering.
     """
     latest: dict[str, dict] = {}
     order: list[str] = []
@@ -3077,11 +3091,10 @@ def _dedupe_rollup(rollup: list[object]) -> list[dict]:
         if not isinstance(item, dict):
             continue
         key = item.get("context") or item.get("name") or ""
-        stamp = item.get("completedAt") or item.get("startedAt") or ""
         if key not in latest:
             order.append(key)
             latest[key] = item
-        elif stamp >= (latest[key].get("completedAt") or latest[key].get("startedAt") or ""):
+        elif _rollup_recency(item) >= _rollup_recency(latest[key]):
             latest[key] = item
     return [latest[key] for key in order]
 

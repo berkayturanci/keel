@@ -24,16 +24,27 @@ def ci_conclusion(pr: int | str, *, cwd: str | None = None, _run=None) -> str | 
 
     ``statusCheckRollup`` retains every historical run of a check, not just the
     latest — a check that failed once and was later rerun to green still carries
-    its old FAILURE conclusion in the raw list. The ``--jq`` filter dedupes by
-    check identity (``context`` for legacy commit statuses, ``name`` for check
-    runs) down to each check's most recent entry (by ``completedAt``, falling
-    back to ``startedAt``) before collecting conclusions, so a superseded
-    failure is not reported as still-current.
+    its old FAILURE conclusion in the raw list, and a freshly requeued rerun may
+    carry no timestamp at all yet. The ``--jq`` filter dedupes by check identity
+    (``context`` for legacy commit statuses, ``name`` for check runs — an empty
+    string is treated the same as absent, matching the Python-side dedupe used
+    by the merge gate) down to each check's most recent entry before collecting
+    conclusions. "Most recent" prefers a still-running/queued entry (no
+    ``conclusion`` yet) over any concluded one for the same check — a new run
+    cannot be queued before the previous one concluded — and otherwise compares
+    ``completedAt``, falling back to ``startedAt``. This mirrors
+    :func:`keel.cli._rollup_recency`, manually verified against a real ``jq``
+    binary; jq output can't be exercised by this module's offline unit tests
+    (see the module docstring).
     """
     jq = (
         "[.statusCheckRollup[]] "
-        "| group_by(.context // .name // \"\") "
-        "| map(max_by(.completedAt // .startedAt // \"\")) "
+        "| group_by("
+        "(.context | select(. != null and . != \"\")) "
+        "// (.name | select(. != null and . != \"\")) "
+        "// \"\""
+        ") "
+        "| map(max_by([(.conclusion == null), (.completedAt // .startedAt // \"\")])) "
         "| map(.conclusion // empty) "
         "| unique | join(\",\")"
     )

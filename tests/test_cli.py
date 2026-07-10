@@ -4716,6 +4716,33 @@ class TestCoreMerge(unittest.TestCase):
         self.assertEqual(len(deduped), 1)
         self.assertEqual(deduped[0]["conclusion"], "SUCCESS")
 
+    def test_dedupe_rollup_pending_requeue_beats_older_completed_entry(self):
+        # A rerun freshly requeued has no conclusion/timestamp yet; it must not
+        # lose to an older *completed* run of the same check just because it
+        # lacks a timestamp — a new run can't be queued before the previous one
+        # concluded, so "no conclusion yet" always outranks any concluded entry.
+        rollup = [
+            {"name": "lint", "conclusion": "SUCCESS", "completedAt": "2026-07-10T09:16:26Z"},
+            {"name": "lint", "conclusion": None, "status": "QUEUED"},
+        ]
+
+        deduped = cli._dedupe_rollup(rollup)
+
+        self.assertEqual(len(deduped), 1)
+        self.assertIsNone(deduped[0]["conclusion"])
+        self.assertEqual(cli._ci_rollup_state(rollup)["state"], "pending")
+
+    def test_dedupe_rollup_pending_requeue_wins_regardless_of_list_order(self):
+        rollup = [
+            {"name": "lint", "conclusion": None, "status": "QUEUED"},
+            {"name": "lint", "conclusion": "SUCCESS", "completedAt": "2026-07-10T09:16:26Z"},
+        ]
+
+        deduped = cli._dedupe_rollup(rollup)
+
+        self.assertEqual(len(deduped), 1)
+        self.assertIsNone(deduped[0]["conclusion"])
+
     def test_verify_merge_evidence_uses_live_artifacts_and_tier(self):
         config = cli.cfg.load_config(PROJECTS / "keel.yaml")
         args = Namespace(
