@@ -29,14 +29,20 @@ def ci_conclusion(pr: int | str, *, cwd: str | None = None, _run=None) -> str | 
     (``context`` for legacy commit statuses, ``name`` for check runs — an empty
     string is treated the same as absent, matching the Python-side dedupe used
     by the merge gate) down to each check's most recent entry before collecting
-    conclusions. "Most recent" prefers a still-running/queued entry (no
-    ``conclusion`` yet) over any concluded one for the same check — a new run
-    cannot be queued before the previous one concluded — and otherwise compares
-    ``completedAt``, falling back to ``startedAt``. This mirrors
-    :func:`keel.cli._rollup_recency`, manually verified against a real ``jq``
-    binary; jq output can't be exercised by this module's offline unit tests
-    (see the module docstring).
+    conclusions. "Most recent" prefers an entry genuinely still in flight (no
+    ``conclusion`` yet *and* a recognized pending ``status``) over any
+    concluded one for the same check — a new run cannot be queued before the
+    previous one concluded — and otherwise compares ``completedAt``, falling
+    back to ``startedAt``. Requiring a recognized pending ``status`` (not
+    merely an absent ``conclusion``) means a malformed or unexpected payload
+    shape can never mask a genuine stale failure. This mirrors
+    :func:`keel.cli._rollup_recency`/``_PENDING_CHECK_STATES``, manually
+    verified against a real ``jq`` binary; jq output can't be exercised by
+    this module's offline unit tests (see the module docstring).
     """
+    pending_states = (
+        "\"EXPECTED\",\"PENDING\",\"QUEUED\",\"REQUESTED\",\"WAITING\",\"IN_PROGRESS\""
+    )
     jq = (
         "[.statusCheckRollup[]] "
         "| group_by("
@@ -44,7 +50,11 @@ def ci_conclusion(pr: int | str, *, cwd: str | None = None, _run=None) -> str | 
         "// (.name | select(. != null and . != \"\")) "
         "// \"\""
         ") "
-        "| map(max_by([(.conclusion == null), (.completedAt // .startedAt // \"\")])) "
+        "| map(max_by(["
+        "((.conclusion == null) and "
+        "((.status // \"\" | ascii_upcase) | IN(" + pending_states + "))), "
+        "(.completedAt // .startedAt // \"\")"
+        "])) "
         "| map(.conclusion // empty) "
         "| unique | join(\",\")"
     )

@@ -3063,13 +3063,25 @@ def _merge_snapshot(pr: int, *, cwd: str) -> dict[str, object]:
     }
 
 
+_PENDING_CHECK_STATES = {"EXPECTED", "PENDING", "QUEUED", "REQUESTED", "WAITING", "IN_PROGRESS"}
+
+
 def _rollup_recency(entry: dict) -> tuple[bool, str]:
-    """Sort key: a check with no conclusion yet (still queued/running) is always
-    a more recent attempt than any concluded entry for the same check — a new
-    run cannot be queued before the previous one has concluded. Within the same
+    """Sort key: a check genuinely still in flight is always a more recent
+    attempt than any concluded entry for the same check — a new run cannot be
+    queued before the previous one has concluded. Within the same
     pending-ness, compare by ``completedAt``/``startedAt``.
+
+    "In flight" requires the entry's own ``status`` to be a recognized
+    pending state, not merely an absent ``conclusion`` — a malformed or
+    unexpected payload shape (no conclusion, no recognized status) falls
+    back to plain timestamp comparison instead of unconditionally
+    outranking a concluded entry, so a genuine stale failure can never be
+    masked by an unrecognized shape.
     """
-    pending = not entry.get("conclusion")
+    status_value = entry.get("status")
+    status_value = status_value.upper() if isinstance(status_value, str) else ""
+    pending = not entry.get("conclusion") and status_value in _PENDING_CHECK_STATES
     stamp = entry.get("completedAt") or entry.get("startedAt") or ""
     return (pending, stamp)
 
@@ -3104,7 +3116,7 @@ def _ci_rollup_state(rollup: list[object]) -> dict[str, object]:
         "ACTION_REQUIRED", "CANCELLED", "ERROR", "FAILURE",
         "STARTUP_FAILURE", "STALE", "TIMED_OUT",
     }
-    pending_states = {"EXPECTED", "PENDING", "QUEUED", "REQUESTED", "WAITING", "IN_PROGRESS"}
+    pending_states = _PENDING_CHECK_STATES
     saw_pending = False
     saw_check = False
     for item in _dedupe_rollup(rollup):

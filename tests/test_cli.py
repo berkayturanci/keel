@@ -4743,6 +4743,23 @@ class TestCoreMerge(unittest.TestCase):
         self.assertEqual(len(deduped), 1)
         self.assertIsNone(deduped[0]["conclusion"])
 
+    def test_dedupe_rollup_unrecognized_pending_shape_does_not_mask_real_failure(self):
+        # A no-conclusion entry only outranks a concluded one when its own
+        # `status` is a recognized pending state — not merely because
+        # `conclusion` is absent. A malformed/unexpected shape (no
+        # conclusion, no recognized status) must fall back to timestamp
+        # comparison so a genuine later FAILURE is never masked.
+        rollup = [
+            {"name": "flaky-check", "conclusion": None, "startedAt": "2026-07-01T09:00:00Z"},
+            {"name": "flaky-check", "conclusion": "FAILURE", "completedAt": "2026-07-10T09:00:00Z"},
+        ]
+
+        deduped = cli._dedupe_rollup(rollup)
+
+        self.assertEqual(len(deduped), 1)
+        self.assertEqual(deduped[0]["conclusion"], "FAILURE")
+        self.assertEqual(cli._ci_rollup_state(rollup)["state"], "fail")
+
     def test_verify_merge_evidence_uses_live_artifacts_and_tier(self):
         config = cli.cfg.load_config(PROJECTS / "keel.yaml")
         args = Namespace(
