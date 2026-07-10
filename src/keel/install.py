@@ -42,7 +42,9 @@ PLUGIN_MARKETPLACE = ".claude-plugin/marketplace.json"
 
 #: the logical install surfaces (``all`` fans over these).
 TARGETS: tuple[str, ...] = ("claude", "skills")
+_TARGETS_SET = frozenset(TARGETS)
 STATUS_TARGETS: tuple[str, ...] = ("claude", "skills", "legacy-claude")
+_STATUS_TARGETS_SET = frozenset(STATUS_TARGETS)
 LEGACY_TARGETS: tuple[str, ...] = ("claude", "skills")
 LEGACY_CLAUDE_DIR = ".claude/commands"
 LEGACY_SKILL_PREFIX = "source-command-"
@@ -462,7 +464,7 @@ def adapter_status(
 ) -> dict[str, list[AdapterFileStatus]]:
     """Report installed adapter freshness for one surface or ``all`` surfaces."""
     targets = STATUS_TARGETS if agent == "all" else (agent,)
-    if any(t not in STATUS_TARGETS for t in targets):
+    if not _STATUS_TARGETS_SET.issuperset(targets):
         raise KeyError(agent)
     root_path = Path(root)
     expected = _expected_files(_src)
@@ -653,7 +655,7 @@ def update_adapters(
     Locally-modified or unknown files are reported and left untouched.
     """
     targets = TARGETS if agent == "all" else (agent,)
-    if any(t not in TARGETS for t in targets):
+    if not _TARGETS_SET.issuperset(targets):
         raise KeyError(agent)
     root_path = Path(root)
     expected = _expected_files(_src)
