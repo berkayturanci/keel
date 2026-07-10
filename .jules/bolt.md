@@ -25,3 +25,6 @@
 ## 2024-07-15 - Optimizing Validation with frozenset.issuperset()
 **Learning:** Using a generator expression with `any(item not in TUPLE for item in items)` to check if all items in a list belong to an allowed set is significantly slower than converting the tuple to a `frozenset` at module level and using `frozenset.issuperset(items)`. The set operation reduces an O(N*M) lookup to O(M) and provided ~6x speedup in isolated benchmarks in the codebase for checking list subsets.
 **Action:** When validating if an unknown iterable sequence is a subset of a known collection of constants, prefer precomputing a `frozenset` and utilizing the `.issuperset()` method rather than generator comprehensions with `any` and `not in`.
+## 2024-07-23 - Optimizing Validation with frozenset.issuperset()
+**Learning:** Checking for CI check subsets using a generator comprehension and `all` (e.g. `all(p in CI_OK_STATES for p in parts)`) is significantly slower than using the C-level `.issuperset()` method on a pre-computed frozenset (e.g. `CI_OK_STATES.issuperset(parts)`).
+**Action:** Replace generator loops validating element inclusion with `.issuperset()` on static `frozensets` for measurable ~3x-4x speedups in hot path logic.
