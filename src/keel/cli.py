@@ -3063,17 +3063,63 @@ def _merge_snapshot(pr: int, *, cwd: str) -> dict[str, object]:
     }
 
 
+_PENDING_CHECK_STATES = {"EXPECTED", "PENDING", "QUEUED", "REQUESTED", "WAITING", "IN_PROGRESS"}
+
+
+def _rollup_recency(entry: dict) -> tuple[bool, str]:
+    """Sort key: a check genuinely still in flight is always a more recent
+    attempt than any concluded entry for the same check — a new run cannot be
+    queued before the previous one has concluded. Within the same
+    pending-ness, compare by ``completedAt``/``startedAt``.
+
+    "In flight" requires the entry's own ``status`` to be a recognized
+    pending state, not merely an absent ``conclusion`` — a malformed or
+    unexpected payload shape (no conclusion, no recognized status) falls
+    back to plain timestamp comparison instead of unconditionally
+    outranking a concluded entry, so a genuine stale failure can never be
+    masked by an unrecognized shape.
+    """
+    status_value = entry.get("status")
+    status_value = status_value.upper() if isinstance(status_value, str) else ""
+    pending = not entry.get("conclusion") and status_value in _PENDING_CHECK_STATES
+    stamp = entry.get("completedAt") or entry.get("startedAt") or ""
+    return (pending, stamp)
+
+
+def _dedupe_rollup(rollup: list[object]) -> list[dict]:
+    """Keep only the most recent entry per check identity (``context``/``name``).
+
+    GitHub's ``statusCheckRollup`` retains every historical run of a check, not
+    just the latest — a check that failed once and was later rerun to green
+    still carries its old FAILURE conclusion in the list, and a freshly
+    requeued rerun may carry no timestamp at all yet. Evaluating the raw list
+    would treat a superseded failure as still-current, or a stale completed
+    entry as more current than an in-flight rerun — either way blocking (or
+    wrongly clearing) the merge. See :func:`_rollup_recency` for the ordering.
+    """
+    latest: dict[str, dict] = {}
+    order: list[str] = []
+    for item in rollup:
+        if not isinstance(item, dict):
+            continue
+        key = item.get("context") or item.get("name") or ""
+        if key not in latest:
+            order.append(key)
+            latest[key] = item
+        elif _rollup_recency(item) >= _rollup_recency(latest[key]):
+            latest[key] = item
+    return [latest[key] for key in order]
+
+
 def _ci_rollup_state(rollup: list[object]) -> dict[str, object]:
     failures = {
         "ACTION_REQUIRED", "CANCELLED", "ERROR", "FAILURE",
         "STARTUP_FAILURE", "STALE", "TIMED_OUT",
     }
-    pending_states = {"EXPECTED", "PENDING", "QUEUED", "REQUESTED", "WAITING", "IN_PROGRESS"}
+    pending_states = _PENDING_CHECK_STATES
     saw_pending = False
     saw_check = False
-    for item in rollup:
-        if not isinstance(item, dict):
-            continue
+    for item in _dedupe_rollup(rollup):
         saw_check = True
         conclusion = item.get("conclusion")
         conclusion = conclusion.upper() if isinstance(conclusion, str) else ""

@@ -1,0 +1,25 @@
+# keel
+
+> keel turns coding agents into work owners. It is a project-neutral, multi-agent
+> workflow backbone that drives a GitHub issue from intake to done: select →
+> branch → implement → CI → review → test → merge → close → capture. Projects set
+> their values in `project.yaml` and snap their own logic into named extension
+> slots. Stdlib-first Python CLI, single runtime dependency, 100% test coverage,
+> 16 `/keel` commands. Works across Claude Code, Codex, and Gemini.
+
+## Docs
+
+- [Home](https://berkayturanci.github.io/keel/): overview, positioning, and quick start
+- [Documentation](https://berkayturanci.github.io/keel/docs.html): commands, config, extension slots, and the fixed backbone
+- [Coverage report](https://berkayturanci.github.io/keel/coverage.html): live test-coverage dashboard
+
+## Source
+
+- [GitHub repository](https://github.com/berkayturanci/keel): source, issues, and releases
+
+## Key concepts
+
+- Fixed backbone: the invariant step sequence every issue flows through
+- Project-neutral core: all project specifics live in `project.yaml`, read via the `keel` CLI
+- Extension slots: named hooks where a project snaps in its own implementers/reviewers
+- Pure-core / thin-I/O split with a strict 100% coverage bar

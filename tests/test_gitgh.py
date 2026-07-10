@@ -124,6 +124,15 @@ class TestGitHub(unittest.TestCase):
     def test_ci_conclusion_failsoft(self):
         self.assertIsNone(github.ci_conclusion(7, _run=_Recorder(code=1)))
 
+    def test_ci_conclusion_jq_dedupes_by_check_identity(self):
+        rec = _Recorder(out="SUCCESS\n")
+        github.ci_conclusion(7, _run=rec)
+        argv = rec.calls[0]
+        self.assertEqual(argv[:4], ["gh", "pr", "view", "7"])
+        jq_expr = argv[argv.index("--jq") + 1]
+        self.assertIn("group_by", jq_expr)
+        self.assertIn("max_by", jq_expr)
+
     def test_merge_pr_method(self):
         rec = _Recorder()
         github.merge_pr(7, method="rebase", _run=rec)
