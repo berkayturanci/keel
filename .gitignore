@@ -25,3 +25,4 @@ venv/
 
 # Editors — Obsidian vault config (local markdown app, not part of the repo)
 .obsidian/
+jury.toml
