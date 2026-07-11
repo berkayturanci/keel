@@ -6,6 +6,26 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.8.2] — 2026-07-11
+
+### Fixed
+- **The 1.8.1 package did not actually contain the statusCheckRollup dedup fix its own
+  changelog claimed.** A squash-merge of an unrelated docs-only PR (#543), whose branch had
+  been updated from `main` via the GitHub "update branch" API shortly before merging, computed
+  its diff against a stale pre-#550 base — silently reverting `_dedupe_rollup`/
+  `_rollup_recency` in `cli.py` and the matching `jq` dedup filter in `github.py` (plus their
+  tests) back to pre-fix state immediately after #550 merged, before the 1.8.1 tag was cut. The
+  revert was invisible locally because the reverted state was internally consistent (old code,
+  no tests for the removed behavior), so `make test`/`make coverage` stayed green throughout.
+  Caught by an `ai-jury` cross-vendor review (claude + codex) of the day's merged changes,
+  which flagged the changelog/source mismatch; confirmed by bisecting the merge history and
+  restored by cherry-picking #550's original commit onto `main`. (#553)
+- **A Google Analytics snippet reintroduced by the same squash-merge issue.** #546 removed the
+  placeholder GA4 script from all four website HTML pages ("Cloudflare beacon already live").
+  A later squash-merge (#540, adding CSP headers to those same pages) reintroduced it as a
+  side effect of the same stale-base diff problem. Removed again. Also flagged by the `ai-jury`
+  review, independently, before the #550 issue was found. (#552)
+
 ## [1.8.1] — 2026-07-10
 
 ### Fixed
