@@ -15,7 +15,7 @@ project intentionally publishes as `keel-workflow`.
 
 ## Current Release State
 
-As of 2026-06-13, the current production PyPI release is `keel-workflow==1.2.3`,
+As of 2026-07-11, the current production PyPI release is `keel-workflow==1.8.2`,
 owned by `berkayturanci`. Verify the current state before every new release with:
 
 ```bash
@@ -59,6 +59,10 @@ Before tagging a release:
     marker matches (otherwise the plugin drift test fails).
 
   Historical version mentions (e.g. "Since **1.6.5**" prose) are deliberately left untouched.
+  **Not covered by `make release-bump`:** the hardcoded fallback version strings in
+  `website/docs.html`, `website/coverage.html`, and `website/content.js` (used before the
+  runtime GitHub-releases fetch in `app.js` resolves). These drift silently — as of 1.8.2 they
+  had been stuck at `v1.6.5` for four releases — so check/update them by hand each release.
 - Update `CHANGELOG.md` with the release notes (the one step `make release-bump` leaves to you).
 - Confirm `pyproject.toml` metadata: name, version, description, readme, license, authors,
   Python version, dependencies, classifiers, URLs, and `keel = "keel.cli:main"`.
@@ -186,6 +190,26 @@ gh release view "v<version>" --json assets
 
 Confirm the PyPI wheel and source-distribution SHA256 digests match the GitHub Release asset
 digests before announcing the release.
+
+## Known Pitfall: Squash-Merging A Branch Updated Via The GitHub API
+
+Updating a PR branch via `PUT /repos/{owner}/{repo}/pulls/{pr}/update-branch` (or the
+"Update branch" button) creates a merge commit on that branch. Squash-merging that PR
+afterward has, in practice, produced a squashed commit computed against a **stale diff base**
+that predates later, unrelated commits already on `main` — silently reverting files the PR
+never touched back to their pre-those-commits state, even though the PR's own branch tip
+(post-update) had them correctly merged in.
+
+This happened twice while shipping 1.8.1/1.8.2: a docs-only accessibility PR's squash-merge
+reverted an unrelated CI-rollup dedup fix (#550) that had landed minutes earlier, and a
+CSP-headers PR's squash-merge reintroduced a previously-removed GA snippet. Both were only
+caught by an `ai-jury` review of the diff against the pre-session baseline, not by CI (the
+reverted state was internally consistent, so tests/coverage stayed green).
+
+**Mitigation:** after squash-merging any PR whose branch went through an `update-branch` call,
+diff the merged commit against its immediate parent for files the PR didn't intend to touch,
+or just re-check that unrelated recent fixes are still present in the merged tree — don't
+trust a green CI run alone.
 
 ## Rollback And Re-Run Notes
 
