@@ -31,3 +31,12 @@
 ## 2024-07-28 - Early returns and loop optimizations over `any()`
 **Learning:** Using sequential `any()` generator expressions forces iteration to spin up generators and iterate over data that may not even need evaluating if an earlier condition is met. By unrolling `any()` checks into explicit early return `if` and `for` loops, evaluations can be short-circuited dramatically faster (up to ~90x speedup in isolated hot path cases where a short-circuit occurs early).
 **Action:** When validating multiple cascading criteria, implement manual short-circuiting via sequential `if` and `for` loops with early returns rather than joining multiple generator expressions.
+## 2024-07-12 - Replaced generator expression in _unique() with iterative loop
+
+**Learning:** When generating a list of unique items, using `dict.fromkeys(generator)` is surprisingly slow. In tight loops (like iterating sentences to check blockers or risk keywords), an iterative loop with a `seen` set reduces generator overhead and performs significantly faster in this codebase.
+**Action:** Replace `list(dict.fromkeys(v for item in items if (v := str(item).strip())))` with a manual `seen` set loop that sequentially iterates items and tracks added elements, especially in performance-critical areas like issue intake parsing.
+
+## 2024-07-12 - Replaced any() with explicit loops in hot paths
+
+**Learning:** When executing checks on collections (e.g. `any(...)` or `all(...)`), providing a generator expression introduces measurable overhead. Unrolling them into explicit `for` loops with early returns saves execution time, especially when evaluating string and regex functions inside tightly bound path matching logic.
+**Action:** Unroll `any(fnmatch.fnmatch(path, g) for g in globs)` and similar operations into plain `for` loops with early returns to bypass generator setup overhead in critical paths like file classification.

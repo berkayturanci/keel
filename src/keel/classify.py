@@ -14,7 +14,10 @@ DEFAULT_TIER = 2
 
 
 def _matches_any(path: str, globs: tuple[str, ...]) -> bool:
-    return any(fnmatch.fnmatch(path, g) for g in globs)
+    for g in globs:
+        if fnmatch.fnmatch(path, g):
+            return True
+    return False
 
 
 def tier_for_files(
