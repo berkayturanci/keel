@@ -13,10 +13,6 @@ import fnmatch
 DEFAULT_TIER = 2
 
 
-def _matches_any(path: str, globs: tuple[str, ...]) -> bool:
-    return any(fnmatch.fnmatch(path, g) for g in globs)
-
-
 def tier_for_files(
     changed: list[str], *, tier3_globs: tuple[str, ...] = (), docs_globs: tuple[str, ...] = ()
 ) -> int:
@@ -28,8 +24,24 @@ def tier_for_files(
     """
     if not changed:
         return DEFAULT_TIER
-    if any(_matches_any(p, tier3_globs) for p in changed):
-        return 3
-    if docs_globs and all(_matches_any(p, docs_globs) for p in changed):
+
+    # ⚡ Bolt Optimization: Use explicit unrolled loops instead of nested any() generators
+    # to avoid the heavy overhead of generator instantiation during iteration hot paths.
+    if tier3_globs:
+        for p in changed:
+            for g in tier3_globs:
+                if fnmatch.fnmatch(p, g):
+                    return 3
+
+    if docs_globs:
+        for p in changed:
+            matches_doc = False
+            for g in docs_globs:
+                if fnmatch.fnmatch(p, g):
+                    matches_doc = True
+                    break
+            if not matches_doc:
+                return DEFAULT_TIER
         return 1
+
     return DEFAULT_TIER

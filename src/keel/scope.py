@@ -14,9 +14,15 @@ classification so docs-only extras are exempt rather than flagged.
 
 from __future__ import annotations
 
+import fnmatch
 from typing import Any
 
-from .classify import _matches_any
+
+def _matches_any(path: str, globs: tuple[str, ...]) -> bool:
+    for g in globs:
+        if fnmatch.fnmatch(path, g):
+            return True
+    return False
 
 SCHEMA_VERSION = "keel.scope-verify.v1"
 
