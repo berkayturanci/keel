@@ -39,6 +39,8 @@ PLUGIN_COMMANDS_DIR = "commands"
 #: the committed plugin manifest + marketplace catalog live here.
 PLUGIN_MANIFEST = ".claude-plugin/plugin.json"
 PLUGIN_MARKETPLACE = ".claude-plugin/marketplace.json"
+#: the committed Codex plugin manifest — same shape, reuses the same ./skill.
+CODEX_PLUGIN_MANIFEST = ".codex-plugin/plugin.json"
 
 #: the logical install surfaces (``all`` fans over these).
 TARGETS: tuple[str, ...] = ("claude", "skills")

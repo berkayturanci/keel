@@ -513,6 +513,10 @@ class TestClaudeCodePlugin(unittest.TestCase):
         import json
         return json.loads((REPO_ROOT / install.PLUGIN_MARKETPLACE).read_text(encoding="utf-8"))
 
+    def _read_codex_manifest(self) -> dict:
+        import json
+        return json.loads((REPO_ROOT / install.CODEX_PLUGIN_MANIFEST).read_text(encoding="utf-8"))
+
     def test_plugin_files_render_from_adapter_bodies(self):
         files = install.plugin_files()
         names = {Path(rel).name for rel in files}
@@ -596,6 +600,19 @@ class TestClaudeCodePlugin(unittest.TestCase):
         self.assertEqual(manifest["license"], "Apache-2.0")
         self.assertEqual(manifest["author"]["name"], "Berkay Turancı")
         self.assertEqual(manifest["homepage"], "https://berkayturanci.github.io/keel/")
+        self.assertTrue(manifest["description"])
+
+    def test_codex_plugin_manifest_version_matches_keel_version(self):
+        from keel import __version__
+        self.assertEqual(self._read_codex_manifest()["version"], __version__)
+
+    def test_codex_plugin_manifest_has_required_fields(self):
+        manifest = self._read_codex_manifest()
+        self.assertEqual(manifest["name"], "keel")
+        self.assertEqual(manifest["license"], "Apache-2.0")
+        self.assertEqual(manifest["author"]["name"], "Berkay Turancı")
+        self.assertEqual(manifest["homepage"], "https://berkayturanci.github.io/keel/")
+        self.assertEqual(manifest["skills"], "./skill")
         self.assertTrue(manifest["description"])
 
     def test_marketplace_has_required_fields_and_keel_plugin(self):

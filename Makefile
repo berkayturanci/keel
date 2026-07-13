@@ -11,7 +11,8 @@
 #                  from src/keel/adapters/commands/ — the drift test locks these byte-for-byte
 #   make release-bump VERSION=x.y.z
 #                  bump the version everywhere a release must touch (pyproject, __init__,
-#                  plugin manifest, pinned-install refs) and regenerate all adapter surfaces
+#                  Claude + Codex plugin manifests, pinned-install refs) and regenerate all
+#                  adapter surfaces
 
 PY ?= python3
 

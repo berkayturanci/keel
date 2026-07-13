@@ -1,0 +1,27 @@
+{
+  "name": "keel",
+  "version": "1.8.2",
+  "description": "Project-neutral, multi-agent workflow core: a fixed backbone of steps that drives an issue from backlog to done, customised per project via config + add-only Lego extensions.",
+  "author": {
+    "name": "Berkay Turancı",
+    "url": "https://github.com/berkayturanci"
+  },
+  "homepage": "https://berkayturanci.github.io/keel/",
+  "repository": "https://github.com/berkayturanci/keel",
+  "license": "Apache-2.0",
+  "keywords": [
+    "workflow",
+    "github",
+    "automation",
+    "multi-agent",
+    "codex"
+  ],
+  "skills": "./skill",
+  "interface": {
+    "displayName": "keel",
+    "shortDescription": "Turns coding agents into work owners — a fixed backbone from backlog to done.",
+    "longDescription": "keel drives a GitHub issue end-to-end through a fixed backbone (select, branch, implement, CI, review, test, merge, close, capture) so a coding agent's work reaches a real done, not just a first draft. Project-neutral: every project-specific value is read from .keel/project.yaml via the keel CLI.",
+    "developerName": "Berkay Turancı",
+    "category": "developer-tools"
+  }
+}

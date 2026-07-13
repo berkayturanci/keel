@@ -21,6 +21,7 @@ def _fixture(root: Path, old: str) -> None:
     """Write a minimal tree carrying the version markers a release touches."""
     (root / "src" / "keel").mkdir(parents=True)
     (root / ".claude-plugin").mkdir()
+    (root / ".codex-plugin").mkdir()
     (root / "website").mkdir()
     (root / ".github" / "workflows").mkdir(parents=True)
     (root / "pyproject.toml").write_text(
@@ -28,6 +29,8 @@ def _fixture(root: Path, old: str) -> None:
     (root / "src" / "keel" / "__init__.py").write_text(
         f'"""doc."""\n__version__ = "{old}"\n', encoding="utf-8")
     (root / ".claude-plugin" / "plugin.json").write_text(
+        f'{{\n  "name": "keel",\n  "version": "{old}"\n}}\n', encoding="utf-8")
+    (root / ".codex-plugin" / "plugin.json").write_text(
         f'{{\n  "name": "keel",\n  "version": "{old}"\n}}\n', encoding="utf-8")
     # README carries the pinned install AND a historical mention that must survive.
     (root / "README.md").write_text(
@@ -51,6 +54,7 @@ class TestBump(unittest.TestCase):
             self.assertEqual(old, "1.7.0")
             self.assertEqual(sorted(changed), [
                 ".claude-plugin/plugin.json",
+                ".codex-plugin/plugin.json",
                 ".github/workflows/keel-ship.yml",
                 "README.md",
                 "pyproject.toml",
@@ -63,6 +67,8 @@ class TestBump(unittest.TestCase):
                           (root / "src" / "keel" / "__init__.py").read_text(encoding="utf-8"))
             self.assertIn('"version": "1.8.0"',
                           (root / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
+            self.assertIn('"version": "1.8.0"',
+                          (root / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
             readme = (root / "README.md").read_text(encoding="utf-8")
             self.assertIn("keel@v1.8.0", readme)
             self.assertNotIn("keel@v1.7.0", readme)
