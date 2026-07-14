@@ -84,9 +84,9 @@
     byGroup[g].forEach(function (d) {
       var art = el("article", "doc-art"); art.id = d.slug;
     art.dataset.text = (d.title + " " + d.summary + " " + d.group).toLowerCase();
-    var src = d.source ? '<a class="doc-source" href="' + d.source + '" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6M10 14L21 3"/></svg>source</a>' : "";
+    var src = d.source ? '<a class="doc-source" href="' + d.source + '" target="_blank" rel="noopener"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6M10 14L21 3"/></svg>source</a>' : "";
     art.innerHTML =
-      '<div class="doc-head"><span class="doc-head-t"><h2 id="h-' + d.slug + '">' + d.title + '</h2><button class="doc-share" type="button" data-slug="' + d.slug + '" title="Copy link to this section" aria-label="Copy link to ' + d.title + '"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg></button></span></div>' +
+      '<div class="doc-head"><span class="doc-head-t"><h2 id="h-' + d.slug + '">' + d.title + '</h2><button class="doc-share" type="button" data-slug="' + d.slug + '" title="Copy link to this section" aria-label="Copy link to ' + d.title + '"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg></button></span></div>' +
       '<p class="doc-summary">' + d.summary + "</p>" +
       '<div class="doc-body">' + d.body + (d.render ? embed(d.render) : "") + src + "</div>";
     main.appendChild(art);

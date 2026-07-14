@@ -28,3 +28,7 @@
 ## 2026-06-25 - Explicit Labels over aria-label for Search Inputs
 **Learning:** Using `aria-label` directly on a form input is technically accessible, but creating a visually hidden `<label class="sr-only">` explicitly associated with the input (`for="id"`) is the gold standard for screen readers and improves backwards compatibility. This is especially true for global elements like site search.
 **Action:** Always prefer `<label for="...">` with `.sr-only` class over `aria-label` for standalone form inputs like search bars to ensure robust screen reader support.
+
+## 2026-06-25 - SVG Icons and aria-hidden
+**Learning:** Screen readers may redundantly announce SVG structures when they are used as decorative icons inside elements that already have an accessible name (like an `aria-label` or text content on a button).
+**Action:** Always add `aria-hidden="true"` to decorative `<svg>` tags (like icons) to reduce screen reader noise.
