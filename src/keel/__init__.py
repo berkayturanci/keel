@@ -11,4 +11,4 @@ The public, deterministic core lives in pure modules (``config``, ``model``,
 thin, fail-soft wrappers. See ``docs/proposals/keel-architecture.md``.
 """
 
-__version__ = "1.8.2"
+__version__ = "1.9.0"
