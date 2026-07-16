@@ -35,3 +35,7 @@
 ## 2024-07-15 - Unrolling any() with pre-computation
 **Learning:** In Python, replacing an `any()` generator expression with a standard `for` loop and an early return avoids generator setup/teardown overhead. When dealing with repeated string operations (like `.lower()`) inside the loop, pre-computing the target string outside the loop further speeds up execution.
 **Action:** Always consider unrolling `any()` generators in hot paths, and hoist loop-invariant transformations to avoid redundant processing.
+
+## 2024-07-28 - Unrolling any() in evidence.py
+**Learning:** In `src/keel/evidence.py`, testing `any()` generators with `timeit` for functions evaluating lists of dictionary items (`_has_trusted_ship_assessment`, `_closure_mismatch_scopes`, `_has_trusted_review_marker`) showed that unrolling the generators into explicit `for` loops with early returns provides significant speedups, especially when a short-circuit condition is met early.
+**Action:** When validating evidence items or running list evaluations that frequently short-circuit, unroll `any()` generator expressions into explicit loops and early returns to avoid generator setup overhead.
