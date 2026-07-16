@@ -6,6 +6,16 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Hosted-API implementer/reviewer delegates** (`--delegate anthropic-api:MODEL` /
+  `openai-api:MODEL`, #548): drive the s4 implement and s7 review steps with only a vendor
+  API key in the environment (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`) — no agent CLI
+  installed. Same no-tools contract as the local-model path (the orchestrator owns every
+  git/PR step; the delegate produces a diff or verdict via one stdlib HTTP call), same
+  tier-3 refusal, gated by the `secrets` consent scope, never retried on HTTP 429. New
+  thin I/O wrapper `keel.api_delegate` and a new `api-token` runtime capability. Design:
+  `docs/proposals/api-token-delegate.md`.
+
 ## [1.8.2] — 2026-07-11
 
 ### Fixed

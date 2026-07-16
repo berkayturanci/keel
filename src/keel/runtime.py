@@ -171,6 +171,7 @@ def detect(
                    "KEEL_RELEASE_PUBLISH", "environment"),
         Capability("secret-access", _truthy(env.get("KEEL_SECRET_ACCESS")),
                    "KEEL_SECRET_ACCESS", "environment"),
+        _api_token_capability(env),
         Capability("production-adjacent", _truthy(env.get("KEEL_PRODUCTION_ADJACENT")),
                    "KEEL_PRODUCTION_ADJACENT", "environment"),
         Capability("private-setup", _truthy(env.get("KEEL_PRIVATE_SETUP")),
@@ -208,6 +209,19 @@ def _tool_capability(
         return Capability(name, True, env_name, "environment")
     path = which(name)
     return Capability(name, path is not None, path or f"{name} not found", "PATH")
+
+
+def _api_token_capability(env: Mapping[str, str]) -> Capability:
+    """``api-token``: a hosted-API delegate key is present in the environment.
+
+    The detail names the env vars found (never their values); the per-vendor
+    dispatch check is :func:`keel.api_delegate.has_api_token`.
+    """
+    from .api_delegate import present_key_names
+
+    names = present_key_names(_env=env)
+    detail = ", ".join(names) if names else "no vendor API key (ANTHROPIC_API_KEY/OPENAI_API_KEY)"
+    return Capability("api-token", bool(names), detail, "environment")
 
 
 def _can_write(root: Path) -> bool:

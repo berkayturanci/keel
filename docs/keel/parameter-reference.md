@@ -1408,7 +1408,7 @@ keel implement <project.yaml> <issue> [--root DIR] [--delegate AGENT]
 | Flag | Type / values | Default | Effect |
 | --- | --- | --- | --- |
 | `issue` | positive int | required | Issue number to implement. |
-| `--delegate AGENT` | free-form delegate label (adapters use `claude`/`codex`/`agy`/`ollama:MODEL`) | `None` | Explicit implementer override, echoed in the contract/result. The CLI does not validate the value; the adapter grammar does. |
+| `--delegate AGENT` | free-form delegate label (adapters use `claude`/`codex`/`agy`/`ollama:MODEL`/`anthropic-api:MODEL`/`openai-api:MODEL`) | `None` | Explicit implementer override, echoed in the contract/result. The CLI does not validate the value; the adapter grammar does. |
 | `--root` / `--dry-run` / `--live` / consent flags / `--target` / intake flags / `--json` | shared | — | Shared semantics. |
 
 ### Details
@@ -1624,13 +1624,13 @@ keel install-legacy-wrappers all --force
 The `/keel:ship` adapter (source: `src/keel/adapters/commands/ship.md`) is the
 agent-facing flow on top of the CLI. Its argument grammar is stricter than argparse:
 unknown flags, out-of-range values, a flag missing its value, repeated single-value
-flags (`--reviewers 2 --reviewers 3`), an empty `ollama:` model, and zero/negative
+flags (`--reviewers 2 --reviewers 3`), an empty `ollama:`/`*-api:` model, and zero/negative
 positionals are all rejected as user error.
 
 ```
 /keel:ship [issue numbers...] [--compound|--profile <standard|compound>]
-           [--delegate <claude|codex|agy|ollama:MODEL>]
-           [--review-delegate <claude|codex|agy|ollama:MODEL>]
+           [--delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL>]
+           [--review-delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL>]
            [--review-comments <inline|summary>] [--reviewers <1|2|3>]
            [--jury|--no-jury|--jury-advisory] [--hotfix] [--dry-run] [--wizard]
 ```
@@ -1639,7 +1639,7 @@ positionals are all rejected as user error.
 | --- | --- | --- | --- |
 | issue numbers | bare positive integers | none → **watch mode** | Explicit issue(s) to ship. With none, the run takes the top of the backlog (highest priority first, then ascending issue number), with a capped watch-mode batch. |
 | `--compound` / `--profile` | flag / `standard` \| `compound` | `standard` | Select the workflow profile. `--compound` ≡ `--profile compound`. |
-| `--delegate` | `claude` \| `codex` \| `agy` \| `ollama:MODEL` | host agent | The s4 implementer; per-run override of any issue role/delegate label. |
+| `--delegate` | `claude` \| `codex` \| `agy` \| `ollama:MODEL` \| `anthropic-api:MODEL` \| `openai-api:MODEL` | host agent | The s4 implementer; per-run override of any issue role/delegate label. |
 | `--review-delegate` | same value set | host agent | The s7 reviewer vendor. |
 | `--review-comments` | `inline` \| `summary` | `inline` | How reviewer findings post in s7. |
 | `--reviewers` | `1` \| `2` \| `3` | auto (from tier) | Override the tier-derived reviewer count. |
@@ -1673,16 +1673,23 @@ compound `workflow_profile`. `--compound` composes with every other flag
 
 ### `--delegate` / `--review-delegate` — in depth
 
-Value set `claude | codex | agy | ollama:MODEL`; `ollama:` requires a non-empty model
+Value set `claude | codex | agy | ollama:MODEL | anthropic-api:MODEL | openai-api:MODEL`;
+`ollama:` and the `*-api:` values require a non-empty model
 (per-issue model overrides can also come from a `delegate-model:<name>` label).
 Implementer precedence at s4: `--delegate` flag > issue `delegate:*` label >
 `HOST_AGENT` (the CLI driving the run, resolved from the runtime). Delegated CLI
 implementers are fed the prompt via stdin and run network-enabled; a bare local (Ollama)
 model cannot run tools, so the orchestrator does every git/PR step itself and delegates
-only diff generation (≤2 retries on a bad diff, then fall back). **Local-model
+only diff generation (≤2 retries on a bad diff, then fall back). The hosted-API
+delegates (`anthropic-api:MODEL` / `openai-api:MODEL`, issue #548) follow the same
+no-tools contract with the endpoint swapped: one stdlib HTTP call per attempt against
+the vendor's API, keyed by `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` from the environment —
+no agent CLI needed. Reading the token requires the `secrets` consent scope; without it
+the run resolves to `HOST_AGENT` before any key is read. **Local-model and hosted-API
 implementers are refused on tier-3** (pre-classified from the issue's target
 paths/labels; ambiguous ⇒ tier-2 and let s7 gate) — the run falls back to `HOST_AGENT`
-there. Quota errors (HTTP 429 / RESOURCE_EXHAUSTED), missing CLIs, and unparseable JSON
+there. Quota errors (HTTP 429 / RESOURCE_EXHAUSTED, never retried), missing CLIs or
+API keys, and unparseable JSON
 returns all fail over to `HOST_AGENT` with the reason logged. A non-host
 `--review-delegate` vendor runs strictly read-only/findings-only; the orchestrator owns
 all GitHub writes on every path. Attribution always records the **effective**

@@ -43,6 +43,26 @@ class TestDetect(unittest.TestCase):
         self.assertTrue(report.available("worktree"))
         self.assertFalse(report.available("release-publish"))
 
+    def test_api_token_present_names_env_vars_not_values(self):
+        with tempfile.TemporaryDirectory() as d:
+            report = runtime.detect(
+                d,
+                env={"ANTHROPIC_API_KEY": "sk-secret-value"},
+                which=fake_which,
+                run=fake_run,
+            )
+        self.assertTrue(report.available("api-token"))
+        cap = next(c for c in report.capabilities if c.name == "api-token")
+        self.assertIn("ANTHROPIC_API_KEY", cap.detail)
+        self.assertNotIn("sk-secret-value", cap.detail)
+
+    def test_api_token_absent_and_blank_key_ignored(self):
+        with tempfile.TemporaryDirectory() as d:
+            report = runtime.detect(
+                d, env={"OPENAI_API_KEY": "   "}, which=fake_which, run=fake_run
+            )
+        self.assertFalse(report.available("api-token"))
+
     def test_missing_gh_auth_degrades(self):
         with tempfile.TemporaryDirectory() as d:
             report = runtime.detect(

@@ -17,6 +17,7 @@ KNOWN_CAPABILITIES: tuple[str, ...] = (
     "worktree",
     "release-publish",
     "secret-access",
+    "api-token",
     "production-adjacent",
     "private-setup",
 )

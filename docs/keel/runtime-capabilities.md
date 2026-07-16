@@ -35,6 +35,7 @@ the structured command contracts described in [`command-contracts.md`](command-c
 | `worktree` | The runtime has `git` and a writable root. |
 | `release-publish` | The operator/runtime explicitly allowed release publishing through `KEEL_RELEASE_PUBLISH=1`. |
 | `secret-access` | The operator/runtime explicitly allowed secret or credential access through `KEEL_SECRET_ACCESS=1`. |
+| `api-token` | A hosted-API delegate key (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`) is present in the environment for the `anthropic-api:`/`openai-api:` delegates. The report names the env vars found — never their values; whether the *selected* delegate's own key is present is checked again at dispatch. Reading the key in a live run still requires `secrets` consent. |
 | `production-adjacent` | The operator/runtime explicitly allowed production-adjacent service access through `KEEL_PRODUCTION_ADJACENT=1`. |
 | `private-setup` | The operator/runtime explicitly confirmed private setup prerequisites through `KEEL_PRIVATE_SETUP=1`. |
 

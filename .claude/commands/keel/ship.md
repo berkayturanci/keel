@@ -1,6 +1,6 @@
 ---
 description: Drive a GitHub issue end-to-end through the keel backbone (select → branch → implement → CI → review → test → merge → close → capture), reading every project value from .keel/project.yaml via the keel CLI.
-argument-hint: "[issue numbers...] [--compound|--profile <standard|compound>] [--delegate <claude|codex|agy|ollama:MODEL>] [--review-delegate <claude|codex|agy|ollama:MODEL>] [--review-comments <inline|summary>] [--reviewers <1|2|3>] [--jury|--no-jury|--jury-advisory] [--hotfix] [--dry-run] [--wizard]"
+argument-hint: "[issue numbers...] [--compound|--profile <standard|compound>] [--delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL>] [--review-delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL>] [--review-comments <inline|summary>] [--reviewers <1|2|3>] [--jury|--no-jury|--jury-advisory] [--hotfix] [--dry-run] [--wizard]"
 allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Bash(jury:*), Read, Edit, Write, Agent
 ---
 
@@ -195,9 +195,11 @@ capture.
   `standard`; `--compound` is an alias for `--profile compound`. The compound profile swaps
   the `s4`/`s7`/`s9`/`s11` steps to compound behavior (see the **Compound profile** section)
   without forking the backbone. Composes with every other flag (e.g. `--compound --jury`).
-- `--delegate <claude|codex|agy|ollama:MODEL>` — the **implementer**. Per-run override
-  of any issue role/delegate label. `ollama:` requires a non-empty model. Default: the
-  **host agent** (the CLI driving this run).
+- `--delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL>` — the
+  **implementer**. Per-run override of any issue role/delegate label. `ollama:` and the
+  `*-api:` values require a non-empty model. The `*-api:` values are the **hosted-API
+  delegates** (no agent CLI needed — just `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` in the
+  environment; see s4). Default: the **host agent** (the CLI driving this run).
 - `--review-delegate <…>` — the **reviewer** vendor (same value set). Default: host agent.
 - `--review-comments <inline|summary>` — how reviewer findings post (s7). Default `inline`.
 - `--reviewers <1|2|3>` — override the tier-derived reviewer count. Default: auto (from tier).
@@ -208,7 +210,7 @@ capture.
 - `--wizard` — interactive opt-in only; runs the guided pre-s1 config collector (see
   `--wizard` section). In any non-interactive context it degrades to a logged no-op.
 
-Reject unknown `--flags`, out-of-range `--reviewers`, an empty `ollama:` model, a flag
+Reject unknown `--flags`, out-of-range `--reviewers`, an empty `ollama:`/`*-api:` model, a flag
 missing its value, or a negative/zero positional. A flag and its value must appear
 together; positionals are everything not consumed by a flag. Repeated single-value flags
 (e.g. `--reviewers 2 --reviewers 3`) are user error. With **no issue numbers**, run in
@@ -292,6 +294,17 @@ Resolve the implementer: `implementer_agents` by the issue's role label, **overr
   diff, then fall back. **Local-model implementers are refused on tier-3** (high-risk,
   per `tier3_globs`; pre-classified from the issue's target paths/labels before the diff
   exists, ambiguous ⇒ treat as tier-2 and let s7 gate) — fall back to `HOST_AGENT` there.
+- **Hosted-API implementer** (`anthropic-api:MODEL`, `openai-api:MODEL`) — the same
+  no-tools contract as the local-model path with the endpoint swapped: the orchestrator
+  does every git/PR step itself and requests only code generation via
+  `keel`'s `api_delegate` wrapper (one stdlib HTTP call per attempt against the vendor's
+  API, keyed by `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` from the environment). Same
+  retry-×2-then-fall-back rule; **never retry HTTP 429 / rate-limit** — fail soft and
+  fall back immediately. Reading the token is `secret_access`, so the run's approved
+  scope must include `secrets` — without it, resolve to `HOST_AGENT` before any key is
+  read. **Hosted-API implementers are refused on tier-3**, same rule and fallback as
+  local models. Attribution: `agent:<vendor>` (e.g. `agent:anthropic-api`) + versionless
+  `model:<base>`, system `anthropic-api:MODEL`.
 
 Every implementer (delegated or not) receives the same brief plus:
 - The approved `operator_consent.delegated_agent_scope`. If the implementer attempts work
@@ -387,7 +400,10 @@ abort the session** (counter resets after any merge).
 ### s7 review *(agent)* + slot `reviewers`
 Run **N reviewers** (N from the s5 tier, or `--reviewers`), the host or `--review-delegate`
 vendor. A non-host reviewer vendor runs **read-only / findings-only** (the vendor's
-read-only mode or local endpoint), the orchestrator still posts — the **orchestrator owns
+read-only mode, local endpoint, or — for `anthropic-api:`/`openai-api:` — one hosted-API
+call via the `api_delegate` wrapper: diff + rubric in, structured verdict out; same
+`secrets`-scope and no-retry-on-429 rules as s4, no tier restriction since review output
+is advisory, not a mutation), the orchestrator still posts — the **orchestrator owns
 all writes**; reviewers never call a GitHub write API. Spawn all reviewers in a **single
 Agent message** so they run concurrently; each gets a fresh codename, the PR head SHA, its
 focus slice, and a no-cross-reading instruction. Coverage invariant: when the count drops,
@@ -673,4 +689,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=claude command=ship keel_version=1.8.2 source_sha256=1712843095e4b7e1e4895c94df4a4987e9a143039208b1f8c3e1aa8cfff5b5ea generated_sha256=1712843095e4b7e1e4895c94df4a4987e9a143039208b1f8c3e1aa8cfff5b5ea -->
+<!-- keel-generated: surface=claude command=ship keel_version=1.8.2 source_sha256=644cb9a10a808ea418d5eb8dd572f5f996b13237e39e58670e4dc562c30e60fe generated_sha256=644cb9a10a808ea418d5eb8dd572f5f996b13237e39e58670e4dc562c30e60fe -->

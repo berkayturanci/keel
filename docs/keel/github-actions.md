@@ -79,3 +79,10 @@ deterministic public-evidence verifier. The live *merge* and the *agentic* steps
 (implement / multi-agent review) intentionally remain in the installed `/keel:<command>`
 adapters and their agent host, where operator consent, delegation, model attribution,
 worktree isolation, and project extensions are available.
+
+The agent-host requirement for the agentic steps is narrower than it used to be: with the
+hosted-API delegates (`--delegate anthropic-api:MODEL` / `openai-api:MODEL`, issue #548) a
+runner needs only a vendor API key as a secret — no installed, authenticated agent CLI —
+to drive implement/review through the same adapter contract. The orchestration itself
+(the adapter prose, consent, attribution, worktrees) still runs in an agent host; the
+delegate only replaces the code-generation engine.

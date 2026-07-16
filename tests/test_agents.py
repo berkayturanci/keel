@@ -89,5 +89,28 @@ class TestAttribution(unittest.TestCase):
         self.assertEqual(a["system"], "ollama:qwen2.5")
 
 
+class TestApiDelegate(unittest.TestCase):
+    def test_known_api_vendors(self):
+        for vendor in agents.API_VENDORS:
+            self.assertTrue(agents.is_api_delegate(vendor))
+
+    def test_non_api_vendors(self):
+        for vendor in ("claude", "codex", "agy", "ollama", "api", "anthropic"):
+            self.assertFalse(agents.is_api_delegate(vendor))
+
+    def test_split_delegate_keeps_api_model(self):
+        # The hosted-API value fits the existing first-colon split unchanged.
+        self.assertEqual(
+            agents.split_delegate("anthropic-api:claude-sonnet-5"),
+            ("anthropic-api", "claude-sonnet-5"),
+        )
+
+    def test_api_attribution(self):
+        a = agents.attribution("anthropic-api", "claude-sonnet-5")
+        self.assertEqual(a["agent_label"], "agent:anthropic-api")
+        self.assertEqual(a["model_label"], "model:claude-sonnet-5")
+        self.assertEqual(a["system"], "anthropic-api:claude-sonnet-5")
+
+
 if __name__ == "__main__":
     unittest.main()

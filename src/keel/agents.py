@@ -16,11 +16,23 @@ from .config import ProjectConfig
 #: Default host agent when nothing else is resolved.
 HOST_DEFAULT = "claude"
 
+#: Hosted-API delegate vendors (issue #548): the vendor's real API keyed by an
+#: env token, no agent CLI installed. Same no-tools contract as ``ollama:`` — the
+#: orchestrator owns every git/PR step and delegates only code generation. The
+#: vendor names match ai-jury's hosted-adapter vocabulary so the value fits the
+#: existing first-colon ``vendor:model`` split unchanged.
+API_VENDORS = ("anthropic-api", "openai-api")
+
 
 def split_delegate(value: str) -> tuple[str, str | None]:
     """Split ``ollama:qwen2.5`` -> ``("ollama", "qwen2.5")``; ``codex`` -> ``("codex", None)``."""
     vendor, sep, model = value.partition(":")
     return vendor, (model if (sep and model) else None)
+
+
+def is_api_delegate(vendor: str) -> bool:
+    """True when ``vendor`` is a hosted-API delegate (``anthropic-api``/``openai-api``)."""
+    return vendor in API_VENDORS
 
 
 def resolve_agent(
