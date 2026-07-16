@@ -457,5 +457,53 @@ class TestBuildRunState(unittest.TestCase):
         self.assertEqual(st["pr"], 9)
 
 
+class RealLedgerRecordTests(unittest.TestCase):
+    """Non-circular key pinning: project a record built by keel's OWN ledger
+    writer (#575 review) so a future ledger rename can't silently zero fields."""
+
+    def _real_record(self):
+        from types import SimpleNamespace
+
+        from keel import ledger
+
+        outcome = SimpleNamespace(gate="build", ok=True, skipped=False, error=None,
+                                  findings=[])
+        failed = SimpleNamespace(gate="evidence", ok=False, skipped=False,
+                                 error="missing verdict", findings=[object(), object()])
+        verdict = SimpleNamespace(counts={"critical": 0, "major": 1, "minor": 0, "nit": 0},
+                                  blocked=True)
+        assessment = SimpleNamespace(
+            tier=3, reviewers=2, window_open=False, ci_ok=True, halted=False,
+            bypassed_window=True,
+            merge=SimpleNamespace(action="blocked", reason="window closed"),
+        )
+        return ledger.build_ship_run_record(
+            command="ship", base_branch="main", changed_files=["a.py", "b.py"],
+            outcomes=[outcome, failed], verdict=verdict, assessment=assessment,
+            issue_number=7, pr_number=9, branch="feat/x",
+            implementer="anthropic-api:claude-sonnet-5",
+            reviewer_agents=["claude", "codex"], tester="claude",
+            host_agent="claude",
+        )
+
+    def test_projection_reads_real_writer_keys(self):
+        state = rs.build_run_state(self._real_record(), checkpoint_step="s8")
+        self.assertEqual(state["tier"], 3)
+        self.assertIs(state["window_open"], False)
+        self.assertIs(state["bypassed_window"], True)
+        self.assertEqual(state["merge_reason"], "window closed")
+        self.assertEqual(state["file_count"], 2)
+        self.assertEqual(state["reviewers"], ["claude", "codex"])
+        self.assertEqual(state["tester"], "claude")
+        self.assertEqual(state["host_agent"], "claude")
+        self.assertEqual(
+            state["gates"],
+            [{"name": "build", "ok": True, "skipped": False, "error": None,
+              "finding_count": 0},
+             {"name": "evidence", "ok": False, "skipped": False,
+              "error": "missing verdict", "finding_count": 2}],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

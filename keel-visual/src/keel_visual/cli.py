@@ -537,6 +537,32 @@ def _board_entry(run_state: dict, identity: dict, project: str) -> dict:
         "merged": bool(run_state.get("merged")),
         "done": bool(run_state.get("done")),
         "jury": run_state.get("jury") or {"mode": None, "active": False},
+        # Ledger-detail fields the drawer renders (#575). Free-text values are
+        # sanitised like branch/author per this function's contract.
+        "tier": run_state.get("tier"),
+        "window_open": run_state.get("window_open"),
+        "bypassed_window": run_state.get("bypassed_window"),
+        "merge_reason": (
+            dash._safe_label(run_state["merge_reason"])
+            if run_state.get("merge_reason") else None
+        ),
+        "file_count": run_state.get("file_count"),
+        "reviewers": [dash._safe_label(r) for r in (run_state.get("reviewers") or [])],
+        "tester": dash._safe_label(run_state["tester"]) if run_state.get("tester") else None,
+        "host_agent": (
+            dash._safe_label(run_state["host_agent"])
+            if run_state.get("host_agent") else None
+        ),
+        "gates": [
+            {
+                "name": dash._safe_label(g.get("name") or ""),
+                "ok": g.get("ok"),
+                "skipped": g.get("skipped"),
+                "error": dash._safe_label(g["error"]) if g.get("error") else None,
+                "finding_count": g.get("finding_count"),
+            }
+            for g in (run_state.get("gates") or [])
+        ],
         "steps": [
             {"id": s.get("id"), "name": s.get("name"), "kind": s.get("kind"),
              "gate": s.get("gate")}

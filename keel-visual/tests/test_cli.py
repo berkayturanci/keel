@@ -823,6 +823,52 @@ class TestDash(unittest.TestCase):
         self.assertEqual(e["base"], "main")
         self.assertEqual(e["author"], "claude (opus)")
 
+    def test_board_entry_carries_ledger_detail_fields(self):
+        # Regression (#575 review): the drawer reads these from board.json, so
+        # _board_entry must actually include them — a whitelist miss is silent.
+        from keel_visual import runstate as rs
+        rec = {
+            "command": "ship", "pull_request": {"number": 9},
+            "assessment": {"tier": 3, "window_open": False, "bypassed_window": True,
+                           "merge": {"action": "merge", "reason": "window bypassed"}},
+            "gates": [{"gate": "build", "ok": True, "skipped": False,
+                       "error": None, "finding_count": 0},
+                      {"gate": "evidence", "ok": False, "skipped": False,
+                       "error": "missing verdict", "finding_count": 2}],
+            "actors": {"implementer": "anthropic-api (claude-sonnet-5)",
+                       "reviewers": ["claude", "codex"], "tester": "claude"},
+            "run_context": {"host_agent": "claude"},
+            "changes": {"file_count": 4},
+        }
+        run_state = rs.build_run_state(rec, checkpoint_step="s8")
+        e = cli._board_entry(run_state, {"pr": 9}, "myproj")
+        self.assertEqual(e["tier"], 3)
+        self.assertIs(e["window_open"], False)
+        self.assertIs(e["bypassed_window"], True)
+        self.assertEqual(e["merge_reason"], "window bypassed")
+        self.assertEqual(e["file_count"], 4)
+        self.assertEqual(e["reviewers"], ["claude", "codex"])
+        self.assertEqual(e["tester"], "claude")
+        self.assertEqual(e["host_agent"], "claude")
+        self.assertEqual(
+            e["gates"],
+            [{"name": "build", "ok": True, "skipped": False, "error": None,
+              "finding_count": 0},
+             {"name": "evidence", "ok": False, "skipped": False,
+              "error": "missing verdict", "finding_count": 2}],
+        )
+
+    def test_board_entry_detail_fields_default_empty(self):
+        from keel_visual import runstate as rs
+        run_state = rs.build_run_state({"command": "ship", "pull_request": {"number": 9}},
+                                       checkpoint_step="s8")
+        e = cli._board_entry(run_state, {"pr": 9}, "myproj")
+        self.assertIsNone(e["tier"])
+        self.assertIsNone(e["window_open"])
+        self.assertIsNone(e["merge_reason"])
+        self.assertEqual(e["reviewers"], [])
+        self.assertEqual(e["gates"], [])
+
     def test_fetch_title_success_and_cache(self):
         cli._TITLE_CACHE.clear()
         calls = []
