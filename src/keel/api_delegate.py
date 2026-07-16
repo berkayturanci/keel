@@ -17,12 +17,16 @@ Design (docs/proposals/api-token-delegate.md):
   to ``rate-limit`` so the caller can honour the no-retry-on-quota rule.
 - **Secrets** — the key is read from the environment only, validated against
   header injection, and scrubbed out of any error text before it is surfaced.
-  Reading it requires the ``secrets`` consent scope (enforced by the caller via
-  the existing ``operator_consent.delegated_agent_scope`` gate).
+  The ``secrets`` consent-scope requirement is part of the adapter contract
+  (ship.md s4/s7: resolve to ``HOST_AGENT`` before any key is read when the
+  scope is absent) — the same prose-level enforcement model as every other
+  delegate rule; this module itself performs no consent check, so any new
+  code surface that calls :func:`generate` must gate it the same way.
 """
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import urllib.error
@@ -131,10 +135,14 @@ def _parse_content(vendor: str, data: object) -> str | None:
     try:
         if vendor == "anthropic-api":
             blocks = data["content"]  # type: ignore[index]
-            parts = [b["text"] for b in blocks if b.get("type") == "text"]
-            return "".join(parts) if parts else None
-        return data["choices"][0]["message"]["content"] or None  # type: ignore[index]
-    except (KeyError, IndexError, TypeError):
+            parts = [b["text"] for b in blocks if isinstance(b, dict) and b.get("type") == "text"]
+            text = "".join(parts) if parts else None
+        else:
+            text = data["choices"][0]["message"]["content"]  # type: ignore[index]
+        # A gateway/proxy or format drift can return valid JSON with a non-str
+        # payload; report bad-response instead of leaking a dict/list to callers.
+        return text if isinstance(text, str) and text else None
+    except (KeyError, IndexError, TypeError, AttributeError):
         return None
 
 
@@ -187,7 +195,9 @@ def generate(
         return ApiResult(False, error_code="bad-key", error=reason)
 
     url, headers, body = _build_request(vendor, model, prompt, key, max_tokens)
-    request = urllib.request.Request(url, data=body, headers=headers, method="POST")  # noqa: S310
+    # URL comes only from the hardcoded _VENDORS constants — never config, env,
+    # or model/prompt content.
+    request = urllib.request.Request(url, data=body, headers=headers, method="POST")  # nosec B310
     opener = _opener if _opener is not None else _build_opener()
     try:
         with opener.open(request, timeout=timeout) as resp:
@@ -200,10 +210,14 @@ def generate(
         except OSError:  # pragma: no cover - defensive; HTTPError bodies rarely fail to read
             detail = str(exc)
         return _status_error(exc.code, _scrub(detail, key))
-    except (urllib.error.URLError, OSError, TimeoutError) as exc:
+    except (urllib.error.URLError, http.client.HTTPException, OSError, TimeoutError) as exc:
+        # http.client exceptions (IncompleteRead, BadStatusLine, ...) are NOT
+        # OSError subclasses and would otherwise escape the fail-soft contract.
         return ApiResult(False, error_code="network", error=_scrub(str(exc), key))
 
-    if status >= 400:
+    if not 200 <= status < 300:
+        # Non-2xx (incl. a 3xx from a redirecting intermediary — this opener
+        # never follows redirects) must never be parsed as a completion.
         return _status_error(status, _scrub(raw, key))
     try:
         data = json.loads(raw)

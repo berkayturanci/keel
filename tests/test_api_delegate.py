@@ -5,6 +5,7 @@ network. Coverage matches the pure-core bar — every branch of the wrapper is
 driven through fakes, the same pattern as ``runner``/``git``/``github``.
 """
 
+import http.client
 import io
 import json
 import unittest
@@ -26,6 +27,17 @@ class FakeResponse:
 
     def __exit__(self, *exc):
         return False
+
+
+class RaisingReadResponse(FakeResponse):
+    """Response whose body read fails mid-stream (connection dropped)."""
+
+    def __init__(self, exc):
+        super().__init__("")
+        self._exc = exc
+
+    def read(self) -> bytes:
+        raise self._exc
 
 
 class NoStatusResponse(FakeResponse):
@@ -268,6 +280,58 @@ class TestGenerate(unittest.TestCase):
         result = api_delegate.generate("anthropic-api", "m", "p", _env=ENV, _opener=opener)
         self.assertEqual(result.error_code, "bad-response")
         self.assertIn("no completion text", result.error)
+
+    def test_incomplete_read_is_fail_soft_not_raised(self):
+        # Regression (review SEC-1): http.client exceptions are NOT OSError
+        # subclasses; a connection dropped mid-body must become a scrubbed
+        # ApiResult, never an unhandled traceback.
+        exc = http.client.IncompleteRead(b"partial sk-ant-key body")
+        opener = FakeOpener(response=RaisingReadResponse(exc))
+        result = api_delegate.generate("anthropic-api", "m", "p", _env=ENV, _opener=opener)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.error_code, "network")
+        self.assertNotIn("sk-ant-key", result.error)
+
+    def test_bad_status_line_is_fail_soft_not_raised(self):
+        exc = http.client.BadStatusLine("garbage")
+        result = api_delegate.generate(
+            "anthropic-api", "m", "p", _env=ENV, _opener=FakeOpener(exc=exc)
+        )
+        self.assertFalse(result.ok)
+        self.assertEqual(result.error_code, "network")
+
+    def test_anthropic_string_content_is_bad_response_not_raised(self):
+        # Regression: {"content": "hello"} used to raise AttributeError.
+        opener = FakeOpener(response=FakeResponse(json.dumps({"content": "hello"})))
+        result = api_delegate.generate("anthropic-api", "m", "p", _env=ENV, _opener=opener)
+        self.assertEqual(result.error_code, "bad-response")
+
+    def test_anthropic_non_dict_block_skipped_not_raised(self):
+        # Regression: {"content": ["junk"]} used to raise AttributeError.
+        opener = FakeOpener(response=FakeResponse(json.dumps({"content": ["junk"]})))
+        result = api_delegate.generate("anthropic-api", "m", "p", _env=ENV, _opener=opener)
+        self.assertEqual(result.error_code, "bad-response")
+
+    def test_openai_non_string_content_is_bad_response(self):
+        body = json.dumps({"choices": [{"message": {"content": {"weird": 1}}}]})
+        opener = FakeOpener(response=FakeResponse(body))
+        result = api_delegate.generate("openai-api", "m", "p", _env=ENV, _opener=opener)
+        self.assertEqual(result.error_code, "bad-response")
+
+    def test_redirect_status_never_parsed_as_completion(self):
+        # Pin the load-bearing opener property: a 3xx (this opener never
+        # follows redirects) must map to an error, not a parsed completion —
+        # even when the body looks like a valid vendor response.
+        opener = FakeOpener(response=FakeResponse(_anthropic_body("evil"), status=302))
+        result = api_delegate.generate("anthropic-api", "m", "p", _env=ENV, _opener=opener)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.error_code, "http")
+
+    def test_non_raising_error_body_is_scrubbed(self):
+        opener = FakeOpener(response=FakeResponse("denied for sk-ant-key", status=403))
+        result = api_delegate.generate("anthropic-api", "m", "p", _env=ENV, _opener=opener)
+        self.assertNotIn("sk-ant-key", result.error)
+        self.assertIn("[REDACTED:api-key]", result.error)
 
     def test_max_tokens_override_lands_in_payload(self):
         opener = FakeOpener(response=FakeResponse(_anthropic_body()))
