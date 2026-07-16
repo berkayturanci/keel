@@ -243,12 +243,7 @@ def ci_passing(ci_conclusion: str | None) -> bool | None:
 
 def is_hotfix(labels: list[str] | tuple[str, ...], *, hotfix_label: str = "hotfix") -> bool:
     """True if the issue/PR carries the hotfix label (case-insensitive)."""
-    # ⚡ Bolt Optimization: Unroll any() generator and pre-compute lower() target
-    target = hotfix_label.lower()
-    for label in labels:
-        if label.strip().lower() == target:
-            return True
-    return False
+    return any(label.strip().lower() == hotfix_label.lower() for label in labels)
 
 
 @dataclass(frozen=True)
