@@ -619,5 +619,57 @@ class RealLedgerRecordTests(unittest.TestCase):
         )
 
 
+class JuryVerdictGateFidelityTests(unittest.TestCase):
+    """The verdict must match ai-jury's DEFAULT gate posture (#579 review):
+    only VERIFIED critical/major blocks; unverified/disputed stays COMMENT."""
+
+    def test_unverified_critical_is_comment_not_blocking(self):
+        data = {"reviews": [{"agent": "claude"}],
+                "groups": [{"severity": "critical", "status": ""}]}
+        out = rs.jury_verdict_from_outcome(data)
+        self.assertEqual(out["verdict"], "COMMENT")
+        self.assertEqual(out["counts"]["critical"], 1)
+
+    def test_disputed_critical_is_comment_not_blocking(self):
+        data = {"reviews": [{"agent": "claude"}],
+                "groups": [{"severity": "critical", "status": "needs_human_decision"}]}
+        out = rs.jury_verdict_from_outcome(data)
+        self.assertEqual(out["verdict"], "COMMENT")
+
+    def test_verified_major_blocks(self):
+        data = {"reviews": [{"agent": "claude"}],
+                "groups": [{"severity": "major", "status": "verified"}]}
+        out = rs.jury_verdict_from_outcome(data)
+        self.assertEqual(out["verdict"], "REQUEST CHANGES")
+
+    def test_report_shape_accepted(self):
+        # The `jury --format json` report is the shape ai-jury's public CLI
+        # actually emits — and the one ship.md s8 saves to the discovery path.
+        data = {
+            "schema_version": "ai-jury.report.v1",
+            "metadata": {"agents": [{"agent": "claude"}, {"agent": "codex"}]},
+            "consensus": [
+                {"representative": {"severity": "major"},
+                 "verification_status": "verified"},
+                {"representative": {"severity": "minor"},
+                 "verification_status": None},
+                {"representative": {"severity": "critical"},
+                 "verification_status": "unsupported"},
+            ],
+            "verdict": "",
+        }
+        out = rs.jury_verdict_from_outcome(data)
+        self.assertEqual(out["verdict"], "REQUEST CHANGES")
+        self.assertEqual(out["counts"], {"critical": 0, "major": 1, "minor": 1, "nit": 0})
+        self.assertEqual(out["reviewers"], 2)
+
+    def test_report_shape_malformed_entries_skipped(self):
+        data = {"schema_version": "x", "consensus": ["junk", {"representative": None}],
+                "metadata": None}
+        out = rs.jury_verdict_from_outcome(data)
+        self.assertEqual(out["verdict"], "APPROVE")
+        self.assertEqual(out["reviewers"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

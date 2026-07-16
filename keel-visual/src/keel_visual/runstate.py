@@ -293,49 +293,97 @@ _JURY_SEVERITIES = ("critical", "major", "minor", "nit")
 
 
 def jury_verdict_from_outcome(data: Any) -> dict[str, Any] | None:
-    """Summarise a serialized ai-jury outcome into a small verdict block.
+    """Summarise a serialized ai-jury artifact into a small verdict block.
 
-    ``data`` is the parsed JSON of the outcome file keel's jury gate saves to
-    ``.keel/state/jury/<run-id>.json`` — either the bare ``outcome_to_dict``
-    dict (top-level ``reviews`` / ``groups``) or a result-cache entry wrapping
-    that dict under ``"outcome"``: the same two shapes ai-jury's own ``jury
-    replay`` sniffs. keel-visual never imports ai-jury; this reads plain dicts.
+    ``data`` is the parsed JSON of the file keel's jury gate saves to
+    ``.keel/state/jury/<run-id>.json``. Three accepted shapes:
 
-    Verdict mapping (mirrors how ai-jury's CI gate weighs consensus groups —
-    groups the verifier marked ``unsupported`` never count and never block):
+    * the ``jury --format json`` **report** (top-level ``consensus`` list with
+      ``representative.severity`` + ``verification_status``) — the shape
+      ai-jury's public CLI actually emits, and the one ship.md s8 saves;
+    * the bare ``outcome_to_dict`` dict (top-level ``reviews``/``groups``);
+    * a result-cache entry wrapping that dict under ``"outcome"``.
 
-    * any critical/major group → ``REQUEST CHANGES`` (blocking signal)
-    * else any minor/nit group → ``COMMENT``
-    * else                     → ``APPROVE``
+    Verdict mapping (mirrors ai-jury's DEFAULT CI gate — ``evaluate_ci`` with
+    ``fail_on=[critical, major], ignore_unverified=True`` — and ship.md s8's
+    "only verified consensus findings fold into s9" rule):
+
+    * any **verified** critical/major group → ``REQUEST CHANGES`` (blocking)
+    * else any other non-``unsupported`` group of any severity (including an
+      unverified or disputed critical — real but not blocking under the
+      default gate) → ``COMMENT``
+    * else → ``APPROVE``
 
     Returns ``{"verdict", "counts", "reviewers"}`` — ``counts`` is groups per
-    severity (unsupported excluded), ``reviewers`` the distinct review agents —
-    or ``None`` for anything that is not a recognised outcome shape. Pure —
-    reads only its argument, never raises.
+    severity (unsupported excluded; note counts include unverified findings,
+    the verdict only blocks on verified ones), ``reviewers`` the distinct
+    review agents (report shape: the metadata panel size) — or ``None`` for
+    an unrecognised shape. Pure — reads only its argument, never raises.
     """
     if not isinstance(data, dict):
         return None
+    norm = _normalized_groups(data)
+    if norm is None:
+        return None
+    group_rows, reviewers = norm
+    counts = dict.fromkeys(_JURY_SEVERITIES, 0)
+    blocking = False
+    commentable = False
+    for severity, status in group_rows:
+        if status == "unsupported":
+            continue  # verifier-rejected findings never count (ai-jury CI rule)
+        if severity in counts:
+            counts[severity] += 1
+        if status == "verified" and severity in ("critical", "major"):
+            blocking = True
+        elif severity in _JURY_SEVERITIES:
+            commentable = True
+        if severity in ("critical", "major") and status not in ("verified",):
+            commentable = True
+    if blocking:
+        verdict = JURY_VERDICT_BLOCKING
+    elif commentable or counts["minor"] or counts["nit"]:
+        verdict = JURY_VERDICT_COMMENT
+    else:
+        verdict = JURY_VERDICT_APPROVE
+    return {"verdict": verdict, "counts": counts, "reviewers": reviewers}
+
+
+def _normalized_groups(data: dict) -> tuple[list[tuple[str, str]], int] | None:
+    """Normalise any accepted artifact shape to ``([(severity, status)], reviewers)``."""
+    if isinstance(data.get("consensus"), list) and "schema_version" in data:
+        rows: list[tuple[str, str]] = []
+        for entry in data["consensus"]:
+            if not isinstance(entry, dict):
+                continue
+            rep = entry.get("representative")
+            severity = rep.get("severity") if isinstance(rep, dict) else None
+            status = entry.get("verification_status")
+            rows.append((
+                severity.strip().lower() if isinstance(severity, str) else "",
+                status.strip().lower() if isinstance(status, str) else "",
+            ))
+        metadata = data.get("metadata")
+        agents = metadata.get("agents") if isinstance(metadata, dict) else None
+        reviewers = len(agents) if isinstance(agents, list) else 0
+        return rows, reviewers
     if isinstance(data.get("outcome"), dict):
         inner = data["outcome"]  # result-cache entry wrapping the outcome dict
     elif "reviews" in data:
         inner = data  # bare outcome_to_dict shape
     else:
         return None
-    counts = dict.fromkeys(_JURY_SEVERITIES, 0)
+    rows = []
     groups = inner.get("groups")
     for group in groups if isinstance(groups, list) else []:
-        if not isinstance(group, dict) or group.get("status") == "unsupported":
-            continue  # verifier-rejected findings never count (ai-jury CI rule)
+        if not isinstance(group, dict):
+            continue
         severity = group.get("severity")
-        severity = severity.strip().lower() if isinstance(severity, str) else ""
-        if severity in counts:
-            counts[severity] += 1
-    if counts["critical"] or counts["major"]:
-        verdict = JURY_VERDICT_BLOCKING
-    elif counts["minor"] or counts["nit"]:
-        verdict = JURY_VERDICT_COMMENT
-    else:
-        verdict = JURY_VERDICT_APPROVE
+        status = group.get("status")
+        rows.append((
+            severity.strip().lower() if isinstance(severity, str) else "",
+            status.strip().lower() if isinstance(status, str) else "",
+        ))
     reviews = inner.get("reviews")
     agents = {
         review["agent"].strip()
@@ -343,7 +391,7 @@ def jury_verdict_from_outcome(data: Any) -> dict[str, Any] | None:
         if isinstance(review, dict)
         and isinstance(review.get("agent"), str) and review["agent"].strip()
     }
-    return {"verdict": verdict, "counts": counts, "reviewers": len(agents)}
+    return rows, len(agents)
 
 
 def _jury_verdict_block(value: Any) -> dict[str, Any] | None:

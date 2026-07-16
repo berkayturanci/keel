@@ -491,6 +491,15 @@ artifacts because they bypass marker validation, transport selection, and same-r
 idempotency. Never interpolate report text into a shell argument. Re-runs use the jury's
 incremental/cache flags to stay cheap.
 
+**Save the jury artifact for visualizers (#576):** in the same jury invocation, also write
+the machine-readable report to keel's state dir — pass
+`--format json -o .keel/state/jury/$RUN_ID.json` (create `.keel/state/jury/` first; the
+filename is the **raw** run id, exact match — run ids are `[A-Za-z0-9._-]+` by
+construction). keel-visual reads this file to show the jury verdict alongside the jury
+mode; it is state, never committed (the `.keel/.gitignore` scaffold already ignores
+`state/`). Fail-soft: if the write fails, log and continue — the artifact is
+display-only and never gates.
+
 ### s9 fixloop
 While there are blocking findings and the budget (**≤3 review-fix rounds**) is not spent:
 aggregate findings → hand to the implementer → fix → push → re-run s6/s7/s8. A **blocker**
