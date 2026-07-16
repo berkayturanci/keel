@@ -270,7 +270,11 @@ Four surfaces:
 - **`serve` / `serve --all`** — a **live** localhost web dashboard (polls every ~0.5s):
   a filterable board, and per-run a detail drawer with a **2D / 3D switch** (a live
   per-run scene with `curve · helix · ring · line · plexus · aurora · comet` styles,
-  drag-orbit + scroll/pinch zoom, theme-aware) and the run's command / phase / status.
+  drag-orbit + scroll/pinch zoom, theme-aware) and, from the ledger record, the run's
+  command / phase / status, **risk tier**, **merge-window** state, **per-named-gate**
+  status (build / lint / evidence / jury …), **agent attribution** (implementer,
+  reviewers, host — including the hosted-API delegates), and the **jury verdict**
+  itself when ai-jury ran, not just the jury mode.
 
 As of **keel 1.6.4**, the deterministic backbone commands (`keel plan` at Step 0, `keel
 run-gates` at s8, `keel merge` at s10) auto-stamp the `keel activity` board when given a

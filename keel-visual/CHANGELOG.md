@@ -15,6 +15,19 @@ All notable changes to keel-visual are documented here. The format follows
   in the header plus a compact named-gate strip (`gates: build✓ evidence✗ jury–`) under
   the flow; the web dashboard drawer gains tier/window chips, a per-gate status list,
   and an agents row (implementer / reviewers / tester / host). (#575)
+- **Jury verdict, not just jury mode.** When ai-jury's gate runs, keel's s8 writes the
+  machine-readable report to `.keel/state/jury/<run-id>.json`; keel-visual reads it (never
+  imports ai-jury) and shows the actual verdict — `APPROVE` / `COMMENT` / `REQUEST CHANGES`
+  — with a per-severity count, in the terminal header chip and the web drawer. The mapping
+  mirrors ai-jury's default CI gate (only *verified* critical/major blocks). Fail-soft: an
+  absent or malformed file reproduces the previous mode-only display. (#576)
+
+### Tests
+- **JS-level tests for the web templates.** A zero-dependency `node --test` suite
+  (`tests/js/`) drives each template's inline script in a `vm` context against a stub DOM,
+  pinning payload parsing, board filtering, theme cycling, the runviz panels, the live-poll
+  re-render, the drawer field guards, and the 3D style picker — run in CI via a Python
+  bridge that skips cleanly when node is absent. (#577)
 
 ## [0.6.0] — 2026-07-03
 

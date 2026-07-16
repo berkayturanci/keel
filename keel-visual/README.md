@@ -152,7 +152,18 @@ Click a run for a closable right-side **detail drawer** (full-screen on mobile):
   orbit, scroll / pinch to zoom) with a **style picker**: `curve · helix · ring · line`
   (geometric arrangements) plus `plexus · aurora · comet` (particle scenes). Theme-aware;
   Three.js lazy-loads on first 3D use.
-- **command / phase / status** under both views.
+- **command / phase / status** under both views, plus the ledger detail keel already
+  records: **risk tier** and **merge-window** chips, a **per-named-gate** status row
+  (`build ✓ · lint ✓ · evidence ✗ · jury –`, with finding counts), an **agents** row
+  (implementer / reviewers / tester / host — the hosted-API delegates show as
+  `anthropic-api` / `openai-api`), and, when ai-jury ran, the **jury verdict** chip
+  (`APPROVE` / `COMMENT` / `REQUEST CHANGES`) with a severity mini-histogram — not just
+  the jury *mode*. All of it degrades fail-soft: an older run missing a field just omits
+  that row.
+
+The **terminal** surfaces (`play` / `dash`) show the same detail compactly: the header
+gains `[T3]` and `[win:open|closed|bypassed]` tags and a `jury — VERDICT` chip, with a
+`gates: build✓ evidence✗ jury–` strip under the flow.
 
 A run that truly **merged** shows a green `merged` badge; one that just **closed out** (a
 `morning`/`triage` that never merges, or a ship that deferred its merge) shows a muted
