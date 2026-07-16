@@ -15,8 +15,8 @@ from __future__ import annotations
 import shutil
 import subprocess
 import unittest
+import unittest.mock as mock
 from pathlib import Path
-from unittest import mock
 
 JS_TEST_DIR = Path(__file__).resolve().parent / "js"
 NODE_TIMEOUT = 300  # seconds — the suite itself finishes in a few seconds
