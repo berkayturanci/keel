@@ -91,6 +91,18 @@ def _bar(fraction: float, width: int, color: str, *, enable: bool) -> str:
     return head + tail
 
 
+def _jury_verdict_word(run: dict[str, Any]) -> str | None:
+    """The run's jury verdict (from the saved ai-jury outcome), or ``None``.
+
+    ``run["jury_verdict"]`` is the validated summary block runstate builds —
+    absent/None means no outcome file was found, so surfaces fall back to the
+    mode-only display. Pure — reads only its argument.
+    """
+    block = run.get("jury_verdict")
+    verdict = block.get("verdict") if isinstance(block, dict) else None
+    return verdict if isinstance(verdict, str) and verdict else None
+
+
 def _header(run: dict[str, Any], *, enable: bool) -> str:
     bits = ["keel-visual"]
     if run.get("command"):
@@ -116,7 +128,9 @@ def _header(run: dict[str, Any], *, enable: bool) -> str:
         head += f"   [{paint('win:bypassed', 'amber', enable=enable)}]"
     jury = run.get("jury") or {}
     if jury.get("active"):
-        head += f"   [{paint('jury', 'cyan', enable=enable)}]"
+        verdict = _jury_verdict_word(run)
+        chip = f"jury — {verdict}" if verdict else "jury"
+        head += f"   [{paint(chip, 'cyan', enable=enable)}]"
     return head
 
 
@@ -189,7 +203,11 @@ def _flow_body(
         word = f"  [{paint('fix loop ↩', 'amber', enable=color)}]"
     jury = run.get("jury") or {}
     if cur.get("id") == REVIEW_STEP_ID and jury.get("active"):
-        word += f"  [{paint('jury: ' + str(jury.get('mode', 'on')), 'cyan', enable=color)}]"
+        tag = "jury: " + str(jury.get("mode", "on"))
+        verdict = _jury_verdict_word(run)
+        if verdict:
+            tag += f" — {verdict}"  # e.g. "jury: gating — REQUEST CHANGES"
+        word += f"  [{paint(tag, 'cyan', enable=color)}]"
     caret = paint("▲", "cyan", enable=color)
     pointer = f"{pointer_pad}{caret} {cur.get('id')} · {cur.get('name')}{word}"
 

@@ -11,6 +11,8 @@ only renders one, so it depends on keel core but core never depends on it.
 from __future__ import annotations
 
 import argparse
+import json
+import re
 import shutil
 import subprocess
 import sys
@@ -67,25 +69,70 @@ def _resolve_record(args: argparse.Namespace, config: cfg.ProjectConfig) -> dict
 
 def _resolve_checkpoint(
     args: argparse.Namespace, config: cfg.ProjectConfig,
-) -> tuple[str | None, dict]:
-    """Resolve ``(current_step, live_state)`` from the run's checkpoint.
+) -> tuple[str | None, dict, str | None]:
+    """Resolve ``(current_step, live_state, run_id)`` from the run's checkpoint.
 
     An explicit ``--checkpoint-step`` pins the step and skips the file (no live
-    state). Otherwise read the checkpoint under ``--root`` and take both its
-    ``position.current_step`` *and* its ``state`` block — the latter is what lets
-    ``--follow`` show live merge progress, not just position. Fail-soft: a
-    missing/malformed checkpoint yields ``(None, {})`` so position falls back to
-    the ledger.
+    state, no run id). Otherwise read the checkpoint under ``--root`` and take
+    its ``position.current_step``, its ``state`` block — the latter is what lets
+    ``--follow`` show live merge progress, not just position — and its
+    ``run_id`` (what keys the run's saved jury outcome, see
+    :func:`_load_jury_verdict`). Fail-soft: a missing/malformed checkpoint
+    yields ``(None, {}, None)`` so position falls back to the ledger.
     """
     if args.checkpoint_step is not None:
-        return args.checkpoint_step, {}
+        return args.checkpoint_step, {}, None
     try:
         record = checkpoint.read_checkpoint(checkpoint.resolve_path(args.root, config))
     except (checkpoint.CheckpointError, OSError):
         # CheckpointError = bad content; OSError = bad path (dir/symlink/perms).
-        return None, {}
+        return None, {}, None
+    run_id = record.get("run_id") if isinstance(record, dict) else None
     return (runstate.current_step_from_checkpoint(record),
-            runstate.live_state_from_checkpoint(record))
+            runstate.live_state_from_checkpoint(record),
+            run_id if isinstance(run_id, str) else None)
+
+
+# Upper bound on a jury-outcome read — mirrors ai-jury's own replay/cache
+# ceiling: a serialized outcome is a few KB, so a multi-MB file is either
+# corrupt or hostile and is rejected without being held fully in memory.
+_MAX_JURY_OUTCOME_BYTES = 8 * 1024 * 1024
+
+# A run id is used as a filename component under .keel/state/jury/ — only plain
+# tokens are accepted so a crafted checkpoint can never point the read outside
+# that directory.
+_RUN_ID_SAFE = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def _load_jury_verdict(root: str, run_id: object) -> dict | None:
+    """Read + summarise the run's saved ai-jury outcome, or ``None``.
+
+    Discovery convention (issue #576): when keel's jury gate runs, the adapter
+    saves ai-jury's serialized outcome JSON to ``.keel/state/jury/<run-id>.json``
+    under the run's root. keel-visual only ever *reads* that file — it never
+    imports ai-jury (same decoupling as the theater handoff) — and is fail-soft
+    end to end: a missing/oversized/non-UTF-8/malformed file, or a run id that
+    is not a plain filename token, yields ``None`` — exactly today's mode-only
+    jury display. Never raises.
+    """
+    if not isinstance(run_id, str) or not _RUN_ID_SAFE.match(run_id):
+        return None
+    path = Path(root) / ".keel" / "state" / "jury" / f"{run_id}.json"
+    try:
+        # Cap the read itself (not stat-then-read, which is a TOCTOU): read at
+        # most the ceiling + 1 so an oversized file is detected cheaply.
+        with path.open("r", encoding="utf-8") as fh:
+            raw = fh.read(_MAX_JURY_OUTCOME_BYTES + 1)
+    except (OSError, ValueError):  # ValueError covers UnicodeDecodeError
+        return None
+    if len(raw) > _MAX_JURY_OUTCOME_BYTES:
+        return None
+    try:
+        data = json.loads(raw)
+    except (ValueError, RecursionError):
+        # RecursionError on hostile deeply-nested JSON is not a ValueError.
+        return None
+    return runstate.jury_verdict_from_outcome(data)
 
 
 def cmd_render(args: argparse.Namespace) -> int:
@@ -114,9 +161,10 @@ def cmd_render(args: argparse.Namespace) -> int:
         print(f"invalid run ledger: {exc}", file=sys.stderr)
         return 1
 
-    cp_step, cp_state = _resolve_checkpoint(args, config)
+    cp_step, cp_state, run_id = _resolve_checkpoint(args, config)
     state = runstate.build_run_state(
         record, checkpoint_step=cp_step, checkpoint_state=cp_state, command=args.command,
+        jury_verdict=_load_jury_verdict(args.root, run_id),
     )
     title = f"{args.command} · issue #{state['issue']}" if state["issue"] else args.command
     html = render.render_html(load_template(), state, title=title)
@@ -142,9 +190,10 @@ def _resolve_config(args: argparse.Namespace) -> cfg.ProjectConfig | tuple[int, 
 def _state_from_config(args: argparse.Namespace, config: cfg.ProjectConfig) -> dict:
     """Build the RunState from an already-loaded config; may raise ``LedgerError``."""
     record = _resolve_record(args, config)
-    cp_step, cp_state = _resolve_checkpoint(args, config)
+    cp_step, cp_state, run_id = _resolve_checkpoint(args, config)
     return runstate.build_run_state(
         record, checkpoint_step=cp_step, checkpoint_state=cp_state, command=args.command,
+        jury_verdict=_load_jury_verdict(args.root, run_id),
     )
 
 
@@ -368,6 +417,9 @@ def _run_records_in_repo(root: str, config: cfg.ProjectConfig) -> list[tuple[dic
             checkpoint_step=runstate.current_step_from_checkpoint(record),
             checkpoint_state=runstate.live_state_from_checkpoint(record),
             command=identity.get("command") or "ship",
+            # The jury outcome is saved under the run's own worktree root —
+            # the same place its checkpoint lives.
+            jury_verdict=_load_jury_verdict(worktree, record.get("run_id")),
         )
         pairs.append((run_state, identity))
     # Activity records live per worktree too — an agent runs a command in its own
@@ -537,6 +589,9 @@ def _board_entry(run_state: dict, identity: dict, project: str) -> dict:
         "merged": bool(run_state.get("merged")),
         "done": bool(run_state.get("done")),
         "jury": run_state.get("jury") or {"mode": None, "active": False},
+        # Verdict summary from the run's saved ai-jury outcome (#576). Already
+        # validated by runstate._jury_verdict_block — literals + int counts only.
+        "jury_verdict": run_state.get("jury_verdict"),
         # Ledger-detail fields the drawer renders (#575). Free-text values are
         # sanitised like branch/author per this function's contract.
         "tier": run_state.get("tier"),

@@ -169,17 +169,19 @@ class TestCheckpointResolve(unittest.TestCase):
         return cfg.load_config(PROJECT)
 
     def test_explicit_step_wins(self):
-        step, state = cli._resolve_checkpoint(_args(checkpoint_step="s5"), self._config())
+        step, state, run_id = cli._resolve_checkpoint(_args(checkpoint_step="s5"), self._config())
         self.assertEqual(step, "s5")
         self.assertEqual(state, {})  # explicit step skips the file -> no live state
+        self.assertIsNone(run_id)
 
     def test_missing_checkpoint_is_none(self):
         import tempfile
         with tempfile.TemporaryDirectory() as d:
             args = _args(root=d, checkpoint_step=None)
-            step, state = cli._resolve_checkpoint(args, self._config())
+            step, state, run_id = cli._resolve_checkpoint(args, self._config())
         self.assertIsNone(step)
         self.assertEqual(state, {})
+        self.assertIsNone(run_id)
 
     def test_corrupt_checkpoint_is_none(self):
         import tempfile
@@ -190,13 +192,15 @@ class TestCheckpointResolve(unittest.TestCase):
             cp = checkpoint.resolve_path(d, config)
             cp.parent.mkdir(parents=True, exist_ok=True)
             cp.write_text("{not json", encoding="utf-8")  # parse -> CheckpointError
-            step, state = cli._resolve_checkpoint(_args(root=d, checkpoint_step=None), config)
+            step, state, run_id = cli._resolve_checkpoint(
+                _args(root=d, checkpoint_step=None), config)
         self.assertIsNone(step)
         self.assertEqual(state, {})
+        self.assertIsNone(run_id)
 
     def test_unreadable_checkpoint_path_is_failsoft(self):
         # A directory where the checkpoint file should be raises OSError, not
-        # CheckpointError — must still degrade to (None, {}), not crash.
+        # CheckpointError — must still degrade to (None, {}, None), not crash.
         import tempfile
 
         from keel import checkpoint
@@ -204,9 +208,11 @@ class TestCheckpointResolve(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             cp = checkpoint.resolve_path(d, config)
             cp.mkdir(parents=True, exist_ok=True)  # path is a dir -> IsADirectoryError
-            step, state = cli._resolve_checkpoint(_args(root=d, checkpoint_step=None), config)
+            step, state, run_id = cli._resolve_checkpoint(
+                _args(root=d, checkpoint_step=None), config)
         self.assertIsNone(step)
         self.assertEqual(state, {})
+        self.assertIsNone(run_id)
 
     def test_reads_step_and_state_from_checkpoint_file(self):
         import tempfile
@@ -221,9 +227,92 @@ class TestCheckpointResolve(unittest.TestCase):
             cp = checkpoint.resolve_path(d, config)
             cp.parent.mkdir(parents=True, exist_ok=True)
             cp.write_text(checkpoint.encode_checkpoint(record), encoding="utf-8")
-            step, state = cli._resolve_checkpoint(_args(root=d, checkpoint_step=None), config)
+            step, state, run_id = cli._resolve_checkpoint(
+                _args(root=d, checkpoint_step=None), config)
         self.assertEqual(step, "s10")
         self.assertEqual(state.get("merge"), "merged")
+        self.assertEqual(run_id, "r1")
+
+
+class TestLoadJuryVerdict(unittest.TestCase):
+    """The `.keel/state/jury/<run-id>.json` discovery loader (#576) — fail-soft."""
+
+    _OUTCOME = {
+        "reviews": [{"agent": "claude"}, {"agent": "codex"}],
+        "groups": [{"severity": "major", "status": "verified"}],
+    }
+
+    def _write(self, root, run_id, text):
+        path = Path(root) / ".keel" / "state" / "jury" / f"{run_id}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_reads_and_summarises_outcome(self):
+        import json
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            self._write(d, "r1", json.dumps(self._OUTCOME))
+            out = cli._load_jury_verdict(d, "r1")
+        self.assertEqual(out["verdict"], "REQUEST CHANGES")
+        self.assertEqual(out["counts"]["major"], 1)
+        self.assertEqual(out["reviewers"], 2)
+
+    def test_missing_file_is_none(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            self.assertIsNone(cli._load_jury_verdict(d, "r1"))
+
+    def test_bad_json_is_none(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            self._write(d, "r1", "{not json")
+            self.assertIsNone(cli._load_jury_verdict(d, "r1"))
+
+    def test_unrecognised_shape_is_none(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            self._write(d, "r1", '{"schema_version": 1, "metadata": {}}')
+            self.assertIsNone(cli._load_jury_verdict(d, "r1"))
+
+    def test_oversized_file_is_none(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            self._write(d, "r1", "[" + " " * cli._MAX_JURY_OUTCOME_BYTES + "]")
+            self.assertIsNone(cli._load_jury_verdict(d, "r1"))
+
+    def test_non_utf8_file_is_none(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / ".keel" / "state" / "jury" / "r1.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"\xff\xfe{}")
+            self.assertIsNone(cli._load_jury_verdict(d, "r1"))
+
+    def test_unusable_run_ids_are_none(self):
+        # Non-string / blank / path-escaping run ids never touch the filesystem.
+        for run_id in (None, 7, "", "a/b", "../r1", "a\\b", "r 1"):
+            self.assertIsNone(cli._load_jury_verdict(".", run_id))
+
+    def test_board_run_state_picks_up_jury_verdict(self):
+        # End-to-end wiring: a worktree checkpoint (run_id "r") + the saved
+        # outcome at .keel/state/jury/r.json → the board RunState carries the
+        # verdict block. No file → today's mode-only display (None).
+        import json
+        import tempfile
+        from unittest.mock import patch
+
+        from keel import config as cfg
+        from keel.runner import CommandResult
+        config = cfg.load_config(PROJECT)
+        with tempfile.TemporaryDirectory() as d:
+            _write_checkpoint(d, config, step="s8", pr=361)
+            self._write(d, "r", json.dumps(self._OUTCOME))
+            with patch("keel_visual.cli.git.worktree_list",
+                       return_value=CommandResult(True, 0, f"worktree {d}\nHEAD abc\n\n")):
+                pairs = cli._run_records_in_repo(d, config)
+        (run_state, _identity), = (p for p in pairs)
+        self.assertEqual(run_state["jury_verdict"]["verdict"], "REQUEST CHANGES")
 
 
 class TestLoopAndFollow(unittest.TestCase):
@@ -857,6 +946,26 @@ class TestDash(unittest.TestCase):
              {"name": "evidence", "ok": False, "skipped": False,
               "error": "missing verdict", "finding_count": 2}],
         )
+
+    def test_board_entry_carries_jury_verdict(self):
+        # Regression guard (#576, same class of bug as the #575 whitelist miss):
+        # the drawer reads jury_verdict from board.json, so _board_entry must
+        # actually include it — a whitelist miss is silent.
+        from keel_visual import runstate as rs
+        summary = {"verdict": "REQUEST CHANGES",
+                   "counts": {"critical": 0, "major": 1, "minor": 2, "nit": 0},
+                   "reviewers": 3}
+        run_state = rs.build_run_state({"command": "ship", "pull_request": {"number": 9}},
+                                       checkpoint_step="s8", jury_verdict=summary)
+        e = cli._board_entry(run_state, {"pr": 9}, "myproj")
+        self.assertEqual(e["jury_verdict"], summary)
+
+    def test_board_entry_jury_verdict_defaults_none(self):
+        from keel_visual import runstate as rs
+        run_state = rs.build_run_state({"command": "ship", "pull_request": {"number": 9}},
+                                       checkpoint_step="s8")
+        e = cli._board_entry(run_state, {"pr": 9}, "myproj")
+        self.assertIsNone(e["jury_verdict"])
 
     def test_board_entry_detail_fields_default_empty(self):
         from keel_visual import runstate as rs

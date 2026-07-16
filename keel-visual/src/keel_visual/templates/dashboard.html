@@ -337,13 +337,21 @@
     if(typeof run.tier==='number'){ const c=el('span','chip'); c.textContent='tier '+run.tier; chips.appendChild(c); }
     if(typeof run.window_open==='boolean'){ const c=el('span','chip'+(run.window_open?' ok':'')); c.textContent=run.window_open?'window open':'window closed'; chips.appendChild(c); }
     if(run.bypassed_window===true){ const c=el('span','chip warn'); c.textContent='window bypassed'; chips.appendChild(c); }
+    // jury verdict chip (from the run's saved ai-jury outcome — absent → mode-only display)
+    const jv=(run.jury_verdict&&typeof run.jury_verdict==='object')?run.jury_verdict:null;
+    if(jv&&jv.verdict){ const c=el('span','chip'+(jv.verdict==='APPROVE'?' ok':jv.verdict==='REQUEST CHANGES'?' warn':'')); c.textContent='jury · '+jv.verdict; chips.appendChild(c); }
     if(chips.childNodes.length) dm.appendChild(chips);
     const meta=el('table','meta'); const rows=[
       ['command', run.command||'ship'],
       ['phase', idn(run.active_id,run.active_name)+'  ('+(active+1)+'/'+(steps.length||1)+')'],
       ['status', run.status||'active'],
     ];
-    if(jury.active) rows.push(['jury', jury.mode||'on']);
+    if(jury.active) rows.push(['jury', (jury.mode||'on')+(jv&&jv.verdict?' — '+jv.verdict:'')]);
+    // severity mini-histogram from the jury outcome (counts exclude verifier-rejected groups)
+    if(jv&&jv.counts){ const jc=jv.counts;
+      let jt='crit '+(jc.critical|0)+' · major '+(jc.major|0)+' · minor '+(jc.minor|0)+' · nit '+(jc.nit|0);
+      if(typeof jv.reviewers==='number'&&jv.reviewers>0) jt+=' · '+jv.reviewers+(jv.reviewers===1?' reviewer':' reviewers');
+      rows.push(['jury findings', jt]); }
     if(run.merge_reason) rows.push(['merge', run.merge_reason]);
     if(typeof run.file_count==='number') rows.push(['files', String(run.file_count)]);
     // agents: implementer / reviewers / tester / host (vendor:model attribution)

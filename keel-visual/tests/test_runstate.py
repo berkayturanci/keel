@@ -74,6 +74,120 @@ class TestLiveStateFromCheckpoint(unittest.TestCase):
         self.assertEqual(rs.live_state_from_checkpoint({"state": {"merge": 5, "close": ""}}), {})
 
 
+def _outcome(groups=None, reviews=None):
+    """A minimal serialized ai-jury outcome (the bare ``outcome_to_dict`` shape)."""
+    return {"reviews": reviews if reviews is not None else [], "groups": groups or []}
+
+
+class TestJuryVerdictFromOutcome(unittest.TestCase):
+    def test_bare_outcome_counts_and_blocking_verdict(self):
+        data = _outcome(
+            groups=[{"severity": "major", "status": "verified"},
+                    {"severity": "minor", "status": ""},
+                    {"severity": "nit", "status": "verified"}],
+            reviews=[{"agent": "claude"}, {"agent": "codex"}, {"agent": "claude"}],
+        )
+        out = rs.jury_verdict_from_outcome(data)
+        self.assertEqual(out["verdict"], "REQUEST CHANGES")
+        self.assertEqual(out["counts"], {"critical": 0, "major": 1, "minor": 1, "nit": 1})
+        self.assertEqual(out["reviewers"], 2)  # distinct agents, dupes collapse
+
+    def test_cache_entry_wrapper_shape(self):
+        inner = _outcome(groups=[{"severity": "minor", "status": "verified"}],
+                         reviews=[{"agent": "claude"}])
+        out = rs.jury_verdict_from_outcome({"cache_schema": 1, "outcome": inner, "mac": "x"})
+        self.assertEqual(out["verdict"], "COMMENT")
+        self.assertEqual(out["counts"]["minor"], 1)
+        self.assertEqual(out["reviewers"], 1)
+
+    def test_unsupported_groups_never_count_or_block(self):
+        data = _outcome(groups=[{"severity": "critical", "status": "unsupported"},
+                                {"severity": "major", "status": "unsupported"}])
+        out = rs.jury_verdict_from_outcome(data)
+        self.assertEqual(out["verdict"], "APPROVE")
+        self.assertEqual(out["counts"], {"critical": 0, "major": 0, "minor": 0, "nit": 0})
+
+    def test_verdict_mapping_edges(self):
+        crit = _outcome(groups=[{"severity": "critical", "status": "verified"}])
+        self.assertEqual(rs.jury_verdict_from_outcome(crit)["verdict"], "REQUEST CHANGES")
+        nit = _outcome(groups=[{"severity": "nit", "status": "verified"}])
+        self.assertEqual(rs.jury_verdict_from_outcome(nit)["verdict"], "COMMENT")
+        self.assertEqual(rs.jury_verdict_from_outcome(_outcome())["verdict"], "APPROVE")
+
+    def test_unrecognised_shapes_are_none(self):
+        # Neither a bare outcome (no "reviews") nor a cache entry (no "outcome"
+        # dict) — includes a `--format json` report, which is neither.
+        for bad in (None, [], "x", 5, {}, {"outcome": "x"}, {"groups": []},
+                    {"schema_version": 1, "metadata": {}}):
+            self.assertIsNone(rs.jury_verdict_from_outcome(bad))
+
+    def test_malformed_groups_and_severities_are_dropped(self):
+        data = _outcome(groups=["x", {"severity": 5}, {"severity": "info"},
+                                {"severity": "  MAJOR ", "status": "verified"}])
+        out = rs.jury_verdict_from_outcome(data)
+        self.assertEqual(out["counts"], {"critical": 0, "major": 1, "minor": 0, "nit": 0})
+        self.assertEqual(out["verdict"], "REQUEST CHANGES")
+
+    def test_groups_not_a_list_reads_clean(self):
+        out = rs.jury_verdict_from_outcome({"reviews": [], "groups": "x"})
+        self.assertEqual(out["verdict"], "APPROVE")
+
+    def test_reviewers_dedup_and_drop_malformed(self):
+        data = _outcome(reviews=[{"agent": "a"}, {"agent": " a "}, {"agent": " "},
+                                 {"agent": 5}, "x"])
+        self.assertEqual(rs.jury_verdict_from_outcome(data)["reviewers"], 1)
+
+    def test_reviews_not_a_list_counts_zero(self):
+        out = rs.jury_verdict_from_outcome({"reviews": "x"})
+        self.assertEqual(out["reviewers"], 0)
+
+
+class TestJuryVerdictInBuild(unittest.TestCase):
+    _SUMMARY = {"verdict": "REQUEST CHANGES",
+                "counts": {"critical": 0, "major": 1, "minor": 0, "nit": 0},
+                "reviewers": 3}
+
+    def test_passthrough_on_ship(self):
+        st = rs.build_run_state(None, checkpoint_step="s7", jury_verdict=self._SUMMARY)
+        self.assertEqual(st["jury_verdict"], self._SUMMARY)
+
+    def test_default_is_none(self):
+        st = rs.build_run_state(None, checkpoint_step="s7")
+        self.assertIsNone(st["jury_verdict"])
+
+    def test_non_ship_commands_have_no_verdict(self):
+        st = rs.build_run_state(None, command="overnight", jury_verdict=self._SUMMARY)
+        self.assertIsNone(st["jury_verdict"])
+
+    def test_unknown_verdict_literal_drops_block(self):
+        # Only the three recognised literals ever reach the payload/DOM.
+        bad = dict(self._SUMMARY, verdict="<img src=x onerror=alert(1)>")
+        st = rs.build_run_state(None, checkpoint_step="s7", jury_verdict=bad)
+        self.assertIsNone(st["jury_verdict"])
+
+    def test_malformed_block_drops(self):
+        for bad in ("x", 5, [], {}, {"counts": {}}):
+            st = rs.build_run_state(None, checkpoint_step="s7", jury_verdict=bad)
+            self.assertIsNone(st["jury_verdict"])
+
+    def test_counts_and_reviewers_coerced(self):
+        raw = {"verdict": "APPROVE",
+               "counts": {"critical": -1, "major": "x", "minor": True},
+               "reviewers": "many"}
+        st = rs.build_run_state(None, checkpoint_step="s7", jury_verdict=raw)
+        self.assertEqual(st["jury_verdict"],
+                         {"verdict": "APPROVE",
+                          "counts": {"critical": 0, "major": 0, "minor": 0, "nit": 0},
+                          "reviewers": 0})
+
+    def test_counts_block_not_a_dict(self):
+        raw = {"verdict": "COMMENT", "counts": "x", "reviewers": 2}
+        st = rs.build_run_state(None, checkpoint_step="s7", jury_verdict=raw)
+        self.assertEqual(st["jury_verdict"]["counts"],
+                         {"critical": 0, "major": 0, "minor": 0, "nit": 0})
+        self.assertEqual(st["jury_verdict"]["reviewers"], 2)
+
+
 class TestMergeOutcome(unittest.TestCase):
     def test_live_state_maps(self):
         self.assertEqual(rs._merge_outcome(merged=False, live_merge="merged"), "pass")

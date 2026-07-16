@@ -206,6 +206,29 @@ class TestHeaderAndHelpers(unittest.TestCase):
         out = t.frame(_state(checkpoint="s4", jury_mode="gating"), 4, style="flow", color=False)
         self.assertNotIn("jury: gating", out)
 
+    def test_flow_jury_tag_carries_verdict(self):
+        # With a saved ai-jury outcome the review tag extends to the verdict.
+        st = _state(checkpoint="s7", jury_mode="gating")
+        st["jury_verdict"] = {"verdict": "REQUEST CHANGES",
+                              "counts": {"critical": 0, "major": 1, "minor": 0, "nit": 0},
+                              "reviewers": 2}
+        out = t.frame(st, 7, style="flow", color=False)
+        self.assertIn("jury: gating — REQUEST CHANGES", out)
+
+    def test_header_jury_chip_carries_verdict(self):
+        run = {"command": "ship", "jury": {"mode": "gating", "active": True},
+               "jury_verdict": {"verdict": "APPROVE",
+                                "counts": {"critical": 0, "major": 0, "minor": 0, "nit": 0},
+                                "reviewers": 2}}
+        self.assertIn("[jury — APPROVE]", t._header(run, enable=False))
+
+    def test_jury_verdict_word_failsoft(self):
+        # No block / malformed block / blank verdict all fall back to mode-only.
+        self.assertIsNone(t._jury_verdict_word({}))
+        self.assertIsNone(t._jury_verdict_word({"jury_verdict": "x"}))
+        self.assertIsNone(t._jury_verdict_word({"jury_verdict": {"verdict": ""}}))
+        self.assertIsNone(t._jury_verdict_word({"jury_verdict": {"verdict": 5}}))
+
     def test_bar_fraction(self):
         out = t._bar(0.5, 10, "green", enable=False)
         self.assertEqual(out.count("█"), 5)
