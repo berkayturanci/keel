@@ -6,6 +6,8 @@ All notable changes to keel-visual are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-07-17
+
 ### Added
 - **Unread ledger fields surfaced end-to-end.** `build_run_state()` now projects
   `tier`, `window_open`/`bypassed_window`, the named `gates[]` outcomes, `reviewers`,
