@@ -58,7 +58,7 @@ window.KEEL = {
       cmd: "keel:ship",
       one: "Drive a GitHub issue end-to-end through the whole backbone.",
       detail:
-        "Select → branch → implement → CI → review → test → merge → close → capture. The full flow: per-round review, inline file:line comments, --delegate / --review-delegate, --reviewers N, the <a href='https://github.com/berkayturanci/ai-jury' target='_blank' rel='noopener'>ai-jury</a> gate, the timezone-aware merge window + mkdir merge lock, and vendor+model attribution. <b>--compound</b> selects the compound-engineering profile — same backbone and safety primitives, with implement / review / fixloop / capture (s4·s7·s9·s11) as compound step overrides.",
+        "Select → branch → implement → CI → review → test → merge → close → capture. The full flow: per-round review, inline file:line comments, --delegate / --review-delegate (incl. hosted-API anthropic-api:MODEL / openai-api:MODEL — no agent CLI, just an API key), --reviewers N, the <a href='https://github.com/berkayturanci/ai-jury' target='_blank' rel='noopener'>ai-jury</a> gate, the timezone-aware merge window + mkdir merge lock, and vendor+model attribution. <b>--compound</b> selects the compound-engineering profile — same backbone and safety primitives, with implement / review / fixloop / capture (s4·s7·s9·s11) as compound step overrides.",
     },
     {
       slug: "implement", name: "/keel:implement", group: "Per-step", featured: true, scene: "implement",
@@ -371,7 +371,7 @@ window.KEEL = {
       group: "Reference", title: "Runtime capabilities", slug: "runtime-capabilities",
       summary: "Commands declare what they need (git, gh, network, agents); keel detects what the runtime actually has.",
       body:
-        "<p>Each command declares its runtime requirements; <code>keel capabilities</code> detects what's actually available in this session (git, <code>gh</code>, network, delegated agents) and the run degrades fail-soft or stops with a clear reason instead of half-running. <code>capability-unavailable</code> is a closed, auditable skip reason.</p>",
+        "<p>Each command declares its runtime requirements; <code>keel capabilities</code> detects what's actually available in this session (git, <code>gh</code>, network, delegated agents, hosted-API keys via <code>api-token</code>) and the run degrades fail-soft or stops with a clear reason instead of half-running. <code>capability-unavailable</code> is a closed, auditable skip reason.</p>",
       source: "https://github.com/berkayturanci/keel/blob/main/docs/keel/runtime-capabilities.md",
     },
     {

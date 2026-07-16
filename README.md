@@ -51,6 +51,11 @@ Changing the backbone is a keel-core change. Projects only ever touch layers 2�
   workflow preferences in `policy_pack` data instead of packaged command prose.
 - **Opt-in `jury` gate** — runs the [ai-jury](https://github.com/berkayturanci/ai-jury) multi-agent
   reviewer on the diff when installed; a fail-soft no-op otherwise.
+- **Headless with just an API key** — the hosted-API delegates
+  (`--delegate anthropic-api:MODEL` / `openai-api:MODEL`) drive the implement/review steps
+  with only `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` in the environment — no agent CLI
+  installed. Same consent, attribution, and tier-3 rules as every other delegate
+  ([design](docs/proposals/api-token-delegate.md)).
 - **Safe merges by construction** — the core-owned `keel merge` path (resource claim,
   window re-check, live CI rollup, and evidence verification before the merge), timezone-aware
   night no-merge window, risk-tier → reviewer count, hotfix bypass with an audit line,
@@ -223,6 +228,7 @@ If a step's gate fails, keel blocks its own merge — the same backbone every co
 - [`docs/keel/github-actions.md`](docs/keel/github-actions.md) — run keel live on GitHub's free runner (the `keel-ship` workflow)
 - [`docs/keel/release.md`](docs/keel/release.md) — PyPI/TestPyPI release runbook and package smoke test
 - [`docs/proposals/keel-architecture.md`](docs/proposals/keel-architecture.md) — full design
+- [`docs/proposals/api-token-delegate.md`](docs/proposals/api-token-delegate.md) — hosted-API (API-token) implementer/reviewer delegate design (#548)
 
 ## Development
 
