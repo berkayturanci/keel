@@ -6,7 +6,15 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.9.0] — 2026-07-17
+
 ### Added
+- **Codex plugin** alongside the existing Claude Code plugin (#565): keel installs as a
+  Codex plugin (`.codex-plugin/`) so `/keel:<command>` works natively there too; the
+  release bumper and a version-lockstep test keep its manifest in sync with the package.
+- **Jury artifact saved for visualizers** (#576/#579): when the s8 jury gate runs, ship
+  writes the machine-readable report to `.keel/state/jury/<run-id>.json` (fail-soft,
+  state-only) so keel-visual can show the actual verdict, not just the jury mode.
 - **Hosted-API implementer/reviewer delegates** (`--delegate anthropic-api:MODEL` /
   `openai-api:MODEL`, #548): drive the s4 implement and s7 review steps with only a vendor
   API key in the environment (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`) — no agent CLI
