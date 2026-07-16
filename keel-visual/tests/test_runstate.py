@@ -187,6 +187,139 @@ class TestJury(unittest.TestCase):
         self.assertEqual(rs.build_run_state(None)["jury"], {"mode": None, "active": False})
 
 
+def _rich_record():
+    """A record carrying every ledger field the projection surfaces (see keel.ledger)."""
+    rec = _record(action="merge")
+    rec["assessment"].update({"tier": 3, "window_open": True, "bypassed_window": False})
+    rec["gates"] = [
+        {"gate": "build", "ok": True, "skipped": False, "error": None, "finding_count": 0},
+        {"gate": "evidence", "ok": False, "skipped": False, "error": "no evidence",
+         "finding_count": 2},
+        {"gate": "jury", "ok": False, "skipped": True, "error": None, "finding_count": 0},
+    ]
+    rec["actors"] = {"implementer": "agent:claude", "reviewers": ["agent:codex", "agent:gemini"],
+                     "tester": "agent:anthropic-api"}
+    rec["run_context"] = {"host_agent": "claude-code"}
+    rec["changes"] = {"file_count": 4, "files": ["a.py"]}
+    return rec
+
+
+class TestGatesFromRecord(unittest.TestCase):
+    def test_projects_named_gates(self):
+        gates = rs.gates_from_record(_rich_record())
+        self.assertEqual(gates, [
+            {"name": "build", "ok": True, "skipped": False, "error": None, "finding_count": 0},
+            {"name": "evidence", "ok": False, "skipped": False, "error": "no evidence",
+             "finding_count": 2},
+            {"name": "jury", "ok": False, "skipped": True, "error": None, "finding_count": 0},
+        ])
+
+    def test_missing_or_malformed_block(self):
+        self.assertEqual(rs.gates_from_record(None), [])
+        self.assertEqual(rs.gates_from_record({}), [])
+        self.assertEqual(rs.gates_from_record({"gates": "x"}), [])
+
+    def test_drops_entries_without_a_usable_name(self):
+        gates = rs.gates_from_record({"gates": ["x", {}, {"gate": ""}, {"gate": 5},
+                                                {"gate": "lint", "ok": True}]})
+        self.assertEqual([g["name"] for g in gates], ["lint"])
+
+    def test_coerces_malformed_fields(self):
+        # Non-bool ok/skipped, blank/non-str error, negative/bool counts — every
+        # field degrades to its safe default instead of surfacing junk.
+        gates = rs.gates_from_record({"gates": [
+            {"gate": "build", "ok": "yes", "skipped": 1, "error": "  ", "finding_count": -1},
+            {"gate": "lint", "ok": True, "skipped": False, "error": 5, "finding_count": True},
+        ]})
+        self.assertEqual(gates[0], {"name": "build", "ok": False, "skipped": False,
+                                    "error": None, "finding_count": 0})
+        self.assertEqual(gates[1], {"name": "lint", "ok": True, "skipped": False,
+                                    "error": None, "finding_count": 0})
+
+
+class TestLedgerFieldsInBuild(unittest.TestCase):
+    def test_rich_record_surfaces_every_field(self):
+        st = rs.build_run_state(_rich_record())
+        self.assertEqual(st["tier"], 3)
+        self.assertTrue(st["window_open"])
+        self.assertFalse(st["bypassed_window"])
+        self.assertEqual([g["name"] for g in st["gates"]], ["build", "evidence", "jury"])
+        self.assertEqual(st["reviewers"], ["agent:codex", "agent:gemini"])
+        self.assertEqual(st["tester"], "agent:anthropic-api")
+        self.assertEqual(st["host_agent"], "claude-code")
+        self.assertEqual(st["merge_reason"], "r")
+        self.assertEqual(st["file_count"], 4)
+
+    def test_no_record_leaves_fields_empty(self):
+        st = rs.build_run_state(None)
+        self.assertIsNone(st["tier"])
+        self.assertIsNone(st["window_open"])
+        self.assertIsNone(st["bypassed_window"])
+        self.assertEqual(st["gates"], [])
+        self.assertEqual(st["reviewers"], [])
+        self.assertIsNone(st["tester"])
+        self.assertIsNone(st["host_agent"])
+        self.assertIsNone(st["merge_reason"])
+        self.assertIsNone(st["file_count"])
+
+    def test_bypassed_window_surfaces_when_set(self):
+        rec = _rich_record()
+        rec["assessment"]["bypassed_window"] = True
+        self.assertTrue(rs.build_run_state(rec)["bypassed_window"])
+
+    def test_malformed_fields_degrade_to_none(self):
+        rec = _record(action="defer")
+        rec["assessment"].update({"tier": "three", "window_open": "yes",
+                                  "bypassed_window": 1})
+        rec["actors"] = {"reviewers": "agent:codex", "tester": "  "}
+        rec["run_context"] = {"host_agent": 5}
+        rec["changes"] = {"file_count": -2}
+        st = rs.build_run_state(rec)
+        self.assertIsNone(st["tier"])
+        self.assertIsNone(st["window_open"])
+        self.assertIsNone(st["bypassed_window"])
+        self.assertEqual(st["reviewers"], [])
+        self.assertIsNone(st["tester"])
+        self.assertIsNone(st["host_agent"])
+        self.assertIsNone(st["file_count"])
+
+    def test_malformed_blocks_degrade_to_none(self):
+        rec = _record(action="defer")
+        rec["assessment"] = "x"
+        rec["actors"] = "x"
+        rec["run_context"] = "x"
+        rec["changes"] = "x"
+        st = rs.build_run_state(rec)
+        self.assertIsNone(st["tier"])
+        self.assertIsNone(st["window_open"])
+        self.assertEqual(st["reviewers"], [])
+        self.assertIsNone(st["merge_reason"])
+        self.assertIsNone(st["file_count"])
+
+    def test_bool_tier_and_count_rejected(self):
+        # bools are ints in Python — a corrupt record must not surface tier=True.
+        rec = _record(action="defer")
+        rec["assessment"]["tier"] = True
+        rec["changes"] = {"file_count": True}
+        st = rs.build_run_state(rec)
+        self.assertIsNone(st["tier"])
+        self.assertIsNone(st["file_count"])
+
+    def test_reviewers_list_drops_junk_entries(self):
+        rec = _record(action="defer")
+        rec["actors"] = {"reviewers": ["agent:codex", "", 5, "  ", "agent:gemini"]}
+        self.assertEqual(rs.build_run_state(rec)["reviewers"],
+                         ["agent:codex", "agent:gemini"])
+
+    def test_merge_reason_read_alongside_action(self):
+        rec = _record(action="defer")
+        rec["assessment"]["merge"]["reason"] = "window closed"
+        st = rs.build_run_state(rec)
+        self.assertEqual(st["merge_reason"], "window closed")
+        rec["assessment"]["merge"]["reason"] = 5
+        self.assertIsNone(rs.build_run_state(rec)["merge_reason"])
+
+
 class TestBuildRunState(unittest.TestCase):
     def test_none_record_starts_at_s0(self):
         st = rs.build_run_state(None)

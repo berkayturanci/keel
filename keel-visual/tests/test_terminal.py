@@ -120,6 +120,66 @@ class TestFrame(unittest.TestCase):
         self.assertIn("keel-visual", out)
 
 
+class TestHeaderBadgesAndGateStrip(unittest.TestCase):
+    def test_header_tier_badge(self):
+        self.assertIn("[T3]", t._header({"command": "ship", "tier": 3}, enable=False))
+        self.assertIn("[T1]", t._header({"command": "ship", "tier": 1}, enable=False))
+
+    def test_header_no_tier_badge_when_unknown(self):
+        self.assertNotIn("[T", t._header({"command": "ship"}, enable=False))
+        self.assertNotIn("[T", t._header({"command": "ship", "tier": "3"}, enable=False))
+
+    def test_header_window_tag(self):
+        self.assertIn("[win:open]", t._header({"window_open": True}, enable=False))
+        self.assertIn("[win:closed]", t._header({"window_open": False}, enable=False))
+
+    def test_header_no_window_tag_when_unknown(self):
+        out = t._header({"command": "ship", "window_open": "yes"}, enable=False)
+        self.assertNotIn("win:", out)
+
+    def test_header_bypassed_window_tag(self):
+        run = {"window_open": False, "bypassed_window": True}
+        out = t._header(run, enable=False)
+        self.assertIn("[win:closed]", out)
+        self.assertIn("[win:bypassed]", out)
+        self.assertNotIn("win:bypassed", t._header({"window_open": False}, enable=False))
+
+    def test_header_badges_colored(self):
+        run = {"tier": 3, "window_open": True, "bypassed_window": True}
+        self.assertIn("\x1b[", t._header(run, enable=True))
+
+    def test_gate_strip_glyphs(self):
+        gates = [
+            {"name": "build", "ok": True, "skipped": False},
+            {"name": "evidence", "ok": False, "skipped": False},
+            {"name": "jury", "ok": False, "skipped": True},
+        ]
+        out = t._gate_strip(gates, enable=False)
+        self.assertEqual(out, "gates: build✓ evidence✗ jury–")
+
+    def test_gate_strip_unnamed_gate_falls_back(self):
+        self.assertEqual(t._gate_strip([{"ok": True}], enable=False), "gates: ?✓")
+
+    def test_flow_renders_gate_strip(self):
+        st = _state(checkpoint="s8")
+        st["gates"] = [{"name": "build", "ok": True, "skipped": False},
+                       {"name": "lint", "ok": False, "skipped": False}]
+        out = t.frame(st, 8, style="flow", color=False)
+        self.assertIn("gates: build✓ lint✗", out)
+
+    def test_flow_no_gate_strip_when_empty(self):
+        out = t.frame(_state(checkpoint="s8"), 8, style="flow", color=False)
+        self.assertNotIn("gates:", out)
+
+    def test_frame_header_carries_tier_and_window(self):
+        st = _state(checkpoint="s8")
+        st["tier"] = 2
+        st["window_open"] = True
+        out = t.frame(st, 8, style="flow", color=False)
+        self.assertIn("[T2]", out)
+        self.assertIn("[win:open]", out)
+
+
 class TestHeaderAndHelpers(unittest.TestCase):
     def test_header_in_progress(self):
         out = t._header({"command": "ship"}, enable=False)

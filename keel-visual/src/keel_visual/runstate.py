@@ -75,14 +75,72 @@ def current_step_from_checkpoint(record: dict[str, Any] | None) -> str | None:
 
 
 def _merge_action(record: dict[str, Any]) -> str | None:
-    assessment = record.get("assessment")
-    if not isinstance(assessment, dict):
-        return None
-    merge = assessment.get("merge")
-    if not isinstance(merge, dict):
-        return None
+    merge = _merge_block(record)
     action = merge.get("action")
     return action if isinstance(action, str) else None
+
+
+def _assessment_block(record: dict[str, Any] | None) -> dict[str, Any]:
+    """Return the record's ``assessment`` block (``{}`` when missing/malformed)."""
+    assessment = record.get("assessment") if isinstance(record, dict) else None
+    return assessment if isinstance(assessment, dict) else {}
+
+
+def _merge_block(record: dict[str, Any] | None) -> dict[str, Any]:
+    """Return the record's ``assessment.merge`` block (``{}`` when missing/malformed)."""
+    merge = _assessment_block(record).get("merge")
+    return merge if isinstance(merge, dict) else {}
+
+
+def _bool_or_none(value: Any) -> bool | None:
+    """Coerce a ledger flag to ``bool`` (or ``None``) — never free text."""
+    return value if isinstance(value, bool) else None
+
+
+def _str_or_none(value: Any) -> str | None:
+    """Coerce a ledger field to a non-blank ``str`` (or ``None``)."""
+    return value if isinstance(value, str) and value.strip() else None
+
+
+def _str_list(value: Any) -> list[str]:
+    """Coerce a ledger list field to a list of non-blank strings (drops the rest)."""
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str) and item.strip()]
+
+
+def _count_or_none(value: Any) -> int | None:
+    """Coerce a ledger count to a non-negative ``int`` (or ``None``)."""
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+def gates_from_record(record: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Project the ledger ``gates[]`` array as named gate outcomes.
+
+    keel writes one entry per gate that ran — ``gate`` (name), ``ok``,
+    ``skipped``, ``error``, ``finding_count`` (see
+    :func:`keel.ledger.build_ship_record`). This surfaces each *named* gate
+    (build / lint / evidence / jury / …) individually, where the flow steps only
+    carry the generic gate phases. Entries without a usable name are dropped and
+    every field is coerced to its expected type, so a corrupt ledger degrades to
+    an empty/partial list instead of raising. Pure — reads only its argument.
+    """
+    raw = record.get("gates") if isinstance(record, dict) else None
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for entry in raw:
+        name = entry.get("gate") if isinstance(entry, dict) else None
+        if not isinstance(name, str) or not name.strip():
+            continue
+        out.append({
+            "name": name,
+            "ok": entry.get("ok") is True,
+            "skipped": entry.get("skipped") is True,
+            "error": _str_or_none(entry.get("error")),
+            "finding_count": _count_or_none(entry.get("finding_count")) or 0,
+        })
+    return out
 
 
 def _verdict_counts(record: dict[str, Any]) -> dict[str, int]:
@@ -333,6 +391,13 @@ def build_run_state(
     branch = git_block.get("branch") if isinstance(git_block, dict) else None
     base = git_block.get("base_branch") if isinstance(git_block, dict) else None
     author = actors.get("implementer") if isinstance(actors, dict) else None
+    # Assessment / actors / context fields the ledger already carries (tier,
+    # merge window, per-gate outcomes, reviewer/tester/host attribution, merge
+    # reason, change size) — read fail-soft like branch/base/author above, so an
+    # activity-only run (no ledger record) simply leaves them None/empty.
+    assessment = _assessment_block(rec)
+    run_context = rec.get("run_context") if rec else None
+    changes = rec.get("changes") if rec else None
     # Jury: prefer the live checkpoint (mid-run, for --follow); fall back to the
     # ledger (post-run). Both read only keel's own records, never ai-jury.
     if not is_ship:
@@ -348,6 +413,20 @@ def build_run_state(
         "branch": branch if isinstance(branch, str) and branch else None,
         "base": base if isinstance(base, str) and base else None,
         "author": author if isinstance(author, str) and author else None,
+        "tier": _int_or_none(assessment.get("tier")),
+        "window_open": _bool_or_none(assessment.get("window_open")),
+        "bypassed_window": _bool_or_none(assessment.get("bypassed_window")),
+        "gates": gates_from_record(rec),
+        "reviewers": _str_list(actors.get("reviewers")) if isinstance(actors, dict) else [],
+        "tester": _str_or_none(actors.get("tester")) if isinstance(actors, dict) else None,
+        "host_agent": (
+            _str_or_none(run_context.get("host_agent"))
+            if isinstance(run_context, dict) else None
+        ),
+        "merge_reason": _str_or_none(_merge_block(rec).get("reason")),
+        "file_count": (
+            _count_or_none(changes.get("file_count")) if isinstance(changes, dict) else None
+        ),
         "active_index": active,
         "active_id": flow[active].id,
         "merged": merged,

@@ -105,10 +105,37 @@ def _header(run: dict[str, Any], *, enable: bool) -> str:
     else:
         tag = paint("in progress", "dim", enable=enable)
     head = f"{line}   [{tag}]"
+    tier = run.get("tier")
+    if isinstance(tier, int):
+        head += f"   [{paint(f'T{tier}', 'amber' if tier >= 3 else 'cyan', enable=enable)}]"
+    window = run.get("window_open")
+    if isinstance(window, bool):
+        word = "win:open" if window else "win:closed"
+        head += f"   [{paint(word, 'green' if window else 'dim', enable=enable)}]"
+    if run.get("bypassed_window"):
+        head += f"   [{paint('win:bypassed', 'amber', enable=enable)}]"
     jury = run.get("jury") or {}
     if jury.get("active"):
         head += f"   [{paint('jury', 'cyan', enable=enable)}]"
     return head
+
+
+# Named-gate outcome -> (glyph, colour): ✓ ran clean, ✗ failed, – skipped.
+_GATE_GLYPHS = {"ok": ("✓", "green"), "fail": ("✗", "red"), "skip": ("–", "dim")}
+
+
+def _gate_strip(gates: list[dict[str, Any]], *, enable: bool) -> str:
+    """Render the ledger's named gates as one compact strip line.
+
+    e.g. ``gates: build✓ lint✓ evidence✗ jury–`` — the per-gate detail the flow
+    line's generic gate phases cannot show. Pure — reads only its arguments.
+    """
+    bits = []
+    for gate in gates:
+        key = "skip" if gate.get("skipped") else ("ok" if gate.get("ok") else "fail")
+        glyph, colr = _GATE_GLYPHS[key]
+        bits.append(f"{gate.get('name', '?')}{paint(glyph, colr, enable=enable)}")
+    return f"gates: {' '.join(bits)}"
 
 
 def frame(run: dict[str, Any], active: int, *, style: str = "flow", color: bool = True) -> str:
@@ -167,6 +194,9 @@ def _flow_body(
     pointer = f"{pointer_pad}{caret} {cur.get('id')} · {cur.get('name')}{word}"
 
     lines = [pipeline, label_line, "", pointer]
+    gates = run.get("gates") or []
+    if gates:
+        lines.append(_gate_strip(gates, enable=color))
     reg = run.get("regression") or {}
     if reg.get("reached") and cur.get("kind") in ("gate", "merge"):
         worst = reg.get("worst", "none")

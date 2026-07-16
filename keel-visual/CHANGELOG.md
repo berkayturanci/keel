@@ -6,6 +6,16 @@ All notable changes to keel-visual are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Unread ledger fields surfaced end-to-end.** `build_run_state()` now projects
+  `tier`, `window_open`/`bypassed_window`, the named `gates[]` outcomes, `reviewers`,
+  `tester`, `host_agent`, `merge_reason`, and `file_count` from the ledger `ship_run`
+  record keel already writes (fail-soft, no new core field). Terminal `play` shows a
+  tier badge (`[T3]`) and merge-window tag (`[win:open]`/`[win:closed]`/`[win:bypassed]`)
+  in the header plus a compact named-gate strip (`gates: build✓ evidence✗ jury–`) under
+  the flow; the web dashboard drawer gains tier/window chips, a per-gate status list,
+  and an agents row (implementer / reviewers / tester / host). (#575)
+
 ## [0.6.0] — 2026-07-03
 
 ### Added

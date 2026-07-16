@@ -129,6 +129,10 @@
   .meta td{padding:6px 0;border-top:1px solid var(--line)}
   .meta td:first-child{color:var(--mut)}
   .meta td:last-child{text-align:right}
+  .dchips{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}
+  .dchips .chip{font-size:11px;font-weight:600;color:var(--mut);background:var(--panel2);border:1px solid var(--line);border-radius:999px;padding:2px 8px}
+  .dchips .chip.ok{color:var(--ok);background:rgba(61,207,140,.12)}
+  .dchips .chip.warn{color:var(--warn);background:rgba(240,160,32,.12)}
 </style>
 </head>
 <body>
@@ -328,12 +332,34 @@
     });
     d2.appendChild(flow);
     const dm=document.getElementById('dmeta'); dm.textContent='';   // meta lives outside #d2d so 3D shows it too
+    // tier / merge-window chips (ledger assessment fields — absent on activity-only runs)
+    const chips=el('div','dchips');
+    if(typeof run.tier==='number'){ const c=el('span','chip'); c.textContent='tier '+run.tier; chips.appendChild(c); }
+    if(typeof run.window_open==='boolean'){ const c=el('span','chip'+(run.window_open?' ok':'')); c.textContent=run.window_open?'window open':'window closed'; chips.appendChild(c); }
+    if(run.bypassed_window===true){ const c=el('span','chip warn'); c.textContent='window bypassed'; chips.appendChild(c); }
+    if(chips.childNodes.length) dm.appendChild(chips);
     const meta=el('table','meta'); const rows=[
       ['command', run.command||'ship'],
       ['phase', idn(run.active_id,run.active_name)+'  ('+(active+1)+'/'+(steps.length||1)+')'],
       ['status', run.status||'active'],
     ];
     if(jury.active) rows.push(['jury', jury.mode||'on']);
+    if(run.merge_reason) rows.push(['merge', run.merge_reason]);
+    if(typeof run.file_count==='number') rows.push(['files', String(run.file_count)]);
+    // agents: implementer / reviewers / tester / host (vendor:model attribution)
+    const agents=[];
+    if(run.author) agents.push('impl '+run.author);
+    if(Array.isArray(run.reviewers)&&run.reviewers.length) agents.push('review '+run.reviewers.join(', '));
+    if(run.tester) agents.push('test '+run.tester);
+    if(run.host_agent) agents.push('host '+run.host_agent);
+    if(agents.length) rows.push(['agents', agents.join(' · ')]);
+    // per-gate status list (named ledger gates: ✓ ok, ✗ failed, – skipped)
+    (Array.isArray(run.gates)?run.gates:[]).forEach(g=>{
+      let v=g.skipped?'– skipped':g.ok?'✓ ok':'✗ failed';
+      if(g.finding_count) v+=' · '+g.finding_count+(g.finding_count===1?' finding':' findings');
+      if(!g.ok&&!g.skipped&&g.error) v+=' · '+g.error;
+      rows.push(['gate · '+(g.name||'?'), v]);
+    });
     rows.forEach(([k,v])=>{ const tr=el('tr'); const a=el('td'); a.textContent=k; const b=el('td'); b.textContent=v; tr.append(a,b); meta.appendChild(tr); });
     dm.appendChild(meta);
     const hud=drawer.querySelector('.dhud');
