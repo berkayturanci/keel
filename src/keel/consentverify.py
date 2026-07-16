@@ -37,7 +37,7 @@ from . import consent
 SCHEMA_VERSION = "keel.consent-verify.v1"
 
 VERDICT_ADVISORY = "advisory"
-VERDICT_PASS = "pass"
+VERDICT_PASS = "pass"  # nosec B105
 VERDICT_FAIL = "fail"
 
 # Observed-effect flag name -> the consent.side_effect vocabulary entry it maps
