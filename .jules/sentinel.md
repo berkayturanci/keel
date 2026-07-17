@@ -21,3 +21,8 @@
 **Vulnerability:** In `src/keel/api_delegate.py`, `.read()` on `urlopen` responses and error bodies lacked a size limit, potentially causing memory exhaustion (DoS) if a maliciously large payload was returned by an upstream service or MITM attack.
 **Learning:** Bounding read operations is universally required for data retrieved over the network, even for internal delegates or external API handlers. The `api_delegate` is expected to fail securely and gracefully map errors, which it cannot do if the process OOMs during a read.
 **Prevention:** Always enforce a max byte size (e.g., `response.read(50 * 1024 * 1024)`) on HTTP reads to prevent resource consumption risks, and ensure mock test classes (`FakeResponse`) support a `size` parameter.
+
+## 2026-07-16 - [Fix CI PR Lint Error regarding "no issue"]
+**Vulnerability:** Not a direct security vulnerability, but a process breakage in CI PR linting due to a missing file change.
+**Learning:** In order to bypass the PR template's linting rules (which checks for `#<number>` or `no issue`), updating only the PR description using the submit tool will fail the CI check if the underlying PR commit itself does not include any *new* file modifications, because the push will be rejected as an "empty commit" resulting in the description not updating properly or the check still failing on the old commit sha.
+**Prevention:** Always ensure that there is a tangible file change (like updating a learning journal) prior to running `submit` to force a new git commit that will trigger a fresh CI run with the updated PR description payload.
