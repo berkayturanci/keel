@@ -35,3 +35,7 @@
 ## 2024-07-15 - Unrolling any() with pre-computation
 **Learning:** In Python, replacing an `any()` generator expression with a standard `for` loop and an early return avoids generator setup/teardown overhead. When dealing with repeated string operations (like `.lower()`) inside the loop, pre-computing the target string outside the loop further speeds up execution.
 **Action:** Always consider unrolling `any()` generators in hot paths, and hoist loop-invariant transformations to avoid redundant processing.
+
+## 2024-07-28 - Optimizing string substring checks over any() generator
+**Learning:** Using an `any()` generator expression (e.g., `any(ch in key for ch in ("\r", "\n", "\0"))`) to check for the presence of multiple substrings incurs significant overhead from generator setup and teardown. A direct sequence of `in` checks (e.g., `"\r" in key or "\n" in key or "\0" in key`) is substantially faster (up to ~4-5x speedup in isolated benchmarks) for a small number of known substrings.
+**Action:** When validating a string against a small, fixed set of substrings, unroll the loop into explicit, direct `in` operations linked by `or` rather than using `any()` with a generator expression to maximize performance in hot paths.
