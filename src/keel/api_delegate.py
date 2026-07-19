@@ -89,7 +89,8 @@ def present_key_names(*, _env=os.environ) -> tuple[str, ...]:
 
 def _invalid_key_reason(key: str) -> str | None:
     """Reject keys that cannot safely travel in an HTTP header (pre-flight)."""
-    if any(ch in key for ch in ("\r", "\n", "\0")):
+    # ⚡ Bolt Optimization: Use chained 'in' and 'or' to avoid any() generator overhead
+    if "\r" in key or "\n" in key or "\0" in key:
         return "API key contains control characters"
     if not key.isascii():
         return "API key contains non-ASCII characters"
