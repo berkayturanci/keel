@@ -16,3 +16,7 @@
 **Vulnerability:** Bandit flagged `subprocess.run` with `shell=True` (B604) in `runner.py` and `yaml.load` (B506) in `yaml_helper.py` as Medium severity vulnerabilities.
 **Learning:** These were intentional design choices: `runner.py` explicitly handles a controlled shell boundary, and `yaml_helper.py` safely implements C-extension safe loaders. Automated tools can produce false positives on custom safe implementations or explicit intentional patterns.
 **Prevention:** Rather than modifying functional, safe, and explicitly designed code just to pass a static analyzer, correctly suppress known false positive Bandit warnings using specific inline `# nosec BXXX` directives (e.g., `# nosec B604`, `# nosec B506`) to maintain a clean security signal without compromising intentional architecture.
+## 2026-07-19 - [DoS via Unbounded URL Read]
+**Vulnerability:** Found `read()` without limits which can lead to Denial of Service (DoS).
+**Learning:** Add explicit size limits (e.g., `read(50 * 1024 * 1024)`) on `read()` calls, especially in API integrations where external services can send massive responses, which can consume a significant amount of memory and potentially cause DoS attacks.
+**Prevention:** Make sure `read()` calls on external network inputs are properly bounded with an appropriate size to avoid out-of-memory errors and protect against payload exhaustion.

@@ -19,7 +19,7 @@ class FakeResponse:
         self._body = body.encode("utf-8")
         self.status = status
 
-    def read(self) -> bytes:
+    def read(self, size=-1) -> bytes:
         return self._body
 
     def __enter__(self):
@@ -36,7 +36,7 @@ class RaisingReadResponse(FakeResponse):
         super().__init__("")
         self._exc = exc
 
-    def read(self) -> bytes:
+    def read(self, size=-1) -> bytes:
         raise self._exc
 
 

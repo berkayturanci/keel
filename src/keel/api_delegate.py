@@ -201,12 +201,12 @@ def generate(
     opener = _opener if _opener is not None else _build_opener()
     try:
         with opener.open(request, timeout=timeout) as resp:
-            raw = resp.read().decode("utf-8", errors="replace")
+            raw = resp.read(50 * 1024 * 1024).decode("utf-8", errors="replace")
             status = getattr(resp, "status", 200)
     except urllib.error.HTTPError as exc:
         detail = ""
         try:
-            detail = exc.read().decode("utf-8", errors="replace")
+            detail = exc.read(50 * 1024 * 1024).decode("utf-8", errors="replace")
         except OSError:  # pragma: no cover - defensive; HTTPError bodies rarely fail to read
             detail = str(exc)
         return _status_error(exc.code, _scrub(detail, key))
