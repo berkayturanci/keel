@@ -39,3 +39,6 @@
 ## 2024-07-31 - Fast Substring Checks with explicit `or`
 **Learning:** When checking a string for the presence of a small, fixed set of substrings in Python hot paths, using a direct sequence of `in` checks linked by `or` (e.g., `"a" in s or "b" in s`) avoids generator setup overhead and is significantly faster than using an `any()` generator expression.
 **Action:** Replace `any(sub in s for sub in ("a", "b", "c"))` with direct `"a" in s or "b" in s or "c" in s` for micro-optimizations in string validations.
+## 2024-05-16 - Unroll any() generator in intake.py
+**Learning:** In Python hot paths, unrolling chained `any()` generator expressions into explicit sequential `if` and `for` loops with early returns can bypass generator overhead and significantly improve performance by properly short-circuiting.
+**Action:** Unroll `any()` generator loops in hot paths to explicit loops.

@@ -223,7 +223,11 @@ def _is_blocked(combined: str, labels: tuple[str, ...]) -> bool:
     if not _BLOCKED_RE.search(compact):
         return False
 
-    return any(_is_actionable_blocker(sentence) for sentence in _sentences(compact))
+    # ⚡ Bolt Optimization: Unroll any() generator to avoid generator overhead
+    for sentence in _sentences(compact):
+        if _is_actionable_blocker(sentence):
+            return True
+    return False
 
 
 def _blocked_summary(combined: str) -> str:
