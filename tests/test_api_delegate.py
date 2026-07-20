@@ -19,8 +19,8 @@ class FakeResponse:
         self._body = body.encode("utf-8")
         self.status = status
 
-    def read(self) -> bytes:
-        return self._body
+    def read(self, size: int = -1) -> bytes:
+        return self._body[:size] if size >= 0 else self._body
 
     def __enter__(self):
         return self
@@ -36,7 +36,7 @@ class RaisingReadResponse(FakeResponse):
         super().__init__("")
         self._exc = exc
 
-    def read(self) -> bytes:
+    def read(self, size: int = -1) -> bytes:
         raise self._exc
 
 
