@@ -16,3 +16,8 @@
 **Vulnerability:** Bandit flagged `subprocess.run` with `shell=True` (B604) in `runner.py` and `yaml.load` (B506) in `yaml_helper.py` as Medium severity vulnerabilities.
 **Learning:** These were intentional design choices: `runner.py` explicitly handles a controlled shell boundary, and `yaml_helper.py` safely implements C-extension safe loaders. Automated tools can produce false positives on custom safe implementations or explicit intentional patterns.
 **Prevention:** Rather than modifying functional, safe, and explicitly designed code just to pass a static analyzer, correctly suppress known false positive Bandit warnings using specific inline `# nosec BXXX` directives (e.g., `# nosec B604`, `# nosec B506`) to maintain a clean security signal without compromising intentional architecture.
+
+## 2026-07-18 - [DoS Risk via Unbounded Payload Read in API Delegate]
+**Vulnerability:** In `src/keel/api_delegate.py`, `resp.read().decode("utf-8")` and `exc.read().decode("utf-8")` were reading from external APIs without a size limit.
+**Learning:** External API dependencies, even trusted ones, can suffer from MITM attacks, DNS hijacking, or simple backend bugs that return massive payloads. Unbounded `.read()` operations leave the application vulnerable to memory exhaustion (DoS).
+**Prevention:** Always enforce a maximum read byte limit when downloading external data into memory (e.g., `resp.read(50 * 1024 * 1024)`). This caps memory utilization while accommodating large legitimate responses. When making this fix, ensure test mocks like `FakeResponse` are updated to accept the `size` parameter.
