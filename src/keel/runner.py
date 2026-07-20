@@ -9,7 +9,7 @@ runner is fully unit-testable offline; agentic gates are dispatched elsewhere.
 from __future__ import annotations
 
 import re
-import subprocess
+import subprocess  # nosec B404
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
