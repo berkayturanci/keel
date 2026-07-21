@@ -65,7 +65,13 @@ def _validate(instance: Any, schema: dict, path: str, errors: list[str]) -> None
     if "type" in schema:
         types = schema["type"]
         types = [types] if isinstance(types, str) else types
-        if not any(_type_matches(instance, t) for t in types):
+        # ⚡ Bolt Optimization: Unroll any() generator to avoid generator overhead
+        matched = False
+        for t in types:
+            if _type_matches(instance, t):
+                matched = True
+                break
+        if not matched:
             errors.append(f"{path}: expected type {'/'.join(types)} (got {_kind(instance)})")
             # If the basic type is wrong, deeper checks would be noisy; stop here.
             return
