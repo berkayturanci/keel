@@ -757,10 +757,12 @@ def _aggregate_clean_areas(reviewers: list[dict[str, Any]]) -> list[str]:
 
 
 def _merge_recommendation(reviewers: list[dict[str, Any]], histogram: dict[str, int]) -> str:
-    needs_fixes = any(
-        not _value(reviewer.get("verdict"), "LGTM").lower().startswith("lgtm")
-        for reviewer in reviewers
-    )
+    # ⚡ Bolt Optimization: Unroll any() generator to avoid generator overhead
+    needs_fixes = False
+    for reviewer in reviewers:
+        if not _value(reviewer.get("verdict"), "LGTM").lower().startswith("lgtm"):
+            needs_fixes = True
+            break
     if needs_fixes or histogram["blocker"] > 0:
         return "❌ block"
     if histogram["major"] + histogram["minor"] > 0:
