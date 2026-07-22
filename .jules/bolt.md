@@ -54,3 +54,6 @@
 ## 2024-08-01 - Evidence Bypass Label
 **Learning:** Bypassing `keel evidence` for agent-driven PRs requires applying the `keel:evidence-waived` label, instead of trying to fake PR markers in the body.
 **Action:** Ensure the PR gets labeled with `keel:evidence-waived`.
+## 2024-08-01 - Evidence Requirement
+**Learning:** Bypassing `keel evidence` using the `keel:evidence-waived` label requires an operator's intervention, meaning the CI fails initially for automated submissions until the label is applied.
+**Action:** Wait for the user to apply the label and explicitly ask them to re-run the CI when done.
