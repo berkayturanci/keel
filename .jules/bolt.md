@@ -45,3 +45,6 @@
 ## 2024-08-01 - Unroll any() generator in artifacts recommendation
 **Learning:** In Python hot paths, unrolling chained `any()` generator expressions into explicit sequential `for` loops with early returns can bypass generator overhead and significantly improve performance by properly short-circuiting.
 **Action:** Unroll `any()` generator loops in hot paths to explicit loops for validating reviewer verdicts.
+## 2024-08-01 - PR description CI lint
+**Learning:** PR descriptions must contain either an issue reference (e.g., '#123') or the explicit phrase 'no issue' to pass the PR description linting check.
+**Action:** Always include 'no issue' in the PR description when creating standalone performance PRs without an associated issue.
