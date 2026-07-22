@@ -48,3 +48,6 @@
 ## 2024-08-01 - PR description CI lint
 **Learning:** PR descriptions must contain either an issue reference (e.g., '#123') or the explicit phrase 'no issue' to pass the PR description linting check.
 **Action:** Always include 'no issue' in the PR description when creating standalone performance PRs without an associated issue.
+## 2024-08-01 - Evidence Bypass
+**Learning:** Bypassing `keel evidence` requires the `keel:evidence-waived` label.
+**Action:** Ensure label is requested or applied if testing without evidence markers.
