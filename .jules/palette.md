@@ -40,3 +40,5 @@
 ## 2026-06-26 - Tab List Role Validation
 **Learning:** Proper tab list semantics require validating the structure with both `role="tablist"` and `role="tab"`. Without these roles, assistive technologies may not correctly interpret the dynamic `aria-selected` attribute.
 **Action:** Always ensure the full tab structure (`tablist` and `tab`) is present when implementing custom dynamic list views.
+
+**Prevention:** Ensure that dynamically injected roles also come with the correct aria state attributes.
