@@ -455,7 +455,7 @@
       rail.querySelectorAll(".show-tab").forEach(function (b, j) {
         var isOn = j === i;
         b.classList.toggle("on", isOn);
-        b.setAttribute("aria-pressed", isOn ? "true" : "false");
+        b.setAttribute("aria-selected", isOn ? "true" : "false");
       });
       if (cmdEl) cmdEl.textContent = c.name;
       if (grpEl) grpEl.textContent = c.group;
@@ -488,6 +488,7 @@
       if (c.group !== lastGroup) { rail.appendChild(el("div", "st-group", c.group)); lastGroup = c.group; }
       var b = el("button", "show-tab", '<span class="st-name">' + c.name + (c.flagship ? ' <span class="st-flag">flagship</span>' : "") + '</span><span class="st-one">' + c.one + "</span>");
       b.type = "button";
+      b.setAttribute("role", "tab");
       b.addEventListener("click", function () { activate(i); });
       rail.appendChild(b);
     });

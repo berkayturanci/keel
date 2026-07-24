@@ -32,3 +32,7 @@
 ## 2026-06-25 - SVG Icons and aria-hidden
 **Learning:** Screen readers may redundantly announce SVG structures when they are used as decorative icons inside elements that already have an accessible name (like an `aria-label` or text content on a button).
 **Action:** Always add `aria-hidden="true"` to decorative `<svg>` tags (like icons) to reduce screen reader noise.
+
+## 2026-06-26 - Correct ARIA Semantics for Tab Lists
+**Learning:** The application uses dynamic UI element toggles (like the command selector `.show-rail`) that function visually and structurally as tab lists, but were incorrectly applying `aria-pressed="true/false"` which is meant for single toggle buttons.
+**Action:** Always verify the structural role of dynamic lists. Use `role="tablist"` for the container, `role="tab"` for the items, and `aria-selected="true/false"` instead of `aria-pressed`.
