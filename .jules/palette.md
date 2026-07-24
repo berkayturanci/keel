@@ -36,3 +36,9 @@
 ## 2026-06-26 - Correct ARIA Semantics for Tab Lists
 **Learning:** The application uses dynamic UI element toggles (like the command selector `.show-rail`) that function visually and structurally as tab lists, but were incorrectly applying `aria-pressed="true/false"` which is meant for single toggle buttons.
 **Action:** Always verify the structural role of dynamic lists. Use `role="tablist"` for the container, `role="tab"` for the items, and `aria-selected="true/false"` instead of `aria-pressed`.
+
+## 2026-06-26 - Tab List Role Validation
+**Learning:** Proper tab list semantics require validating the structure with both `role="tablist"` and `role="tab"`. Without these roles, assistive technologies may not correctly interpret the dynamic `aria-selected` attribute.
+**Action:** Always ensure the full tab structure (`tablist` and `tab`) is present when implementing custom dynamic list views.
+
+**Prevention:** Ensure that dynamically injected roles also come with the correct aria state attributes.
