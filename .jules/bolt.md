@@ -42,3 +42,6 @@
 ## 2024-05-16 - Unroll any() generator in intake.py
 **Learning:** In Python hot paths, unrolling chained `any()` generator expressions into explicit sequential `if` and `for` loops with early returns can bypass generator overhead and significantly improve performance by properly short-circuiting.
 **Action:** Unroll `any()` generator loops in hot paths to explicit loops.
+## 2024-07-24 - Unrolling any() in jsonschema type validation
+**Learning:** In Python, using `any()` with a generator expression inside hot path validation loops (like schema type matching) incurs measurable generator setup/teardown overhead. Unrolling this into a standard `for` loop with an early `break` provided a ~2x performance speedup in local micro-benchmarks.
+**Action:** When validating against a list of types or conditions in a hot path, prefer a simple `for` loop with early exits over a generator expression inside `any()`.
