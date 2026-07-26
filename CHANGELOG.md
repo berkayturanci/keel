@@ -6,6 +6,16 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **The ship adapter describes the jury downgrade instead of instructing it** (#612): the
+  `s8` prose still told the agent to "count distinct participating vendors" and perform the
+  sub-2-vendor downgrade itself, which #611 moved into `ship.resolve_jury()`. It now states
+  that core resolves the effective mode and the agent's job is to *report* the participating
+  count via `evidence-verify --jury-vendors`, with an explicit "do not re-derive or override
+  that downgrade". Regenerated into the plugin `commands/`, `.claude/commands/keel/` and
+  `.agents/skills/keel-ship/`; `docs/keel/parameter-reference.md` carries an independent copy
+  of the same sentence and was updated alongside.
+
 ### Fixed
 - **The jury gates on the panel that ran, not on the tier alone** (#610): a tier-3 PR
   required a posted gating `jury-verdict` regardless of whether a gating panel could be
