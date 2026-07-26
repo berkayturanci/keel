@@ -13,7 +13,7 @@
     set: function (k, v) { try { localStorage.setItem(k, v); } catch (e) {} },
   };
 
-  /* ---- Display popover: theme / motion / type ---------------------- */
+  /* ---- Display popover: motion ------------------------------------- */
   function setAttr(name, key, val) {
     root.setAttribute(name, val);
     store.set(key, val);
@@ -21,32 +21,60 @@
     document.querySelectorAll('[data-seg="' + key + '"] button').forEach(function (b) {
       var isOn = b.dataset.val === val;
       b.classList.toggle("on", isOn);
-      b.setAttribute("aria-pressed", isOn ? "true" : "false");
+      // A segmented setting is a single-select group, so the state is
+      // aria-checked on radios — aria-pressed describes independent toggles.
+      b.setAttribute("aria-checked", isOn ? "true" : "false");
+      b.tabIndex = isOn ? 0 : -1;
     });
   }
   function wireSeg() {
     document.querySelectorAll(".seg[data-seg]").forEach(function (seg) {
       var key = seg.dataset.seg;
-      var attr = key === "theme" ? "data-theme" : key === "motion" ? "data-motion" : "data-type";
-      seg.querySelectorAll("button").forEach(function (b) {
+      var attr = "data-" + key;
+      var opts = Array.prototype.slice.call(seg.querySelectorAll("button"));
+      opts.forEach(function (b) {
         var isOn = b.dataset.val === root.getAttribute(attr);
         b.classList.toggle("on", isOn);
-        b.setAttribute("aria-pressed", isOn ? "true" : "false");
+        b.setAttribute("aria-checked", isOn ? "true" : "false");
+        b.tabIndex = isOn ? 0 : -1;
         b.addEventListener("click", function () { setAttr(attr, key, b.dataset.val); });
+      });
+      // Roving tabindex: a radiogroup is one Tab stop and arrows move within it.
+      seg.addEventListener("keydown", function (e) {
+        if (e.altKey || e.ctrlKey || e.metaKey) return;
+        var from = opts.indexOf(document.activeElement);
+        if (from < 0) return;
+        var to;
+        if (e.key === "ArrowRight" || e.key === "ArrowDown") to = from + 1;
+        else if (e.key === "ArrowLeft" || e.key === "ArrowUp") to = from - 1;
+        else if (e.key === "Home") to = 0;
+        else if (e.key === "End") to = opts.length - 1;
+        else return;
+        e.preventDefault();
+        to = (to + opts.length) % opts.length;
+        opts[to].focus();
+        setAttr(attr, key, opts[to].dataset.val);
       });
     });
   }
   var dispBtn = document.getElementById("disp-btn");
   var dispPop = document.getElementById("disp-pop");
   if (dispBtn && dispPop) {
+    var setDispOpen = function (open) {
+      dispPop.classList.toggle("open", open);
+      dispBtn.setAttribute("aria-expanded", open ? "true" : "false");
+    };
     dispBtn.addEventListener("click", function (e) {
       e.stopPropagation();
-      dispPop.classList.toggle("open");
+      setDispOpen(!dispPop.classList.contains("open"));
     });
     document.addEventListener("click", function (e) {
-      if (!dispPop.contains(e.target) && e.target !== dispBtn) dispPop.classList.remove("open");
+      if (!dispPop.contains(e.target) && !dispBtn.contains(e.target)) setDispOpen(false);
     });
-    document.addEventListener("keydown", function (e) { if (e.key === "Escape") dispPop.classList.remove("open"); });
+    document.addEventListener("keydown", function (e) {
+      // Escape returns focus to the trigger rather than stranding it in a hidden popover.
+      if (e.key === "Escape" && dispPop.classList.contains("open")) { setDispOpen(false); dispBtn.focus(); }
+    });
   }
   wireSeg();
 

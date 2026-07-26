@@ -26,3 +26,7 @@ venv/
 # Editors — Obsidian vault config (local markdown app, not part of the repo)
 .obsidian/
 jury.toml
+
+# Agent scratch plans — working notes, not repo content. Tracking one means every
+# agent run that rewrites its plan lands as a source change in an unrelated PR.
+/plan.md

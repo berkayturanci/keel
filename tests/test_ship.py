@@ -2,7 +2,7 @@
 
 import unittest
 
-from keel import ship
+from keel import evidence, ship
 from keel.findings import Finding, summarize
 
 CLEAN = summarize([])
@@ -248,6 +248,90 @@ class TestPauseMode(unittest.TestCase):
                         merge_window=WIN, merge_window_mode="pause", now=NIGHT, is_blocker=True)
         self.assertFalse(a.halted)
         self.assertEqual(a.merge.action, "merge")
+
+
+class TestJuryPanelDowngrade(unittest.TestCase):
+    """A gating jury must reflect the panel that actually ran, not just the tier."""
+
+    def test_unknown_panel_leaves_gating_alone(self):
+        # None = not resolved yet (planning, `keel plan`, any pre-s8 caller).
+        jury = ship.resolve_jury(tier=3)
+
+        self.assertEqual(jury["mode"], "gating")
+        self.assertFalse(jury["downgraded"])
+        self.assertIsNone(jury["participating_vendors"])
+
+    def test_single_vendor_panel_downgrades_to_advisory(self):
+        jury = ship.resolve_jury(tier=3, participating_vendors=1)
+
+        self.assertEqual(jury["mode"], "advisory")
+        self.assertTrue(jury["downgraded"])
+        self.assertFalse(jury["verified_consensus_gates"])
+        self.assertTrue(jury["enabled"])
+
+    def test_zero_participants_downgrade_too(self):
+        # "A jury that did not complete cleanly never gates" is the same
+        # comparison: no agent returned output means zero vendors participated.
+        jury = ship.resolve_jury(tier=3, participating_vendors=0)
+
+        self.assertEqual(jury["mode"], "advisory")
+        self.assertTrue(jury["downgraded"])
+
+    def test_minimum_vendors_gates(self):
+        jury = ship.resolve_jury(tier=3, participating_vendors=ship.MINIMUM_JURY_VENDORS)
+
+        self.assertEqual(jury["mode"], "gating")
+        self.assertFalse(jury["downgraded"])
+        self.assertTrue(jury["verified_consensus_gates"])
+
+    def test_minimum_vendors_constant_is_reported(self):
+        # The constant used to be written and never read; the reported value and
+        # the enforced threshold must be the same thing.
+        self.assertEqual(
+            ship.resolve_jury(tier=3)["minimum_vendors"],
+            ship.MINIMUM_JURY_VENDORS,
+        )
+
+    def test_reason_records_the_downgrade(self):
+        reason = ship.resolve_jury(tier=3, participating_vendors=1)["reason"]
+
+        self.assertIn("tier-3 auto", reason)
+        self.assertIn("downgraded to advisory", reason)
+        self.assertIn("minimum 2", reason)
+
+    def test_disabled_jury_is_not_downgraded(self):
+        # Nothing to downgrade, and `downgraded` must not imply "was gating".
+        jury = ship.resolve_jury(tier=3, no_jury=True, participating_vendors=0)
+
+        self.assertEqual(jury["mode"], "off")
+        self.assertFalse(jury["downgraded"])
+
+    def test_explicit_advisory_is_not_reported_as_a_downgrade(self):
+        jury = ship.resolve_jury(tier=3, jury_advisory=True, participating_vendors=0)
+
+        self.assertEqual(jury["mode"], "advisory")
+        self.assertFalse(jury["downgraded"])
+
+    def test_contract_threads_the_panel_through(self):
+        contract = ship.resolve_review_contract(tier=3, jury_participating_vendors=1)
+
+        self.assertEqual(contract["jury"]["mode"], "advisory")
+        self.assertEqual(contract["jury"]["participating_vendors"], 1)
+
+    def test_short_panel_drops_the_evidence_requirement(self):
+        # The point of the change: the gate stops demanding a gating verdict the
+        # jury step would decline to treat as gating.
+        short = evidence.required_items(
+            ship.resolve_review_contract(tier=3, jury_participating_vendors=1),
+            phase=evidence.PHASE_PRE_MERGE,
+        )
+        full = evidence.required_items(
+            ship.resolve_review_contract(tier=3, jury_participating_vendors=2),
+            phase=evidence.PHASE_PRE_MERGE,
+        )
+
+        self.assertNotIn("jury-verdict", [item.id for item in short])
+        self.assertIn("jury-verdict", [item.id for item in full])
 
 
 if __name__ == "__main__":

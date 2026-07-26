@@ -76,7 +76,12 @@ jobs:
   evidence:
     name: keel evidence (required)
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'pull_request' || github.event.inputs.pr != '' }}
+    # Ordered after `ship` on purpose. Arming falls through to the ship-assessment
+    # comment for any branch outside evidence._SHIP_BRANCH_RE, and that comment is
+    # written by the `ship` job — running the two in parallel let this gate read the
+    # PR before the comment existed and pass having checked nothing.
+    needs: ship
+    if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event.inputs.pr != '') }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
@@ -92,7 +97,11 @@ jobs:
           PR: ${{ github.event.pull_request.number || github.event.inputs.pr }}
           DEFERRAL: ${{ github.event.inputs.deferral }}
         run: |
-          ARGS=(.keel/project.yaml --root . --pr "$PR")
+          # --phase pre-merge: the closure comments are an s11 artifact, posted after
+          # the merge this gate authorizes, so requiring them here is unsatisfiable.
+          # --require-armed: an unarmed gate must not report success, or a green check
+          # cannot be told apart from one that never evaluated anything.
+          ARGS=(.keel/project.yaml --root . --pr "$PR" --phase pre-merge --require-armed)
           if [ -n "$DEFERRAL" ]; then
             ARGS+=(--deferral "$DEFERRAL")
           fi

@@ -1129,5 +1129,256 @@ class TestAttributionVerifyWiring(unittest.TestCase):
         self.assertEqual(report["findings"], [])
 
 
+class TestEvidencePhases(unittest.TestCase):
+    def test_pre_merge_phase_excludes_closure_items(self):
+        items = evidence.required_items(
+            _review_contract(reviewers=2, jury=True),
+            phase=evidence.PHASE_PRE_MERGE,
+        )
+
+        self.assertEqual(
+            [item.id for item in items],
+            ["review-verdict-1", "review-verdict-2", "jury-verdict"],
+        )
+
+    def test_post_merge_phase_is_only_the_closure_pair(self):
+        items = evidence.required_items(
+            _review_contract(reviewers=2, jury=True),
+            phase=evidence.PHASE_POST_MERGE,
+        )
+
+        self.assertEqual(
+            [item.id for item in items],
+            ["closure-comment-pr", "closure-comment-issue"],
+        )
+
+    def test_default_phase_is_all_and_partitions_exactly(self):
+        contract = _review_contract(reviewers=2, jury=True)
+
+        every = evidence.required_items(contract)
+        pre = evidence.required_items(contract, phase=evidence.PHASE_PRE_MERGE)
+        post = evidence.required_items(contract, phase=evidence.PHASE_POST_MERGE)
+
+        # `all` is the default, and the two phases partition it with no overlap
+        # and nothing dropped — a requirement cannot go missing between phases.
+        self.assertEqual(
+            evidence.required_items(contract, phase=evidence.PHASE_ALL),
+            every,
+        )
+        self.assertEqual(set(pre) | set(post), set(every))
+        self.assertEqual(set(pre) & set(post), set())
+
+    def test_items_declare_their_phase(self):
+        by_id = {
+            item.id: item.phase
+            for item in evidence.required_items(_review_contract(reviewers=1, jury=True))
+        }
+
+        self.assertEqual(by_id["closure-comment-pr"], evidence.PHASE_POST_MERGE)
+        self.assertEqual(by_id["closure-comment-issue"], evidence.PHASE_POST_MERGE)
+        self.assertEqual(by_id["review-verdict-1"], evidence.PHASE_PRE_MERGE)
+        self.assertEqual(by_id["jury-verdict"], evidence.PHASE_PRE_MERGE)
+
+    def test_as_dict_carries_phase(self):
+        item = evidence.required_items(_review_contract(reviewers=1))[0]
+
+        self.assertEqual(item.as_dict()["phase"], item.phase)
+
+    def test_unknown_phase_raises_rather_than_narrowing(self):
+        with self.assertRaises(ValueError) as ctx:
+            evidence.required_items(_review_contract(reviewers=1), phase="premerge")
+
+        self.assertIn("premerge", str(ctx.exception))
+
+    def test_unknown_phase_raises_even_when_unenforced(self):
+        # The guard runs before the dry-run/unenforced short-circuit, so a typo is
+        # never masked by a run that happens to require nothing.
+        with self.assertRaises(ValueError):
+            evidence.required_items(
+                _review_contract(reviewers=1),
+                enforced=False,
+                phase="nope",
+            )
+
+    def test_verify_reports_the_phase_it_checked(self):
+        report = evidence.verify(
+            _review_contract(reviewers=1),
+            phase=evidence.PHASE_PRE_MERGE,
+            pr_labels=["agent:claude"],
+        )
+
+        self.assertEqual(report["phase"], evidence.PHASE_PRE_MERGE)
+
+    def test_pre_merge_verify_does_not_demand_closure_comments(self):
+        # The regression this whole split exists for: at s10 the closure comments
+        # have not been posted yet, so requiring them makes the backbone unmergeable.
+        report = evidence.verify(
+            _review_contract(reviewers=1),
+            pr_comments=[_verdict("a", head="abc")],
+            head_sha="abc",
+            pr_labels=["agent:claude"],
+            phase=evidence.PHASE_PRE_MERGE,
+        )
+
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["missing"], [])
+
+
+class TestEvidenceArming(unittest.TestCase):
+    def test_unarmed_gate_passes_by_default(self):
+        report = evidence.verify(_review_contract(reviewers=1), enforced=False)
+
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["findings"], [])
+
+    def test_require_armed_turns_an_unarmed_gate_into_a_failure(self):
+        report = evidence.verify(
+            _review_contract(reviewers=1),
+            enforced=False,
+            require_armed=True,
+        )
+
+        self.assertEqual(report["status"], "fail")
+        self.assertEqual([f["id"] for f in report["findings"]], ["gate-unarmed"])
+        self.assertEqual(report["findings"][0]["severity"], "major")
+
+    def test_require_armed_accepts_a_deliberate_operator_waiver(self):
+        # A waiver is an explicit operator act; the point of the check is to
+        # separate that from a gate that armed late or not at all.
+        report = evidence.verify(
+            _review_contract(reviewers=1),
+            enforced=False,
+            require_armed=True,
+            waived=True,
+        )
+
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["findings"], [])
+
+    def test_require_armed_is_quiet_when_the_gate_is_armed(self):
+        report = evidence.verify(
+            _review_contract(reviewers=1),
+            pr_comments=[_verdict("a", head="abc")],
+            head_sha="abc",
+            pr_labels=["agent:claude"],
+            phase=evidence.PHASE_PRE_MERGE,
+            require_armed=True,
+        )
+
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["findings"], [])
+
+    def test_require_armed_is_suppressed_under_dry_run(self):
+        report = evidence.verify(
+            _review_contract(reviewers=1),
+            dry_run=True,
+            enforced=False,
+            require_armed=True,
+        )
+
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["findings"], [])
+
+
+
+class TestJuryParticipatingVendors(unittest.TestCase):
+    """The panel size reaches a CI gate only through the posted jury verdict."""
+
+    @staticmethod
+    def _verdict_comment(*, vendors=None, participants=(), head="abc"):
+        from keel import artifacts
+        return _comment(artifacts.render_jury_verdict(
+            head_sha=head,
+            participants=participants,
+            participating_vendors=vendors,
+        ))
+
+    def test_reads_the_declared_count(self):
+        got = evidence.jury_participating_vendors(
+            [self._verdict_comment(vendors=1)], head_sha="abc")
+
+        self.assertEqual(got, 1)
+
+    def test_zero_is_a_real_answer_not_a_missing_one(self):
+        # A run where no agent returned output declares 0; conflating that with
+        # "not declared" would leave the gate demanding a verdict that cannot exist.
+        got = evidence.jury_participating_vendors(
+            [self._verdict_comment(vendors=0)], head_sha="abc")
+
+        self.assertEqual(got, 0)
+        self.assertIsNotNone(got)
+
+    def test_no_verdict_posted_is_undeclared(self):
+        self.assertIsNone(evidence.jury_participating_vendors([], head_sha="abc"))
+
+    def test_verdict_without_the_field_is_undeclared(self):
+        # Back-compat: a verdict posted before the field existed must not be read
+        # as a short panel and silently relax the gate.
+        body = f"{evidence.JURY_VERDICT_MARKER}\nhead: abc\n\nAI Jury verdict: LGTM.\n"
+
+        self.assertIsNone(
+            evidence.jury_participating_vendors([_comment(body)], head_sha="abc"))
+
+    def test_count_is_inferred_from_participants_when_omitted(self):
+        got = evidence.jury_participating_vendors(
+            [self._verdict_comment(participants=["claude", "codex"])], head_sha="abc")
+
+        self.assertEqual(got, 2)
+
+    def test_head_mismatch_is_ignored(self):
+        got = evidence.jury_participating_vendors(
+            [self._verdict_comment(vendors=1, head="stale")], head_sha="abc")
+
+        self.assertIsNone(got)
+
+    def test_untrusted_author_is_ignored(self):
+        item = {
+            "body": self._verdict_comment(vendors=1)["body"],
+            "author_association": "NONE",
+            "user": {"login": "drive-by"},
+        }
+
+        self.assertIsNone(evidence.jury_participating_vendors([item], head_sha="abc"))
+
+    def test_largest_declared_count_wins(self):
+        # A corrected re-post must not be capped by the stale partial run.
+        got = evidence.jury_participating_vendors(
+            [self._verdict_comment(vendors=1), self._verdict_comment(vendors=3)],
+            head_sha="abc",
+        )
+
+        self.assertEqual(got, 3)
+
+    def test_reads_from_pr_reviews_too(self):
+        got = evidence.jury_participating_vendors(
+            None, [self._verdict_comment(vendors=2)], head_sha="abc")
+
+        self.assertEqual(got, 2)
+
+    def test_non_numeric_count_is_rejected(self):
+        body = f"{evidence.JURY_VERDICT_MARKER}\nhead: abc\nvendors: many\n"
+
+        self.assertIsNone(
+            evidence.jury_participating_vendors([_comment(body)], head_sha="abc"))
+
+    def test_negative_count_is_rejected(self):
+        body = f"{evidence.JURY_VERDICT_MARKER}\nhead: abc\nvendors: -1\n"
+
+        self.assertIsNone(
+            evidence.jury_participating_vendors([_comment(body)], head_sha="abc"))
+
+    def test_short_panel_verdict_relaxes_the_requirement_end_to_end(self):
+        from keel import ship as ship_mod
+        declared = evidence.jury_participating_vendors(
+            [self._verdict_comment(vendors=1)], head_sha="abc")
+        contract = ship_mod.resolve_review_contract(
+            tier=3, jury_participating_vendors=declared)
+
+        ids = [item.id for item in evidence.required_items(
+            contract, phase=evidence.PHASE_PRE_MERGE)]
+        self.assertNotIn("jury-verdict", ids)
+        self.assertEqual(contract["jury"]["mode"], "advisory")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -25,9 +25,20 @@ DEFAULT_WAIVER_LABEL = "keel:evidence-waived"
 TRUSTED_AUTHOR_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 TRUSTED_SHIP_ASSESSMENT_BOTS = frozenset({"github-actions", "github-actions[bot]"})
 
-_FIELD_RE = re.compile(r"^\s*(?P<key>reviewer|head|vendor|model)\s*:\s*(?P<value>\S+)\s*$",
-                       re.IGNORECASE | re.MULTILINE)
+_FIELD_RE = re.compile(
+    r"^\s*(?P<key>reviewer|head|vendor|model|vendors)\s*:\s*(?P<value>\S+)\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
 _SHIP_BRANCH_RE = re.compile(r"^(feature|fix|chore|docs|test)/issue-\d+(?:-|$)")
+
+# Evidence phases. An artifact is required in the phase that produces it, mirroring
+# the step mapping stepverifier already applies (review -> s7, jury -> s8, closure ->
+# s12). The merge gate at s10 asks for PHASE_PRE_MERGE, because the closure comment
+# is a post-merge record and requiring it at s10 makes the backbone unsatisfiable.
+PHASE_PRE_MERGE = "pre-merge"
+PHASE_POST_MERGE = "post-merge"
+PHASE_ALL = "all"
+PHASES = (PHASE_PRE_MERGE, PHASE_POST_MERGE, PHASE_ALL)
 
 
 @dataclass(frozen=True)
@@ -36,6 +47,7 @@ class EvidenceItem:
     kind: str
     required: bool
     description: str
+    phase: str = PHASE_PRE_MERGE
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -43,6 +55,7 @@ class EvidenceItem:
             "kind": self.kind,
             "required": self.required,
             "description": self.description,
+            "phase": self.phase,
         }
 
 
@@ -167,8 +180,18 @@ def required_items(
     *,
     dry_run: bool = False,
     enforced: bool = True,
+    phase: str = PHASE_ALL,
 ) -> tuple[EvidenceItem, ...]:
-    """Return the tier/flag-derived evidence requirements."""
+    """Return the tier/flag-derived evidence requirements for ``phase``.
+
+    ``phase`` selects which artifacts are in scope: ``pre-merge`` covers the
+    review verdicts and a gating jury verdict (everything that must exist before
+    s10 authorizes a merge), ``post-merge`` covers the closure comments s11
+    posts, and ``all`` — the default, so existing callers are unchanged — covers
+    both. An unknown phase raises, so a typo cannot silently drop requirements.
+    """
+    if phase not in PHASES:
+        raise ValueError(f"unknown evidence phase {phase!r}; expected one of {', '.join(PHASES)}")
     if dry_run or not enforced:
         return ()
     reviewers = review_contract.get("reviewers")
@@ -186,12 +209,14 @@ def required_items(
             "closure",
             True,
             "PR conversation comment with keel.closure-comment.v1 marker",
+            PHASE_POST_MERGE,
         ),
         EvidenceItem(
             "closure-comment-issue",
             "closure",
             True,
             "Linked issue comment with keel.closure-comment.v1 marker",
+            PHASE_POST_MERGE,
         ),
     ]
     for index in range(1, reviewer_count + 1):
@@ -200,6 +225,7 @@ def required_items(
             "review",
             True,
             "Distinct posted s7 reviewer verdict for the current PR",
+            PHASE_PRE_MERGE,
         ))
     if jury_required:
         items.append(EvidenceItem(
@@ -207,8 +233,11 @@ def required_items(
             "jury",
             True,
             "Posted gating jury verdict comment for the current PR",
+            PHASE_PRE_MERGE,
         ))
-    return tuple(items)
+    if phase == PHASE_ALL:
+        return tuple(items)
+    return tuple(item for item in items if item.phase == phase)
 
 
 def verify(
@@ -224,8 +253,22 @@ def verify(
     dry_run: bool = False,
     enforced: bool = True,
     deferrals: tuple[str, ...] = (),
+    phase: str = PHASE_ALL,
+    require_armed: bool = False,
+    waived: bool = False,
 ) -> dict[str, Any]:
     """Verify required evidence artifacts and return a deterministic report.
+
+    ``phase`` narrows the requirement set to the artifacts that phase produces;
+    see :func:`required_items`. The s10 merge gate passes ``pre-merge`` so it
+    does not demand the closure comments s11 has not written yet.
+
+    ``require_armed`` closes the vacuous-pass hole: with the gate unarmed there
+    are no requirements, so the report would otherwise pass without having
+    checked anything, and a green result could not be told apart from "could not
+    tell whether this was a ship run". When set, an unarmed gate is a blocking
+    finding instead. A deliberately non-ship PR still goes green through the
+    operator waiver label, which disarms explicitly rather than by accident.
 
     When ``ledger_record`` is the ship_run record for this PR, a closure comment
     only counts when its content matches the canonical render of that record
@@ -237,7 +280,7 @@ def verify(
     :func:`attribution_check`.
     """
     del pr_body  # Explicitly not accepted as evidence.
-    items = required_items(review_contract, dry_run=dry_run, enforced=enforced)
+    items = required_items(review_contract, dry_run=dry_run, enforced=enforced, phase=phase)
     deferred = set(deferrals)
     counts = _evidence_counts(
         pr_comments=pr_comments or [],
@@ -292,12 +335,21 @@ def verify(
     )
     if attribution is not None:
         findings = [*findings, attribution]
+    unarmed = _unarmed_finding(
+        enforced=enforced,
+        dry_run=dry_run,
+        require_armed=require_armed,
+        waived=waived,
+    )
+    if unarmed is not None:
+        findings = [*findings, unarmed]
     blocking_findings = [finding for finding in findings if finding["severity"] == "major"]
     return {
         "schema_version": SCHEMA_VERSION,
         "status": "pass" if not missing and not blocking_findings else "fail",
         "dry_run": dry_run,
         "enforced": enforced,
+        "phase": phase,
         "required_count": len(items),
         "missing": missing,
         "results": results,
@@ -750,6 +802,36 @@ def attribution_check(
     }
 
 
+def _unarmed_finding(
+    *,
+    enforced: bool,
+    dry_run: bool,
+    require_armed: bool,
+    waived: bool,
+) -> dict[str, Any] | None:
+    """Return a blocking finding when the gate was never armed, else ``None``.
+
+    Opt-in via ``require_armed`` so existing callers keep today's behavior. An
+    unarmed gate derives no requirements, so without this the report passes
+    having verified nothing — indistinguishable from a genuine pass. Skipped
+    under ``dry_run``, where producing no evidence is the expected outcome, and
+    when ``waived``: an operator disarming the gate on purpose is the sanctioned
+    way out, and the whole point is to separate that from arming by accident.
+    """
+    if not require_armed or dry_run or enforced or waived:
+        return None
+    return {
+        "id": "gate-unarmed",
+        "severity": "major",
+        "kind": "arming",
+        "message": (
+            "Evidence gate is not armed, so no requirements were checked. Arm it via ship "
+            "provenance (ship branch, posted review verdict, ship-run ledger, or the gate "
+            "label), or disarm deliberately with the operator waiver label."
+        ),
+    }
+
+
 def _attribution_finding(
     *,
     pr_labels: Sequence[str] | None,
@@ -828,6 +910,48 @@ def _has_trusted_review_marker(items: list[dict[str, Any]]) -> bool:
         _is_trusted_source(item, enforced=True) and REVIEW_VERDICT_MARKER in _body(item)
         for item in items
     )
+
+
+def jury_participating_vendors(
+    pr_comments: list[dict[str, Any]] | None = None,
+    pr_reviews: list[dict[str, Any]] | None = None,
+    *,
+    head_sha: str | None = None,
+    enforced: bool = True,
+) -> int | None:
+    """Return the panel size declared by a posted jury verdict, or ``None``.
+
+    Reads the ``vendors: <N>`` field from a trusted, head-bound
+    ``keel.jury-verdict.v1`` comment. This is how the participating-vendor count
+    reaches a CI evidence check: the run ledger and the jury artifact both live
+    under the gitignored ``.keel/state/``, so a hosted runner cannot read either,
+    but PR comments are always visible.
+
+    ``None`` means "not declared" — no jury verdict posted, or one that predates
+    the field — and leaves the jury mode untouched rather than assuming a short
+    panel. Only a verdict that actually states the count may relax the gate.
+
+    When several verdicts qualify, the largest declared count wins: a re-post
+    correcting an earlier partial run should not be capped by the stale one.
+    """
+    counts = [
+        parsed
+        for item in [*(pr_comments or []), *(pr_reviews or [])]
+        if _is_jury_verdict(item, head_sha=head_sha, enforced=enforced)
+        if (parsed := _parse_vendor_count(_fields(_body(item)).get("vendors"))) is not None
+    ]
+    return max(counts) if counts else None
+
+
+def _parse_vendor_count(raw: str | None) -> int | None:
+    """Parse a declared vendor count, rejecting anything not a plain non-negative int."""
+    if raw is None:
+        return None
+    try:
+        parsed = int(raw)
+    except ValueError:
+        return None
+    return parsed if parsed >= 0 else None
 
 
 def _is_jury_verdict(

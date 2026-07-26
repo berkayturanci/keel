@@ -6,6 +6,78 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **The jury downgrade works unattended** (#613): #611 made the jury mode a function of the
+  panel that ran, but nothing computed the count, so `--jury-vendors` was operator-supplied
+  only. The jury verdict now declares `vendors: <N>` (`render_jury_verdict`, inferred from
+  `participants` when not passed), and `evidence-verify` reads it from a trusted, head-bound
+  verdict when the flag is omitted. This is the only channel a hosted runner has: the run
+  ledger and the jury artifact both live under the gitignored `.keel/state/`, so CI can read
+  neither, while PR comments are always visible. An undeclared count leaves the mode alone —
+  only a verdict that states the panel size may relax the gate.
+
+### Changed
+- **The ship adapter describes the jury downgrade instead of instructing it** (#612): the
+  `s8` prose still told the agent to "count distinct participating vendors" and perform the
+  sub-2-vendor downgrade itself, which #611 moved into `ship.resolve_jury()`. It now states
+  that core resolves the effective mode and the agent's job is to *report* the participating
+  count via `evidence-verify --jury-vendors`, with an explicit "do not re-derive or override
+  that downgrade". Regenerated into the plugin `commands/`, `.claude/commands/keel/` and
+  `.agents/skills/keel-ship/`; `docs/keel/parameter-reference.md` carries an independent copy
+  of the same sentence and was updated alongside.
+
+### Fixed
+- **The jury gates on the panel that ran, not on the tier alone** (#610): a tier-3 PR
+  required a posted gating `jury-verdict` regardless of whether a gating panel could be
+  assembled, while the contract's own "a sub-2-vendor panel is downgraded to advisory" rule
+  lived only in adapter prose — `minimum_vendors` was written in `resolve_jury()` and read
+  nowhere. `resolve_jury()` now takes `participating_vendors` and downgrades
+  `gating → advisory` below `MINIMUM_JURY_VENDORS`, so the evidence gate (which reads
+  `jury.mode`) stops demanding a verdict the jury step would decline to treat as gating.
+  A run where no agent returned output is simply zero vendors, so "a jury that did not
+  complete cleanly never gates" needs no separate branch. Surfaced via
+  `evidence-verify --jury-vendors N`; omitting it leaves today's behaviour unchanged.
+- **Evidence requirements are split by phase, and the merge gate stops demanding a
+  post-merge artifact** (#608): `evidence.required_items()` required the two closure
+  comments whenever the gate was armed, but s11 posts those *after* the s10 merge the gate
+  authorizes — so a run following the backbone step order could never merge. Items now
+  declare a `phase` (`pre-merge` for review/jury verdicts, `post-merge` for closure),
+  mirroring the mapping `stepverifier` already applies, and `evidence-verify` takes
+  `--phase {pre-merge,post-merge,all}` (default `all`, so existing callers are unchanged).
+  The committed `keel-ship.yml` gate now runs `--phase pre-merge`.
+- **An unarmed evidence gate can no longer report success** (#608): with no ship provenance
+  the gate derives no requirements and passed having checked nothing, indistinguishable
+  from a genuine pass. New `evidence-verify --require-armed` turns that into a blocking
+  `gate-unarmed` finding; the operator waiver label still disarms deliberately and passes.
+  The `evidence` job in `keel-ship.yml` also gains `needs: ship`, because arming falls
+  through to the ship-assessment comment for any branch outside `_SHIP_BRANCH_RE` and the
+  two jobs previously raced.
+
+### Added
+- **Display settings popover is reachable again** (#606): the `[data-motion="max"]` animation
+  rules in `styles.css` had no UI — `wireSeg()` queried a `.seg[data-seg]` control that no
+  page rendered, so the only way to reach them was editing `localStorage` by hand. The
+  titlebar gains a display button whose popover exposes the Motion segment, wired with
+  correct single-select semantics: `role="radiogroup"` + `role="radio"`/`aria-checked`
+  (not `aria-pressed`), roving tabindex, Arrow/Home/End, `aria-expanded` on the trigger,
+  and focus returned to it on `Escape`.
+
+### Removed
+- **Dead `data-type` plumbing** (#606): every page set `data-type` on `<html>` from
+  `localStorage`, but no stylesheet has ever read it. Dropped from all four pages.
+- **`plan.md` is no longer tracked** (#606): a leftover agent scratch plan at the repo root.
+  Because it was in version control, every agent run that rewrote its plan landed as a
+  source change inside an unrelated PR. Untracked and gitignored.
+
+### Fixed
+- **Command rail is a complete ARIA tabs pattern** (#604): the website's showcase rail
+  drives a detail panel but announced itself as 16 independent toggle buttons via
+  `aria-pressed`. It now carries the whole pattern — roving tabindex (one Tab stop instead
+  of sixteen), Arrow/Home/End navigation on both axes with wraparound, `aria-selected`, and
+  `#show-detail` as a `tabpanel` wired both ways via `aria-controls`/`aria-labelledby`. The
+  interleaved group headings become `role="presentation"` (a tablist may only own tabs) and
+  their text moves into each tab's accessible name so the grouping survives.
+
 ## [1.9.0] — 2026-07-17
 
 ### Added
