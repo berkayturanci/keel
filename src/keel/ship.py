@@ -22,6 +22,12 @@ CI_OK_STATES = frozenset({"SUCCESS", "NEUTRAL", "SKIPPED"})
 
 POSTING_MODES = frozenset({"inline", "summary"})
 
+# A cross-vendor jury needs at least this many distinct vendors to gate. Below it
+# the panel cannot produce cross-vendor consensus, so the verdict is advisory —
+# and a run where no agent produced output counts as zero, which is how "a jury
+# that did not complete cleanly never gates" falls out of the same comparison.
+MINIMUM_JURY_VENDORS = 2
+
 REVIEW_FOCUS_A = (
     "logic correctness",
     "null safety",
@@ -82,8 +88,23 @@ def resolve_jury(
     jury: bool = False,
     no_jury: bool = False,
     jury_advisory: bool = False,
+    participating_vendors: int | None = None,
 ) -> dict[str, Any]:
-    """Resolve the cross-vendor jury mode using ship flag precedence."""
+    """Resolve the cross-vendor jury mode using ship flag precedence.
+
+    ``participating_vendors`` is the count of distinct vendors that actually took
+    part in the panel. Below :data:`MINIMUM_JURY_VENDORS` a gating mode is
+    downgraded to advisory, because a panel that small cannot produce
+    cross-vendor consensus — and a run where no agent returned output is simply
+    zero, so "a jury that did not complete cleanly never gates" needs no separate
+    branch. ``None`` means the panel is not known yet (planning, ``keel plan``,
+    any caller resolving the contract before s8 runs), and leaves the mode alone.
+
+    The downgrade must live here rather than in adapter prose: the evidence gate
+    derives its ``jury-verdict`` requirement from this ``mode``, so a mode that
+    ignores the real panel makes the gate demand a verdict the jury step would
+    decline to treat as gating.
+    """
     if no_jury:
         enabled = False
         reason = "--no-jury"
@@ -97,13 +118,27 @@ def resolve_jury(
         enabled = False
         reason = "default"
     mode = "off" if not enabled else ("advisory" if jury_advisory else "gating")
+    downgraded = (
+        mode == "gating"
+        and participating_vendors is not None
+        and participating_vendors < MINIMUM_JURY_VENDORS
+    )
+    if downgraded:
+        mode = "advisory"
+        reason = (
+            f"{reason}; downgraded to advisory "
+            f"({participating_vendors} participating vendor(s), "
+            f"minimum {MINIMUM_JURY_VENDORS})"
+        )
     return {
         "enabled": enabled,
         "mode": mode,
         "reason": reason,
         "configured_gate": "jury" in gates,
         "fail_soft": True,
-        "minimum_vendors": 2,
+        "minimum_vendors": MINIMUM_JURY_VENDORS,
+        "participating_vendors": participating_vendors,
+        "downgraded": downgraded,
         "verified_consensus_gates": enabled and mode == "gating",
         "severity_policy": {
             "critical": "block",
@@ -125,6 +160,7 @@ def resolve_review_contract(
     no_jury: bool = False,
     jury_advisory: bool = False,
     require_distinct_vendors: bool = False,
+    jury_participating_vendors: int | None = None,
 ) -> dict[str, Any]:
     """Machine-readable review, jury, test, and merge-gate plan for ship-like flows."""
     if reviewer_override is not None and reviewer_override not in {1, 2, 3}:
@@ -164,6 +200,7 @@ def resolve_review_contract(
             jury=jury,
             no_jury=no_jury,
             jury_advisory=jury_advisory,
+            participating_vendors=jury_participating_vendors,
         ),
         "finding_policy": {
             "critical": "block",

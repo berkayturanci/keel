@@ -478,10 +478,16 @@ The **`jury` gate** runs the ai-jury CLI read-only on the PR diff when present (
 fail-soft otherwise) using the committed panel; it never passes `--strict`. In **gating**
 mode the depth is the full verified run; only **verified consensus**
 `critical`/`major`/`minor` findings fold into s9 (`critical`/`major` ⇒ block, `minor` ⇒
-gated suggestion, `nit` ⇒ advisory; a jury-driven fix consumes one round). A sub-2-vendor
-panel is downgraded to advisory (count distinct participating vendors before assembling the
-verdict so the posted comment matches what is enforced), and any jury run that did not
-complete cleanly **never gates**. Honour `--review-comments` (pass the jury's native inline
+gated suggestion, `nit` ⇒ advisory; a jury-driven fix consumes one round). **Core resolves
+the effective mode from the panel that actually ran** — a run with fewer than
+`ship.MINIMUM_JURY_VENDORS` (2) distinct *participating* vendors is downgraded to advisory,
+and a run where no agent returned output is simply zero vendors, so a jury that did not
+complete cleanly **never gates**. Do not re-derive or override that downgrade: report the
+count and let core decide. Pass the distinct participating vendors — those that actually
+returned output, not those merely configured — via `keel evidence-verify --jury-vendors <N>`,
+and post a verdict whose declared mode matches the resolved `jury.mode`, which the evidence
+gate reads to decide whether a `jury-verdict` is required at all.
+Honour `--review-comments` (pass the jury's native inline
 flag through in inline mode, never under `--dry-run`). The orchestrator MUST POST the
 single jury summary/verdict comment to the GitHub PR through `keel post-comment`:
 `keel post-comment .keel/project.yaml --root . --target pr:<PR> --artifact jury-verdict

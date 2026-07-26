@@ -25,8 +25,10 @@ DEFAULT_WAIVER_LABEL = "keel:evidence-waived"
 TRUSTED_AUTHOR_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 TRUSTED_SHIP_ASSESSMENT_BOTS = frozenset({"github-actions", "github-actions[bot]"})
 
-_FIELD_RE = re.compile(r"^\s*(?P<key>reviewer|head|vendor|model)\s*:\s*(?P<value>\S+)\s*$",
-                       re.IGNORECASE | re.MULTILINE)
+_FIELD_RE = re.compile(
+    r"^\s*(?P<key>reviewer|head|vendor|model|vendors)\s*:\s*(?P<value>\S+)\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
 _SHIP_BRANCH_RE = re.compile(r"^(feature|fix|chore|docs|test)/issue-\d+(?:-|$)")
 
 # Evidence phases. An artifact is required in the phase that produces it, mirroring
@@ -908,6 +910,48 @@ def _has_trusted_review_marker(items: list[dict[str, Any]]) -> bool:
         _is_trusted_source(item, enforced=True) and REVIEW_VERDICT_MARKER in _body(item)
         for item in items
     )
+
+
+def jury_participating_vendors(
+    pr_comments: list[dict[str, Any]] | None = None,
+    pr_reviews: list[dict[str, Any]] | None = None,
+    *,
+    head_sha: str | None = None,
+    enforced: bool = True,
+) -> int | None:
+    """Return the panel size declared by a posted jury verdict, or ``None``.
+
+    Reads the ``vendors: <N>`` field from a trusted, head-bound
+    ``keel.jury-verdict.v1`` comment. This is how the participating-vendor count
+    reaches a CI evidence check: the run ledger and the jury artifact both live
+    under the gitignored ``.keel/state/``, so a hosted runner cannot read either,
+    but PR comments are always visible.
+
+    ``None`` means "not declared" — no jury verdict posted, or one that predates
+    the field — and leaves the jury mode untouched rather than assuming a short
+    panel. Only a verdict that actually states the count may relax the gate.
+
+    When several verdicts qualify, the largest declared count wins: a re-post
+    correcting an earlier partial run should not be capped by the stale one.
+    """
+    counts = [
+        parsed
+        for item in [*(pr_comments or []), *(pr_reviews or [])]
+        if _is_jury_verdict(item, head_sha=head_sha, enforced=enforced)
+        if (parsed := _parse_vendor_count(_fields(_body(item)).get("vendors"))) is not None
+    ]
+    return max(counts) if counts else None
+
+
+def _parse_vendor_count(raw: str | None) -> int | None:
+    """Parse a declared vendor count, rejecting anything not a plain non-negative int."""
+    if raw is None:
+        return None
+    try:
+        parsed = int(raw)
+    except ValueError:
+        return None
+    return parsed if parsed >= 0 else None
 
 
 def _is_jury_verdict(
