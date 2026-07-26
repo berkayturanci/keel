@@ -1974,6 +1974,92 @@ class TestShip(unittest.TestCase):
         self.assertIn("required      : 0", out)
         self.assertIn("note          : evidence gate not enforced", out)
 
+    def test_evidence_verify_require_armed_fails_an_unarmed_gate(self):
+        # Without this the check exits 0 having verified nothing, so a green
+        # required check cannot be told apart from one that never evaluated.
+        rc, out, _ = run([
+            "evidence-verify", str(PROJECTS / "example-android.yaml"),
+            "--root", str(REPO_ROOT),
+            "--pr", "300",
+            "--head-ref", "docs/readme-polish",
+            "--require-armed",
+            "--pr-comments-json", _write_raw("[]"),
+            "--issue-comments-json", _write_raw("[]"),
+            "--pr-reviews-json", _write_raw("[]"),
+        ])
+
+        self.assertEqual(rc, 1)
+        self.assertIn("enforced      : false (no-ship-provenance)", out)
+        self.assertIn("FAIL  gate-unarmed", out)
+
+    def test_evidence_verify_require_armed_still_honours_operator_waiver(self):
+        rc, out, _ = run([
+            "evidence-verify", str(PROJECTS / "example-android.yaml"),
+            "--root", str(REPO_ROOT),
+            "--pr", "300",
+            "--head-ref", "fix/issue-266-evidence-arming",
+            "--pr-label", "keel:evidence-waived",
+            "--require-armed",
+            "--pr-comments-json", _write_raw("[]"),
+            "--issue-comments-json", _write_raw("[]"),
+            "--pr-reviews-json", _write_raw("[]"),
+        ])
+
+        self.assertEqual(rc, 0)
+        self.assertIn("enforced      : false (operator-waiver-label)", out)
+        self.assertNotIn("gate-unarmed", out)
+
+    def test_evidence_verify_pre_merge_phase_omits_closure_requirements(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pr_comments = root / "pr.json"
+            body = root / "body.md"
+            # No closure comments anywhere: they are an s11 artifact, and this is
+            # the gate that authorizes the s10 merge that precedes s11.
+            _write_json_fixture(pr_comments, [
+                _trusted_comment("keel.review-verdict.v1\nReviewer A LGTM"),
+            ])
+            body.write_text("Closes #212", encoding="utf-8")
+            rc, out, _ = run([
+                "evidence-verify", str(PROJECTS / "example-android.yaml"),
+                "--root", str(REPO_ROOT),
+                "--pr", "300",
+                "--pr-label", "keel:ship",
+                "--pr-label", "agent:codex",
+                "--reviewers", "1",
+                "--no-jury",
+                "--phase", "pre-merge",
+                "--pr-comments-json", str(pr_comments),
+                "--issue-comments-json", _write_raw("[]"),
+                "--pr-reviews-json", _write_raw("[]"),
+                "--pr-body-file", str(body),
+                "--json",
+            ])
+
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["verification"]["phase"], "pre-merge")
+        self.assertEqual(data["verification"]["status"], "pass")
+        self.assertEqual(
+            [item["id"] for item in data["verification"]["results"]],
+            ["review-verdict-1"],
+        )
+
+    def test_evidence_verify_phase_appears_in_human_output(self):
+        rc, out, _ = run([
+            "evidence-verify", str(PROJECTS / "example-android.yaml"),
+            "--root", str(REPO_ROOT),
+            "--pr", "300",
+            "--head-ref", "docs/readme-polish",
+            "--phase", "post-merge",
+            "--pr-comments-json", _write_raw("[]"),
+            "--issue-comments-json", _write_raw("[]"),
+            "--pr-reviews-json", _write_raw("[]"),
+        ])
+
+        self.assertEqual(rc, 0)
+        self.assertIn("phase         : post-merge", out)
+
     def test_evidence_verify_fixture_keeps_explicit_issue(self):
         rc, out, _ = run([
             "evidence-verify", str(PROJECTS / "example-android.yaml"),

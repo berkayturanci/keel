@@ -474,6 +474,40 @@ status `pass` (exit 0). The only disarm path for ship provenance is the operator
 waiver label `keel:evidence-waived`, which is reported in the check output. When enforced,
 the verifier is fail-closed and accepts only durable GitHub artifacts:
 
+### Phases — `--phase {pre-merge,post-merge,all}`
+
+Evidence is required in the phase that *produces* it, mirroring the step mapping
+`stepverifier` already applies:
+
+| phase | items | produced at | checked by |
+|---|---|---|---|
+| `pre-merge` | review verdicts, gating jury verdict | s7 / s8 | the s10 merge gate |
+| `post-merge` | `closure-comment-pr`, `closure-comment-issue` | s11 | after the merge |
+| `all` (default) | both | — | back-compat for existing callers |
+
+The distinction is not cosmetic. The closure comment is a record of a completed ship, so
+demanding it at s10 makes the backbone unsatisfiable: s10 refuses to merge without evidence
+that s11 only writes after the merge. **The merge gate must therefore pass `--phase
+pre-merge`**; the committed `keel-ship.yml` does. Run `--phase post-merge` once the closure
+comments are posted.
+
+An unknown `--phase` value is rejected rather than silently narrowing the requirement set.
+
+### `--require-armed`
+
+With the gate unarmed there are no requirements, so the report passes having verified
+nothing — and a green `keel evidence (required)` check cannot be told apart from one that
+never evaluated anything. `--require-armed` turns that state into a blocking `gate-unarmed`
+finding (exit 1) instead.
+
+This matters because three of the arming signals depend on artifacts that may not exist
+yet. A PR whose branch does not match the ship-branch pattern falls through to the
+assessment comment, so whether the gate evaluates anything depends on job ordering — which
+is why the `evidence` job in `keel-ship.yml` declares `needs: ship`.
+
+The operator waiver label is unaffected: it disarms deliberately and still reports `pass`,
+which is the point — an explicit operator act stays distinguishable from arming by accident.
+
 - a `keel.closure-comment.v1` closure marker on both the PR and linked issue, posted by a
   trusted GitHub actor. **Closure fidelity:** when a `ship_run` ledger record exists for the
   PR, the posted closure body must match the canonical render of that record
@@ -516,6 +550,12 @@ tier, reviewer count, and jury requirement from the same project policy used by 
 keel evidence-verify .keel/project.yaml --root . --pr 456
 keel evidence-verify .keel/project.yaml --root . --pr 456 --reviewers 3 --jury --json
 keel evidence-verify .keel/project.yaml --root . --pr 456 --no-jury
+
+# The s10 merge gate: review evidence only, and refuse to pass unevaluated.
+keel evidence-verify .keel/project.yaml --root . --pr 456 --phase pre-merge --require-armed
+
+# After s11 has posted the closure comments.
+keel evidence-verify .keel/project.yaml --root . --pr 456 --phase post-merge
 ```
 
 `--gate-label <name>` overrides the legacy arming label for a single run,

@@ -6,6 +6,23 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **Evidence requirements are split by phase, and the merge gate stops demanding a
+  post-merge artifact** (#608): `evidence.required_items()` required the two closure
+  comments whenever the gate was armed, but s11 posts those *after* the s10 merge the gate
+  authorizes — so a run following the backbone step order could never merge. Items now
+  declare a `phase` (`pre-merge` for review/jury verdicts, `post-merge` for closure),
+  mirroring the mapping `stepverifier` already applies, and `evidence-verify` takes
+  `--phase {pre-merge,post-merge,all}` (default `all`, so existing callers are unchanged).
+  The committed `keel-ship.yml` gate now runs `--phase pre-merge`.
+- **An unarmed evidence gate can no longer report success** (#608): with no ship provenance
+  the gate derives no requirements and passed having checked nothing, indistinguishable
+  from a genuine pass. New `evidence-verify --require-armed` turns that into a blocking
+  `gate-unarmed` finding; the operator waiver label still disarms deliberately and passes.
+  The `evidence` job in `keel-ship.yml` also gains `needs: ship`, because arming falls
+  through to the ship-assessment comment for any branch outside `_SHIP_BRANCH_RE` and the
+  two jobs previously raced.
+
 ### Added
 - **Display settings popover is reachable again** (#606): the `[data-motion="max"]` animation
   rules in `styles.css` had no UI — `wireSeg()` queried a `.seg[data-seg]` control that no

@@ -2226,6 +2226,9 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
         dry_run=args.dry_run,
         enforced=enforced,
         deferrals=tuple(args.deferral or ()),
+        phase=args.phase,
+        require_armed=args.require_armed,
+        waived=bool(gate.get("waived")),
     )
     payload = {
         "contract": evidence.contract_as_dict(
@@ -2252,6 +2255,7 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
         print(f"keel evidence-verify — {report['status']}  PR #{args.pr}")
         print(f"  issue         : {artifacts['issue'] or 'not resolved'}")
         print(f"  dry-run       : {str(args.dry_run).lower()}")
+        print(f"  phase         : {args.phase}")
         if not enforced:
             print(f"  enforced      : false ({gate['reason']})")
             print("  required      : 0")
@@ -2259,6 +2263,11 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
                 print("  note          : evidence gate disarmed by operator waiver label")
             else:
                 print("  note          : evidence gate not enforced; no ship provenance detected")
+            # An unarmed gate checked nothing, so --require-armed refuses to call that
+            # a pass; the waiver label stays the deliberate, operator-signed way out.
+            if report["status"] != "pass":
+                print("  FAIL  gate-unarmed")
+                return 1
             return 0
         print(f"  enforced      : true ({gate['reason']})")
         print(f"  required      : {report['required_count']}")
@@ -4606,6 +4615,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_evidence.add_argument("--require-distinct-vendors", action="store_true",
                             help="require each review verdict to carry a distinct vendor "
                                  "(overrides the project knob; off by default)")
+    p_evidence.add_argument("--phase", choices=evidence.PHASES, default=evidence.PHASE_ALL,
+                            help="which phase's evidence to require: pre-merge (review + "
+                                 "gating jury, the s10 merge gate), post-merge (the s11 "
+                                 "closure comments), or all (default)")
+    p_evidence.add_argument("--require-armed", action="store_true",
+                            help="fail instead of passing when the gate is not armed, so a "
+                                 "green result cannot mean 'checked nothing'; the operator "
+                                 "waiver label remains the deliberate way to disarm")
     p_evidence.add_argument("--dry-run", action="store_true",
                             help="emit the contract without requiring evidence")
     p_evidence.add_argument("--deferral", action="append", default=[],
