@@ -6,6 +6,22 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Display settings popover is reachable again** (#606): the `[data-motion="max"]` animation
+  rules in `styles.css` had no UI — `wireSeg()` queried a `.seg[data-seg]` control that no
+  page rendered, so the only way to reach them was editing `localStorage` by hand. The
+  titlebar gains a display button whose popover exposes the Motion segment, wired with
+  correct single-select semantics: `role="radiogroup"` + `role="radio"`/`aria-checked`
+  (not `aria-pressed`), roving tabindex, Arrow/Home/End, `aria-expanded` on the trigger,
+  and focus returned to it on `Escape`.
+
+### Removed
+- **Dead `data-type` plumbing** (#606): every page set `data-type` on `<html>` from
+  `localStorage`, but no stylesheet has ever read it. Dropped from all four pages.
+- **`plan.md` is no longer tracked** (#606): a leftover agent scratch plan at the repo root.
+  Because it was in version control, every agent run that rewrote its plan landed as a
+  source change inside an unrelated PR. Untracked and gitignored.
+
 ### Fixed
 - **Command rail is a complete ARIA tabs pattern** (#604): the website's showcase rail
   drives a detail panel but announced itself as 16 independent toggle buttons via

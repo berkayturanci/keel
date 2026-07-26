@@ -40,3 +40,11 @@
 ## 2026-07-26 - A tablist may only own tabs
 **Learning:** `role="tablist"` permits only `tab` children. Interleaved group headings (`<div class="st-group">`) become invalid children and are liable to be dropped from the accessibility tree — silently losing the grouping that gives a long tab list its structure.
 **Action:** Mark the visual heading `role="presentation"` and fold its text into each tab's accessible name (`aria-label="<group>: <name> — <one-liner>"`), so the grouping survives for screen reader users without relying on `display: contents` or `aria-owns` support.
+
+## 2026-07-26 - Segmented settings are radiogroups, not toggle rows
+**Learning:** A segmented control that picks exactly one value (Motion: Balanced | Max) is a single-select group. Marking each segment with `aria-pressed` describes it as a row of independent toggles, so a screen-reader user is told two buttons can be "pressed" at once and never learns the options are alternatives. `aria-current` is not the fix either — that marks the current item in a navigational set, not a chosen setting value.
+**Action:** Use `role="radiogroup"` on the container with an `aria-labelledby` pointing at its visible label, `role="radio"` + `aria-checked` on each segment, and the same roving-tabindex + Arrow/Home/End contract a tablist needs — the group is one Tab stop, arrows move and select within it.
+
+## 2026-07-26 - A popover trigger owes aria-expanded and focus return
+**Learning:** A disclosure button that opens a popover must report its state via `aria-expanded` and point at the panel with `aria-controls`, otherwise a screen-reader user cannot tell the popover exists or whether it is open. Closing with `Escape` without moving focus is equally broken: focus is left inside a now-hidden container.
+**Action:** Toggle `aria-expanded` in the same place the open class is toggled (one helper, never two code paths), and on `Escape` return focus to the trigger that opened the popover.
