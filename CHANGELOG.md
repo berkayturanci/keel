@@ -6,6 +6,8 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.10.0] — 2026-07-27
+
 ### Added
 - **The jury downgrade works unattended** (#613): #611 made the jury mode a function of the
   panel that ran, but nothing computed the count, so `--jury-vendors` was operator-supplied
