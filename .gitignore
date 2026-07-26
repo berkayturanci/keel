@@ -30,3 +30,6 @@ jury.toml
 # Agent scratch plans — working notes, not repo content. Tracking one means every
 # agent run that rewrites its plan lands as a source change in an unrelated PR.
 /plan.md
+# Root-level scratch scripts, same reason: real tests live in tests/, so a
+# test_*.py at the repo root is a throwaway an agent left behind (#616).
+/test_*.py
