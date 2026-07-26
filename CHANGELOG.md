@@ -6,6 +6,16 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **The jury downgrade works unattended** (#613): #611 made the jury mode a function of the
+  panel that ran, but nothing computed the count, so `--jury-vendors` was operator-supplied
+  only. The jury verdict now declares `vendors: <N>` (`render_jury_verdict`, inferred from
+  `participants` when not passed), and `evidence-verify` reads it from a trusted, head-bound
+  verdict when the flag is omitted. This is the only channel a hosted runner has: the run
+  ledger and the jury artifact both live under the gitignored `.keel/state/`, so CI can read
+  neither, while PR comments are always visible. An undeclared count leaves the mode alone —
+  only a verdict that states the panel size may relax the gate.
+
 ### Changed
 - **The ship adapter describes the jury downgrade instead of instructing it** (#612): the
   `s8` prose still told the agent to "count distinct participating vendors" and perform the

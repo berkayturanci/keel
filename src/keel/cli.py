@@ -2197,7 +2197,18 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
             args.require_distinct_vendors
             or config.knobs.evidence_require_distinct_vendors
         ),
-        jury_participating_vendors=args.jury_vendors,
+        # An explicit --jury-vendors wins; otherwise take the count a posted jury
+        # verdict declared, so the downgrade works unattended in CI where neither
+        # the ledger nor the jury artifact under .keel/state/ is readable.
+        jury_participating_vendors=(
+            args.jury_vendors
+            if args.jury_vendors is not None
+            else evidence.jury_participating_vendors(
+                artifacts["pr_comments"],
+                artifacts["pr_reviews"],
+                head_sha=artifacts["head_sha"],
+            )
+        ),
     )
     gate_label = args.gate_label or config.knobs.evidence_gate_label
     waiver_label = args.waiver_label or evidence.DEFAULT_WAIVER_LABEL

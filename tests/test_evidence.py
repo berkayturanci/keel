@@ -1280,5 +1280,105 @@ class TestEvidenceArming(unittest.TestCase):
         self.assertEqual(report["findings"], [])
 
 
+
+class TestJuryParticipatingVendors(unittest.TestCase):
+    """The panel size reaches a CI gate only through the posted jury verdict."""
+
+    @staticmethod
+    def _verdict_comment(*, vendors=None, participants=(), head="abc"):
+        from keel import artifacts
+        return _comment(artifacts.render_jury_verdict(
+            head_sha=head,
+            participants=participants,
+            participating_vendors=vendors,
+        ))
+
+    def test_reads_the_declared_count(self):
+        got = evidence.jury_participating_vendors(
+            [self._verdict_comment(vendors=1)], head_sha="abc")
+
+        self.assertEqual(got, 1)
+
+    def test_zero_is_a_real_answer_not_a_missing_one(self):
+        # A run where no agent returned output declares 0; conflating that with
+        # "not declared" would leave the gate demanding a verdict that cannot exist.
+        got = evidence.jury_participating_vendors(
+            [self._verdict_comment(vendors=0)], head_sha="abc")
+
+        self.assertEqual(got, 0)
+        self.assertIsNotNone(got)
+
+    def test_no_verdict_posted_is_undeclared(self):
+        self.assertIsNone(evidence.jury_participating_vendors([], head_sha="abc"))
+
+    def test_verdict_without_the_field_is_undeclared(self):
+        # Back-compat: a verdict posted before the field existed must not be read
+        # as a short panel and silently relax the gate.
+        body = f"{evidence.JURY_VERDICT_MARKER}\nhead: abc\n\nAI Jury verdict: LGTM.\n"
+
+        self.assertIsNone(
+            evidence.jury_participating_vendors([_comment(body)], head_sha="abc"))
+
+    def test_count_is_inferred_from_participants_when_omitted(self):
+        got = evidence.jury_participating_vendors(
+            [self._verdict_comment(participants=["claude", "codex"])], head_sha="abc")
+
+        self.assertEqual(got, 2)
+
+    def test_head_mismatch_is_ignored(self):
+        got = evidence.jury_participating_vendors(
+            [self._verdict_comment(vendors=1, head="stale")], head_sha="abc")
+
+        self.assertIsNone(got)
+
+    def test_untrusted_author_is_ignored(self):
+        item = {
+            "body": self._verdict_comment(vendors=1)["body"],
+            "author_association": "NONE",
+            "user": {"login": "drive-by"},
+        }
+
+        self.assertIsNone(evidence.jury_participating_vendors([item], head_sha="abc"))
+
+    def test_largest_declared_count_wins(self):
+        # A corrected re-post must not be capped by the stale partial run.
+        got = evidence.jury_participating_vendors(
+            [self._verdict_comment(vendors=1), self._verdict_comment(vendors=3)],
+            head_sha="abc",
+        )
+
+        self.assertEqual(got, 3)
+
+    def test_reads_from_pr_reviews_too(self):
+        got = evidence.jury_participating_vendors(
+            None, [self._verdict_comment(vendors=2)], head_sha="abc")
+
+        self.assertEqual(got, 2)
+
+    def test_non_numeric_count_is_rejected(self):
+        body = f"{evidence.JURY_VERDICT_MARKER}\nhead: abc\nvendors: many\n"
+
+        self.assertIsNone(
+            evidence.jury_participating_vendors([_comment(body)], head_sha="abc"))
+
+    def test_negative_count_is_rejected(self):
+        body = f"{evidence.JURY_VERDICT_MARKER}\nhead: abc\nvendors: -1\n"
+
+        self.assertIsNone(
+            evidence.jury_participating_vendors([_comment(body)], head_sha="abc"))
+
+    def test_short_panel_verdict_relaxes_the_requirement_end_to_end(self):
+        from keel import ship as ship_mod
+        declared = evidence.jury_participating_vendors(
+            [self._verdict_comment(vendors=1)], head_sha="abc")
+        contract = ship_mod.resolve_review_contract(
+            tier=3, jury_participating_vendors=declared)
+
+        ids = [item.id for item in evidence.required_items(
+            contract, phase=evidence.PHASE_PRE_MERGE)]
+        self.assertNotIn("jury-verdict", ids)
+        self.assertEqual(contract["jury"]["mode"], "advisory")
+
+
 if __name__ == "__main__":
     unittest.main()

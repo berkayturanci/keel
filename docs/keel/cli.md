@@ -516,6 +516,26 @@ and the reason string), so the posted verdict can state the mode that was actual
 enforced. An explicit `--jury-advisory` is *not* reported as a downgrade — it was never
 gating — and `--no-jury` is untouched.
 
+**Where the count comes from when the flag is omitted.** The verifier reads `vendors: <N>`
+from a trusted, head-bound `keel.jury-verdict.v1` comment on the PR. That is the only
+channel available to a hosted runner: the run ledger and the jury artifact both live under
+the gitignored `.keel/state/`, so CI can read neither, while PR comments are always
+visible. `keel.artifacts.render_jury_verdict()` emits the field, inferring it from
+`participants` when a count is not passed explicitly.
+
+Precedence and failure modes:
+
+- explicit `--jury-vendors` always wins;
+- otherwise the **largest** count declared by a qualifying verdict is used, so a corrected
+  re-post is not capped by an earlier partial run;
+- a verdict that omits the field, sits on a stale head, or comes from an untrusted author
+  is **not** read — the count stays undeclared and the jury mode is left alone. Only a
+  verdict that actually states the panel size may relax the gate;
+- a non-numeric or negative value is rejected the same way.
+
+`0` is a real answer, not a missing one: it is the run where no agent returned output, and
+it must downgrade rather than read as "unknown".
+
 This lives in core rather than in adapter prose on purpose: the evidence gate derives its
 `jury-verdict` requirement from `jury.mode`, so a mode that ignores the real panel makes
 the gate demand a verdict the jury step would decline to treat as gating.
