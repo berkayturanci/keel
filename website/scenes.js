@@ -447,16 +447,21 @@
     var featured = K.commands.slice();
     var ARGS = window.KEEL_ARGS || {};
     var stop = null, active = -1;
+    var tabs = [];
 
     function activate(i) {
       if (i === active) return;
       active = i;
       var c = featured[i];
-      rail.querySelectorAll(".show-tab").forEach(function (b, j) {
+      tabs.forEach(function (b, j) {
         var isOn = j === i;
         b.classList.toggle("on", isOn);
-        b.setAttribute("aria-pressed", isOn ? "true" : "false");
+        b.setAttribute("aria-selected", isOn ? "true" : "false");
+        // roving tabindex: only the selected tab is in the Tab sequence, so the
+        // rail costs one stop instead of 16. Arrow keys move within it.
+        b.tabIndex = isOn ? 0 : -1;
       });
+      if (detail && tabs[i]) detail.setAttribute("aria-labelledby", tabs[i].id);
       if (cmdEl) cmdEl.textContent = c.name;
       if (grpEl) grpEl.textContent = c.group;
       if (detail) {
@@ -485,12 +490,45 @@
       var i = active; active = -1; activate(i); // restart the scene at the new speed
     });
     featured.forEach(function (c, i) {
-      if (c.group !== lastGroup) { rail.appendChild(el("div", "st-group", c.group)); lastGroup = c.group; }
+      if (c.group !== lastGroup) {
+        // A tablist may only own tabs, so the visual group heading is hidden from
+        // the a11y tree; its text rides along in each tab's accessible name below.
+        var g = el("div", "st-group", c.group);
+        g.setAttribute("role", "presentation");
+        rail.appendChild(g);
+        lastGroup = c.group;
+      }
       var b = el("button", "show-tab", '<span class="st-name">' + c.name + (c.flagship ? ' <span class="st-flag">flagship</span>' : "") + '</span><span class="st-one">' + c.one + "</span>");
       b.type = "button";
+      b.id = "show-tab-" + c.slug;
+      b.setAttribute("role", "tab");
+      b.setAttribute("aria-selected", "false");
+      b.setAttribute("aria-controls", "show-detail");
+      b.setAttribute("aria-label", c.group + ": " + c.name + " — " + c.one);
+      b.tabIndex = -1;
       b.addEventListener("click", function () { activate(i); });
       rail.appendChild(b);
+      tabs.push(b);
     });
+
+    // Arrow/Home/End move selection within the rail. The rail is a vertical list
+    // at desktop widths and a horizontal scroller under 880px, so both axes move.
+    rail.addEventListener("keydown", function (e) {
+      if (e.altKey || e.ctrlKey || e.metaKey) return;
+      var from = tabs.indexOf(document.activeElement);
+      if (from < 0) return;
+      var to;
+      if (e.key === "ArrowDown" || e.key === "ArrowRight") to = from + 1;
+      else if (e.key === "ArrowUp" || e.key === "ArrowLeft") to = from - 1;
+      else if (e.key === "Home") to = 0;
+      else if (e.key === "End") to = tabs.length - 1;
+      else return;
+      e.preventDefault();
+      to = (to + tabs.length) % tabs.length;
+      tabs[to].focus();
+      activate(to);
+    });
+
     activate(0);
   }
 

@@ -251,10 +251,10 @@
         <section class="view" id="view-commands" data-view="commands">
           <div class="view-head"><p class="view-kicker brass">16 workflows · /keel:&lt;command&gt;</p><h1>Pick a command, watch it run</h1><p>These are the agentic flows — every one is <strong>project-neutral</strong>: behaviour comes only from that repo's <code style="font-family:var(--font-mono);color:var(--accent-2)">.keel/project.yaml</code>. Select any of the 16 — its scene plays a scripted run, with its arguments and flags below.</p></div>
           <div class="show-grid">
-            <div class="show-rail" id="show-rail"></div>
+            <div class="show-rail" id="show-rail" role="tablist" aria-orientation="vertical" aria-label="Workflow commands"></div>
             <div class="show-main">
               <div class="sc-panel"><div class="sc-head"><span class="sc-head-l"><span class="sc-group" id="sc-group"></span><span class="sc-cmd" id="sc-cmd"></span></span><button class="q-speed" id="sc-speed" type="button" title="Animation speed">1×</button></div><div class="sc-stage" id="show-scene"></div></div>
-              <div class="show-detail" id="show-detail"></div>
+              <div class="show-detail" id="show-detail" role="tabpanel" tabindex="0"></div>
             </div>
           </div>
           <p class="cmd-note" style="margin-top:1.6rem;font-size:.82rem;color:var(--faint);font-style:italic">Examples are illustrative — each command reads its values from .keel/project.yaml. Install them with <code style="font-family:var(--font-mono)">keel install-adapter all</code> or the Claude Code plugin.</p>

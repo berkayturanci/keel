@@ -32,3 +32,11 @@
 ## 2026-06-25 - SVG Icons and aria-hidden
 **Learning:** Screen readers may redundantly announce SVG structures when they are used as decorative icons inside elements that already have an accessible name (like an `aria-label` or text content on a button).
 **Action:** Always add `aria-hidden="true"` to decorative `<svg>` tags (like icons) to reduce screen reader noise.
+
+## 2026-07-26 - `role="tab"` is a contract, not an attribute swap
+**Learning:** Swapping `aria-pressed` for `aria-selected` and adding `role="tablist"`/`role="tab"` to a single-select list makes accessibility *worse* if the behaviour behind the roles is missing. Once an element is a tab, assistive tech announces "tab, 3 of 16" and users reach for Arrow keys; without a roving tabindex every tab also stays in the Tab sequence, and without `role="tabpanel"` + `aria-controls`/`aria-labelledby` there is no announced route from a tab to the content it selected. A plain button with `aria-pressed` is better than a tab that does not behave like one.
+**Action:** Only adopt `role="tab"` together with all four parts: (1) roving tabindex — selected tab `tabindex="0"`, the rest `-1`; (2) Arrow/Home/End handling on the tablist; (3) a `role="tabpanel"` wired both ways; (4) valid tablist children. For a single-select list that is *not* a tab/panel pair, use `aria-current` instead; for a settings segmented control, use `role="radiogroup"` + `aria-checked`, not `aria-pressed`.
+
+## 2026-07-26 - A tablist may only own tabs
+**Learning:** `role="tablist"` permits only `tab` children. Interleaved group headings (`<div class="st-group">`) become invalid children and are liable to be dropped from the accessibility tree — silently losing the grouping that gives a long tab list its structure.
+**Action:** Mark the visual heading `role="presentation"` and fold its text into each tab's accessible name (`aria-label="<group>: <name> — <one-liner>"`), so the grouping survives for screen reader users without relying on `display: contents` or `aria-owns` support.
