@@ -50,7 +50,9 @@ Changing the backbone is a keel-core change. Projects only ever touch layers 2�
   `pre-merge`, …) and keep labels, path policy, health sources, local commands, and
   workflow preferences in `policy_pack` data instead of packaged command prose.
 - **Opt-in `jury` gate** — runs the [ai-jury](https://github.com/berkayturanci/ai-jury) multi-agent
-  reviewer on the diff when installed; a fail-soft no-op otherwise.
+  reviewer on the diff when installed; a fail-soft no-op otherwise. Core resolves the mode from
+  the panel that actually ran: a cross-vendor gate needs ≥2 distinct vendors, so a short panel
+  downgrades to advisory instead of blocking on a jury that never convened.
 - **Headless with just an API key** — the hosted-API delegates
   (`--delegate anthropic-api:MODEL` / `openai-api:MODEL`) drive the implement/review steps
   with only `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` in the environment — no agent CLI
@@ -60,7 +62,10 @@ Changing the backbone is a keel-core change. Projects only ever touch layers 2�
   window re-check, live CI rollup, and evidence verification before the merge), timezone-aware
   night no-merge window, risk-tier → reviewer count, hotfix bypass with an audit line,
   vendor+model attribution. The PR evidence gate arms from ship provenance by default —
-  only the operator-applied `keel:evidence-waived` label disarms it.
+  only the operator-applied `keel:evidence-waived` label disarms it, and a gate that never
+  armed now **blocks** rather than reporting a pass having checked nothing. Requirements are
+  split by phase, so the merge gate asks for the review/jury evidence that exists at s10 and
+  not the closure comments s11 writes after it.
 
 ### How Keel compares
 
