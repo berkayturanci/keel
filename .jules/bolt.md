@@ -45,3 +45,6 @@
 ## 2024-07-31 - Fast PR Comment Validations with Explicit Loops
 **Learning:** In hot paths evaluating list of dicts (like GitHub PR comment payloads), using a generator expression with `any()` (e.g., `any(cond(item) for item in items)`) incurs noticeable generator setup overhead. Profiling isolated routines shows that an explicit `for` loop with an early `return True` is significantly faster (up to ~3x) because it short-circuits without creating a generator object.
 **Action:** Replace `any()` generator expressions with explicit `for` loops and early returns in hot paths that iterate over lists of dictionaries, such as when parsing and evaluating PR comments for trust markers.
+## 2024-08-01 - Avoid duplicate `frozenset`
+**Learning:** Using `frozenset` requires iterating over the input, so if the target items is small or cold path, `frozenset` might be slower.
+**Action:** Use `frozenset` mostly on hot paths where intersection or superset is checked.
