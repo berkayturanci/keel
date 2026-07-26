@@ -2197,6 +2197,7 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
             args.require_distinct_vendors
             or config.knobs.evidence_require_distinct_vendors
         ),
+        jury_participating_vendors=args.jury_vendors,
     )
     gate_label = args.gate_label or config.knobs.evidence_gate_label
     waiver_label = args.waiver_label or evidence.DEFAULT_WAIVER_LABEL
@@ -4612,6 +4613,11 @@ def build_parser() -> argparse.ArgumentParser:
                             help="disable the cross-vendor jury requirement")
     p_evidence.add_argument("--jury-advisory", action="store_true",
                             help="make an enabled jury advisory instead of required")
+    p_evidence.add_argument("--jury-vendors", type=_nonnegative_int, default=None,
+                            help="distinct vendors that actually took part in the jury panel; "
+                                 f"below {ship.MINIMUM_JURY_VENDORS} a gating jury is downgraded "
+                                 "to advisory and no jury verdict is required. 0 covers a run "
+                                 "where no agent returned output. Omit when the panel is unknown")
     p_evidence.add_argument("--require-distinct-vendors", action="store_true",
                             help="require each review verdict to carry a distinct vendor "
                                  "(overrides the project knob; off by default)")

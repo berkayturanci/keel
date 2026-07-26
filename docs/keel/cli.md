@@ -493,6 +493,33 @@ comments are posted.
 
 An unknown `--phase` value is rejected rather than silently narrowing the requirement set.
 
+### `--jury-vendors N` — the panel decides whether the jury gates
+
+A gating jury is auto-enabled on tier-3, but a cross-vendor panel needs at least
+`MINIMUM_JURY_VENDORS` (2) distinct vendors to produce cross-vendor consensus. Pass the
+number that **actually took part** and a short panel downgrades `gating → advisory`, which
+drops `jury-verdict` from the required set:
+
+| `--jury-vendors` | jury mode | `jury-verdict` required |
+|---|---|---|
+| omitted | unchanged (panel not known yet) | per tier/flags |
+| `0` | advisory | no |
+| `1` | advisory | no |
+| `2`+ | gating | yes |
+
+`0` is not a special case — it is the run where no agent returned output, which is how the
+contract's "a jury that did not complete cleanly never gates" falls out of the same
+comparison rather than needing its own branch.
+
+The downgrade is recorded in the contract (`jury.downgraded`, `jury.participating_vendors`,
+and the reason string), so the posted verdict can state the mode that was actually
+enforced. An explicit `--jury-advisory` is *not* reported as a downgrade — it was never
+gating — and `--no-jury` is untouched.
+
+This lives in core rather than in adapter prose on purpose: the evidence gate derives its
+`jury-verdict` requirement from `jury.mode`, so a mode that ignores the real panel makes
+the gate demand a verdict the jury step would decline to treat as gating.
+
 ### `--require-armed`
 
 With the gate unarmed there are no requirements, so the report passes having verified
