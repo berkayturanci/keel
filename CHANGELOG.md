@@ -6,6 +6,15 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **Command rail is a complete ARIA tabs pattern** (#604): the website's showcase rail
+  drives a detail panel but announced itself as 16 independent toggle buttons via
+  `aria-pressed`. It now carries the whole pattern — roving tabindex (one Tab stop instead
+  of sixteen), Arrow/Home/End navigation on both axes with wraparound, `aria-selected`, and
+  `#show-detail` as a `tabpanel` wired both ways via `aria-controls`/`aria-labelledby`. The
+  interleaved group headings become `role="presentation"` (a tablist may only own tabs) and
+  their text moves into each tab's accessible name so the grouping survives.
+
 ## [1.9.0] — 2026-07-17
 
 ### Added
