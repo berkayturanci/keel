@@ -684,6 +684,8 @@ keel evidence-verify <project.yaml> --pr N [--issue N] [--root DIR]
 | `--jury` / `--no-jury` / `--jury-advisory` | flags | off | Whether a gating jury verdict is required (gating + enabled ⇒ required; advisory ⇒ not required). |
 | `--dry-run` | flag | off | Contract shape only: no live fetch, zero required items. |
 | `--deferral` | evidence id (e.g. `review-verdict-2`), kind (`closure` \| `review` \| `jury`), or `all`; repeatable | none | Explicit, recorded operator deferral of specific evidence items. Only meaningful when the gate is enforced. |
+| `--phase` | `pre-merge` \| `post-merge` \| `all` | `all` | Which artifacts are in scope. `pre-merge` is the review verdicts plus a gating jury verdict — everything that must exist before s10 authorizes the merge; `post-merge` is the closure comments s11 writes after it. The default keeps every existing caller unchanged; the committed `keel-ship.yml` gate passes `pre-merge`, because requiring a post-merge artifact at the merge gate makes the backbone unsatisfiable. |
+| `--require-armed` | flag | off | Treat an unarmed gate as a blocking `gate-unarmed` finding instead of a pass. With no ship provenance the gate derives no requirements and would otherwise report success having verified nothing, indistinguishable from a genuine pass. The operator waiver label still disarms deliberately and passes. |
 | `--pr-comments-json` / `--issue-comments-json` / `--pr-reviews-json` / `--pr-body-file` | file paths | `None` | Offline fixtures; supplying any of them disables the live `gh` fetch. |
 | `--changed-file PATH` | repeatable | none | Offline changed-file paths used to derive the risk tier from fixtures. |
 | `--head-sha SHA` | string | `None` | Offline head SHA for verdict head-binding. |
