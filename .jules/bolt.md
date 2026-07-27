@@ -42,3 +42,7 @@
 ## 2024-05-16 - Unroll any() generator in intake.py
 **Learning:** In Python hot paths, unrolling chained `any()` generator expressions into explicit sequential `if` and `for` loops with early returns can bypass generator overhead and significantly improve performance by properly short-circuiting.
 **Action:** Unroll `any()` generator loops in hot paths to explicit loops.
+
+## 2024-05-15 - Unrolling any() checks with list comprehensions for large loops
+**Learning:** Combining list comprehensions with `any()` checks creates unnecessary generator overhead and evaluates functions like `_is_trusted_source` on items that might otherwise be skipped.
+**Action:** Unroll generator expressions into explicit sequential `if` and `for` loops with early returns in Python hot paths to bypass overhead and short-circuit efficiently.

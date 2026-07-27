@@ -432,15 +432,20 @@ def _closure_mismatch_scopes(
         return set()
     scopes: set[str] = set()
     for scope, comments in (("pr", pr_comments), ("issue", issue_comments)):
-        markered = [
-            comment for comment in comments
-            if _is_trusted_source(comment, enforced=enforced)
-            and _has_closure_marker(_body(comment))
-        ]
-        if markered and not any(
-            closure_body_matches_record(_body(comment), ledger_record)
-            for comment in markered
-        ):
+        # ⚡ Bolt Optimization: Unroll any() and avoid expensive generator overhead
+        has_markered = False
+        has_match = False
+        for comment in comments:
+            body = _body(comment)
+            if not _has_closure_marker(body):
+                continue
+            if not _is_trusted_source(comment, enforced=enforced):
+                continue
+            has_markered = True
+            if closure_body_matches_record(body, ledger_record):
+                has_match = True
+                break
+        if has_markered and not has_match:
             scopes.add(scope)
     return scopes
 
