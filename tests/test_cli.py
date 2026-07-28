@@ -415,6 +415,9 @@ def _run_git(root: Path, *args: str) -> None:
 #: Git-for-Windows happening to be on PATH. Double quotes group correctly in both sh and
 #: cmd.exe. Kept short so the orphaned child releases the inherited pipes promptly.
 _SLOW_CMD = f'"{sys.executable}" -c "import time; time.sleep(30)"'
+#: Same command as a YAML scalar. json.dumps is valid YAML and escapes correctly, so an
+#: interpreter path containing an apostrophe cannot break the document.
+_SLOW_CMD_YAML = json.dumps(_SLOW_CMD)
 
 
 class TestRunGates(unittest.TestCase):
@@ -432,10 +435,9 @@ class TestRunGates(unittest.TestCase):
 
     def test_ship_also_renders_a_timeout_apart_from_a_failure(self):
         # #622 must land on the ship surface too, not only run-gates.
-        import tempfile
         p = _write_raw("extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
                        "repo: tmp\ngates: [build]\nknobs:\n"
-                       f"  build_gate_cmd: '{_SLOW_CMD}'\n  gate_timeout_s: 1\n")
+                       f"  build_gate_cmd: {_SLOW_CMD_YAML}\n  gate_timeout_s: 1\n")
         with tempfile.TemporaryDirectory() as d:
             _, out, _ = run(["ship", p, "--root", d])
         self.assertIn("TIMEOUT", out)
@@ -445,7 +447,7 @@ class TestRunGates(unittest.TestCase):
         # End-to-end proof of #622: knob -> plan_gates -> runner -> outcome -> render.
         p = _write_raw("extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
                        "repo: tmp\ngates: [build]\nknobs:\n"
-                       f"  build_gate_cmd: '{_SLOW_CMD}'\n  gate_timeout_s: 1\n")
+                       f"  build_gate_cmd: {_SLOW_CMD_YAML}\n  gate_timeout_s: 1\n")
         rc, out, _ = run(["run-gates", p, "--root", "."])
         self.assertEqual(rc, 1)             # a timeout blocks exactly as a failure does
         self.assertIn("TIMEOUT", out)       # ...but the operator can see which it is
