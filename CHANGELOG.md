@@ -42,14 +42,18 @@ of them — and why several were found only by mutating the code and watching no
   `docs/keel/extensions.md` both permit.
 
 ### Fixed
-- **The release bump no longer steps over a site file that has already fallen behind.**
-  `scripts/release_bump.py` searched for the version currently in `pyproject.toml`, so a file
-  stuck on some *other* version matched neither the old nor the new string, was silently
-  skipped, and stayed behind forever. `website/docs.html`, `coverage.html` and `content.js`
-  sat at `v1.6.5` for four releases and then `v1.8.2` for three more, with the runbook asking
-  a human to catch it by hand each time. The four site surfaces are now matched by shape and
-  re-synced; `tests/test_release_docs.py` fails if any falls behind again, and
-  `docs/keel/release.md` drops the manual step.
+- **The release bump now covers every site surface, and cannot step over a stale one.**
+  Two separate gaps, with one symptom. `website/docs.html`, `coverage.html` and
+  `content.js` were **never registered with the tooling at all** — the runbook named them as
+  a manual step instead, and the manual step was missed, leaving them at `v1.6.5` for four
+  releases and then `v1.8.2` for three more. `website/index.html` *was* registered, but by
+  searching for the version currently in `pyproject.toml`; had it ever drifted it would have
+  matched neither the old nor the new string and been skipped forever, so the one file that
+  was wired up was wired up fragilely. All four are now matched by *shape*, which registers
+  the three missing ones and makes the literal-match fragility moot in the same stroke.
+  `tests/test_release_docs.py` derives its list from the script's own table and fails if any
+  surface falls behind; `docs/keel/release.md` drops the manual step and documents the repair
+  path (`make release-bump VERSION=<current>`).
 
 - **Re-running the ledger append no longer bricks the session** (found in review): the
   append was unconditional, so the natural retry after a crash mid-s11 wrote a *second*

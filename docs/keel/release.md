@@ -66,12 +66,14 @@ Before tagging a release:
 
   The site's hardcoded fallback strings (`website/index.html`, `docs.html`, `coverage.html`,
   `content.js` — used before `app.js`'s runtime GitHub-releases fetch resolves) **are** covered,
-  as of 1.11.0. They used to be a manual step, and the manual step kept being missed: the
-  three non-`index.html` files sat at `v1.6.5` for four releases and then `v1.8.2` for three
-  more. The cause was mechanical — the rewrites searched for the *current* version, so a file
-  already behind matched neither the old nor the new string and was skipped forever. Those
-  four surfaces are now matched by shape, so a stale file is re-synced rather than stepped
-  over, and `tests/test_release_docs.py` fails if any of them falls behind again.
+  as of 1.11.0. Two gaps produced one symptom. `docs.html`, `coverage.html` and `content.js`
+  were never wired into the script — this runbook named them as a manual step, and the step
+  was missed, leaving them at `v1.6.5` for four releases and then `v1.8.2` for three more.
+  `index.html` *was* wired, but by searching for the *current* version, so had it ever
+  drifted it would have matched neither the old nor the new string and been skipped forever.
+  All four are now matched by shape, which registers the three missing surfaces and removes
+  the fragility from the fourth; `tests/test_release_docs.py` derives its list from the
+  script's own table and fails if any of them falls behind again.
 
   If that test *does* fire — or a bump dies part-way — re-run the bump at the **current**
   version to repair it: `make release-bump VERSION=<current>` re-syncs the site surfaces

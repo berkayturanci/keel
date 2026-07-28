@@ -71,12 +71,13 @@ def _edits(old: str, new: str) -> list[tuple[str, str, str]]:
 #: Version-bearing tokens in the site, matched by *pattern* rather than by the
 #: current version.
 #:
-#: The literal edits above find `old`, which is read from ``pyproject.toml``. A file
-#: that has already fallen behind therefore contains neither `old` nor `new`, is
-#: silently skipped, and stays behind forever — which is exactly what happened to
-#: `docs.html`, `coverage.html` and `content.js`, stuck at v1.8.2 for three releases
-#: while the runbook asked a human to catch it by hand each time. Matching the shape
-#: re-syncs a stale file instead of stepping over it.
+#: Two gaps this closes, with one symptom. ``docs.html``, ``coverage.html`` and
+#: ``content.js`` were never in ``_edits`` at all — the runbook named them as a manual
+#: step, and the step was missed for seven releases. ``index.html`` *was* listed, but the
+#: literal edits find ``old`` (read from ``pyproject.toml``), so a file that has already
+#: fallen behind contains neither ``old`` nor ``new``, is skipped by the ``find not in
+#: text`` guard, and stays behind forever. Matching by shape registers the three missing
+#: surfaces and removes that fragility from the fourth at the same time.
 _SITE_PATTERNS: tuple[tuple[str, str, str], ...] = (
     ("website/index.html", r"keel@v\d+\.\d+\.\d+", "keel@v{new}"),
     ("website/index.html", r"(?<=data-version>)v\d+\.\d+\.\d+", "v{new}"),
