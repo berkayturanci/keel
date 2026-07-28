@@ -65,20 +65,20 @@ from .runner import command_gate_runner, run_argv
 
 
 def _gate_runner(root: str, diff_text: str, *, jury_mode: str = "gating",
-                 timeout: int = DEFAULT_GATE_TIMEOUT_S,
-                 jury_timeout: int = DEFAULT_JURY_TIMEOUT_S):
+                 timeout: int = DEFAULT_GATE_TIMEOUT_S):
     """A gate runner that handles command gates plus the ``jury`` built-in (on the diff).
 
     ``timeout`` is the project's ``knobs.gate_timeout_s``; it covers any command spec
-    that reached the runner without a resolved per-gate limit. ``jury_timeout`` is the
-    project's ``knobs.jury_timeout_s`` — the jury is a builtin, not a command gate, so
-    it carries its own budget.
+    that reached the runner without a resolved per-gate limit. The jury builtin reads
+    its own budget off ``spec.timeout``, which ``plan_gates`` resolves from
+    ``knobs.jury_timeout_s``.
     """
     commands = command_gate_runner(root, timeout=timeout)
 
     def run(spec: GateSpec):
         if spec.kind == "builtin" and spec.id == "jury":
-            return jury.run_gate(diff_text, cwd=root, mode=jury_mode, timeout=jury_timeout)
+            jury_limit = spec.timeout if spec.timeout is not None else DEFAULT_JURY_TIMEOUT_S
+            return jury.run_gate(diff_text, cwd=root, mode=jury_mode, timeout=jury_limit)
         return commands(spec)
 
     return run
@@ -287,8 +287,7 @@ def _cmd_run_gates(args: argparse.Namespace) -> int:
 
     diff_text = git.diff(config.base_branch, "HEAD", cwd=args.root)
     outcomes = gates.run_gates(specs, _gate_runner(args.root, diff_text, jury_mode="gating",
-                                                   timeout=config.knobs.gate_timeout_s,
-                                                   jury_timeout=config.knobs.jury_timeout_s))
+                                                   timeout=config.knobs.gate_timeout_s))
     _autostamp(config, args.root, args.gate_command, getattr(args, "run_id", None),
                args.gate_phase, issue=getattr(args, "issue", None),
                pr=getattr(args, "pull_request", None))   # the run reached the test gate (s8)
@@ -931,8 +930,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     outcomes = gates.run_gates(
         specs,
         _gate_runner(args.root, diff_text, jury_mode=review_contract["jury"]["mode"],
-                     timeout=config.knobs.gate_timeout_s,
-                     jury_timeout=config.knobs.jury_timeout_s),
+                     timeout=config.knobs.gate_timeout_s),
     )
     verdict = fnd.summarize(gates.collect_findings(outcomes))
     ci_conclusion = (

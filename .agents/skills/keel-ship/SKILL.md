@@ -484,9 +484,13 @@ mode the depth is the full verified run; only **verified consensus**
 gated suggestion, `nit` ⇒ advisory; a jury-driven fix consumes one round). **Core resolves
 the effective mode from the panel that actually ran** — a run with fewer than
 `ship.MINIMUM_JURY_VENDORS` (2) distinct *participating* vendors is downgraded to advisory,
-and a run where no agent returned output is simply zero vendors, so a jury that did not
-complete cleanly **never gates**. Do not re-derive or override that downgrade: report the
-count and let core decide. Pass the distinct participating vendors — those that actually
+and a run where no agent returned output is simply zero vendors, so at **this layer** — the
+pre-merge evidence check — a jury that did not complete cleanly does not gate. Do not
+re-derive or override that downgrade: report the count and let core decide. Note this is
+distinct from the **s8 gate layer**: there a jury run that produced no verdict (killed by
+`knobs.jury_timeout_s`, or output with no parseable report) is a blocking `major` in gating
+mode. The gate refuses to call a non-review a pass; the evidence check separately declines
+to *require* a verdict from a panel that never ran. Pass the distinct participating vendors — those that actually
 returned output, not those merely configured — via `keel evidence-verify --jury-vendors <N>`,
 and post a verdict whose declared mode matches the resolved `jury.mode`, which the evidence
 gate reads to decide whether a `jury-verdict` is required at all.
@@ -707,4 +711,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=skills command=ship keel_version=1.10.0 source_sha256=5f0a04b6264996cb36e77e94339d99788a05e2e8d01cc4d64c5bdf89b8af9ea2 generated_sha256=55e1e359e68d685ccbd7e1227e6290a45a8a85e5aa57d281be75b04380c84749 -->
+<!-- keel-generated: surface=skills command=ship keel_version=1.10.0 source_sha256=2acf1c16690108d52f4be6e2ff11b926b9804cd3a4a730fb49393dea0ff902d8 generated_sha256=ee8cf7bcfb010b90d0dca35e7d231e1f9660f3afcc3a8fd846de354b537c5f26 -->

@@ -1047,10 +1047,19 @@ PR content, issue text, or prior agent output.
 If `gates:` includes **`jury`** and the [ai-jury](https://github.com/berkayturanci/ai-jury)
 `jury` CLI is installed, the jury gate runs it on the diff (`git diff base...HEAD`) and maps
 its findings (file/line/severity) into keel findings (critical/major block). If `jury` is
-not installed the gate is a **fail-soft no-op** — the flow runs with or without jury.
-Diffs larger than 1 MB (`MAX_DIFF_BYTES`) also fail soft: keel skips the external jury run
-and emits a non-blocking `nit` finding (`jury:skipped-oversize`) so the skip is visible in
-the verdict instead of being silent.
+not installed the gate is a **fail-soft no-op** — the flow runs with or without jury. Its
+wall-clock limit is [`knobs.jury_timeout_s`](configuration.md#jury_timeout_s) (default
+600s), separate from `gate_timeout_s` because a cross-vendor panel and a test suite have
+unrelated runtimes.
+
+Three outcomes mean the panel produced **no review**: an oversize diff (over 1 MB,
+`MAX_DIFF_BYTES`), a run killed by `jury_timeout_s`, and a run whose output carries no
+parseable verdict. All three surface a visible finding rather than passing silently —
+blocking `major` in **gating** mode, non-blocking `minor` in advisory. Note `run-gates`
+always runs the jury in gating mode, so all three block here; `keel ship` uses the mode
+its review contract resolved. A nonzero exit that *does* carry a parseable report is a
+completed review — that is how ai-jury signals "request changes" — so its findings are
+used as-is.
 
 ```bash
 keel run-gates .keel/project.yaml --root .

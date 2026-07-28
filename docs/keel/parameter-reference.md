@@ -1201,9 +1201,13 @@ Each configured command gate runs its shell command; non-zero exit becomes a blo
 (`knobs.gate_timeout_s`, default 600s; per-gate `timeout:` frontmatter wins) renders as a
 distinct `TIMEOUT` instead of `FAIL` and its finding says no pass/fail result was produced
 — it still blocks, exactly as a failure does. The built-in `jury` gate (when `gates:`
-includes `jury`) runs the ai-jury CLI on `git diff base...HEAD` in **gating** mode here;
-a missing `jury` CLI is a fail-soft no-op, and diffs over 1 MB skip the jury with a
-visible non-blocking `jury:skipped-oversize` nit. Missing *required* runtime
+includes `jury`) runs the ai-jury CLI on `git diff base...HEAD` in **gating** mode here,
+with its own `knobs.jury_timeout_s` limit (default 600s). A missing `jury` CLI is a
+fail-soft no-op. Three outcomes mean no review was produced — a diff over 1 MB
+(`jury:skipped-oversize`), a run killed by the limit, and a run with no parseable verdict
+(`jury:incomplete-run`) — and in gating mode each is a blocking `major`, so `run-gates`
+blocks on all three (advisory mode, which `keel ship` may resolve to, downgrades them to
+a non-blocking `minor`). Missing *required* runtime
 capabilities exit 1 before any gate runs; missing optional capabilities print a degraded
 notice and continue. Exits 1 when the summarized verdict blocks (`BLOCKED — merge is
 gated by the findings above`), so it wires directly into CI.

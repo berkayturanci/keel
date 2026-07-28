@@ -345,6 +345,14 @@ class TestParse(unittest.TestCase):
         self.assertEqual(config.knobs.jury_timeout_s, 2400)
         self.assertEqual(config.knobs.gate_timeout_s, 600)
 
+    def test_jury_timeout_default_hashes_like_the_explicit_value(self):
+        # Omitting the knob and writing 600 must be the same config, or every project
+        # that has not adopted the knob gets a spurious cache/determinism churn.
+        data = copy.deepcopy(VALID)
+        data["knobs"]["jury_timeout_s"] = 600
+        self.assertEqual(cfg.config_hash(cfg.parse_config(copy.deepcopy(VALID))),
+                         cfg.config_hash(cfg.parse_config(data)))
+
     def test_jury_timeout_changes_config_hash(self):
         base = cfg.parse_config(copy.deepcopy(VALID))
         data = copy.deepcopy(VALID)

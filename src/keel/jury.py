@@ -32,15 +32,39 @@ def map_severity(severity: str) -> str:
     return _SEVERITY.get((severity or "").strip().lower(), "minor")
 
 
-def parse_findings(data: dict | str) -> list[Finding]:
-    """Map an ai-jury JSON report (dict or raw string) into keel Findings."""
+def parse_report(data: dict | str) -> list[Finding] | None:
+    """Map an ai-jury JSON report into Findings, or ``None`` if it is not a report.
+
+    The ``None`` return is the point: it separates *"the panel reviewed the diff and
+    found nothing"* from *"this output is not a verdict at all"*, which
+    :func:`parse_findings` collapses into the same empty list. Only the caller that
+    decides whether a gate passed needs that distinction — see :func:`run_gate`.
+
+    Tolerates trailing non-JSON. :func:`keel.runner.run_argv` hands back
+    ``stdout + stderr`` concatenated, and ai-jury logs its progress to stderr, so a
+    real report is followed by ``[jury] …`` lines. A strict ``json.loads`` rejects the
+    whole thing and silently loses every finding.
+    """
     if isinstance(data, str):
         try:
-            data = json.loads(data)
+            data, _end = json.JSONDecoder().raw_decode(data.lstrip())
         except json.JSONDecodeError:
-            return []
-    if not isinstance(data, dict):
-        return []
+            return None
+    if not isinstance(data, dict) or "findings" not in data:
+        return None
+    return _findings_from(data)
+
+
+def parse_findings(data: dict | str) -> list[Finding]:
+    """Map an ai-jury JSON report (dict or raw string) into keel Findings.
+
+    Unparseable input yields ``[]``. Use :func:`parse_report` when the difference
+    between "no findings" and "no report" matters.
+    """
+    return parse_report(data) or []
+
+
+def _findings_from(data: dict) -> list[Finding]:
     out: list[Finding] = []
     for f in data.get("findings") or []:
         path = f.get("file")
@@ -118,34 +142,38 @@ def run_gate(
     mode: str = "advisory",
     timeout: int = DEFAULT_JURY_TIMEOUT_S,
     _run=None,
-) -> tuple[bool, list[Finding]]:
+) -> tuple[bool, list[Finding], bool]:
     """Run ``jury`` on ``diff_text`` and map its findings.
 
-    Returns ``(ok, findings)``; ``ok`` is False when a finding blocks (critical/major)
-    or when the run produced no verdict at all in gating mode. Fail-soft no-op
-    (``(True, [])``) when there is no diff or the ``jury`` CLI is not installed — keel
-    does not depend on ai-jury, so an absent CLI is a legitimate no-op.
+    Returns ``(ok, findings, timed_out)``. ``ok`` is False when a finding blocks
+    (critical/major) or when the run produced no verdict at all in gating mode.
+    Fail-soft no-op when there is no diff or the ``jury`` CLI is not installed — keel
+    does not depend on ai-jury, so an absent CLI is a legitimate no-op, distinct from
+    a run that started and did not finish.
 
-    Three ways a run can end without a review, all handled the same way — advisory
-    emits a non-blocking ``nit``, gating fails closed with a blocking ``major``:
+    Three ways a run can end without a review, all handled alike — gating fails closed
+    with a blocking ``major``, advisory surfaces a ``minor``:
 
     * the diff is oversize and was never submitted,
     * the CLI was killed by ``timeout``,
-    * the CLI exited nonzero and its output carried no parseable findings.
+    * the CLI returned no parseable verdict, whatever its exit code.
 
-    The last two used to report ``(True, [])``: :func:`parse_findings` returns ``[]``
-    for unparseable output, so ``blocked`` came out False and a hung or crashed panel
-    read as a clean pass. A gate that produced no verdict must never do that.
+    The last used to report ``(True, [])``: :func:`parse_findings` yields ``[]`` for
+    unparseable output, so ``blocked`` came out False and a hung, crashed, or
+    unreadable panel read as a clean pass. The test is deliberately *"did we parse a
+    verdict"* rather than *"was the exit code zero"* — ai-jury exits nonzero to signal
+    "request changes", which is a completed review whose findings must be honoured,
+    while an exit of zero carrying unreadable output is not a review at all.
     """
     if not diff_text:
-        return True, []
+        return True, [], False
     size = len(diff_text.encode("utf-8"))
     if size > MAX_DIFF_BYTES:
         if mode == "gating":
-            return False, [_oversize_finding(size, severity="major")]
-        return True, [_oversize_finding(size)]
+            return False, [_oversize_finding(size, severity="major")], False
+        return True, [_oversize_finding(size)], False
     if not available(cwd=cwd, _run=_run):
-        return True, []
+        return True, [], False
     fd, path = tempfile.mkstemp(suffix=".diff")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
@@ -154,13 +182,13 @@ def run_gate(
                           cwd=cwd, timeout=timeout, **_kw(_run))
     finally:
         os.unlink(path)
-    findings = parse_findings(result.output)
-    if not result.ok and not findings:
-        # No verdict exists. A nonzero exit that still parsed findings is fine — the
-        # panel reached a conclusion and the exit code is ai-jury's own signalling.
+    report = parse_report(result.output)
+    if report is None:
         gating = mode == "gating"
         incomplete = _incomplete_finding(
-            result, timeout=timeout, severity="major" if gating else "nit")
-        return (not gating), [incomplete]
-    blocked = any(f.severity in ("critical", "major") for f in findings)
-    return (not blocked), findings
+            result, timeout=timeout, severity="major" if gating else "minor")
+        # timed_out rides along so the outcome renders as TIMEOUT rather than FAIL,
+        # the distinction #622 established for command gates.
+        return (not gating), [incomplete], result.timed_out
+    blocked = any(f.severity in ("critical", "major") for f in report)
+    return (not blocked), report, False

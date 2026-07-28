@@ -137,12 +137,24 @@ class TestGateTimeoutResolution(unittest.TestCase):
         self.assertEqual(specs[0].timeout, model.DEFAULT_GATE_TIMEOUT_S)
         self.assertEqual(model.DEFAULT_GATE_TIMEOUT_S, 600)  # today's behaviour preserved
 
-    def test_jury_builtin_carries_no_subprocess_timeout(self):
+    def test_jury_builtin_carries_its_own_budget(self):
+        # The jury builtin *does* shell out (via run_argv), so unlike an agentic gate it
+        # needs a resolved limit — from knobs.jury_timeout_s, not gate_timeout_s.
+        config = cfg.parse_config({
+            "extends": "keel", "core_version": "^0.1", "base_branch": "main",
+            "knobs": {"build_gate_cmd": "make test", "gate_timeout_s": 1200,
+                      "jury_timeout_s": 3600},
+            "gates": ["jury"],
+        })
+        self.assertEqual(gates.plan_gates(config, {})[0].timeout, 3600)
+
+    def test_jury_builtin_defaults_to_the_jury_constant(self):
         config = cfg.parse_config({
             "extends": "keel", "core_version": "^0.1", "base_branch": "main",
             "knobs": {"build_gate_cmd": "make test"}, "gates": ["jury"],
         })
-        self.assertIsNone(gates.plan_gates(config, {})[0].timeout)
+        self.assertEqual(gates.plan_gates(config, {})[0].timeout,
+                         model.DEFAULT_JURY_TIMEOUT_S)
 
     def test_extension_timeout_wins_over_the_project_knob(self):
         piece = _ext("slow-gate", "pre-merge", on_fail="block")

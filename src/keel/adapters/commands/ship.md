@@ -481,9 +481,13 @@ mode the depth is the full verified run; only **verified consensus**
 gated suggestion, `nit` ⇒ advisory; a jury-driven fix consumes one round). **Core resolves
 the effective mode from the panel that actually ran** — a run with fewer than
 `ship.MINIMUM_JURY_VENDORS` (2) distinct *participating* vendors is downgraded to advisory,
-and a run where no agent returned output is simply zero vendors, so a jury that did not
-complete cleanly **never gates**. Do not re-derive or override that downgrade: report the
-count and let core decide. Pass the distinct participating vendors — those that actually
+and a run where no agent returned output is simply zero vendors, so at **this layer** — the
+pre-merge evidence check — a jury that did not complete cleanly does not gate. Do not
+re-derive or override that downgrade: report the count and let core decide. Note this is
+distinct from the **s8 gate layer**: there a jury run that produced no verdict (killed by
+`knobs.jury_timeout_s`, or output with no parseable report) is a blocking `major` in gating
+mode. The gate refuses to call a non-review a pass; the evidence check separately declines
+to *require* a verdict from a panel that never ran. Pass the distinct participating vendors — those that actually
 returned output, not those merely configured — via `keel evidence-verify --jury-vendors <N>`,
 and post a verdict whose declared mode matches the resolved `jury.mode`, which the evidence
 gate reads to decide whether a `jury-verdict` is required at all.

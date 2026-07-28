@@ -259,6 +259,11 @@ timeouts advisory would punch a hole in the very thing the gate protects. The go
 an operator can tell *why* the gate is red — a slow host or a broken test — never that it
 stops being red.
 
+> **Not the same as the run-control layer.** `runcontrols.contract_as_dict()` advertises
+> `"wall_clock_timeouts": False`. That refers to run budgets, step caps, and oscillation
+> halts — keel imposes no wall-clock limit on a *run*. `gate_timeout_s` and `jury_timeout_s` are
+> subprocess limits on a single gate. The two are independent and do not contradict each other.
+
 #### `jury_timeout_s`
 
 Wall-clock seconds the **`jury` built-in** may run. Defaults to `600`, which is what keel
@@ -272,20 +277,18 @@ knobs:
   jury_timeout_s: 3600    # ...and a full cross-vendor panel is slower still
 ```
 
-A jury run killed by this limit — or one that exits nonzero without producing a parseable
-verdict — **produced no review**. In `gating` mode that fails closed with a blocking
-`major` finding; in `advisory` mode it surfaces a non-blocking `nit`. This matches how an
-oversize diff is already handled, and it is the point of the knob: a panel that never
-reached a conclusion must not be reported as a clean pass.
+A jury run killed by this limit — or one whose output carries no parseable verdict at all,
+whatever its exit code — **produced no review**. In `gating` mode that fails closed with a
+blocking `major`; in `advisory` mode it surfaces a non-blocking `minor`. That is the point
+of the knob: a panel that never reached a conclusion must not be reported as a clean pass.
 
-A nonzero exit that *does* carry parseable findings is a completed review — ai-jury signals
-"request changes" that way — so its findings are used as-is rather than treated as an
-incomplete run.
+(`minor` rather than the oversize branch's `nit`: an oversize diff is a deterministic skip
+the operator can see from the diff itself, while an incomplete run is an invisible
+operational failure that will otherwise recur silently on every run.)
 
-> **Not the same as the run-control layer.** `runcontrols.contract_as_dict()` advertises
-> `"wall_clock_timeouts": False`. That refers to run budgets, step caps, and oscillation
-> halts — keel imposes no wall-clock limit on a *run*. `gate_timeout_s` is the subprocess
-> limit on a single command gate. The two are independent and do not contradict each other.
+A nonzero exit that *does* carry a parseable report is a completed review — ai-jury signals
+"request changes" that way — so its findings are used as-is. The test is deliberately
+"did we parse a verdict", not "was the exit code zero".
 
 ## `policy_pack`
 

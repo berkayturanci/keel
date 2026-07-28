@@ -14,7 +14,7 @@ from argparse import Namespace
 from pathlib import Path
 from unittest.mock import patch
 
-from keel import cli, install, ledger, runtime, ship, stepverifier
+from keel import cli, install, ledger, model, runtime, ship, stepverifier
 from keel.runner import CommandResult
 
 # Module-level scratch directory backing the path-returning helpers below.
@@ -6495,10 +6495,28 @@ class TestGateRunner(unittest.TestCase):
         self.assertTrue(timed_out)
         self.assertIn("timed out after 1s", findings[0].message)
 
+    def test_jury_budget_reaches_run_gate_from_the_spec(self):
+        # plan_gates resolves knobs.jury_timeout_s onto the jury spec; this pins that the
+        # runner passes it on. Without it the knob can be made inert (or wired to
+        # gate_timeout_s) and the whole suite stays green — the dead-plumbing class #622
+        # was caught on.
+        from keel.gates import GateSpec
+        run_gate = cli._gate_runner(".", "a diff")
+        with patch("keel.jury.run_gate", return_value=(True, [], False)) as spy:
+            run_gate(GateSpec("jury", "builtin", "test", "block", timeout=4242))
+        self.assertEqual(spy.call_args.kwargs["timeout"], 4242)
+
+    def test_jury_budget_falls_back_when_the_spec_carries_none(self):
+        from keel.gates import GateSpec
+        run_gate = cli._gate_runner(".", "a diff")
+        with patch("keel.jury.run_gate", return_value=(True, [], False)) as spy:
+            run_gate(GateSpec("jury", "builtin", "test", "block", timeout=None))
+        self.assertEqual(spy.call_args.kwargs["timeout"], model.DEFAULT_JURY_TIMEOUT_S)
+
     def test_jury_branch_noop_without_diff(self):
         from keel.gates import GateSpec
         run_gate = cli._gate_runner(".", "")  # empty diff -> jury is a fail-soft no-op
-        ok, findings = run_gate(GateSpec("jury", "builtin", "test", "block"))
+        ok, findings, _ = run_gate(GateSpec("jury", "builtin", "test", "block"))
         self.assertTrue(ok)
         self.assertEqual(findings, [])
 

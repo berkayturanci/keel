@@ -7,74 +7,38 @@ All notable changes to keel are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
-- **A timed-out or crashed jury gate no longer passes** (#624): `jury.run_gate` never
-  consulted `result.ok`. On a timeout `run_argv` returns `CommandResult(False, 124,
-  "timed out after 600s")`, and `parse_findings` returns `[]` for that unparseable
-  output — so `blocked` came out False and the gate reported `(True, [])`. A hung or
-  crashed cross-vendor panel therefore read as a **clean pass**, silently removing the
-  jury from the merge decision. This is the inverse of #622 and strictly worse: there the
-  gate stayed red and only the label was wrong; here the gate went green on a run that
-  produced no review at all.
+- **The jury gate never actually read ai-jury's findings** (#624, found in review):
+  `keel.runner.run_argv` returns `stdout + stderr` concatenated and ai-jury logs its
+  progress (`[jury] …`) to stderr, so the combined text was never valid JSON and a strict
+  `json.loads` discarded **every** finding. Against the real CLI a 6-finding report parsed
+  as zero. `parse_report` now uses `raw_decode`, which reads the leading JSON value and
+  ignores the trailing log lines; the same 6 findings now survive, anchors included.
 
-  A run that yields no verdict is now treated exactly as an oversize diff already was —
-  blocking `major` in `gating` mode, non-blocking `nit` in `advisory` — carrying a
-  `jury:incomplete-run` finding that names the timeout limit or the exit code. A nonzero
-  exit that *does* carry parseable findings is still honoured as a completed review, since
-  that is how ai-jury signals "request changes".
+- **A jury run that produced no verdict no longer passes the gate** (#624):
+  `jury.run_gate` never consulted `result.ok`, and `parse_findings` returns `[]` for
+  unparseable output — so `blocked` came out False and a hung, crashed, or (per the item
+  above) simply unreadable panel reported `(True, [])`. The jury silently dropped out of
+  the merge decision. This is the inverse of #622 and strictly worse: there the gate
+  stayed red and only the label was wrong; here it went green on a run that produced no
+  review at all.
+
+  A run that yields no verdict is now handled like an oversize diff — blocking `major` in
+  `gating` mode, `minor` in `advisory` — carrying a `jury:incomplete-run` finding naming
+  the timeout limit or the exit code. The condition is *"did we parse a verdict"*, not
+  *"was the exit code zero"*: ai-jury exits nonzero to signal "request changes", which is a
+  completed review whose findings are honoured, while a zero exit carrying unreadable
+  output is not a review. An absent `jury` CLI remains a clean no-op — keel does not
+  depend on ai-jury. A jury killed by its limit also carries `timed_out`, so it renders as
+  `TIMEOUT` rather than `FAIL`, consistent with #622.
 
 ### Added
 - **`knobs.jury_timeout_s`** (integer ≥ 1, default `600`) sets the jury built-in's
-  wall-clock budget, which was previously hardcoded and unreachable from config — so
-  #622's `gate_timeout_s` had no effect on it. Kept separate from `gate_timeout_s` on
-  purpose: the jury is a cross-vendor agent CLI rather than a project test command, and a
-  panel that needs an hour should not force every test gate to wait an hour too.
-
-### Added
-- **The gate timeout is configurable, and a timeout no longer masquerades as a failure**
-  (#622): `run_command` applied a hardcoded 600s limit to every command gate, and the kill
-  came back through the same code path as a genuine test failure — so `[major] … BLOCKED`
-  meant both "a test broke" and "this machine is slow", with no way to raise the limit and
-  no way to tell the two apart. Two additions, both back-compatible for existing
-  `GateOutcome` / `CommandResult` consumers:
-  - `knobs.gate_timeout_s` (integer ≥ 1, default `600`, so today's behaviour is preserved)
-    sets the project-wide limit, and an optional `timeout:` frontmatter field on a
-    `command` extension overrides it for one legitimately slower gate. `plan_gates`
-    resolves the effective value per gate — extension `timeout:` → `knobs.gate_timeout_s`
-    → `600` — onto the new `GateSpec.timeout`, and `cli` threads the project knob into
-    `command_gate_runner`.
-  - A timeout is now its own outcome: `CommandResult.timed_out` and `GateOutcome.timed_out`
-    mark the kill, and the finding says the command produced no pass/fail result and points
-    at the knob that fixes it. Every operator-facing surface distinguishes it — `run-gates`
-    and `keel ship` render `TIMEOUT` rather than `FAIL`, and the rendered PR body /
-    `keel ship --json` testing summary say `timed out` rather than `failed`. Cosmetic
-    side effect: `run-gates` widens its status column from 4 to 7 characters to fit the
-    new label, so every gate line (passing ones included) is indented three spaces further.
-    The machine-readable surfaces carry it too — `keel ship --json`'s
-    `gate_outcomes[].timed_out` and the run ledger's `gates[].timed_out` (additive;
-    `keel.run-ledger.v1` is unchanged, so existing records and readers are unaffected) —
-    and `keel-visual` renders a timed-out gate as `⧗` instead of `✗`.
-
-  **The merge-gate invariant is unchanged**: a timed-out gate keeps `ok=False` and its
-  original severity, so it blocks exactly as a failure does. Only the label and the
-  operator-facing explanation differ. Making `TIMEOUT` advisory would have punched a hole
-  in the gate — a genuinely hanging test (deadlock, infinite loop) is a real defect that
-  also presents as a timeout. An operator can now tell *why* the gate is red, never make it
-  stop being red.
-
-  `run_argv`'s 120s default (git/`gh` wrappers, not gates) is deliberately unchanged; it
-  reports `timed_out` for consistency but keeps its own limit.
-
-### Changed
-- **`jsonschema_min` now implements `minimum` / `maximum`** (needed for `gate_timeout_s`'s
-  `minimum: 1`). The validator skips unknown keywords by design, so a bound the schema
-  declared was previously silently unenforced. **This is not purely additive**: three
-  floors already declared in `project.schema.json` but never enforced now take effect, so
-  a `project.yaml` that loaded before may fail `keel validate` after upgrading —
-  `policy_pack.scan.batch_threshold` (`minimum: 1`),
-  `policy_pack.scan.large_diff_max_bytes` (`minimum: 1`), and
-  `policy_pack.scan.near_text_similarity` (`minimum: 0`, `maximum: 1`). Each rejected
-  value was already meaningless (a batch threshold of `0`, a similarity ratio of `42`);
-  the schema simply now says so. No in-repo project config is affected.
+  wall-clock budget, previously hardcoded and unreachable from config — #622's
+  `gate_timeout_s` covers command gates and never applied to it. Kept separate on purpose:
+  the jury is a cross-vendor agent CLI, not a project test command, so a panel that needs
+  an hour should not force every test gate to wait an hour too. `plan_gates` now resolves
+  it onto the jury `GateSpec`, so every gate that shells out has its budget decided in one
+  place and visible in the plan contract.
 
 ## [1.10.0] — 2026-07-27
 

@@ -78,11 +78,17 @@ GateRunner = Callable[
 def plan_gates(config: ProjectConfig, loaded: dict[str, list[Extension]]) -> tuple[GateSpec, ...]:
     """Order gates by backbone phase: guard, built-in test gates, test hooks, pre-merge.
 
-    Each ``command`` gate's wall-clock ``timeout`` is resolved here, most specific
-    first: the extension's own ``timeout:`` frontmatter → the project's
-    ``knobs.gate_timeout_s`` → :data:`keel.model.DEFAULT_GATE_TIMEOUT_S`. Non-``command``
-    gates carry ``None``: nothing shells out for them, so a number there would
-    advertise a limit that is never applied.
+    Every gate that shells out gets its wall-clock ``timeout`` resolved here, so the
+    planner is the single place budgets are decided:
+
+    * ``command`` gates, most specific first — the extension's own ``timeout:``
+      frontmatter → ``knobs.gate_timeout_s`` → :data:`keel.model.DEFAULT_GATE_TIMEOUT_S`;
+    * the ``jury`` builtin, which also shells out (via ``run_argv``) —
+      ``knobs.jury_timeout_s``, kept separate because a cross-vendor panel and a test
+      suite have unrelated runtimes.
+
+    ``agentic`` gates carry ``None``: the agent-dispatch layer runs those, nothing
+    shells out for them, and a number there would advertise a limit never applied.
     """
     project_timeout = config.knobs.gate_timeout_s
 
@@ -109,7 +115,8 @@ def plan_gates(config: ProjectConfig, loaded: dict[str, list[Extension]]) -> tup
                 specs.append(GateSpec("lint", "command", "test", "block",
                                       run=config.knobs.lint_cmd, timeout=project_timeout))
         elif name == "jury":
-            specs.append(GateSpec("jury", "builtin", "test", "block"))
+            specs.append(GateSpec("jury", "builtin", "test", "block",
+                                  timeout=config.knobs.jury_timeout_s))
         else:
             raise GateError(
                 f"unknown built-in gate {name!r}; valid: {', '.join(BUILTIN_GATES)} "
