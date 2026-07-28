@@ -11,7 +11,8 @@ All notable changes to keel are documented here. The format follows
   (#622): `run_command` applied a hardcoded 600s limit to every command gate, and the kill
   came back through the same code path as a genuine test failure — so `[major] … BLOCKED`
   meant both "a test broke" and "this machine is slow", with no way to raise the limit and
-  no way to tell the two apart. Two additions, both back-compatible:
+  no way to tell the two apart. Two additions, both back-compatible for existing
+  `GateOutcome` / `CommandResult` consumers:
   - `knobs.gate_timeout_s` (integer ≥ 1, default `600`, so today's behaviour is preserved)
     sets the project-wide limit, and an optional `timeout:` frontmatter field on a
     `command` extension overrides it for one legitimately slower gate. `plan_gates`
@@ -32,10 +33,17 @@ All notable changes to keel are documented here. The format follows
   `run_argv`'s 120s default (git/`gh` wrappers, not gates) is deliberately unchanged; it
   reports `timed_out` for consistency but keeps its own limit.
 
-### Fixed
-- `jsonschema_min` now implements `minimum`, so numeric bounds declared in
-  `project.schema.json` are actually enforced instead of silently ignored (the validator
-  skips unknown keywords by design). Needed for `gate_timeout_s`'s `minimum: 1`.
+### Changed
+- **`jsonschema_min` now implements `minimum` / `maximum`** (needed for `gate_timeout_s`'s
+  `minimum: 1`). The validator skips unknown keywords by design, so a bound the schema
+  declared was previously silently unenforced. **This is not purely additive**: three
+  floors already declared in `project.schema.json` but never enforced now take effect, so
+  a `project.yaml` that loaded before may fail `keel validate` after upgrading —
+  `policy_pack.scan.batch_threshold` (`minimum: 1`),
+  `policy_pack.scan.large_diff_max_bytes` (`minimum: 1`), and
+  `policy_pack.scan.near_text_similarity` (`minimum: 0`, `maximum: 1`). Each rejected
+  value was already meaningless (a batch threshold of `0`, a similarity ratio of `42`);
+  the schema simply now says so. No in-repo project config is affected.
 
 ## [1.10.0] — 2026-07-27
 

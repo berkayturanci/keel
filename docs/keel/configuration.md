@@ -482,8 +482,13 @@ Project-owned scan scope for `regression` and `review-all-day`.
 | `active_branch_patterns` | string[] | branch globs considered active work during time-window scans |
 | `issue_labels` | map command→string[] | labels for issues opened by scan commands |
 | `near_text_similarity` | number 0..1 | deterministic duplicate-finding threshold |
-| `batch_threshold` | integer | commit count threshold before batch/fan-out behavior |
-| `large_diff_max_bytes` | integer | max diff bytes before file-boundary truncation |
+| `batch_threshold` | integer ≥ 1 | commit count threshold before batch/fan-out behavior |
+| `large_diff_max_bytes` | integer ≥ 1 | max diff bytes before file-boundary truncation |
+
+These three bounds were declared in the schema from the start but only became *enforced*
+when `jsonschema_min` gained `minimum` / `maximum` support. A config carrying a
+meaningless value (`batch_threshold: 0`, `near_text_similarity: 42`) loaded silently
+before and now fails `keel validate`.
 
 ### `policy_pack.command_routing`
 

@@ -116,7 +116,7 @@ def parse_extension(text: str, *, source: str, expected_slot: str | None = None)
         # bool is an int subclass — `timeout: true` is a typo, not a limit.
         if isinstance(timeout, bool) or not isinstance(timeout, int) or timeout < 1:
             errors.append(f"invalid timeout {timeout!r}; expected a positive integer (seconds)")
-        elif kind != "command":
+        if kind != "command":
             errors.append(f"'timeout' only applies to a 'command' extension (got kind {kind!r})")
     if kind == "agentic" and not (prompt or body.strip()):
         errors.append("an 'agentic' extension requires a 'prompt' value or a body")

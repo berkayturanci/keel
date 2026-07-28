@@ -84,11 +84,19 @@ GateRunner = Callable[
 def plan_gates(config: ProjectConfig, loaded: dict[str, list[Extension]]) -> tuple[GateSpec, ...]:
     """Order gates by backbone phase: guard, built-in test gates, test hooks, pre-merge.
 
-    Each gate's wall-clock ``timeout`` is resolved here, most specific first:
-    the extension's own ``timeout:`` frontmatter → the project's
-    ``knobs.gate_timeout_s`` → :data:`DEFAULT_GATE_TIMEOUT_S`.
+    Each ``command`` gate's wall-clock ``timeout`` is resolved here, most specific
+    first: the extension's own ``timeout:`` frontmatter → the project's
+    ``knobs.gate_timeout_s`` → :data:`DEFAULT_GATE_TIMEOUT_S`. Non-``command`` gates
+    carry ``None``: nothing shells out for them, so a number there would advertise a
+    limit that is never applied.
     """
     project_timeout = config.knobs.gate_timeout_s
+
+    def _timeout_for(e: Extension) -> int | None:
+        if e.kind != "command":
+            return None
+        return e.timeout if e.timeout is not None else project_timeout
+
     specs: list[GateSpec] = []
 
     for e in loaded.get("guard", []):
@@ -96,7 +104,7 @@ def plan_gates(config: ProjectConfig, loaded: dict[str, list[Extension]]) -> tup
                               run=e.run, prompt=e.prompt, agent=e.agent, source=e.source,
                               required_capabilities=e.required_capabilities,
                               optional_capabilities=e.optional_capabilities,
-                              timeout=e.timeout if e.timeout is not None else project_timeout))
+                              timeout=_timeout_for(e)))
 
     for name in config.gates:
         if name == "build":
@@ -120,7 +128,7 @@ def plan_gates(config: ProjectConfig, loaded: dict[str, list[Extension]]) -> tup
                                   run=e.run, prompt=e.prompt, agent=e.agent, source=e.source,
                                   required_capabilities=e.required_capabilities,
                                   optional_capabilities=e.optional_capabilities,
-                                  timeout=e.timeout if e.timeout is not None else project_timeout))
+                                  timeout=_timeout_for(e)))
     return tuple(specs)
 
 

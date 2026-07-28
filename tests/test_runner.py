@@ -82,11 +82,13 @@ class TestCommandGateRunner(unittest.TestCase):
         ok, findings, timed_out = run(self._spec())
         self.assertTrue(ok)
         self.assertEqual(findings, [])
+        self.assertFalse(timed_out)
 
     def test_fail_produces_finding_with_tail(self):
         run = runner.command_gate_runner(_run=_fail)
         ok, findings, timed_out = run(self._spec(on_fail="block"))
         self.assertFalse(ok)
+        self.assertFalse(timed_out)  # a plain failure is not a timeout
         self.assertEqual(findings[0].severity, "major")  # block -> major
         self.assertIn("second line", findings[0].message)
 
@@ -100,6 +102,7 @@ class TestCommandGateRunner(unittest.TestCase):
         ok, findings, timed_out = run(GateSpec("jury", "builtin", "test", "block"))
         self.assertTrue(ok)
         self.assertEqual(findings, [])
+        self.assertFalse(timed_out)
 
     def test_fail_without_location_has_no_path(self):
         run = runner.command_gate_runner(_run=_fail)

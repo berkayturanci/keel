@@ -163,6 +163,46 @@ class TestMinimum(unittest.TestCase):
         self.assertIn("expected type integer", errs[0])
 
 
+class TestMaximum(unittest.TestCase):
+    """``maximum`` — declared alongside ``minimum`` on policy_pack.scan.near_text_similarity."""
+
+    SCHEMA = {"type": "number", "minimum": 0, "maximum": 1}
+
+    def test_above_maximum_rejected(self):
+        errs = js.validate(42, self.SCHEMA)
+        self.assertEqual(len(errs), 1)
+        self.assertIn("greater than maximum 1", errs[0])
+
+    def test_within_range_accepted(self):
+        for value in (0, 0.6, 1):
+            self.assertEqual(js.validate(value, self.SCHEMA), [])
+
+    def test_both_bounds_reported_independently(self):
+        self.assertIn("less than minimum", js.validate(-0.5, self.SCHEMA)[0])
+
+    def test_absent_maximum_is_a_noop(self):
+        self.assertEqual(js.validate(10_000, {"type": "integer", "minimum": 1}), [])
+
+
+class TestSchemaBoundsNowEnforced(unittest.TestCase):
+    """The bundled schema declared these floors long before the validator honoured them."""
+
+    def test_previously_unenforced_scan_bounds_now_fail(self):
+        from keel import config as cfg
+        for field, bad in (
+            ("batch_threshold", 0),
+            ("large_diff_max_bytes", 0),
+            ("near_text_similarity", 42),
+        ):
+            data = {
+                "extends": "keel", "core_version": "^0.1", "base_branch": "main",
+                "knobs": {"build_gate_cmd": "make test"},
+                "policy_pack": {"name": "p", "scan": {field: bad}},
+            }
+            with self.assertRaises(cfg.ConfigError, msg=field):
+                cfg.parse_config(data)
+
+
 class TestNonDictSchema(unittest.TestCase):
     def test_non_dict_schema_is_noop(self):
         self.assertEqual(js.validate("anything", True), [])

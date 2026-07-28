@@ -226,6 +226,15 @@ class TestTimeoutFrontmatter(unittest.TestCase):
             ext.parse_extension(text, source="x.md")
         self.assertIn("only applies to a 'command' extension", str(c.exception))
 
+    def test_both_timeout_problems_reported_together(self):
+        # Every validator in parse_extension accumulates, so the author sees the value
+        # problem and the kind problem in one pass rather than one per fix.
+        text = "---\nid: x\nslot: tester\nkind: agentic\nprompt: p\ntimeout: 0\n---\n"
+        with self.assertRaises(ext.ExtensionError) as c:
+            ext.parse_extension(text, source="x.md")
+        self.assertIn("invalid timeout", str(c.exception))
+        self.assertIn("only applies to a 'command' extension", str(c.exception))
+
 
 def _config_with(tester=(), pre_merge=()):
     data = {

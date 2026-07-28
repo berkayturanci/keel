@@ -158,6 +158,18 @@ class TestGateTimeoutResolution(unittest.TestCase):
         specs = gates.plan_gates(self._config_with(1200), {"guard": [_ext("g", "guard")]})
         self.assertEqual(specs[0].timeout, 1200)
 
+    def test_agentic_extension_carries_no_timeout(self):
+        # Nothing shells out for an agentic piece, so a number here would advertise a
+        # limit that is never applied.
+        piece = _ext("a", "tester", kind="agentic", run=None)
+        specs = gates.plan_gates(self._config_with(1200), {"tester": [piece]})
+        self.assertIsNone(specs[-1].timeout)
+
+    def test_agentic_guard_extension_carries_no_timeout(self):
+        piece = _ext("a", "guard", kind="agentic", run=None)
+        specs = gates.plan_gates(self._config_with(1200), {"guard": [piece]})
+        self.assertIsNone(specs[0].timeout)
+
 
 class TestTimedOutOutcome(unittest.TestCase):
     """GateOutcome.timed_out is descriptive only — it never softens the gate (#622)."""

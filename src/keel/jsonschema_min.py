@@ -9,7 +9,7 @@ Supported keywords
 ------------------
 ``type`` (incl. list-of-types), ``const``, ``enum``, ``required``,
 ``properties``, ``additionalProperties`` (bool), ``items``, ``minItems``,
-``pattern``, ``minLength``, ``minimum``.
+``pattern``, ``minLength``, ``minimum``, ``maximum``.
 
 Anything else in a schema is ignored (forward-compatible), so the schema must not
 rely on unsupported keywords for enforcement.
@@ -89,11 +89,13 @@ def _validate_string(instance: str, schema: dict, path: str, errors: list[str]) 
         errors.append(f"{path}: shorter than minLength {min_len}")
 
 
-def _validate_number(instance: int | float, schema: dict, path: str,
-                     errors: list[str]) -> None:
+def _validate_number(instance: int | float, schema: dict, path: str, errors: list[str]) -> None:
     minimum = schema.get("minimum")
     if minimum is not None and instance < minimum:
         errors.append(f"{path}: {instance!r} is less than minimum {minimum}")
+    maximum = schema.get("maximum")
+    if maximum is not None and instance > maximum:
+        errors.append(f"{path}: {instance!r} is greater than maximum {maximum}")
 
 
 def _validate_array(instance: list, schema: dict, path: str, errors: list[str]) -> None:
