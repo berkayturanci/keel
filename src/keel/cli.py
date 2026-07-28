@@ -64,6 +64,20 @@ from .model import DEFAULT_GATE_TIMEOUT_S, DEFAULT_JURY_TIMEOUT_S
 from .runner import command_gate_runner, run_argv
 
 
+def _gate_status(outcome) -> str:
+    """Operator-facing label for one gate outcome.
+
+    `NOT-RUN` is deliberately not `ok`: an agentic gate the command-only runner never
+    dispatched has produced no result, and showing it as a pass is what let a blocking
+    review gate nobody executed read as green.
+    """
+    if outcome.not_run:
+        return "NOT-RUN"
+    if outcome.ok:
+        return "ok"
+    return "TIMEOUT" if outcome.timed_out else "FAIL"
+
+
 def _gate_runner(root: str, diff_text: str, *, jury_mode: str = "gating",
                  timeout: int = DEFAULT_GATE_TIMEOUT_S):
     """A gate runner that handles command gates plus the ``jury`` built-in (on the diff).
@@ -294,7 +308,7 @@ def _cmd_run_gates(args: argparse.Namespace) -> int:
     for o in outcomes:
         # A timeout still blocks; it is labelled apart so a slow host does not read
         # as a broken test (and a hanging command still reads as red).
-        status = "ok" if o.ok else ("TIMEOUT" if o.timed_out else "FAIL")
+        status = _gate_status(o)
         print(f"  {status:>7}  {o.gate}")
 
     verdict = fnd.summarize(gates.collect_findings(outcomes))
@@ -740,11 +754,24 @@ def _cmd_merge(args: argparse.Namespace) -> int:
             return _finish_merge(
                 args, payload, f"PR merge state is {snapshot['merge_state']}", code=1
             )
-        if snapshot["ci"]["state"] != "pass":
-            return _finish_merge(args, payload, f"CI is {snapshot['ci']['state']}", code=1)
+        ci_state = snapshot["ci"]["state"]
+        if ci_state not in ("pass", "no-checks"):
+            return _finish_merge(args, payload, f"CI is {ci_state}", code=1)
 
         evidence_payload = _verify_merge_evidence(args, config)
         payload["evidence"] = evidence_payload
+        if ci_state == "no-checks":
+            # ship.md's rule, now enforced in core rather than by adapter prose: an
+            # empty check set is acceptable only when every changed path is a docs
+            # path. Checked after the evidence load because that is what supplies the
+            # changed-file list, and only on this branch so a red CI still short-
+            # circuits before any extra API work.
+            docs_only = evidence_payload.get("docs_only") is True
+            payload["ci_no_checks_docs_only"] = docs_only
+            if not docs_only:
+                return _finish_merge(
+                    args, payload,
+                    "CI did not run on a non-docs PR (empty check set)", code=1)
         if not evidence_payload["enforced"]:
             return _finish_merge(args, payload, "evidence gate is not enforced", code=1)
         if evidence_payload["verification"]["status"] != "pass":
@@ -904,11 +931,20 @@ def _cmd_ship(args: argparse.Namespace) -> int:
             print(message, file=sys.stderr)
         return 1
 
-    changed = git.changed_files(config.base_branch, "HEAD", cwd=args.root)
-    tier = classify.tier_for_files(
-        changed,
-        tier3_globs=config.knobs.tier3_globs,
-        docs_globs=config.knobs.docs_gate_paths,
+    changed_read = git.changed_files(config.base_branch, "HEAD", cwd=args.root)
+    # None means git could not be read. Classify fail-closed to the strictest tier
+    # rather than letting an unreadable diff look like an empty one — an empty list
+    # classifies as TIER-2 and would silently drop a reviewer and the gating jury.
+    changed_unreadable = changed_read is None
+    changed = changed_read or []
+    tier = (
+        classify.UNKNOWN_TIER
+        if changed_unreadable
+        else classify.tier_for_files(
+            changed,
+            tier3_globs=config.knobs.tier3_globs,
+            docs_globs=config.knobs.docs_gate_paths,
+        )
     )
     review_contract = ship.resolve_review_contract(
         tier=tier,
@@ -940,7 +976,9 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     )
 
     a = ship.assess(
-        changed_files=changed,
+        # None-preserving on purpose: assess classifies an unreadable diff fail-closed,
+        # and collapsing it to [] here is what made this whole guard inert.
+        changed_files=changed_read,
         gate_verdict=verdict,
         tier3_globs=config.knobs.tier3_globs,
         docs_globs=config.knobs.docs_gate_paths,
@@ -1061,7 +1099,12 @@ def _cmd_ship(args: argparse.Namespace) -> int:
 
     name = config.repo or config.extends
     print(f"keel {command} — {name}  (base {config.base_branch})")
-    print(f"  changed files : {len(changed)}")
+    if changed_unreadable:
+        # Never let this be silent: the tier below was forced, not measured.
+        print("  changed files : UNREADABLE (git diff failed) — "
+              "classified TIER-3 fail-closed")
+    else:
+        print(f"  changed files : {len(changed)}")
     print(f"  profile       : {contract['workflow_profile']['profile']}")
     print(f"  risk tier     : TIER-{a.tier}  → {a.reviewers} reviewer(s)")
     jury_state = a.review_contract["jury"]["mode"]
@@ -1085,8 +1128,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     if transport.degraded:
         print(f"  github degraded: {', '.join(transport.degraded)}")
     for o in outcomes:
-        state = "ok" if o.ok else ("TIMEOUT" if o.timed_out else "FAIL")
-        print(f"  gate {o.gate:<14} {state}")
+        print(f"  gate {o.gate:<14} {_gate_status(o)}")
     if evaluation.missing_optional:
         print(f"  degraded opt. : {', '.join(evaluation.missing_optional)}")
     if a.halted:  # pragma: no cover - display only; logic covered in ship.assess tests
@@ -3166,7 +3208,12 @@ def _ci_rollup_state(rollup: list[object]) -> dict[str, object]:
             saw_pending = True
     if saw_pending:
         return {"state": "pending", "reason": "check-pending"}
-    return {"state": "pass", "reason": "all-checks-passing" if saw_check else "no-checks"}
+    if saw_check:
+        return {"state": "pass", "reason": "all-checks-passing"}
+    # An empty rollup is not a pass: no check has reported for this head. Kept as its
+    # own state so the merge gate can apply the documented docs-only carve-out instead
+    # of treating "CI has not run" as "CI is green".
+    return {"state": "no-checks", "reason": "no-checks"}
 
 
 def _verify_merge_evidence(
@@ -3196,6 +3243,9 @@ def _verify_merge_evidence(
         )
         if changed_files else None
     )
+    # Tier 1 is "every changed path is a docs path". An unreadable/empty file list is
+    # deliberately not docs-only: the empty-check-set carve-out must fail closed.
+    docs_only = bool(changed_files) and tier == 1
     review_contract = ship.resolve_review_contract(
         tier=tier,
         reviewer_override=args.reviewers,
@@ -3237,6 +3287,7 @@ def _verify_merge_evidence(
         "head_sha": artifacts["head_sha"],
         "head_ref": artifacts.get("head_ref"),
         "changed_files": changed_files,
+        "docs_only": docs_only,
     }
 
 

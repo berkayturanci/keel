@@ -388,7 +388,9 @@ operator-applied `keel:evidence-waived` label may disarm it. Evaluate the rollup
 mixed state with any failure is a failure, never poll past it. Three branches:
 - **all green** (`success`/`skipped`/`neutral`/`stale`) ⇒ proceed.
 - **empty check set** ⇒ allow only if every changed path is in `docs_gate_paths`, else
-  mark blocked ("CI did not run on a non-docs PR").
+  mark blocked ("CI did not run on a non-docs PR"). `keel merge` enforces this itself —
+  it reports the rollup as `no-checks` (never `pass`) and applies the same carve-out — so
+  this branch is a description of core's behaviour, not a rule you implement.
 - **any failure/pending** ⇒ watch with a hard timeout (portable `timeout`/`gtimeout`
   wrapper; require `coreutils` on hosts lacking GNU `timeout`), then on a real failure run
   the fix-and-reply loop (read the failed log, fix, self-review, push) and re-enter s6.
@@ -708,4 +710,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=claude command=ship keel_version=1.10.0 source_sha256=2acf1c16690108d52f4be6e2ff11b926b9804cd3a4a730fb49393dea0ff902d8 generated_sha256=2acf1c16690108d52f4be6e2ff11b926b9804cd3a4a730fb49393dea0ff902d8 -->
+<!-- keel-generated: surface=claude command=ship keel_version=1.10.0 source_sha256=a32a95767c185337c6d4edacb3f3db3e44d4a2a2ff5a35b9bda456b71c1400b0 generated_sha256=a32a95767c185337c6d4edacb3f3db3e44d4a2a2ff5a35b9bda456b71c1400b0 -->

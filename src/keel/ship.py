@@ -302,7 +302,7 @@ class ShipAssessment:
 
 def assess(
     *,
-    changed_files: list[str],
+    changed_files: list[str] | None,
     gate_verdict: Verdict,
     tier3_globs: tuple[str, ...] = (),
     docs_globs: tuple[str, ...] = (),
@@ -325,8 +325,19 @@ def assess(
 
     ``merge_window_mode`` 'pause' halts the pipeline outside the window; 'freeze'
     (default) only blocks the merge. ``is_blocker`` (a hotfix) bypasses the window —
-    but never the findings or a failing CI."""
-    tier = classify.tier_for_files(changed_files, tier3_globs=tier3_globs, docs_globs=docs_globs)
+    but never the findings or a failing CI.
+
+    ``changed_files`` is ``None`` when git could not be read (as
+    :func:`keel.git.changed_files` reports it), which is deliberately *not* the same
+    as ``[]``. An empty list classifies as the default tier; an unreadable one
+    classifies fail-closed at :data:`keel.classify.UNKNOWN_TIER`, so a change nobody
+    could see never buys itself a lighter review contract."""
+    tier = (
+        classify.UNKNOWN_TIER
+        if changed_files is None
+        else classify.tier_for_files(changed_files, tier3_globs=tier3_globs,
+                                     docs_globs=docs_globs)
+    )
     reviewers = reviewer_override if reviewer_override is not None else reviewer_count(tier)
     window_open = (
         is_merge_open(timezone, merge_window, now=now) if (timezone and merge_window) else True

@@ -117,6 +117,20 @@ def _incomplete_finding(
     )
 
 
+def _unreadable_diff_finding(*, severity: str = "minor") -> Finding:
+    """Record that the diff itself could not be read, so no review was possible."""
+    return Finding(
+        severity=severity,
+        message=("jury could not run: the diff could not be read from git (is the base "
+                 "branch fetched locally? a shallow or single-branch clone cannot "
+                 "resolve base...HEAD). No review was performed."),
+        source="jury:unreadable-diff",
+        path=None,
+        line=None,
+        anchorable=False,
+    )
+
+
 def _oversize_finding(size: int, *, severity: str = "nit") -> Finding:
     """Record that the jury gate skipped an oversize diff.
 
@@ -165,6 +179,13 @@ def run_gate(
     "request changes", which is a completed review whose findings must be honoured,
     while an exit of zero carrying unreadable output is not a review at all.
     """
+    if diff_text is None:
+        # The diff could not be read (git failed). That is not "nothing to review":
+        # passing here would silently remove the review gate from the merge decision,
+        # which is the same fail-open the verdict check below exists to prevent.
+        gating = mode == "gating"
+        return (not gating), [_unreadable_diff_finding(
+            severity="major" if gating else "minor")], False
     if not diff_text:
         return True, [], False
     size = len(diff_text.encode("utf-8"))

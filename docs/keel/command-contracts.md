@@ -159,11 +159,17 @@ one fail-closed path:
 
 1. acquire the single-host `merge` resource claim;
 2. re-run the configured merge-window check inside the claim;
-3. read the live PR check rollup and classify failure before pending;
+3. read the live PR check rollup and classify failure before pending. An **empty** rollup
+   is its own `no-checks` state, not a pass — no check has reported for this head. It is
+   allowed through only when every changed path is a docs path (the carve-out for PRs no
+   workflow is expected to trigger); on any other PR it blocks;
 4. run `evidence-verify` for the current PR artifacts;
-5. require a SHA-stamped gates-pass: a `ship_run` ledger record for the PR whose
-   `git.head_sha` equals the PR's current head and whose gates passed, so a stale green
-   run from an older head cannot authorize merging a newer head;
+5. require a SHA-stamped gates-pass: the **latest** `ship_run` ledger record for the PR
+   whose `git.head_sha` equals the PR's current head must have passed its gates — so
+   neither a stale green run from an older head nor a green run superseded by a later red
+   one on the *same* head can authorize the merge. A gate flagged `not_run` (the
+   command-only runner does not dispatch agentic gates) never counts as passed when the
+   project declared it `on_fail: block`;
 6. require a **covering checkpoint** for the run at the merge step `s10`, so a run that
    never recorded state cannot cold-merge (audit GAP-13);
 7. call GitHub's merge operation only when every prior gate passes.

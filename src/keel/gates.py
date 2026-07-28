@@ -65,13 +65,27 @@ class GateOutcome:
     #: label and the operator-facing explanation differ — a hanging command is a real
     #: defect and must stay red.
     timed_out: bool = False
+    #: True when *this runner did not execute the gate at all* — an ``agentic`` gate
+    #: reached the command-only runner, which the agent-dispatch layer runs instead.
+    #: Distinct from ``ok`` on purpose: "not my job" must never be recorded as "ran and
+    #: passed", or a blocking review gate nobody executed would authorize the merge.
+    #: ``ok`` stays True so a soft gate does not spuriously fail the run; consumers that
+    #: certify (see :func:`keel.ledger.record_gates_passed`) must refuse a *blocking*
+    #: gate that was never run.
+    not_run: bool = False
+    #: The gate's declared severity (``block`` / ``suggest`` / ``warn``), carried from
+    #: its :class:`GateSpec` so a consumer reading only outcomes can tell whether a
+    #: ``not_run`` gate was one the project required.
+    on_fail: str = "block"
 
 
-# runner(spec) -> (ok, findings) or (ok, findings, timed_out). May raise; run_gates
-# handles it fail-soft. The 2-tuple form stays supported for runners that cannot
-# time out (agentic / builtin dispatchers).
+# runner(spec) -> (ok, findings[, timed_out[, not_run]]). May raise; run_gates handles
+# it fail-soft. The shorter forms stay supported for runners that cannot time out or
+# that execute every gate they are given.
 GateRunner = Callable[
-    [GateSpec], "tuple[bool, list[Finding]] | tuple[bool, list[Finding], bool]"
+    [GateSpec],
+    "tuple[bool, list[Finding]] | tuple[bool, list[Finding], bool] "
+    "| tuple[bool, list[Finding], bool, bool]",
 ]
 
 
@@ -141,30 +155,36 @@ def run_gates(specs, runner: GateRunner, *, fail_soft: bool = True) -> list[Gate
             # tuple() first: the runner contract has always been "any 2-iterable",
             # so indexing the raw return would reject a generator that used to work.
             result = tuple(runner(spec))
-            # Runners that cannot time out may return the 2-tuple form.
+            # Runners that cannot time out may return the 2-tuple form; runners that
+            # execute every gate they are given may omit the not-run flag.
             ok, found = result[0], result[1]
             timed_out = result[2] is True if len(result) > 2 else False
+            not_run = result[3] is True if len(result) > 3 else False
         except Exception as exc:  # noqa: BLE001 - fail-soft is the contract
             if not fail_soft:
                 raise
             if spec.on_fail == "block":
                 # A hard gate that errors must still block (can't silently pass).
                 finding = Finding("major", f"gate {spec.id!r} errored: {exc}", spec.id)
-                outcomes.append(GateOutcome(spec.id, False, (finding,), error=str(exc)))
+                outcomes.append(GateOutcome(spec.id, False, (finding,), error=str(exc),
+                                            on_fail=spec.on_fail))
             else:
                 # Soft gate broke -> degrade to a no-op (logged), never abort.
-                outcomes.append(GateOutcome(spec.id, True, (), error=str(exc), skipped=True))
+                outcomes.append(GateOutcome(spec.id, True, (), error=str(exc), skipped=True,
+                                            on_fail=spec.on_fail))
             continue
 
         found = tuple(found)
         if ok:
-            outcomes.append(GateOutcome(spec.id, True, found))
+            outcomes.append(GateOutcome(spec.id, True, found, not_run=not_run,
+                                        on_fail=spec.on_fail))
         else:
             if not found:
                 sev = _ON_FAIL_SEVERITY[spec.on_fail]
                 found = (Finding(sev, f"gate {spec.id!r} failed", spec.id),)
             # ok stays False for a timeout: the merge gate is unchanged, only the label.
-            outcomes.append(GateOutcome(spec.id, False, found, timed_out=timed_out))
+            outcomes.append(GateOutcome(spec.id, False, found, timed_out=timed_out,
+                                        on_fail=spec.on_fail))
     return outcomes
 
 

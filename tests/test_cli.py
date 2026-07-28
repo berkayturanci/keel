@@ -36,6 +36,22 @@ PROJECTS = Path(__file__).resolve().parent.parent / "projects"
 REPO_ROOT = PROJECTS.parent
 
 
+#: Realistic object names for the git fakes. The wrappers validate the shape of a
+#: parsed SHA (see ``git._SHA_RE``), so a placeholder like ``"tip"`` no longer
+#: passes for one.
+SHA_TIP = "1f2e3d4c5b6a79887766554433221100ffeeddcc"
+SHA_HEAD = "0c4589650d0f129271ca84779442d1046ceb8482"
+
+
+def _proc(output="", *, ok=True):
+    """A fake ``run_argv`` return whose **stdout** carries ``output``.
+
+    Parsers read ``.stdout`` alone, never the concatenated ``.output`` (#629), so a
+    fake that populates only ``output`` would read back as an empty stream.
+    """
+    return CommandResult(ok, 0 if ok else 1, output, stdout=output)
+
+
 def _trusted_comment(body):
     return {"body": body, "author_association": "MEMBER"}
 
@@ -601,7 +617,9 @@ class TestWindow(unittest.TestCase):
 class TestShip(unittest.TestCase):
     def test_clean_merges(self):
         import tempfile
-        with tempfile.TemporaryDirectory() as d:  # non-git root -> no changed files
+        with tempfile.TemporaryDirectory() as d, \
+             patch("keel.git.changed_files", return_value=[]), \
+             patch("keel.git.diff", return_value=""):
             rc, out, _ = run(["ship", _write_config("'true'"), "--root", d])
         self.assertEqual(rc, 0)
         self.assertIn("keel ship", out)
@@ -609,6 +627,19 @@ class TestShip(unittest.TestCase):
         self.assertIn("DECISION", out.upper())
         self.assertIn("MERGE", out)
         self.assertIn("github        :", out)
+
+    def test_an_unreadable_changeset_classifies_tier_3_not_tier_2(self):
+        # A non-git root makes `git diff --name-only` fail. Reading that as an empty
+        # changeset lands on the *default* tier, quietly dropping a reviewer and the
+        # gating jury on a change nobody could see. Fail closed instead, and say so.
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["ship", _write_config("'true'"), "--root", d])
+        self.assertEqual(rc, 0)
+        self.assertIn("changed files : UNREADABLE", out)
+        self.assertIn("TIER-3", out)
+        self.assertIn("3 reviewer(s)", out)
+        self.assertIn("jury          : gating", out)
 
     def test_json_dry_run_contract(self):
         import tempfile
@@ -3489,20 +3520,20 @@ class TestVerifyBranch(unittest.TestCase):
         # worktree facts via the git wrappers. We stub run_argv for both surfaces.
         def fake_run(argv, **kwargs):
             if argv[0] == "gh":
-                body = json.dumps({"head": {"sha": "headsha", "ref": "feature/x"}})
-                return Namespace(ok=True, output=body)
+                body = json.dumps({"head": {"sha": SHA_HEAD, "ref": "feature/x"}})
+                return _proc(body)
             if argv[:2] == ["git", "rev-parse"]:
-                return Namespace(ok=True, output="tipsha\n")
+                return _proc(SHA_TIP + "\n")
             if argv[:2] == ["git", "merge-base"]:
-                return Namespace(ok=True, output="tipsha\n")
+                return _proc(SHA_TIP + "\n")
             if argv[:2] == ["git", "rev-list"]:
-                return Namespace(ok=True, output="0\n")
+                return _proc("0\n")
             if argv[:3] == ["git", "worktree", "list"]:
                 porcelain = (
                     "worktree /repo\nHEAD aaa\nbranch refs/heads/develop\n\n"
                     "worktree /repo/worktrees/i\nHEAD bbb\nbranch refs/heads/feature/x\n"
                 )
-                return Namespace(ok=True, output=porcelain)
+                return _proc(porcelain)
             raise AssertionError(f"unexpected argv {argv}")
 
         with patch("keel.cli.run_argv", side_effect=fake_run), \
@@ -3520,16 +3551,16 @@ class TestVerifyBranch(unittest.TestCase):
     def test_live_worktree_list_failure_skips_isolation(self):
         def fake_run(argv, **kwargs):
             if argv[0] == "gh":
-                body = json.dumps({"head": {"sha": "h", "ref": "feature/x"}})
-                return Namespace(ok=True, output=body)
+                body = json.dumps({"head": {"sha": SHA_HEAD, "ref": "feature/x"}})
+                return _proc(body)
             if argv[:2] == ["git", "rev-parse"]:
-                return Namespace(ok=True, output="tip\n")
+                return _proc(SHA_TIP + "\n")
             if argv[:2] == ["git", "merge-base"]:
-                return Namespace(ok=True, output="tip\n")
+                return _proc(SHA_TIP + "\n")
             if argv[:2] == ["git", "rev-list"]:
-                return Namespace(ok=True, output="0\n")
+                return _proc("0\n")
             if argv[:3] == ["git", "worktree", "list"]:
-                return Namespace(ok=False, output="")
+                return _proc("", ok=False)
             raise AssertionError(f"unexpected argv {argv}")
 
         with patch("keel.cli.run_argv", side_effect=fake_run), \
@@ -3545,16 +3576,16 @@ class TestVerifyBranch(unittest.TestCase):
     def test_live_branch_not_checked_out_skips_isolation(self):
         def fake_run(argv, **kwargs):
             if argv[0] == "gh":
-                body = json.dumps({"head": {"sha": "h", "ref": "feature/absent"}})
-                return Namespace(ok=True, output=body)
+                body = json.dumps({"head": {"sha": SHA_HEAD, "ref": "feature/absent"}})
+                return _proc(body)
             if argv[:2] == ["git", "rev-parse"]:
-                return Namespace(ok=True, output="tip\n")
+                return _proc(SHA_TIP + "\n")
             if argv[:2] == ["git", "merge-base"]:
-                return Namespace(ok=True, output="tip\n")
+                return _proc(SHA_TIP + "\n")
             if argv[:2] == ["git", "rev-list"]:
-                return Namespace(ok=True, output="0\n")
+                return _proc("0\n")
             if argv[:3] == ["git", "worktree", "list"]:
-                return Namespace(ok=True, output="worktree /repo\n")
+                return _proc("worktree /repo\n")
             raise AssertionError(f"unexpected argv {argv}")
 
         with patch("keel.cli.run_argv", side_effect=fake_run), \
@@ -3571,13 +3602,13 @@ class TestVerifyBranch(unittest.TestCase):
         # gh returns a head SHA but no ref → no branch to locate locally.
         def fake_run(argv, **kwargs):
             if argv[0] == "gh":
-                return Namespace(ok=True, output=json.dumps({"head": {"sha": "h"}}))
+                return _proc(json.dumps({"head": {"sha": SHA_HEAD}}))
             if argv[:2] == ["git", "rev-parse"]:
-                return Namespace(ok=True, output="tip\n")
+                return _proc(SHA_TIP + "\n")
             if argv[:2] == ["git", "merge-base"]:
-                return Namespace(ok=True, output="tip\n")
+                return _proc(SHA_TIP + "\n")
             if argv[:2] == ["git", "rev-list"]:
-                return Namespace(ok=True, output="0\n")
+                return _proc("0\n")
             raise AssertionError(f"unexpected argv {argv}")
 
         with patch("keel.cli.run_argv", side_effect=fake_run), \
@@ -3676,14 +3707,14 @@ class TestVerifyBranchFactGathering(unittest.TestCase):
         # worktree lookup is skipped without calling git for it.
         def fake_run(argv, **kwargs):
             if argv[:2] == ["git", "rev-parse"]:
-                return Namespace(ok=True, output="t\n")
+                return _proc(SHA_TIP + "\n")
             raise AssertionError(f"unexpected {argv}")
 
-        args = self._args(head_sha="h", merge_base_sha="t", base_distance=0)
+        args = self._args(head_sha=SHA_HEAD, merge_base_sha=SHA_TIP, base_distance=0)
         with patch("keel.git.run_argv", side_effect=fake_run):
             facts = cli._gather_branch_facts(args, "develop")
         self.assertIsNone(facts["is_linked_worktree"])
-        self.assertEqual(facts["base_tip_sha"], "t")
+        self.assertEqual(facts["base_tip_sha"], SHA_TIP)
 
     def test_local_facts_do_not_override_supplied_worktree_path(self):
         # worktree_path/is_linked supplied as flags; a live worktree lookup still
@@ -4195,6 +4226,58 @@ class TestCoreMerge(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertEqual(json.loads(out)["ci"]["state"], "fail")
         evidence_mock.assert_not_called()
+
+    def test_merge_blocks_an_empty_check_set_on_a_non_docs_pr(self):
+        # An empty statusCheckRollup is "CI never ran", not "CI passed". Reading it as a
+        # pass merged code no workflow ever built (#627). The carve-out is docs-only PRs,
+        # where no workflow is expected to trigger — so a code PR with zero checks blocks.
+        fake_report = _merge_capability_report()
+        snapshot = _json_result({
+            "headRefOid": "abc",
+            "mergeStateStatus": "CLEAN",
+            "statusCheckRollup": [],
+        })
+        with (
+            patch("keel.cli.runtime.detect", return_value=fake_report),
+            patch("keel.cli.window.is_merge_open", return_value=True),
+            patch("keel.cli.github.pr_merge_snapshot", return_value=snapshot),
+            patch("keel.cli._verify_merge_evidence", return_value={"docs_only": False}),
+        ):
+            rc, out, _ = run(_merge_args(json_out=True))
+
+        payload = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertEqual(payload["ci"]["state"], "no-checks")
+        self.assertFalse(payload["ci_no_checks_docs_only"])
+        self.assertIn("empty check set", payload["reason"])
+
+    def test_merge_allows_an_empty_check_set_on_a_docs_only_pr(self):
+        fake_report = _merge_capability_report()
+        snapshot = _json_result({
+            "headRefOid": "abc",
+            "mergeStateStatus": "CLEAN",
+            "statusCheckRollup": [],
+        })
+        evidence = {
+            "docs_only": True,
+            "enforced": True,
+            "verification": {"status": "pass", "missing": []},
+        }
+        with (
+            patch("keel.cli.runtime.detect", return_value=fake_report),
+            patch("keel.cli.window.is_merge_open", return_value=True),
+            patch("keel.cli.github.pr_merge_snapshot", return_value=snapshot),
+            patch("keel.cli._verify_merge_evidence", return_value=evidence),
+            patch("keel.cli.ledger.gates_pass_for_head", return_value=(False, None)),
+        ):
+            rc, out, _ = run(_merge_args(json_out=True))
+
+        payload = json.loads(out)
+        # It gets past the CI check (the next gate, gates-for-head, is what stops it) —
+        # which is the point: the empty check set alone did not block a docs-only PR.
+        self.assertEqual(rc, 1)
+        self.assertTrue(payload["ci_no_checks_docs_only"])
+        self.assertIn("no gates-pass recorded", payload["reason"])
 
     def test_merge_blocks_closed_window_snapshot_error_and_dirty_state(self):
         fake_report = _merge_capability_report()
@@ -6475,13 +6558,35 @@ class TestShipHotfix(unittest.TestCase):
         self.assertIn("DECISION", out.upper())
 
 
+class TestGateStatusLabel(unittest.TestCase):
+    """`NOT-RUN` must never render as `ok` — that is what made an undispatched
+    blocking review gate read as green on the operator's screen (#626)."""
+
+    def _label(self, **kw):
+        from keel.gates import GateOutcome
+        return cli._gate_status(GateOutcome("g", kw.pop("ok", True), **kw))
+
+    def test_labels(self):
+        self.assertEqual(self._label(), "ok")
+        self.assertEqual(self._label(ok=False), "FAIL")
+        self.assertEqual(self._label(ok=False, timed_out=True), "TIMEOUT")
+        self.assertEqual(self._label(not_run=True), "NOT-RUN")
+
+    def test_not_run_wins_over_ok(self):
+        # An undispatched gate carries ok=True so a soft gate does not spuriously fail
+        # the run; the label must still say nobody ran it.
+        self.assertEqual(self._label(ok=True, not_run=True), "NOT-RUN")
+
+
 class TestGateRunner(unittest.TestCase):
     def test_command_branch_runs(self):
         from keel.gates import GateSpec
         run_gate = cli._gate_runner(".", "")
-        ok, _, timed_out = run_gate(GateSpec("build", "command", "test", "block", run="true"))
+        ok, _, timed_out, not_run = run_gate(
+            GateSpec("build", "command", "test", "block", run="true"))
         self.assertTrue(ok)
         self.assertFalse(timed_out)
+        self.assertFalse(not_run)  # a command gate really did execute
 
     def test_project_timeout_is_threaded_to_specs_without_their_own(self):
         # plan_gates resolves a timeout onto every command spec, so this fallback is
@@ -6489,10 +6594,11 @@ class TestGateRunner(unittest.TestCase):
         # that nothing would notice being deleted or set to the wrong value.
         from keel.gates import GateSpec
         run_gate = cli._gate_runner(".", "", timeout=1)
-        ok, findings, timed_out = run_gate(
+        ok, findings, timed_out, not_run = run_gate(
             GateSpec("build", "command", "test", "block", run=_SLOW_CMD, timeout=None))
         self.assertFalse(ok)
         self.assertTrue(timed_out)
+        self.assertFalse(not_run)
         self.assertIn("timed out after 1s", findings[0].message)
 
     def test_jury_budget_reaches_run_gate_from_the_spec(self):
@@ -6520,14 +6626,29 @@ class TestGateRunner(unittest.TestCase):
         self.assertTrue(ok)
         self.assertEqual(findings, [])
 
+    JURY_CFG = ("extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: x\n"
+                "gates: [build, jury]\nknobs:\n  build_gate_cmd: 'true'\n")
+
     def test_run_gates_with_jury_gate(self):
         import tempfile
-        p = _write_raw("extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: x\n"
-                       "gates: [build, jury]\nknobs:\n  build_gate_cmd: 'true'\n")
-        with tempfile.TemporaryDirectory() as d:  # non-git root -> empty diff -> jury no-op
+        p = _write_raw(self.JURY_CFG)
+        with tempfile.TemporaryDirectory() as d, \
+             patch("keel.git.diff", return_value=""):  # readable, empty -> jury no-op
             rc, out, _ = run(["run-gates", p, "--root", d])
         self.assertEqual(rc, 0)
         self.assertIn("jury", out)
+
+    def test_run_gates_blocks_when_the_diff_cannot_be_read(self):
+        # A non-git root makes `git diff` fail, so there is no diff to review. That is
+        # not "nothing to review": passing would drop the review gate out of the merge
+        # decision silently (#628). Gating mode must fail closed.
+        import tempfile
+        p = _write_raw(self.JURY_CFG)
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["run-gates", p, "--root", d])
+        self.assertEqual(rc, 1)
+        self.assertIn("BLOCKED", out)
+        self.assertIn("could not be read", out)
 
 
 class TestInstallAdapter(unittest.TestCase):

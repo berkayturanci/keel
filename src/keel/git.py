@@ -8,6 +8,8 @@ behaviour is exercised opt-in against a real repo. Each returns a
 
 from __future__ import annotations
 
+import re
+
 from .runner import CommandResult, run_argv
 
 
@@ -31,7 +33,7 @@ def worktree_list(*, cwd: str | None = None, _run=None) -> CommandResult:
 
 def current_branch(*, cwd: str | None = None, _run=None) -> str | None:
     result = run_argv(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=cwd, **_kw(_run))
-    return result.output.strip() if result.ok else None
+    return result.stdout.strip() if result.ok else None
 
 
 def list_branches(*, cwd: str | None = None, _run=None) -> CommandResult:
@@ -49,18 +51,24 @@ def list_branches(*, cwd: str | None = None, _run=None) -> CommandResult:
     )
 
 
+#: A 40- or 64-hex object name (SHA-1 / SHA-256). git may print a ``warning:`` to
+#: stderr while still succeeding; reading ``stdout`` avoids the contamination, and
+#: validating the shape is a second line of defence so a stray token never poses as a SHA.
+_SHA_RE = re.compile(r"\A[0-9a-f]{40}(?:[0-9a-f]{24})?\Z")
+
+
 def rev_parse(ref: str, *, cwd: str | None = None, _run=None) -> str | None:
     """Resolve ``ref`` to a full commit SHA; ``None`` when it cannot be resolved."""
     result = run_argv(["git", "rev-parse", "--verify", "--quiet", ref], cwd=cwd, **_kw(_run))
-    output = result.output.strip()
-    return output if result.ok and output else None
+    output = result.stdout.strip()
+    return output if result.ok and _SHA_RE.match(output) else None
 
 
 def merge_base(a: str, b: str, *, cwd: str | None = None, _run=None) -> str | None:
     """Best common ancestor of ``a`` and ``b``; ``None`` when there is none/on error."""
     result = run_argv(["git", "merge-base", a, b], cwd=cwd, **_kw(_run))
-    output = result.output.strip()
-    return output if result.ok and output else None
+    output = result.stdout.strip()
+    return output if result.ok and _SHA_RE.match(output) else None
 
 
 def rev_count(base: str, head: str, *, cwd: str | None = None, _run=None) -> int | None:
@@ -70,24 +78,35 @@ def rev_count(base: str, head: str, *, cwd: str | None = None, _run=None) -> int
     )
     if not result.ok:
         return None
-    output = result.output.strip()
+    output = result.stdout.strip()
     if not output.isdigit():
         return None
     return int(output)
 
 
-def changed_files(base: str, head: str, *, cwd: str | None = None, _run=None) -> list[str]:
-    """Files changed between ``base`` and ``head`` (``base...head``); ``[]`` on error."""
+def changed_files(base: str, head: str, *, cwd: str | None = None, _run=None) -> list[str] | None:
+    """Files changed between ``base`` and ``head`` (``base...head``).
+
+    ``None`` when the git command failed — deliberately distinct from ``[]`` (the
+    command ran and there were no changes), so a caller classifying risk or checking
+    scope can tell "could not read the diff" apart from "the diff is empty" instead of
+    treating an unreadable diff as a clean, empty one.
+    """
     result = run_argv(["git", "diff", "--name-only", f"{base}...{head}"], cwd=cwd, **_kw(_run))
     if not result.ok:
-        return []
-    return [line for line in result.output.splitlines() if line.strip()]
+        return None
+    return [line for line in result.stdout.splitlines() if line.strip()]
 
 
-def diff(base: str, head: str, *, cwd: str | None = None, _run=None) -> str:
-    """The unified diff between ``base`` and ``head`` (``base...head``); ``""`` on error."""
+def diff(base: str, head: str, *, cwd: str | None = None, _run=None) -> str | None:
+    """The unified diff between ``base`` and ``head`` (``base...head``).
+
+    ``None`` when the git command failed — distinct from ``""`` (the command ran and
+    the diff is empty), so a review/gate caller can refuse to treat an unreadable diff
+    as "nothing to review".
+    """
     result = run_argv(["git", "diff", f"{base}...{head}"], cwd=cwd, **_kw(_run))
-    return result.output if result.ok else ""
+    return result.stdout if result.ok else None
 
 
 def _kw(_run):

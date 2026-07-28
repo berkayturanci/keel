@@ -534,6 +534,33 @@ class TestRecordGatesPassed(unittest.TestCase):
         no_gates["gates"] = "nope"
         self.assertFalse(ledger.record_gates_passed(no_gates))
 
+    def test_a_blocking_gate_that_never_ran_is_not_a_pass(self):
+        # `ok=True, not_run=True` is what a command-only runner reports for an agentic
+        # gate it does not execute. "Nobody ran it" must never certify as "it passed",
+        # or a required review gate authorizes the merge without a reviewer (#626).
+        never_ran = _gates_record(pr=1, head_sha="a", gates=[
+            {"gate": "build", "ok": True, "skipped": False, "error": None},
+            {"gate": "review", "ok": True, "skipped": False, "error": None,
+             "not_run": True, "on_fail": "block"},
+        ])
+        self.assertFalse(ledger.record_gates_passed(never_ran))
+
+    def test_a_non_blocking_gate_that_never_ran_still_passes(self):
+        # A warn/suggest gate is advisory by declaration; not running it withholds
+        # advice, it does not withhold a merge authorization.
+        advisory = _gates_record(pr=1, head_sha="a", gates=[
+            {"gate": "style", "ok": True, "skipped": False, "error": None,
+             "not_run": True, "on_fail": "warn"},
+        ])
+        self.assertTrue(ledger.record_gates_passed(advisory))
+
+    def test_a_record_predating_the_not_run_field_still_passes(self):
+        # Older ledger lines carry neither key; absence means "ran", as it always did.
+        legacy = _gates_record(pr=1, head_sha="a", gates=[
+            {"gate": "build", "ok": True, "skipped": False, "error": None},
+        ])
+        self.assertTrue(ledger.record_gates_passed(legacy))
+
     def test_gate_with_error_or_not_ok_is_not_a_pass(self):
         errored = _gates_record(pr=1, head_sha="a", gates=[
             {"gate": "build", "ok": True, "skipped": False, "error": "boom"},
@@ -590,3 +617,33 @@ class TestGatesPassForHead(unittest.TestCase):
         matched, record = ledger.gates_pass_for_head(records, 42, "head-new")
         self.assertFalse(matched)
         self.assertIsNone(record)
+
+    def test_a_later_red_run_supersedes_an_earlier_green_one(self):
+        # Re-gating the same head is ordinary (flaky suite settles, fix-loop re-runs).
+        # Latest-wins: scanning for *any* green would let the superseded pass authorize
+        # the merge and the later red never be consulted.
+        records = [
+            _gates_record(pr=42, head_sha="head-new", run_id="RUN-1"),
+            _gates_record(pr=42, head_sha="head-new", run_id="RUN-2", blocked=True),
+        ]
+        self.assertEqual(ledger.gates_pass_for_head(records, 42, "head-new"), (False, None))
+
+    def test_a_later_green_run_clears_an_earlier_red_one(self):
+        records = [
+            _gates_record(pr=42, head_sha="head-new", run_id="RUN-1", blocked=True),
+            _gates_record(pr=42, head_sha="head-new", run_id="RUN-2"),
+        ]
+        matched, record = ledger.gates_pass_for_head(records, 42, "head-new")
+        self.assertTrue(matched)
+        self.assertEqual(record["run_id"], "RUN-2")
+
+    def test_a_red_run_on_another_head_does_not_supersede(self):
+        # Only records for the *current* head are consulted; a red run against a
+        # superseded commit is irrelevant, not a veto.
+        records = [
+            _gates_record(pr=42, head_sha="head-new", run_id="RUN-1"),
+            _gates_record(pr=42, head_sha="head-old", run_id="RUN-2", blocked=True),
+        ]
+        matched, record = ledger.gates_pass_for_head(records, 42, "head-new")
+        self.assertTrue(matched)
+        self.assertEqual(record["run_id"], "RUN-1")

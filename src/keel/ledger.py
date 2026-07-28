@@ -139,6 +139,12 @@ def build_ship_run_record(
                 "ok": outcome.ok,
                 "skipped": outcome.skipped,
                 "timed_out": outcome.timed_out,
+                # getattr: outcomes reach here from adapters and fixtures that predate
+                # these fields. Defaulting not_run to False keeps an older producer's
+                # record readable; on_fail defaults to the strict value so a record
+                # that *does* carry not_run without a severity fails closed.
+                "not_run": getattr(outcome, "not_run", False),
+                "on_fail": getattr(outcome, "on_fail", "block"),
                 "error": outcome.error,
                 "finding_count": len(outcome.findings),
             }
@@ -307,6 +313,14 @@ def record_gates_passed(record: dict[str, Any]) -> bool:
     recorded gate either ran clean (``ok``) or was deliberately skipped, with no
     gate reporting an error. A missing or malformed ``gates``/``verdict`` block
     degrades to "not a pass" so a corrupt record can never authorize a merge.
+
+    A gate marked ``not_run`` was never executed by the runner that wrote the
+    record — an ``agentic`` gate reaching the command-only runner. For a
+    ``block``-severity gate that is **not** a pass: certifying "gates passed" for a
+    blocking review nobody ran is exactly the fail-open this check exists to stop.
+    Soft (``warn``/``suggest``) not-run gates are tolerated, matching ``skipped``.
+    Records written before this field existed have no ``not_run`` key and are
+    unaffected.
     """
     verdict = record.get("verdict")
     if not isinstance(verdict, dict) or verdict.get("blocked") is not False:
@@ -321,6 +335,8 @@ def record_gates_passed(record: dict[str, Any]) -> bool:
             return False
         if not (gate.get("ok") is True or gate.get("skipped") is True):
             return False
+        if gate.get("not_run") is True and gate.get("on_fail") == "block":
+            return False
     return True
 
 
@@ -331,16 +347,23 @@ def gates_pass_for_head(
 ) -> tuple[bool, dict[str, Any] | None]:
     """Find a passing gates run recorded against ``head_sha`` for ``pr_number``.
 
-    Returns ``(matched, record)``. ``matched`` is ``True`` only when some
-    ship_run record for the PR carries the exact current ``head_sha`` *and* its
-    gates passed (see :func:`record_gates_passed`). The most recent matching
-    record is returned. A blank ``head_sha`` never matches — an unknown head
-    must not be authorized by a stale green run. This is a pure function: it
-    reads only its arguments and performs no I/O.
+    Returns ``(matched, record)``. ``matched`` is ``True`` only when the **latest**
+    ship_run record for the PR carrying the exact current ``head_sha`` passed its
+    gates (see :func:`record_gates_passed`); the record is returned on a match and
+    ``None`` otherwise. A blank ``head_sha`` never matches — an unknown head must
+    not be authorized by a stale green run. This is a pure function: it reads only
+    its arguments and performs no I/O.
+
+    Latest-wins, not any-pass. Re-gating the same head is ordinary — a flaky suite
+    settles, a fix-loop re-runs, a dependency lands — so the same ``head_sha`` can
+    carry a green record followed by a red one. Scanning for *any* green would let
+    the superseded pass authorize the merge and the later red never be consulted:
+    a fail-open in exactly the gate that exists to hold the merge closed. Only the
+    most recent verdict for the head counts.
     """
     if not isinstance(head_sha, str) or not head_sha.strip():
         return False, None
-    match: dict[str, Any] | None = None
+    latest: dict[str, Any] | None = None
     for record in records:
         if record.get("record_type") != RECORD_TYPE_SHIP_RUN:
             continue
@@ -352,9 +375,10 @@ def gates_pass_for_head(
         record_sha = git.get("head_sha") if isinstance(git, dict) else None
         if record_sha != head_sha:
             continue
-        if record_gates_passed(record):
-            match = record
-    return (match is not None), match
+        latest = record
+    if latest is None or not record_gates_passed(latest):
+        return False, None
+    return True, latest
 
 
 def capture_health_summary(records: list[dict[str, Any]]) -> dict[str, Any]:

@@ -12,6 +12,12 @@ import fnmatch
 #: Default tier when nothing else matches.
 DEFAULT_TIER = 2
 
+#: Strictest tier — the fail-closed answer when the changed-file list could not be
+#: read at all. An unreadable diff must never classify as the *default* tier: that
+#: is the answer for "an empty changeset", and it silently drops a reviewer and the
+#: gating jury on a change nobody has seen.
+UNKNOWN_TIER = 3
+
 
 def tier_for_files(
     changed: list[str], *, tier3_globs: tuple[str, ...] = (), docs_globs: tuple[str, ...] = ()

@@ -7,6 +7,56 @@ All notable changes to keel are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **`git` warnings on stderr no longer corrupt every parsed value** (#629): `run_argv`
+  returned only `stdout + stderr` concatenated, and every `git` wrapper parsed *that*. git
+  routinely warns while exiting 0 — an ambiguous refname (a tag and a branch sharing a
+  name) prints `warning: refname '<x>' is ambiguous.` and still succeeds — so
+  `rev_parse`/`merge_base` returned `"warning: …\n<sha>"` as a SHA, `changed_files`
+  invented a phantom path from the warning line, and `diff` handed the review gate a patch
+  with log noise prepended. `CommandResult` now carries `stdout` and `stderr` separately
+  (`output` is unchanged, for the diagnostic uses that genuinely want both) and every
+  parser reads `stdout` alone. `rev_parse`/`merge_base` additionally validate the object-name
+  shape, so a stray token can never pose as a SHA even if a stream is ever re-crossed.
+
+- **An unreadable diff no longer reads as an empty one** (#628): `git.changed_files` and
+  `git.diff` collapsed failure to `[]`/`""`, which is exactly what "nothing changed" looks
+  like. Three consumers drew the wrong conclusion from it, all in the safe-looking
+  direction:
+  - the jury gate treated "could not read the diff" as "nothing to review" and passed;
+  - `keel ship` classified the change at the default TIER-2, quietly dropping a reviewer
+    and turning the gating jury off;
+  - and the evidence gate's docs-only carve-out counted an empty list as docs-only.
+
+  Both wrappers now return `None` on failure, distinct from the empty value. `ship.assess`
+  takes `changed_files: list[str] | None` and classifies `None` at the new
+  `classify.UNKNOWN_TIER` (3) fail-closed; `jury.run_gate` raises a blocking
+  `jury:unreadable-diff` finding in gating mode; and `keel ship` prints
+  `changed files : UNREADABLE` so a forced tier is never mistaken for a measured one.
+
+- **A gate nobody ran can no longer certify a merge** (#626): the command-only runner
+  returns `(True, [])` for an `agentic` gate — it does not execute those, the agent-dispatch
+  layer does — and that pass was recorded in the run ledger indistinguishably from a gate
+  that ran clean. `record_gates_passed` then read it as a pass, so a **blocking** review
+  gate that was never dispatched authorized the merge at `keel merge`'s SHA-stamped gates
+  check. Gate outcomes now carry `not_run` and the declared `on_fail`; a blocking gate
+  flagged `not_run` refuses to certify, advisory gates are unaffected, and ledger records
+  written before these fields existed still read as passes. The operator-facing label is
+  `NOT-RUN`, never `ok`.
+
+- **An empty CI check set is no longer a pass** (#627): `_ci_rollup_state` returned
+  `state: "pass"` for an empty `statusCheckRollup`, differing from a real pass only in a
+  `reason` field nothing consumed — so a PR on which no workflow ever ran merged as green.
+  It is now its own `no-checks` state, and `keel merge` applies the documented docs-only
+  carve-out in core rather than in adapter prose: an empty check set passes only when every
+  changed path is a docs path, and blocks otherwise. An unreadable or empty changed-file
+  list is deliberately not docs-only.
+
+- **A superseded green gates run no longer authorizes a merge** (found in review):
+  `ledger.gates_pass_for_head` scanned for *any* passing ship_run record against the current
+  head, so re-gating the same commit — a flaky suite settling, a fix-loop re-running — left
+  the earlier green in place and the later red was never consulted. It is now latest-wins:
+  only the most recent record for that head counts.
+
 - **The jury gate never actually read ai-jury's findings** (#624, found in review):
   `keel.runner.run_argv` returns `stdout + stderr` concatenated and ai-jury logs its
   progress (`[jury] …`) to stderr, so the combined text was never valid JSON and a strict
