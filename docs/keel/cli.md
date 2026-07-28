@@ -422,9 +422,15 @@ keel capture-verify .keel/project.yaml --root . --from-transport --merged-since 
 
 `--from-transport` lists merged PRs from the host (`gh pr list --state merged`, narrowed by
 `--merged-since`). `--merged-pr` still works and is *added* to the derived set (the union is
-verified, so an explicit override can only widen, never shrink, the checked set). The transport
-query is fail-soft: when it errors the report sets `merged_pr_source.transport_failed: true` and
-falls back to any `--merged-pr` values.
+verified, so an explicit override can only widen, never shrink, the checked set).
+
+When the transport query errors, the report sets `merged_pr_source.transport_failed: true`,
+the status becomes **`transport-unavailable`** with `certified: false`, and the command exits
+non-zero. This is not a failure of the PRs it *did* check — it is a refusal to certify. A
+failed query leaves the derived set empty, so the union degenerates to exactly the
+`--merged-pr` list the caller supplied, and the anti-shrink guarantee above evaporates: an
+un-captured PR simply disappears from the accounting. An audit that could not observe must
+say so rather than render like a clean one.
 
 When the merged set is derived (or any reconcile input is supplied) three additive checks run:
 
