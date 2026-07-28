@@ -975,7 +975,13 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     if unknown:
         print(f"--gate-result names no planned gate: {', '.join(unknown)}", file=sys.stderr)
         return 1
-    outcomes = gates.apply_recorded_results(outcomes, recorded_results)
+    outcomes, rejected = gates.apply_recorded_results(outcomes, recorded_results)
+    if rejected:
+        # Refuse loudly: keel ran these and has a measured verdict. Silently discarding
+        # the flag would leave the operator believing they recorded something.
+        print(f"--gate-result cannot override a gate keel executed: {', '.join(rejected)}",
+              file=sys.stderr)
+        return 1
     verdict = fnd.summarize(gates.collect_findings(outcomes))
     ci_conclusion = (
         github.ci_conclusion(args.pr, cwd=args.root)

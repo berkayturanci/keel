@@ -197,7 +197,7 @@ def unrun_blocking(outcomes: list[GateOutcome]) -> tuple[str, ...]:
 
 def apply_recorded_results(
     outcomes: list[GateOutcome], results: dict[str, str]
-) -> list[GateOutcome]:
+) -> tuple[list[GateOutcome], list[str]]:
     """Fold externally-executed gate verdicts into ``outcomes``.
 
     ``results`` maps a gate id to ``"pass"`` or ``"fail"``. It exists because the
@@ -206,21 +206,35 @@ def apply_recorded_results(
     :func:`keel.ledger.record_gates_passed` can never certify the run. That would make
     a blocking agentic gate a permanent merge block rather than a gate.
 
+    **Only a ``not_run`` outcome is replaced.** A gate keel executed has a measured
+    verdict, and letting a recorded one override it would turn this channel into a way
+    to certify a run whose gates were observed failing — the same fail-open this whole
+    series exists to close, arriving from the other direction. Results naming an
+    executed gate are returned in ``rejected`` so the caller can refuse loudly rather
+    than silently discard them.
+
     A recorded result clears ``not_run``, because the gate *was* run; a ``fail``
     additionally produces a finding at the gate's declared severity, exactly as an
-    in-process failure would. Ids that match no outcome are ignored here — the CLI
-    validates them against the plan, where the gate list is known.
+    in-process failure would. A not-run gate can be neither timed out nor skipped, so
+    the rebuilt outcome carries neither.
+
+    Returns ``(outcomes, rejected)``. Ids matching no outcome at all are left to the
+    CLI, which validates them against the plan.
     """
     applied: list[GateOutcome] = []
+    rejected: list[str] = []
     for outcome in outcomes:
         verdict = results.get(outcome.gate)
         if verdict is None:
             applied.append(outcome)
             continue
+        if not outcome.not_run:
+            rejected.append(outcome.gate)
+            applied.append(outcome)
+            continue
         if verdict == "pass":
             applied.append(GateOutcome(outcome.gate, True, outcome.findings,
-                                       error=outcome.error, skipped=outcome.skipped,
-                                       on_fail=outcome.on_fail))
+                                       error=outcome.error, on_fail=outcome.on_fail))
             continue
         found = outcome.findings or (
             Finding(_ON_FAIL_SEVERITY[outcome.on_fail],
@@ -228,8 +242,8 @@ def apply_recorded_results(
                     outcome.gate),
         )
         applied.append(GateOutcome(outcome.gate, False, found, error=outcome.error,
-                                   skipped=outcome.skipped, on_fail=outcome.on_fail))
-    return applied
+                                   on_fail=outcome.on_fail))
+    return applied, rejected
 
 
 def collect_findings(outcomes: list[GateOutcome]) -> list[Finding]:

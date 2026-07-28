@@ -64,6 +64,21 @@ All notable changes to keel are documented here. The format follows
   PR state of `open`/`closed`/`missing` is now `ambiguous`. `unknown` (the default when the
   adapter volunteers nothing) is absence of evidence and leaves the jump intact.
 
+- **`--gate-result` cannot override a gate keel executed** (found in re-review): the flag
+  applied a recorded verdict to *any* outcome, so a gate keel ran and observed failing
+  could be flipped to certifying — the same fail-open this series exists to close,
+  arriving from the other direction. Reproduced with a `warn`-severity command gate whose
+  `run:` genuinely fails: `record_gates_passed` went False → **True** under
+  `--gate-result <id>=pass`, and that predicate is what authorizes `keel merge`. A recorded
+  result now applies only to a `not_run` outcome, and naming an executed gate is refused
+  loudly rather than silently discarded.
+
+- **The closure comment tells the truth about an unreadable diff** (found in re-review):
+  `render_closure_comment`'s defensive coercions absorbed the new `None`s, so the artifact
+  actually posted to the PR still said `Changed files: 0` and `Docs touched: no` — an
+  affirmative claim about a diff nobody could read, in the one place a human looks. It now
+  renders `unreadable (git diff failed)` and `unknown`.
+
 - **The assessment no longer says "clear to merge" about a run it cannot certify**
   (found in review): a `NOT-RUN` blocking gate made `record_gates_passed` refuse the
   record, but `ship.assess` did not know about it — so `keel ship` printed
@@ -87,11 +102,12 @@ All notable changes to keel are documented here. The format follows
   away, and still render contradicting text on the page. The pattern now matches only the
   exact form the transport emits.
 
-- **`record_gates_passed` applies its strict default at read time** (found in review): a
-  gate carrying `not_run: true` with no `on_fail` key certified as passed, because the
-  strict default was applied only where keel *wrote* the record. Any other producer that
-  learned the new key without its sibling failed open in exactly the certification path
-  the check exists to close.
+- **`record_gates_passed` fails closed on any `on_fail` it does not recognise** (found in
+  review): a gate carrying `not_run: true` with no `on_fail` key certified as passed,
+  because the strict default was applied only where keel *wrote* the record. A missing key,
+  a JSON-round-tripped `None`, and an unknown severity name all mean "we cannot tell this
+  was optional", and this is the certification path — only an explicit `warn`/`suggest`
+  now clears it.
 
 - **`git` warnings on stderr no longer corrupt every parsed value** (#629): `run_argv`
   returned only `stdout + stderr` concatenated, and every `git` wrapper parsed *that*. git

@@ -299,7 +299,8 @@ class TestNotRunPropagation(unittest.TestCase):
         from keel.runner import command_gate_runner
 
         outcomes = gates.run_gates([self._spec("block")], command_gate_runner("."))
-        applied = gates.apply_recorded_results(outcomes, {"security-review": "pass"})
+        applied, rejected = gates.apply_recorded_results(outcomes, {"security-review": "pass"})
+        self.assertEqual(rejected, [])
 
         self.assertFalse(applied[0].not_run)     # it *was* run — by the agent
         self.assertEqual(gates.unrun_blocking(applied), ())
@@ -310,7 +311,8 @@ class TestNotRunPropagation(unittest.TestCase):
         from keel.runner import command_gate_runner
 
         outcomes = gates.run_gates([self._spec("block")], command_gate_runner("."))
-        applied = gates.apply_recorded_results(outcomes, {"security-review": "fail"})
+        applied, rejected = gates.apply_recorded_results(outcomes, {"security-review": "fail"})
+        self.assertEqual(rejected, [])
 
         self.assertFalse(applied[0].ok)
         self.assertFalse(applied[0].not_run)
@@ -318,8 +320,37 @@ class TestNotRunPropagation(unittest.TestCase):
         self.assertFalse(ledger.record_gates_passed(self._record(applied)))
 
     def test_an_unnamed_gate_is_left_alone(self):
-        outcomes = [gates.GateOutcome("build", True, on_fail="block")]
-        self.assertEqual(gates.apply_recorded_results(outcomes, {"other": "fail"}), outcomes)
+        outcomes = [gates.GateOutcome("build", True, not_run=True, on_fail="block")]
+        self.assertEqual(gates.apply_recorded_results(outcomes, {"other": "fail"}),
+                         (outcomes, []))
+
+    def test_a_gate_keel_executed_cannot_be_overridden(self):
+        # The channel exists for gates keel *cannot* run. Letting it override a measured
+        # verdict would certify a run whose gates were observed failing — the same
+        # fail-open from the other direction. A `warn` gate is the sharp case: its
+        # failure carries no blocking finding to save it.
+        from keel import ledger
+        failed = gates.GateOutcome(
+            "flaky-check", False,
+            (Finding("nit", "flaky-check failed (exit 1)", "flaky-check"),),
+            on_fail="warn")
+        applied, rejected = gates.apply_recorded_results(applied_in := [failed],
+                                                        {"flaky-check": "pass"})
+
+        self.assertEqual(rejected, ["flaky-check"])
+        self.assertEqual(applied, applied_in)     # verdict untouched
+        self.assertFalse(ledger.record_gates_passed(self._record(applied)))
+
+    def test_a_recorded_result_drops_timed_out_and_skipped(self):
+        # A not-run gate can be neither, so carrying either forward would produce a
+        # self-contradictory record (and lose the TIMEOUT label's meaning).
+        stale = gates.GateOutcome("g", True, not_run=True, timed_out=True, skipped=True,
+                                  on_fail="block")
+        applied, _ = gates.apply_recorded_results([stale], {"g": "pass"})
+
+        self.assertFalse(applied[0].timed_out)
+        self.assertFalse(applied[0].skipped)
+        self.assertFalse(applied[0].not_run)
 
     def test_a_not_run_gate_reported_as_failing_keeps_the_flag(self):
         # Unreachable with the in-tree runners, but the contract allows it and a dropped

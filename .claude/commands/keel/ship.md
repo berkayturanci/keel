@@ -473,6 +473,14 @@ reviewer's **returned findings**, not the comment shape, so it is mode-independe
 runs the project gates (`build_gate_cmd`,
 `lint_cmd`, plus the `tester` Lego — the manual-test list, which may loop back to the
 implementer defensively without spending review budget unless it surfaces a blocking fix).
+An **`agentic` gate reports `NOT-RUN` here** — this command does not dispatch those, you
+do. `NOT-RUN` is not a pass: a gate declared `on_fail: block` that shows `NOT-RUN` blocks
+the merge decision and refuses to certify the run, so `keel merge` will reject the head.
+Dispatch the gate yourself (at s9 for `pre-merge` Lego), then **re-run the command with
+`--gate-result <id>=pass|fail`** to record what your dispatch found. A recorded result may
+only be given for a gate keel did not execute — the command refuses to override its own
+measurement of a gate it ran.
+
 When a gating or advisory jury is enabled and `result.artifact_bodies.jury_verdict_template`
 is available, use that canonical shape for the posted jury verdict and preserve
 `keel.jury-verdict.v1` plus `head: <sha>`.
@@ -553,7 +561,10 @@ gates-pass check must run deterministically inside core, not as adapter prose.
   s11 summary as the merge's authorization.
 - **Pre-merge prep:** re-assert mergeability; if behind/dirty, integrate `base_branch`
   (merge, not rebase), re-green CI, run a single focused merge-conflict review (max 2
-  integration iterations, then blocked + morning queue). Run any `pre-merge` Lego. Then
+  integration iterations, then blocked + morning queue). Run any `pre-merge` Lego — and for
+each one that is `kind: agentic`, record what it found with
+`keel ship … --append-ledger --gate-result <id>=pass|fail`, or its `NOT-RUN` outcome will
+refuse to certify the run at s10. Then
   pre-clean the worktree so `--delete-branch` won't be held by a local ref — remove it
   with `keel worktree-remove <worktree_path> --root .`, which validates the path is nested
   under the repo root and registered in `git worktree list` before removing (never call
@@ -570,7 +581,9 @@ gates-pass check must run deterministically inside core, not as adapter prose.
   exits non-zero **without merging** — on a closed window, append to the morning queue, post
   the deferral comment via `keel post-comment`, leave the PR ready, and continue with the
   next issue; on a missing gates-pass for the current head, re-run `keel run-gates` (or
-  ship with `--append-ledger`) against the head and retry; on a denied claim, treat it as
+  ship with `--append-ledger`) against the head and retry — if the refusal names a
+  `NOT-RUN` blocking gate, the re-run needs `--gate-result <id>=pass|fail` for it, since
+  re-running alone reproduces the same not-run record; on a denied claim, treat it as
   lock contention (mark the issue blocked, comment, continue). For a blocker issue, pass
   `--hotfix` — the audited bypass of both the window and the gates-SHA requirement; it still
   requires the approved consent scopes and is recorded in the ledger. **The `--hotfix`
@@ -710,4 +723,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=claude command=ship keel_version=1.10.0 source_sha256=a32a95767c185337c6d4edacb3f3db3e44d4a2a2ff5a35b9bda456b71c1400b0 generated_sha256=a32a95767c185337c6d4edacb3f3db3e44d4a2a2ff5a35b9bda456b71c1400b0 -->
+<!-- keel-generated: surface=claude command=ship keel_version=1.10.0 source_sha256=28030ef04fccaada2d9012d490765954c2163b87484a661d4fa5cb467d0ca118 generated_sha256=28030ef04fccaada2d9012d490765954c2163b87484a661d4fa5cb467d0ca118 -->

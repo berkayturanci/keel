@@ -6925,6 +6925,18 @@ class TestGateResultFlag(unittest.TestCase):
         self.assertIn("gate security-review FAIL", out)
         self.assertIn("blocking findings present", out)
 
+    def test_a_result_for_a_gate_keel_executed_is_refused(self):
+        # The flag records what keel *cannot* measure. Overriding what it did measure
+        # would let a run whose gates failed certify a merge.
+        cfg = ("extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: x\n"
+               "gates: [build]\nknobs:\n  build_gate_cmd: 'false'\n")
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, _, err = run(["ship", _write_raw(cfg), "--root", d,
+                              "--gate-result", "build=pass"])
+        self.assertEqual(rc, 1)
+        self.assertIn("cannot override a gate keel executed: build", err)
+
     def test_a_result_for_an_unplanned_gate_is_refused(self):
         rc, _, err = self._ship("--gate-result", "no-such-gate=pass")
         self.assertEqual(rc, 1)

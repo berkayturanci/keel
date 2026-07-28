@@ -345,7 +345,10 @@ def record_gates_passed(record: dict[str, Any]) -> bool:
         # only at write time protects records keel wrote and no others: any producer that
         # learns `not_run` without its sibling key would otherwise fail open in exactly
         # the certification path this check exists to close.
-        if gate.get("not_run") is True and gate.get("on_fail", "block") == "block":
+        # Fail closed on anything not explicitly soft: a missing key, a JSON-round-tripped
+        # `None`, or a severity name keel does not know all mean "we cannot tell this was
+        # optional", and this is the certification path.
+        if gate.get("not_run") is True and gate.get("on_fail") not in ("warn", "suggest"):
             return False
     return True
 
