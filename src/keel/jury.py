@@ -203,7 +203,10 @@ def run_gate(
                           cwd=cwd, timeout=timeout, **_kw(_run))
     finally:
         os.unlink(path)
-    report = parse_report(result.output)
+    # stdout alone: ai-jury logs its progress (`[jury] …`) to stderr, and reading the
+    # concatenation is what made every report unparseable (#624). `parse_report` still
+    # tolerates trailing non-JSON, for a vendor that also chats on stdout.
+    report = parse_report(result.stdout)
     if report is None:
         gating = mode == "gating"
         incomplete = _incomplete_finding(

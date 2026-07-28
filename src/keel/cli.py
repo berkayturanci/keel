@@ -415,7 +415,7 @@ def _gather_issue_facts(args: argparse.Namespace) -> tuple[str, tuple[str, ...],
         result = github.issue_facts(issue, cwd=args.root)
         if result.ok:
             try:
-                data = json.loads(result.output)
+                data = json.loads(result.stdout)
             except json.JSONDecodeError:
                 data = None
             if isinstance(data, dict):
@@ -1223,12 +1223,23 @@ def _cmd_capture_verify(args: argparse.Namespace) -> int:
 
     base_ok = report["status"] == "complete"
     reconcile_ok = reconcile_report is None or reconcile_report["ok"]
+    # A failed transport empties the *derived* merged-PR set, so the union degenerates to
+    # exactly the list the agent supplied — and the anti-shrink defence this command
+    # exists to provide silently evaporates, taking any un-captured PR with it. An audit
+    # that could not observe must say "cannot certify", never "clean" (#630).
+    transport_failed = derivation.get("transport_failed") is True
+    status = "transport-unavailable" if transport_failed else report["status"]
+    payload["status"] = status
+    payload["certified"] = base_ok and reconcile_ok and not transport_failed
 
     if args.json:
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
-        print(f"keel capture-verify — {report['status']}  {ledger_path}")
+        print(f"keel capture-verify — {status}  {ledger_path}")
         print(f"  merged-PR source: {derivation['source']} ({len(derived_prs)} PR(s))")
+        if transport_failed:
+            print("  transport     : FAILED — the derived merged-PR set is unobservable, "
+                  "so this audit cannot certify that every merged PR was captured")
         for result in report["results"]:
             state = "ok" if result["ok"] else "FAIL"
             print(
@@ -1241,7 +1252,7 @@ def _cmd_capture_verify(args: argparse.Namespace) -> int:
                       f"{finding['type']}  {finding['reason']}")
             if reconcile_report["ok"]:
                 print("  reconcile: ok")
-    return 0 if base_ok and reconcile_ok else 1
+    return 0 if payload["certified"] else 1
 
 
 def _cmd_consent_verify(args: argparse.Namespace) -> int:
@@ -1517,7 +1528,7 @@ def _dryrun_after_snapshot(
             "after snapshot incomplete: git branch listing failed; cannot certify dry run"
         )
     branches = tuple(
-        line.strip() for line in branches_result.output.splitlines() if line.strip()
+        line.strip() for line in branches_result.stdout.splitlines() if line.strip()
     )
     pattern = dryrunverify.issue_branch_pattern(args.issue)
     pr_numbers = tuple(
@@ -1543,7 +1554,7 @@ def _dryrun_live_prs(root: str) -> list[tuple[int, str]]:
         raise ValueError(
             "after snapshot incomplete: gh PR listing failed; cannot certify dry run"
         )
-    entries = json.loads(result.output or "[]")
+    entries = json.loads(result.stdout or "[]")
     pairs: list[tuple[int, str]] = []
     for entry in entries if isinstance(entries, list) else ():
         if not isinstance(entry, dict):
@@ -1610,7 +1621,7 @@ def _merged_prs_from_transport(args: argparse.Namespace) -> tuple[list[int], boo
     if not result.ok:
         return [], True
     try:
-        items = json.loads(result.output or "[]")
+        items = json.loads(result.stdout or "[]")
     except json.JSONDecodeError:
         return [], True
     if not isinstance(items, list):
@@ -2207,7 +2218,7 @@ def _post_artifact_comment(
     if not result.ok:
         return payload, result.output.strip() or "gh comment mutation failed"
     try:
-        response = json.loads(result.output or "{}")
+        response = json.loads(result.stdout or "{}")
     except json.JSONDecodeError:
         response = {}
     if isinstance(response, dict):
@@ -2532,7 +2543,7 @@ def _local_worktree_facts(branch: str, *, cwd: str) -> dict[str, object] | None:
     listed = git.worktree_list(cwd=cwd)
     if not listed.ok:
         return None
-    entries = _parse_worktree_porcelain(listed.output)
+    entries = _parse_worktree_porcelain(listed.stdout)
     if not entries:
         return None
     repo_root = entries[0]["path"]
@@ -3128,7 +3139,7 @@ def _merge_snapshot(pr: int, *, cwd: str) -> dict[str, object]:
     if not result.ok:
         raise ValueError(f"unable to read PR merge snapshot: {result.output.strip()}")
     try:
-        payload = json.loads(result.output or "{}")
+        payload = json.loads(result.stdout or "{}")
     except json.JSONDecodeError as exc:
         raise ValueError("PR merge snapshot was not JSON") from exc
     rollup = payload.get("statusCheckRollup")
@@ -3302,7 +3313,7 @@ def _validated_worktree_path(root: str | Path, worktree: str) -> Path:
         raise ValueError(f"unable to list registered worktrees: {listed.output.strip()}")
     registered = {
         Path(line.split(" ", 1)[1]).resolve()
-        for line in listed.output.splitlines()
+        for line in listed.stdout.splitlines()
         if line.startswith("worktree ")
     }
     if candidate not in registered:
@@ -3601,7 +3612,7 @@ def _gh_json(args: list[str], *, cwd: str) -> dict[str, object]:
     result = run_argv(["gh", "api", endpoint], cwd=cwd)
     if not result.ok:
         raise ValueError(f"gh api {endpoint} failed: {result.output.strip()}")
-    value = json.loads(result.output or "{}")
+    value = json.loads(result.stdout or "{}")
     if not isinstance(value, dict):
         raise ValueError(f"gh api {endpoint} did not return a JSON object")
     return value
@@ -3612,7 +3623,7 @@ def _gh_json_list(args: list[str], *, cwd: str) -> list[dict[str, object]]:
     result = run_argv(["gh", "api", "--paginate", "--slurp", endpoint], cwd=cwd)
     if not result.ok:
         raise ValueError(f"gh api {endpoint} failed: {result.output.strip()}")
-    value = json.loads(result.output or "[]")
+    value = json.loads(result.stdout or "[]")
     if value and all(isinstance(item, list) for item in value):
         value = [entry for page in value for entry in page]
     if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
