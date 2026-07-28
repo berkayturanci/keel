@@ -791,7 +791,7 @@ def extension_hooks_as_dict(
 
 def ship_result_as_dict(
     *,
-    changed_files: list[str],
+    changed_files: list[str] | None,
     outcomes: list[gates.GateOutcome],
     verdict,
     assessment,
@@ -855,8 +855,10 @@ def ship_result_as_dict(
         ),
     }
     return {
-        "changed_files": list(changed_files),
-        "changed_file_count": len(changed_files),
+        # None stays None: "could not read the diff" must not report as "0 files".
+        "changed_files": None if changed_files is None else list(changed_files),
+        "changed_file_count": None if changed_files is None else len(changed_files),
+        "changed_files_unreadable": changed_files is None,
         "issue_intake": issue_intake,
         "run_ledger": run_ledger,
         "closure_comment": closure_comment,
@@ -912,7 +914,9 @@ def _testing_summary(outcomes: list[gates.GateOutcome]) -> list[str]:
     return lines
 
 
-def _docs_impact(changed_files: list[str]) -> str:
+def _docs_impact(changed_files: list[str] | None) -> str:
+    if changed_files is None:
+        return "Docs Impact: unknown — the changed-file list could not be read from git."
     docs = [file for file in changed_files if _is_doc_path(file)]
     if docs:
         return "Updated docs: " + ", ".join(f"`{file}`" for file in docs)

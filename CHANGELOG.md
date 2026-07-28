@@ -18,6 +18,22 @@ All notable changes to keel are documented here. The format follows
   `classify.is_docs_only` directly instead of inferring it from `tier == 1`.
   `docs/keel/configuration.md` now states the difference as a table.
 
+- **`knobs.jury_timeout_s`** (integer ≥ 1, default `600`) sets the jury built-in's
+  wall-clock budget, previously hardcoded and unreachable from config — #622's
+  `gate_timeout_s` covers command gates and never applied to it. Kept separate on purpose:
+  the jury is a cross-vendor agent CLI, not a project test command, so a panel that needs
+  an hour should not force every test gate to wait an hour too. `plan_gates` now resolves
+  it onto the jury `GateSpec`, so every gate that shells out has its budget decided in one
+  place and visible in the plan contract.
+
+- **`keel ship --gate-result <id>=pass|fail`** records the verdict of a gate keel cannot
+  execute — an `agentic` gate, dispatched by the agent rather than by the command-only
+  runner. Repeatable. This is the channel the `not_run` refusal below needs: without it a
+  blocking agentic gate is `NOT-RUN` forever, `record_gates_passed` never certifies the
+  run, and `keel merge` refuses every head — a permanent merge block rather than a gate.
+  Found by review of this changeset, against a project config the schema and
+  `docs/keel/extensions.md` both permit.
+
 ### Fixed
 - **Re-running the ledger append no longer bricks the session** (found in review): the
   append was unconditional, so the natural retry after a crash mid-s11 wrote a *second*
@@ -47,6 +63,35 @@ All notable changes to keel are documented here. The format follows
   attests the merge *decision*, not the merge. A `merged` checkpoint contradicted by a live
   PR state of `open`/`closed`/`missing` is now `ambiguous`. `unknown` (the default when the
   adapter volunteers nothing) is absence of evidence and leaves the jump intact.
+
+- **The assessment no longer says "clear to merge" about a run it cannot certify**
+  (found in review): a `NOT-RUN` blocking gate made `record_gates_passed` refuse the
+  record, but `ship.assess` did not know about it — so `keel ship` printed
+  `decision: MERGE — clear to merge` immediately below `gate <id> NOT-RUN`, and
+  `keel merge` then refused with nothing the operator could connect it to. `decide_merge`
+  now takes the unrun blocking gates and blocks, naming them and the flag that satisfies
+  them.
+
+- **An unreadable diff is unreadable in the machine-readable surfaces too** (found in
+  review): the fail-closed classification reached the console line and the tier, but
+  `keel ship --json`, the ledger record, and the closure comment rendered from it all
+  still said "0 changed files" — so a downstream consumer could not tell "we could not
+  read the diff" from "the diff was empty", and the record claimed TIER-3 with zero files.
+  The counts are now `null` with an explicit `unreadable` flag, and the rendered PR body
+  says the list could not be read.
+
+- **The closure-fidelity strip cannot launder content** (found in review): the run-id
+  marker was stripped with a permissive `.*?`, and an HTML comment ends at its first
+  `-->` — so a trusted author could append
+  `<!-- keel.run-id: r1 --> **NOT ACTUALLY MERGED** -->`, have the whole line normalize
+  away, and still render contradicting text on the page. The pattern now matches only the
+  exact form the transport emits.
+
+- **`record_gates_passed` applies its strict default at read time** (found in review): a
+  gate carrying `not_run: true` with no `on_fail` key certified as passed, because the
+  strict default was applied only where keel *wrote* the record. Any other producer that
+  learned the new key without its sibling failed open in exactly the certification path
+  the check exists to close.
 
 - **`git` warnings on stderr no longer corrupt every parsed value** (#629): `run_argv`
   returned only `stdout + stderr` concatenated, and every `git` wrapper parsed *that*. git
@@ -150,15 +195,6 @@ All notable changes to keel are documented here. The format follows
   - **`gate_timeout_s`**'s two CLI call sites. `plan_gates` makes the runner fallback
     unreachable, so this is defence in depth rather than dead code — pinned so the redundancy
     cannot quietly become wrong.
-
-### Added
-- **`knobs.jury_timeout_s`** (integer ≥ 1, default `600`) sets the jury built-in's
-  wall-clock budget, previously hardcoded and unreachable from config — #622's
-  `gate_timeout_s` covers command gates and never applied to it. Kept separate on purpose:
-  the jury is a cross-vendor agent CLI, not a project test command, so a panel that needs
-  an hour should not force every test gate to wait an hour too. `plan_gates` now resolves
-  it onto the jury `GateSpec`, so every gate that shells out has its budget decided in one
-  place and visible in the plan contract.
 
 ## [1.10.0] — 2026-07-27
 

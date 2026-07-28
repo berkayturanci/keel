@@ -84,7 +84,7 @@ def build_ship_run_record(
     *,
     command: str,
     base_branch: str,
-    changed_files: list[str],
+    changed_files: list[str] | None,
     declared_files: list[str] | None = None,
     outcomes: list[Any],
     verdict: Any,
@@ -128,9 +128,15 @@ def build_ship_run_record(
             "branch": branch,
             "head_sha": head_sha,
         },
+        # `None` means git could not be read, and stays distinct from `[]` all the way
+        # into the record: a consumer of the ledger (or of the closure comment rendered
+        # from it) must not read "we could not see the diff" as "the diff was empty" —
+        # that is the conflation this whole family of fixes exists to remove, and a
+        # record claiming TIER-3 with zero files is self-contradictory besides.
         "changes": {
-            "file_count": len(changed_files),
-            "files": list(changed_files),
+            "file_count": None if changed_files is None else len(changed_files),
+            "files": None if changed_files is None else list(changed_files),
+            "unreadable": changed_files is None,
         },
         "declared": _declared_block(declared_files),
         "gates": [
@@ -335,7 +341,11 @@ def record_gates_passed(record: dict[str, Any]) -> bool:
             return False
         if not (gate.get("ok") is True or gate.get("skipped") is True):
             return False
-        if gate.get("not_run") is True and gate.get("on_fail") == "block":
+        # Missing `on_fail` defaults to the strict value *here*, at read time. Defaulting
+        # only at write time protects records keel wrote and no others: any producer that
+        # learns `not_run` without its sibling key would otherwise fail open in exactly
+        # the certification path this check exists to close.
+        if gate.get("not_run") is True and gate.get("on_fail", "block") == "block":
             return False
     return True
 

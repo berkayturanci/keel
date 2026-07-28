@@ -182,6 +182,26 @@ class TestAssess(unittest.TestCase):
         self.assertEqual(unreadable.review_contract["jury"]["mode"], "gating")
         self.assertEqual(empty.tier, 2)
 
+    def test_a_required_gate_nobody_ran_blocks_the_merge(self):
+        # `record_gates_passed` refuses to certify such a record, so reporting
+        # "clear to merge" would promise a merge `keel merge` then refuses, with no
+        # reason given to the operator.
+        blocked = ship.assess(changed_files=["x.py"], gate_verdict=CLEAN,
+                              unrun_blocking_gates=("security-review",))
+        self.assertEqual(blocked.merge.action, "block")
+        self.assertIn("security-review", blocked.merge.reason)
+        self.assertIn("--gate-result", blocked.merge.reason)
+
+    def test_advisory_gates_that_did_not_run_do_not_block(self):
+        self.assertEqual(
+            ship.assess(changed_files=["x.py"], gate_verdict=CLEAN).merge.action, "merge")
+
+    def test_blocking_findings_outrank_an_unrun_gate_in_the_reason(self):
+        blocked = ship.assess(changed_files=["x.py"], gate_verdict=BLOCKED,
+                              unrun_blocking_gates=("security-review",))
+        self.assertEqual(blocked.merge.action, "block")
+        self.assertEqual(blocked.merge.reason, "blocking findings present")
+
     def test_docs_only_tier1(self):
         a = ship.assess(changed_files=["docs/x.md"], gate_verdict=CLEAN,
                         tier3_globs=TIER3, docs_globs=DOCS)

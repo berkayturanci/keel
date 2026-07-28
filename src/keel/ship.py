@@ -246,15 +246,35 @@ class MergeDecision:
     reason: str
 
 
-def decide_merge(verdict: Verdict, *, window_open: bool, is_blocker: bool = False) -> MergeDecision:
+def decide_merge(
+    verdict: Verdict,
+    *,
+    window_open: bool,
+    is_blocker: bool = False,
+    unrun_blocking_gates: tuple[str, ...] = (),
+) -> MergeDecision:
     """Decide what to do with a green-or-not PR given the window.
 
     * blocking findings ⇒ **block** (never merges);
+    * a required gate that nobody ran ⇒ **block** (no verdict exists to clear it);
     * outside the merge window and not a blocker ⇒ **defer** to the morning queue;
     * otherwise ⇒ **merge**. A blocker bypasses the window (but never the findings).
+
+    ``unrun_blocking_gates`` names ``on_fail: block`` gates this run did not execute —
+    agentic gates reach the command-only runner, which does not dispatch them. The
+    assessment must say so: :func:`keel.ledger.record_gates_passed` refuses to certify
+    such a record, so reporting "clear to merge" would promise a merge that
+    ``keel merge`` will then refuse, with the operator given no reason why.
     """
     if verdict.blocked:
         return MergeDecision("block", "blocking findings present")
+    if unrun_blocking_gates:
+        listed = ", ".join(unrun_blocking_gates)
+        return MergeDecision(
+            "block",
+            f"required gate(s) not run: {listed} — record a result with "
+            "--gate-result <id>=pass|fail once the gate has been dispatched",
+        )
     if not window_open and not is_blocker:
         return MergeDecision("defer", "outside merge window (night no-merge)")
     reason = "blocker bypass" if (is_blocker and not window_open) else "clear to merge"
@@ -313,6 +333,7 @@ def assess(
     ci_conclusion: str | None = None,
     now=None,
     is_blocker: bool = False,
+    unrun_blocking_gates: tuple[str, ...] = (),
     reviewer_override: int | None = None,
     review_comments: str = "inline",
     gates: tuple[str, ...] = (),
@@ -349,7 +370,8 @@ def assess(
     if ci_ok is False:
         merge = MergeDecision("block", "CI failing")
     else:
-        merge = decide_merge(gate_verdict, window_open=window_open, is_blocker=is_blocker)
+        merge = decide_merge(gate_verdict, window_open=window_open, is_blocker=is_blocker,
+                             unrun_blocking_gates=unrun_blocking_gates)
     bypassed = is_blocker and not window_open and merge.action == "merge"
     review_contract = resolve_review_contract(
         tier=tier,

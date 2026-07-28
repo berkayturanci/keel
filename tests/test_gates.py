@@ -245,3 +245,87 @@ class TestTimedOutOutcome(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestNotRunPropagation(unittest.TestCase):
+    """`not_run` + `on_fail` must survive the whole chain, or #626 re-opens.
+
+    The leaf predicate (`ledger.record_gates_passed`) was unit-tested against
+    hand-written dicts, so `on_fail=spec.on_fail` in `run_gates` and the two keys in
+    `build_ship_run_record` were both green when mutated to a permissive constant —
+    the gate refusal would have quietly stopped refusing.
+    """
+
+    def _spec(self, on_fail):
+        return gates.GateSpec("security-review", "agentic", "pre-merge", on_fail)
+
+    def _record(self, outcomes):
+        from types import SimpleNamespace
+
+        from keel import ledger
+        return ledger.build_ship_run_record(
+            command="ship", base_branch="main", changed_files=["a.py"],
+            outcomes=outcomes,
+            verdict=summarize(gates.collect_findings(outcomes)),
+            assessment=SimpleNamespace(
+                tier=2, reviewers=2, window_open=True, ci_ok=None,
+                merge=SimpleNamespace(action="merge", reason="ok"),
+                halted=False, bypassed_window=False),
+        )
+
+    def test_a_blocking_agentic_gate_never_certifies_end_to_end(self):
+        from keel import ledger
+        from keel.runner import command_gate_runner
+
+        outcomes = gates.run_gates([self._spec("block")], command_gate_runner("."))
+
+        self.assertTrue(outcomes[0].not_run)
+        self.assertEqual(outcomes[0].on_fail, "block")
+        self.assertEqual(gates.unrun_blocking(outcomes), ("security-review",))
+        self.assertFalse(ledger.record_gates_passed(self._record(outcomes)))
+
+    def test_an_advisory_agentic_gate_still_certifies_end_to_end(self):
+        from keel import ledger
+        from keel.runner import command_gate_runner
+
+        outcomes = gates.run_gates([self._spec("warn")], command_gate_runner("."))
+
+        self.assertTrue(outcomes[0].not_run)
+        self.assertEqual(gates.unrun_blocking(outcomes), ())
+        self.assertTrue(ledger.record_gates_passed(self._record(outcomes)))
+
+    def test_a_recorded_result_lets_the_run_certify(self):
+        from keel import ledger
+        from keel.runner import command_gate_runner
+
+        outcomes = gates.run_gates([self._spec("block")], command_gate_runner("."))
+        applied = gates.apply_recorded_results(outcomes, {"security-review": "pass"})
+
+        self.assertFalse(applied[0].not_run)     # it *was* run — by the agent
+        self.assertEqual(gates.unrun_blocking(applied), ())
+        self.assertTrue(ledger.record_gates_passed(self._record(applied)))
+
+    def test_a_recorded_failure_blocks_at_the_declared_severity(self):
+        from keel import ledger
+        from keel.runner import command_gate_runner
+
+        outcomes = gates.run_gates([self._spec("block")], command_gate_runner("."))
+        applied = gates.apply_recorded_results(outcomes, {"security-review": "fail"})
+
+        self.assertFalse(applied[0].ok)
+        self.assertFalse(applied[0].not_run)
+        self.assertEqual(applied[0].findings[0].severity, "major")
+        self.assertFalse(ledger.record_gates_passed(self._record(applied)))
+
+    def test_an_unnamed_gate_is_left_alone(self):
+        outcomes = [gates.GateOutcome("build", True, on_fail="block")]
+        self.assertEqual(gates.apply_recorded_results(outcomes, {"other": "fail"}), outcomes)
+
+    def test_a_not_run_gate_reported_as_failing_keeps_the_flag(self):
+        # Unreachable with the in-tree runners, but the contract allows it and a dropped
+        # flag would silently re-open the certification hole.
+        def runner(spec):
+            return False, [], False, True
+
+        outcomes = gates.run_gates([self._spec("block")], runner)
+        self.assertTrue(outcomes[0].not_run)

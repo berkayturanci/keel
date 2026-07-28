@@ -686,7 +686,13 @@ class TestShip(unittest.TestCase):
         self.assertFalse(data["contract"]["side_effects"]["mutates_in_dry_run"])
         self.assertEqual(data["contract"]["operator_consent"]["status"],
                          "not-required-dry-run")
-        self.assertEqual(data["result"]["changed_file_count"], 0)
+        # A non-git root: the diff could not be read, which is not "0 files changed".
+        self.assertIsNone(data["result"]["changed_file_count"])
+        self.assertIsNone(data["result"]["changed_files"])
+        self.assertTrue(data["result"]["changed_files_unreadable"])
+        self.assertIsNone(
+            data["result"]["run_ledger"]["record"]["changes"]["file_count"])
+        self.assertTrue(data["result"]["run_ledger"]["record"]["changes"]["unreadable"])
         self.assertFalse(data["result"]["run_ledger"]["appended"])
         self.assertEqual(data["result"]["run_ledger"]["record"]["record_type"], "ship_run")
         self.assertEqual(data["result"]["assessment"]["merge"]["action"], "merge")
@@ -4411,6 +4417,101 @@ class TestCoreMerge(unittest.TestCase):
         self.assertTrue(payload["ci_no_checks_docs_only"])
         self.assertIn("no gates-pass recorded", payload["reason"])
 
+    def _merge_with_changed_files(self, changed):
+        """Drive `keel merge` with a real evidence load, so the docs-only carve-out is
+        computed by production code instead of handed in by the test.
+
+        Patching `_verify_merge_evidence` (as the two tests above do) pins the *branch*
+        in `_cmd_merge` but not the *value* that drives it — with that seam,
+        `docs_only = True` is a green mutation and #627 is quietly re-opened. Patching
+        one level deeper, at the artifact load, leaves `classify.is_docs_only` in the
+        path.
+        """
+        artifacts = {
+            "pr_body": "Closes #1", "pr_comments": [], "issue_comments": [],
+            "pr_reviews": [], "issue": 1, "head_sha": "abc", "head_ref": "feature/x",
+            "changed_files": changed, "pr_labels": ["keel:ship"],
+        }
+        snapshot = _json_result({
+            "headRefOid": "abc", "mergeStateStatus": "CLEAN", "statusCheckRollup": [],
+        })
+        with (
+            patch("keel.cli.runtime.detect", return_value=_merge_capability_report()),
+            patch("keel.cli.window.is_merge_open", return_value=True),
+            patch("keel.cli.github.pr_merge_snapshot", return_value=snapshot),
+            patch("keel.cli._load_evidence_artifacts", return_value=artifacts),
+            patch("keel.cli.ledger.gates_pass_for_head", return_value=(False, None)),
+        ):
+            rc, out, _ = run(_merge_args(json_out=True))
+        return rc, json.loads(out)
+
+    def test_the_docs_only_carve_out_is_computed_from_the_real_changed_files(self):
+        # Every changed path is a docs path -> the empty check set is tolerated, and the
+        # run proceeds to the next gate (gates-for-head, which is what stops it here).
+        rc_docs, docs = self._merge_with_changed_files(["docs/keel/cli.md", "README.md"])
+        # One code path is enough to withdraw the carve-out.
+        rc_code, code = self._merge_with_changed_files(["docs/keel/cli.md", "src/keel/cli.py"])
+
+        self.assertTrue(docs["ci_no_checks_docs_only"])
+        # It cleared the CI check and was stopped by a later gate — which is the point.
+        self.assertNotIn("empty check set", docs["reason"])
+        self.assertFalse(code["ci_no_checks_docs_only"])
+        self.assertIn("empty check set", code["reason"])
+        self.assertEqual((rc_docs, rc_code), (1, 1))
+
+    def test_an_unreadable_or_empty_changeset_never_earns_the_carve_out(self):
+        # The carve-out is the one place an empty CI check set is tolerated, so "we could
+        # not see what changed" must not buy it.
+        for changed in ([], None):
+            with self.subTest(changed=changed):
+                rc, payload = self._merge_with_changed_files(changed)
+                self.assertEqual(rc, 1)
+                self.assertFalse(payload["ci_no_checks_docs_only"])
+                self.assertIn("empty check set", payload["reason"])
+
+    def test_the_merge_gate_reads_the_evidence_knobs_from_config(self):
+        # #633 pinned these two wires on the `evidence-verify` path but not on the copy
+        # inside `_verify_merge_evidence` — the merge-gate one, i.e. the safety-critical
+        # of the two. An operator who tightens either knob in config had no proof it
+        # reached `keel merge`.
+        config = _write_raw(
+            "extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
+            "repo: acme/example\ngates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+            "  evidence_gate_label: 'acme:reviewed'\n"
+            "  evidence_require_distinct_vendors: true\n"
+        )
+        args = Namespace(
+            path=config, root=str(REPO_ROOT), pr=300, reviewers=None,
+            review_comments="inline", jury=False, no_jury=True, jury_advisory=False,
+            jury_vendors=None, require_distinct_vendors=False, gate_label=None,
+            waiver_label=None, deferral=[], phase="pre-merge", require_armed=False,
+            dry_run=False, issue=None,
+        )
+        # Two LGTMs from the *same* vendor: only a live `require_distinct_vendors`
+        # turns that into a finding, so the finding is the knob's observable effect.
+        same_vendor = [
+            _trusted_comment("keel.review-verdict.v1\nreviewer: a\nvendor: claude\n"
+                             "head: abc\nLGTM"),
+            _trusted_comment("keel.review-verdict.v1\nreviewer: b\nvendor: claude\n"
+                             "head: abc\nLGTM"),
+        ]
+        artifacts = {
+            "pr_body": "Closes #1", "pr_comments": same_vendor, "issue_comments": [],
+            "pr_reviews": [], "issue": 1, "head_sha": "abc", "head_ref": "feature/x",
+            "changed_files": ["src/keel/cli.py"], "pr_labels": ["acme:reviewed"],
+        }
+        with patch("keel.cli._load_evidence_artifacts", return_value=artifacts):
+            payload = cli._verify_merge_evidence(args, cli.cfg.load_config(config))
+
+        # The configured label armed the gate — the built-in default would not have.
+        self.assertEqual(payload["gate_label"], "acme:reviewed")
+        self.assertTrue(payload["enforced"])
+        self.assertTrue(
+            any(f["id"] == "review-vendor-distinctness"
+                for f in payload["verification"]["findings"]),
+            payload["verification"]["findings"],
+        )
+
     def test_merge_blocks_closed_window_snapshot_error_and_dirty_state(self):
         fake_report = _merge_capability_report()
         with (
@@ -6728,6 +6829,115 @@ class TestShipHotfix(unittest.TestCase):
         # decision depends on the wall-clock window, but the flag must be accepted
         self.assertIn("keel ship", out)
         self.assertIn("DECISION", out.upper())
+
+
+class TestRunIdMarkerRoundTrip(unittest.TestCase):
+    """The marker must make a comment findable *and* leave closure fidelity intact.
+
+    Those two requirements used to be mutually exclusive: `post-comment` matches on
+    marker + run-id, but `evidence-verify` compares the posted closure body against the
+    canonical render, so any run-id in the body failed fidelity. The fix splits them —
+    the transport stamps, `evidence` strips — and it is the *interaction* that matters,
+    so that is what this pins.
+    """
+
+    RECORD = {"run_id": "ship-123", "actors": {}, "pull_request": {"number": 7},
+              "changes": {}, "capture": {}}
+
+    def _body(self):
+        from keel import closure
+        return closure.render_closure_comment(self.RECORD)
+
+    def test_a_bare_closure_body_is_not_findable(self):
+        # The defect: the canonical render writes "- **Run id:** <id>", which the
+        # idempotency matcher does not recognise, so every resume posted a duplicate.
+        self.assertFalse(cli._comment_has_run_id(self._body(), "ship-123:closure"))
+
+    def test_the_stamped_body_is_both_findable_and_verbatim(self):
+        from keel import evidence
+        posted = cli._with_run_id_marker(self._body(), "ship-123:closure")
+
+        self.assertTrue(cli._comment_has_run_id(posted, "ship-123:closure"))
+        self.assertTrue(evidence.closure_body_matches_record(posted, self.RECORD))
+
+    def test_stamping_twice_does_not_stack_markers(self):
+        once = cli._with_run_id_marker(self._body(), "ship-123:closure")
+        self.assertEqual(cli._with_run_id_marker(once, "ship-123:closure"), once)
+
+    def test_no_run_id_leaves_the_body_untouched(self):
+        self.assertEqual(cli._with_run_id_marker(self._body(), None), self._body())
+
+    def test_the_strip_cannot_launder_text_past_the_fidelity_check(self):
+        from keel import evidence
+        # An HTML comment ends at its first `-->`, so trailing text renders visibly on
+        # the page. A permissive strip would normalize the whole line away and let a
+        # trusted author contradict the record while still comparing equal.
+        smuggled = self._body() + (
+            "\n<!-- keel.run-id: r1 --> **THIS PR WAS NOT ACTUALLY MERGED** -->\n")
+        self.assertFalse(evidence.closure_body_matches_record(smuggled, self.RECORD))
+
+
+class TestGateResultFlag(unittest.TestCase):
+    """`--gate-result` is the channel that makes a blocking agentic gate satisfiable.
+
+    Without it, `command_gate_runner` reports every agentic gate `not_run`,
+    `record_gates_passed` refuses the record for every head, and `keel merge` blocks
+    forever with no way to record that the agent did dispatch the gate — a permanent
+    merge block rather than a gate.
+    """
+
+    CFG = ("extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: x\n"
+           "gates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+           "extensions:\n  pre-merge: [security-review.md]\n")
+    EXT = ("---\nid: security-review\nslot: pre-merge\nkind: agentic\n"
+           "on_fail: block\nagent: inherit\n---\nReview the diff.\n")
+
+    def _root(self, stack):
+        import tempfile
+        d = stack.enter_context(tempfile.TemporaryDirectory())
+        ext = Path(d) / ".keel" / "extensions"
+        ext.mkdir(parents=True)
+        (ext / "security-review.md").write_text(self.EXT, encoding="utf-8")
+        return d
+
+    def _ship(self, *extra):
+        with contextlib.ExitStack() as stack:
+            d = self._root(stack)
+            rc, out, err = run(["ship", _write_raw(self.CFG), "--root", d, *extra])
+        return rc, out, err
+
+    def test_an_undispatched_blocking_gate_blocks_and_says_why(self):
+        rc, out, _ = self._ship()
+        self.assertEqual(rc, 1)
+        self.assertIn("gate security-review NOT-RUN", out)
+        self.assertIn("required gate(s) not run: security-review", out)
+        self.assertIn("--gate-result", out)
+
+    def test_a_recorded_pass_clears_it(self):
+        rc, out, _ = self._ship("--gate-result", "security-review=pass")
+        self.assertEqual(rc, 0)
+        self.assertIn("gate security-review ok", out)
+        self.assertIn("MERGE — clear to merge", out)
+
+    def test_a_recorded_failure_blocks_on_findings(self):
+        rc, out, _ = self._ship("--gate-result", "security-review=fail")
+        self.assertEqual(rc, 1)
+        self.assertIn("gate security-review FAIL", out)
+        self.assertIn("blocking findings present", out)
+
+    def test_a_result_for_an_unplanned_gate_is_refused(self):
+        rc, _, err = self._ship("--gate-result", "no-such-gate=pass")
+        self.assertEqual(rc, 1)
+        self.assertIn("names no planned gate: no-such-gate", err)
+
+    def test_argument_shape_is_validated(self):
+        for bad in ("noequals", "=pass", "gate=maybe", "gate="):
+            with self.subTest(value=bad):
+                with self.assertRaises(cli.argparse.ArgumentTypeError):
+                    cli._gate_result_arg(bad)
+
+    def test_verdict_is_case_insensitive_and_trimmed(self):
+        self.assertEqual(cli._gate_result_arg(" gate = PASS "), ("gate", "pass"))
 
 
 class TestGateStatusLabel(unittest.TestCase):

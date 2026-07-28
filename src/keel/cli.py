@@ -969,6 +969,13 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         _gate_runner(args.root, diff_text, jury_mode=review_contract["jury"]["mode"],
                      timeout=config.knobs.gate_timeout_s),
     )
+    recorded_results = dict(getattr(args, "gate_result", None) or ())
+    planned = {spec.id for spec in specs}
+    unknown = sorted(set(recorded_results) - planned)
+    if unknown:
+        print(f"--gate-result names no planned gate: {', '.join(unknown)}", file=sys.stderr)
+        return 1
+    outcomes = gates.apply_recorded_results(outcomes, recorded_results)
     verdict = fnd.summarize(gates.collect_findings(outcomes))
     ci_conclusion = (
         github.ci_conclusion(args.pr, cwd=args.root)
@@ -989,6 +996,10 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         merge_window_mode=config.merge_window_mode,
         ci_conclusion=ci_conclusion,
         is_blocker=args.hotfix,
+        # A required gate nobody dispatched has produced no verdict, so the assessment
+        # must not report "clear to merge": `keel merge` will refuse the record, and
+        # without this the operator is told the run is clean and given no reason why.
+        unrun_blocking_gates=gates.unrun_blocking(outcomes),
         reviewer_override=args.reviewers,
         review_comments=args.review_comments,
         gates=config.gates,
@@ -1019,7 +1030,9 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     ledger_record = ledger.build_ship_run_record(
         command=command,
         base_branch=config.base_branch,
-        changed_files=changed,
+        # None-preserving, as into `assess`: the record must not claim an empty diff on
+        # a run that could not read one.
+        changed_files=changed_read,
         declared_files=args.declared_file,
         outcomes=outcomes,
         verdict=verdict,
@@ -1095,7 +1108,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         print(json.dumps({
             "contract": contract,
             "result": contracts.ship_result_as_dict(
-                changed_files=changed,
+                changed_files=changed_read,
                 outcomes=outcomes,
                 verdict=verdict,
                 assessment=a,
@@ -3647,6 +3660,23 @@ def _verdict_count_arg(value: str) -> tuple[int, int]:
     return pr, count
 
 
+GATE_RESULTS = ("pass", "fail")
+
+
+def _gate_result_arg(value: str) -> tuple[str, str]:
+    """Parse ``--gate-result ID=pass|fail``."""
+    if "=" not in value:
+        raise argparse.ArgumentTypeError("--gate-result must use ID=pass|fail")
+    gate_id, _, verdict = value.partition("=")
+    gate_id, verdict = gate_id.strip(), verdict.strip().lower()
+    if not gate_id:
+        raise argparse.ArgumentTypeError("--gate-result requires a gate id")
+    if verdict not in GATE_RESULTS:
+        raise argparse.ArgumentTypeError(
+            f"--gate-result verdict must be one of {', '.join(GATE_RESULTS)}")
+    return gate_id, verdict
+
+
 def _gh_json(args: list[str], *, cwd: str) -> dict[str, object]:
     endpoint = "/".join(args)
     result = run_argv(["gh", "api", endpoint], cwd=cwd)
@@ -5365,6 +5395,10 @@ def _add_ship_parser(parser: argparse.ArgumentParser, *, command: str) -> None:
     parser.add_argument("--capture-artifact", default=None,
                         help="durable capture artifact reference (path or content hash) "
                              "proving an applied capture; required for clean reconcile")
+    parser.add_argument("--gate-result", action="append", default=[],
+                        type=_gate_result_arg, metavar="ID=pass|fail",
+                        help="record the verdict of a gate this command cannot execute "
+                             "(an agentic gate, run by the dispatching agent); repeatable")
     parser.add_argument("--implementer", default=None,
                         help="effective implementer codename or vendor/model label")
     parser.add_argument("--reviewer-agent", action="append", default=[],

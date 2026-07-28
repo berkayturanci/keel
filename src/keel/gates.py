@@ -183,9 +183,53 @@ def run_gates(specs, runner: GateRunner, *, fail_soft: bool = True) -> list[Gate
                 sev = _ON_FAIL_SEVERITY[spec.on_fail]
                 found = (Finding(sev, f"gate {spec.id!r} failed", spec.id),)
             # ok stays False for a timeout: the merge gate is unchanged, only the label.
+            # not_run rides along on this branch too: dropping it would let a future
+            # runner that reports a not-run gate as *failing* certify the merge anyway.
             outcomes.append(GateOutcome(spec.id, False, found, timed_out=timed_out,
-                                        on_fail=spec.on_fail))
+                                        not_run=not_run, on_fail=spec.on_fail))
     return outcomes
+
+
+def unrun_blocking(outcomes: list[GateOutcome]) -> tuple[str, ...]:
+    """Names of ``on_fail: block`` gates this run did not execute, in outcome order."""
+    return tuple(o.gate for o in outcomes if o.not_run and o.on_fail == "block")
+
+
+def apply_recorded_results(
+    outcomes: list[GateOutcome], results: dict[str, str]
+) -> list[GateOutcome]:
+    """Fold externally-executed gate verdicts into ``outcomes``.
+
+    ``results`` maps a gate id to ``"pass"`` or ``"fail"``. It exists because the
+    command-only runner cannot execute ``agentic`` gates — the agent-dispatch layer
+    does — and without a way to report back, such a gate stays ``not_run`` forever and
+    :func:`keel.ledger.record_gates_passed` can never certify the run. That would make
+    a blocking agentic gate a permanent merge block rather than a gate.
+
+    A recorded result clears ``not_run``, because the gate *was* run; a ``fail``
+    additionally produces a finding at the gate's declared severity, exactly as an
+    in-process failure would. Ids that match no outcome are ignored here — the CLI
+    validates them against the plan, where the gate list is known.
+    """
+    applied: list[GateOutcome] = []
+    for outcome in outcomes:
+        verdict = results.get(outcome.gate)
+        if verdict is None:
+            applied.append(outcome)
+            continue
+        if verdict == "pass":
+            applied.append(GateOutcome(outcome.gate, True, outcome.findings,
+                                       error=outcome.error, skipped=outcome.skipped,
+                                       on_fail=outcome.on_fail))
+            continue
+        found = outcome.findings or (
+            Finding(_ON_FAIL_SEVERITY[outcome.on_fail],
+                    f"gate {outcome.gate!r} failed (reported by the dispatching agent)",
+                    outcome.gate),
+        )
+        applied.append(GateOutcome(outcome.gate, False, found, error=outcome.error,
+                                   skipped=outcome.skipped, on_fail=outcome.on_fail))
+    return applied
 
 
 def collect_findings(outcomes: list[GateOutcome]) -> list[Finding]:
