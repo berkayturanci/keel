@@ -157,6 +157,14 @@ class TestHeaderBadgesAndGateStrip(unittest.TestCase):
         out = t._gate_strip(gates, enable=False)
         self.assertEqual(out, "gates: build✓ evidence✗ jury–")
 
+    def test_gate_strip_distinguishes_a_timeout_from_a_failure(self):
+        # keel#622: a timed-out gate is still red, but must not read as a broken test.
+        gates = [
+            {"name": "build", "ok": False, "skipped": False, "timed_out": True},
+            {"name": "lint", "ok": False, "skipped": False, "timed_out": False},
+        ]
+        self.assertEqual(t._gate_strip(gates, enable=False), "gates: build⧗ lint✗")
+
     def test_gate_strip_unnamed_gate_falls_back(self):
         self.assertEqual(t._gate_strip([{"ok": True}], enable=False), "gates: ?✓")
 

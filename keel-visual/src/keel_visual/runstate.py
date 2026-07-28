@@ -137,6 +137,9 @@ def gates_from_record(record: dict[str, Any] | None) -> list[dict[str, Any]]:
             "name": name,
             "ok": entry.get("ok") is True,
             "skipped": entry.get("skipped") is True,
+            # Carried so the strip can tell a slow host from a broken test. Absent on
+            # records written before the field existed, which reads as False.
+            "timed_out": entry.get("timed_out") is True,
             "error": _str_or_none(entry.get("error")),
             "finding_count": _count_or_none(entry.get("finding_count")) or 0,
         })

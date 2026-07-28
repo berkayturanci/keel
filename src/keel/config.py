@@ -14,12 +14,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-# Both names come from `model`, the one module with no intra-package imports, so config
-# carries no edge that could close an import cycle. SLOTS is the source of truth for the
-# named slots; DEFAULT_GATE_TIMEOUT_S is shared with the gate planner and runner.
 from . import jsonschema_min
 from . import yaml_helper as yaml
 from .capabilities import validate_names
+
+# Keep both names coming from `model` — the one module with no intra-package imports.
+# Taking DEFAULT_GATE_TIMEOUT_S from `gates` instead closes a config -> gates -> config
+# cycle (gates names config in its TYPE_CHECKING imports). SLOTS: source of truth for
+# the named slots; DEFAULT_GATE_TIMEOUT_S: shared with the gate planner and runner.
 from .model import DEFAULT_GATE_TIMEOUT_S, SLOTS
 
 SCHEMA_PATH = Path(__file__).parent / "schema" / "project.schema.json"

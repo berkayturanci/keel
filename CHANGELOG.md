@@ -26,6 +26,10 @@ All notable changes to keel are documented here. The format follows
     `keel ship --json` testing summary say `timed out` rather than `failed`. Cosmetic
     side effect: `run-gates` widens its status column from 4 to 7 characters to fit the
     new label, so every gate line (passing ones included) is indented three spaces further.
+    The machine-readable surfaces carry it too — `keel ship --json`'s
+    `gate_outcomes[].timed_out` and the run ledger's `gates[].timed_out` (additive;
+    `keel.run-ledger.v1` is unchanged, so existing records and readers are unaffected) —
+    and `keel-visual` renders a timed-out gate as `⧗` instead of `✗`.
 
   **The merge-gate invariant is unchanged**: a timed-out gate keeps `ok=False` and its
   original severity, so it blocks exactly as a failure does. Only the label and the
