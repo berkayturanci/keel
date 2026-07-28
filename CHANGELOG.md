@@ -125,6 +125,25 @@ of them — and why several were found only by mutating the code and watching no
   was optional", and this is the certification path — only an explicit `warn`/`suggest`
   now clears it.
 
+- **`capture-verify` refuses to certify when its transport failed** (#630): the command
+  computed `transport_failed`, recorded it in the payload, and ignored it. A `gh` hiccup
+  empties the *derived* merged-PR set, so the union degenerates to exactly the list the
+  agent supplied and the anti-shrink defence the command exists to provide silently
+  evaporates — reported as `complete`, exit 0, with an un-captured PR simply absent from the
+  accounting. It is now a distinct `transport-unavailable` status with `certified: false`
+  and a non-zero exit: an audit that could not observe must say so.
+
+- **An unreadable lock owner no longer disables the ownership guard** (#631):
+  `lock._holder` returned `None` for "nobody holds this", "`owner.json` is corrupt",
+  "`owner.json` is missing" and "the read failed" alike, and the guard was written so a
+  `None` holder made the check *vanish* rather than fail closed — letting a second run
+  release a live merge claim and take the lock. Since every caller reaches `_holder` only
+  with the claim directory present, there is no "unheld" answer to give: an unreadable owner
+  is now `UNKNOWN_HOLDER` and refuses a named release, while `owner=None` stays the
+  deliberate any-owner escape for clearing a stuck claim. The window needs no disk
+  corruption — `_claim_path` creates the directory before it writes the owner file, so any
+  crash in between leaves the lock held but ownerless.
+
 - **`git` warnings on stderr no longer corrupt every parsed value** (#629): `run_argv`
   returned only `stdout + stderr` concatenated, and every `git` wrapper parsed *that*. git
   routinely warns while exiting 0 — an ambiguous refname (a tag and a branch sharing a

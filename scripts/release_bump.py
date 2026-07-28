@@ -92,21 +92,26 @@ def bump(root: Path, new: str) -> tuple[str, list[str]]:
 
     Returns ``(old_version, changed_relative_paths)``. A file whose ``find``
     token is absent is skipped (so re-running after a partial bump is safe).
+
+    Re-running at the *current* version is a supported repair, not a no-op: the site
+    rewrites still run. That is exactly the recovery an operator reaches for when the
+    drift test fires, or after a bump that died between the ``pyproject.toml`` write —
+    the first literal edit — and the site loop. The literal edits are skipped in that
+    case because ``old == new`` makes each ``find`` a no-op anyway.
     """
     if not SEMVER.match(new):
         raise ValueError(f"version must be X.Y.Z, got {new!r}")
     old = current_version(root)
-    if old == new:
-        return old, []
     changed: list[str] = []
-    for rel, find, replace in _edits(old, new):
-        path = root / rel
-        text = path.read_text(encoding="utf-8")
-        if find not in text:
-            continue
-        path.write_text(text.replace(find, replace), encoding="utf-8")
-        if rel not in changed:
-            changed.append(rel)
+    if old != new:
+        for rel, find, replace in _edits(old, new):
+            path = root / rel
+            text = path.read_text(encoding="utf-8")
+            if find not in text:
+                continue
+            path.write_text(text.replace(find, replace), encoding="utf-8")
+            if rel not in changed:
+                changed.append(rel)
     for rel, pattern, template in _SITE_PATTERNS:
         path = root / rel
         if not path.exists():
@@ -139,7 +144,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"release-bump: already at {args.version}; nothing to change")
         return 0
 
-    print(f"release-bump: {old} -> {args.version}")
+    if old == args.version:
+        print(f"release-bump: already at {args.version}; re-synced files that had drifted")
+    else:
+        print(f"release-bump: {old} -> {args.version}")
     for rel in changed:
         print(f"  updated {rel}")
     print("Next: `make plugin && make adapters` (regenerate keel_version markers), "

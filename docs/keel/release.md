@@ -72,6 +72,10 @@ Before tagging a release:
   already behind matched neither the old nor the new string and was skipped forever. Those
   four surfaces are now matched by shape, so a stale file is re-synced rather than stepped
   over, and `tests/test_release_docs.py` fails if any of them falls behind again.
+
+  If that test *does* fire — or a bump dies part-way — re-run the bump at the **current**
+  version to repair it: `make release-bump VERSION=<current>` re-syncs the site surfaces
+  without touching anything else, and reports which files it repaired.
 - Update `CHANGELOG.md` with the release notes (the one step `make release-bump` leaves to you).
 - Confirm `pyproject.toml` metadata: name, version, description, readme, license, authors,
   Python version, dependencies, classifiers, URLs, and `keel = "keel.cli:main"`.
