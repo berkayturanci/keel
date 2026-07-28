@@ -1034,6 +1034,12 @@ default `ship`) — so a run moves forward on the board without the agent's per-
 
 Each gate runs its configured shell command; a non-zero exit becomes a blocking finding
 (`gate:<name>`), a zero exit a pass. The command's output tail is captured for context.
+
+A gate that exceeds its wall-clock limit is killed and reported as a third, distinct
+outcome — `TIMEOUT` rather than `FAIL` — so a slow host does not read as a broken test.
+It **still blocks**: a hanging command is a real defect. The limit is
+[`knobs.gate_timeout_s`](configuration.md#gate_timeout_s) (default 600s), overridable for
+one slower gate with `timeout:` frontmatter on a `command` extension.
 Reviewer checklist for changes touching command-gate execution: `spec.run` values must
 remain sourced only from operator-controlled project config or extension YAML, never from
 PR content, issue text, or prior agent output.

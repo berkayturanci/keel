@@ -23,7 +23,9 @@ All notable changes to keel are documented here. The format follows
     mark the kill, and the finding says the command produced no pass/fail result and points
     at the knob that fixes it. Every operator-facing surface distinguishes it — `run-gates`
     and `keel ship` render `TIMEOUT` rather than `FAIL`, and the rendered PR body /
-    `keel ship --json` testing summary say `timed out` rather than `failed`.
+    `keel ship --json` testing summary say `timed out` rather than `failed`. Cosmetic
+    side effect: `run-gates` widens its status column from 4 to 7 characters to fit the
+    new label, so every gate line (passing ones included) is indented three spaces further.
 
   **The merge-gate invariant is unchanged**: a timed-out gate keeps `ok=False` and its
   original severity, so it blocks exactly as a failure does. Only the label and the

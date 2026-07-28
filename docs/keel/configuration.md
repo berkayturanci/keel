@@ -247,8 +247,7 @@ A gate killed by this limit is reported as a **timeout**, not as a failing test:
 
 ```
   TIMEOUT  build
-    [major] build: build timed out after 600s (exit 124); the command produced no
-            pass/fail result. Raise the limit via knobs.gate_timeout_s …
+    [major] build: build timed out after 600s (exit 124); the command produced no pass/fail result. Raise the limit via knobs.gate_timeout_s (or this gate's timeout:) if it legitimately needs longer — a genuinely hanging command is still a defect.
 BLOCKED — merge is gated by the findings above
 ```
 

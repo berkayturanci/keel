@@ -1197,7 +1197,10 @@ keel run-gates <project.yaml> [--root DIR]
 ### Details
 
 Each configured command gate runs its shell command; non-zero exit becomes a blocking
-`gate:<name>` finding, output tail captured. The built-in `jury` gate (when `gates:`
+`gate:<name>` finding, output tail captured. A gate killed by its wall-clock limit
+(`knobs.gate_timeout_s`, default 600s; per-gate `timeout:` frontmatter wins) renders as a
+distinct `TIMEOUT` instead of `FAIL` and its finding says no pass/fail result was produced
+— it still blocks, exactly as a failure does. The built-in `jury` gate (when `gates:`
 includes `jury`) runs the ai-jury CLI on `git diff base...HEAD` in **gating** mode here;
 a missing `jury` CLI is a fail-soft no-op, and diffs over 1 MB skip the jury with a
 visible non-blocking `jury:skipped-oversize` nit. Missing *required* runtime

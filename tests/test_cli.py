@@ -7,6 +7,7 @@ import itertools
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from argparse import Namespace
@@ -409,6 +410,13 @@ def _run_git(root: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=root, check=True, capture_output=True, text=True)
 
 
+#: A gate command that outlives any test timeout, driven by this interpreter rather than a
+#: `sleep` binary: `shell=True` means cmd.exe on Windows, where `sleep` only resolves via
+#: Git-for-Windows happening to be on PATH. Double quotes group correctly in both sh and
+#: cmd.exe. Kept short so the orphaned child releases the inherited pipes promptly.
+_SLOW_CMD = f'"{sys.executable}" -c "import time; time.sleep(30)"'
+
+
 class TestRunGates(unittest.TestCase):
     def test_passing_gate(self):
         rc, out, _ = run(["run-gates", _write_config("'true'"), "--root", "."])
@@ -427,7 +435,7 @@ class TestRunGates(unittest.TestCase):
         import tempfile
         p = _write_raw("extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
                        "repo: tmp\ngates: [build]\nknobs:\n"
-                       "  build_gate_cmd: 'sleep 5'\n  gate_timeout_s: 1\n")
+                       f"  build_gate_cmd: '{_SLOW_CMD}'\n  gate_timeout_s: 1\n")
         with tempfile.TemporaryDirectory() as d:
             _, out, _ = run(["ship", p, "--root", d])
         self.assertIn("TIMEOUT", out)
@@ -437,7 +445,7 @@ class TestRunGates(unittest.TestCase):
         # End-to-end proof of #622: knob -> plan_gates -> runner -> outcome -> render.
         p = _write_raw("extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
                        "repo: tmp\ngates: [build]\nknobs:\n"
-                       "  build_gate_cmd: 'sleep 5'\n  gate_timeout_s: 1\n")
+                       f"  build_gate_cmd: '{_SLOW_CMD}'\n  gate_timeout_s: 1\n")
         rc, out, _ = run(["run-gates", p, "--root", "."])
         self.assertEqual(rc, 1)             # a timeout blocks exactly as a failure does
         self.assertIn("TIMEOUT", out)       # ...but the operator can see which it is
@@ -6466,6 +6474,18 @@ class TestGateRunner(unittest.TestCase):
         ok, _, timed_out = run_gate(GateSpec("build", "command", "test", "block", run="true"))
         self.assertTrue(ok)
         self.assertFalse(timed_out)
+
+    def test_project_timeout_is_threaded_to_specs_without_their_own(self):
+        # plan_gates resolves a timeout onto every command spec, so this fallback is
+        # only reachable for a spec built elsewhere — pin it, or the wiring is dead code
+        # that nothing would notice being deleted or set to the wrong value.
+        from keel.gates import GateSpec
+        run_gate = cli._gate_runner(".", "", timeout=1)
+        ok, findings, timed_out = run_gate(
+            GateSpec("build", "command", "test", "block", run=_SLOW_CMD, timeout=None))
+        self.assertFalse(ok)
+        self.assertTrue(timed_out)
+        self.assertIn("timed out after 1s", findings[0].message)
 
     def test_jury_branch_noop_without_diff(self):
         from keel.gates import GateSpec

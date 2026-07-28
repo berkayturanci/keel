@@ -208,10 +208,11 @@ class TestTimeoutFrontmatter(unittest.TestCase):
             self.assertIn("invalid timeout", str(c.exception))
 
     def test_rejects_non_integer(self):
-        text = "---\nid: x\nslot: tester\nkind: command\nrun: y\ntimeout: soon\n---\n"
-        with self.assertRaises(ext.ExtensionError) as c:
-            ext.parse_extension(text, source="x.md")
-        self.assertIn("invalid timeout", str(c.exception))
+        for value in ("soon", "60.5"):
+            text = f"---\nid: x\nslot: tester\nkind: command\nrun: y\ntimeout: {value}\n---\n"
+            with self.assertRaises(ext.ExtensionError) as c:
+                ext.parse_extension(text, source="x.md")
+            self.assertIn("invalid timeout", str(c.exception))
 
     def test_rejects_boolean(self):
         # bool is an int subclass — `timeout: true` is a typo, not a limit.
