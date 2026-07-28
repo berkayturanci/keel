@@ -310,6 +310,33 @@ class TestParse(unittest.TestCase):
         with self.assertRaises(cfg.ConfigError):
             cfg.parse_config(bad)
 
+    def test_gate_timeout_defaults_to_600_and_parses(self):
+        config = cfg.parse_config(copy.deepcopy(VALID))
+        self.assertEqual(config.knobs.gate_timeout_s, 600)  # today's behaviour preserved
+
+        data = copy.deepcopy(VALID)
+        data["knobs"]["gate_timeout_s"] = 3600
+        self.assertEqual(cfg.parse_config(data).knobs.gate_timeout_s, 3600)
+
+    def test_gate_timeout_changes_config_hash(self):
+        base = cfg.parse_config(copy.deepcopy(VALID))
+        data = copy.deepcopy(VALID)
+        data["knobs"]["gate_timeout_s"] = 3600
+        self.assertNotEqual(cfg.config_hash(base), cfg.config_hash(cfg.parse_config(data)))
+
+    def test_gate_timeout_rejects_non_integer(self):
+        bad = copy.deepcopy(VALID)
+        bad["knobs"]["gate_timeout_s"] = "3600"
+        with self.assertRaises(cfg.ConfigError):
+            cfg.parse_config(bad)
+
+    def test_gate_timeout_rejects_zero_and_negative(self):
+        for value in (0, -1):
+            bad = copy.deepcopy(VALID)
+            bad["knobs"]["gate_timeout_s"] = value
+            with self.assertRaises(cfg.ConfigError):
+                cfg.parse_config(bad)
+
     def test_unknown_capability_rejected(self):
         bad = copy.deepcopy(VALID)
         bad["knobs"]["required_capabilities"] = ["bogus"]

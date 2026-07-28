@@ -189,6 +189,44 @@ run: ./tools/guard
         self.assertIn("missing frontmatter", str(c.exception))
 
 
+class TestTimeoutFrontmatter(unittest.TestCase):
+    """A single gate that is legitimately slower than the rest (#622)."""
+
+    def test_absent_timeout_defaults_to_none(self):
+        # None ⇒ inherit knobs.gate_timeout_s at plan time.
+        self.assertIsNone(ext.parse_extension(COMMAND, source="golden.md").timeout)
+
+    def test_timeout_is_parsed(self):
+        text = "---\nid: x\nslot: tester\nkind: command\nrun: y\ntimeout: 3600\n---\n"
+        self.assertEqual(ext.parse_extension(text, source="x.md").timeout, 3600)
+
+    def test_rejects_zero_and_negative(self):
+        for value in (0, -30):
+            text = f"---\nid: x\nslot: tester\nkind: command\nrun: y\ntimeout: {value}\n---\n"
+            with self.assertRaises(ext.ExtensionError) as c:
+                ext.parse_extension(text, source="x.md")
+            self.assertIn("invalid timeout", str(c.exception))
+
+    def test_rejects_non_integer(self):
+        text = "---\nid: x\nslot: tester\nkind: command\nrun: y\ntimeout: soon\n---\n"
+        with self.assertRaises(ext.ExtensionError) as c:
+            ext.parse_extension(text, source="x.md")
+        self.assertIn("invalid timeout", str(c.exception))
+
+    def test_rejects_boolean(self):
+        # bool is an int subclass — `timeout: true` is a typo, not a limit.
+        text = "---\nid: x\nslot: tester\nkind: command\nrun: y\ntimeout: true\n---\n"
+        with self.assertRaises(ext.ExtensionError) as c:
+            ext.parse_extension(text, source="x.md")
+        self.assertIn("invalid timeout", str(c.exception))
+
+    def test_rejects_timeout_on_an_agentic_piece(self):
+        text = "---\nid: x\nslot: tester\nkind: agentic\nprompt: p\ntimeout: 60\n---\n"
+        with self.assertRaises(ext.ExtensionError) as c:
+            ext.parse_extension(text, source="x.md")
+        self.assertIn("only applies to a 'command' extension", str(c.exception))
+
+
 def _config_with(tester=(), pre_merge=()):
     data = {
         "extends": "keel",

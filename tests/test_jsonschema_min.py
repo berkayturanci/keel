@@ -132,6 +132,37 @@ class TestKind(unittest.TestCase):
         self.assertIn("got set", js.validate({1, 2}, {"type": "string"})[0])
 
 
+class TestMinimum(unittest.TestCase):
+    """``minimum`` — used by knobs.gate_timeout_s to reject a non-positive limit."""
+
+    SCHEMA = {"type": "integer", "minimum": 1}
+
+    def test_below_minimum_rejected(self):
+        errs = js.validate(0, self.SCHEMA)
+        self.assertEqual(len(errs), 1)
+        self.assertIn("less than minimum 1", errs[0])
+
+    def test_negative_rejected(self):
+        self.assertTrue(js.validate(-30, self.SCHEMA))
+
+    def test_at_and_above_minimum_accepted(self):
+        self.assertEqual(js.validate(1, self.SCHEMA), [])
+        self.assertEqual(js.validate(3600, self.SCHEMA), [])
+
+    def test_float_minimum_enforced(self):
+        self.assertTrue(js.validate(0.5, {"type": "number", "minimum": 1}))
+        self.assertEqual(js.validate(1.5, {"type": "number", "minimum": 1}), [])
+
+    def test_absent_minimum_is_a_noop(self):
+        self.assertEqual(js.validate(-5, {"type": "integer"}), [])
+
+    def test_boolean_is_not_range_checked_as_a_number(self):
+        # bool is an int subclass; the type check already rejects it.
+        errs = js.validate(True, self.SCHEMA)
+        self.assertEqual(len(errs), 1)
+        self.assertIn("expected type integer", errs[0])
+
+
 class TestNonDictSchema(unittest.TestCase):
     def test_non_dict_schema_is_noop(self):
         self.assertEqual(js.validate("anything", True), [])

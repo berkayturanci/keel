@@ -143,6 +143,7 @@ contracts, but executable project behavior remains in extension files or project
 | `optional_capabilities` | string[] | | runtime capabilities that may degrade explicitly when unavailable |
 | `evidence_gate_label` | string | | Legacy PR label that also arms the required pre-merge evidence gate (default `keel:ship`); ship provenance now arms the gate by default |
 | `evidence_require_distinct_vendors` | boolean | | When `true`, `evidence-verify` additionally requires each required review verdict to carry vendor provenance and that no two share a vendor (default `false`) |
+| `gate_timeout_s` | integer ≥ 1 | | wall-clock seconds a command gate may run before it is killed (default `600`) |
 
 ### `knobs` field details
 
@@ -225,6 +226,43 @@ jury — satisfies it simply by carrying distinct vendor provenance; keel takes 
 on any review vendor. A missing `vendor:` on a required verdict, or two verdicts sharing a
 vendor, fails verification with a blocking `review-vendor-distinctness` finding. Override
 per run with `keel evidence-verify --require-distinct-vendors`.
+
+#### `gate_timeout_s`
+
+Wall-clock seconds a **command gate** may run before keel kills it. Defaults to `600`
+(ten minutes), which is what keel used unconditionally before this knob existed. Raise it
+on a slow host where a legitimate build or test suite needs longer:
+
+```yaml
+knobs:
+  build_gate_cmd: "make test"
+  gate_timeout_s: 3600     # this project's suite needs far more than ten minutes here
+```
+
+When only **one** gate is the slow one, leave the project knob alone and give that gate its
+own limit with `timeout:` frontmatter (see [extensions](extensions.md)). Resolution is
+most-specific-first, per gate: the extension's `timeout:` → `knobs.gate_timeout_s` → `600`.
+
+A gate killed by this limit is reported as a **timeout**, not as a failing test:
+
+```
+  TIMEOUT  build
+    [major] build: build timed out after 600s (exit 124); the command produced no
+            pass/fail result. Raise the limit via knobs.gate_timeout_s …
+BLOCKED — merge is gated by the findings above
+```
+
+**A timeout still blocks the merge, exactly as a failure does.** Only the label and the
+operator-facing explanation change. This is deliberate: a genuinely *hanging* command
+(deadlock, infinite loop) is a real defect that also presents as a timeout, so making
+timeouts advisory would punch a hole in the very thing the gate protects. The goal is that
+an operator can tell *why* the gate is red — a slow host or a broken test — never that it
+stops being red.
+
+> **Not the same as the run-control layer.** `runcontrols.contract_as_dict()` advertises
+> `"wall_clock_timeouts": False`. That refers to run budgets, step caps, and oscillation
+> halts — keel imposes no wall-clock limit on a *run*. `gate_timeout_s` is the subprocess
+> limit on a single command gate. The two are independent and do not contradict each other.
 
 ## `policy_pack`
 

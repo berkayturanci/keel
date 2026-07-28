@@ -6,6 +6,37 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **The gate timeout is configurable, and a timeout no longer masquerades as a failure**
+  (#622): `run_command` applied a hardcoded 600s limit to every command gate, and the kill
+  came back through the same code path as a genuine test failure — so `[major] … BLOCKED`
+  meant both "a test broke" and "this machine is slow", with no way to raise the limit and
+  no way to tell the two apart. Two additions, both back-compatible:
+  - `knobs.gate_timeout_s` (integer ≥ 1, default `600`, so today's behaviour is preserved)
+    sets the project-wide limit, and an optional `timeout:` frontmatter field on a
+    `command` extension overrides it for one legitimately slower gate. `plan_gates`
+    resolves the effective value per gate — extension `timeout:` → `knobs.gate_timeout_s`
+    → `600` — onto the new `GateSpec.timeout`, and `cli` threads the project knob into
+    `command_gate_runner`.
+  - A timeout is now its own outcome: `CommandResult.timed_out` and `GateOutcome.timed_out`
+    mark the kill, `run-gates` renders it as `TIMEOUT` rather than `FAIL`, and the finding
+    says the command produced no pass/fail result and points at the knob that fixes it.
+
+  **The merge-gate invariant is unchanged**: a timed-out gate keeps `ok=False` and its
+  original severity, so it blocks exactly as a failure does. Only the label and the
+  operator-facing explanation differ. Making `TIMEOUT` advisory would have punched a hole
+  in the gate — a genuinely hanging test (deadlock, infinite loop) is a real defect that
+  also presents as a timeout. An operator can now tell *why* the gate is red, never make it
+  stop being red.
+
+  `run_argv`'s 120s default (git/`gh` wrappers, not gates) is deliberately unchanged; it
+  reports `timed_out` for consistency but keeps its own limit.
+
+### Fixed
+- `jsonschema_min` now implements `minimum`, so numeric bounds declared in
+  `project.schema.json` are actually enforced instead of silently ignored (the validator
+  skips unknown keywords by design). Needed for `gate_timeout_s`'s `minimum: 1`.
+
 ## [1.10.0] — 2026-07-27
 
 ### Added

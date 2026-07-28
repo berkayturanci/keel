@@ -422,6 +422,18 @@ class TestRunGates(unittest.TestCase):
         self.assertIn("FAIL", out)
         self.assertIn("BLOCKED", out)
 
+    def test_timed_out_gate_renders_apart_from_a_failure_but_still_blocks(self):
+        # End-to-end proof of #622: knob -> plan_gates -> runner -> outcome -> render.
+        p = _write_raw("extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
+                       "repo: tmp\ngates: [build]\nknobs:\n"
+                       "  build_gate_cmd: 'sleep 5'\n  gate_timeout_s: 1\n")
+        rc, out, _ = run(["run-gates", p, "--root", "."])
+        self.assertEqual(rc, 1)             # a timeout blocks exactly as a failure does
+        self.assertIn("TIMEOUT", out)       # ...but the operator can see which it is
+        self.assertIn("BLOCKED", out)
+        self.assertIn("timed out after 1s", out)
+        self.assertNotIn("FAIL", out)
+
     def test_missing_config(self):
         rc, _, err = run(["run-gates", "/no/such.yaml"])
         self.assertEqual(rc, 1)
@@ -6440,8 +6452,9 @@ class TestGateRunner(unittest.TestCase):
     def test_command_branch_runs(self):
         from keel.gates import GateSpec
         run_gate = cli._gate_runner(".", "")
-        ok, _ = run_gate(GateSpec("build", "command", "test", "block", run="true"))
+        ok, _, timed_out = run_gate(GateSpec("build", "command", "test", "block", run="true"))
         self.assertTrue(ok)
+        self.assertFalse(timed_out)
 
     def test_jury_branch_noop_without_diff(self):
         from keel.gates import GateSpec

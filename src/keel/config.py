@@ -17,6 +17,7 @@ from typing import Any
 from . import jsonschema_min
 from . import yaml_helper as yaml
 from .capabilities import validate_names
+from .gates import DEFAULT_GATE_TIMEOUT_S  # shared with the gate runner (no runtime cycle)
 from .model import SLOTS  # single source of truth for the named slots (re-exported)
 
 SCHEMA_PATH = Path(__file__).parent / "schema" / "project.schema.json"
@@ -64,6 +65,9 @@ class Knobs:
     optional_capabilities: tuple[str, ...] = ()
     evidence_gate_label: str = "keel:ship"
     evidence_require_distinct_vendors: bool = False
+    #: Wall-clock seconds a command gate may run before it is killed. Raise this on a
+    #: slow host; a single slower gate can override it with ``timeout:`` frontmatter.
+    gate_timeout_s: int = DEFAULT_GATE_TIMEOUT_S
 
 
 @dataclass(frozen=True)
@@ -117,6 +121,7 @@ def _build(data: dict) -> ProjectConfig:
         optional_capabilities=tuple(k.get("optional_capabilities", [])),
         evidence_gate_label=k.get("evidence_gate_label", "keel:ship"),
         evidence_require_distinct_vendors=bool(k.get("evidence_require_distinct_vendors", False)),
+        gate_timeout_s=int(k.get("gate_timeout_s", DEFAULT_GATE_TIMEOUT_S)),
     )
     extensions = {slot: tuple(files) for slot, files in data.get("extensions", {}).items()}
     automation_data = data.get("automation", {})
@@ -231,5 +236,6 @@ def _canonical(config: ProjectConfig) -> dict:
             "optional_capabilities": list(config.knobs.optional_capabilities),
             "evidence_gate_label": config.knobs.evidence_gate_label,
             "evidence_require_distinct_vendors": config.knobs.evidence_require_distinct_vendors,
+            "gate_timeout_s": config.knobs.gate_timeout_s,
         },
     }
