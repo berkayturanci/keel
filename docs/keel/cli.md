@@ -1196,6 +1196,13 @@ an `agentic` gate, dispatched by the agent rather than by keel. Repeatable. With
 a gate stays `NOT-RUN`, and a `NOT-RUN` gate declared `on_fail: block` blocks the merge
 decision and refuses to certify the run at `keel merge`.
 
+It may only be given for a gate keel did **not** run. Naming a gate keel executed exits 1
+with `--gate-result cannot override a gate keel executed: <id>`, and naming a gate that is
+not in the plan exits 1 with `--gate-result names no planned gate: <id>`. The first refusal
+is the point of the flag's design: keel has a measured verdict for a gate it ran, and
+letting a recorded one replace it would turn this channel into a way to certify a run whose
+gates were observed failing.
+
 This is the runnable, agent-free part of the backbone (s5 classify + s6 CI + s8 gates +
 s10 merge decision). It does **not** call coding agents and does **not** perform the merge —
 the live merge (s10) needs a configured runner with `git` + an authenticated `gh`.

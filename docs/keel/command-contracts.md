@@ -338,7 +338,7 @@ The block records:
   `none`. The values come from the ledger record's `run_context` block, which `keel ship`
   populates from the resolved transport, the `--host-agent`/`--transport`/`--profile` inputs,
   the resolved jury mode, and the existing `--operator`/`--approve-scope` consent inputs
-- the `docs_touched` section renders `- **Docs touched:** yes|no` directly after the
+- the `docs_touched` section renders `- **Docs touched:** yes|no|unknown` directly after the
   Changed files block. Its value is derived deterministically and consumer-neutrally from
   `changes.files`: a file counts as documentation when any path component equals `docs`
   (case-insensitive) or its suffix is one of `.md`, `.mdx`, `.markdown`, `.rst`, `.adoc`.
@@ -346,7 +346,11 @@ The block records:
   text doc such as `docs/notes.txt` is still covered by the `docs/` directory rule. The
   set is intentionally project-neutral; custom documentation paths are a
   project-config/policy concern, not a core renderer concern. Missing/empty/non-list
-  `files` (or a missing `changes` block) render `no`
+  `files` (or a missing `changes` block) render `no`. A record whose `changes.unreadable`
+  is `true` — git could not produce the file list at all — renders `unknown` instead, and
+  the Changed files line renders `unreadable (git diff failed)` in place of a count: "no
+  docs touched" is an affirmative claim, and it must not be made about a diff nobody could
+  read
 - `source: run-ledger ship_run record`
 - `deterministic: true`, `consumer_neutral: true`, `mirror_not_parser: true`
 - `renderer: keel.closure.render_closure_comment`
