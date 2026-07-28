@@ -20,8 +20,10 @@ All notable changes to keel are documented here. The format follows
     → `600` — onto the new `GateSpec.timeout`, and `cli` threads the project knob into
     `command_gate_runner`.
   - A timeout is now its own outcome: `CommandResult.timed_out` and `GateOutcome.timed_out`
-    mark the kill, `run-gates` renders it as `TIMEOUT` rather than `FAIL`, and the finding
-    says the command produced no pass/fail result and points at the knob that fixes it.
+    mark the kill, and the finding says the command produced no pass/fail result and points
+    at the knob that fixes it. Every operator-facing surface distinguishes it — `run-gates`
+    and `keel ship` render `TIMEOUT` rather than `FAIL`, and the rendered PR body /
+    `keel ship --json` testing summary say `timed out` rather than `failed`.
 
   **The merge-gate invariant is unchanged**: a timed-out gate keeps `ok=False` and its
   original severity, so it blocks exactly as a failure does. Only the label and the

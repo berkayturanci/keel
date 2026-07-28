@@ -899,6 +899,9 @@ def _testing_summary(outcomes: list[gates.GateOutcome]) -> list[str]:
             state = "skipped"
         elif outcome.ok:
             state = "passed"
+        elif outcome.timed_out:
+            # Still a blocking outcome — but "failed" would read as a broken test.
+            state = "timed out"
         else:
             state = "failed"
         suffix = f" ({outcome.error})" if outcome.error else ""

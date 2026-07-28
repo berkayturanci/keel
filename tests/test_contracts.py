@@ -1231,6 +1231,24 @@ class TestShipResultClosureComment(unittest.TestCase):
         self.assertIn("lint: failed (lint failed)", pr_body)
         self.assertIn("Updated docs: `docs/keel/cli.md`", pr_body)
 
+    def test_artifact_bodies_report_a_timeout_apart_from_a_failure(self):
+        # #622: the PR body must not tell the operator a test broke when the gate
+        # was killed by its wall-clock limit.
+        result = contracts.ship_result_as_dict(
+            changed_files=["src/keel/gates.py"],
+            outcomes=[
+                gates.GateOutcome("build", False, timed_out=True),
+                gates.GateOutcome("lint", False),
+            ],
+            verdict=self._verdict(),
+            assessment=self._assessment(),
+        )
+
+        pr_body = result["artifact_bodies"]["pr_body"]
+        self.assertIn("build: timed out", pr_body)
+        self.assertNotIn("build: failed", pr_body)
+        self.assertIn("lint: failed", pr_body)
+
     def test_closure_comment_none_without_record(self):
         result = contracts.ship_result_as_dict(
             changed_files=[],

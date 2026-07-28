@@ -137,10 +137,12 @@ def run_gates(specs, runner: GateRunner, *, fail_soft: bool = True) -> list[Gate
     outcomes: list[GateOutcome] = []
     for spec in specs:
         try:
-            result = runner(spec)
+            # tuple() first: the runner contract has always been "any 2-iterable",
+            # so indexing the raw return would reject a generator that used to work.
+            result = tuple(runner(spec))
             # Runners that cannot time out may return the 2-tuple form.
             ok, found = result[0], result[1]
-            timed_out = bool(result[2]) if len(result) > 2 else False
+            timed_out = result[2] is True if len(result) == 3 else False
         except Exception as exc:  # noqa: BLE001 - fail-soft is the contract
             if not fail_soft:
                 raise

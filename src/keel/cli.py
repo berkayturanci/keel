@@ -1081,7 +1081,8 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     if transport.degraded:
         print(f"  github degraded: {', '.join(transport.degraded)}")
     for o in outcomes:
-        print(f"  gate {o.gate:<14} {'ok' if o.ok else 'FAIL'}")
+        state = "ok" if o.ok else ("TIMEOUT" if o.timed_out else "FAIL")
+        print(f"  gate {o.gate:<14} {state}")
     if evaluation.missing_optional:
         print(f"  degraded opt. : {', '.join(evaluation.missing_optional)}")
     if a.halted:  # pragma: no cover - display only; logic covered in ship.assess tests

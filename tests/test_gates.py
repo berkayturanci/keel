@@ -215,6 +215,21 @@ class TestTimedOutOutcome(unittest.TestCase):
         outcomes = gates.run_gates([self._spec()], boom)
         self.assertFalse(outcomes[0].timed_out)
 
+    def test_generator_returning_runner_still_works(self):
+        # The runner contract has always been "any 2-iterable". Indexing the raw
+        # return would have made a soft gate silently pass via the fail-soft path.
+        outcomes = gates.run_gates(
+            [gates.GateSpec("g", "command", "test", "warn", run="x")],
+            lambda s: (v for v in (False, [Finding("nit", "boom", "g")])),
+        )
+        self.assertFalse(outcomes[0].ok)
+        self.assertIsNone(outcomes[0].error)
+        self.assertFalse(outcomes[0].skipped)
+
+    def test_non_true_third_element_is_not_a_timeout(self):
+        outcomes = gates.run_gates([self._spec()], lambda s: (False, [], "oops"))
+        self.assertFalse(outcomes[0].timed_out)
+
 
 if __name__ == "__main__":
     unittest.main()

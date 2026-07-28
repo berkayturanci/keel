@@ -422,6 +422,17 @@ class TestRunGates(unittest.TestCase):
         self.assertIn("FAIL", out)
         self.assertIn("BLOCKED", out)
 
+    def test_ship_also_renders_a_timeout_apart_from_a_failure(self):
+        # #622 must land on the ship surface too, not only run-gates.
+        import tempfile
+        p = _write_raw("extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
+                       "repo: tmp\ngates: [build]\nknobs:\n"
+                       "  build_gate_cmd: 'sleep 5'\n  gate_timeout_s: 1\n")
+        with tempfile.TemporaryDirectory() as d:
+            _, out, _ = run(["ship", p, "--root", d])
+        self.assertIn("TIMEOUT", out)
+        self.assertNotIn("FAIL", out)
+
     def test_timed_out_gate_renders_apart_from_a_failure_but_still_blocks(self):
         # End-to-end proof of #622: knob -> plan_gates -> runner -> outcome -> render.
         p = _write_raw("extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
