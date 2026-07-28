@@ -344,11 +344,13 @@ class TestNotRunPropagation(unittest.TestCase):
         # self-contradictory record (and lose the TIMEOUT label's meaning).
         stale = gates.GateOutcome("g", True, not_run=True, timed_out=True, skipped=True,
                                   on_fail="block")
-        applied, _ = gates.apply_recorded_results([stale], {"g": "pass"})
+        for verdict in ("pass", "fail"):
+            with self.subTest(verdict=verdict):
+                applied, _ = gates.apply_recorded_results([stale], {"g": verdict})
 
-        self.assertFalse(applied[0].timed_out)
-        self.assertFalse(applied[0].skipped)
-        self.assertFalse(applied[0].not_run)
+                self.assertFalse(applied[0].timed_out)
+                self.assertFalse(applied[0].skipped)
+                self.assertFalse(applied[0].not_run)
 
     def test_a_not_run_gate_reported_as_failing_keeps_the_flag(self):
         # Unreachable with the in-tree runners, but the contract allows it and a dropped
