@@ -1080,8 +1080,16 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         "warnings": run_context_warnings,
     }
     if args.append_ledger and args.live:
-        ledger.append_record(ledger_path, ledger_record)
-        ledger_result["appended"] = True
+        clash = ledger.existing_capture_marker(existing_ledger_records, ledger_record)
+        if clash is None:
+            ledger.append_record(ledger_path, ledger_record)
+            ledger_result["appended"] = True
+        else:
+            # A second marker for this PR would make capture-verify refuse the session
+            # and capture-reconcile refuse to repair it — recoverable only by hand. The
+            # append is the natural retry after a crash mid-s11, so it no-ops instead.
+            ledger_result["skipped"] = "duplicate-capture-marker"
+            ledger_result["existing_run_id"] = clash.get("run_id")
 
     if args.json:
         print(json.dumps({
@@ -1122,7 +1130,14 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     print(f"  run ledger    : {ledger_result['path']}")
     print(f"  run controls  : {run_control_report['status']}")
     if args.append_ledger:
-        print(f"  ledger append : {'yes' if ledger_result['appended'] else 'dry-run/no-live'}")
+        if ledger_result.get("skipped") == "duplicate-capture-marker":
+            print("  ledger append : skipped — PR already has a capture marker "
+                  f"(run {ledger_result['existing_run_id']}); a second one would block "
+                  "capture-verify with no automated repair")
+        else:
+            print(
+                f"  ledger append : {'yes' if ledger_result['appended'] else 'dry-run/no-live'}"
+            )
     for warning in run_context_warnings:
         print(f"  run context   : warning: {warning}")
     if intake_record["questions"]:
@@ -2194,6 +2209,7 @@ def _post_artifact_comment(
         ["repos", owner_repo, "issues", str(target_number), "comments"], cwd=cwd
     )
     match = _find_comment_match(existing, marker=marker, run_id=run_id)
+    body = _with_run_id_marker(body, run_id)
     payload: dict[str, object] = {
         "schema_version": "keel.post-comment.v1",
         "target": {"kind": target_kind, "number": target_number},
@@ -3501,6 +3517,22 @@ def _find_comment_match(
             continue
         matches.append(comment)
     return matches[-1] if matches else None
+
+
+def _with_run_id_marker(body: str, run_id: str | None) -> str:
+    """Append the ``keel.run-id`` marker so a re-post can find and edit *this* comment.
+
+    Idempotency is matched on marker **and** run-id (:func:`_find_comment_match`), but
+    no ship renderer emitted a run-id in a form :func:`_comment_has_run_id` recognises —
+    the closure comment writes ``- **Run id:** <id>``, and the review/jury verdicts write
+    none at all — so every resume re-posted instead of editing. Stamping it here rather
+    than in the renderers keeps it out of the *content*: closure fidelity compares the
+    posted body against the canonical render, and `evidence` strips this line before
+    comparing, so a body can be both idempotent and verbatim.
+    """
+    if not run_id or _comment_has_run_id(body, run_id):
+        return body
+    return f"{body.rstrip()}\n\n<!-- keel.run-id: {run_id} -->\n"
 
 
 def _comment_has_run_id(body: str, run_id: str) -> bool:

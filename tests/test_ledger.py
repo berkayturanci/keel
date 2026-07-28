@@ -574,6 +574,53 @@ class TestRecordGatesPassed(unittest.TestCase):
         self.assertFalse(ledger.record_gates_passed(malformed))
 
 
+def _marker_record(*, pr, run_id="RUN-1", marker="keel-capture:1"):
+    record = _gates_record(pr=pr, head_sha="a", run_id=run_id)
+    if marker is not None:
+        record["capture"] = {"marker": marker, "status": "applied"}
+    return record
+
+
+class TestExistingCaptureMarker(unittest.TestCase):
+    """One capture marker per merged PR, enforced at *write* time.
+
+    It was only ever detected afterwards: `capture.verify_session` refuses the whole
+    session on a second marker and `capture-reconcile` returns `blocked` with nothing to
+    offer, so the natural retry after a crash mid-s11 was the very action that bricked
+    the run.
+    """
+
+    def test_a_second_marker_for_the_same_pr_is_a_duplicate(self):
+        existing = _marker_record(pr=7, run_id="RUN-1")
+        clash = ledger.existing_capture_marker([existing], _marker_record(pr=7, run_id="RUN-2"))
+        self.assertIsNotNone(clash)
+        self.assertEqual(clash["run_id"], "RUN-1")
+
+    def test_a_different_pr_is_not_a_duplicate(self):
+        existing = _marker_record(pr=7)
+        self.assertIsNone(ledger.existing_capture_marker([existing], _marker_record(pr=8)))
+
+    def test_a_record_carrying_no_marker_never_clashes(self):
+        existing = _marker_record(pr=7)
+        self.assertIsNone(
+            ledger.existing_capture_marker([existing], _marker_record(pr=7, marker=None)))
+        blank = _marker_record(pr=7, marker="   ")
+        self.assertIsNone(ledger.existing_capture_marker([existing], blank))
+
+    def test_a_record_without_a_pr_number_never_clashes(self):
+        candidate = _marker_record(pr=7)
+        candidate["pull_request"] = "nope"
+        self.assertIsNone(ledger.existing_capture_marker([_marker_record(pr=7)], candidate))
+
+    def test_markerless_and_non_ship_records_are_skipped(self):
+        markerless = _gates_record(pr=7, head_sha="a")          # no capture block at all
+        malformed_pr = _marker_record(pr=7)
+        malformed_pr["pull_request"] = "nope"
+        non_ship = dict(_marker_record(pr=7), record_type="capture_run")
+        self.assertIsNone(ledger.existing_capture_marker(
+            [markerless, malformed_pr, non_ship], _marker_record(pr=7, run_id="RUN-2")))
+
+
 class TestGatesPassForHead(unittest.TestCase):
     def test_matching_head_with_passing_gates_matches(self):
         records = [_gates_record(pr=42, head_sha="head-new", run_id="RUN-9")]

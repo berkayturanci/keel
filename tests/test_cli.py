@@ -1293,10 +1293,12 @@ class TestShip(unittest.TestCase):
         import tempfile
         with tempfile.TemporaryDirectory() as d:
             config = _write_config_with_ledger("'true'")
-            for run_id in ("RUN-1", "RUN-2"):
+            # Distinct PRs: two capture markers on one PR is the invalid state
+            # capture-verify refuses, and the append now declines to create it.
+            for run_id, pr in (("RUN-1", "160"), ("RUN-2", "161")):
                 rc, _, _ = run(["ship", config, "--root", d, "--live", "--append-ledger",
                                 "--run-id", run_id,
-                                "--pull-request", "160",
+                                "--pull-request", pr,
                                 "--capture-status", "skipped",
                                 "--approve-scope", "filesystem,git,github",
                                 "--operator", "tester"])
@@ -1314,6 +1316,34 @@ class TestShip(unittest.TestCase):
         read = json.loads(out_json)
         self.assertEqual(read["records"][0]["run_id"], "RUN-2")
         self.assertEqual(read["capture_health"]["counts"]["skipped"], 1)
+
+    def test_repeating_the_ledger_append_does_not_duplicate_a_capture_marker(self):
+        # Re-running the append is the natural retry after a crash mid-s11. A second
+        # marker for the same PR makes capture-verify refuse the whole session
+        # ("multiple capture markers found for merged PR") and capture-reconcile return
+        # `blocked` with no actions — recoverable only by editing the ledger by hand.
+        # So the retry must be a no-op, not the thing that bricks the run.
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger("'true'")
+            argv = ["ship", config, "--root", d, "--live", "--append-ledger",
+                    "--run-id", "ship-42", "--pull-request", "7",
+                    "--capture-status", "skipped",
+                    "--approve-scope", "filesystem,git,github", "--operator", "tester"]
+            first_rc, first_out, _ = run(argv)
+            second_rc, second_out, _ = run(argv)
+            verify_rc, verify_out, _ = run(
+                ["capture-verify", config, "--root", d, "--merged-pr", "7"])
+            read_rc, read_json, _ = run(["ledger", config, "--root", d, "--json"])
+
+        self.assertEqual((first_rc, second_rc, read_rc), (0, 0, 0))
+        self.assertIn("ledger append : yes", first_out)
+        self.assertIn("ledger append : skipped", second_out)
+        self.assertIn("already has a capture marker (run ship-42)", second_out)
+        self.assertEqual(len(json.loads(read_json)["records"]), 1)
+        # …and the session stays verifiable, which is the whole point.
+        self.assertEqual(verify_rc, 0)
+        self.assertNotIn("multiple capture markers", verify_out)
 
     def test_capture_verify_reports_complete_from_ledger_marker(self):
         import tempfile

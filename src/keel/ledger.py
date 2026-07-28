@@ -435,6 +435,45 @@ def capture_health_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _capture_marker(record: dict[str, Any]) -> str | None:
+    capture = record.get("capture")
+    marker = capture.get("marker") if isinstance(capture, dict) else None
+    return marker if isinstance(marker, str) and marker.strip() else None
+
+
+def existing_capture_marker(
+    records: list[dict[str, Any]], record: dict[str, Any]
+) -> dict[str, Any] | None:
+    """The already-recorded capture marker ``record`` would duplicate, if any.
+
+    Exactly one capture marker per merged PR is an invariant that was only ever
+    *detected*, never prevented: :func:`keel.capture.verify_session` refuses the whole
+    session on a second one ("multiple capture markers found for merged PR"),
+    ``capture-reconcile`` returns ``blocked`` with no actions to offer, and nothing in
+    this module can remove a line — so the only exit is editing the ledger by hand.
+
+    Re-running the same append is the most natural thing to do after a crash mid-s11,
+    which made the obvious recovery the very action that bricks the run. Checking here
+    costs one pass over records the caller already holds. Returns the conflicting
+    record so the caller can name it; ``None`` when the append is new.
+    """
+    if _capture_marker(record) is None:
+        return None
+    pull_request = record.get("pull_request")
+    pr = pull_request.get("number") if isinstance(pull_request, dict) else None
+    if not isinstance(pr, int):
+        return None
+    for existing in records:
+        if existing.get("record_type") != RECORD_TYPE_SHIP_RUN:
+            continue
+        other = existing.get("pull_request")
+        if (other.get("number") if isinstance(other, dict) else None) != pr:
+            continue
+        if _capture_marker(existing) is not None:
+            return existing
+    return None
+
+
 def append_record(path: str | Path, record: dict[str, Any]) -> None:
     """Append one validated JSONL record, creating parent directories as needed."""
     ledger_path = Path(path)

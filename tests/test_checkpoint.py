@@ -277,6 +277,33 @@ class TestResumePlan(unittest.TestCase):
         self.assertEqual(plan["status"], "needs-capture")
         self.assertEqual(plan["next_step"], "s11")
 
+    def test_a_merged_checkpoint_contradicted_by_live_state_is_ambiguous(self):
+        # A checkpoint claiming `merge: merged` used to win over *any* live state, so a
+        # checkpoint written optimistically before the merge landed sent every later
+        # resume straight to capture and close — closing the issue for a merge that
+        # never happened. `closeorder` cannot catch it either: it attests the merge
+        # *decision*, not the merge.
+        for live in ("open", "closed", "missing"):
+            with self.subTest(live_pr_state=live):
+                plan = checkpoint.resume_plan_as_dict(
+                    _record(current_step="s10", pull_request=170, merge_state="merged"),
+                    live_pr_state=live,
+                )
+                self.assertEqual(plan["status"], "ambiguous")
+                self.assertFalse(plan["can_resume"])
+                self.assertIn(live, plan["reason"])
+                self.assertTrue(plan["warnings"])
+
+    def test_an_unreported_live_state_leaves_the_merged_jump_intact(self):
+        # `unknown` is the default when the adapter volunteered nothing — absence of
+        # evidence, not evidence of contradiction. Treating it as ambiguous would make
+        # every resume unresumable.
+        plan = checkpoint.resume_plan_as_dict(
+            _record(current_step="s10", pull_request=170, merge_state="merged"),
+        )
+        self.assertEqual(plan["status"], "needs-capture")
+        self.assertEqual(plan["next_step"], "s11")
+
     def test_live_state_validation(self):
         with self.assertRaisesRegex(checkpoint.CheckpointError, "unsupported live_pr_state"):
             checkpoint.resume_plan_as_dict(_record(), live_pr_state="bad")

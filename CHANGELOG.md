@@ -19,6 +19,35 @@ All notable changes to keel are documented here. The format follows
   `docs/keel/configuration.md` now states the difference as a table.
 
 ### Fixed
+- **Re-running the ledger append no longer bricks the session** (found in review): the
+  append was unconditional, so the natural retry after a crash mid-s11 wrote a *second*
+  capture marker for the PR. "Exactly one marker per merged PR" was enforced nowhere at
+  write time and only detected afterwards — `capture-verify` then refuses the whole
+  session and `capture-reconcile` returns `blocked` with no actions, leaving hand-editing
+  `run-ledger.jsonl` as the only exit. `keel ship --append-ledger` now checks the records
+  it already holds (`ledger.existing_capture_marker`) and no-ops with a message naming the
+  run that owns the existing marker.
+
+- **Ship artifact comments are actually idempotent now** (found in review): `post-comment`
+  matches an existing comment on marker **and** run-id, but no ship renderer emitted a
+  run-id in a form the matcher recognised — the closure comment writes
+  `- **Run id:** <id>`, the review and jury verdicts write none — so every resume posted a
+  duplicate rather than editing. For the closure comment it was worse than an oversight: it
+  was impossible, because `evidence-verify` compares the posted body against the canonical
+  render, so adding the marker to the body would have failed closure fidelity. The marker
+  is now stamped by the transport (`_with_run_id_marker`) and stripped by
+  `evidence._normalize_closure_body` before comparison, so a body can be both idempotent
+  and verbatim.
+
+- **A checkpoint claiming `merged` no longer overrides live evidence to the contrary**
+  (found in review): `resume_plan_as_dict` checked `state.merge == "merged"` before any
+  ambiguity branch, so a checkpoint written optimistically *before* the merge landed sent
+  every later resume straight to capture and close — closing the issue and flipping the
+  status label for a merge that never happened. `closeorder` cannot catch it either; it
+  attests the merge *decision*, not the merge. A `merged` checkpoint contradicted by a live
+  PR state of `open`/`closed`/`missing` is now `ambiguous`. `unknown` (the default when the
+  adapter volunteers nothing) is absence of evidence and leaves the jump intact.
+
 - **`git` warnings on stderr no longer corrupt every parsed value** (#629): `run_argv`
   returned only `stdout + stderr` concatenated, and every `git` wrapper parsed *that*. git
   routinely warns while exiting 0 — an ambiguous refname (a tag and a branch sharing a
