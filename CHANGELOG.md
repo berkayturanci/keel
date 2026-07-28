@@ -6,6 +6,13 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.11.0] — 2026-07-28
+
+Nine of the twelve entries below are the same defect in different clothes: **a value meaning
+"we could not observe this" was spelled the same as the value meaning "we observed nothing
+wrong."** Every one failed in the safe-looking direction, which is why the suite stayed green
+over all of them.
+
 ### Added
 - **`knobs.docs_only_allowlist` now does something** (#632): it was declared in the schema,
   parsed into `Knobs`, folded into `config_hash` and echoed into the adapter contract —
@@ -35,6 +42,15 @@ All notable changes to keel are documented here. The format follows
   `docs/keel/extensions.md` both permit.
 
 ### Fixed
+- **The release bump no longer steps over a site file that has already fallen behind.**
+  `scripts/release_bump.py` searched for the version currently in `pyproject.toml`, so a file
+  stuck on some *other* version matched neither the old nor the new string, was silently
+  skipped, and stayed behind forever. `website/docs.html`, `coverage.html` and `content.js`
+  sat at `v1.6.5` for four releases and then `v1.8.2` for three more, with the runbook asking
+  a human to catch it by hand each time. The four site surfaces are now matched by shape and
+  re-synced; `tests/test_release_docs.py` fails if any falls behind again, and
+  `docs/keel/release.md` drops the manual step.
+
 - **Re-running the ledger append no longer bricks the session** (found in review): the
   append was unconditional, so the natural retry after a crash mid-s11 wrote a *second*
   capture marker for the PR. "Exactly one marker per merged PR" was enforced nowhere at

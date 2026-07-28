@@ -56,10 +56,27 @@ def _edits(old: str, new: str) -> list[tuple[str, str, str]]:
         (".claude-plugin/plugin.json", f'"version": "{old}"', f'"version": "{new}"'),
         (".codex-plugin/plugin.json", f'"version": "{old}"', f'"version": "{new}"'),
         ("README.md", f"keel@v{old}", f"keel@v{new}"),
-        ("website/index.html", f"keel@v{old}", f"keel@v{new}"),
-        ("website/index.html", f">v{old}<", f">v{new}<"),
         (".github/workflows/keel-ship.yml", f"keel@v{old}", f"keel@v{new}"),
     ]
+
+
+#: Version-bearing tokens in the site, matched by *pattern* rather than by the
+#: current version.
+#:
+#: The literal edits above find `old`, which is read from ``pyproject.toml``. A file
+#: that has already fallen behind therefore contains neither `old` nor `new`, is
+#: silently skipped, and stays behind forever — which is exactly what happened to
+#: `docs.html`, `coverage.html` and `content.js`, stuck at v1.8.2 for three releases
+#: while the runbook asked a human to catch it by hand each time. Matching the shape
+#: re-syncs a stale file instead of stepping over it.
+_SITE_PATTERNS: tuple[tuple[str, str, str], ...] = (
+    ("website/index.html", r"keel@v\d+\.\d+\.\d+", "keel@v{new}"),
+    ("website/index.html", r">v\d+\.\d+\.\d+<", ">v{new}<"),
+    ("website/docs.html", r"(?<=data-version>)v\d+\.\d+\.\d+", "v{new}"),
+    ("website/coverage.html", r"(?<=data-version>)v\d+\.\d+\.\d+", "v{new}"),
+    ("website/content.js", r'(?<=version: ")v\d+\.\d+\.\d+', "v{new}"),
+    ("website/content.js", r"keel@v\d+\.\d+\.\d+", "keel@v{new}"),
+)
 
 
 def bump(root: Path, new: str) -> tuple[str, list[str]]:
@@ -80,6 +97,17 @@ def bump(root: Path, new: str) -> tuple[str, list[str]]:
         if find not in text:
             continue
         path.write_text(text.replace(find, replace), encoding="utf-8")
+        if rel not in changed:
+            changed.append(rel)
+    for rel, pattern, template in _SITE_PATTERNS:
+        path = root / rel
+        if not path.exists():
+            continue  # a checkout without the site (or a fixture root) is not an error
+        text = path.read_text(encoding="utf-8")
+        rewritten = re.sub(pattern, template.format(new=new), text)
+        if rewritten == text:
+            continue
+        path.write_text(rewritten, encoding="utf-8")
         if rel not in changed:
             changed.append(rel)
     return old, changed

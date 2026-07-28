@@ -59,10 +59,15 @@ Before tagging a release:
     marker matches (otherwise the plugin drift test fails).
 
   Historical version mentions (e.g. "Since **1.6.5**" prose) are deliberately left untouched.
-  **Not covered by `make release-bump`:** the hardcoded fallback version strings in
-  `website/docs.html`, `website/coverage.html`, and `website/content.js` (used before the
-  runtime GitHub-releases fetch in `app.js` resolves). These drift silently — as of 1.8.2 they
-  had been stuck at `v1.6.5` for four releases — so check/update them by hand each release.
+
+  The site's hardcoded fallback strings (`website/index.html`, `docs.html`, `coverage.html`,
+  `content.js` — used before `app.js`'s runtime GitHub-releases fetch resolves) **are** covered,
+  as of 1.11.0. They used to be a manual step, and the manual step kept being missed: the
+  three non-`index.html` files sat at `v1.6.5` for four releases and then `v1.8.2` for three
+  more. The cause was mechanical — the rewrites searched for the *current* version, so a file
+  already behind matched neither the old nor the new string and was skipped forever. Those
+  four surfaces are now matched by shape, so a stale file is re-synced rather than stepped
+  over, and `tests/test_release_docs.py` fails if any of them falls behind again.
 - Update `CHANGELOG.md` with the release notes (the one step `make release-bump` leaves to you).
 - Confirm `pyproject.toml` metadata: name, version, description, readme, license, authors,
   Python version, dependencies, classifiers, URLs, and `keel = "keel.cli:main"`.

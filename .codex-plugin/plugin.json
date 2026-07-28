@@ -1,6 +1,6 @@
 {
   "name": "keel",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "description": "Project-neutral, multi-agent workflow core: a fixed backbone of steps that drives an issue from backlog to done, customised per project via config + add-only Lego extensions.",
   "author": {
     "name": "Berkay Turancı",

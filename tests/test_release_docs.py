@@ -36,6 +36,33 @@ class TestReleaseDocs(unittest.TestCase):
                 self.assertTrue(tags, f"expected at least one versioned git install in {path}")
                 self.assertEqual(tags, [expected_tag])
 
+    def test_no_site_surface_carries_a_stale_version_string(self):
+        # `release_bump` used to find the *current* version literally, so a file that had
+        # already fallen behind contained neither the old nor the new string, was silently
+        # skipped, and stayed behind forever — docs.html, coverage.html and content.js sat
+        # at v1.6.5 for four releases, then v1.8.2 for three more, each time relying on a
+        # runbook line asking a human to catch it. The script now matches by shape; this
+        # is what tells us if that stops working.
+        expected = f"v{__version__}"
+        surfaces = {
+            "website/index.html": (r"keel@(?P<v>v[0-9]+\.[0-9]+\.[0-9]+)",
+                                   r">(?P<v>v[0-9]+\.[0-9]+\.[0-9]+)<"),
+            "website/docs.html": (r"data-version>(?P<v>v[0-9]+\.[0-9]+\.[0-9]+)",),
+            "website/coverage.html": (r"data-version>(?P<v>v[0-9]+\.[0-9]+\.[0-9]+)",),
+            "website/content.js": (r'version: "(?P<v>v[0-9]+\.[0-9]+\.[0-9]+)"',
+                                   r"keel@(?P<v>v[0-9]+\.[0-9]+\.[0-9]+)"),
+        }
+        for rel, patterns in surfaces.items():
+            text = (REPO_ROOT / rel).read_text(encoding="utf-8")
+            for pattern in patterns:
+                with self.subTest(path=rel, pattern=pattern):
+                    found = [m.group("v") for m in re.finditer(pattern, text)]
+                    self.assertTrue(found, f"no version token matched in {rel}")
+                    self.assertEqual(set(found), {expected})
+        # Deliberately per-token rather than a blanket file scan: release-note prose
+        # legitimately names older lines ("v1.2.1 line"), and a blanket scan would either
+        # fail on that or have to be weakened until it caught nothing.
+
     def test_public_v1_surfaces_do_not_carry_stale_roadmap_claims(self):
         public_paths = [
             REPO_ROOT / "README.md",
