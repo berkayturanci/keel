@@ -136,8 +136,8 @@ contracts, but executable project behavior remains in extension files or project
 | `implementer_agents` | map role→agent | | role to local agent mapping |
 | `tier3_globs` | string[] | | high-risk paths that force full scrutiny |
 | `ci_workflows` | map name→glob | | CI workflow display name → gating path glob |
-| `docs_gate_paths` | string[] | | paths that trigger the docs gate |
-| `docs_only_allowlist` | string[] | | paths allowed in a docs-only PR |
+| `docs_gate_paths` | string[] | | the docs surface: paths that trigger the docs gate |
+| `docs_only_allowlist` | string[] | | paths that may ride along in a docs change without forcing code-risk classification |
 | `sot_doc` | string | | source-of-truth doc, e.g. `AGENTS.md` |
 | `required_capabilities` | string[] | | runtime capabilities that must be present before mutating work starts |
 | `optional_capabilities` | string[] | | runtime capabilities that may degrade explicitly when unavailable |
@@ -175,13 +175,25 @@ mapping to decide which CI checks are relevant to a PR's changed files.
 
 #### `docs_gate_paths`
 
-Paths that count as docs-gate surfaces. Ship uses them to classify docs-only changes and
-to decide when an empty CI check set may be acceptable.
+The **docs surface**: paths that *are* documentation. Ship uses them to classify docs-only
+changes, to decide when scope creep is tolerable, and to decide when an empty CI check set
+may be acceptable.
 
 #### `docs_only_allowlist`
 
-Paths that are allowed in a docs-only PR. Use this to include related generated docs
-artifacts, site files, or metadata that should not force code-risk classification.
+Paths permitted to **ride along** in a docs change without forcing code-risk
+classification — generated site output, metadata. They widen the risk-tier judgement only;
+they are deliberately narrower than `docs_gate_paths`:
+
+| | `docs_gate_paths` | `docs_only_allowlist` |
+|---|---|---|
+| keeps a change at TIER-1 | yes | yes |
+| exempt from scope-creep | yes | no |
+| allows an empty CI check set | yes | no |
+
+The last row is the point of the distinction: a generated site file riding along with a
+docs edit is exactly the case where a workflow *should* have run, so the allowlist must not
+buy the empty-check-set carve-out. Leave it empty unless you have such riders.
 
 #### `sot_doc`
 

@@ -589,6 +589,21 @@ class TestWindow(unittest.TestCase):
         self.assertIn("merge window", out)
         self.assertIn("Etc/GMT-3", out)
 
+    def test_reports_open_and_closed_from_the_configured_window(self):
+        # The command previously asserted only that the words "merge window" and the
+        # timezone appeared — never OPEN vs CLOSED, which is the operator's entire
+        # question, so `is_open = True` was a green mutation (#633). Rather than adding
+        # a `now` seam to production (an env-settable clock would be a way to walk
+        # through a closed merge window), spy on the window predicate: this pins both
+        # the verdict *and* the config values that reach it.
+        for is_open, expected in ((True, "OPEN"), (False, "CLOSED")):
+            with self.subTest(open=is_open):
+                with patch("keel.cli.window.is_merge_open", return_value=is_open) as spy:
+                    rc, out, _ = run(["window", str(PROJECTS / "example-android.yaml")])
+                self.assertEqual(rc, 0)
+                self.assertIn(expected, out)
+                self.assertEqual(spy.call_args.args, ("Etc/GMT-3", "07:00-01:30"))
+
     def test_not_configured(self):
         p = _write_raw("extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
                        "knobs:\n  build_gate_cmd: 'true'\n")
@@ -620,6 +635,30 @@ class TestShip(unittest.TestCase):
         self.assertIn("DECISION", out.upper())
         self.assertIn("MERGE", out)
         self.assertIn("github        :", out)
+
+    def test_docs_only_allowlist_reaches_the_ship_classification(self):
+        # The knob was declared, parsed, hashed and echoed into the contract, and read
+        # by nothing (#632). Pin the wire from config to the assessed tier: without the
+        # allowlist the generated site file demotes a docs change to TIER-2; with it the
+        # change stays TIER-1 (1 reviewer).
+        import tempfile
+        files = ["docs/keel/cli.md", "website/index.html"]
+        base = ("extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
+                "repo: tmp\ngates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+                "  docs_gate_paths: ['docs/**', '*.md']\n")
+        without = _write_raw(base)
+        with_allow = _write_raw(base + "  docs_only_allowlist: ['website/**']\n")
+
+        def _tier(config):
+            with tempfile.TemporaryDirectory() as d, \
+                 patch("keel.git.changed_files", return_value=files), \
+                 patch("keel.git.diff", return_value=""):
+                rc, out, _ = run(["ship", config, "--root", d, "--json"])
+            self.assertEqual(rc, 0)
+            return json.loads(out)["result"]["assessment"]["tier"]
+
+        self.assertEqual(_tier(without), 2)
+        self.assertEqual(_tier(with_allow), 1)
 
     def test_an_unreadable_changeset_classifies_tier_3_not_tier_2(self):
         # A non-git root makes `git diff --name-only` fail. Reading that as an empty
@@ -1724,7 +1763,7 @@ class TestShip(unittest.TestCase):
             for f in data["verification"]["findings"]
         ))
 
-    def _run_distinct_vendor_verify(self, *, flag, vendor_b):
+    def _run_distinct_vendor_verify(self, *, flag, vendor_b, config=None):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             pr_comments = root / "pr-comments.json"
@@ -1745,7 +1784,7 @@ class TestShip(unittest.TestCase):
                 ),
             ])
             argv = [
-                "evidence-verify", str(PROJECTS / "example-android.yaml"),
+                "evidence-verify", config or str(PROJECTS / "example-android.yaml"),
                 "--root", str(REPO_ROOT),
                 "--pr", "300",
                 "--pr-label", "keel:ship",
@@ -1781,6 +1820,55 @@ class TestShip(unittest.TestCase):
         data = json.loads(out)
         self.assertEqual(rc, 0)
         self.assertEqual(data["verification"]["status"], "pass")
+
+    def test_evidence_verify_reads_distinct_vendors_from_config_not_only_the_flag(self):
+        # `evidence_require_distinct_vendors: true` is a safety-*tightening* setting an
+        # operator turns on deliberately, and its only path into the run was a wire no
+        # test exercised — every fixture left it at the default, so `=False` was a green
+        # mutation (#633). Drive it from config with no flag.
+        config = _write_raw(
+            "extends: keel\ncore_version: '^0.1'\nbase_branch: develop\n"
+            "repo: acme/example\ngates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+            "  evidence_require_distinct_vendors: true\n"
+        )
+        rc, out, _ = self._run_distinct_vendor_verify(
+            flag=False, vendor_b="claude", config=config)
+        data = json.loads(out)
+
+        self.assertEqual(rc, 1)
+        self.assertEqual(data["verification"]["status"], "fail")
+        self.assertTrue(
+            any(f["id"] == "review-vendor-distinctness"
+                for f in data["verification"]["findings"])
+        )
+
+    def test_evidence_verify_reads_the_gate_label_from_config_not_only_the_flag(self):
+        # Same shape for `evidence_gate_label`: the tests proved the *default* reached
+        # `evidence`, never that an operator's override did. A PR carrying only the
+        # configured label must arm the gate, and one carrying only the built-in default
+        # must not.
+        config = _write_raw(
+            "extends: keel\ncore_version: '^0.1'\nbase_branch: develop\n"
+            "repo: acme/example\ngates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+            "  evidence_gate_label: 'acme:reviewed'\n"
+        )
+
+        def _gate(label):
+            with tempfile.TemporaryDirectory() as d:
+                empty = Path(d) / "empty.json"
+                _write_json_fixture(empty, [])
+                rc, out, _ = run([
+                    "evidence-verify", config, "--root", str(REPO_ROOT), "--pr", "300",
+                    "--pr-label", label, "--reviewers", "1",
+                    "--pr-comments-json", str(empty),
+                    "--issue-comments-json", str(empty),
+                    "--pr-reviews-json", str(empty),
+                    "--json",
+                ])
+            return json.loads(out)["gate"]["enforced"]
+
+        self.assertTrue(_gate("acme:reviewed"))
+        self.assertFalse(_gate("keel:ship"))
 
     def test_evidence_verify_enforces_closure_fidelity_against_ledger(self):
         from keel import closure, ledger
@@ -6563,6 +6651,46 @@ class TestShipHotfix(unittest.TestCase):
             "merge_window_mode: pause\ngates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
         )
 
+    def _cfg_freeze(self):
+        return _write_raw(
+            "extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: x\n"
+            "timezone: Europe/Istanbul\nmerge_window: '07:00-01:30'\n"
+            "merge_window_mode: freeze\ngates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+        )
+
+    def _ship(self, config, *extra, closed):
+        import tempfile
+        # Spy on the window predicate rather than the wall clock: this fixes the verdict
+        # *and* captures the (timezone, merge_window) the CLI actually wired into
+        # `ship.assess`, so blanking either config value fails the test (#633).
+        with tempfile.TemporaryDirectory() as d, \
+             patch("keel.ship.is_merge_open", return_value=not closed) as spy:
+            rc, out, _ = run(["ship", config, "--root", d, "--json", *extra])
+        self.assertEqual(spy.call_args.args, ("Europe/Istanbul", "07:00-01:30"))
+        return rc, json.loads(out)["result"]["assessment"]
+
+    def test_pause_mode_halts_outside_the_window(self):
+        _, open_run = self._ship(self._cfg(), closed=False)
+        _, closed_run = self._ship(self._cfg(), closed=True)
+        self.assertTrue(open_run["window_open"])
+        self.assertFalse(open_run["halted"])
+        self.assertFalse(closed_run["window_open"])
+        self.assertTrue(closed_run["halted"])           # `pause` halts the pipeline
+
+    def test_freeze_mode_blocks_the_merge_without_halting(self):
+        _, closed_run = self._ship(self._cfg_freeze(), closed=True)
+        self.assertFalse(closed_run["window_open"])
+        self.assertFalse(closed_run["halted"])          # `freeze` only gates the merge
+        self.assertEqual(closed_run["merge"]["action"], "defer")
+
+    def test_hotfix_bypasses_a_closed_window(self):
+        rc, assessed = self._ship(self._cfg(), "--hotfix", closed=True)
+        self.assertEqual(rc, 0)
+        self.assertFalse(assessed["window_open"])
+        self.assertFalse(assessed["halted"])            # a blocker is not paused
+        self.assertEqual(assessed["merge"]["action"], "merge")
+        self.assertTrue(assessed["bypassed_window"])
+
     def test_hotfix_flag_runs(self):
         import tempfile
         with tempfile.TemporaryDirectory() as d:
@@ -6590,6 +6718,36 @@ class TestGateStatusLabel(unittest.TestCase):
         # An undispatched gate carries ok=True so a soft gate does not spuriously fail
         # the run; the label must still say nobody ran it.
         self.assertEqual(self._label(ok=True, not_run=True), "NOT-RUN")
+
+
+class TestGateTimeoutWiring(unittest.TestCase):
+    """`knobs.gate_timeout_s` reaches `_gate_runner` from both commands that build one.
+
+    `plan_gates` already resolves a timeout onto every command spec, and
+    `command_gate_runner` prefers `spec.timeout`, so this kwarg is defence in depth for a
+    spec built outside the planner — real, but unreachable from the CLI today, which is
+    why deleting it stayed green under mutation (#633). Pinned so the redundancy cannot
+    quietly become *wrong*.
+    """
+
+    CFG = ("extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: x\n"
+           "gates: [build]\nknobs:\n  build_gate_cmd: 'true'\n  gate_timeout_s: 47\n")
+
+    def _timeout_seen(self, command):
+        import tempfile
+        real = cli._gate_runner
+        with tempfile.TemporaryDirectory() as d, \
+             patch("keel.cli._gate_runner", side_effect=real) as spy, \
+             patch("keel.git.changed_files", return_value=[]), \
+             patch("keel.git.diff", return_value=""):
+            run([command, _write_raw(self.CFG), "--root", d])
+        return spy.call_args.kwargs["timeout"]
+
+    def test_run_gates_passes_the_configured_budget(self):
+        self.assertEqual(self._timeout_seen("run-gates"), 47)
+
+    def test_ship_passes_the_configured_budget(self):
+        self.assertEqual(self._timeout_seen("ship"), 47)
 
 
 class TestGateRunner(unittest.TestCase):

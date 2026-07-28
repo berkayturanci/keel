@@ -1,6 +1,7 @@
 """Tests for structured command contracts."""
 
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -884,6 +885,60 @@ class TestBuildCommandContract(unittest.TestCase):
         self.assertIn("dedupe", scan)
         self.assertNotIn("regression", scan)
         self.assertNotIn("review_all_day", scan)
+
+
+class TestScanThresholdsAreWired(unittest.TestCase):
+    """`policy_pack.scan` thresholds, asserted at values distinguishable from the
+    built-in defaults — `projects/keel.yaml` sets each to exactly the default, so the
+    existing assertions could not tell a live wire from a hardcoded fallback (#633)."""
+
+    def _config(self, **scan):
+        base = cfg.load_config(PROJECTS / "example-flutter.yaml")
+        pack = dict(base.policy_pack or {})
+        pack["scan"] = {**(pack.get("scan") or {}), **scan}
+        return replace(base, policy_pack=pack)
+
+    def test_near_text_similarity_reaches_both_copies_in_one_contract(self):
+        # The scan contract carries this threshold twice under near-identical keys:
+        # `scan.dedupe` and `scan.work_creation_policy.dedupe`. The second hardcoded the
+        # default, so they agreed only while the project set the knob to exactly 0.6.
+        scan = contracts.scan_contract_as_dict(
+            command="regression", config=self._config(near_text_similarity=0.9))
+
+        self.assertEqual(scan["dedupe"]["near_text_similarity"], 0.9)
+        self.assertEqual(
+            scan["work_creation_policy"]["dedupe"]["near_text_similarity"], 0.9)
+
+    def test_reporting_contract_carries_the_same_threshold(self):
+        report = contracts.reporting_contract_as_dict(
+            command="coverage", config=self._config(near_text_similarity=0.85))
+
+        self.assertEqual(
+            report["work_creation_policy"]["dedupe"]["near_text_similarity"], 0.85)
+
+    def test_large_diff_max_bytes_is_honoured(self):
+        # Previously asserted nowhere at all: `-> 1` was a green mutation.
+        scan = contracts.scan_contract_as_dict(
+            command="review-all-day", config=self._config(large_diff_max_bytes=4096))
+
+        self.assertEqual(
+            scan["review_all_day"]["diff_truncation"]["max_bytes"], 4096)
+
+    def test_batch_threshold_is_honoured(self):
+        scan = contracts.scan_contract_as_dict(
+            command="review-all-day", config=self._config(batch_threshold=11))
+        strategy = scan["review_all_day"]["strategy"]
+
+        self.assertEqual(strategy["batch_threshold"], 11)
+        self.assertEqual(strategy["fanout_when_commit_count_gt"], 11)
+
+    def test_defaults_apply_when_the_knobs_are_absent(self):
+        config = cfg.load_config(PROJECTS / "example-flutter.yaml")
+        scan = contracts.scan_contract_as_dict(command="review-all-day", config=config)
+
+        self.assertEqual(scan["dedupe"]["near_text_similarity"], 0.6)
+        self.assertEqual(scan["review_all_day"]["diff_truncation"]["max_bytes"], 200000)
+
 
     def test_project_command_contract_has_graph_capabilities_and_side_effects(self):
         config = cfg.load_config(PROJECTS / "example-android.yaml")

@@ -944,6 +944,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
             changed,
             tier3_globs=config.knobs.tier3_globs,
             docs_globs=config.knobs.docs_gate_paths,
+            allowlist_globs=config.knobs.docs_only_allowlist,
         )
     )
     review_contract = ship.resolve_review_contract(
@@ -982,6 +983,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         gate_verdict=verdict,
         tier3_globs=config.knobs.tier3_globs,
         docs_globs=config.knobs.docs_gate_paths,
+        allowlist_globs=config.knobs.docs_only_allowlist,
         timezone=config.timezone,
         merge_window=config.merge_window,
         merge_window_mode=config.merge_window_mode,
@@ -1908,6 +1910,7 @@ def _cmd_review(args: argparse.Namespace) -> int:
             changed_files,
             tier3_globs=config.knobs.tier3_globs,
             docs_globs=config.knobs.docs_gate_paths,
+            allowlist_globs=config.knobs.docs_only_allowlist,
         )
         if changed_files else None
     )
@@ -2248,6 +2251,7 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
             changed_files,
             tier3_globs=config.knobs.tier3_globs,
             docs_globs=config.knobs.docs_gate_paths,
+            allowlist_globs=config.knobs.docs_only_allowlist,
         )
         if changed_files else None
     )
@@ -3251,12 +3255,16 @@ def _verify_merge_evidence(
             changed_files,
             tier3_globs=config.knobs.tier3_globs,
             docs_globs=config.knobs.docs_gate_paths,
+            allowlist_globs=config.knobs.docs_only_allowlist,
         )
         if changed_files else None
     )
-    # Tier 1 is "every changed path is a docs path". An unreadable/empty file list is
-    # deliberately not docs-only: the empty-check-set carve-out must fail closed.
-    docs_only = bool(changed_files) and tier == 1
+    # Asked directly, not inferred from `tier == 1`: `docs_only_allowlist` can keep a
+    # change at TIER-1 without making it docs-*only*, and a generated site file riding
+    # along with a docs edit is exactly when a workflow should have run. An unreadable
+    # or empty file list is deliberately not docs-only either — this carve-out is the
+    # one place an empty CI check set is tolerated, so it must fail closed.
+    docs_only = classify.is_docs_only(changed_files, config.knobs.docs_gate_paths)
     review_contract = ship.resolve_review_contract(
         tier=tier,
         reviewer_override=args.reviewers,

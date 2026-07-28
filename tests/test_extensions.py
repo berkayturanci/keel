@@ -237,14 +237,14 @@ class TestTimeoutFrontmatter(unittest.TestCase):
         self.assertIn("only applies to a 'command' extension", str(c.exception))
 
 
-def _config_with(tester=(), pre_merge=()):
+def _config_with(tester=(), pre_merge=(), extensions_dir=".keel/extensions"):
     data = {
         "extends": "keel",
         "core_version": "^0.1",
         "base_branch": "main",
         "knobs": {"build_gate_cmd": "make test"},
         "extensions": {"tester": list(tester), "pre-merge": list(pre_merge)},
-        "extensions_dir": ".keel/extensions",
+        "extensions_dir": extensions_dir,
     }
     return cfg.parse_config(data)
 
@@ -261,6 +261,34 @@ class TestLoad(unittest.TestCase):
             self.assertEqual(problems, [])
             self.assertEqual(loaded["tester"][0].id, "design-parity")
             self.assertEqual(loaded["pre-merge"][0].on_fail, "block")
+
+    def test_a_custom_extensions_dir_is_honoured(self):
+        # Every fixture in the suite used the literal default, so all three layers of
+        # this knob — parse, use, echo — were unbroken by mutation (#633). `load_extensions`
+        # is fail-soft, so a directory that stopped being honoured would yield zero
+        # extensions and a *green* run: a silently gate-less pipeline.
+        with tempfile.TemporaryDirectory() as d:
+            ed = Path(d) / "tools" / "keel-ext"
+            ed.mkdir(parents=True)
+            (ed / "gate.md").write_text(HARD_GATE, encoding="utf-8")
+            config = _config_with(pre_merge=["gate.md"], extensions_dir="tools/keel-ext")
+            loaded, problems = ext.load_extensions(config, d)
+
+            self.assertEqual(problems, [])
+            self.assertEqual(loaded["pre-merge"][0].on_fail, "block")
+
+        # …and the default is not silently searched as a fallback: a file sitting in
+        # `.keel/extensions` must NOT satisfy a config pointing elsewhere.
+        with tempfile.TemporaryDirectory() as d:
+            default_dir = Path(d) / ".keel" / "extensions"
+            default_dir.mkdir(parents=True)
+            (default_dir / "gate.md").write_text(HARD_GATE, encoding="utf-8")
+            config = _config_with(pre_merge=["gate.md"], extensions_dir="tools/keel-ext")
+            loaded, problems = ext.load_extensions(config, d, strict=False)
+
+            self.assertEqual(loaded["pre-merge"], [])
+            self.assertEqual(len(problems), 1)
+            self.assertIn("cannot read gate.md", problems[0])
 
     def test_strict_raises_on_missing_file(self):
         with tempfile.TemporaryDirectory() as d:

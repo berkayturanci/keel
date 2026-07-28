@@ -306,6 +306,7 @@ def assess(
     gate_verdict: Verdict,
     tier3_globs: tuple[str, ...] = (),
     docs_globs: tuple[str, ...] = (),
+    allowlist_globs: tuple[str, ...] = (),
     timezone: str | None = None,
     merge_window: str | None = None,
     merge_window_mode: str = "freeze",
@@ -336,7 +337,8 @@ def assess(
         classify.UNKNOWN_TIER
         if changed_files is None
         else classify.tier_for_files(changed_files, tier3_globs=tier3_globs,
-                                     docs_globs=docs_globs)
+                                     docs_globs=docs_globs,
+                                     allowlist_globs=allowlist_globs)
     )
     reviewers = reviewer_override if reviewer_override is not None else reviewer_count(tier)
     window_open = (

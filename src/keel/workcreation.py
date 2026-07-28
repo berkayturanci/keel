@@ -45,8 +45,16 @@ class WorkDecision:
         return result
 
 
-def contract_as_dict() -> dict[str, Any]:
-    """Return the shared work-creation policy contract."""
+def contract_as_dict(*, near_text_similarity: float | None = None) -> dict[str, Any]:
+    """Return the shared work-creation policy contract.
+
+    ``near_text_similarity`` is the project's resolved
+    ``policy_pack.scan.near_text_similarity``. It has to be passed in rather than
+    defaulted here, because the caller embeds this dict *beside* a `dedupe` block that
+    already honours the knob — hardcoding the default shipped two different thresholds
+    under near-identical keys in one contract, agreeing only as long as the project set
+    the knob to exactly the built-in default (#633).
+    """
     return {
         "schema_version": SCHEMA_VERSION,
         "consumer_neutral": True,
@@ -62,7 +70,9 @@ def contract_as_dict() -> dict[str, Any]:
         "dedupe": {
             "against": "open work",
             "keys": ["dedupe_key", "normalized_title", "near_text"],
-            "near_text_similarity": DEFAULT_NEAR_TEXT_SIMILARITY,
+            "near_text_similarity": _confidence(
+                near_text_similarity, DEFAULT_NEAR_TEXT_SIMILARITY
+            ),
             "duplicate_outcome": "suppress-duplicate",
         },
         "cycle_limit": {

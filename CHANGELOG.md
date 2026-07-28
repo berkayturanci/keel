@@ -6,6 +6,18 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **`knobs.docs_only_allowlist` now does something** (#632): it was declared in the schema,
+  parsed into `Knobs`, folded into `config_hash` and echoed into the adapter contract —
+  and read by nothing. An operator who set it got silence. It now widens the *risk-tier*
+  judgement: listed paths may ride along in a docs change without forcing code-risk
+  classification. Deliberately narrower than `docs_gate_paths` — an allowlisted path is
+  **not** scope-creep-exempt and does **not** buy the empty-CI-check carve-out, because a
+  generated site file riding along with a docs edit is exactly when a workflow should have
+  run. `classify.tier_for_files` takes `allowlist_globs`; the carve-out asks the new
+  `classify.is_docs_only` directly instead of inferring it from `tier == 1`.
+  `docs/keel/configuration.md` now states the difference as a table.
+
 ### Fixed
 - **`git` warnings on stderr no longer corrupt every parsed value** (#629): `run_argv`
   returned only `stdout + stderr` concatenated, and every `git` wrapper parsed *that*. git
@@ -57,6 +69,12 @@ All notable changes to keel are documented here. The format follows
   the earlier green in place and the later red was never consulted. It is now latest-wins:
   only the most recent record for that head counts.
 
+- **One contract shipped two different dedupe thresholds** (#633): `contracts` embeds a
+  `work_creation_policy` block beside a `dedupe` block that already honours
+  `policy_pack.scan.near_text_similarity`, but `workcreation.contract_as_dict()` hardcoded
+  the default. The two keys — near-identical, in the same dict — agreed only while a
+  project set the knob to exactly the built-in `0.6`. One resolver now feeds every copy.
+
 - **The jury gate never actually read ai-jury's findings** (#624, found in review):
   `keel.runner.run_argv` returns `stdout + stderr` concatenated and ai-jury logs its
   progress (`[jury] …`) to stderr, so the combined text was never valid JSON and a strict
@@ -80,6 +98,29 @@ All notable changes to keel are documented here. The format follows
   output is not a review. An absent `jury` CLI remains a clean no-op — keel does not
   depend on ai-jury. A jury killed by its limit also carries `timed_out`, so it renders as
   `TIMEOUT` rather than `FAIL`, consistent with #622.
+
+### Tests
+- **Five config wires that no test could break** (#633), found by a mutation sweep — the
+  production code was correct in each case, but the wire could have been deleted or set to
+  the wrong value with the whole suite staying green. That is exactly how #623 and #625
+  reached `main` at 100 % line+branch coverage.
+  - **The merge window**, keel's central safety gate, was unassertable in `keel ship` and
+    `keel window`: every mutation of the config→`ship.assess` wire was green, and so was
+    `is_open = True`. `keel window` asserted only that the words "merge window" and the
+    timezone appeared, never OPEN vs CLOSED. Now pinned by spying on the window predicate
+    rather than adding a `now` seam to production — an env-settable clock would be a way to
+    walk a merge through a closed window.
+  - **`extensions_dir`** was never exercised at a non-default value anywhere. `load_extensions`
+    is fail-soft, so a directory that stopped being honoured would yield zero extensions and
+    a green run: a silently gate-less pipeline.
+  - **`evidence_gate_label` and `evidence_require_distinct_vendors`** were only ever driven
+    through their CLI *flags*; the `or config.knobs.…` half never contributed in any test, so
+    an operator's config override was unproven.
+  - **`policy_pack.scan.large_diff_max_bytes`** had no assertion at all; its two siblings were
+    asserted at values indistinguishable from the fallback.
+  - **`gate_timeout_s`**'s two CLI call sites. `plan_gates` makes the runner fallback
+    unreachable, so this is defence in depth rather than dead code — pinned so the redundancy
+    cannot quietly become wrong.
 
 ### Added
 - **`knobs.jury_timeout_s`** (integer ≥ 1, default `600`) sets the jury built-in's
