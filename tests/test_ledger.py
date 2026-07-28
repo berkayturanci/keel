@@ -554,6 +554,19 @@ class TestRecordGatesPassed(unittest.TestCase):
         ])
         self.assertTrue(ledger.record_gates_passed(advisory))
 
+    def test_an_unrun_gate_with_no_recognised_severity_is_not_a_pass(self):
+        # The strict read-time default exists for exactly these records: a producer that
+        # learned `not_run` without its sibling key, or round-tripped the value through
+        # JSON. A missing key, a null, and a severity keel does not know all mean "we
+        # cannot tell this gate was optional" — and this is the certification path.
+        for on_fail in ({}, {"on_fail": None}, {"on_fail": "bogus"}, {"on_fail": ""}):
+            with self.subTest(on_fail=on_fail):
+                record = _gates_record(pr=1, head_sha="a", gates=[
+                    {"gate": "review", "ok": True, "skipped": False, "error": None,
+                     "not_run": True, **on_fail},
+                ])
+                self.assertFalse(ledger.record_gates_passed(record))
+
     def test_a_record_predating_the_not_run_field_still_passes(self):
         # Older ledger lines carry neither key; absence means "ran", as it always did.
         legacy = _gates_record(pr=1, head_sha="a", gates=[

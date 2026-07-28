@@ -1167,6 +1167,21 @@ class TestBuildCommandContract(unittest.TestCase):
         self.assertTrue(contract["extension_problems"])
 
 
+class TestDocsImpactRendering(unittest.TestCase):
+    def test_an_unreadable_file_list_is_not_reported_as_no_docs(self):
+        # "no documentation files changed" is an affirmative claim; it must not be made
+        # about a diff nobody could read.
+        unreadable = contracts._docs_impact(None)
+        empty = contracts._docs_impact([])
+
+        self.assertIn("could not be read", unreadable)
+        self.assertNotIn("none — no documentation files changed", unreadable)
+        self.assertIn("none — no documentation files changed", empty)
+
+    def test_docs_files_are_listed(self):
+        self.assertIn("`docs/keel/cli.md`", contracts._docs_impact(["docs/keel/cli.md"]))
+
+
 class TestScanThresholdsAreWired(unittest.TestCase):
     """`policy_pack.scan` thresholds, asserted at values distinguishable from the
     built-in defaults — `projects/keel.yaml` sets each to exactly the default, so the

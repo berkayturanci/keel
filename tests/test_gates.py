@@ -243,8 +243,6 @@ class TestTimedOutOutcome(unittest.TestCase):
         self.assertFalse(outcomes[0].timed_out)
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class TestNotRunPropagation(unittest.TestCase):
@@ -360,3 +358,6 @@ class TestNotRunPropagation(unittest.TestCase):
 
         outcomes = gates.run_gates([self._spec("block")], runner)
         self.assertTrue(outcomes[0].not_run)
+
+if __name__ == "__main__":
+    unittest.main()
