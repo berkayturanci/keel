@@ -1249,6 +1249,13 @@ class TestShipResultClosureComment(unittest.TestCase):
         self.assertNotIn("build: failed", pr_body)
         self.assertIn("lint: failed", pr_body)
 
+        # The machine-readable surface must distinguish it too, or a consumer has to
+        # string-match the finding message to tell a slow host from a broken test.
+        outcomes = {o["gate"]: o for o in result["gate_outcomes"]}
+        self.assertTrue(outcomes["build"]["timed_out"])
+        self.assertFalse(outcomes["build"]["ok"])
+        self.assertFalse(outcomes["lint"]["timed_out"])
+
     def test_closure_comment_none_without_record(self):
         result = contracts.ship_result_as_dict(
             changed_files=[],

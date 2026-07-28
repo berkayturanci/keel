@@ -138,6 +138,7 @@ def build_ship_run_record(
                 "gate": outcome.gate,
                 "ok": outcome.ok,
                 "skipped": outcome.skipped,
+                "timed_out": outcome.timed_out,
                 "error": outcome.error,
                 "finding_count": len(outcome.findings),
             }

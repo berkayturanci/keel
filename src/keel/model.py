@@ -10,6 +10,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+#: Wall-clock seconds a command gate may run before it is killed, when neither the
+#: gate's own ``timeout:`` nor the project's ``knobs.gate_timeout_s`` overrides it.
+#: Lives here — the one module with no intra-package imports — so the pure planner
+#: (``gates``), the config layer, and the thin subprocess wrapper (``runner``) can
+#: share one value without any of them importing each other.
+DEFAULT_GATE_TIMEOUT_S: int = 600
+
 
 @dataclass(frozen=True)
 class Step:

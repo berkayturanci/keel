@@ -864,6 +864,7 @@ def ship_result_as_dict(
                 "gate": outcome.gate,
                 "ok": outcome.ok,
                 "skipped": outcome.skipped,
+                "timed_out": outcome.timed_out,
                 "error": outcome.error,
                 "findings": [_finding_as_dict(finding) for finding in outcome.findings],
             }

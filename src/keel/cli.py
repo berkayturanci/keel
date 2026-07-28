@@ -59,7 +59,8 @@ from . import config as cfg
 from . import findings as fnd
 from . import orchestrator as orch
 from .extensions import ExtensionError, load_extensions
-from .gates import DEFAULT_GATE_TIMEOUT_S, GateSpec
+from .gates import GateSpec
+from .model import DEFAULT_GATE_TIMEOUT_S
 from .runner import command_gate_runner, run_argv
 
 

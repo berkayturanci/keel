@@ -410,11 +410,17 @@ def _run_git(root: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=root, check=True, capture_output=True, text=True)
 
 
-#: A gate command that outlives any test timeout, driven by this interpreter rather than a
-#: `sleep` binary: `shell=True` means cmd.exe on Windows, where `sleep` only resolves via
-#: Git-for-Windows happening to be on PATH. Double quotes group correctly in both sh and
-#: cmd.exe. Kept short so the orphaned child releases the inherited pipes promptly.
-_SLOW_CMD = f'"{sys.executable}" -c "import time; time.sleep(30)"'
+#: A gate command that outlives the 1s limit these tests use, driven by this interpreter
+#: rather than a `sleep` binary: `shell=True` means cmd.exe on Windows, where `sleep` only
+#: resolves via Git-for-Windows happening to be on PATH. Double quotes group correctly in
+#: both sh and cmd.exe.
+#:
+#: 5s, not longer: on Windows the child is cmd.exe and the interpreter is a *grandchild*
+#: holding the inherited pipes, so subprocess's timeout path kills cmd.exe and then blocks
+#: in communicate() until the orphan exits. That bounds the real cost at this value per
+#: test on the Windows matrix legs; a 4s margin over the 1s limit is ample. POSIX is
+#: unaffected — sh execs the command, so the killed process is the sleeper itself.
+_SLOW_CMD = f'"{sys.executable}" -c "import time; time.sleep(5)"'
 #: Same command as a YAML scalar. json.dumps is valid YAML and escapes correctly, so an
 #: interpreter path containing an apostrophe cannot break the document.
 _SLOW_CMD_YAML = json.dumps(_SLOW_CMD)

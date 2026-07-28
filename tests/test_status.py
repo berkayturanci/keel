@@ -40,8 +40,8 @@ def _checkpoint(**overrides):
 
 
 def _ledger_record(*, issue, pr, action="merge", blocked=False, capture_status="applied"):
-    outcome = SimpleNamespace(gate="build", ok=not blocked, skipped=False, error=None,
-                              findings=[])
+    outcome = SimpleNamespace(gate="build", ok=not blocked, skipped=False,
+                              timed_out=False, error=None, findings=[])
     verdict = SimpleNamespace(blocked=blocked, counts={"blocker": int(blocked)})
     merge = SimpleNamespace(action=action, reason=f"{action} reason")
     assessment = SimpleNamespace(

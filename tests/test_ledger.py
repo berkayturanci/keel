@@ -32,7 +32,8 @@ def _config(
 
 
 def _record(*, config: cfg.ProjectConfig | None = None) -> dict:
-    outcome = SimpleNamespace(gate="build", ok=True, skipped=False, error=None, findings=[])
+    outcome = SimpleNamespace(gate="build", ok=True, skipped=False, timed_out=False,
+                              error=None, findings=[])
     verdict = SimpleNamespace(blocked=False, counts={"blocker": 0})
     merge = SimpleNamespace(action="merge", reason="all gates passed")
     assessment = SimpleNamespace(

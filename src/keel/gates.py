@@ -23,12 +23,6 @@ if TYPE_CHECKING:  # pragma: no cover
 #: Built-in gate names accepted in ``project.yaml``'s ``gates:`` list.
 BUILTIN_GATES: tuple[str, ...] = ("build", "lint", "jury")
 
-#: Wall-clock seconds a command gate may run before it is killed, when neither the
-#: gate's own ``timeout:`` nor the project's ``knobs.gate_timeout_s`` overrides it.
-#: Defined here (not in the I/O layer) so the pure planner and the thin subprocess
-#: wrapper share one value.
-DEFAULT_GATE_TIMEOUT_S: int = 600
-
 # A failed gate with no explicit findings is reported at this severity.
 _ON_FAIL_SEVERITY: dict[str, str] = {"block": "major", "suggest": "minor", "warn": "nit"}
 
@@ -86,9 +80,9 @@ def plan_gates(config: ProjectConfig, loaded: dict[str, list[Extension]]) -> tup
 
     Each ``command`` gate's wall-clock ``timeout`` is resolved here, most specific
     first: the extension's own ``timeout:`` frontmatter → the project's
-    ``knobs.gate_timeout_s`` → :data:`DEFAULT_GATE_TIMEOUT_S`. Non-``command`` gates
-    carry ``None``: nothing shells out for them, so a number there would advertise a
-    limit that is never applied.
+    ``knobs.gate_timeout_s`` → :data:`keel.model.DEFAULT_GATE_TIMEOUT_S`. Non-``command``
+    gates carry ``None``: nothing shells out for them, so a number there would
+    advertise a limit that is never applied.
     """
     project_timeout = config.knobs.gate_timeout_s
 
@@ -142,7 +136,7 @@ def run_gates(specs, runner: GateRunner, *, fail_soft: bool = True) -> list[Gate
             result = tuple(runner(spec))
             # Runners that cannot time out may return the 2-tuple form.
             ok, found = result[0], result[1]
-            timed_out = result[2] is True if len(result) == 3 else False
+            timed_out = result[2] is True if len(result) > 2 else False
         except Exception as exc:  # noqa: BLE001 - fail-soft is the contract
             if not fail_soft:
                 raise

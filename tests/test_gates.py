@@ -4,7 +4,7 @@ import unittest
 from dataclasses import replace
 
 from keel import config as cfg
-from keel import gates
+from keel import gates, model
 from keel.extensions import Extension
 from keel.findings import Finding, summarize
 
@@ -134,8 +134,8 @@ class TestGateTimeoutResolution(unittest.TestCase):
 
     def test_builtin_gates_fall_back_to_the_default(self):
         specs = gates.plan_gates(self._config_with(), {})
-        self.assertEqual(specs[0].timeout, gates.DEFAULT_GATE_TIMEOUT_S)
-        self.assertEqual(gates.DEFAULT_GATE_TIMEOUT_S, 600)  # today's behaviour preserved
+        self.assertEqual(specs[0].timeout, model.DEFAULT_GATE_TIMEOUT_S)
+        self.assertEqual(model.DEFAULT_GATE_TIMEOUT_S, 600)  # today's behaviour preserved
 
     def test_jury_builtin_carries_no_subprocess_timeout(self):
         config = cfg.parse_config({

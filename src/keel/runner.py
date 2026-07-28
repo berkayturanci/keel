@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from .findings import Finding
-from .gates import DEFAULT_GATE_TIMEOUT_S
+from .model import DEFAULT_GATE_TIMEOUT_S
 
 if TYPE_CHECKING:  # pragma: no cover
     from .gates import GateSpec
