@@ -580,9 +580,9 @@ class RealLedgerRecordTests(unittest.TestCase):
 
         from keel import ledger
 
-        outcome = SimpleNamespace(gate="build", ok=True, skipped=False, error=None,
-                                  findings=[])
-        failed = SimpleNamespace(gate="evidence", ok=False, skipped=False,
+        outcome = SimpleNamespace(gate="build", ok=True, skipped=False, timed_out=False,
+                                  error=None, findings=[])
+        failed = SimpleNamespace(gate="evidence", ok=False, skipped=False, timed_out=False,
                                  error="missing verdict", findings=[object(), object()])
         verdict = SimpleNamespace(counts={"critical": 0, "major": 1, "minor": 0, "nit": 0},
                                   blocked=True)
