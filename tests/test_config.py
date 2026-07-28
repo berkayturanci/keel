@@ -330,6 +330,34 @@ class TestParse(unittest.TestCase):
         with self.assertRaises(cfg.ConfigError):
             cfg.parse_config(bad)
 
+    def test_jury_timeout_defaults_to_600_and_parses(self):
+        self.assertEqual(cfg.parse_config(copy.deepcopy(VALID)).knobs.jury_timeout_s, 600)
+        data = copy.deepcopy(VALID)
+        data["knobs"]["jury_timeout_s"] = 2400
+        self.assertEqual(cfg.parse_config(data).knobs.jury_timeout_s, 2400)
+
+    def test_jury_timeout_is_independent_of_gate_timeout(self):
+        # The jury is a cross-vendor agent CLI, not a test command; raising one budget
+        # must not move the other.
+        data = copy.deepcopy(VALID)
+        data["knobs"]["jury_timeout_s"] = 2400
+        config = cfg.parse_config(data)
+        self.assertEqual(config.knobs.jury_timeout_s, 2400)
+        self.assertEqual(config.knobs.gate_timeout_s, 600)
+
+    def test_jury_timeout_changes_config_hash(self):
+        base = cfg.parse_config(copy.deepcopy(VALID))
+        data = copy.deepcopy(VALID)
+        data["knobs"]["jury_timeout_s"] = 2400
+        self.assertNotEqual(cfg.config_hash(base), cfg.config_hash(cfg.parse_config(data)))
+
+    def test_jury_timeout_rejects_invalid_values(self):
+        for value in (0, -1, "600", True):
+            bad = copy.deepcopy(VALID)
+            bad["knobs"]["jury_timeout_s"] = value
+            with self.assertRaises(cfg.ConfigError, msg=repr(value)):
+                cfg.parse_config(bad)
+
     def test_gate_timeout_rejects_zero_and_negative(self):
         for value in (0, -1):
             bad = copy.deepcopy(VALID)

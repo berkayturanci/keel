@@ -6,6 +6,29 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **A timed-out or crashed jury gate no longer passes** (#624): `jury.run_gate` never
+  consulted `result.ok`. On a timeout `run_argv` returns `CommandResult(False, 124,
+  "timed out after 600s")`, and `parse_findings` returns `[]` for that unparseable
+  output — so `blocked` came out False and the gate reported `(True, [])`. A hung or
+  crashed cross-vendor panel therefore read as a **clean pass**, silently removing the
+  jury from the merge decision. This is the inverse of #622 and strictly worse: there the
+  gate stayed red and only the label was wrong; here the gate went green on a run that
+  produced no review at all.
+
+  A run that yields no verdict is now treated exactly as an oversize diff already was —
+  blocking `major` in `gating` mode, non-blocking `nit` in `advisory` — carrying a
+  `jury:incomplete-run` finding that names the timeout limit or the exit code. A nonzero
+  exit that *does* carry parseable findings is still honoured as a completed review, since
+  that is how ai-jury signals "request changes".
+
+### Added
+- **`knobs.jury_timeout_s`** (integer ≥ 1, default `600`) sets the jury built-in's
+  wall-clock budget, which was previously hardcoded and unreachable from config — so
+  #622's `gate_timeout_s` had no effect on it. Kept separate from `gate_timeout_s` on
+  purpose: the jury is a cross-vendor agent CLI rather than a project test command, and a
+  panel that needs an hour should not force every test gate to wait an hour too.
+
 ### Added
 - **The gate timeout is configurable, and a timeout no longer masquerades as a failure**
   (#622): `run_command` applied a hardcoded 600s limit to every command gate, and the kill

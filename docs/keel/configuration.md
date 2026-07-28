@@ -144,6 +144,7 @@ contracts, but executable project behavior remains in extension files or project
 | `evidence_gate_label` | string | | Legacy PR label that also arms the required pre-merge evidence gate (default `keel:ship`); ship provenance now arms the gate by default |
 | `evidence_require_distinct_vendors` | boolean | | When `true`, `evidence-verify` additionally requires each required review verdict to carry vendor provenance and that no two share a vendor (default `false`) |
 | `gate_timeout_s` | integer ≥ 1 | | wall-clock seconds a command gate may run before it is killed (default `600`) |
+| `jury_timeout_s` | integer ≥ 1 | | wall-clock seconds the `jury` built-in may run before it is killed (default `600`) |
 
 ### `knobs` field details
 
@@ -257,6 +258,29 @@ operator-facing explanation change. This is deliberate: a genuinely *hanging* co
 timeouts advisory would punch a hole in the very thing the gate protects. The goal is that
 an operator can tell *why* the gate is red — a slow host or a broken test — never that it
 stops being red.
+
+#### `jury_timeout_s`
+
+Wall-clock seconds the **`jury` built-in** may run. Defaults to `600`, which is what keel
+used unconditionally before this knob existed. It is deliberately **separate** from
+`gate_timeout_s`: the jury is a cross-vendor agent CLI, not a project test command, so a
+panel that legitimately needs an hour should not force every test gate to wait an hour too.
+
+```yaml
+knobs:
+  gate_timeout_s: 1800    # this project's test suite is slow
+  jury_timeout_s: 3600    # ...and a full cross-vendor panel is slower still
+```
+
+A jury run killed by this limit — or one that exits nonzero without producing a parseable
+verdict — **produced no review**. In `gating` mode that fails closed with a blocking
+`major` finding; in `advisory` mode it surfaces a non-blocking `nit`. This matches how an
+oversize diff is already handled, and it is the point of the knob: a panel that never
+reached a conclusion must not be reported as a clean pass.
+
+A nonzero exit that *does* carry parseable findings is a completed review — ai-jury signals
+"request changes" that way — so its findings are used as-is rather than treated as an
+incomplete run.
 
 > **Not the same as the run-control layer.** `runcontrols.contract_as_dict()` advertises
 > `"wall_clock_timeouts": False`. That refers to run budgets, step caps, and oscillation

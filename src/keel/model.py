@@ -23,6 +23,12 @@ from dataclasses import dataclass
 #: share one value without any of them importing each other.
 DEFAULT_GATE_TIMEOUT_S: int = 600
 
+#: Wall-clock seconds the ``jury`` built-in may run before it is killed. Separate from
+#: :data:`DEFAULT_GATE_TIMEOUT_S` on purpose: the jury is a cross-vendor agent CLI, not a
+#: project test command, so its budget should be raisable without loosening every test
+#: gate — and vice versa.
+DEFAULT_JURY_TIMEOUT_S: int = 600
+
 
 @dataclass(frozen=True)
 class Step:

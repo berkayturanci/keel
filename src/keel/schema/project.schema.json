@@ -89,6 +89,11 @@
           "type": "integer",
           "minimum": 1,
           "description": "Wall-clock seconds a command gate may run before it is killed. Default 600. Raise it on a slow host where a legitimate build or test suite needs longer than ten minutes; a single slower gate can override it with timeout: frontmatter. A gate killed by this limit is reported as a timeout, not as a failing test — but it still blocks the merge."
+        },
+        "jury_timeout_s": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Wall-clock seconds the jury built-in may run before it is killed. Default 600. Separate from gate_timeout_s because the jury is a cross-vendor agent CLI rather than a project test command. A jury run killed by this limit produces no verdict, so in gating mode it fails closed rather than passing."
         }
       }
     },

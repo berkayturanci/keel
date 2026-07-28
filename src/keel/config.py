@@ -22,7 +22,7 @@ from .capabilities import validate_names
 # Taking DEFAULT_GATE_TIMEOUT_S from `gates` instead closes a config -> gates -> config
 # cycle (gates names config in its TYPE_CHECKING imports). SLOTS: source of truth for
 # the named slots; DEFAULT_GATE_TIMEOUT_S: shared with the gate planner and runner.
-from .model import DEFAULT_GATE_TIMEOUT_S, SLOTS
+from .model import DEFAULT_GATE_TIMEOUT_S, DEFAULT_JURY_TIMEOUT_S, SLOTS
 
 SCHEMA_PATH = Path(__file__).parent / "schema" / "project.schema.json"
 
@@ -72,6 +72,9 @@ class Knobs:
     #: Wall-clock seconds a command gate may run before it is killed. Raise this on a
     #: slow host; a single slower gate can override it with ``timeout:`` frontmatter.
     gate_timeout_s: int = DEFAULT_GATE_TIMEOUT_S
+    #: Wall-clock seconds the ``jury`` built-in may run. Separate from gate_timeout_s:
+    #: a cross-vendor panel and a test suite have unrelated runtimes.
+    jury_timeout_s: int = DEFAULT_JURY_TIMEOUT_S
 
 
 @dataclass(frozen=True)
@@ -126,6 +129,7 @@ def _build(data: dict) -> ProjectConfig:
         evidence_gate_label=k.get("evidence_gate_label", "keel:ship"),
         evidence_require_distinct_vendors=bool(k.get("evidence_require_distinct_vendors", False)),
         gate_timeout_s=int(k.get("gate_timeout_s", DEFAULT_GATE_TIMEOUT_S)),
+        jury_timeout_s=int(k.get("jury_timeout_s", DEFAULT_JURY_TIMEOUT_S)),
     )
     extensions = {slot: tuple(files) for slot, files in data.get("extensions", {}).items()}
     automation_data = data.get("automation", {})
@@ -241,5 +245,6 @@ def _canonical(config: ProjectConfig) -> dict:
             "evidence_gate_label": config.knobs.evidence_gate_label,
             "evidence_require_distinct_vendors": config.knobs.evidence_require_distinct_vendors,
             "gate_timeout_s": config.knobs.gate_timeout_s,
+            "jury_timeout_s": config.knobs.jury_timeout_s,
         },
     }

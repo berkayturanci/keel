@@ -1,6 +1,7 @@
 """Unit tests for the jury built-in gate (pure parse + fail-soft runner)."""
 
 import json
+import subprocess
 import unittest
 
 from keel import jury
@@ -128,6 +129,75 @@ class TestRunGate(unittest.TestCase):
         ok, fs = jury.run_gate("diff", _run=clean)
         self.assertTrue(ok)
         self.assertEqual(len(fs), 1)
+
+
+def _jury_hangs(argv, **kw):
+    if "--version" in argv:
+        return _Proc(0, "jury 1.0")
+    raise subprocess.TimeoutExpired(cmd="jury", timeout=600)
+
+
+def _jury_crashes(argv, **kw):
+    if "--version" in argv:
+        return _Proc(0, "jury 1.0")
+    return _Proc(2, "", "Traceback (most recent call last): boom")
+
+
+class TestIncompleteRun(unittest.TestCase):
+    """A jury run that produced no verdict must never read as a clean pass (#624)."""
+
+    def test_timeout_blocks_in_gating_mode(self):
+        ok, fs = jury.run_gate("diff", mode="gating", _run=_jury_hangs)
+        self.assertFalse(ok)
+        self.assertEqual(fs[0].severity, "major")
+        self.assertEqual(fs[0].source, "jury:incomplete-run")
+
+    def test_crash_blocks_in_gating_mode(self):
+        ok, fs = jury.run_gate("diff", mode="gating", _run=_jury_crashes)
+        self.assertFalse(ok)
+        self.assertEqual(fs[0].severity, "major")
+
+    def test_advisory_mode_surfaces_it_without_blocking(self):
+        # Same shape as the oversize-diff precedent: advisory reports, gating blocks.
+        for runner in (_jury_hangs, _jury_crashes):
+            ok, fs = jury.run_gate("diff", mode="advisory", _run=runner)
+            self.assertTrue(ok)
+            self.assertEqual(fs[0].severity, "nit")
+            self.assertEqual(fs[0].source, "jury:incomplete-run")
+
+    def test_timeout_message_names_the_limit_and_the_knob(self):
+        _, fs = jury.run_gate("diff", mode="gating", timeout=1800, _run=_jury_hangs)
+        self.assertIn("timed out after 1800s", fs[0].message)
+        self.assertIn("jury_timeout_s", fs[0].message)
+
+    def test_crash_message_names_the_exit_code_and_is_not_a_timeout(self):
+        _, fs = jury.run_gate("diff", mode="gating", _run=_jury_crashes)
+        self.assertIn("exited 2", fs[0].message)
+        self.assertNotIn("timed out", fs[0].message)
+
+    def test_nonzero_exit_carrying_findings_is_still_a_verdict(self):
+        # ai-jury signals REQUEST CHANGES with a nonzero exit; that is a completed
+        # review, not an incomplete run, so its findings must be used as-is.
+        ok, fs = jury.run_gate("diff", mode="gating", _run=_jury_ok)
+        self.assertFalse(ok)  # SAMPLE carries a major
+        self.assertEqual([f.source for f in fs if f.source == "jury:incomplete-run"], [])
+        self.assertEqual(len(fs), 3)
+
+    def test_absent_cli_is_still_a_clean_no_op(self):
+        # keel does not depend on ai-jury; an uninstalled CLI is not an incomplete run.
+        self.assertEqual(jury.run_gate("diff", mode="gating", _run=_jury_absent), (True, []))
+
+    def test_timeout_is_threaded_to_the_subprocess(self):
+        seen = {}
+
+        def _capture(argv, **kw):
+            if "--version" in argv:
+                return _Proc(0, "jury 1.0")
+            seen["timeout"] = kw["timeout"]
+            return _Proc(0, json.dumps({"findings": []}))
+
+        jury.run_gate("diff", timeout=2400, _run=_capture)
+        self.assertEqual(seen["timeout"], 2400)
 
 
 if __name__ == "__main__":

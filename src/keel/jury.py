@@ -13,7 +13,8 @@ import os
 import tempfile
 
 from .findings import Finding
-from .runner import run_argv
+from .model import DEFAULT_JURY_TIMEOUT_S
+from .runner import CommandResult, run_argv
 
 #: ai-jury severities → keel severities (unknown ⇒ ``minor``).
 _SEVERITY = {
@@ -65,6 +66,33 @@ def available(*, cwd: str | None = None, _run=None) -> bool:
     return run_argv(["jury", "--version"], cwd=cwd, timeout=30, **_kw(_run)).ok
 
 
+def _incomplete_finding(
+    result: CommandResult, *, timeout: int, severity: str = "nit"
+) -> Finding:
+    """Record that the jury CLI ran but produced no verdict.
+
+    A timeout, or a nonzero exit whose output carries no parseable findings, means the
+    panel never reached a conclusion. That is emphatically **not** a clean pass — it is
+    the *absence* of a review — so in gating mode it fails closed exactly as an oversize
+    diff does. The timeout case is named apart from a crash so the operator can tell a
+    slow panel from a broken one.
+    """
+    if result.timed_out:
+        detail = (f"timed out after {timeout}s; no verdict was produced. Raise "
+                  "knobs.jury_timeout_s if the panel legitimately needs longer")
+    else:
+        detail = (f"exited {result.code} without a parseable verdict; the panel did not "
+                  "complete")
+    return Finding(
+        severity=severity,
+        message=f"jury run incomplete: the jury CLI {detail}.",
+        source="jury:incomplete-run",
+        path=None,
+        line=None,
+        anchorable=False,
+    )
+
+
 def _oversize_finding(size: int, *, severity: str = "nit") -> Finding:
     """Record that the jury gate skipped an oversize diff.
 
@@ -88,15 +116,26 @@ def run_gate(
     *,
     cwd: str | None = None,
     mode: str = "advisory",
+    timeout: int = DEFAULT_JURY_TIMEOUT_S,
     _run=None,
 ) -> tuple[bool, list[Finding]]:
     """Run ``jury`` on ``diff_text`` and map its findings.
 
-    Returns ``(ok, findings)``; ``ok`` is False only when a finding blocks
-    (critical/major). Fail-soft no-op (``(True, [])``) when there is no diff or the
-    ``jury`` CLI is not installed. In advisory mode, an oversize diff passes but
-    emits a non-blocking advisory finding. In gating mode, an oversize diff fails
-    closed with a blocking finding.
+    Returns ``(ok, findings)``; ``ok`` is False when a finding blocks (critical/major)
+    or when the run produced no verdict at all in gating mode. Fail-soft no-op
+    (``(True, [])``) when there is no diff or the ``jury`` CLI is not installed — keel
+    does not depend on ai-jury, so an absent CLI is a legitimate no-op.
+
+    Three ways a run can end without a review, all handled the same way — advisory
+    emits a non-blocking ``nit``, gating fails closed with a blocking ``major``:
+
+    * the diff is oversize and was never submitted,
+    * the CLI was killed by ``timeout``,
+    * the CLI exited nonzero and its output carried no parseable findings.
+
+    The last two used to report ``(True, [])``: :func:`parse_findings` returns ``[]``
+    for unparseable output, so ``blocked`` came out False and a hung or crashed panel
+    read as a clean pass. A gate that produced no verdict must never do that.
     """
     if not diff_text:
         return True, []
@@ -112,9 +151,16 @@ def run_gate(
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(diff_text)
         result = run_argv(["jury", "--format", "json", "--diff-file", path],
-                          cwd=cwd, timeout=600, **_kw(_run))
+                          cwd=cwd, timeout=timeout, **_kw(_run))
     finally:
         os.unlink(path)
     findings = parse_findings(result.output)
+    if not result.ok and not findings:
+        # No verdict exists. A nonzero exit that still parsed findings is fine — the
+        # panel reached a conclusion and the exit code is ai-jury's own signalling.
+        gating = mode == "gating"
+        incomplete = _incomplete_finding(
+            result, timeout=timeout, severity="major" if gating else "nit")
+        return (not gating), [incomplete]
     blocked = any(f.severity in ("critical", "major") for f in findings)
     return (not blocked), findings
