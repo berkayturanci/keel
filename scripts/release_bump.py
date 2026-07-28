@@ -17,9 +17,17 @@ release-bump`` target runs it and then regenerates the surfaces. It deliberately
 edits keel-repo-specific paths — it is a maintenance tool (sibling to
 ``release_smoke.py``), not a consumer-neutral ``keel`` CLI command.
 
-Historical version mentions (e.g. "Since **1.6.5**" prose) are left untouched:
-only the precise pinned-install (``keel@vX``) and badge (``>vX<``) forms and the
-declared version assignments are rewritten.
+Prose that merely *names* a version (e.g. "Since **1.6.5**", a dated release-history
+line) is left untouched. What is rewritten is the declared version assignments, plus —
+in the site files only — the pinned-install (``keel@vX.Y.Z``) and the badge behind a
+``data-version`` / ``version:`` anchor.
+
+Note the site rewrites match by *shape*, not against the current version, so they widen
+what the old literal edits could reach: a deliberate historical pin written as
+``keel@v1.6.5`` inside ``index.html`` or ``content.js`` would now be rewritten too. That
+is the deliberate trade for re-syncing a file that has already fallen behind — see
+:data:`_SITE_PATTERNS`. Keep historical pins out of those two files, or in a form other
+than ``keel@vX.Y.Z``.
 """
 
 from __future__ import annotations
@@ -71,7 +79,7 @@ def _edits(old: str, new: str) -> list[tuple[str, str, str]]:
 #: re-syncs a stale file instead of stepping over it.
 _SITE_PATTERNS: tuple[tuple[str, str, str], ...] = (
     ("website/index.html", r"keel@v\d+\.\d+\.\d+", "keel@v{new}"),
-    ("website/index.html", r">v\d+\.\d+\.\d+<", ">v{new}<"),
+    ("website/index.html", r"(?<=data-version>)v\d+\.\d+\.\d+", "v{new}"),
     ("website/docs.html", r"(?<=data-version>)v\d+\.\d+\.\d+", "v{new}"),
     ("website/coverage.html", r"(?<=data-version>)v\d+\.\d+\.\d+", "v{new}"),
     ("website/content.js", r'(?<=version: ")v\d+\.\d+\.\d+', "v{new}"),

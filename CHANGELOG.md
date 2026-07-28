@@ -8,10 +8,10 @@ All notable changes to keel are documented here. The format follows
 
 ## [1.11.0] — 2026-07-28
 
-Nine of the twelve entries below are the same defect in different clothes: **a value meaning
-"we could not observe this" was spelled the same as the value meaning "we observed nothing
-wrong."** Every one failed in the safe-looking direction, which is why the suite stayed green
-over all of them.
+Most of what follows is one defect in different clothes: **a value meaning "we could not
+observe this" was spelled the same as the value meaning "we observed nothing wrong."** Every
+instance failed in the safe-looking direction, which is why the suite stayed green over all
+of them — and why several were found only by mutating the code and watching nothing die.
 
 ### Added
 - **`knobs.docs_only_allowlist` now does something** (#632): it was declared in the schema,
