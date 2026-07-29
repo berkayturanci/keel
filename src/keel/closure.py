@@ -102,7 +102,8 @@ def _reviewers(reviewers: Any) -> str:
         return "none"
     entries = [reviewer.strip() for reviewer in reviewers if _is_reviewer(reviewer)]
     listed = [reviewer for reviewer in entries if not _is_jury(reviewer)]
-    has_jury = any(_is_jury(reviewer) for reviewer in entries)
+    # ⚡ Bolt Optimization: Compare lengths instead of redundant predicate evaluation via any()
+    has_jury = len(listed) < len(entries)
     if not listed:
         return JURY_LABEL if has_jury else "none"
     rendered = ", ".join(listed)
