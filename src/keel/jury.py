@@ -214,5 +214,9 @@ def run_gate(
         # timed_out rides along so the outcome renders as TIMEOUT rather than FAIL,
         # the distinction #622 established for command gates.
         return (not gating), [incomplete], result.timed_out
-    blocked = any(f.severity in ("critical", "major") for f in report)
+    blocked = False
+    for f in report:
+        if f.severity in ("critical", "major"):
+            blocked = True
+            break
     return (not blocked), report, False
