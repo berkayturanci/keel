@@ -322,10 +322,12 @@ class TestGatesFromRecord(unittest.TestCase):
     def test_projects_named_gates(self):
         gates = rs.gates_from_record(_rich_record())
         self.assertEqual(gates, [
-            {"name": "build", "ok": True, "skipped": False, "error": None, "finding_count": 0},
-            {"name": "evidence", "ok": False, "skipped": False, "error": "no evidence",
-             "finding_count": 2},
-            {"name": "jury", "ok": False, "skipped": True, "error": None, "finding_count": 0},
+            {"name": "build", "ok": True, "skipped": False, "timed_out": False,
+             "error": None, "finding_count": 0},
+            {"name": "evidence", "ok": False, "skipped": False, "timed_out": False,
+             "error": "no evidence", "finding_count": 2},
+            {"name": "jury", "ok": False, "skipped": True, "timed_out": False,
+             "error": None, "finding_count": 0},
         ])
 
     def test_missing_or_malformed_block(self):
@@ -342,13 +344,15 @@ class TestGatesFromRecord(unittest.TestCase):
         # Non-bool ok/skipped, blank/non-str error, negative/bool counts — every
         # field degrades to its safe default instead of surfacing junk.
         gates = rs.gates_from_record({"gates": [
-            {"gate": "build", "ok": "yes", "skipped": 1, "error": "  ", "finding_count": -1},
+            {"gate": "build", "ok": "yes", "skipped": 1, "error": "  ", "finding_count": -1,
+             "timed_out": "yes"},
             {"gate": "lint", "ok": True, "skipped": False, "error": 5, "finding_count": True},
         ]})
         self.assertEqual(gates[0], {"name": "build", "ok": False, "skipped": False,
-                                    "error": None, "finding_count": 0})
+                                    "timed_out": False, "error": None, "finding_count": 0})
+        # A record written before the field existed simply reads as not-timed-out.
         self.assertEqual(gates[1], {"name": "lint", "ok": True, "skipped": False,
-                                    "error": None, "finding_count": 0})
+                                    "timed_out": False, "error": None, "finding_count": 0})
 
 
 class TestLedgerFieldsInBuild(unittest.TestCase):
@@ -580,9 +584,9 @@ class RealLedgerRecordTests(unittest.TestCase):
 
         from keel import ledger
 
-        outcome = SimpleNamespace(gate="build", ok=True, skipped=False, error=None,
-                                  findings=[])
-        failed = SimpleNamespace(gate="evidence", ok=False, skipped=False,
+        outcome = SimpleNamespace(gate="build", ok=True, skipped=False, timed_out=False,
+                                  error=None, findings=[])
+        failed = SimpleNamespace(gate="evidence", ok=False, skipped=False, timed_out=False,
                                  error="missing verdict", findings=[object(), object()])
         verdict = SimpleNamespace(counts={"critical": 0, "major": 1, "minor": 0, "nit": 0},
                                   blocked=True)
@@ -612,9 +616,9 @@ class RealLedgerRecordTests(unittest.TestCase):
         self.assertEqual(state["host_agent"], "claude")
         self.assertEqual(
             state["gates"],
-            [{"name": "build", "ok": True, "skipped": False, "error": None,
-              "finding_count": 0},
-             {"name": "evidence", "ok": False, "skipped": False,
+            [{"name": "build", "ok": True, "skipped": False, "timed_out": False,
+              "error": None, "finding_count": 0},
+             {"name": "evidence", "ok": False, "skipped": False, "timed_out": False,
               "error": "missing verdict", "finding_count": 2}],
         )
 

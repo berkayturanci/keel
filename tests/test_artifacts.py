@@ -52,6 +52,17 @@ class TestPrBodyRenderer(unittest.TestCase):
         self.assertIn("Refs #<issue-number>", body)
         self.assertIn("No changed files recorded yet.", body)
 
+    def test_pr_body_distinguishes_an_unreadable_file_list_from_an_empty_one(self):
+        # `None` is git.changed_files' "could not read". Rendering it as
+        # "No changed files recorded yet." puts the exact conflation this family of
+        # fixes removes onto the PR body an operator and the docs gate both read.
+        unreadable = artifacts.render_pr_body(changed_files=None)
+        empty = artifacts.render_pr_body(changed_files=[])
+
+        self.assertIn("could not be read from git", unreadable)
+        self.assertNotIn("No changed files recorded yet.", unreadable)
+        self.assertIn("No changed files recorded yet.", empty)
+
 
 class TestIssueUpdateRenderer(unittest.TestCase):
     def test_issue_update_has_stable_marker(self):

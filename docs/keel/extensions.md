@@ -65,6 +65,7 @@ slot: pre-merge
 kind: command
 on_fail: block             # hard gate: merge is blocked unless it passes
 run: ./scripts/check-design-parity.sh
+timeout: 3600              # optional: seconds; overrides knobs.gate_timeout_s for this gate
 ---
 ```
 
@@ -82,6 +83,12 @@ run: ./scripts/check-design-parity.sh
   `warn`→`nit`.
 - `required_capabilities` and `optional_capabilities` must use known runtime capability names.
   See [`runtime-capabilities.md`](runtime-capabilities.md).
+- `timeout` is optional and **only valid on a `command` extension**: a positive integer
+  number of seconds for a gate that is legitimately slower than the rest. Omit it to
+  inherit the project's [`knobs.gate_timeout_s`](configuration.md#gate_timeout_s)
+  (itself defaulting to `600`). A gate killed by its limit is reported as a **timeout**
+  rather than a failure — but it still blocks the merge, since a hanging command is a real
+  defect.
 
 ## Fail-soft
 

@@ -391,7 +391,9 @@ operator-applied `keel:evidence-waived` label may disarm it. Evaluate the rollup
 mixed state with any failure is a failure, never poll past it. Three branches:
 - **all green** (`success`/`skipped`/`neutral`/`stale`) ⇒ proceed.
 - **empty check set** ⇒ allow only if every changed path is in `docs_gate_paths`, else
-  mark blocked ("CI did not run on a non-docs PR").
+  mark blocked ("CI did not run on a non-docs PR"). `keel merge` enforces this itself —
+  it reports the rollup as `no-checks` (never `pass`) and applies the same carve-out — so
+  this branch is a description of core's behaviour, not a rule you implement.
 - **any failure/pending** ⇒ watch with a hard timeout (portable `timeout`/`gtimeout`
   wrapper; require `coreutils` on hosts lacking GNU `timeout`), then on a real failure run
   the fix-and-reply loop (read the failed log, fix, self-review, push) and re-enter s6.
@@ -474,6 +476,14 @@ reviewer's **returned findings**, not the comment shape, so it is mode-independe
 runs the project gates (`build_gate_cmd`,
 `lint_cmd`, plus the `tester` Lego — the manual-test list, which may loop back to the
 implementer defensively without spending review budget unless it surfaces a blocking fix).
+An **`agentic` gate reports `NOT-RUN` here** — this command does not dispatch those, you
+do. `NOT-RUN` is not a pass: a gate declared `on_fail: block` that shows `NOT-RUN` blocks
+the merge decision and refuses to certify the run, so `keel merge` will reject the head.
+Dispatch the gate yourself (at s9 for `pre-merge` Lego), then **re-run the command with
+`--gate-result <id>=pass|fail`** to record what your dispatch found. A recorded result may
+only be given for a gate keel did not execute — the command refuses to override its own
+measurement of a gate it ran.
+
 When a gating or advisory jury is enabled and `result.artifact_bodies.jury_verdict_template`
 is available, use that canonical shape for the posted jury verdict and preserve
 `keel.jury-verdict.v1` plus `head: <sha>`.
@@ -484,9 +494,13 @@ mode the depth is the full verified run; only **verified consensus**
 gated suggestion, `nit` ⇒ advisory; a jury-driven fix consumes one round). **Core resolves
 the effective mode from the panel that actually ran** — a run with fewer than
 `ship.MINIMUM_JURY_VENDORS` (2) distinct *participating* vendors is downgraded to advisory,
-and a run where no agent returned output is simply zero vendors, so a jury that did not
-complete cleanly **never gates**. Do not re-derive or override that downgrade: report the
-count and let core decide. Pass the distinct participating vendors — those that actually
+and a run where no agent returned output is simply zero vendors, so at **this layer** — the
+pre-merge evidence check — a jury that did not complete cleanly does not gate. Do not
+re-derive or override that downgrade: report the count and let core decide. Note this is
+distinct from the **s8 gate layer**: there a jury run that produced no verdict (killed by
+`knobs.jury_timeout_s`, or output with no parseable report) is a blocking `major` in gating
+mode. The gate refuses to call a non-review a pass; the evidence check separately declines
+to *require* a verdict from a panel that never ran. Pass the distinct participating vendors — those that actually
 returned output, not those merely configured — via `keel evidence-verify --jury-vendors <N>`,
 and post a verdict whose declared mode matches the resolved `jury.mode`, which the evidence
 gate reads to decide whether a `jury-verdict` is required at all.
@@ -550,7 +564,10 @@ gates-pass check must run deterministically inside core, not as adapter prose.
   s11 summary as the merge's authorization.
 - **Pre-merge prep:** re-assert mergeability; if behind/dirty, integrate `base_branch`
   (merge, not rebase), re-green CI, run a single focused merge-conflict review (max 2
-  integration iterations, then blocked + morning queue). Run any `pre-merge` Lego. Then
+  integration iterations, then blocked + morning queue). Run any `pre-merge` Lego — and for
+each one that is `kind: agentic`, record what it found with
+`keel ship … --append-ledger --gate-result <id>=pass|fail`, or its `NOT-RUN` outcome will
+refuse to certify the run at s10. Then
   pre-clean the worktree so `--delete-branch` won't be held by a local ref — remove it
   with `keel worktree-remove <worktree_path> --root .`, which validates the path is nested
   under the repo root and registered in `git worktree list` before removing (never call
@@ -567,7 +584,9 @@ gates-pass check must run deterministically inside core, not as adapter prose.
   exits non-zero **without merging** — on a closed window, append to the morning queue, post
   the deferral comment via `keel post-comment`, leave the PR ready, and continue with the
   next issue; on a missing gates-pass for the current head, re-run `keel run-gates` (or
-  ship with `--append-ledger`) against the head and retry; on a denied claim, treat it as
+  ship with `--append-ledger`) against the head and retry — if the refusal names a
+  `NOT-RUN` blocking gate, the re-run needs `--gate-result <id>=pass|fail` for it, since
+  re-running alone reproduces the same not-run record; on a denied claim, treat it as
   lock contention (mark the issue blocked, comment, continue). For a blocker issue, pass
   `--hotfix` — the audited bypass of both the window and the gates-SHA requirement; it still
   requires the approved consent scopes and is recorded in the ledger. **The `--hotfix`
@@ -707,4 +726,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=skills command=ship keel_version=1.10.0 source_sha256=5f0a04b6264996cb36e77e94339d99788a05e2e8d01cc4d64c5bdf89b8af9ea2 generated_sha256=55e1e359e68d685ccbd7e1227e6290a45a8a85e5aa57d281be75b04380c84749 -->
+<!-- keel-generated: surface=skills command=ship keel_version=1.11.0 source_sha256=28030ef04fccaada2d9012d490765954c2163b87484a661d4fa5cb467d0ca118 generated_sha256=a7a63c674f8c127b73fdc2d29e16199af62acab291c8d9da360c580a5a9458f3 -->

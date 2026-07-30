@@ -7,13 +7,14 @@ import itertools
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from argparse import Namespace
 from pathlib import Path
 from unittest.mock import patch
 
-from keel import cli, install, ledger, runtime, ship, stepverifier
+from keel import cli, install, ledger, model, runtime, ship, stepverifier
 from keel.runner import CommandResult
 
 # Module-level scratch directory backing the path-returning helpers below.
@@ -24,15 +25,24 @@ atexit.register(_TMP.cleanup)
 _TMP_COUNTER = itertools.count()
 
 
-def _ok_result(output):
-    return CommandResult(True, 0, output)
-
-
-def _fail_result(output):
-    return CommandResult(False, 1, output)
-
 PROJECTS = Path(__file__).resolve().parent.parent / "projects"
 REPO_ROOT = PROJECTS.parent
+
+
+#: Realistic object names for the git fakes. The wrappers validate the shape of a
+#: parsed SHA (see ``git._SHA_RE``), so a placeholder like ``"tip"`` no longer
+#: passes for one.
+SHA_TIP = "1f2e3d4c5b6a79887766554433221100ffeeddcc"
+SHA_HEAD = "0c4589650d0f129271ca84779442d1046ceb8482"
+
+
+def _proc(output="", *, ok=True):
+    """A fake ``run_argv`` return whose **stdout** carries ``output``.
+
+    Parsers read ``.stdout`` alone, never the concatenated ``.output`` (#629), so a
+    fake that populates only ``output`` would read back as an empty stream.
+    """
+    return CommandResult(ok, 0 if ok else 1, output, stdout=output)
 
 
 def _trusted_comment(body):
@@ -409,6 +419,22 @@ def _run_git(root: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=root, check=True, capture_output=True, text=True)
 
 
+#: A gate command that outlives the 1s limit these tests use, driven by this interpreter
+#: rather than a `sleep` binary: `shell=True` means cmd.exe on Windows, where `sleep` only
+#: resolves via Git-for-Windows happening to be on PATH. Double quotes group correctly in
+#: both sh and cmd.exe.
+#:
+#: 5s, not longer: on Windows the child is cmd.exe and the interpreter is a *grandchild*
+#: holding the inherited pipes, so subprocess's timeout path kills cmd.exe and then blocks
+#: in communicate() until the orphan exits. That bounds the real cost at this value per
+#: test on the Windows matrix legs; a 4s margin over the 1s limit is ample. POSIX is
+#: unaffected — sh execs the command, so the killed process is the sleeper itself.
+_SLOW_CMD = f'"{sys.executable}" -c "import time; time.sleep(5)"'
+#: Same command as a YAML scalar. json.dumps is valid YAML and escapes correctly, so an
+#: interpreter path containing an apostrophe cannot break the document.
+_SLOW_CMD_YAML = json.dumps(_SLOW_CMD)
+
+
 class TestRunGates(unittest.TestCase):
     def test_passing_gate(self):
         rc, out, _ = run(["run-gates", _write_config("'true'"), "--root", "."])
@@ -421,6 +447,28 @@ class TestRunGates(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("FAIL", out)
         self.assertIn("BLOCKED", out)
+
+    def test_ship_also_renders_a_timeout_apart_from_a_failure(self):
+        # #622 must land on the ship surface too, not only run-gates.
+        p = _write_raw("extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
+                       "repo: tmp\ngates: [build]\nknobs:\n"
+                       f"  build_gate_cmd: {_SLOW_CMD_YAML}\n  gate_timeout_s: 1\n")
+        with tempfile.TemporaryDirectory() as d:
+            _, out, _ = run(["ship", p, "--root", d])
+        self.assertIn("TIMEOUT", out)
+        self.assertNotIn("FAIL", out)
+
+    def test_timed_out_gate_renders_apart_from_a_failure_but_still_blocks(self):
+        # End-to-end proof of #622: knob -> plan_gates -> runner -> outcome -> render.
+        p = _write_raw("extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
+                       "repo: tmp\ngates: [build]\nknobs:\n"
+                       f"  build_gate_cmd: {_SLOW_CMD_YAML}\n  gate_timeout_s: 1\n")
+        rc, out, _ = run(["run-gates", p, "--root", "."])
+        self.assertEqual(rc, 1)             # a timeout blocks exactly as a failure does
+        self.assertIn("TIMEOUT", out)       # ...but the operator can see which it is
+        self.assertIn("BLOCKED", out)
+        self.assertIn("timed out after 1s", out)
+        self.assertNotIn("FAIL", out)
 
     def test_missing_config(self):
         rc, _, err = run(["run-gates", "/no/such.yaml"])
@@ -541,6 +589,21 @@ class TestWindow(unittest.TestCase):
         self.assertIn("merge window", out)
         self.assertIn("Etc/GMT-3", out)
 
+    def test_reports_open_and_closed_from_the_configured_window(self):
+        # The command previously asserted only that the words "merge window" and the
+        # timezone appeared — never OPEN vs CLOSED, which is the operator's entire
+        # question, so `is_open = True` was a green mutation (#633). Rather than adding
+        # a `now` seam to production (an env-settable clock would be a way to walk
+        # through a closed merge window), spy on the window predicate: this pins both
+        # the verdict *and* the config values that reach it.
+        for is_open, expected in ((True, "OPEN"), (False, "CLOSED")):
+            with self.subTest(open=is_open):
+                with patch("keel.cli.window.is_merge_open", return_value=is_open) as spy:
+                    rc, out, _ = run(["window", str(PROJECTS / "example-android.yaml")])
+                self.assertEqual(rc, 0)
+                self.assertIn(expected, out)
+                self.assertEqual(spy.call_args.args, ("Etc/GMT-3", "07:00-01:30"))
+
     def test_not_configured(self):
         p = _write_raw("extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
                        "knobs:\n  build_gate_cmd: 'true'\n")
@@ -562,7 +625,9 @@ class TestWindow(unittest.TestCase):
 class TestShip(unittest.TestCase):
     def test_clean_merges(self):
         import tempfile
-        with tempfile.TemporaryDirectory() as d:  # non-git root -> no changed files
+        with tempfile.TemporaryDirectory() as d, \
+             patch("keel.git.changed_files", return_value=[]), \
+             patch("keel.git.diff", return_value=""):
             rc, out, _ = run(["ship", _write_config("'true'"), "--root", d])
         self.assertEqual(rc, 0)
         self.assertIn("keel ship", out)
@@ -570,6 +635,43 @@ class TestShip(unittest.TestCase):
         self.assertIn("DECISION", out.upper())
         self.assertIn("MERGE", out)
         self.assertIn("github        :", out)
+
+    def test_docs_only_allowlist_reaches_the_ship_classification(self):
+        # The knob was declared, parsed, hashed and echoed into the contract, and read
+        # by nothing (#632). Pin the wire from config to the assessed tier: without the
+        # allowlist the generated site file demotes a docs change to TIER-2; with it the
+        # change stays TIER-1 (1 reviewer).
+        import tempfile
+        files = ["docs/keel/cli.md", "website/index.html"]
+        base = ("extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
+                "repo: tmp\ngates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+                "  docs_gate_paths: ['docs/**', '*.md']\n")
+        without = _write_raw(base)
+        with_allow = _write_raw(base + "  docs_only_allowlist: ['website/**']\n")
+
+        def _tier(config):
+            with tempfile.TemporaryDirectory() as d, \
+                 patch("keel.git.changed_files", return_value=files), \
+                 patch("keel.git.diff", return_value=""):
+                rc, out, _ = run(["ship", config, "--root", d, "--json"])
+            self.assertEqual(rc, 0)
+            return json.loads(out)["result"]["assessment"]["tier"]
+
+        self.assertEqual(_tier(without), 2)
+        self.assertEqual(_tier(with_allow), 1)
+
+    def test_an_unreadable_changeset_classifies_tier_3_not_tier_2(self):
+        # A non-git root makes `git diff --name-only` fail. Reading that as an empty
+        # changeset lands on the *default* tier, quietly dropping a reviewer and the
+        # gating jury on a change nobody could see. Fail closed instead, and say so.
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["ship", _write_config("'true'"), "--root", d])
+        self.assertEqual(rc, 0)
+        self.assertIn("changed files : UNREADABLE", out)
+        self.assertIn("TIER-3", out)
+        self.assertIn("3 reviewer(s)", out)
+        self.assertIn("jury          : gating", out)
 
     def test_json_dry_run_contract(self):
         import tempfile
@@ -584,7 +686,13 @@ class TestShip(unittest.TestCase):
         self.assertFalse(data["contract"]["side_effects"]["mutates_in_dry_run"])
         self.assertEqual(data["contract"]["operator_consent"]["status"],
                          "not-required-dry-run")
-        self.assertEqual(data["result"]["changed_file_count"], 0)
+        # A non-git root: the diff could not be read, which is not "0 files changed".
+        self.assertIsNone(data["result"]["changed_file_count"])
+        self.assertIsNone(data["result"]["changed_files"])
+        self.assertTrue(data["result"]["changed_files_unreadable"])
+        self.assertIsNone(
+            data["result"]["run_ledger"]["record"]["changes"]["file_count"])
+        self.assertTrue(data["result"]["run_ledger"]["record"]["changes"]["unreadable"])
         self.assertFalse(data["result"]["run_ledger"]["appended"])
         self.assertEqual(data["result"]["run_ledger"]["record"]["record_type"], "ship_run")
         self.assertEqual(data["result"]["assessment"]["merge"]["action"], "merge")
@@ -1191,10 +1299,12 @@ class TestShip(unittest.TestCase):
         import tempfile
         with tempfile.TemporaryDirectory() as d:
             config = _write_config_with_ledger("'true'")
-            for run_id in ("RUN-1", "RUN-2"):
+            # Distinct PRs: two capture markers on one PR is the invalid state
+            # capture-verify refuses, and the append now declines to create it.
+            for run_id, pr in (("RUN-1", "160"), ("RUN-2", "161")):
                 rc, _, _ = run(["ship", config, "--root", d, "--live", "--append-ledger",
                                 "--run-id", run_id,
-                                "--pull-request", "160",
+                                "--pull-request", pr,
                                 "--capture-status", "skipped",
                                 "--approve-scope", "filesystem,git,github",
                                 "--operator", "tester"])
@@ -1212,6 +1322,34 @@ class TestShip(unittest.TestCase):
         read = json.loads(out_json)
         self.assertEqual(read["records"][0]["run_id"], "RUN-2")
         self.assertEqual(read["capture_health"]["counts"]["skipped"], 1)
+
+    def test_repeating_the_ledger_append_does_not_duplicate_a_capture_marker(self):
+        # Re-running the append is the natural retry after a crash mid-s11. A second
+        # marker for the same PR makes capture-verify refuse the whole session
+        # ("multiple capture markers found for merged PR") and capture-reconcile return
+        # `blocked` with no actions — recoverable only by editing the ledger by hand.
+        # So the retry must be a no-op, not the thing that bricks the run.
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger("'true'")
+            argv = ["ship", config, "--root", d, "--live", "--append-ledger",
+                    "--run-id", "ship-42", "--pull-request", "7",
+                    "--capture-status", "skipped",
+                    "--approve-scope", "filesystem,git,github", "--operator", "tester"]
+            first_rc, first_out, _ = run(argv)
+            second_rc, second_out, _ = run(argv)
+            verify_rc, verify_out, _ = run(
+                ["capture-verify", config, "--root", d, "--merged-pr", "7"])
+            read_rc, read_json, _ = run(["ledger", config, "--root", d, "--json"])
+
+        self.assertEqual((first_rc, second_rc, read_rc), (0, 0, 0))
+        self.assertIn("ledger append : yes", first_out)
+        self.assertIn("ledger append : skipped", second_out)
+        self.assertIn("already has a capture marker (run ship-42)", second_out)
+        self.assertEqual(len(json.loads(read_json)["records"]), 1)
+        # …and the session stays verifiable, which is the whole point.
+        self.assertEqual(verify_rc, 0)
+        self.assertNotIn("multiple capture markers", verify_out)
 
     def test_capture_verify_reports_complete_from_ledger_marker(self):
         import tempfile
@@ -1322,7 +1460,7 @@ class TestShip(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             config = _write_config_with_ledger("'true'")
             self._ship_applied(config, d, 160, artifact="artifacts/160.md")
-            with patch.object(cli.github, "merged_prs", return_value=_ok_result(
+            with patch.object(cli.github, "merged_prs", return_value=_proc(
                     json.dumps([{"number": 160}, {"number": 161}]))):
                 rc, out, _ = run(["capture-verify", config, "--root", d,
                                   "--merged-pr", "160", "--from-transport", "--json"])
@@ -1400,24 +1538,41 @@ class TestShip(unittest.TestCase):
         types = [f["type"] for f in data["reconcile"]["findings"]]
         self.assertEqual(types, ["reviewer-count-mismatch"])
 
-    def test_capture_verify_transport_failure_is_fail_soft(self):
-        # Transport query fails; --merged-pr still provides the set.
+    def test_capture_verify_refuses_to_certify_when_the_transport_failed(self):
+        # A gh failure empties the *derived* set, so the union degenerates to exactly
+        # the agent's --merged-pr list and the anti-shrink defence this command exists
+        # to provide evaporates. It must not render as a clean audit (#630).
         with tempfile.TemporaryDirectory() as d:
             config = _write_config_with_ledger("'true'")
             self._ship_applied(config, d, 160, artifact="artifacts/160.md")
             with patch.object(cli.github, "merged_prs",
-                              return_value=_fail_result("gh offline")):
+                              return_value=_proc("gh offline", ok=False)):
                 rc, out, _ = run(["capture-verify", config, "--root", d,
                                   "--merged-pr", "160", "--from-transport", "--json"])
-        self.assertEqual(rc, 0)
+        self.assertEqual(rc, 1)
         data = json.loads(out)
         self.assertTrue(data["merged_pr_source"]["transport_failed"])
+        self.assertEqual(data["status"], "transport-unavailable")
+        self.assertFalse(data["certified"])
+
+    def test_capture_verify_human_output_names_the_failed_transport(self):
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger("'true'")
+            self._ship_applied(config, d, 160, artifact="artifacts/160.md")
+            with patch.object(cli.github, "merged_prs",
+                              return_value=_proc("gh offline", ok=False)):
+                rc, out, _ = run(["capture-verify", config, "--root", d,
+                                  "--merged-pr", "160", "--from-transport"])
+        self.assertEqual(rc, 1)
+        self.assertIn("capture-verify — transport-unavailable", out)
+        self.assertIn("transport     : FAILED", out)
+        self.assertIn("cannot certify", out)
 
     def test_capture_verify_transport_empty_with_no_override_errors(self):
         with tempfile.TemporaryDirectory() as d:
             config = _write_config_with_ledger("'true'")
             with patch.object(cli.github, "merged_prs",
-                              return_value=_ok_result("[]")):
+                              return_value=_proc("[]")):
                 rc, _, err = run(["capture-verify", config, "--root", d, "--from-transport"])
         self.assertEqual(rc, 1)
         self.assertIn("no merged PRs derived", err)
@@ -1427,31 +1582,35 @@ class TestShip(unittest.TestCase):
             config = _write_config_with_ledger("'true'")
             self._ship_applied(config, d, 160, artifact="artifacts/160.md")
             with patch.object(cli.github, "merged_prs",
-                              return_value=_ok_result("not json")):
+                              return_value=_proc("not json")):
                 rc, out, _ = run(["capture-verify", config, "--root", d,
                                   "--merged-pr", "160", "--from-transport", "--json"])
-        self.assertEqual(rc, 0)
+        self.assertEqual(rc, 1)
         data = json.loads(out)
         self.assertTrue(data["merged_pr_source"]["transport_failed"])
+        self.assertEqual(data["status"], "transport-unavailable")
+        self.assertFalse(data["certified"])
 
     def test_capture_verify_transport_non_list_json_is_fail_soft(self):
         with tempfile.TemporaryDirectory() as d:
             config = _write_config_with_ledger("'true'")
             self._ship_applied(config, d, 160, artifact="artifacts/160.md")
             with patch.object(cli.github, "merged_prs",
-                              return_value=_ok_result("{}")):
+                              return_value=_proc("{}")):
                 rc, out, _ = run(["capture-verify", config, "--root", d,
                                   "--merged-pr", "160", "--from-transport", "--json"])
-        self.assertEqual(rc, 0)
+        self.assertEqual(rc, 1)
         data = json.loads(out)
         self.assertTrue(data["merged_pr_source"]["transport_failed"])
+        self.assertEqual(data["status"], "transport-unavailable")
+        self.assertFalse(data["certified"])
 
     def test_capture_verify_merged_since_narrows_search(self):
         captured = {}
 
         def fake_merged_prs(*, search=None, cwd=None):
             captured["search"] = search
-            return _ok_result(json.dumps([{"number": 160}]))
+            return _proc(json.dumps([{"number": 160}]))
 
         with tempfile.TemporaryDirectory() as d:
             config = _write_config_with_ledger("'true'")
@@ -1513,19 +1672,19 @@ class TestShip(unittest.TestCase):
         def fake_run(argv, **kwargs):
             endpoint = argv[-1]
             if endpoint.endswith("/issues/160/comments"):
-                return CommandResult(True, 0, json.dumps([[
+                return _proc(json.dumps([[
                     {"body": "keel.review-verdict.v1\nreviewer: a\nLGTM",
                      "author_association": "MEMBER"},
                 ]]))
             if endpoint.endswith("/pulls/160/reviews"):
-                return CommandResult(True, 0, json.dumps([[]]))
-            return CommandResult(False, 1, "unexpected endpoint")
+                return _proc(json.dumps([[]]))
+            return _proc("unexpected endpoint", ok=False)
 
         with tempfile.TemporaryDirectory() as d:
             config = self._config_owner_repo_ledger()
             self._write_ledger_record(d, 160, reviewers=["agent-a", "agent-b"])
             with patch.object(cli.github, "merged_prs",
-                              return_value=_ok_result(json.dumps([{"number": 160}]))), \
+                              return_value=_proc(json.dumps([{"number": 160}]))), \
                     patch("keel.cli.run_argv", side_effect=fake_run):
                 rc, out, _ = run(["capture-verify", config, "--root", d,
                                   "--from-transport", "--json"])
@@ -1537,13 +1696,13 @@ class TestShip(unittest.TestCase):
 
     def test_capture_verify_live_verdict_fetch_failure_is_advisory(self):
         def fake_run(argv, **kwargs):
-            return CommandResult(False, 1, "gh offline")
+            return _proc("gh offline", ok=False)
 
         with tempfile.TemporaryDirectory() as d:
             config = self._config_owner_repo_ledger()
             self._write_ledger_record(d, 160, reviewers=["agent-a", "agent-b"])
             with patch.object(cli.github, "merged_prs",
-                              return_value=_ok_result(json.dumps([{"number": 160}]))), \
+                              return_value=_proc(json.dumps([{"number": 160}]))), \
                     patch("keel.cli.run_argv", side_effect=fake_run):
                 rc, out, _ = run(["capture-verify", config, "--root", d,
                                   "--from-transport", "--json"])
@@ -1640,7 +1799,7 @@ class TestShip(unittest.TestCase):
             for f in data["verification"]["findings"]
         ))
 
-    def _run_distinct_vendor_verify(self, *, flag, vendor_b):
+    def _run_distinct_vendor_verify(self, *, flag, vendor_b, config=None):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             pr_comments = root / "pr-comments.json"
@@ -1661,7 +1820,7 @@ class TestShip(unittest.TestCase):
                 ),
             ])
             argv = [
-                "evidence-verify", str(PROJECTS / "example-android.yaml"),
+                "evidence-verify", config or str(PROJECTS / "example-android.yaml"),
                 "--root", str(REPO_ROOT),
                 "--pr", "300",
                 "--pr-label", "keel:ship",
@@ -1697,6 +1856,55 @@ class TestShip(unittest.TestCase):
         data = json.loads(out)
         self.assertEqual(rc, 0)
         self.assertEqual(data["verification"]["status"], "pass")
+
+    def test_evidence_verify_reads_distinct_vendors_from_config_not_only_the_flag(self):
+        # `evidence_require_distinct_vendors: true` is a safety-*tightening* setting an
+        # operator turns on deliberately, and its only path into the run was a wire no
+        # test exercised — every fixture left it at the default, so `=False` was a green
+        # mutation (#633). Drive it from config with no flag.
+        config = _write_raw(
+            "extends: keel\ncore_version: '^0.1'\nbase_branch: develop\n"
+            "repo: acme/example\ngates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+            "  evidence_require_distinct_vendors: true\n"
+        )
+        rc, out, _ = self._run_distinct_vendor_verify(
+            flag=False, vendor_b="claude", config=config)
+        data = json.loads(out)
+
+        self.assertEqual(rc, 1)
+        self.assertEqual(data["verification"]["status"], "fail")
+        self.assertTrue(
+            any(f["id"] == "review-vendor-distinctness"
+                for f in data["verification"]["findings"])
+        )
+
+    def test_evidence_verify_reads_the_gate_label_from_config_not_only_the_flag(self):
+        # Same shape for `evidence_gate_label`: the tests proved the *default* reached
+        # `evidence`, never that an operator's override did. A PR carrying only the
+        # configured label must arm the gate, and one carrying only the built-in default
+        # must not.
+        config = _write_raw(
+            "extends: keel\ncore_version: '^0.1'\nbase_branch: develop\n"
+            "repo: acme/example\ngates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+            "  evidence_gate_label: 'acme:reviewed'\n"
+        )
+
+        def _gate(label):
+            with tempfile.TemporaryDirectory() as d:
+                empty = Path(d) / "empty.json"
+                _write_json_fixture(empty, [])
+                rc, out, _ = run([
+                    "evidence-verify", config, "--root", str(REPO_ROOT), "--pr", "300",
+                    "--pr-label", label, "--reviewers", "1",
+                    "--pr-comments-json", str(empty),
+                    "--issue-comments-json", str(empty),
+                    "--pr-reviews-json", str(empty),
+                    "--json",
+                ])
+            return json.loads(out)["gate"]["enforced"]
+
+        self.assertTrue(_gate("acme:reviewed"))
+        self.assertFalse(_gate("keel:ship"))
 
     def test_evidence_verify_enforces_closure_fidelity_against_ledger(self):
         from keel import closure, ledger
@@ -2177,22 +2385,22 @@ class TestShip(unittest.TestCase):
             calls.append(argv)
             endpoint = argv[-1]
             if endpoint.endswith("/pulls/300"):
-                return Namespace(ok=True, output=json.dumps({
+                return _proc(json.dumps({
                     "body": "Closes #212",
                     "head": {"sha": "abc123", "ref": "fix/issue-266-evidence-arming"},
                     "labels": [{"name": "keel:ship"}, {"name": "agent:claude"}],
                 }))
             if endpoint.endswith("/pulls/300/files"):
-                return Namespace(ok=True, output=json.dumps([
+                return _proc(json.dumps([
                     [{"filename": "src/keel/evidence.py"}],
                 ]))
             if endpoint.endswith("/issues/300/comments"):
-                return Namespace(ok=True, output=json.dumps([
+                return _proc(json.dumps([
                     _trusted_comment("<!-- keel.closure-comment.v1 -->"),
                     _trusted_comment("keel.review-verdict.v1\nreviewer: a\nhead: abc123\nLGTM"),
                 ]))
             if endpoint.endswith("/pulls/300/reviews"):
-                return Namespace(ok=True, output=json.dumps([
+                return _proc(json.dumps([
                     {
                         "body": "keel.review-verdict.v1\nreviewer: b\nLGTM",
                         "commit_id": "abc123",
@@ -2200,10 +2408,10 @@ class TestShip(unittest.TestCase):
                     },
                 ]))
             if endpoint.endswith("/issues/212/comments"):
-                return Namespace(ok=True, output=json.dumps([
+                return _proc(json.dumps([
                     _trusted_comment("<!-- keel.closure-comment.v1 -->"),
                 ]))
-            return Namespace(ok=False, output="unexpected endpoint")
+            return _proc("unexpected endpoint", ok=False)
 
         with patch("keel.cli.run_argv", side_effect=fake_run):
             rc, out, _ = run([
@@ -2227,28 +2435,28 @@ class TestShip(unittest.TestCase):
         def fake_run(argv, **_kw):
             endpoint = argv[-1]
             if endpoint.endswith("/pulls/300"):
-                return Namespace(ok=True, output=json.dumps({
+                return _proc(json.dumps({
                     "body": "Closes #212",
                     "head": {"sha": "abc123"},
                     "labels": [{"name": "keel:ship"}],
                 }))
             if endpoint.endswith("/pulls/300/files"):
-                return Namespace(ok=True, output=json.dumps([
+                return _proc(json.dumps([
                     [{"filename": ".github/workflows/keel-ship.yml"}],
                 ]))
             if endpoint.endswith("/issues/300/comments"):
-                return Namespace(ok=True, output=json.dumps([
+                return _proc(json.dumps([
                     _trusted_comment("<!-- keel.closure-comment.v1 -->"),
                     _trusted_comment("keel.review-verdict.v1\nreviewer: a\nhead: abc123\nLGTM"),
                     _trusted_comment("keel.review-verdict.v1\nreviewer: b\nhead: abc123\nLGTM"),
                 ]))
             if endpoint.endswith("/pulls/300/reviews"):
-                return Namespace(ok=True, output="[]")
+                return _proc("[]")
             if endpoint.endswith("/issues/212/comments"):
-                return Namespace(ok=True, output=json.dumps([
+                return _proc(json.dumps([
                     _trusted_comment("<!-- keel.closure-comment.v1 -->"),
                 ]))
-            return Namespace(ok=False, output="unexpected endpoint")
+            return _proc("unexpected endpoint", ok=False)
 
         with patch("keel.cli.run_argv", side_effect=fake_run):
             rc, out, _ = run([
@@ -2312,27 +2520,27 @@ class TestShip(unittest.TestCase):
             calls.append(argv)
             endpoint = argv[-1]
             if endpoint.endswith("/pulls/300"):
-                return Namespace(ok=True, output=json.dumps({
+                return _proc(json.dumps({
                     "body": "Closes #212",
                     "labels": [{"name": "keel:ship"}, {"name": "agent:claude"}],
                 }))
             if endpoint.endswith("/pulls/300/files"):
-                return Namespace(ok=True, output=json.dumps([
+                return _proc(json.dumps([
                     [{"filename": "src/keel/evidence.py"}],
                 ]))
             if endpoint.endswith("/issues/300/comments"):
-                return Namespace(ok=True, output=json.dumps([
+                return _proc(json.dumps([
                     _trusted_comment("<!-- keel.closure-comment.v1 -->"),
                     _trusted_comment("keel.review-verdict.v1\nReviewer A LGTM"),
                     _trusted_comment("keel.review-verdict.v1\nReviewer B LGTM"),
                 ]))
             if endpoint.endswith("/pulls/300/reviews"):
-                return Namespace(ok=True, output="[]")
+                return _proc("[]")
             if endpoint.endswith("/issues/99/comments"):
-                return Namespace(ok=True, output=json.dumps([
+                return _proc(json.dumps([
                     _trusted_comment("<!-- keel.closure-comment.v1 -->"),
                 ]))
-            return Namespace(ok=False, output="unexpected endpoint")
+            return _proc("unexpected endpoint", ok=False)
 
         with patch("keel.cli.run_argv", side_effect=fake_run):
             rc, out, _ = run([
@@ -2351,7 +2559,7 @@ class TestShip(unittest.TestCase):
 
     def test_evidence_verify_reports_live_gh_errors_and_bad_shapes(self):
         def failing_run(_argv, **_kw):
-            return Namespace(ok=False, output="no auth")
+            return _proc("no auth", ok=False)
 
         with patch("keel.cli.run_argv", side_effect=failing_run):
             rc_fail, _, err_fail = run([
@@ -2365,8 +2573,8 @@ class TestShip(unittest.TestCase):
         def bad_object_run(argv, **_kw):
             endpoint = argv[-1]
             if endpoint.endswith("/pulls/300"):
-                return Namespace(ok=True, output="[]")
-            return Namespace(ok=True, output="[]")
+                return _proc("[]")
+            return _proc("[]")
 
         with patch("keel.cli.run_argv", side_effect=bad_object_run):
             rc_obj, _, err_obj = run([
@@ -2380,8 +2588,8 @@ class TestShip(unittest.TestCase):
         def bad_list_run(argv, **_kw):
             endpoint = argv[-1]
             if endpoint.endswith("/pulls/300"):
-                return Namespace(ok=True, output=json.dumps({"body": ""}))
-            return Namespace(ok=True, output="{}")
+                return _proc(json.dumps({"body": ""}))
+            return _proc("{}")
 
         with patch("keel.cli.run_argv", side_effect=bad_list_run):
             rc_list, _, err_list = run([
@@ -2395,8 +2603,8 @@ class TestShip(unittest.TestCase):
         def failing_paginated_run(argv, **_kw):
             endpoint = argv[-1]
             if endpoint.endswith("/pulls/300"):
-                return Namespace(ok=True, output=json.dumps({"body": ""}))
-            return Namespace(ok=False, output="page failed")
+                return _proc(json.dumps({"body": ""}))
+            return _proc("page failed", ok=False)
 
         with patch("keel.cli.run_argv", side_effect=failing_paginated_run):
             rc_page, _, err_page = run([
@@ -2414,15 +2622,15 @@ class TestShip(unittest.TestCase):
             calls.append(argv)
             endpoint = argv[-1]
             if endpoint.endswith("/pulls/300"):
-                return Namespace(ok=True, output=json.dumps({
+                return _proc(json.dumps({
                     "body": "Refs #212",
                     "labels": [{"name": "keel:ship"}],
                 }))
             if endpoint.endswith("/pulls/300/files"):
-                return Namespace(ok=True, output=json.dumps([
+                return _proc(json.dumps([
                     [{"filename": "src/keel/evidence.py"}],
                 ]))
-            return Namespace(ok=True, output="[]")
+            return _proc("[]")
 
         with patch("keel.cli.run_argv", side_effect=fake_run):
             rc, out, _ = run([
@@ -2831,12 +3039,12 @@ class TestConsentVerify(unittest.TestCase):
         def fake_run(argv, **kwargs):
             endpoint = argv[-1]
             if endpoint.endswith("/pulls/300"):
-                return CommandResult(True, 0, json.dumps(
+                return _proc(json.dumps(
                     {"merged": True, "labels": [{"name": "keel:ship"}]}
                 ))
             if endpoint.endswith("/issues/300/comments"):
-                return CommandResult(True, 0, json.dumps([[{"body": "hi"}]]))
-            return CommandResult(False, 1, "unexpected endpoint")
+                return _proc(json.dumps([[{"body": "hi"}]]))
+            return _proc("unexpected endpoint", ok=False)
 
         with tempfile.TemporaryDirectory() as d:
             ledger_jsonl = Path(d) / "ledger.jsonl"
@@ -2859,10 +3067,10 @@ class TestConsentVerify(unittest.TestCase):
         def fake_run(argv, **kwargs):
             endpoint = argv[-1]
             if endpoint.endswith("/pulls/300"):
-                return CommandResult(True, 0, json.dumps({"merged": False, "labels": []}))
+                return _proc(json.dumps({"merged": False, "labels": []}))
             if endpoint.endswith("/issues/300/comments"):
-                return CommandResult(True, 0, json.dumps([[]]))
-            return CommandResult(False, 1, "unexpected endpoint")
+                return _proc(json.dumps([[]]))
+            return _proc("unexpected endpoint", ok=False)
 
         with tempfile.TemporaryDirectory() as d:
             ledger_jsonl = Path(d) / "ledger.jsonl"
@@ -2883,7 +3091,7 @@ class TestConsentVerify(unittest.TestCase):
     def test_live_transport_failure_surfaces_error(self):
         with tempfile.TemporaryDirectory() as d:
             with patch("keel.cli.run_argv",
-                       return_value=CommandResult(False, 1, "gh offline")):
+                       return_value=_proc("gh offline", ok=False)):
                 rc, _, err = run([
                     "consent-verify", str(PROJECTS / "example-android.yaml"),
                     "--root", d, "--pr", "300", "--json",
@@ -3036,10 +3244,10 @@ class TestCloseReconcile(unittest.TestCase):
         def fake_run(argv, **kwargs):
             endpoint = argv[-1]
             if endpoint.endswith("/issues/8"):
-                return CommandResult(True, 0, json.dumps(
+                return _proc(json.dumps(
                     {"state": "closed", "labels": [{"name": "status:done"}]}
                 ))
-            return CommandResult(False, 1, "unexpected endpoint")
+            return _proc("unexpected endpoint", ok=False)
 
         with tempfile.TemporaryDirectory() as d:
             ledger_jsonl = Path(d) / "ledger.jsonl"
@@ -3060,10 +3268,10 @@ class TestCloseReconcile(unittest.TestCase):
         def fake_run(argv, **kwargs):
             endpoint = argv[-1]
             if endpoint.endswith("/issues/8"):
-                return CommandResult(True, 0, json.dumps(
+                return _proc(json.dumps(
                     {"state": "open", "labels": []}
                 ))
-            return CommandResult(False, 1, "unexpected endpoint")
+            return _proc("unexpected endpoint", ok=False)
 
         with tempfile.TemporaryDirectory() as d:
             ledger_jsonl = Path(d) / "ledger.jsonl"
@@ -3081,7 +3289,7 @@ class TestCloseReconcile(unittest.TestCase):
     def test_live_transport_failure_surfaces_error(self):
         with tempfile.TemporaryDirectory() as d:
             with patch("keel.cli.run_argv",
-                       return_value=CommandResult(False, 1, "gh offline")):
+                       return_value=_proc("gh offline", ok=False)):
                 rc, _, err = run([
                     "close-reconcile", str(PROJECTS / "example-android.yaml"),
                     "--root", d, "--issue", "8", "--json",
@@ -3255,13 +3463,13 @@ class TestDryrunVerify(unittest.TestCase):
         # Live: ledger read from a fresh root (empty), branches + PRs via gh/git.
         def fake_run(argv, **kwargs):
             if argv[:2] == ["git", "for-each-ref"]:
-                return CommandResult(True, 0, "main\nfeature/issue-8\n")
+                return _proc("main\nfeature/issue-8\n")
             if argv[:3] == ["gh", "pr", "list"]:
-                return CommandResult(True, 0, json.dumps(
+                return _proc(json.dumps(
                     [{"number": 42, "headRefName": "feature/issue-8"},
                      {"number": 7, "headRefName": "feature/issue-9"}]
                 ))
-            return CommandResult(False, 1, "unexpected")
+            return _proc("unexpected", ok=False)
 
         with tempfile.TemporaryDirectory() as d:
             before = Path(d) / "before.json"
@@ -3288,10 +3496,10 @@ class TestDryrunVerify(unittest.TestCase):
         # unobservable PR set could hide a leaked PR. Fail closed: rc=1.
         def fake_run(argv, **kwargs):
             if argv[:2] == ["git", "for-each-ref"]:
-                return CommandResult(True, 0, "main\n")
+                return _proc("main\n")
             if argv[:3] == ["gh", "pr", "list"]:
-                return CommandResult(False, 1, "gh offline")
-            return CommandResult(False, 1, "unexpected")
+                return _proc("gh offline", ok=False)
+            return _proc("unexpected", ok=False)
 
         with tempfile.TemporaryDirectory() as d:
             before = Path(d) / "before.json"
@@ -3315,8 +3523,8 @@ class TestDryrunVerify(unittest.TestCase):
         # snapshot must fail closed, not report clean.
         def fake_run(argv, **kwargs):
             if argv[:2] == ["git", "for-each-ref"]:
-                return CommandResult(False, 1, "git offline")
-            return CommandResult(False, 1, "unexpected")
+                return _proc("git offline", ok=False)
+            return _proc("unexpected", ok=False)
 
         with tempfile.TemporaryDirectory() as d:
             before = Path(d) / "before.json"
@@ -3338,13 +3546,13 @@ class TestDryrunVerify(unittest.TestCase):
     def test_live_pr_list_skips_malformed_entries(self):
         def fake_run(argv, **kwargs):
             if argv[:2] == ["git", "for-each-ref"]:
-                return CommandResult(True, 0, "main\n")
+                return _proc("main\n")
             if argv[:3] == ["gh", "pr", "list"]:
-                return CommandResult(True, 0, json.dumps(
+                return _proc(json.dumps(
                     ["nope", {"number": "x", "headRefName": "feature/issue-8"},
                      {"number": 42, "headRefName": "feature/issue-8"}]
                 ))
-            return CommandResult(False, 1, "unexpected")
+            return _proc("unexpected", ok=False)
 
         with tempfile.TemporaryDirectory() as d:
             before = Path(d) / "before.json"
@@ -3450,20 +3658,20 @@ class TestVerifyBranch(unittest.TestCase):
         # worktree facts via the git wrappers. We stub run_argv for both surfaces.
         def fake_run(argv, **kwargs):
             if argv[0] == "gh":
-                body = json.dumps({"head": {"sha": "headsha", "ref": "feature/x"}})
-                return Namespace(ok=True, output=body)
+                body = json.dumps({"head": {"sha": SHA_HEAD, "ref": "feature/x"}})
+                return _proc(body)
             if argv[:2] == ["git", "rev-parse"]:
-                return Namespace(ok=True, output="tipsha\n")
+                return _proc(SHA_TIP + "\n")
             if argv[:2] == ["git", "merge-base"]:
-                return Namespace(ok=True, output="tipsha\n")
+                return _proc(SHA_TIP + "\n")
             if argv[:2] == ["git", "rev-list"]:
-                return Namespace(ok=True, output="0\n")
+                return _proc("0\n")
             if argv[:3] == ["git", "worktree", "list"]:
                 porcelain = (
                     "worktree /repo\nHEAD aaa\nbranch refs/heads/develop\n\n"
                     "worktree /repo/worktrees/i\nHEAD bbb\nbranch refs/heads/feature/x\n"
                 )
-                return Namespace(ok=True, output=porcelain)
+                return _proc(porcelain)
             raise AssertionError(f"unexpected argv {argv}")
 
         with patch("keel.cli.run_argv", side_effect=fake_run), \
@@ -3481,16 +3689,16 @@ class TestVerifyBranch(unittest.TestCase):
     def test_live_worktree_list_failure_skips_isolation(self):
         def fake_run(argv, **kwargs):
             if argv[0] == "gh":
-                body = json.dumps({"head": {"sha": "h", "ref": "feature/x"}})
-                return Namespace(ok=True, output=body)
+                body = json.dumps({"head": {"sha": SHA_HEAD, "ref": "feature/x"}})
+                return _proc(body)
             if argv[:2] == ["git", "rev-parse"]:
-                return Namespace(ok=True, output="tip\n")
+                return _proc(SHA_TIP + "\n")
             if argv[:2] == ["git", "merge-base"]:
-                return Namespace(ok=True, output="tip\n")
+                return _proc(SHA_TIP + "\n")
             if argv[:2] == ["git", "rev-list"]:
-                return Namespace(ok=True, output="0\n")
+                return _proc("0\n")
             if argv[:3] == ["git", "worktree", "list"]:
-                return Namespace(ok=False, output="")
+                return _proc("", ok=False)
             raise AssertionError(f"unexpected argv {argv}")
 
         with patch("keel.cli.run_argv", side_effect=fake_run), \
@@ -3506,16 +3714,16 @@ class TestVerifyBranch(unittest.TestCase):
     def test_live_branch_not_checked_out_skips_isolation(self):
         def fake_run(argv, **kwargs):
             if argv[0] == "gh":
-                body = json.dumps({"head": {"sha": "h", "ref": "feature/absent"}})
-                return Namespace(ok=True, output=body)
+                body = json.dumps({"head": {"sha": SHA_HEAD, "ref": "feature/absent"}})
+                return _proc(body)
             if argv[:2] == ["git", "rev-parse"]:
-                return Namespace(ok=True, output="tip\n")
+                return _proc(SHA_TIP + "\n")
             if argv[:2] == ["git", "merge-base"]:
-                return Namespace(ok=True, output="tip\n")
+                return _proc(SHA_TIP + "\n")
             if argv[:2] == ["git", "rev-list"]:
-                return Namespace(ok=True, output="0\n")
+                return _proc("0\n")
             if argv[:3] == ["git", "worktree", "list"]:
-                return Namespace(ok=True, output="worktree /repo\n")
+                return _proc("worktree /repo\n")
             raise AssertionError(f"unexpected argv {argv}")
 
         with patch("keel.cli.run_argv", side_effect=fake_run), \
@@ -3532,13 +3740,13 @@ class TestVerifyBranch(unittest.TestCase):
         # gh returns a head SHA but no ref → no branch to locate locally.
         def fake_run(argv, **kwargs):
             if argv[0] == "gh":
-                return Namespace(ok=True, output=json.dumps({"head": {"sha": "h"}}))
+                return _proc(json.dumps({"head": {"sha": SHA_HEAD}}))
             if argv[:2] == ["git", "rev-parse"]:
-                return Namespace(ok=True, output="tip\n")
+                return _proc(SHA_TIP + "\n")
             if argv[:2] == ["git", "merge-base"]:
-                return Namespace(ok=True, output="tip\n")
+                return _proc(SHA_TIP + "\n")
             if argv[:2] == ["git", "rev-list"]:
-                return Namespace(ok=True, output="0\n")
+                return _proc("0\n")
             raise AssertionError(f"unexpected argv {argv}")
 
         with patch("keel.cli.run_argv", side_effect=fake_run), \
@@ -3637,14 +3845,14 @@ class TestVerifyBranchFactGathering(unittest.TestCase):
         # worktree lookup is skipped without calling git for it.
         def fake_run(argv, **kwargs):
             if argv[:2] == ["git", "rev-parse"]:
-                return Namespace(ok=True, output="t\n")
+                return _proc(SHA_TIP + "\n")
             raise AssertionError(f"unexpected {argv}")
 
-        args = self._args(head_sha="h", merge_base_sha="t", base_distance=0)
+        args = self._args(head_sha=SHA_HEAD, merge_base_sha=SHA_TIP, base_distance=0)
         with patch("keel.git.run_argv", side_effect=fake_run):
             facts = cli._gather_branch_facts(args, "develop")
         self.assertIsNone(facts["is_linked_worktree"])
-        self.assertEqual(facts["base_tip_sha"], "t")
+        self.assertEqual(facts["base_tip_sha"], SHA_TIP)
 
     def test_local_facts_do_not_override_supplied_worktree_path(self):
         # worktree_path/is_linked supplied as flags; a live worktree lookup still
@@ -3655,7 +3863,7 @@ class TestVerifyBranchFactGathering(unittest.TestCase):
                     "worktree /repo\nbranch refs/heads/develop\n\n"
                     "worktree /repo/wt-auto\nbranch refs/heads/feature/x\n"
                 )
-                return Namespace(ok=True, output=porcelain)
+                return _proc(porcelain)
             raise AssertionError(f"unexpected {argv}")
 
         args = self._args(
@@ -3673,7 +3881,7 @@ class TestVerifyBranchFactGathering(unittest.TestCase):
     def test_empty_porcelain_returns_none(self):
         self.assertEqual(cli._parse_worktree_porcelain(""), [])
         with patch("keel.git.run_argv",
-                   side_effect=lambda *a, **k: Namespace(ok=True, output="\n")):
+                   side_effect=lambda *a, **k: _proc("\n")):
             self.assertIsNone(cli._local_worktree_facts("feature/x", cwd="/repo"))
 
 
@@ -3979,7 +4187,7 @@ class TestCoreMerge(unittest.TestCase):
             worktree = root / "worktrees" / "issue-1"
             worktree.mkdir(parents=True)
             with patch("keel.cli.git.worktree_list",
-                       return_value=Namespace(ok=True, output=f"worktree {root}\n")):
+                       return_value=_proc(f"worktree {root}\n")):
                 rc, _, err = run(["worktree-remove", "--root", d, str(worktree)])
 
         self.assertEqual(rc, 1)
@@ -3991,7 +4199,7 @@ class TestCoreMerge(unittest.TestCase):
             worktree = root / "worktrees" / "issue-1"
             worktree.mkdir(parents=True)
             with patch("keel.cli.git.worktree_list",
-                       return_value=Namespace(ok=False, output="bad list")):
+                       return_value=_proc("bad list", ok=False)):
                 rc, _, err = run(["worktree-remove", "--root", d, str(worktree)])
 
         self.assertEqual(rc, 1)
@@ -4011,9 +4219,9 @@ class TestCoreMerge(unittest.TestCase):
             worktree.mkdir(parents=True)
             with (
                 patch("keel.cli.git.worktree_list",
-                      return_value=Namespace(ok=True, output=f"worktree {worktree}\n")),
+                      return_value=_proc(f"worktree {worktree}\n")),
                 patch("keel.cli.git.worktree_remove",
-                      return_value=Namespace(ok=True, code=0, output="")),
+                      return_value=_proc("")),
             ):
                 rc, out, _ = run(["worktree-remove", "--root", d, str(worktree)])
 
@@ -4027,9 +4235,9 @@ class TestCoreMerge(unittest.TestCase):
             worktree.mkdir(parents=True)
             with (
                 patch("keel.cli.git.worktree_list",
-                      return_value=Namespace(ok=True, output=f"worktree {worktree}\n")),
+                      return_value=_proc(f"worktree {worktree}\n")),
                 patch("keel.cli.git.worktree_remove",
-                      return_value=Namespace(ok=False, code=1, output="remove failed")),
+                      return_value=_proc("remove failed", ok=False)),
             ):
                 rc_json, out_json, _ = run([
                     "worktree-remove", "--root", d, "--json", str(worktree),
@@ -4157,6 +4365,153 @@ class TestCoreMerge(unittest.TestCase):
         self.assertEqual(json.loads(out)["ci"]["state"], "fail")
         evidence_mock.assert_not_called()
 
+    def test_merge_blocks_an_empty_check_set_on_a_non_docs_pr(self):
+        # An empty statusCheckRollup is "CI never ran", not "CI passed". Reading it as a
+        # pass merged code no workflow ever built (#627). The carve-out is docs-only PRs,
+        # where no workflow is expected to trigger — so a code PR with zero checks blocks.
+        fake_report = _merge_capability_report()
+        snapshot = _json_result({
+            "headRefOid": "abc",
+            "mergeStateStatus": "CLEAN",
+            "statusCheckRollup": [],
+        })
+        with (
+            patch("keel.cli.runtime.detect", return_value=fake_report),
+            patch("keel.cli.window.is_merge_open", return_value=True),
+            patch("keel.cli.github.pr_merge_snapshot", return_value=snapshot),
+            patch("keel.cli._verify_merge_evidence", return_value={"docs_only": False}),
+        ):
+            rc, out, _ = run(_merge_args(json_out=True))
+
+        payload = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertEqual(payload["ci"]["state"], "no-checks")
+        self.assertFalse(payload["ci_no_checks_docs_only"])
+        self.assertIn("empty check set", payload["reason"])
+
+    def test_merge_allows_an_empty_check_set_on_a_docs_only_pr(self):
+        fake_report = _merge_capability_report()
+        snapshot = _json_result({
+            "headRefOid": "abc",
+            "mergeStateStatus": "CLEAN",
+            "statusCheckRollup": [],
+        })
+        evidence = {
+            "docs_only": True,
+            "enforced": True,
+            "verification": {"status": "pass", "missing": []},
+        }
+        with (
+            patch("keel.cli.runtime.detect", return_value=fake_report),
+            patch("keel.cli.window.is_merge_open", return_value=True),
+            patch("keel.cli.github.pr_merge_snapshot", return_value=snapshot),
+            patch("keel.cli._verify_merge_evidence", return_value=evidence),
+            patch("keel.cli.ledger.gates_pass_for_head", return_value=(False, None)),
+        ):
+            rc, out, _ = run(_merge_args(json_out=True))
+
+        payload = json.loads(out)
+        # It gets past the CI check (the next gate, gates-for-head, is what stops it) —
+        # which is the point: the empty check set alone did not block a docs-only PR.
+        self.assertEqual(rc, 1)
+        self.assertTrue(payload["ci_no_checks_docs_only"])
+        self.assertIn("no gates-pass recorded", payload["reason"])
+
+    def _merge_with_changed_files(self, changed):
+        """Drive `keel merge` with a real evidence load, so the docs-only carve-out is
+        computed by production code instead of handed in by the test.
+
+        Patching `_verify_merge_evidence` (as the two tests above do) pins the *branch*
+        in `_cmd_merge` but not the *value* that drives it — with that seam,
+        `docs_only = True` is a green mutation and #627 is quietly re-opened. Patching
+        one level deeper, at the artifact load, leaves `classify.is_docs_only` in the
+        path.
+        """
+        artifacts = {
+            "pr_body": "Closes #1", "pr_comments": [], "issue_comments": [],
+            "pr_reviews": [], "issue": 1, "head_sha": "abc", "head_ref": "feature/x",
+            "changed_files": changed, "pr_labels": ["keel:ship"],
+        }
+        snapshot = _json_result({
+            "headRefOid": "abc", "mergeStateStatus": "CLEAN", "statusCheckRollup": [],
+        })
+        with (
+            patch("keel.cli.runtime.detect", return_value=_merge_capability_report()),
+            patch("keel.cli.window.is_merge_open", return_value=True),
+            patch("keel.cli.github.pr_merge_snapshot", return_value=snapshot),
+            patch("keel.cli._load_evidence_artifacts", return_value=artifacts),
+            patch("keel.cli.ledger.gates_pass_for_head", return_value=(False, None)),
+        ):
+            rc, out, _ = run(_merge_args(json_out=True))
+        return rc, json.loads(out)
+
+    def test_the_docs_only_carve_out_is_computed_from_the_real_changed_files(self):
+        # Every changed path is a docs path -> the empty check set is tolerated, and the
+        # run proceeds to the next gate (gates-for-head, which is what stops it here).
+        rc_docs, docs = self._merge_with_changed_files(["docs/keel/cli.md", "README.md"])
+        # One code path is enough to withdraw the carve-out.
+        rc_code, code = self._merge_with_changed_files(["docs/keel/cli.md", "src/keel/cli.py"])
+
+        self.assertTrue(docs["ci_no_checks_docs_only"])
+        # It cleared the CI check and was stopped by a later gate — which is the point.
+        self.assertNotIn("empty check set", docs["reason"])
+        self.assertFalse(code["ci_no_checks_docs_only"])
+        self.assertIn("empty check set", code["reason"])
+        self.assertEqual((rc_docs, rc_code), (1, 1))
+
+    def test_an_unreadable_or_empty_changeset_never_earns_the_carve_out(self):
+        # The carve-out is the one place an empty CI check set is tolerated, so "we could
+        # not see what changed" must not buy it.
+        for changed in ([], None):
+            with self.subTest(changed=changed):
+                rc, payload = self._merge_with_changed_files(changed)
+                self.assertEqual(rc, 1)
+                self.assertFalse(payload["ci_no_checks_docs_only"])
+                self.assertIn("empty check set", payload["reason"])
+
+    def test_the_merge_gate_reads_the_evidence_knobs_from_config(self):
+        # #633 pinned these two wires on the `evidence-verify` path but not on the copy
+        # inside `_verify_merge_evidence` — the merge-gate one, i.e. the safety-critical
+        # of the two. An operator who tightens either knob in config had no proof it
+        # reached `keel merge`.
+        config = _write_raw(
+            "extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
+            "repo: acme/example\ngates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+            "  evidence_gate_label: 'acme:reviewed'\n"
+            "  evidence_require_distinct_vendors: true\n"
+        )
+        args = Namespace(
+            path=config, root=str(REPO_ROOT), pr=300, reviewers=None,
+            review_comments="inline", jury=False, no_jury=True, jury_advisory=False,
+            jury_vendors=None, require_distinct_vendors=False, gate_label=None,
+            waiver_label=None, deferral=[], phase="pre-merge", require_armed=False,
+            dry_run=False, issue=None,
+        )
+        # Two LGTMs from the *same* vendor: only a live `require_distinct_vendors`
+        # turns that into a finding, so the finding is the knob's observable effect.
+        same_vendor = [
+            _trusted_comment("keel.review-verdict.v1\nreviewer: a\nvendor: claude\n"
+                             "head: abc\nLGTM"),
+            _trusted_comment("keel.review-verdict.v1\nreviewer: b\nvendor: claude\n"
+                             "head: abc\nLGTM"),
+        ]
+        artifacts = {
+            "pr_body": "Closes #1", "pr_comments": same_vendor, "issue_comments": [],
+            "pr_reviews": [], "issue": 1, "head_sha": "abc", "head_ref": "feature/x",
+            "changed_files": ["src/keel/cli.py"], "pr_labels": ["acme:reviewed"],
+        }
+        with patch("keel.cli._load_evidence_artifacts", return_value=artifacts):
+            payload = cli._verify_merge_evidence(args, cli.cfg.load_config(config))
+
+        # The configured label armed the gate — the built-in default would not have.
+        self.assertEqual(payload["gate_label"], "acme:reviewed")
+        self.assertTrue(payload["enforced"])
+        self.assertTrue(
+            any(f["id"] == "review-vendor-distinctness"
+                for f in payload["verification"]["findings"]),
+            payload["verification"]["findings"],
+        )
+
     def test_merge_blocks_closed_window_snapshot_error_and_dirty_state(self):
         fake_report = _merge_capability_report()
         with (
@@ -4168,7 +4523,7 @@ class TestCoreMerge(unittest.TestCase):
             patch("keel.cli.runtime.detect", return_value=fake_report),
             patch("keel.cli.window.is_merge_open", return_value=True),
             patch("keel.cli.github.pr_merge_snapshot",
-                  return_value=Namespace(ok=False, output="gh failed")),
+                  return_value=_proc("gh failed", ok=False)),
         ):
             rc_snapshot, out_snapshot, _ = run(_merge_args(json_out=True))
         with (
@@ -4203,7 +4558,7 @@ class TestCoreMerge(unittest.TestCase):
                 "verification": {"status": "pass", "missing": []},
             }),
             patch("keel.cli.github.issue_facts",
-                  return_value=_ok_result(json.dumps(
+                  return_value=_proc(json.dumps(
                       {"title": "hotfix: patch the boot loop", "labels": []}))),
         ):
             argv = _merge_args(json_out=True, dry_run=True)
@@ -4238,7 +4593,7 @@ class TestCoreMerge(unittest.TestCase):
         with (
             patch("keel.cli.runtime.detect", return_value=fake_report),
             patch("keel.cli.github.issue_facts",
-                  return_value=_fail_result("offline")),
+                  return_value=_proc("offline", ok=False)),
         ):
             argv = _merge_args(dry_run=True)
             argv += ["--hotfix", "--blocker-rule", "blocker-title-regex",
@@ -4270,7 +4625,7 @@ class TestCoreMerge(unittest.TestCase):
         with (
             patch("keel.cli.runtime.detect", return_value=fake_report),
             patch("keel.cli.github.issue_facts",
-                  return_value=_ok_result(json.dumps(
+                  return_value=_proc(json.dumps(
                       {"title": "routine docs tidy", "labels": []}))),
         ):
             argv = _merge_args(dry_run=True)
@@ -4285,7 +4640,7 @@ class TestCoreMerge(unittest.TestCase):
         with (
             patch("keel.cli.runtime.detect", return_value=fake_report),
             patch("keel.cli.github.issue_facts",
-                  return_value=_ok_result(json.dumps(
+                  return_value=_proc(json.dumps(
                       {"title": "hotfix: x", "labels": []}))),
         ):
             argv = _merge_args(dry_run=True)
@@ -4516,7 +4871,7 @@ class TestCoreMerge(unittest.TestCase):
             patch("keel.cli.ledger.gates_pass_for_head",
                   return_value=(True, {"run_id": "RUN-1"})),
             patch("keel.cli.github.merge_pr",
-                  return_value=Namespace(ok=False, output="merge failed")),
+                  return_value=_proc("merge failed", ok=False)),
         ):
             rc_fail, out_fail, _ = run(_merge_args(json_out=True))
         with (
@@ -4536,7 +4891,7 @@ class TestCoreMerge(unittest.TestCase):
             patch("keel.cli.ledger.gates_pass_for_head",
                   return_value=(True, {"run_id": "RUN-1"})),
             patch("keel.cli.github.merge_pr",
-                  return_value=Namespace(ok=True, output="merged")),
+                  return_value=_proc("merged")),
         ):
             rc_ok, out_ok, _ = run(_merge_args(json_out=True))
 
@@ -4573,7 +4928,7 @@ class TestCoreMerge(unittest.TestCase):
             }),
             patch("keel.cli.ledger.read_records", return_value=records),
             patch("keel.cli.github.merge_pr",
-                  return_value=Namespace(ok=True, output="merged")),
+                  return_value=_proc("merged")),
         ):
             return run(_merge_args(json_out=True))
 
@@ -4629,9 +4984,9 @@ class TestCoreMerge(unittest.TestCase):
             }),
             patch("keel.cli.ledger.read_records") as read_mock,
             patch("keel.cli.github.merge_pr",
-                  return_value=Namespace(ok=True, output="merged")),
+                  return_value=_proc("merged")),
             patch("keel.cli.github.issue_facts",
-                  return_value=_ok_result(json.dumps(
+                  return_value=_proc(json.dumps(
                       {"title": "boot loop", "labels": [{"name": "blocker"}]}))),
         ):
             argv = _merge_args(json_out=True)
@@ -4735,7 +5090,7 @@ class TestCoreMerge(unittest.TestCase):
     def test_merge_snapshot_and_ci_rollup_edges(self):
         with patch(
             "keel.cli.github.pr_merge_snapshot",
-            return_value=Namespace(ok=True, output="{"),
+            return_value=_proc("{"),
         ):
             with self.assertRaisesRegex(ValueError, "not JSON"):
                 cli._merge_snapshot(1, cwd=".")
@@ -5451,7 +5806,7 @@ class TestMergeCheckpointGate(unittest.TestCase):
             patch("keel.cli.ledger.gates_pass_for_head",
                   return_value=(True, {"run_id": run_id})),
             patch("keel.cli.github.merge_pr",
-                  return_value=Namespace(ok=True, output="merged")),
+                  return_value=_proc("merged")),
         ):
             argv = [
                 "merge", config, "--root", root, "--pr", "123",
@@ -6427,6 +6782,46 @@ class TestShipHotfix(unittest.TestCase):
             "merge_window_mode: pause\ngates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
         )
 
+    def _cfg_freeze(self):
+        return _write_raw(
+            "extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: x\n"
+            "timezone: Europe/Istanbul\nmerge_window: '07:00-01:30'\n"
+            "merge_window_mode: freeze\ngates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+        )
+
+    def _ship(self, config, *extra, closed):
+        import tempfile
+        # Spy on the window predicate rather than the wall clock: this fixes the verdict
+        # *and* captures the (timezone, merge_window) the CLI actually wired into
+        # `ship.assess`, so blanking either config value fails the test (#633).
+        with tempfile.TemporaryDirectory() as d, \
+             patch("keel.ship.is_merge_open", return_value=not closed) as spy:
+            rc, out, _ = run(["ship", config, "--root", d, "--json", *extra])
+        self.assertEqual(spy.call_args.args, ("Europe/Istanbul", "07:00-01:30"))
+        return rc, json.loads(out)["result"]["assessment"]
+
+    def test_pause_mode_halts_outside_the_window(self):
+        _, open_run = self._ship(self._cfg(), closed=False)
+        _, closed_run = self._ship(self._cfg(), closed=True)
+        self.assertTrue(open_run["window_open"])
+        self.assertFalse(open_run["halted"])
+        self.assertFalse(closed_run["window_open"])
+        self.assertTrue(closed_run["halted"])           # `pause` halts the pipeline
+
+    def test_freeze_mode_blocks_the_merge_without_halting(self):
+        _, closed_run = self._ship(self._cfg_freeze(), closed=True)
+        self.assertFalse(closed_run["window_open"])
+        self.assertFalse(closed_run["halted"])          # `freeze` only gates the merge
+        self.assertEqual(closed_run["merge"]["action"], "defer")
+
+    def test_hotfix_bypasses_a_closed_window(self):
+        rc, assessed = self._ship(self._cfg(), "--hotfix", closed=True)
+        self.assertEqual(rc, 0)
+        self.assertFalse(assessed["window_open"])
+        self.assertFalse(assessed["halted"])            # a blocker is not paused
+        self.assertEqual(assessed["merge"]["action"], "merge")
+        self.assertTrue(assessed["bypassed_window"])
+
     def test_hotfix_flag_runs(self):
         import tempfile
         with tempfile.TemporaryDirectory() as d:
@@ -6436,28 +6831,248 @@ class TestShipHotfix(unittest.TestCase):
         self.assertIn("DECISION", out.upper())
 
 
+class TestRunIdMarkerRoundTrip(unittest.TestCase):
+    """The marker must make a comment findable *and* leave closure fidelity intact.
+
+    Those two requirements used to be mutually exclusive: `post-comment` matches on
+    marker + run-id, but `evidence-verify` compares the posted closure body against the
+    canonical render, so any run-id in the body failed fidelity. The fix splits them —
+    the transport stamps, `evidence` strips — and it is the *interaction* that matters,
+    so that is what this pins.
+    """
+
+    RECORD = {"run_id": "ship-123", "actors": {}, "pull_request": {"number": 7},
+              "changes": {}, "capture": {}}
+
+    def _body(self):
+        from keel import closure
+        return closure.render_closure_comment(self.RECORD)
+
+    def test_a_bare_closure_body_is_not_findable(self):
+        # The defect: the canonical render writes "- **Run id:** <id>", which the
+        # idempotency matcher does not recognise, so every resume posted a duplicate.
+        self.assertFalse(cli._comment_has_run_id(self._body(), "ship-123:closure"))
+
+    def test_the_stamped_body_is_both_findable_and_verbatim(self):
+        from keel import evidence
+        posted = cli._with_run_id_marker(self._body(), "ship-123:closure")
+
+        self.assertTrue(cli._comment_has_run_id(posted, "ship-123:closure"))
+        self.assertTrue(evidence.closure_body_matches_record(posted, self.RECORD))
+
+    def test_stamping_twice_does_not_stack_markers(self):
+        once = cli._with_run_id_marker(self._body(), "ship-123:closure")
+        self.assertEqual(cli._with_run_id_marker(once, "ship-123:closure"), once)
+
+    def test_no_run_id_leaves_the_body_untouched(self):
+        self.assertEqual(cli._with_run_id_marker(self._body(), None), self._body())
+
+    def test_the_strip_cannot_launder_text_past_the_fidelity_check(self):
+        from keel import evidence
+        # An HTML comment ends at its first `-->`, so trailing text renders visibly on
+        # the page. A permissive strip would normalize the whole line away and let a
+        # trusted author contradict the record while still comparing equal.
+        smuggled = self._body() + (
+            "\n<!-- keel.run-id: r1 --> **THIS PR WAS NOT ACTUALLY MERGED** -->\n")
+        self.assertFalse(evidence.closure_body_matches_record(smuggled, self.RECORD))
+
+
+class TestGateResultFlag(unittest.TestCase):
+    """`--gate-result` is the channel that makes a blocking agentic gate satisfiable.
+
+    Without it, `command_gate_runner` reports every agentic gate `not_run`,
+    `record_gates_passed` refuses the record for every head, and `keel merge` blocks
+    forever with no way to record that the agent did dispatch the gate — a permanent
+    merge block rather than a gate.
+    """
+
+    CFG = ("extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: x\n"
+           "gates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+           "extensions:\n  pre-merge: [security-review.md]\n")
+    EXT = ("---\nid: security-review\nslot: pre-merge\nkind: agentic\n"
+           "on_fail: block\nagent: inherit\n---\nReview the diff.\n")
+
+    def _root(self, stack):
+        import tempfile
+        d = stack.enter_context(tempfile.TemporaryDirectory())
+        ext = Path(d) / ".keel" / "extensions"
+        ext.mkdir(parents=True)
+        (ext / "security-review.md").write_text(self.EXT, encoding="utf-8")
+        return d
+
+    def _ship(self, *extra):
+        with contextlib.ExitStack() as stack:
+            d = self._root(stack)
+            rc, out, err = run(["ship", _write_raw(self.CFG), "--root", d, *extra])
+        return rc, out, err
+
+    def test_an_undispatched_blocking_gate_blocks_and_says_why(self):
+        rc, out, _ = self._ship()
+        self.assertEqual(rc, 1)
+        self.assertIn("gate security-review NOT-RUN", out)
+        self.assertIn("required gate(s) not run: security-review", out)
+        self.assertIn("--gate-result", out)
+
+    def test_a_recorded_pass_clears_it(self):
+        rc, out, _ = self._ship("--gate-result", "security-review=pass")
+        self.assertEqual(rc, 0)
+        self.assertIn("gate security-review ok", out)
+        self.assertIn("MERGE — clear to merge", out)
+
+    def test_a_recorded_failure_blocks_on_findings(self):
+        rc, out, _ = self._ship("--gate-result", "security-review=fail")
+        self.assertEqual(rc, 1)
+        self.assertIn("gate security-review FAIL", out)
+        self.assertIn("blocking findings present", out)
+
+    def test_a_result_for_a_gate_keel_executed_is_refused(self):
+        # The flag records what keel *cannot* measure. Overriding what it did measure
+        # would let a run whose gates failed certify a merge.
+        cfg = ("extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: x\n"
+               "gates: [build]\nknobs:\n  build_gate_cmd: 'false'\n")
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, _, err = run(["ship", _write_raw(cfg), "--root", d,
+                              "--gate-result", "build=pass"])
+        self.assertEqual(rc, 1)
+        self.assertIn("cannot override a gate keel executed: build", err)
+
+    def test_a_result_for_an_unplanned_gate_is_refused(self):
+        rc, _, err = self._ship("--gate-result", "no-such-gate=pass")
+        self.assertEqual(rc, 1)
+        self.assertIn("names no planned gate: no-such-gate", err)
+
+    def test_argument_shape_is_validated(self):
+        for bad in ("noequals", "=pass", "gate=maybe", "gate="):
+            with self.subTest(value=bad):
+                with self.assertRaises(cli.argparse.ArgumentTypeError):
+                    cli._gate_result_arg(bad)
+
+    def test_verdict_is_case_insensitive_and_trimmed(self):
+        self.assertEqual(cli._gate_result_arg(" gate = PASS "), ("gate", "pass"))
+
+
+class TestGateStatusLabel(unittest.TestCase):
+    """`NOT-RUN` must never render as `ok` — that is what made an undispatched
+    blocking review gate read as green on the operator's screen (#626)."""
+
+    def _label(self, **kw):
+        from keel.gates import GateOutcome
+        return cli._gate_status(GateOutcome("g", kw.pop("ok", True), **kw))
+
+    def test_labels(self):
+        self.assertEqual(self._label(), "ok")
+        self.assertEqual(self._label(ok=False), "FAIL")
+        self.assertEqual(self._label(ok=False, timed_out=True), "TIMEOUT")
+        self.assertEqual(self._label(not_run=True), "NOT-RUN")
+
+    def test_not_run_wins_over_ok(self):
+        # An undispatched gate carries ok=True so a soft gate does not spuriously fail
+        # the run; the label must still say nobody ran it.
+        self.assertEqual(self._label(ok=True, not_run=True), "NOT-RUN")
+
+
+class TestGateTimeoutWiring(unittest.TestCase):
+    """`knobs.gate_timeout_s` reaches `_gate_runner` from both commands that build one.
+
+    `plan_gates` already resolves a timeout onto every command spec, and
+    `command_gate_runner` prefers `spec.timeout`, so this kwarg is defence in depth for a
+    spec built outside the planner — real, but unreachable from the CLI today, which is
+    why deleting it stayed green under mutation (#633). Pinned so the redundancy cannot
+    quietly become *wrong*.
+    """
+
+    CFG = ("extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: x\n"
+           "gates: [build]\nknobs:\n  build_gate_cmd: 'true'\n  gate_timeout_s: 47\n")
+
+    def _timeout_seen(self, command):
+        import tempfile
+        real = cli._gate_runner
+        with tempfile.TemporaryDirectory() as d, \
+             patch("keel.cli._gate_runner", side_effect=real) as spy, \
+             patch("keel.git.changed_files", return_value=[]), \
+             patch("keel.git.diff", return_value=""):
+            run([command, _write_raw(self.CFG), "--root", d])
+        return spy.call_args.kwargs["timeout"]
+
+    def test_run_gates_passes_the_configured_budget(self):
+        self.assertEqual(self._timeout_seen("run-gates"), 47)
+
+    def test_ship_passes_the_configured_budget(self):
+        self.assertEqual(self._timeout_seen("ship"), 47)
+
+
 class TestGateRunner(unittest.TestCase):
     def test_command_branch_runs(self):
         from keel.gates import GateSpec
         run_gate = cli._gate_runner(".", "")
-        ok, _ = run_gate(GateSpec("build", "command", "test", "block", run="true"))
+        ok, _, timed_out, not_run = run_gate(
+            GateSpec("build", "command", "test", "block", run="true"))
         self.assertTrue(ok)
+        self.assertFalse(timed_out)
+        self.assertFalse(not_run)  # a command gate really did execute
+
+    def test_project_timeout_is_threaded_to_specs_without_their_own(self):
+        # plan_gates resolves a timeout onto every command spec, so this fallback is
+        # only reachable for a spec built elsewhere — pin it, or the wiring is dead code
+        # that nothing would notice being deleted or set to the wrong value.
+        from keel.gates import GateSpec
+        run_gate = cli._gate_runner(".", "", timeout=1)
+        ok, findings, timed_out, not_run = run_gate(
+            GateSpec("build", "command", "test", "block", run=_SLOW_CMD, timeout=None))
+        self.assertFalse(ok)
+        self.assertTrue(timed_out)
+        self.assertFalse(not_run)
+        self.assertIn("timed out after 1s", findings[0].message)
+
+    def test_jury_budget_reaches_run_gate_from_the_spec(self):
+        # plan_gates resolves knobs.jury_timeout_s onto the jury spec; this pins that the
+        # runner passes it on. Without it the knob can be made inert (or wired to
+        # gate_timeout_s) and the whole suite stays green — the dead-plumbing class #622
+        # was caught on.
+        from keel.gates import GateSpec
+        run_gate = cli._gate_runner(".", "a diff")
+        with patch("keel.jury.run_gate", return_value=(True, [], False)) as spy:
+            run_gate(GateSpec("jury", "builtin", "test", "block", timeout=4242))
+        self.assertEqual(spy.call_args.kwargs["timeout"], 4242)
+
+    def test_jury_budget_falls_back_when_the_spec_carries_none(self):
+        from keel.gates import GateSpec
+        run_gate = cli._gate_runner(".", "a diff")
+        with patch("keel.jury.run_gate", return_value=(True, [], False)) as spy:
+            run_gate(GateSpec("jury", "builtin", "test", "block", timeout=None))
+        self.assertEqual(spy.call_args.kwargs["timeout"], model.DEFAULT_JURY_TIMEOUT_S)
 
     def test_jury_branch_noop_without_diff(self):
         from keel.gates import GateSpec
         run_gate = cli._gate_runner(".", "")  # empty diff -> jury is a fail-soft no-op
-        ok, findings = run_gate(GateSpec("jury", "builtin", "test", "block"))
+        ok, findings, _ = run_gate(GateSpec("jury", "builtin", "test", "block"))
         self.assertTrue(ok)
         self.assertEqual(findings, [])
 
+    JURY_CFG = ("extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: x\n"
+                "gates: [build, jury]\nknobs:\n  build_gate_cmd: 'true'\n")
+
     def test_run_gates_with_jury_gate(self):
         import tempfile
-        p = _write_raw("extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: x\n"
-                       "gates: [build, jury]\nknobs:\n  build_gate_cmd: 'true'\n")
-        with tempfile.TemporaryDirectory() as d:  # non-git root -> empty diff -> jury no-op
+        p = _write_raw(self.JURY_CFG)
+        with tempfile.TemporaryDirectory() as d, \
+             patch("keel.git.diff", return_value=""):  # readable, empty -> jury no-op
             rc, out, _ = run(["run-gates", p, "--root", d])
         self.assertEqual(rc, 0)
         self.assertIn("jury", out)
+
+    def test_run_gates_blocks_when_the_diff_cannot_be_read(self):
+        # A non-git root makes `git diff` fail, so there is no diff to review. That is
+        # not "nothing to review": passing would drop the review gate out of the merge
+        # decision silently (#628). Gating mode must fail closed.
+        import tempfile
+        p = _write_raw(self.JURY_CFG)
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["run-gates", p, "--root", d])
+        self.assertEqual(rc, 1)
+        self.assertIn("BLOCKED", out)
+        self.assertIn("could not be read", out)
 
 
 class TestInstallAdapter(unittest.TestCase):
@@ -6889,8 +7504,8 @@ class TestPostComment(unittest.TestCase):
 
         def failing_list(argv, **_kwargs):
             if argv[:4] == ["gh", "api", "--paginate", "--slurp"]:
-                return Namespace(ok=False, output="rate limited")
-            return Namespace(ok=False, output=f"unexpected {argv}")
+                return _proc("rate limited", ok=False)
+            return _proc(f"unexpected {argv}", ok=False)
 
         with (
             patch("keel.cli.runtime.detect", return_value=_merge_capability_report()),
@@ -6911,17 +7526,17 @@ class TestPostComment(unittest.TestCase):
         def fake_run(argv, **_kwargs):
             calls.append(argv)
             if argv[:4] == ["gh", "api", "--paginate", "--slurp"]:
-                return Namespace(ok=True, output="[]")
+                return _proc("[]")
             if argv[:3] == ["gh", "api", "repos/berkayturanci/keel/issues/247/comments"]:
                 self.assertIn("-f", argv)
                 body_arg = next(item for item in argv if item.startswith("body="))
                 self.assertIn("keel.issue-update.v1", body_arg)
                 self.assertNotIn("--body", argv)
-                return Namespace(ok=True, output=json.dumps({
+                return _proc(json.dumps({
                     "id": 42,
                     "html_url": "https://github.example/comment/42",
                 }))
-            return Namespace(ok=False, output=f"unexpected {argv}")
+            return _proc(f"unexpected {argv}", ok=False)
 
         body = _body_file("<!-- keel.issue-update.v1 -->\n\nrun-id: abc\n")
         with (
@@ -6949,8 +7564,8 @@ class TestPostComment(unittest.TestCase):
 
         def failing_post(argv, **_kwargs):
             if argv[:4] == ["gh", "api", "--paginate", "--slurp"]:
-                return Namespace(ok=True, output="[]")
-            return Namespace(ok=False, output="")
+                return _proc("[]")
+            return _proc("", ok=False)
 
         with (
             patch("keel.cli.runtime.detect", return_value=_merge_capability_report()),
@@ -6966,8 +7581,8 @@ class TestPostComment(unittest.TestCase):
 
         def text_post(argv, **_kwargs):
             if argv[:4] == ["gh", "api", "--paginate", "--slurp"]:
-                return Namespace(ok=True, output="[]")
-            return Namespace(ok=True, output="created")
+                return _proc("[]")
+            return _proc("created")
 
         with (
             patch("keel.cli.runtime.detect", return_value=_merge_capability_report()),
@@ -6984,8 +7599,8 @@ class TestPostComment(unittest.TestCase):
 
         def list_response_post(argv, **_kwargs):
             if argv[:4] == ["gh", "api", "--paginate", "--slurp"]:
-                return Namespace(ok=True, output="[]")
-            return Namespace(ok=True, output="[]")
+                return _proc("[]")
+            return _proc("[]")
 
         with (
             patch("keel.cli.runtime.detect", return_value=_merge_capability_report()),
@@ -7017,11 +7632,11 @@ class TestPostComment(unittest.TestCase):
         def fake_run(argv, **_kwargs):
             calls.append(argv)
             if argv[:4] == ["gh", "api", "--paginate", "--slurp"]:
-                return Namespace(ok=True, output=json.dumps([existing]))
+                return _proc(json.dumps([existing]))
             if argv[:3] == ["gh", "api", "repos/berkayturanci/keel/issues/comments/99"]:
                 self.assertIn("PATCH", argv)
-                return Namespace(ok=True, output=json.dumps({"id": 99}))
-            return Namespace(ok=False, output=f"unexpected {argv}")
+                return _proc(json.dumps({"id": 99}))
+            return _proc(f"unexpected {argv}", ok=False)
 
         body = _body_file("<!-- keel.closure-comment.v1 -->\n\nrun-id: run-1\nnew\n")
         with (
@@ -7049,7 +7664,7 @@ class TestPostComment(unittest.TestCase):
 
         def fake_list(argv, **_kwargs):
             self.assertEqual(argv[:4], ["gh", "api", "--paginate", "--slurp"])
-            return Namespace(ok=True, output=json.dumps([existing]))
+            return _proc(json.dumps([existing]))
 
         with (
             patch("keel.cli.runtime.detect", return_value=_merge_capability_report()),
@@ -7132,7 +7747,7 @@ def _merge_args(*, root: str | None = None, json_out: bool = False, dry_run: boo
 
 
 def _json_result(payload: dict):
-    return Namespace(ok=True, output=json.dumps(payload))
+    return _proc(json.dumps(payload))
 
 
 class TestGuardCommand(unittest.TestCase):
@@ -7172,7 +7787,7 @@ class TestGuardCommand(unittest.TestCase):
         self.assertIn("(none)", out)
 
     def test_guard_live_issue_fetch(self):
-        facts = _ok_result(json.dumps({
+        facts = _proc(json.dumps({
             "title": "security: token leak",
             "labels": [{"name": "P0"}, {"name": "needs-fix"}],
         }))
@@ -7184,7 +7799,7 @@ class TestGuardCommand(unittest.TestCase):
         self.assertEqual(payload["matched"], ["blocker-title-regex"])
 
     def test_guard_live_fetch_failure_falls_back_to_args(self):
-        with patch("keel.cli.github.issue_facts", return_value=_fail_result("offline")):
+        with patch("keel.cli.github.issue_facts", return_value=_proc("offline", ok=False)):
             rc, out, _ = run([
                 "guard", self._cfg(), "--issue", "42",
                 "--issue-title", "hotfix: x", "--json",
@@ -7194,7 +7809,7 @@ class TestGuardCommand(unittest.TestCase):
         self.assertEqual(payload["title"], "hotfix: x")
 
     def test_guard_live_fetch_bad_json_falls_back(self):
-        with patch("keel.cli.github.issue_facts", return_value=_ok_result("not-json")):
+        with patch("keel.cli.github.issue_facts", return_value=_proc("not-json")):
             rc, out, _ = run([
                 "guard", self._cfg(), "--issue", "42",
                 "--issue-title", "hotfix: x", "--json",
@@ -7203,7 +7818,7 @@ class TestGuardCommand(unittest.TestCase):
         self.assertEqual(json.loads(out)["title"], "hotfix: x")
 
     def test_guard_live_fetch_non_dict_payload_falls_back(self):
-        with patch("keel.cli.github.issue_facts", return_value=_ok_result("[]")):
+        with patch("keel.cli.github.issue_facts", return_value=_proc("[]")):
             rc, out, _ = run([
                 "guard", self._cfg(), "--issue", "42",
                 "--issue-title", "hotfix: x", "--json",
@@ -7212,7 +7827,7 @@ class TestGuardCommand(unittest.TestCase):
         self.assertEqual(json.loads(out)["title"], "hotfix: x")
 
     def test_guard_live_fetch_ignores_malformed_fields(self):
-        facts = _ok_result(json.dumps({"title": 5, "labels": "nope"}))
+        facts = _proc(json.dumps({"title": 5, "labels": "nope"}))
         with patch("keel.cli.github.issue_facts", return_value=facts):
             rc, out, _ = run([
                 "guard", self._cfg(), "--issue", "42",
@@ -7224,7 +7839,7 @@ class TestGuardCommand(unittest.TestCase):
         self.assertEqual(payload["labels"], [])
 
     def test_guard_live_fetch_skips_malformed_labels(self):
-        facts = _ok_result(json.dumps({
+        facts = _proc(json.dumps({
             "title": "tidy", "labels": [{"name": "blocker"}, "junk", {"x": 1}],
         }))
         with patch("keel.cli.github.issue_facts", return_value=facts):
@@ -7252,7 +7867,7 @@ class TestGatherIssueFacts(unittest.TestCase):
         return Namespace(**base)
 
     def test_authoritative_true_on_live_fetch(self):
-        facts = _ok_result(json.dumps({
+        facts = _proc(json.dumps({
             "title": "security: leak", "labels": [{"name": "P0"}],
         }))
         with patch("keel.cli.github.issue_facts", return_value=facts):
@@ -7270,7 +7885,7 @@ class TestGatherIssueFacts(unittest.TestCase):
         self.assertFalse(authoritative)
 
     def test_authoritative_false_on_failed_fetch(self):
-        with patch("keel.cli.github.issue_facts", return_value=_fail_result("offline")):
+        with patch("keel.cli.github.issue_facts", return_value=_proc("offline", ok=False)):
             title, _labels, authoritative = cli._gather_issue_facts(
                 self._args(issue=42, issue_title="hotfix: x")
             )

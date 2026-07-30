@@ -60,16 +60,39 @@ from . import findings as fnd
 from . import orchestrator as orch
 from .extensions import ExtensionError, load_extensions
 from .gates import GateSpec
+from .model import DEFAULT_GATE_TIMEOUT_S, DEFAULT_JURY_TIMEOUT_S
 from .runner import command_gate_runner, run_argv
 
 
-def _gate_runner(root: str, diff_text: str, *, jury_mode: str = "gating"):
-    """A gate runner that handles command gates plus the ``jury`` built-in (on the diff)."""
-    commands = command_gate_runner(root)
+def _gate_status(outcome) -> str:
+    """Operator-facing label for one gate outcome.
+
+    `NOT-RUN` is deliberately not `ok`: an agentic gate the command-only runner never
+    dispatched has produced no result, and showing it as a pass is what let a blocking
+    review gate nobody executed read as green.
+    """
+    if outcome.not_run:
+        return "NOT-RUN"
+    if outcome.ok:
+        return "ok"
+    return "TIMEOUT" if outcome.timed_out else "FAIL"
+
+
+def _gate_runner(root: str, diff_text: str, *, jury_mode: str = "gating",
+                 timeout: int = DEFAULT_GATE_TIMEOUT_S):
+    """A gate runner that handles command gates plus the ``jury`` built-in (on the diff).
+
+    ``timeout`` is the project's ``knobs.gate_timeout_s``; it covers any command spec
+    that reached the runner without a resolved per-gate limit. The jury builtin reads
+    its own budget off ``spec.timeout``, which ``plan_gates`` resolves from
+    ``knobs.jury_timeout_s``.
+    """
+    commands = command_gate_runner(root, timeout=timeout)
 
     def run(spec: GateSpec):
         if spec.kind == "builtin" and spec.id == "jury":
-            return jury.run_gate(diff_text, cwd=root, mode=jury_mode)
+            jury_limit = spec.timeout if spec.timeout is not None else DEFAULT_JURY_TIMEOUT_S
+            return jury.run_gate(diff_text, cwd=root, mode=jury_mode, timeout=jury_limit)
         return commands(spec)
 
     return run
@@ -277,13 +300,16 @@ def _cmd_run_gates(args: argparse.Namespace) -> int:
         print(evaluation.render(), file=sys.stderr)
 
     diff_text = git.diff(config.base_branch, "HEAD", cwd=args.root)
-    outcomes = gates.run_gates(specs, _gate_runner(args.root, diff_text, jury_mode="gating"))
+    outcomes = gates.run_gates(specs, _gate_runner(args.root, diff_text, jury_mode="gating",
+                                                   timeout=config.knobs.gate_timeout_s))
     _autostamp(config, args.root, args.gate_command, getattr(args, "run_id", None),
                args.gate_phase, issue=getattr(args, "issue", None),
                pr=getattr(args, "pull_request", None))   # the run reached the test gate (s8)
     for o in outcomes:
-        status = "ok" if o.ok else "FAIL"
-        print(f"  {status:>4}  {o.gate}")
+        # A timeout still blocks; it is labelled apart so a slow host does not read
+        # as a broken test (and a hanging command still reads as red).
+        status = _gate_status(o)
+        print(f"  {status:>7}  {o.gate}")
 
     verdict = fnd.summarize(gates.collect_findings(outcomes))
     for f in verdict.findings:
@@ -389,7 +415,7 @@ def _gather_issue_facts(args: argparse.Namespace) -> tuple[str, tuple[str, ...],
         result = github.issue_facts(issue, cwd=args.root)
         if result.ok:
             try:
-                data = json.loads(result.output)
+                data = json.loads(result.stdout)
             except json.JSONDecodeError:
                 data = None
             if isinstance(data, dict):
@@ -728,11 +754,24 @@ def _cmd_merge(args: argparse.Namespace) -> int:
             return _finish_merge(
                 args, payload, f"PR merge state is {snapshot['merge_state']}", code=1
             )
-        if snapshot["ci"]["state"] != "pass":
-            return _finish_merge(args, payload, f"CI is {snapshot['ci']['state']}", code=1)
+        ci_state = snapshot["ci"]["state"]
+        if ci_state not in ("pass", "no-checks"):
+            return _finish_merge(args, payload, f"CI is {ci_state}", code=1)
 
         evidence_payload = _verify_merge_evidence(args, config)
         payload["evidence"] = evidence_payload
+        if ci_state == "no-checks":
+            # ship.md's rule, now enforced in core rather than by adapter prose: an
+            # empty check set is acceptable only when every changed path is a docs
+            # path. Checked after the evidence load because that is what supplies the
+            # changed-file list, and only on this branch so a red CI still short-
+            # circuits before any extra API work.
+            docs_only = evidence_payload.get("docs_only") is True
+            payload["ci_no_checks_docs_only"] = docs_only
+            if not docs_only:
+                return _finish_merge(
+                    args, payload,
+                    "CI did not run on a non-docs PR (empty check set)", code=1)
         if not evidence_payload["enforced"]:
             return _finish_merge(args, payload, "evidence gate is not enforced", code=1)
         if evidence_payload["verification"]["status"] != "pass":
@@ -892,11 +931,21 @@ def _cmd_ship(args: argparse.Namespace) -> int:
             print(message, file=sys.stderr)
         return 1
 
-    changed = git.changed_files(config.base_branch, "HEAD", cwd=args.root)
-    tier = classify.tier_for_files(
-        changed,
-        tier3_globs=config.knobs.tier3_globs,
-        docs_globs=config.knobs.docs_gate_paths,
+    changed_read = git.changed_files(config.base_branch, "HEAD", cwd=args.root)
+    # None means git could not be read. Classify fail-closed to the strictest tier
+    # rather than letting an unreadable diff look like an empty one — an empty list
+    # classifies as TIER-2 and would silently drop a reviewer and the gating jury.
+    changed_unreadable = changed_read is None
+    changed = changed_read or []
+    tier = (
+        classify.UNKNOWN_TIER
+        if changed_unreadable
+        else classify.tier_for_files(
+            changed,
+            tier3_globs=config.knobs.tier3_globs,
+            docs_globs=config.knobs.docs_gate_paths,
+            allowlist_globs=config.knobs.docs_only_allowlist,
+        )
     )
     review_contract = ship.resolve_review_contract(
         tier=tier,
@@ -917,8 +966,22 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     diff_text = git.diff(config.base_branch, "HEAD", cwd=args.root)
     outcomes = gates.run_gates(
         specs,
-        _gate_runner(args.root, diff_text, jury_mode=review_contract["jury"]["mode"]),
+        _gate_runner(args.root, diff_text, jury_mode=review_contract["jury"]["mode"],
+                     timeout=config.knobs.gate_timeout_s),
     )
+    recorded_results = dict(getattr(args, "gate_result", None) or ())
+    planned = {spec.id for spec in specs}
+    unknown = sorted(set(recorded_results) - planned)
+    if unknown:
+        print(f"--gate-result names no planned gate: {', '.join(unknown)}", file=sys.stderr)
+        return 1
+    outcomes, rejected = gates.apply_recorded_results(outcomes, recorded_results)
+    if rejected:
+        # Refuse loudly: keel ran these and has a measured verdict. Silently discarding
+        # the flag would leave the operator believing they recorded something.
+        print(f"--gate-result cannot override a gate keel executed: {', '.join(rejected)}",
+              file=sys.stderr)
+        return 1
     verdict = fnd.summarize(gates.collect_findings(outcomes))
     ci_conclusion = (
         github.ci_conclusion(args.pr, cwd=args.root)
@@ -927,15 +990,22 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     )
 
     a = ship.assess(
-        changed_files=changed,
+        # None-preserving on purpose: assess classifies an unreadable diff fail-closed,
+        # and collapsing it to [] here is what made this whole guard inert.
+        changed_files=changed_read,
         gate_verdict=verdict,
         tier3_globs=config.knobs.tier3_globs,
         docs_globs=config.knobs.docs_gate_paths,
+        allowlist_globs=config.knobs.docs_only_allowlist,
         timezone=config.timezone,
         merge_window=config.merge_window,
         merge_window_mode=config.merge_window_mode,
         ci_conclusion=ci_conclusion,
         is_blocker=args.hotfix,
+        # A required gate nobody dispatched has produced no verdict, so the assessment
+        # must not report "clear to merge": `keel merge` will refuse the record, and
+        # without this the operator is told the run is clean and given no reason why.
+        unrun_blocking_gates=gates.unrun_blocking(outcomes),
         reviewer_override=args.reviewers,
         review_comments=args.review_comments,
         gates=config.gates,
@@ -966,7 +1036,9 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     ledger_record = ledger.build_ship_run_record(
         command=command,
         base_branch=config.base_branch,
-        changed_files=changed,
+        # None-preserving, as into `assess`: the record must not claim an empty diff on
+        # a run that could not read one.
+        changed_files=changed_read,
         declared_files=args.declared_file,
         outcomes=outcomes,
         verdict=verdict,
@@ -1027,14 +1099,22 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         "warnings": run_context_warnings,
     }
     if args.append_ledger and args.live:
-        ledger.append_record(ledger_path, ledger_record)
-        ledger_result["appended"] = True
+        clash = ledger.existing_capture_marker(existing_ledger_records, ledger_record)
+        if clash is None:
+            ledger.append_record(ledger_path, ledger_record)
+            ledger_result["appended"] = True
+        else:
+            # A second marker for this PR would make capture-verify refuse the session
+            # and capture-reconcile refuse to repair it — recoverable only by hand. The
+            # append is the natural retry after a crash mid-s11, so it no-ops instead.
+            ledger_result["skipped"] = "duplicate-capture-marker"
+            ledger_result["existing_run_id"] = clash.get("run_id")
 
     if args.json:
         print(json.dumps({
             "contract": contract,
             "result": contracts.ship_result_as_dict(
-                changed_files=changed,
+                changed_files=changed_read,
                 outcomes=outcomes,
                 verdict=verdict,
                 assessment=a,
@@ -1048,7 +1128,12 @@ def _cmd_ship(args: argparse.Namespace) -> int:
 
     name = config.repo or config.extends
     print(f"keel {command} — {name}  (base {config.base_branch})")
-    print(f"  changed files : {len(changed)}")
+    if changed_unreadable:
+        # Never let this be silent: the tier below was forced, not measured.
+        print("  changed files : UNREADABLE (git diff failed) — "
+              "classified TIER-3 fail-closed")
+    else:
+        print(f"  changed files : {len(changed)}")
     print(f"  profile       : {contract['workflow_profile']['profile']}")
     print(f"  risk tier     : TIER-{a.tier}  → {a.reviewers} reviewer(s)")
     jury_state = a.review_contract["jury"]["mode"]
@@ -1064,7 +1149,14 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     print(f"  run ledger    : {ledger_result['path']}")
     print(f"  run controls  : {run_control_report['status']}")
     if args.append_ledger:
-        print(f"  ledger append : {'yes' if ledger_result['appended'] else 'dry-run/no-live'}")
+        if ledger_result.get("skipped") == "duplicate-capture-marker":
+            print("  ledger append : skipped — PR already has a capture marker "
+                  f"(run {ledger_result['existing_run_id']}); a second one would block "
+                  "capture-verify with no automated repair")
+        else:
+            print(
+                f"  ledger append : {'yes' if ledger_result['appended'] else 'dry-run/no-live'}"
+            )
     for warning in run_context_warnings:
         print(f"  run context   : warning: {warning}")
     if intake_record["questions"]:
@@ -1072,7 +1164,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     if transport.degraded:
         print(f"  github degraded: {', '.join(transport.degraded)}")
     for o in outcomes:
-        print(f"  gate {o.gate:<14} {'ok' if o.ok else 'FAIL'}")
+        print(f"  gate {o.gate:<14} {_gate_status(o)}")
     if evaluation.missing_optional:
         print(f"  degraded opt. : {', '.join(evaluation.missing_optional)}")
     if a.halted:  # pragma: no cover - display only; logic covered in ship.assess tests
@@ -1167,12 +1259,23 @@ def _cmd_capture_verify(args: argparse.Namespace) -> int:
 
     base_ok = report["status"] == "complete"
     reconcile_ok = reconcile_report is None or reconcile_report["ok"]
+    # A failed transport empties the *derived* merged-PR set, so the union degenerates to
+    # exactly the list the agent supplied — and the anti-shrink defence this command
+    # exists to provide silently evaporates, taking any un-captured PR with it. An audit
+    # that could not observe must say "cannot certify", never "clean" (#630).
+    transport_failed = derivation.get("transport_failed") is True
+    status = "transport-unavailable" if transport_failed else report["status"]
+    payload["status"] = status
+    payload["certified"] = base_ok and reconcile_ok and not transport_failed
 
     if args.json:
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
-        print(f"keel capture-verify — {report['status']}  {ledger_path}")
+        print(f"keel capture-verify — {status}  {ledger_path}")
         print(f"  merged-PR source: {derivation['source']} ({len(derived_prs)} PR(s))")
+        if transport_failed:
+            print("  transport     : FAILED — the derived merged-PR set is unobservable, "
+                  "so this audit cannot certify that every merged PR was captured")
         for result in report["results"]:
             state = "ok" if result["ok"] else "FAIL"
             print(
@@ -1185,7 +1288,7 @@ def _cmd_capture_verify(args: argparse.Namespace) -> int:
                       f"{finding['type']}  {finding['reason']}")
             if reconcile_report["ok"]:
                 print("  reconcile: ok")
-    return 0 if base_ok and reconcile_ok else 1
+    return 0 if payload["certified"] else 1
 
 
 def _cmd_consent_verify(args: argparse.Namespace) -> int:
@@ -1461,7 +1564,7 @@ def _dryrun_after_snapshot(
             "after snapshot incomplete: git branch listing failed; cannot certify dry run"
         )
     branches = tuple(
-        line.strip() for line in branches_result.output.splitlines() if line.strip()
+        line.strip() for line in branches_result.stdout.splitlines() if line.strip()
     )
     pattern = dryrunverify.issue_branch_pattern(args.issue)
     pr_numbers = tuple(
@@ -1487,7 +1590,7 @@ def _dryrun_live_prs(root: str) -> list[tuple[int, str]]:
         raise ValueError(
             "after snapshot incomplete: gh PR listing failed; cannot certify dry run"
         )
-    entries = json.loads(result.output or "[]")
+    entries = json.loads(result.stdout or "[]")
     pairs: list[tuple[int, str]] = []
     for entry in entries if isinstance(entries, list) else ():
         if not isinstance(entry, dict):
@@ -1554,7 +1657,7 @@ def _merged_prs_from_transport(args: argparse.Namespace) -> tuple[list[int], boo
     if not result.ok:
         return [], True
     try:
-        items = json.loads(result.output or "[]")
+        items = json.loads(result.stdout or "[]")
     except json.JSONDecodeError:
         return [], True
     if not isinstance(items, list):
@@ -1841,6 +1944,7 @@ def _cmd_review(args: argparse.Namespace) -> int:
             changed_files,
             tier3_globs=config.knobs.tier3_globs,
             docs_globs=config.knobs.docs_gate_paths,
+            allowlist_globs=config.knobs.docs_only_allowlist,
         )
         if changed_files else None
     )
@@ -2124,6 +2228,7 @@ def _post_artifact_comment(
         ["repos", owner_repo, "issues", str(target_number), "comments"], cwd=cwd
     )
     match = _find_comment_match(existing, marker=marker, run_id=run_id)
+    body = _with_run_id_marker(body, run_id)
     payload: dict[str, object] = {
         "schema_version": "keel.post-comment.v1",
         "target": {"kind": target_kind, "number": target_number},
@@ -2151,7 +2256,7 @@ def _post_artifact_comment(
     if not result.ok:
         return payload, result.output.strip() or "gh comment mutation failed"
     try:
-        response = json.loads(result.output or "{}")
+        response = json.loads(result.stdout or "{}")
     except json.JSONDecodeError:
         response = {}
     if isinstance(response, dict):
@@ -2181,6 +2286,7 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
             changed_files,
             tier3_globs=config.knobs.tier3_globs,
             docs_globs=config.knobs.docs_gate_paths,
+            allowlist_globs=config.knobs.docs_only_allowlist,
         )
         if changed_files else None
     )
@@ -2476,7 +2582,7 @@ def _local_worktree_facts(branch: str, *, cwd: str) -> dict[str, object] | None:
     listed = git.worktree_list(cwd=cwd)
     if not listed.ok:
         return None
-    entries = _parse_worktree_porcelain(listed.output)
+    entries = _parse_worktree_porcelain(listed.stdout)
     if not entries:
         return None
     repo_root = entries[0]["path"]
@@ -3072,7 +3178,7 @@ def _merge_snapshot(pr: int, *, cwd: str) -> dict[str, object]:
     if not result.ok:
         raise ValueError(f"unable to read PR merge snapshot: {result.output.strip()}")
     try:
-        payload = json.loads(result.output or "{}")
+        payload = json.loads(result.stdout or "{}")
     except json.JSONDecodeError as exc:
         raise ValueError("PR merge snapshot was not JSON") from exc
     rollup = payload.get("statusCheckRollup")
@@ -3152,7 +3258,12 @@ def _ci_rollup_state(rollup: list[object]) -> dict[str, object]:
             saw_pending = True
     if saw_pending:
         return {"state": "pending", "reason": "check-pending"}
-    return {"state": "pass", "reason": "all-checks-passing" if saw_check else "no-checks"}
+    if saw_check:
+        return {"state": "pass", "reason": "all-checks-passing"}
+    # An empty rollup is not a pass: no check has reported for this head. Kept as its
+    # own state so the merge gate can apply the documented docs-only carve-out instead
+    # of treating "CI has not run" as "CI is green".
+    return {"state": "no-checks", "reason": "no-checks"}
 
 
 def _verify_merge_evidence(
@@ -3179,9 +3290,16 @@ def _verify_merge_evidence(
             changed_files,
             tier3_globs=config.knobs.tier3_globs,
             docs_globs=config.knobs.docs_gate_paths,
+            allowlist_globs=config.knobs.docs_only_allowlist,
         )
         if changed_files else None
     )
+    # Asked directly, not inferred from `tier == 1`: `docs_only_allowlist` can keep a
+    # change at TIER-1 without making it docs-*only*, and a generated site file riding
+    # along with a docs edit is exactly when a workflow should have run. An unreadable
+    # or empty file list is deliberately not docs-only either — this carve-out is the
+    # one place an empty CI check set is tolerated, so it must fail closed.
+    docs_only = classify.is_docs_only(changed_files, config.knobs.docs_gate_paths)
     review_contract = ship.resolve_review_contract(
         tier=tier,
         reviewer_override=args.reviewers,
@@ -3223,6 +3341,7 @@ def _verify_merge_evidence(
         "head_sha": artifacts["head_sha"],
         "head_ref": artifacts.get("head_ref"),
         "changed_files": changed_files,
+        "docs_only": docs_only,
     }
 
 
@@ -3237,7 +3356,7 @@ def _validated_worktree_path(root: str | Path, worktree: str) -> Path:
         raise ValueError(f"unable to list registered worktrees: {listed.output.strip()}")
     registered = {
         Path(line.split(" ", 1)[1]).resolve()
-        for line in listed.output.splitlines()
+        for line in listed.stdout.splitlines()
         if line.startswith("worktree ")
     }
     if candidate not in registered:
@@ -3419,6 +3538,22 @@ def _find_comment_match(
     return matches[-1] if matches else None
 
 
+def _with_run_id_marker(body: str, run_id: str | None) -> str:
+    """Append the ``keel.run-id`` marker so a re-post can find and edit *this* comment.
+
+    Idempotency is matched on marker **and** run-id (:func:`_find_comment_match`), but
+    no ship renderer emitted a run-id in a form :func:`_comment_has_run_id` recognises —
+    the closure comment writes ``- **Run id:** <id>``, and the review/jury verdicts write
+    none at all — so every resume re-posted instead of editing. Stamping it here rather
+    than in the renderers keeps it out of the *content*: closure fidelity compares the
+    posted body against the canonical render, and `evidence` strips this line before
+    comparing, so a body can be both idempotent and verbatim.
+    """
+    if not run_id or _comment_has_run_id(body, run_id):
+        return body
+    return f"{body.rstrip()}\n\n<!-- keel.run-id: {run_id} -->\n"
+
+
 def _comment_has_run_id(body: str, run_id: str) -> bool:
     patterns = (
         rf"^\s*(?:run[-_ ]?id)\s*:\s*{re.escape(run_id)}\s*$",
@@ -3531,12 +3666,29 @@ def _verdict_count_arg(value: str) -> tuple[int, int]:
     return pr, count
 
 
+GATE_RESULTS = ("pass", "fail")
+
+
+def _gate_result_arg(value: str) -> tuple[str, str]:
+    """Parse ``--gate-result ID=pass|fail``."""
+    if "=" not in value:
+        raise argparse.ArgumentTypeError("--gate-result must use ID=pass|fail")
+    gate_id, _, verdict = value.partition("=")
+    gate_id, verdict = gate_id.strip(), verdict.strip().lower()
+    if not gate_id:
+        raise argparse.ArgumentTypeError("--gate-result requires a gate id")
+    if verdict not in GATE_RESULTS:
+        raise argparse.ArgumentTypeError(
+            f"--gate-result verdict must be one of {', '.join(GATE_RESULTS)}")
+    return gate_id, verdict
+
+
 def _gh_json(args: list[str], *, cwd: str) -> dict[str, object]:
     endpoint = "/".join(args)
     result = run_argv(["gh", "api", endpoint], cwd=cwd)
     if not result.ok:
         raise ValueError(f"gh api {endpoint} failed: {result.output.strip()}")
-    value = json.loads(result.output or "{}")
+    value = json.loads(result.stdout or "{}")
     if not isinstance(value, dict):
         raise ValueError(f"gh api {endpoint} did not return a JSON object")
     return value
@@ -3547,7 +3699,7 @@ def _gh_json_list(args: list[str], *, cwd: str) -> list[dict[str, object]]:
     result = run_argv(["gh", "api", "--paginate", "--slurp", endpoint], cwd=cwd)
     if not result.ok:
         raise ValueError(f"gh api {endpoint} failed: {result.output.strip()}")
-    value = json.loads(result.output or "[]")
+    value = json.loads(result.stdout or "[]")
     if value and all(isinstance(item, list) for item in value):
         value = [entry for page in value for entry in page]
     if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
@@ -5249,6 +5401,10 @@ def _add_ship_parser(parser: argparse.ArgumentParser, *, command: str) -> None:
     parser.add_argument("--capture-artifact", default=None,
                         help="durable capture artifact reference (path or content hash) "
                              "proving an applied capture; required for clean reconcile")
+    parser.add_argument("--gate-result", action="append", default=[],
+                        type=_gate_result_arg, metavar="ID=pass|fail",
+                        help="record the verdict of a gate this command cannot execute "
+                             "(an agentic gate, run by the dispatching agent); repeatable")
     parser.add_argument("--implementer", default=None,
                         help="effective implementer codename or vendor/model label")
     parser.add_argument("--reviewer-agent", action="append", default=[],

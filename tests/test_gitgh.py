@@ -4,6 +4,11 @@ import unittest
 
 from keel import git, github
 
+#: Realistic object names — the wrappers validate a parsed SHA's shape, so a
+#: placeholder no longer passes for one.
+SHA_A = "0c4589650d0f129271ca84779442d1046ceb8482"
+SHA_B = "1f2e3d4c5b6a79887766554433221100ffeeddcc"
+
 
 class _Recorder:
     """Captures the argv passed to subprocess and returns a canned proc."""
@@ -62,7 +67,9 @@ class TestGit(unittest.TestCase):
         self.assertEqual(rec.calls[0][-1], "origin/main...HEAD")
 
     def test_changed_files_failsoft(self):
-        self.assertEqual(git.changed_files("a", "b", _run=_Recorder(code=2)), [])
+        # None, not []: "git failed" must stay distinguishable from "no files changed",
+        # or an unreadable diff classifies as an empty one (see #628).
+        self.assertIsNone(git.changed_files("a", "b", _run=_Recorder(code=2)))
 
     def test_diff_returns_patch(self):
         rec = _Recorder(out="@@ -1 +1 @@\n-a\n+b")
@@ -70,11 +77,13 @@ class TestGit(unittest.TestCase):
         self.assertEqual(rec.calls[0], ["git", "diff", "main...HEAD"])
 
     def test_diff_failsoft(self):
-        self.assertEqual(git.diff("a", "b", _run=_Recorder(code=1)), "")
+        # None, not "": an unreadable diff must not read as an empty one, or the
+        # review gate passes on a change nobody reviewed (#628).
+        self.assertIsNone(git.diff("a", "b", _run=_Recorder(code=1)))
 
     def test_rev_parse_resolves_sha(self):
-        rec = _Recorder(out="deadbeef\n")
-        self.assertEqual(git.rev_parse("origin/main", _run=rec), "deadbeef")
+        rec = _Recorder(out=SHA_A + "\n")
+        self.assertEqual(git.rev_parse("origin/main", _run=rec), SHA_A)
         self.assertEqual(rec.calls[0], ["git", "rev-parse", "--verify", "--quiet", "origin/main"])
 
     def test_rev_parse_failsoft_on_error(self):
@@ -84,8 +93,8 @@ class TestGit(unittest.TestCase):
         self.assertIsNone(git.rev_parse("origin/main", _run=_Recorder(out="\n")))
 
     def test_merge_base_argv_and_value(self):
-        rec = _Recorder(out="abc123\n")
-        self.assertEqual(git.merge_base("head", "tip", _run=rec), "abc123")
+        rec = _Recorder(out=SHA_B + "\n")
+        self.assertEqual(git.merge_base("head", "tip", _run=rec), SHA_B)
         self.assertEqual(rec.calls[0], ["git", "merge-base", "head", "tip"])
 
     def test_merge_base_failsoft_on_error(self):
@@ -218,6 +227,46 @@ class TestListBranches(unittest.TestCase):
     def test_list_branches_error_is_visible(self):
         result = git.list_branches(_run=_Recorder(code=1))
         self.assertFalse(result.ok)
+
+
+class TestStderrContamination(unittest.TestCase):
+    """git can warn on stderr while exiting 0; parsers must read stdout alone (#629).
+
+    The trigger is ordinary: a tag and a branch sharing a name makes git print
+    ``warning: refname '<x>' is ambiguous.`` and still succeed.
+    """
+
+    WARN = "warning: refname 'feature' is ambiguous.\n"
+
+    def test_merge_base_ignores_stderr_warning(self):
+        rec = _Recorder(out=SHA_A + "\n", err=self.WARN)
+        self.assertEqual(git.merge_base("feature", "main", _run=rec), SHA_A)
+
+    def test_rev_parse_ignores_stderr_warning(self):
+        rec = _Recorder(out=SHA_A + "\n", err=self.WARN)
+        self.assertEqual(git.rev_parse("feature", _run=rec), SHA_A)
+
+    def test_merge_base_rejects_a_non_sha(self):
+        # Second line of defence: even if stderr ever reached stdout, a warning line
+        # is not a SHA and must not be handed on as one.
+        rec = _Recorder(out="warning: refname is ambiguous.\n")
+        self.assertIsNone(git.merge_base("a", "b", _run=rec))
+
+    def test_changed_files_drops_no_phantom_from_stderr(self):
+        rec = _Recorder(out="src/a.py\n", err=self.WARN)
+        self.assertEqual(git.changed_files("main", "feature", _run=rec), ["src/a.py"])
+
+    def test_diff_carries_no_stderr_noise(self):
+        rec = _Recorder(out="@@ -1 +1 @@\n-a\n+b", err=self.WARN)
+        self.assertEqual(git.diff("main", "HEAD", _run=rec), "@@ -1 +1 @@\n-a\n+b")
+
+    def test_command_result_keeps_streams_separate(self):
+        from keel.runner import run_argv
+        rec = _Recorder(out="payload", err="noise")
+        r = run_argv(["git", "x"], _run=rec)
+        self.assertEqual(r.stdout, "payload")
+        self.assertEqual(r.stderr, "noise")
+        self.assertEqual(r.output, "payloadnoise")  # diagnostics still see both
 
 
 if __name__ == "__main__":

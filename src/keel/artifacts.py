@@ -65,7 +65,7 @@ def render_pr_body(
     *,
     issue_number: int | None = None,
     issue_intake: dict[str, Any] | None = None,
-    changed_files: list[str] | tuple[str, ...] = (),
+    changed_files: list[str] | tuple[str, ...] | None = (),
     testing: list[str] | tuple[str, ...] = (),
     docs_impact: str | None = None,
 ) -> str:
@@ -80,11 +80,15 @@ def render_pr_body(
         "",
         "## Changes Made",
     ]
-    files = [file for file in changed_files if isinstance(file, str)]
-    if files:
-        lines.extend(f"- Updated `{file}`." for file in files)
+    # `None` is "git could not be read", which must not render as "nothing changed".
+    if changed_files is None:
+        lines.append("- The changed-file list could not be read from git.")
     else:
-        lines.append("- No changed files recorded yet.")
+        files = [file for file in changed_files if isinstance(file, str)]
+        if files:
+            lines.extend(f"- Updated `{file}`." for file in files)
+        else:
+            lines.append("- No changed files recorded yet.")
     lines.extend(["", "## Testing"])
     tests = [item for item in testing if isinstance(item, str) and item.strip()]
     lines.extend(f"- {item.strip()}" for item in tests) if tests else lines.append(

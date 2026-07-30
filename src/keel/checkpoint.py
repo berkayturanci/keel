@@ -227,7 +227,30 @@ def resume_plan_as_dict(
     next_step = current_step
     action = record["resume"]["action"]
 
-    if live_pr_state == "merged" or state["merge"] == "merged":
+    # A checkpoint claiming `merge: merged` used to win over *any* live state, so a
+    # checkpoint written optimistically before the merge landed sent every later resume
+    # straight to capture and close — closing the issue and flipping status:done on a PR
+    # that never merged. The post-hoc auditor cannot catch it either: `closeorder`
+    # attests the merge *decision*, not the merge. Live evidence that the PR is not
+    # merged is the stronger signal and makes this ambiguous.
+    claimed_merged = state["merge"] == "merged"
+    contradicted = (
+        claimed_merged
+        and live_pr_state in {"open", "closed", "missing"}
+        and identifiers.get("pull_request")
+    )
+    if contradicted:
+        status = "ambiguous"
+        can_resume = False
+        reason = (
+            "checkpoint records the merge as complete but live state reports the "
+            f"pull request {live_pr_state}"
+        )
+        warnings.append(
+            "confirm whether the merge actually landed before resuming; resuming here "
+            "would close the issue for a merge that may never have happened"
+        )
+    elif live_pr_state == "merged" or claimed_merged:
         if state["capture"] in {"not-started", "failed"}:
             status = "needs-capture"
             next_step = "s11"

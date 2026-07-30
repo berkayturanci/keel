@@ -65,7 +65,7 @@ def ci_conclusion(pr: int | str, *, cwd: str | None = None, _run=None) -> str | 
     )
     if not result.ok:
         return None
-    return result.output.strip() or None
+    return result.stdout.strip() or None
 
 
 def merged_prs(

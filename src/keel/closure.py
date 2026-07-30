@@ -126,6 +126,11 @@ def _pull_request(pull_request: Any) -> str:
 
 def _changed_files(changes: Any) -> list[str]:
     block = changes if isinstance(changes, dict) else {}
+    if block.get("unreadable") is True:
+        # The record says git could not be read. The defensive coercions below would
+        # otherwise absorb the `None`s and post "0" to the PR — an affirmative claim
+        # about a diff nobody saw, in the one artifact a human actually reads.
+        return ["- **Changed files:** unreadable (git diff failed)"]
     files = block.get("files")
     files = list(files) if isinstance(files, list) else []
     count = block.get("file_count")
@@ -139,9 +144,13 @@ def _docs_touched(changes: Any) -> str:
     """Return ``"yes"`` when any changed file is documentation, else ``"no"``.
 
     Derived deterministically and consumer-neutrally from ``changes.files``; the
-    ledger schema is unchanged and no project config is read.
+    ledger schema is unchanged and no project config is read. An unreadable diff
+    answers ``"unknown"`` rather than ``"no"`` — the file list it would be derived
+    from does not exist.
     """
     block = changes if isinstance(changes, dict) else {}
+    if block.get("unreadable") is True:
+        return "unknown"
     files = block.get("files")
     files = files if isinstance(files, list) else []
     return "yes" if any(_is_doc(file) for file in files) else "no"

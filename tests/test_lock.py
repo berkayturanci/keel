@@ -70,24 +70,47 @@ class TestResourceClaims(unittest.TestCase):
             self.assertEqual(released.status, "released")
             self.assertEqual(released.owner, "any-owner")
 
-    def test_release_without_owner_metadata_still_releases(self):
+    def test_release_without_owner_metadata_still_releases_unowned(self):
+        # An `owner=None` release is the deliberate any-owner escape for clearing a
+        # stuck claim, so it works even when nobody's name is recorded.
         with tempfile.TemporaryDirectory() as d:
             path = lk.resource_path(d, "manual")
             path.mkdir()
             released = lk.release_resource(d, "manual")
 
             self.assertEqual(released.status, "released")
-            self.assertIsNone(released.holder)
+            self.assertEqual(released.holder, lk.UNKNOWN_HOLDER)
 
-    def test_malformed_owner_metadata_degrades_to_unknown_holder(self):
+    def test_an_unreadable_owner_refuses_a_named_release(self):
+        # The claim directory exists, so the resource IS held — we just cannot name the
+        # holder. Treating that as "unheld" let a second run release a live merge claim
+        # and take the lock (#631). It must refuse, exactly as a mismatched name does.
         with tempfile.TemporaryDirectory() as d:
             lk.claim_resource(d, "shared", owner="agent-a")
             path = lk.resource_path(d, "shared")
             (path / "owner.json").write_text("{", encoding="utf-8")
             released = lk.release_resource(d, "shared", owner="agent-b")
 
-            self.assertEqual(released.status, "released")
-            self.assertIsNone(released.holder)
+            self.assertEqual(released.status, "not-owner")
+            self.assertEqual(released.holder, lk.UNKNOWN_HOLDER)
+            self.assertTrue(path.exists())          # still held
+            denied = lk.claim_resource(d, "shared", owner="agent-b")
+            self.assertFalse(denied.granted)        # and agent-b cannot take it
+
+    def test_a_missing_owner_file_refuses_a_named_release(self):
+        # The reachable version: `_claim_path` mkdirs before writing owner.json, so a
+        # crash in that window leaves the lock held but ownerless. No disk corruption
+        # required.
+        with tempfile.TemporaryDirectory() as d:
+            lk.claim_resource(d, "shared", owner="agent-a")
+            path = lk.resource_path(d, "shared")
+            (path / "owner.json").unlink()
+            released = lk.release_resource(d, "shared", owner="agent-b")
+
+            self.assertEqual(released.status, "not-owner")
+            self.assertTrue(path.exists())
+            # The any-owner escape still clears it.
+            self.assertEqual(lk.release_resource(d, "shared").status, "released")
 
     def test_release_raises_when_claim_directory_is_not_empty(self):
         with tempfile.TemporaryDirectory() as d:

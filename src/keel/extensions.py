@@ -50,6 +50,9 @@ class Extension:
     source: str
     required_capabilities: tuple[str, ...] = ()
     optional_capabilities: tuple[str, ...] = ()
+    #: Wall-clock seconds for a ``command`` piece that is legitimately slower than the
+    #: rest. ``None`` ⇒ inherit the project's ``knobs.gate_timeout_s``.
+    timeout: int | None = None
 
 
 def split_frontmatter(text: str) -> tuple[dict, str]:
@@ -82,6 +85,7 @@ def parse_extension(text: str, *, source: str, expected_slot: str | None = None)
     prompt = meta.get("prompt")
     required_capabilities = tuple(meta.get("required_capabilities", []))
     optional_capabilities = tuple(meta.get("optional_capabilities", []))
+    timeout = meta.get("timeout")
 
     if not ext_id:
         errors.append("missing 'id'")
@@ -108,6 +112,12 @@ def parse_extension(text: str, *, source: str, expected_slot: str | None = None)
 
     if kind == "command" and not run:
         errors.append("a 'command' extension requires a 'run' value")
+    if timeout is not None:
+        # bool is an int subclass — `timeout: true` is a typo, not a limit.
+        if isinstance(timeout, bool) or not isinstance(timeout, int) or timeout < 1:
+            errors.append(f"invalid timeout {timeout!r}; expected a positive integer (seconds)")
+        if kind != "command":
+            errors.append(f"'timeout' only applies to a 'command' extension (got kind {kind!r})")
     if kind == "agentic" and not (prompt or body.strip()):
         errors.append("an 'agentic' extension requires a 'prompt' value or a body")
     errors.extend(validate_names(required_capabilities, source=f"{source}: required_capabilities"))
@@ -128,6 +138,7 @@ def parse_extension(text: str, *, source: str, expected_slot: str | None = None)
         prompt=prompt,
         required_capabilities=required_capabilities,
         optional_capabilities=optional_capabilities,
+        timeout=timeout,
         body=body,
         source=source,
     )

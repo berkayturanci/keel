@@ -8,14 +8,23 @@ import json
 import os
 import tempfile
 import unittest
-from argparse import Namespace
 from pathlib import Path
 from unittest.mock import patch
 
 from keel import cli, closure, evidence, review, runtime
+from keel.runner import CommandResult
 
 PROJECTS = Path(__file__).resolve().parent.parent / "projects"
 ANDROID = str(PROJECTS / "example-android.yaml")
+
+
+def _proc(output="", *, ok=True):
+    """A fake ``run_argv`` return whose **stdout** carries ``output``.
+
+    Parsers read ``.stdout`` alone, never the concatenated ``.output`` (#629), so a
+    fake that populates only ``output`` would read back as an empty stream.
+    """
+    return CommandResult(ok, 0 if ok else 1, output, stdout=output)
 
 # Module-level scratch directory backing the path-returning ``_write`` helper.
 # Cleaned at process exit so the suite leaves no stray temp files behind.
@@ -468,14 +477,14 @@ class TestReviewCli(unittest.TestCase):
 
         def fake_run(argv, **_kw):
             if "POST" in argv or "PATCH" in argv:
-                return Namespace(ok=True, output=json.dumps({"id": 1}))
+                return _proc(json.dumps({"id": 1}))
             endpoint = argv[-1]
             if "comments" in endpoint:
                 state["comment_fetches"] += 1
                 # First fetch (evidence load) succeeds; the posting fetch is malformed.
                 if state["comment_fetches"] == 1:
-                    return Namespace(ok=True, output="[]")
-                return Namespace(ok=True, output=json.dumps({"not": "a list"}))
+                    return _proc("[]")
+                return _proc(json.dumps({"not": "a list"}))
             return _live_fetch(argv)
 
         with (
@@ -495,7 +504,7 @@ class TestReviewCli(unittest.TestCase):
         reviews = _write(_two_reviews())
 
         def fake_run(argv, **_kw):
-            return Namespace(ok=False, output="boom")
+            return _proc("boom", ok=False)
 
         with (
             patch("keel.cli.runtime.detect", return_value=_capable_report()),
@@ -514,7 +523,7 @@ class TestReviewCli(unittest.TestCase):
 
         def fake_run(argv, **_kw):
             if "POST" in argv:
-                return Namespace(ok=False, output="post failed")
+                return _proc("post failed", ok=False)
             return _live_fetch(argv)
 
         with (
@@ -594,19 +603,19 @@ class TestReviewCli(unittest.TestCase):
 def _live_fetch(argv, **_kw):
     """Offline stand-in for the gh reads/writes the live review path performs."""
     if "POST" in argv or "PATCH" in argv:
-        return Namespace(ok=True, output=json.dumps({"id": 1, "html_url": "u"}))
+        return _proc(json.dumps({"id": 1, "html_url": "u"}))
     endpoint = argv[-1]
     if endpoint.endswith("/pulls/42"):
-        return Namespace(ok=True, output=json.dumps({
+        return _proc(json.dumps({
             "body": "", "head": {"sha": "abc123"}, "labels": [],
         }))
     if endpoint.endswith("/pulls/42/files"):
-        return Namespace(ok=True, output=json.dumps([]))
+        return _proc(json.dumps([]))
     if endpoint.endswith("/pulls/42/reviews"):
-        return Namespace(ok=True, output="[]")
+        return _proc("[]")
     if "comments" in endpoint:
-        return Namespace(ok=True, output="[]")
-    return Namespace(ok=False, output="unexpected endpoint")
+        return _proc("[]")
+    return _proc("unexpected endpoint", ok=False)
 
 
 def _config_without_owner() -> str:

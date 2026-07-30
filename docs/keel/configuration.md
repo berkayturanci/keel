@@ -136,13 +136,15 @@ contracts, but executable project behavior remains in extension files or project
 | `implementer_agents` | map role→agent | | role to local agent mapping |
 | `tier3_globs` | string[] | | high-risk paths that force full scrutiny |
 | `ci_workflows` | map name→glob | | CI workflow display name → gating path glob |
-| `docs_gate_paths` | string[] | | paths that trigger the docs gate |
-| `docs_only_allowlist` | string[] | | paths allowed in a docs-only PR |
+| `docs_gate_paths` | string[] | | the docs surface: paths that trigger the docs gate |
+| `docs_only_allowlist` | string[] | | paths that may ride along in a docs change without forcing code-risk classification |
 | `sot_doc` | string | | source-of-truth doc, e.g. `AGENTS.md` |
 | `required_capabilities` | string[] | | runtime capabilities that must be present before mutating work starts |
 | `optional_capabilities` | string[] | | runtime capabilities that may degrade explicitly when unavailable |
 | `evidence_gate_label` | string | | Legacy PR label that also arms the required pre-merge evidence gate (default `keel:ship`); ship provenance now arms the gate by default |
 | `evidence_require_distinct_vendors` | boolean | | When `true`, `evidence-verify` additionally requires each required review verdict to carry vendor provenance and that no two share a vendor (default `false`) |
+| `gate_timeout_s` | integer ≥ 1 | | wall-clock seconds a command gate may run before it is killed (default `600`) |
+| `jury_timeout_s` | integer ≥ 1 | | wall-clock seconds the `jury` built-in may run before it is killed (default `600`) |
 
 ### `knobs` field details
 
@@ -173,13 +175,25 @@ mapping to decide which CI checks are relevant to a PR's changed files.
 
 #### `docs_gate_paths`
 
-Paths that count as docs-gate surfaces. Ship uses them to classify docs-only changes and
-to decide when an empty CI check set may be acceptable.
+The **docs surface**: paths that *are* documentation. Ship uses them to classify docs-only
+changes, to decide when scope creep is tolerable, and to decide when an empty CI check set
+may be acceptable.
 
 #### `docs_only_allowlist`
 
-Paths that are allowed in a docs-only PR. Use this to include related generated docs
-artifacts, site files, or metadata that should not force code-risk classification.
+Paths permitted to **ride along** in a docs change without forcing code-risk
+classification — generated site output, metadata. They widen the risk-tier judgement only;
+they are deliberately narrower than `docs_gate_paths`:
+
+| | `docs_gate_paths` | `docs_only_allowlist` |
+|---|---|---|
+| keeps a change at TIER-1 | yes | yes |
+| exempt from scope-creep | yes | no |
+| allows an empty CI check set | yes | no |
+
+The last row is the point of the distinction: a generated site file riding along with a
+docs edit is exactly the case where a workflow *should* have run, so the allowlist must not
+buy the empty-check-set carve-out. Leave it empty unless you have such riders.
 
 #### `sot_doc`
 
@@ -225,6 +239,68 @@ jury — satisfies it simply by carrying distinct vendor provenance; keel takes 
 on any review vendor. A missing `vendor:` on a required verdict, or two verdicts sharing a
 vendor, fails verification with a blocking `review-vendor-distinctness` finding. Override
 per run with `keel evidence-verify --require-distinct-vendors`.
+
+#### `gate_timeout_s`
+
+Wall-clock seconds a **command gate** may run before keel kills it. Defaults to `600`
+(ten minutes), which is what keel used unconditionally before this knob existed. Raise it
+on a slow host where a legitimate build or test suite needs longer:
+
+```yaml
+knobs:
+  build_gate_cmd: "make test"
+  gate_timeout_s: 3600     # this project's suite needs far more than ten minutes here
+```
+
+When only **one** gate is the slow one, leave the project knob alone and give that gate its
+own limit with `timeout:` frontmatter (see [extensions](extensions.md)). Resolution is
+most-specific-first, per gate: the extension's `timeout:` → `knobs.gate_timeout_s` → `600`.
+
+A gate killed by this limit is reported as a **timeout**, not as a failing test:
+
+```
+  TIMEOUT  build
+    [major] build: build timed out after 600s (exit 124); the command produced no pass/fail result. Raise the limit via knobs.gate_timeout_s (or this gate's timeout:) if it legitimately needs longer — a genuinely hanging command is still a defect.
+BLOCKED — merge is gated by the findings above
+```
+
+**A timeout still blocks the merge, exactly as a failure does.** Only the label and the
+operator-facing explanation change. This is deliberate: a genuinely *hanging* command
+(deadlock, infinite loop) is a real defect that also presents as a timeout, so making
+timeouts advisory would punch a hole in the very thing the gate protects. The goal is that
+an operator can tell *why* the gate is red — a slow host or a broken test — never that it
+stops being red.
+
+> **Not the same as the run-control layer.** `runcontrols.contract_as_dict()` advertises
+> `"wall_clock_timeouts": False`. That refers to run budgets, step caps, and oscillation
+> halts — keel imposes no wall-clock limit on a *run*. `gate_timeout_s` and `jury_timeout_s` are
+> subprocess limits on a single gate. The two are independent and do not contradict each other.
+
+#### `jury_timeout_s`
+
+Wall-clock seconds the **`jury` built-in** may run. Defaults to `600`, which is what keel
+used unconditionally before this knob existed. It is deliberately **separate** from
+`gate_timeout_s`: the jury is a cross-vendor agent CLI, not a project test command, so a
+panel that legitimately needs an hour should not force every test gate to wait an hour too.
+
+```yaml
+knobs:
+  gate_timeout_s: 1800    # this project's test suite is slow
+  jury_timeout_s: 3600    # ...and a full cross-vendor panel is slower still
+```
+
+A jury run killed by this limit — or one whose output carries no parseable verdict at all,
+whatever its exit code — **produced no review**. In `gating` mode that fails closed with a
+blocking `major`; in `advisory` mode it surfaces a non-blocking `minor`. That is the point
+of the knob: a panel that never reached a conclusion must not be reported as a clean pass.
+
+(`minor` rather than the oversize branch's `nit`: an oversize diff is a deterministic skip
+the operator can see from the diff itself, while an incomplete run is an invisible
+operational failure that will otherwise recur silently on every run.)
+
+A nonzero exit that *does* carry a parseable report is a completed review — ai-jury signals
+"request changes" that way — so its findings are used as-is. The test is deliberately
+"did we parse a verdict", not "was the exit code zero".
 
 ## `policy_pack`
 
@@ -444,8 +520,13 @@ Project-owned scan scope for `regression` and `review-all-day`.
 | `active_branch_patterns` | string[] | branch globs considered active work during time-window scans |
 | `issue_labels` | map command→string[] | labels for issues opened by scan commands |
 | `near_text_similarity` | number 0..1 | deterministic duplicate-finding threshold |
-| `batch_threshold` | integer | commit count threshold before batch/fan-out behavior |
-| `large_diff_max_bytes` | integer | max diff bytes before file-boundary truncation |
+| `batch_threshold` | integer ≥ 1 | commit count threshold before batch/fan-out behavior |
+| `large_diff_max_bytes` | integer ≥ 1 | max diff bytes before file-boundary truncation |
+
+These three bounds were declared in the schema from the start but only became *enforced*
+when `jsonschema_min` gained `minimum` / `maximum` support. A config carrying a
+meaningless value (`batch_threshold: 0`, `near_text_similarity: 42`) loaded silently
+before and now fails `keel validate`.
 
 ### `policy_pack.command_routing`
 

@@ -501,14 +501,31 @@ def _has_closure_marker(body: str) -> bool:
     return closure.COMMENT_MARKER in body
 
 
+#: The idempotency marker ``keel post-comment`` appends to a posted body so a re-post
+#: can find and edit its own comment. It is transport bookkeeping, not content, so it is
+#: stripped before a closure body is compared to its canonical render.
+#:
+#: Matched in the *exact* form the transport emits — a run id, then the close, then end
+#: of line. A permissive ``.*?`` would let a trusted author smuggle arbitrary text past
+#: the verbatim comparison: an HTML comment ends at its first ``-->``, so anything after
+#: that renders visibly on the page while the whole line still normalizes away.
+RUN_ID_MARKER_RE = re.compile(r"^\s*<!--\s*keel\.run-id:\s*[\w.:@/+-]+\s*-->\s*$")
+
+
 def _normalize_closure_body(body: str) -> str:
     """Normalize a closure body for content comparison.
 
     Robust to harmless formatting drift but sensitive to real content changes:
     trailing whitespace is stripped per line, runs of blank lines collapse to a
     single blank line, and leading/trailing blank lines are dropped.
+
+    The transport's ``keel.run-id`` marker line is dropped too. Without that, closure
+    fidelity and post-comment idempotency were mutually exclusive: the marker is what
+    lets a re-post edit its own comment instead of duplicating, and its presence made
+    the body differ from the canonical render.
     """
-    lines = [line.rstrip() for line in body.splitlines()]
+    lines = [line.rstrip() for line in body.splitlines()
+             if not RUN_ID_MARKER_RE.match(line)]
     normalized: list[str] = []
     for line in lines:
         if not line and (not normalized or not normalized[-1]):

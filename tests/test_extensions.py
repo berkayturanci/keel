@@ -189,14 +189,62 @@ run: ./tools/guard
         self.assertIn("missing frontmatter", str(c.exception))
 
 
-def _config_with(tester=(), pre_merge=()):
+class TestTimeoutFrontmatter(unittest.TestCase):
+    """A single gate that is legitimately slower than the rest (#622)."""
+
+    def test_absent_timeout_defaults_to_none(self):
+        # None ⇒ inherit knobs.gate_timeout_s at plan time.
+        self.assertIsNone(ext.parse_extension(COMMAND, source="golden.md").timeout)
+
+    def test_timeout_is_parsed(self):
+        text = "---\nid: x\nslot: tester\nkind: command\nrun: y\ntimeout: 3600\n---\n"
+        self.assertEqual(ext.parse_extension(text, source="x.md").timeout, 3600)
+
+    def test_rejects_zero_and_negative(self):
+        for value in (0, -30):
+            text = f"---\nid: x\nslot: tester\nkind: command\nrun: y\ntimeout: {value}\n---\n"
+            with self.assertRaises(ext.ExtensionError) as c:
+                ext.parse_extension(text, source="x.md")
+            self.assertIn("invalid timeout", str(c.exception))
+
+    def test_rejects_non_integer(self):
+        for value in ("soon", "60.5"):
+            text = f"---\nid: x\nslot: tester\nkind: command\nrun: y\ntimeout: {value}\n---\n"
+            with self.assertRaises(ext.ExtensionError) as c:
+                ext.parse_extension(text, source="x.md")
+            self.assertIn("invalid timeout", str(c.exception))
+
+    def test_rejects_boolean(self):
+        # bool is an int subclass — `timeout: true` is a typo, not a limit.
+        text = "---\nid: x\nslot: tester\nkind: command\nrun: y\ntimeout: true\n---\n"
+        with self.assertRaises(ext.ExtensionError) as c:
+            ext.parse_extension(text, source="x.md")
+        self.assertIn("invalid timeout", str(c.exception))
+
+    def test_rejects_timeout_on_an_agentic_piece(self):
+        text = "---\nid: x\nslot: tester\nkind: agentic\nprompt: p\ntimeout: 60\n---\n"
+        with self.assertRaises(ext.ExtensionError) as c:
+            ext.parse_extension(text, source="x.md")
+        self.assertIn("only applies to a 'command' extension", str(c.exception))
+
+    def test_both_timeout_problems_reported_together(self):
+        # Every validator in parse_extension accumulates, so the author sees the value
+        # problem and the kind problem in one pass rather than one per fix.
+        text = "---\nid: x\nslot: tester\nkind: agentic\nprompt: p\ntimeout: 0\n---\n"
+        with self.assertRaises(ext.ExtensionError) as c:
+            ext.parse_extension(text, source="x.md")
+        self.assertIn("invalid timeout", str(c.exception))
+        self.assertIn("only applies to a 'command' extension", str(c.exception))
+
+
+def _config_with(tester=(), pre_merge=(), extensions_dir=".keel/extensions"):
     data = {
         "extends": "keel",
         "core_version": "^0.1",
         "base_branch": "main",
         "knobs": {"build_gate_cmd": "make test"},
         "extensions": {"tester": list(tester), "pre-merge": list(pre_merge)},
-        "extensions_dir": ".keel/extensions",
+        "extensions_dir": extensions_dir,
     }
     return cfg.parse_config(data)
 
@@ -213,6 +261,34 @@ class TestLoad(unittest.TestCase):
             self.assertEqual(problems, [])
             self.assertEqual(loaded["tester"][0].id, "design-parity")
             self.assertEqual(loaded["pre-merge"][0].on_fail, "block")
+
+    def test_a_custom_extensions_dir_is_honoured(self):
+        # Every fixture in the suite used the literal default, so all three layers of
+        # this knob — parse, use, echo — were unbroken by mutation (#633). `load_extensions`
+        # is fail-soft, so a directory that stopped being honoured would yield zero
+        # extensions and a *green* run: a silently gate-less pipeline.
+        with tempfile.TemporaryDirectory() as d:
+            ed = Path(d) / "tools" / "keel-ext"
+            ed.mkdir(parents=True)
+            (ed / "gate.md").write_text(HARD_GATE, encoding="utf-8")
+            config = _config_with(pre_merge=["gate.md"], extensions_dir="tools/keel-ext")
+            loaded, problems = ext.load_extensions(config, d)
+
+            self.assertEqual(problems, [])
+            self.assertEqual(loaded["pre-merge"][0].on_fail, "block")
+
+        # …and the default is not silently searched as a fallback: a file sitting in
+        # `.keel/extensions` must NOT satisfy a config pointing elsewhere.
+        with tempfile.TemporaryDirectory() as d:
+            default_dir = Path(d) / ".keel" / "extensions"
+            default_dir.mkdir(parents=True)
+            (default_dir / "gate.md").write_text(HARD_GATE, encoding="utf-8")
+            config = _config_with(pre_merge=["gate.md"], extensions_dir="tools/keel-ext")
+            loaded, problems = ext.load_extensions(config, d, strict=False)
+
+            self.assertEqual(loaded["pre-merge"], [])
+            self.assertEqual(len(problems), 1)
+            self.assertIn("cannot read gate.md", problems[0])
 
     def test_strict_raises_on_missing_file(self):
         with tempfile.TemporaryDirectory() as d:

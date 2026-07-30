@@ -79,41 +79,113 @@ class TestCommandGateRunner(unittest.TestCase):
 
     def test_pass(self):
         run = runner.command_gate_runner(_run=_ok)
-        ok, findings = run(self._spec())
+        ok, findings, timed_out, _nr = run(self._spec())
         self.assertTrue(ok)
         self.assertEqual(findings, [])
+        self.assertFalse(timed_out)
 
     def test_fail_produces_finding_with_tail(self):
         run = runner.command_gate_runner(_run=_fail)
-        ok, findings = run(self._spec(on_fail="block"))
+        ok, findings, timed_out, _nr = run(self._spec(on_fail="block"))
         self.assertFalse(ok)
+        self.assertFalse(timed_out)  # a plain failure is not a timeout
         self.assertEqual(findings[0].severity, "major")  # block -> major
         self.assertIn("second line", findings[0].message)
 
     def test_soft_fail_severity(self):
         run = runner.command_gate_runner(_run=_fail)
-        _, findings = run(self._spec(on_fail="warn"))
+        _, findings, _, _nr = run(self._spec(on_fail="warn"))
         self.assertEqual(findings[0].severity, "nit")
 
     def test_non_command_gate_is_noop(self):
         run = runner.command_gate_runner(_run=_fail)
-        ok, findings = run(GateSpec("jury", "builtin", "test", "block"))
+        ok, findings, timed_out, _nr = run(GateSpec("jury", "builtin", "test", "block"))
         self.assertTrue(ok)
         self.assertEqual(findings, [])
+        self.assertFalse(timed_out)
 
     def test_fail_without_location_has_no_path(self):
         run = runner.command_gate_runner(_run=_fail)
-        _, findings = run(self._spec())
+        _, findings, _, _nr = run(self._spec())
         self.assertIsNone(findings[0].path)
         self.assertFalse(findings[0].anchorable)
 
     def test_fail_with_location_is_anchorable(self):
         def _located(*a, **k):
             return _Proc(1, "src/app.py:42:5: undefined name 'x'", "")
-        _, findings = runner.command_gate_runner(_run=_located)(self._spec())
+        _, findings, _, _nr = runner.command_gate_runner(_run=_located)(self._spec())
         self.assertEqual(findings[0].path, "src/app.py")
         self.assertEqual(findings[0].line, 42)
         self.assertTrue(findings[0].anchorable)
+
+
+class TestGateTimeout(unittest.TestCase):
+    """A timeout is reported apart from a failure — but still blocks (#622)."""
+
+    def _spec(self, on_fail="block", timeout=None):
+        return GateSpec("build", "command", "test", on_fail, run="make test", timeout=timeout)
+
+    def test_run_command_marks_timeout(self):
+        r = runner.run_command("make test", _run=_timeout)
+        self.assertTrue(r.timed_out)
+        self.assertEqual(r.code, 124)
+
+    def test_run_command_failure_is_not_a_timeout(self):
+        self.assertFalse(runner.run_command("make test", _run=_fail).timed_out)
+
+    def test_run_argv_marks_timeout(self):
+        self.assertTrue(runner.run_argv(["git", "status"], _run=_timeout).timed_out)
+
+    def test_oserror_is_not_a_timeout(self):
+        self.assertFalse(runner.run_command("nope", _run=_oserror).timed_out)
+
+    def test_timeout_still_blocks_with_unchanged_severity(self):
+        # The merge-gate invariant: a timed-out gate is as red as a failing one.
+        ok, findings, timed_out, _nr = runner.command_gate_runner(_run=_timeout)(self._spec())
+        self.assertFalse(ok)
+        self.assertTrue(timed_out)
+        self.assertEqual(findings[0].severity, "major")  # block -> major, same as a failure
+
+    def test_soft_timeout_keeps_soft_severity(self):
+        _, findings, _, _nr = runner.command_gate_runner(_run=_timeout)(self._spec(on_fail="warn"))
+        self.assertEqual(findings[0].severity, "nit")
+
+    def test_timeout_message_is_distinct_from_failure(self):
+        _, findings, _, _nr = runner.command_gate_runner(_run=_timeout)(self._spec())
+        message = findings[0].message
+        self.assertIn("timed out after", message)
+        self.assertIn("no pass/fail result", message)
+        self.assertIn("gate_timeout_s", message)  # tells the operator how to fix it
+        self.assertNotIn("build failed", message)
+
+    def test_timeout_finding_is_not_anchored(self):
+        _, findings, _, _nr = runner.command_gate_runner(_run=_timeout)(self._spec())
+        self.assertIsNone(findings[0].path)
+        self.assertFalse(findings[0].anchorable)
+
+    def test_spec_timeout_overrides_the_runner_default(self):
+        seen = {}
+
+        def _capture(*a, **k):
+            seen["timeout"] = k["timeout"]
+            return _Proc(0)
+
+        runner.command_gate_runner(timeout=600, _run=_capture)(self._spec(timeout=3600))
+        self.assertEqual(seen["timeout"], 3600)
+
+    def test_runner_default_applies_without_a_spec_timeout(self):
+        seen = {}
+
+        def _capture(*a, **k):
+            seen["timeout"] = k["timeout"]
+            return _Proc(0)
+
+        runner.command_gate_runner(timeout=900, _run=_capture)(self._spec())
+        self.assertEqual(seen["timeout"], 900)
+
+    def test_message_quotes_the_effective_limit(self):
+        _, findings, _, _nr = runner.command_gate_runner(_run=_timeout)(self._spec(timeout=1800))
+        self.assertIn("timed out after 1800s", findings[0].message)
 
 
 class TestFirstLocation(unittest.TestCase):

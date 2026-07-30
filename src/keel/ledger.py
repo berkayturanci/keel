@@ -84,7 +84,7 @@ def build_ship_run_record(
     *,
     command: str,
     base_branch: str,
-    changed_files: list[str],
+    changed_files: list[str] | None,
     declared_files: list[str] | None = None,
     outcomes: list[Any],
     verdict: Any,
@@ -128,9 +128,15 @@ def build_ship_run_record(
             "branch": branch,
             "head_sha": head_sha,
         },
+        # `None` means git could not be read, and stays distinct from `[]` all the way
+        # into the record: a consumer of the ledger (or of the closure comment rendered
+        # from it) must not read "we could not see the diff" as "the diff was empty" —
+        # that is the conflation this whole family of fixes exists to remove, and a
+        # record claiming TIER-3 with zero files is self-contradictory besides.
         "changes": {
-            "file_count": len(changed_files),
-            "files": list(changed_files),
+            "file_count": None if changed_files is None else len(changed_files),
+            "files": None if changed_files is None else list(changed_files),
+            "unreadable": changed_files is None,
         },
         "declared": _declared_block(declared_files),
         "gates": [
@@ -138,6 +144,13 @@ def build_ship_run_record(
                 "gate": outcome.gate,
                 "ok": outcome.ok,
                 "skipped": outcome.skipped,
+                "timed_out": outcome.timed_out,
+                # getattr: outcomes reach here from adapters and fixtures that predate
+                # these fields. Defaulting not_run to False keeps an older producer's
+                # record readable; on_fail defaults to the strict value so a record
+                # that *does* carry not_run without a severity fails closed.
+                "not_run": getattr(outcome, "not_run", False),
+                "on_fail": getattr(outcome, "on_fail", "block"),
                 "error": outcome.error,
                 "finding_count": len(outcome.findings),
             }
@@ -306,6 +319,14 @@ def record_gates_passed(record: dict[str, Any]) -> bool:
     recorded gate either ran clean (``ok``) or was deliberately skipped, with no
     gate reporting an error. A missing or malformed ``gates``/``verdict`` block
     degrades to "not a pass" so a corrupt record can never authorize a merge.
+
+    A gate marked ``not_run`` was never executed by the runner that wrote the
+    record — an ``agentic`` gate reaching the command-only runner. For a
+    ``block``-severity gate that is **not** a pass: certifying "gates passed" for a
+    blocking review nobody ran is exactly the fail-open this check exists to stop.
+    Soft (``warn``/``suggest``) not-run gates are tolerated, matching ``skipped``.
+    Records written before this field existed have no ``not_run`` key and are
+    unaffected.
     """
     verdict = record.get("verdict")
     if not isinstance(verdict, dict) or verdict.get("blocked") is not False:
@@ -320,6 +341,15 @@ def record_gates_passed(record: dict[str, Any]) -> bool:
             return False
         if not (gate.get("ok") is True or gate.get("skipped") is True):
             return False
+        # Missing `on_fail` defaults to the strict value *here*, at read time. Defaulting
+        # only at write time protects records keel wrote and no others: any producer that
+        # learns `not_run` without its sibling key would otherwise fail open in exactly
+        # the certification path this check exists to close.
+        # Fail closed on anything not explicitly soft: a missing key, a JSON-round-tripped
+        # `None`, or a severity name keel does not know all mean "we cannot tell this was
+        # optional", and this is the certification path.
+        if gate.get("not_run") is True and gate.get("on_fail") not in ("warn", "suggest"):
+            return False
     return True
 
 
@@ -330,16 +360,23 @@ def gates_pass_for_head(
 ) -> tuple[bool, dict[str, Any] | None]:
     """Find a passing gates run recorded against ``head_sha`` for ``pr_number``.
 
-    Returns ``(matched, record)``. ``matched`` is ``True`` only when some
-    ship_run record for the PR carries the exact current ``head_sha`` *and* its
-    gates passed (see :func:`record_gates_passed`). The most recent matching
-    record is returned. A blank ``head_sha`` never matches — an unknown head
-    must not be authorized by a stale green run. This is a pure function: it
-    reads only its arguments and performs no I/O.
+    Returns ``(matched, record)``. ``matched`` is ``True`` only when the **latest**
+    ship_run record for the PR carrying the exact current ``head_sha`` passed its
+    gates (see :func:`record_gates_passed`); the record is returned on a match and
+    ``None`` otherwise. A blank ``head_sha`` never matches — an unknown head must
+    not be authorized by a stale green run. This is a pure function: it reads only
+    its arguments and performs no I/O.
+
+    Latest-wins, not any-pass. Re-gating the same head is ordinary — a flaky suite
+    settles, a fix-loop re-runs, a dependency lands — so the same ``head_sha`` can
+    carry a green record followed by a red one. Scanning for *any* green would let
+    the superseded pass authorize the merge and the later red never be consulted:
+    a fail-open in exactly the gate that exists to hold the merge closed. Only the
+    most recent verdict for the head counts.
     """
     if not isinstance(head_sha, str) or not head_sha.strip():
         return False, None
-    match: dict[str, Any] | None = None
+    latest: dict[str, Any] | None = None
     for record in records:
         if record.get("record_type") != RECORD_TYPE_SHIP_RUN:
             continue
@@ -351,9 +388,10 @@ def gates_pass_for_head(
         record_sha = git.get("head_sha") if isinstance(git, dict) else None
         if record_sha != head_sha:
             continue
-        if record_gates_passed(record):
-            match = record
-    return (match is not None), match
+        latest = record
+    if latest is None or not record_gates_passed(latest):
+        return False, None
+    return True, latest
 
 
 def capture_health_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
@@ -408,6 +446,45 @@ def capture_health_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
             "ledger, GitHub, or capture destinations.",
         },
     }
+
+
+def _capture_marker(record: dict[str, Any]) -> str | None:
+    capture = record.get("capture")
+    marker = capture.get("marker") if isinstance(capture, dict) else None
+    return marker if isinstance(marker, str) and marker.strip() else None
+
+
+def existing_capture_marker(
+    records: list[dict[str, Any]], record: dict[str, Any]
+) -> dict[str, Any] | None:
+    """The already-recorded capture marker ``record`` would duplicate, if any.
+
+    Exactly one capture marker per merged PR is an invariant that was only ever
+    *detected*, never prevented: :func:`keel.capture.verify_session` refuses the whole
+    session on a second one ("multiple capture markers found for merged PR"),
+    ``capture-reconcile`` returns ``blocked`` with no actions to offer, and nothing in
+    this module can remove a line — so the only exit is editing the ledger by hand.
+
+    Re-running the same append is the most natural thing to do after a crash mid-s11,
+    which made the obvious recovery the very action that bricks the run. Checking here
+    costs one pass over records the caller already holds. Returns the conflicting
+    record so the caller can name it; ``None`` when the append is new.
+    """
+    if _capture_marker(record) is None:
+        return None
+    pull_request = record.get("pull_request")
+    pr = pull_request.get("number") if isinstance(pull_request, dict) else None
+    if not isinstance(pr, int):
+        return None
+    for existing in records:
+        if existing.get("record_type") != RECORD_TYPE_SHIP_RUN:
+            continue
+        other = existing.get("pull_request")
+        if (other.get("number") if isinstance(other, dict) else None) != pr:
+            continue
+        if _capture_marker(existing) is not None:
+            return existing
+    return None
 
 
 def append_record(path: str | Path, record: dict[str, Any]) -> None:

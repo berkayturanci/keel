@@ -6,6 +6,251 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.11.0] — 2026-07-28
+
+Most of what follows is one defect in different clothes: **a value meaning "we could not
+observe this" was spelled the same as the value meaning "we observed nothing wrong."** Every
+instance failed in the safe-looking direction, which is why the suite stayed green over all
+of them — and why several were found only by mutating the code and watching nothing die.
+
+### Added
+- **`knobs.docs_only_allowlist` now does something** (#632): it was declared in the schema,
+  parsed into `Knobs`, folded into `config_hash` and echoed into the adapter contract —
+  and read by nothing. An operator who set it got silence. It now widens the *risk-tier*
+  judgement: listed paths may ride along in a docs change without forcing code-risk
+  classification. Deliberately narrower than `docs_gate_paths` — an allowlisted path is
+  **not** scope-creep-exempt and does **not** buy the empty-CI-check carve-out, because a
+  generated site file riding along with a docs edit is exactly when a workflow should have
+  run. `classify.tier_for_files` takes `allowlist_globs`; the carve-out asks the new
+  `classify.is_docs_only` directly instead of inferring it from `tier == 1`.
+  `docs/keel/configuration.md` now states the difference as a table.
+
+- **`knobs.jury_timeout_s`** (integer ≥ 1, default `600`) sets the jury built-in's
+  wall-clock budget, previously hardcoded and unreachable from config — #622's
+  `gate_timeout_s` covers command gates and never applied to it. Kept separate on purpose:
+  the jury is a cross-vendor agent CLI, not a project test command, so a panel that needs
+  an hour should not force every test gate to wait an hour too. `plan_gates` now resolves
+  it onto the jury `GateSpec`, so every gate that shells out has its budget decided in one
+  place and visible in the plan contract.
+
+- **`keel ship --gate-result <id>=pass|fail`** records the verdict of a gate keel cannot
+  execute — an `agentic` gate, dispatched by the agent rather than by the command-only
+  runner. Repeatable. This is the channel the `not_run` refusal below needs: without it a
+  blocking agentic gate is `NOT-RUN` forever, `record_gates_passed` never certifies the
+  run, and `keel merge` refuses every head — a permanent merge block rather than a gate.
+  Found by review of this changeset, against a project config the schema and
+  `docs/keel/extensions.md` both permit.
+
+### Fixed
+- **The release bump now covers every site surface, and cannot step over a stale one.**
+  Two separate gaps, with one symptom. `website/docs.html`, `coverage.html` and
+  `content.js` were **never registered with the tooling at all** — the runbook named them as
+  a manual step instead, and the manual step was missed, leaving them at `v1.6.5` for four
+  releases and then `v1.8.2` for three more. `website/index.html` *was* registered, but by
+  searching for the version currently in `pyproject.toml`; had it ever drifted it would have
+  matched neither the old nor the new string and been skipped forever, so the one file that
+  was wired up was wired up fragilely. All four are now matched by *shape*, which registers
+  the three missing ones and makes the literal-match fragility moot in the same stroke.
+  `tests/test_release_docs.py` derives its list from the script's own table and fails if any
+  surface falls behind; `docs/keel/release.md` drops the manual step and documents the repair
+  path (`make release-bump VERSION=<current>`).
+
+- **Re-running the ledger append no longer bricks the session** (found in review): the
+  append was unconditional, so the natural retry after a crash mid-s11 wrote a *second*
+  capture marker for the PR. "Exactly one marker per merged PR" was enforced nowhere at
+  write time and only detected afterwards — `capture-verify` then refuses the whole
+  session and `capture-reconcile` returns `blocked` with no actions, leaving hand-editing
+  `run-ledger.jsonl` as the only exit. `keel ship --append-ledger` now checks the records
+  it already holds (`ledger.existing_capture_marker`) and no-ops with a message naming the
+  run that owns the existing marker.
+
+- **Ship artifact comments are actually idempotent now** (found in review): `post-comment`
+  matches an existing comment on marker **and** run-id, but no ship renderer emitted a
+  run-id in a form the matcher recognised — the closure comment writes
+  `- **Run id:** <id>`, the review and jury verdicts write none — so every resume posted a
+  duplicate rather than editing. For the closure comment it was worse than an oversight: it
+  was impossible, because `evidence-verify` compares the posted body against the canonical
+  render, so adding the marker to the body would have failed closure fidelity. The marker
+  is now stamped by the transport (`_with_run_id_marker`) and stripped by
+  `evidence._normalize_closure_body` before comparison, so a body can be both idempotent
+  and verbatim.
+
+- **A checkpoint claiming `merged` no longer overrides live evidence to the contrary**
+  (found in review): `resume_plan_as_dict` checked `state.merge == "merged"` before any
+  ambiguity branch, so a checkpoint written optimistically *before* the merge landed sent
+  every later resume straight to capture and close — closing the issue and flipping the
+  status label for a merge that never happened. `closeorder` cannot catch it either; it
+  attests the merge *decision*, not the merge. A `merged` checkpoint contradicted by a live
+  PR state of `open`/`closed`/`missing` is now `ambiguous`. `unknown` (the default when the
+  adapter volunteers nothing) is absence of evidence and leaves the jump intact.
+
+- **`--gate-result` cannot override a gate keel executed** (found in re-review): the flag
+  applied a recorded verdict to *any* outcome, so a gate keel ran and observed failing
+  could be flipped to certifying — the same fail-open this series exists to close,
+  arriving from the other direction. Reproduced with a `warn`-severity command gate whose
+  `run:` genuinely fails: `record_gates_passed` went False → **True** under
+  `--gate-result <id>=pass`, and that predicate is what authorizes `keel merge`. A recorded
+  result now applies only to a `not_run` outcome, and naming an executed gate is refused
+  loudly rather than silently discarded.
+
+- **The closure comment tells the truth about an unreadable diff** (found in re-review):
+  `render_closure_comment`'s defensive coercions absorbed the new `None`s, so the artifact
+  actually posted to the PR still said `Changed files: 0` and `Docs touched: no` — an
+  affirmative claim about a diff nobody could read, in the one place a human looks. It now
+  renders `unreadable (git diff failed)` and `unknown`.
+
+- **The assessment no longer says "clear to merge" about a run it cannot certify**
+  (found in review): a `NOT-RUN` blocking gate made `record_gates_passed` refuse the
+  record, but `ship.assess` did not know about it — so `keel ship` printed
+  `decision: MERGE — clear to merge` immediately below `gate <id> NOT-RUN`, and
+  `keel merge` then refused with nothing the operator could connect it to. `decide_merge`
+  now takes the unrun blocking gates and blocks, naming them and the flag that satisfies
+  them.
+
+- **An unreadable diff is unreadable in the machine-readable surfaces too** (found in
+  review): the fail-closed classification reached the console line and the tier, but
+  `keel ship --json`, the ledger record, and the closure comment rendered from it all
+  still said "0 changed files" — so a downstream consumer could not tell "we could not
+  read the diff" from "the diff was empty", and the record claimed TIER-3 with zero files.
+  The counts are now `null` with an explicit `unreadable` flag, and the rendered PR body
+  says the list could not be read.
+
+- **The closure-fidelity strip cannot launder content** (found in review): the run-id
+  marker was stripped with a permissive `.*?`, and an HTML comment ends at its first
+  `-->` — so a trusted author could append
+  `<!-- keel.run-id: r1 --> **NOT ACTUALLY MERGED** -->`, have the whole line normalize
+  away, and still render contradicting text on the page. The pattern now matches only the
+  exact form the transport emits.
+
+- **`record_gates_passed` fails closed on any `on_fail` it does not recognise** (found in
+  review): a gate carrying `not_run: true` with no `on_fail` key certified as passed,
+  because the strict default was applied only where keel *wrote* the record. A missing key,
+  a JSON-round-tripped `None`, and an unknown severity name all mean "we cannot tell this
+  was optional", and this is the certification path — only an explicit `warn`/`suggest`
+  now clears it.
+
+- **`capture-verify` refuses to certify when its transport failed** (#630): the command
+  computed `transport_failed`, recorded it in the payload, and ignored it. A `gh` hiccup
+  empties the *derived* merged-PR set, so the union degenerates to exactly the list the
+  agent supplied and the anti-shrink defence the command exists to provide silently
+  evaporates — reported as `complete`, exit 0, with an un-captured PR simply absent from the
+  accounting. It is now a distinct `transport-unavailable` status with `certified: false`
+  and a non-zero exit: an audit that could not observe must say so.
+
+- **An unreadable lock owner no longer disables the ownership guard** (#631):
+  `lock._holder` returned `None` for "nobody holds this", "`owner.json` is corrupt",
+  "`owner.json` is missing" and "the read failed" alike, and the guard was written so a
+  `None` holder made the check *vanish* rather than fail closed — letting a second run
+  release a live merge claim and take the lock. Since every caller reaches `_holder` only
+  with the claim directory present, there is no "unheld" answer to give: an unreadable owner
+  is now `UNKNOWN_HOLDER` and refuses a named release, while `owner=None` stays the
+  deliberate any-owner escape for clearing a stuck claim. The window needs no disk
+  corruption — `_claim_path` creates the directory before it writes the owner file, so any
+  crash in between leaves the lock held but ownerless.
+
+- **`git` warnings on stderr no longer corrupt every parsed value** (#629): `run_argv`
+  returned only `stdout + stderr` concatenated, and every `git` wrapper parsed *that*. git
+  routinely warns while exiting 0 — an ambiguous refname (a tag and a branch sharing a
+  name) prints `warning: refname '<x>' is ambiguous.` and still succeeds — so
+  `rev_parse`/`merge_base` returned `"warning: …\n<sha>"` as a SHA, `changed_files`
+  invented a phantom path from the warning line, and `diff` handed the review gate a patch
+  with log noise prepended. `CommandResult` now carries `stdout` and `stderr` separately
+  (`output` is unchanged, for the diagnostic uses that genuinely want both) and every
+  parser reads `stdout` alone. `rev_parse`/`merge_base` additionally validate the object-name
+  shape, so a stray token can never pose as a SHA even if a stream is ever re-crossed.
+
+- **An unreadable diff no longer reads as an empty one** (#628): `git.changed_files` and
+  `git.diff` collapsed failure to `[]`/`""`, which is exactly what "nothing changed" looks
+  like. Three consumers drew the wrong conclusion from it, all in the safe-looking
+  direction:
+  - the jury gate treated "could not read the diff" as "nothing to review" and passed;
+  - `keel ship` classified the change at the default TIER-2, quietly dropping a reviewer
+    and turning the gating jury off;
+  - and the evidence gate's docs-only carve-out counted an empty list as docs-only.
+
+  Both wrappers now return `None` on failure, distinct from the empty value. `ship.assess`
+  takes `changed_files: list[str] | None` and classifies `None` at the new
+  `classify.UNKNOWN_TIER` (3) fail-closed; `jury.run_gate` raises a blocking
+  `jury:unreadable-diff` finding in gating mode; and `keel ship` prints
+  `changed files : UNREADABLE` so a forced tier is never mistaken for a measured one.
+
+- **A gate nobody ran can no longer certify a merge** (#626): the command-only runner
+  returns `(True, [])` for an `agentic` gate — it does not execute those, the agent-dispatch
+  layer does — and that pass was recorded in the run ledger indistinguishably from a gate
+  that ran clean. `record_gates_passed` then read it as a pass, so a **blocking** review
+  gate that was never dispatched authorized the merge at `keel merge`'s SHA-stamped gates
+  check. Gate outcomes now carry `not_run` and the declared `on_fail`; a blocking gate
+  flagged `not_run` refuses to certify, advisory gates are unaffected, and ledger records
+  written before these fields existed still read as passes. The operator-facing label is
+  `NOT-RUN`, never `ok`.
+
+- **An empty CI check set is no longer a pass** (#627): `_ci_rollup_state` returned
+  `state: "pass"` for an empty `statusCheckRollup`, differing from a real pass only in a
+  `reason` field nothing consumed — so a PR on which no workflow ever ran merged as green.
+  It is now its own `no-checks` state, and `keel merge` applies the documented docs-only
+  carve-out in core rather than in adapter prose: an empty check set passes only when every
+  changed path is a docs path, and blocks otherwise. An unreadable or empty changed-file
+  list is deliberately not docs-only.
+
+- **A superseded green gates run no longer authorizes a merge** (found in review):
+  `ledger.gates_pass_for_head` scanned for *any* passing ship_run record against the current
+  head, so re-gating the same commit — a flaky suite settling, a fix-loop re-running — left
+  the earlier green in place and the later red was never consulted. It is now latest-wins:
+  only the most recent record for that head counts.
+
+- **One contract shipped two different dedupe thresholds** (#633): `contracts` embeds a
+  `work_creation_policy` block beside a `dedupe` block that already honours
+  `policy_pack.scan.near_text_similarity`, but `workcreation.contract_as_dict()` hardcoded
+  the default. The two keys — near-identical, in the same dict — agreed only while a
+  project set the knob to exactly the built-in `0.6`. One resolver now feeds every copy.
+
+- **The jury gate never actually read ai-jury's findings** (#624, found in review):
+  `keel.runner.run_argv` returns `stdout + stderr` concatenated and ai-jury logs its
+  progress (`[jury] …`) to stderr, so the combined text was never valid JSON and a strict
+  `json.loads` discarded **every** finding. Against the real CLI a 6-finding report parsed
+  as zero. `parse_report` now uses `raw_decode`, which reads the leading JSON value and
+  ignores the trailing log lines; the same 6 findings now survive, anchors included.
+
+- **A jury run that produced no verdict no longer passes the gate** (#624):
+  `jury.run_gate` never consulted `result.ok`, and `parse_findings` returns `[]` for
+  unparseable output — so `blocked` came out False and a hung, crashed, or (per the item
+  above) simply unreadable panel reported `(True, [])`. The jury silently dropped out of
+  the merge decision. This is the inverse of #622 and strictly worse: there the gate
+  stayed red and only the label was wrong; here it went green on a run that produced no
+  review at all.
+
+  A run that yields no verdict is now handled like an oversize diff — blocking `major` in
+  `gating` mode, `minor` in `advisory` — carrying a `jury:incomplete-run` finding naming
+  the timeout limit or the exit code. The condition is *"did we parse a verdict"*, not
+  *"was the exit code zero"*: ai-jury exits nonzero to signal "request changes", which is a
+  completed review whose findings are honoured, while a zero exit carrying unreadable
+  output is not a review. An absent `jury` CLI remains a clean no-op — keel does not
+  depend on ai-jury. A jury killed by its limit also carries `timed_out`, so it renders as
+  `TIMEOUT` rather than `FAIL`, consistent with #622.
+
+### Tests
+- **Five config wires that no test could break** (#633), found by a mutation sweep — the
+  production code was correct in each case, but the wire could have been deleted or set to
+  the wrong value with the whole suite staying green. That is exactly how #623 and #625
+  reached `main` at 100 % line+branch coverage.
+  - **The merge window**, keel's central safety gate, was unassertable in `keel ship` and
+    `keel window`: every mutation of the config→`ship.assess` wire was green, and so was
+    `is_open = True`. `keel window` asserted only that the words "merge window" and the
+    timezone appeared, never OPEN vs CLOSED. Now pinned by spying on the window predicate
+    rather than adding a `now` seam to production — an env-settable clock would be a way to
+    walk a merge through a closed window.
+  - **`extensions_dir`** was never exercised at a non-default value anywhere. `load_extensions`
+    is fail-soft, so a directory that stopped being honoured would yield zero extensions and
+    a green run: a silently gate-less pipeline.
+  - **`evidence_gate_label` and `evidence_require_distinct_vendors`** were only ever driven
+    through their CLI *flags*; the `or config.knobs.…` half never contributed in any test, so
+    an operator's config override was unproven.
+  - **`policy_pack.scan.large_diff_max_bytes`** had no assertion at all; its two siblings were
+    asserted at values indistinguishable from the fallback.
+  - **`gate_timeout_s`**'s two CLI call sites. `plan_gates` makes the runner fallback
+    unreachable, so this is defence in depth rather than dead code — pinned so the redundancy
+    cannot quietly become wrong.
+
 ## [1.10.0] — 2026-07-27
 
 ### Added

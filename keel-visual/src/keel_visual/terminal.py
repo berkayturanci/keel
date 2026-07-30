@@ -134,8 +134,11 @@ def _header(run: dict[str, Any], *, enable: bool) -> str:
     return head
 
 
-# Named-gate outcome -> (glyph, colour): ✓ ran clean, ✗ failed, – skipped.
-_GATE_GLYPHS = {"ok": ("✓", "green"), "fail": ("✗", "red"), "skip": ("–", "dim")}
+# Named-gate outcome -> (glyph, colour): ✓ ran clean, ✗ failed, ⧗ timed out, – skipped.
+# A timeout stays red — it blocks exactly as a failure does — but reads apart from one,
+# so a slow host is not mistaken for a broken test.
+_GATE_GLYPHS = {"ok": ("✓", "green"), "fail": ("✗", "red"),
+                "timeout": ("⧗", "red"), "skip": ("–", "dim")}
 
 
 def _gate_strip(gates: list[dict[str, Any]], *, enable: bool) -> str:
@@ -146,7 +149,12 @@ def _gate_strip(gates: list[dict[str, Any]], *, enable: bool) -> str:
     """
     bits = []
     for gate in gates:
-        key = "skip" if gate.get("skipped") else ("ok" if gate.get("ok") else "fail")
+        if gate.get("skipped"):
+            key = "skip"
+        elif gate.get("ok"):
+            key = "ok"
+        else:
+            key = "timeout" if gate.get("timed_out") else "fail"
         glyph, colr = _GATE_GLYPHS[key]
         bits.append(f"{gate.get('name', '?')}{paint(glyph, colr, enable=enable)}")
     return f"gates: {' '.join(bits)}"

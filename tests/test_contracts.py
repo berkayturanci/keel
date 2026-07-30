@@ -1,6 +1,7 @@
 """Tests for structured command contracts."""
 
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -885,6 +886,7 @@ class TestBuildCommandContract(unittest.TestCase):
         self.assertNotIn("regression", scan)
         self.assertNotIn("review_all_day", scan)
 
+
     def test_project_command_contract_has_graph_capabilities_and_side_effects(self):
         config = cfg.load_config(PROJECTS / "example-android.yaml")
         loaded = {}
@@ -1165,6 +1167,75 @@ class TestBuildCommandContract(unittest.TestCase):
         self.assertTrue(contract["extension_problems"])
 
 
+class TestDocsImpactRendering(unittest.TestCase):
+    def test_an_unreadable_file_list_is_not_reported_as_no_docs(self):
+        # "no documentation files changed" is an affirmative claim; it must not be made
+        # about a diff nobody could read.
+        unreadable = contracts._docs_impact(None)
+        empty = contracts._docs_impact([])
+
+        self.assertIn("could not be read", unreadable)
+        self.assertNotIn("none — no documentation files changed", unreadable)
+        self.assertIn("none — no documentation files changed", empty)
+
+    def test_docs_files_are_listed(self):
+        self.assertIn("`docs/keel/cli.md`", contracts._docs_impact(["docs/keel/cli.md"]))
+
+
+class TestScanThresholdsAreWired(unittest.TestCase):
+    """`policy_pack.scan` thresholds, asserted at values distinguishable from the
+    built-in defaults — `projects/keel.yaml` sets each to exactly the default, so the
+    existing assertions could not tell a live wire from a hardcoded fallback (#633)."""
+
+    def _config(self, **scan):
+        base = cfg.load_config(PROJECTS / "example-flutter.yaml")
+        pack = dict(base.policy_pack or {})
+        pack["scan"] = {**(pack.get("scan") or {}), **scan}
+        return replace(base, policy_pack=pack)
+
+    def test_near_text_similarity_reaches_both_copies_in_one_contract(self):
+        # The scan contract carries this threshold twice under near-identical keys:
+        # `scan.dedupe` and `scan.work_creation_policy.dedupe`. The second hardcoded the
+        # default, so they agreed only while the project set the knob to exactly 0.6.
+        scan = contracts.scan_contract_as_dict(
+            command="regression", config=self._config(near_text_similarity=0.9))
+
+        self.assertEqual(scan["dedupe"]["near_text_similarity"], 0.9)
+        self.assertEqual(
+            scan["work_creation_policy"]["dedupe"]["near_text_similarity"], 0.9)
+
+    def test_reporting_contract_carries_the_same_threshold(self):
+        report = contracts.reporting_contract_as_dict(
+            command="coverage", config=self._config(near_text_similarity=0.85))
+
+        self.assertEqual(
+            report["work_creation_policy"]["dedupe"]["near_text_similarity"], 0.85)
+
+    def test_large_diff_max_bytes_is_honoured(self):
+        # Previously asserted nowhere at all: `-> 1` was a green mutation.
+        scan = contracts.scan_contract_as_dict(
+            command="review-all-day", config=self._config(large_diff_max_bytes=4096))
+
+        self.assertEqual(
+            scan["review_all_day"]["diff_truncation"]["max_bytes"], 4096)
+
+    def test_batch_threshold_is_honoured(self):
+        scan = contracts.scan_contract_as_dict(
+            command="review-all-day", config=self._config(batch_threshold=11))
+        strategy = scan["review_all_day"]["strategy"]
+
+        self.assertEqual(strategy["batch_threshold"], 11)
+        self.assertEqual(strategy["fanout_when_commit_count_gt"], 11)
+
+    def test_defaults_apply_when_the_knobs_are_absent(self):
+        config = cfg.load_config(PROJECTS / "example-flutter.yaml")
+        scan = contracts.scan_contract_as_dict(command="review-all-day", config=config)
+
+        self.assertEqual(scan["dedupe"]["near_text_similarity"], 0.6)
+        self.assertEqual(scan["review_all_day"]["diff_truncation"]["max_bytes"], 200000)
+
+
+
 class TestShipResultClosureComment(unittest.TestCase):
     def _assessment(self):
         merge = SimpleNamespace(action="merge", reason="all gates passed")
@@ -1230,6 +1301,31 @@ class TestShipResultClosureComment(unittest.TestCase):
         self.assertIn("build: skipped", pr_body)
         self.assertIn("lint: failed (lint failed)", pr_body)
         self.assertIn("Updated docs: `docs/keel/cli.md`", pr_body)
+
+    def test_artifact_bodies_report_a_timeout_apart_from_a_failure(self):
+        # #622: the PR body must not tell the operator a test broke when the gate
+        # was killed by its wall-clock limit.
+        result = contracts.ship_result_as_dict(
+            changed_files=["src/keel/gates.py"],
+            outcomes=[
+                gates.GateOutcome("build", False, timed_out=True),
+                gates.GateOutcome("lint", False),
+            ],
+            verdict=self._verdict(),
+            assessment=self._assessment(),
+        )
+
+        pr_body = result["artifact_bodies"]["pr_body"]
+        self.assertIn("build: timed out", pr_body)
+        self.assertNotIn("build: failed", pr_body)
+        self.assertIn("lint: failed", pr_body)
+
+        # The machine-readable surface must distinguish it too, or a consumer has to
+        # string-match the finding message to tell a slow host from a broken test.
+        outcomes = {o["gate"]: o for o in result["gate_outcomes"]}
+        self.assertTrue(outcomes["build"]["timed_out"])
+        self.assertFalse(outcomes["build"]["ok"])
+        self.assertFalse(outcomes["lint"]["timed_out"])
 
     def test_closure_comment_none_without_record(self):
         result = contracts.ship_result_as_dict(

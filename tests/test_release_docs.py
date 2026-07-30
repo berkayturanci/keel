@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import re
+import sys
 import tomllib
 import unittest
 from pathlib import Path
 
 from keel import __version__
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+import release_bump  # noqa: E402  (path-inserted maintenance script)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 VERSIONED_GIT_INSTALL_RE = re.compile(
@@ -35,6 +39,31 @@ class TestReleaseDocs(unittest.TestCase):
                 tags = [match.group("tag") for match in VERSIONED_GIT_INSTALL_RE.finditer(text)]
                 self.assertTrue(tags, f"expected at least one versioned git install in {path}")
                 self.assertEqual(tags, [expected_tag])
+
+    def test_no_site_surface_carries_a_stale_version_string(self):
+        # `release_bump` used to find the *current* version literally, so a file that had
+        # already fallen behind contained neither the old nor the new string, was silently
+        # skipped, and stayed behind forever — docs.html, coverage.html and content.js sat
+        # at v1.6.5 for four releases, then v1.8.2 for three more, each time relying on a
+        # runbook line asking a human to catch it. The script now matches by shape; this
+        # is what tells us if that stops working.
+        expected = f"v{__version__}"
+        # Derived from the script's own table rather than restated here: a fifth surface
+        # added to `_SITE_PATTERNS` and forgotten in a hand-written list would be exactly
+        # the unguarded file this test exists to prevent.
+        for rel, pattern, _template in release_bump._SITE_PATTERNS:
+            with self.subTest(path=rel, pattern=pattern):
+                path = REPO_ROOT / rel
+                self.assertTrue(path.exists(), f"{rel} is in _SITE_PATTERNS but missing")
+                found = re.findall(pattern, path.read_text(encoding="utf-8"))
+                self.assertTrue(found, f"pattern matched nothing in {rel}")
+                # Some patterns match the surrounding token (`keel@v1.2.3`); compare on
+                # the version itself.
+                versions = {match.rsplit("@", 1)[-1] for match in found}
+                self.assertEqual(versions, {expected})
+        # Deliberately per-token rather than a blanket file scan: release-note prose
+        # legitimately names older lines ("v1.2.1 line"), and a blanket scan would either
+        # fail on that or have to be weakened until it caught nothing.
 
     def test_public_v1_surfaces_do_not_carry_stale_roadmap_claims(self):
         public_paths = [

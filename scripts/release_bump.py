@@ -17,9 +17,17 @@ release-bump`` target runs it and then regenerates the surfaces. It deliberately
 edits keel-repo-specific paths — it is a maintenance tool (sibling to
 ``release_smoke.py``), not a consumer-neutral ``keel`` CLI command.
 
-Historical version mentions (e.g. "Since **1.6.5**" prose) are left untouched:
-only the precise pinned-install (``keel@vX``) and badge (``>vX<``) forms and the
-declared version assignments are rewritten.
+Prose that merely *names* a version (e.g. "Since **1.6.5**", a dated release-history
+line) is left untouched. What is rewritten is the declared version assignments, plus —
+in the site files only — the pinned-install (``keel@vX.Y.Z``) and the badge behind a
+``data-version`` / ``version:`` anchor.
+
+Note the site rewrites match by *shape*, not against the current version, so they widen
+what the old literal edits could reach: a deliberate historical pin written as
+``keel@v1.6.5`` inside ``index.html`` or ``content.js`` would now be rewritten too. That
+is the deliberate trade for re-syncing a file that has already fallen behind — see
+:data:`_SITE_PATTERNS`. Keep historical pins out of those two files, or in a form other
+than ``keel@vX.Y.Z``.
 """
 
 from __future__ import annotations
@@ -56,10 +64,28 @@ def _edits(old: str, new: str) -> list[tuple[str, str, str]]:
         (".claude-plugin/plugin.json", f'"version": "{old}"', f'"version": "{new}"'),
         (".codex-plugin/plugin.json", f'"version": "{old}"', f'"version": "{new}"'),
         ("README.md", f"keel@v{old}", f"keel@v{new}"),
-        ("website/index.html", f"keel@v{old}", f"keel@v{new}"),
-        ("website/index.html", f">v{old}<", f">v{new}<"),
         (".github/workflows/keel-ship.yml", f"keel@v{old}", f"keel@v{new}"),
     ]
+
+
+#: Version-bearing tokens in the site, matched by *pattern* rather than by the
+#: current version.
+#:
+#: Two gaps this closes, with one symptom. ``docs.html``, ``coverage.html`` and
+#: ``content.js`` were never in ``_edits`` at all — the runbook named them as a manual
+#: step, and the step was missed for seven releases. ``index.html`` *was* listed, but the
+#: literal edits find ``old`` (read from ``pyproject.toml``), so a file that has already
+#: fallen behind contains neither ``old`` nor ``new``, is skipped by the ``find not in
+#: text`` guard, and stays behind forever. Matching by shape registers the three missing
+#: surfaces and removes that fragility from the fourth at the same time.
+_SITE_PATTERNS: tuple[tuple[str, str, str], ...] = (
+    ("website/index.html", r"keel@v\d+\.\d+\.\d+", "keel@v{new}"),
+    ("website/index.html", r"(?<=data-version>)v\d+\.\d+\.\d+", "v{new}"),
+    ("website/docs.html", r"(?<=data-version>)v\d+\.\d+\.\d+", "v{new}"),
+    ("website/coverage.html", r"(?<=data-version>)v\d+\.\d+\.\d+", "v{new}"),
+    ("website/content.js", r'(?<=version: ")v\d+\.\d+\.\d+', "v{new}"),
+    ("website/content.js", r"keel@v\d+\.\d+\.\d+", "keel@v{new}"),
+)
 
 
 def bump(root: Path, new: str) -> tuple[str, list[str]]:
@@ -67,19 +93,35 @@ def bump(root: Path, new: str) -> tuple[str, list[str]]:
 
     Returns ``(old_version, changed_relative_paths)``. A file whose ``find``
     token is absent is skipped (so re-running after a partial bump is safe).
+
+    Re-running at the *current* version is a supported repair, not a no-op: the site
+    rewrites still run. That is exactly the recovery an operator reaches for when the
+    drift test fires, or after a bump that died between the ``pyproject.toml`` write —
+    the first literal edit — and the site loop. The literal edits are skipped in that
+    case because ``old == new`` makes each ``find`` a no-op anyway.
     """
     if not SEMVER.match(new):
         raise ValueError(f"version must be X.Y.Z, got {new!r}")
     old = current_version(root)
-    if old == new:
-        return old, []
     changed: list[str] = []
-    for rel, find, replace in _edits(old, new):
+    if old != new:
+        for rel, find, replace in _edits(old, new):
+            path = root / rel
+            text = path.read_text(encoding="utf-8")
+            if find not in text:
+                continue
+            path.write_text(text.replace(find, replace), encoding="utf-8")
+            if rel not in changed:
+                changed.append(rel)
+    for rel, pattern, template in _SITE_PATTERNS:
         path = root / rel
+        if not path.exists():
+            continue  # a checkout without the site (or a fixture root) is not an error
         text = path.read_text(encoding="utf-8")
-        if find not in text:
+        rewritten = re.sub(pattern, template.format(new=new), text)
+        if rewritten == text:
             continue
-        path.write_text(text.replace(find, replace), encoding="utf-8")
+        path.write_text(rewritten, encoding="utf-8")
         if rel not in changed:
             changed.append(rel)
     return old, changed
@@ -103,7 +145,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"release-bump: already at {args.version}; nothing to change")
         return 0
 
-    print(f"release-bump: {old} -> {args.version}")
+    if old == args.version:
+        print(f"release-bump: already at {args.version}; re-synced files that had drifted")
+    else:
+        print(f"release-bump: {old} -> {args.version}")
     for rel in changed:
         print(f"  updated {rel}")
     print("Next: `make plugin && make adapters` (regenerate keel_version markers), "

@@ -422,9 +422,15 @@ keel capture-verify .keel/project.yaml --root . --from-transport --merged-since 
 
 `--from-transport` lists merged PRs from the host (`gh pr list --state merged`, narrowed by
 `--merged-since`). `--merged-pr` still works and is *added* to the derived set (the union is
-verified, so an explicit override can only widen, never shrink, the checked set). The transport
-query is fail-soft: when it errors the report sets `merged_pr_source.transport_failed: true` and
-falls back to any `--merged-pr` values.
+verified, so an explicit override can only widen, never shrink, the checked set).
+
+When the transport query errors, the report sets `merged_pr_source.transport_failed: true`,
+the status becomes **`transport-unavailable`** with `certified: false`, and the command exits
+non-zero. This is not a failure of the PRs it *did* check — it is a refusal to certify. A
+failed query leaves the derived set empty, so the union degenerates to exactly the
+`--merged-pr` list the caller supplied, and the anti-shrink guarantee above evaporates: an
+un-captured PR simply disappears from the accounting. An audit that could not observe must
+say so rather than render like a clean one.
 
 When the merged set is derived (or any reconcile input is supplied) three additive checks run:
 
@@ -1034,6 +1040,28 @@ default `ship`) — so a run moves forward on the board without the agent's per-
 
 Each gate runs its configured shell command; a non-zero exit becomes a blocking finding
 (`gate:<name>`), a zero exit a pass. The command's output tail is captured for context.
+
+A gate that exceeds its wall-clock limit is killed and reported as a third, distinct
+outcome — `TIMEOUT` rather than `FAIL` — so a slow host does not read as a broken test.
+It **still blocks**: a hanging command is a real defect. The limit is
+[`knobs.gate_timeout_s`](configuration.md#gate_timeout_s) (default 600s), overridable for
+one slower gate with `timeout:` frontmatter on a `command` extension.
+
+There are four outcome labels, and the difference between the last two matters:
+
+| label | meaning |
+|---|---|
+| `ok` | the gate ran and passed |
+| `FAIL` | the gate ran and failed |
+| `TIMEOUT` | the gate was killed by its wall-clock limit before producing a verdict — still blocks |
+| `NOT-RUN` | **this command did not execute the gate at all** |
+
+`NOT-RUN` is what an `agentic` gate reports here: the command-only runner does not dispatch
+those, the agent does. It is deliberately not `ok` — a gate nobody ran has produced no
+verdict, and recording it as a pass is what let a blocking review gate authorize a merge
+without a reviewer. A `NOT-RUN` gate declared `on_fail: block` will not certify the run, so
+`keel merge` refuses it; record the agent's result with
+`keel ship --gate-result <id>=pass|fail` once the gate has actually been dispatched.
 Reviewer checklist for changes touching command-gate execution: `spec.run` values must
 remain sourced only from operator-controlled project config or extension YAML, never from
 PR content, issue text, or prior agent output.
@@ -1041,10 +1069,19 @@ PR content, issue text, or prior agent output.
 If `gates:` includes **`jury`** and the [ai-jury](https://github.com/berkayturanci/ai-jury)
 `jury` CLI is installed, the jury gate runs it on the diff (`git diff base...HEAD`) and maps
 its findings (file/line/severity) into keel findings (critical/major block). If `jury` is
-not installed the gate is a **fail-soft no-op** — the flow runs with or without jury.
-Diffs larger than 1 MB (`MAX_DIFF_BYTES`) also fail soft: keel skips the external jury run
-and emits a non-blocking `nit` finding (`jury:skipped-oversize`) so the skip is visible in
-the verdict instead of being silent.
+not installed the gate is a **fail-soft no-op** — the flow runs with or without jury. Its
+wall-clock limit is [`knobs.jury_timeout_s`](configuration.md#jury_timeout_s) (default
+600s), separate from `gate_timeout_s` because a cross-vendor panel and a test suite have
+unrelated runtimes.
+
+Three outcomes mean the panel produced **no review**: an oversize diff (over 1 MB,
+`MAX_DIFF_BYTES`), a run killed by `jury_timeout_s`, and a run whose output carries no
+parseable verdict. All three surface a visible finding rather than passing silently —
+blocking `major` in **gating** mode, non-blocking `minor` in advisory. Note `run-gates`
+always runs the jury in gating mode, so all three block here; `keel ship` uses the mode
+its review contract resolved. A nonzero exit that *does* carry a parseable report is a
+completed review — that is how ai-jury signals "request changes" — so its findings are
+used as-is.
 
 ```bash
 keel run-gates .keel/project.yaml --root .
@@ -1143,6 +1180,28 @@ count), whether the **merge window** is open, optional **CI** status (`--pr N` r
 check-rollup through the selected GitHub transport), each gate's result, and the final
 **merge decision**
 (`MERGE` / `DEFER` / `BLOCK`).
+
+If `git` cannot produce the changed-file list — a shallow or single-branch clone cannot
+resolve `base...HEAD` — the command prints
+`changed files : UNREADABLE (git diff failed) — classified TIER-3 fail-closed` and
+classifies at the strictest tier. This is a **behaviour change for that case**: an
+unreadable diff used to classify as the default TIER-2, quietly asking for one fewer
+reviewer and turning the gating jury off on a change nobody could see. The JSON result and
+the ledger record carry `null` file counts with an explicit `unreadable` flag rather than
+`0`, for the same reason. Fetch the base branch (`git fetch origin <base>`) to restore a
+measured tier.
+
+`--gate-result <id>=pass|fail` records the verdict of a gate this command cannot execute —
+an `agentic` gate, dispatched by the agent rather than by keel. Repeatable. Without it such
+a gate stays `NOT-RUN`, and a `NOT-RUN` gate declared `on_fail: block` blocks the merge
+decision and refuses to certify the run at `keel merge`.
+
+It may only be given for a gate keel did **not** run. Naming a gate keel executed exits 1
+with `--gate-result cannot override a gate keel executed: <id>`, and naming a gate that is
+not in the plan exits 1 with `--gate-result names no planned gate: <id>`. The first refusal
+is the point of the flag's design: keel has a measured verdict for a gate it ran, and
+letting a recorded one replace it would turn this channel into a way to certify a run whose
+gates were observed failing.
 
 This is the runnable, agent-free part of the backbone (s5 classify + s6 CI + s8 gates +
 s10 merge decision). It does **not** call coding agents and does **not** perform the merge —

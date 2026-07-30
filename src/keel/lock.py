@@ -21,6 +21,14 @@ from . import workspace
 
 SCHEMA_VERSION = "keel.resource-claim.v1"
 
+#: Holder of a claim whose owner cannot be read — ``owner.json`` missing, corrupt,
+#: unreadable, or the wrong shape. Deliberately *not* ``None``: the claim directory
+#: exists, so the resource **is** held; we simply cannot name by whom. The window is
+#: ordinary rather than exotic, because :func:`_claim_path` creates the directory
+#: before it writes the owner file, so any crash, kill, or container teardown in
+#: between leaves the lock held but ownerless.
+UNKNOWN_HOLDER = "<unknown>"
+
 
 class LockError(RuntimeError):
     """Raised when the merge lock is already held."""
@@ -164,7 +172,10 @@ def _release_path(
             reason="resource-not-claimed",
         )
     holder = _holder(path)
-    if owner is not None and holder is not None and holder != clean_owner:
+    # An unidentifiable holder refuses a *named* release, exactly as a differently
+    # named one does. Releasing with `owner=None` stays the deliberate any-owner
+    # escape for clearing a stuck claim.
+    if owner is not None and holder != clean_owner:
         return ClaimResult(
             schema_version=SCHEMA_VERSION,
             resource=resource,
@@ -202,16 +213,25 @@ def _write_owner(path: Path, owner: str) -> None:
     )
 
 
-def _holder(path: Path) -> str | None:
+def _holder(path: Path) -> str:
+    """The named owner of an **existing** claim, or :data:`UNKNOWN_HOLDER`.
+
+    Every caller reaches here only with the claim directory present, so there is no
+    "unheld" answer to give. Each way of failing to read the name — file missing,
+    corrupt JSON, unreadable, wrong shape — means the resource is held by someone we
+    cannot identify, not that it is free. Collapsing those to ``None`` made the
+    ownership guard *vanish* rather than fail closed, letting a second run release a
+    live merge claim and take the lock (#631).
+    """
     owner_file = path / "owner.json"
     if not owner_file.exists():
-        return None
+        return UNKNOWN_HOLDER
     try:
         data = json.loads(owner_file.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return None
+        return UNKNOWN_HOLDER
     owner = data.get("owner") if isinstance(data, dict) else None
-    return owner if isinstance(owner, str) and owner.strip() else None
+    return owner if isinstance(owner, str) and owner.strip() else UNKNOWN_HOLDER
 
 
 def _clean(value: str | None, fallback: str) -> str:

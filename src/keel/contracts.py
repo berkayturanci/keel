@@ -651,7 +651,9 @@ def reporting_contract_as_dict(
             "fixes_route_to": "ship",
             "auto_applies_fixes": False,
         },
-        "work_creation_policy": workcreation.contract_as_dict(),
+        "work_creation_policy": workcreation.contract_as_dict(
+            near_text_similarity=_near_text_similarity(config),
+        ),
     }
     if command == "coverage":
         return {
@@ -789,7 +791,7 @@ def extension_hooks_as_dict(
 
 def ship_result_as_dict(
     *,
-    changed_files: list[str],
+    changed_files: list[str] | None,
     outcomes: list[gates.GateOutcome],
     verdict,
     assessment,
@@ -853,8 +855,10 @@ def ship_result_as_dict(
         ),
     }
     return {
-        "changed_files": list(changed_files),
-        "changed_file_count": len(changed_files),
+        # None stays None: "could not read the diff" must not report as "0 files".
+        "changed_files": None if changed_files is None else list(changed_files),
+        "changed_file_count": None if changed_files is None else len(changed_files),
+        "changed_files_unreadable": changed_files is None,
         "issue_intake": issue_intake,
         "run_ledger": run_ledger,
         "closure_comment": closure_comment,
@@ -864,6 +868,7 @@ def ship_result_as_dict(
                 "gate": outcome.gate,
                 "ok": outcome.ok,
                 "skipped": outcome.skipped,
+                "timed_out": outcome.timed_out,
                 "error": outcome.error,
                 "findings": [_finding_as_dict(finding) for finding in outcome.findings],
             }
@@ -899,6 +904,9 @@ def _testing_summary(outcomes: list[gates.GateOutcome]) -> list[str]:
             state = "skipped"
         elif outcome.ok:
             state = "passed"
+        elif outcome.timed_out:
+            # Still a blocking outcome — but "failed" would read as a broken test.
+            state = "timed out"
         else:
             state = "failed"
         suffix = f" ({outcome.error})" if outcome.error else ""
@@ -906,7 +914,9 @@ def _testing_summary(outcomes: list[gates.GateOutcome]) -> list[str]:
     return lines
 
 
-def _docs_impact(changed_files: list[str]) -> str:
+def _docs_impact(changed_files: list[str] | None) -> str:
+    if changed_files is None:
+        return "Docs Impact: unknown — the changed-file list could not be read from git."
     docs = [file for file in changed_files if _is_doc_path(file)]
     if docs:
         return "Updated docs: " + ", ".join(f"`{file}`" for file in docs)
@@ -1098,7 +1108,7 @@ def scan_contract_as_dict(
             "source": "policy_pack.scan.dedupe + canonical defaults",
             "path_token_boundary": True,  # nosec B105
             "type_must_match": True,
-            "near_text_similarity": _scan_float(scan, "near_text_similarity", 0.6),
+            "near_text_similarity": _near_text_similarity(config),
             "open_duplicate": "skip",
             "closed_duplicate": "promote-regression-of",
             "lock": "mkdir",
@@ -1123,7 +1133,9 @@ def scan_contract_as_dict(
             for key, value in sorted(issue_labels.items())
             if isinstance(value, list)
         },
-        "work_creation_policy": workcreation.contract_as_dict(),
+        "work_creation_policy": workcreation.contract_as_dict(
+            near_text_similarity=_near_text_similarity(config),
+        ),
     }
     if command == "regression":
         base["regression"] = {
@@ -1504,6 +1516,21 @@ def _scan_int(scan: dict[str, Any], key: str, default: int) -> int:
 def _scan_float(scan: dict[str, Any], key: str, default: float) -> float:
     value = scan.get(key)
     return value if isinstance(value, int | float) else default
+
+
+def _near_text_similarity(config: cfg.ProjectConfig) -> float:
+    """The project's resolved ``policy_pack.scan.near_text_similarity``.
+
+    Both contract builders embed a ``work_creation_policy`` block carrying this
+    threshold, and the scan contract carries a second copy under ``dedupe``. One
+    resolver keeps every copy in agreement — hardcoding the default in
+    ``workcreation`` shipped two different values under near-identical keys, agreeing
+    only while the project happened to set the knob to the built-in default (#633).
+    """
+    pack = config.policy_pack or {}
+    scan = pack.get("scan") if isinstance(pack.get("scan"), dict) else {}
+    return _scan_float(scan, "near_text_similarity",
+                       workcreation.DEFAULT_NEAR_TEXT_SIMILARITY)
 
 
 def _target_identifier(target: str | None) -> str:

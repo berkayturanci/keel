@@ -220,6 +220,29 @@ class TestRenderClosureComment(unittest.TestCase):
         rendered = closure.render_closure_comment(record)
         self.assertIn("- **Changed files:** 0", rendered)
 
+    def test_an_unreadable_diff_is_not_rendered_as_an_empty_one(self):
+        # The closure comment is the durable public record of the run — the one artifact
+        # a human reads. Rendering `0` / `no` here is an affirmative claim about a diff
+        # nobody could see, and "no docs touched" is a claim the docs gate acts on.
+        # The `None`s alone are absorbed by the defensive coercions above (the test
+        # directly preceding this one relies on that), so the record's explicit
+        # `unreadable` flag is what has to be honoured.
+        record = _record(changes={"file_count": None, "files": None, "unreadable": True})
+        rendered = closure.render_closure_comment(record)
+
+        self.assertIn("- **Changed files:** unreadable (git diff failed)", rendered)
+        self.assertIn("- **Docs touched:** unknown", rendered)
+        self.assertNotIn("- **Changed files:** 0", rendered)
+        self.assertNotIn("- **Docs touched:** no", rendered)
+
+    def test_a_readable_changeset_is_unaffected_by_the_flag(self):
+        record = _record(changes={"file_count": 1, "files": ["docs/a.md"],
+                                  "unreadable": False})
+        rendered = closure.render_closure_comment(record)
+
+        self.assertIn("- **Changed files:** 1", rendered)
+        self.assertIn("- **Docs touched:** yes", rendered)
+
     def test_actors_block_missing(self):
         record = _record()
         del record["actors"]

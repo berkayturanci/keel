@@ -159,11 +159,17 @@ one fail-closed path:
 
 1. acquire the single-host `merge` resource claim;
 2. re-run the configured merge-window check inside the claim;
-3. read the live PR check rollup and classify failure before pending;
+3. read the live PR check rollup and classify failure before pending. An **empty** rollup
+   is its own `no-checks` state, not a pass — no check has reported for this head. It is
+   allowed through only when every changed path is a docs path (the carve-out for PRs no
+   workflow is expected to trigger); on any other PR it blocks;
 4. run `evidence-verify` for the current PR artifacts;
-5. require a SHA-stamped gates-pass: a `ship_run` ledger record for the PR whose
-   `git.head_sha` equals the PR's current head and whose gates passed, so a stale green
-   run from an older head cannot authorize merging a newer head;
+5. require a SHA-stamped gates-pass: the **latest** `ship_run` ledger record for the PR
+   whose `git.head_sha` equals the PR's current head must have passed its gates — so
+   neither a stale green run from an older head nor a green run superseded by a later red
+   one on the *same* head can authorize the merge. A gate flagged `not_run` (the
+   command-only runner does not dispatch agentic gates) never counts as passed when the
+   project declared it `on_fail: block`;
 6. require a **covering checkpoint** for the run at the merge step `s10`, so a run that
    never recorded state cannot cold-merge (audit GAP-13);
 7. call GitHub's merge operation only when every prior gate passes.
@@ -332,7 +338,7 @@ The block records:
   `none`. The values come from the ledger record's `run_context` block, which `keel ship`
   populates from the resolved transport, the `--host-agent`/`--transport`/`--profile` inputs,
   the resolved jury mode, and the existing `--operator`/`--approve-scope` consent inputs
-- the `docs_touched` section renders `- **Docs touched:** yes|no` directly after the
+- the `docs_touched` section renders `- **Docs touched:** yes|no|unknown` directly after the
   Changed files block. Its value is derived deterministically and consumer-neutrally from
   `changes.files`: a file counts as documentation when any path component equals `docs`
   (case-insensitive) or its suffix is one of `.md`, `.mdx`, `.markdown`, `.rst`, `.adoc`.
@@ -340,7 +346,11 @@ The block records:
   text doc such as `docs/notes.txt` is still covered by the `docs/` directory rule. The
   set is intentionally project-neutral; custom documentation paths are a
   project-config/policy concern, not a core renderer concern. Missing/empty/non-list
-  `files` (or a missing `changes` block) render `no`
+  `files` (or a missing `changes` block) render `no`. A record whose `changes.unreadable`
+  is `true` — git could not produce the file list at all — renders `unknown` instead, and
+  the Changed files line renders `unreadable (git diff failed)` in place of a count: "no
+  docs touched" is an affirmative claim, and it must not be made about a diff nobody could
+  read
 - `source: run-ledger ship_run record`
 - `deterministic: true`, `consumer_neutral: true`, `mirror_not_parser: true`
 - `renderer: keel.closure.render_closure_comment`
