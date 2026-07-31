@@ -116,6 +116,15 @@
   var search = document.getElementById("docs-search-input");
   var noRes = document.getElementById("docs-no-results");
   if (search) {
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "/" && document.activeElement !== search) {
+        var tag = document.activeElement ? document.activeElement.tagName : "";
+        if (tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "SELECT") {
+          e.preventDefault();
+          search.focus();
+        }
+      }
+    });
     search.addEventListener("input", function () {
       var q = search.value.trim().toLowerCase();
       var any = false;

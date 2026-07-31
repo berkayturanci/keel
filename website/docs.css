@@ -31,6 +31,8 @@
 }
 .docs-search input:focus { border-color: var(--accent-line); }
 .docs-search svg { position: absolute; left: .6rem; top: 50%; transform: translateY(-50%); width: 15px; height: 15px; color: var(--faint); pointer-events: none; }
+.search-kbd { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); font-family: var(--font-mono); font-size: .65rem; color: var(--muted); background: var(--surface-3); border: 1px solid var(--border); border-radius: 4px; padding: 0 .25rem; pointer-events: none; transition: opacity .2s; }
+.docs-search input:focus ~ .search-kbd { opacity: 0; }
 .docs-nav-group { margin-bottom: .65rem; }
 .docs-nav-group h4 { font-family: var(--font-mono); font-size: .64rem; text-transform: uppercase; letter-spacing: .08em; color: var(--faint); margin: 0 0 .25rem; }
 .docs-nav-group a {

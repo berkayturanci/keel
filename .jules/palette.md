@@ -48,3 +48,7 @@
 ## 2026-07-26 - A popover trigger owes aria-expanded and focus return
 **Learning:** A disclosure button that opens a popover must report its state via `aria-expanded` and point at the panel with `aria-controls`, otherwise a screen-reader user cannot tell the popover exists or whether it is open. Closing with `Escape` without moving focus is equally broken: focus is left inside a now-hidden container.
 **Action:** Toggle `aria-expanded` in the same place the open class is toggled (one helper, never two code paths), and on `Escape` return focus to the trigger that opened the popover.
+
+## 2026-06-12 - [Keyboard Navigable Search]
+**Learning:** Power users rely heavily on direct-action keyboard shortcuts in documentation and data-heavy interfaces. Explicitly indicating shortcuts (like a `/` hint on a search bar) and binding them globally dramatically reduces friction compared to standard tab-based navigation.
+**Action:** Implement global keydown listeners for primary actions (like `/` for search) and pair them with visual `<kbd>` hints within the input container to improve discoverability.
