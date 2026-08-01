@@ -81,7 +81,7 @@ jobs:
       # workflow (publish-visual.yml) before use.
       - name: Publish keel-visual to TestPyPI
         if: github.event_name == 'workflow_dispatch'
-        uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247  # v1.14.1
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
         with:
           repository-url: https://test.pypi.org/legacy/
           skip-existing: true
@@ -91,7 +91,7 @@ jobs:
       # publish-visual.yml. A failed publish fails the release loudly.
       - name: Publish keel-visual to PyPI
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/keel-visual-v')
-        uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247  # v1.14.1
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
         with:
           skip-existing: true
 
