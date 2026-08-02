@@ -3555,13 +3555,11 @@ def _with_run_id_marker(body: str, run_id: str | None) -> str:
 
 
 def _comment_has_run_id(body: str, run_id: str) -> bool:
-    escaped_run_id = re.escape(run_id)
-    # ⚡ Bolt Optimization: Combine regex patterns with OR to avoid any() generator overhead
-    pattern = (
-        rf"(?:^\s*(?:run[-_ ]?id)\s*:\s*{escaped_run_id}\s*$)|"
-        rf"(?:<!--\s*keel\.run-id:\s*{escaped_run_id}\s*-->)"
+    patterns = (
+        rf"^\s*(?:run[-_ ]?id)\s*:\s*{re.escape(run_id)}\s*$",
+        rf"<!--\s*keel\.run-id:\s*{re.escape(run_id)}\s*-->",
     )
-    return bool(re.search(pattern, body, re.IGNORECASE | re.MULTILINE))
+    return any(re.search(pattern, body, re.IGNORECASE | re.MULTILINE) for pattern in patterns)
 
 
 def _finish_post_comment(args: argparse.Namespace, payload: dict[str, object], *, code: int) -> int:

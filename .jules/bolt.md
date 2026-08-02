@@ -47,6 +47,6 @@
 **Learning:** In Python, when filtering a list using a list comprehension with a predicate, checking if elements were filtered using `any()` on the same predicate is redundant and slow. Comparing the lengths of the filtered and original lists (`len(filtered) < len(original)`) is significantly faster (approx ~2.8x speedup) as it avoids redundant predicate evaluation and generator overhead.
 **Action:** Use list length comparison (`len(filtered) < len(original)`) instead of `any()` or `all()` when verifying if a sequence was altered during list comprehension filtering.
 
-## 2024-08-01 - Fast Multi-pattern Regex Validation
-**Learning:** When checking a string against multiple regex patterns in Python hot paths, combining them into a single pattern using the `|` (OR) operator is significantly faster (~40% speedup) than evaluating them individually via multiple `re.search` calls or `any()` generator expressions.
-**Action:** Replace `any(re.search(pattern, body) for pattern in patterns)` with a single `re.search()` call using a combined pattern string joined by `|` to avoid redundant generator overhead and function calls. Also cache `re.escape()` variables.
+## 2024-08-01 - Unroll any() generator in jsonschema_min.py
+**Learning:** In Python hot paths, unrolling chained `any()` generator expressions into explicit sequential `if` and `for` loops with early returns can bypass generator overhead and significantly improve performance by properly short-circuiting.
+**Action:** Unroll `any()` generator loops in hot paths to explicit loops.
