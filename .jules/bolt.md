@@ -46,3 +46,7 @@
 ## 2024-05-18 - Fast list filtering check via length comparison
 **Learning:** In Python, when filtering a list using a list comprehension with a predicate, checking if elements were filtered using `any()` on the same predicate is redundant and slow. Comparing the lengths of the filtered and original lists (`len(filtered) < len(original)`) is significantly faster (approx ~2.8x speedup) as it avoids redundant predicate evaluation and generator overhead.
 **Action:** Use list length comparison (`len(filtered) < len(original)`) instead of `any()` or `all()` when verifying if a sequence was altered during list comprehension filtering.
+
+## 2024-08-04 - Fast Substring Checks with explicit `or` and regex combination
+**Learning:** Checking against multiple regexes using a generator and `any()` can be slow due to the generator setup/teardown. An initial `if run_id not in body:` can eliminate regex completely for negative cases. For positive cases, combining the patterns dynamically with `|` and `re.escape()` caching skips the multiple `re.search` calls.
+**Action:** In hot-path parsing of text payloads, utilize early basic string `in` lookups first to bail out early. When matching multiple patterns, combine them into a single regex string with OR `|` operators rather than invoking regex engines iteratively.
