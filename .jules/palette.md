@@ -48,3 +48,7 @@
 ## 2026-07-26 - A popover trigger owes aria-expanded and focus return
 **Learning:** A disclosure button that opens a popover must report its state via `aria-expanded` and point at the panel with `aria-controls`, otherwise a screen-reader user cannot tell the popover exists or whether it is open. Closing with `Escape` without moving focus is equally broken: focus is left inside a now-hidden container.
 **Action:** Toggle `aria-expanded` in the same place the open class is toggled (one helper, never two code paths), and on `Escape` return focus to the trigger that opened the popover.
+
+## 2026-07-27 - Dynamic text elements need dynamic ARIA labels
+**Learning:** When modifying or creating dynamic UI toggle buttons that display only an icon or generic text (like a speed multiplier: "1x", "2x"), setting a static aria-label on page load is insufficient. If the button's textContent changes to reflect the new state, screen reader users might miss the updated context unless the aria-label is explicitly updated alongside it.
+**Action:** Always ensure the element's aria-label attribute is explicitly updated in the JavaScript event listeners alongside the textContent to maintain screen reader accessibility for generic or icon-only buttons.
