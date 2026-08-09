@@ -48,3 +48,6 @@
 ## 2026-07-26 - A popover trigger owes aria-expanded and focus return
 **Learning:** A disclosure button that opens a popover must report its state via `aria-expanded` and point at the panel with `aria-controls`, otherwise a screen-reader user cannot tell the popover exists or whether it is open. Closing with `Escape` without moving focus is equally broken: focus is left inside a now-hidden container.
 **Action:** Toggle `aria-expanded` in the same place the open class is toggled (one helper, never two code paths), and on `Escape` return focus to the trigger that opened the popover.
+## 2024-05-18 - Missing ARIA label updates for dynamic speed buttons
+**Learning:** Found dynamic UI toggle buttons (`q-speed`, `sc-speed`) displaying generic text like "1×", "2×" which change upon click, but their `aria-label` attributes aren't present or aren't updated. This creates accessibility issues for screen reader users, who won't hear what speed has been set.
+**Action:** When adding/modifying generic textual/icon toggles, ensure `aria-label` is set explicitly and updated in JavaScript so screen reader users get meaningful announcements of state changes.
