@@ -153,14 +153,22 @@ class TestMissingCiWorkflows(unittest.TestCase):
     def test_names_a_declared_workflow_that_never_ran(self):
         self.assertEqual(ship.missing_ci_workflows(["CI"], self.WORKFLOWS), ("CodeQL",))
 
-    def test_matrix_jobs_count_for_their_workflow(self):
-        # A matrix job reports as "CI (py3.13 / ubuntu-latest)"; the declaration
-        # names the workflow, so a prefix match is what keeps this usable.
+    def test_job_names_are_the_wrong_input_and_this_is_why(self):
+        """Regression guard for a false block that would have hit every keel PR.
+
+        `ci_workflows` is keyed "CI"; the rollup reports job names like
+        "test (py3.13 / ubuntu-latest)". Feeding job names here reports the
+        workflow missing even though it ran, which is why the caller must pass
+        github.ci_workflow_names (workflowName) and not ci_check_names.
+        """
+        jobs = ["test (py3.13 / ubuntu-latest)", "Analyze (Python)"]
+        self.assertEqual(ship.missing_ci_workflows(jobs, {"CI": "**"}), ("CI",))
+        self.assertEqual(ship.missing_ci_workflows(["CI", "CodeQL"], {"CI": "**"}), ())
+
+    def test_matching_is_exact_not_a_prefix(self):
+        # A prefix rule would let an unrelated "testing-utils" satisfy "test".
         self.assertEqual(
-            ship.missing_ci_workflows(
-                ["CI (py3.13 / ubuntu-latest)", "CodeQL"], self.WORKFLOWS
-            ),
-            (),
+            ship.missing_ci_workflows(["testing-utils"], {"test": "**"}), ("test",)
         )
 
     def test_case_insensitive(self):
@@ -343,6 +351,7 @@ class TestAssess(unittest.TestCase):
         """Green is not enough when a workflow the project declares produced no run."""
         a = ship.assess(changed_files=["x.py"], gate_verdict=CLEAN,
                         ci_conclusion="SUCCESS", ci_check_names=["CI"],
+                        ci_workflow_names=["CI"],
                         ci_workflows={"CI": "**", "CodeQL": "**"})
         self.assertTrue(a.ci_ok)
         self.assertEqual(a.missing_workflows, ("CodeQL",))
@@ -352,7 +361,8 @@ class TestAssess(unittest.TestCase):
     def test_all_declared_workflows_present_merges(self):
         a = ship.assess(changed_files=["x.py"], gate_verdict=CLEAN,
                         ci_conclusion="SUCCESS",
-                        ci_check_names=["CI (py3.13 / ubuntu-latest)", "CodeQL"],
+                        ci_check_names=["test (py3.13 / ubuntu-latest)", "CodeQL"],
+                        ci_workflow_names=["CI", "CodeQL"],
                         ci_workflows={"CI": "**", "CodeQL": "**"})
         self.assertEqual(a.missing_workflows, ())
         self.assertEqual(a.merge.action, "merge")
@@ -361,6 +371,7 @@ class TestAssess(unittest.TestCase):
         # Both are true; the operator should be told about the failure first.
         a = ship.assess(changed_files=["x.py"], gate_verdict=CLEAN,
                         ci_conclusion="FAILURE", ci_check_names=["CI"],
+                        ci_workflow_names=["CI"],
                         ci_workflows={"CI": "**", "CodeQL": "**"})
         self.assertEqual(a.merge.action, "block")
         self.assertEqual(a.merge.reason, "CI failing")

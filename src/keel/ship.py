@@ -319,34 +319,33 @@ def ci_ran(ci_conclusion: str | None) -> bool | None:
 
 
 def missing_ci_workflows(
-    check_names: Sequence[str] | None,
+    workflow_names: Sequence[str] | None,
     ci_workflows: dict[str, str] | None,
 ) -> tuple[str, ...]:
-    """Declared workflows in ``ci_workflows`` that reported no check for this head.
+    """Declared workflows in ``ci_workflows`` that reported nothing for this head.
 
     ``knobs.ci_workflows`` is the project stating which workflows gate a merge, so
     presence can be checked against a **declaration** instead of inferred from an
     empty set — the difference between "I saw no failures" and "I saw the things
-    that were supposed to run". Matching is case-insensitive on the display name,
-    and a declared name also counts as present when a reported check starts with it,
-    since a matrix job reports as ``test (py3.13 / ubuntu-latest)`` under the
-    workflow-level name ``test``.
+    that were supposed to run".
+
+    ``workflow_names`` must be *workflow* names (:func:`keel.github.ci_workflow_names`),
+    not job names. The distinction is not cosmetic: `ci_workflows` is keyed ``CI``,
+    while the rollup reports ``test (py3.13 / ubuntu-latest)``, so comparing against
+    job names would report every declared workflow missing on any repo using a matrix.
+    Matching is exact and case-insensitive — a prefix rule would let an unrelated
+    ``testing-utils`` satisfy a declared ``test``.
 
     ``()`` when nothing is declared or the names could not be read — absence of a
     declaration is not evidence of a missing run.
     """
-    if not ci_workflows or check_names is None:
+    if not ci_workflows or workflow_names is None:
         return ()
-    reported = [name.strip().lower() for name in check_names if name.strip()]
-    missing = [
-        declared
-        for declared in ci_workflows
-        if not any(
-            seen == declared.strip().lower() or seen.startswith(declared.strip().lower())
-            for seen in reported
-        )
-    ]
-    return tuple(sorted(missing))
+    reported = {name.strip().lower() for name in workflow_names if name.strip()}
+    return tuple(sorted(
+        declared for declared in ci_workflows
+        if declared.strip().lower() not in reported
+    ))
 
 
 def is_hotfix(labels: list[str] | tuple[str, ...], *, hotfix_label: str = "hotfix") -> bool:
@@ -388,6 +387,7 @@ def assess(
     merge_window_mode: str = "freeze",
     ci_conclusion: str | None = None,
     ci_check_names: Sequence[str] | None = None,
+    ci_workflow_names: Sequence[str] | None = None,
     ci_workflows: dict[str, str] | None = None,
     now=None,
     is_blocker: bool = False,
@@ -429,7 +429,7 @@ def assess(
     docs_only = changed_files is not None and classify.is_docs_only(
         list(changed_files), docs_globs
     )
-    missing = () if docs_only else missing_ci_workflows(ci_check_names, ci_workflows)
+    missing = () if docs_only else missing_ci_workflows(ci_workflow_names, ci_workflows)
     if ci_ok is False:
         merge = MergeDecision("block", "CI failing")
     elif ran is False and not docs_only:

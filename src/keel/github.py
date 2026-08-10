@@ -80,17 +80,14 @@ def ci_conclusion(pr: int | str, *, cwd: str | None = None, _run=None) -> str | 
 
 
 def ci_check_names(pr: int | str, *, cwd: str | None = None, _run=None) -> list[str] | None:
-    """The distinct check names reported for ``pr``, or ``None`` when ``gh`` failed.
+    """The distinct check identities reported for ``pr``, or ``None`` when ``gh`` failed.
 
-    A **fact about the PR**, kept separate from :func:`ci_conclusion`'s facts about
-    the *outcome*: knowing every check passed says nothing about whether the checks
-    a project expects ever ran (issue #675). ``[]`` means the rollup is genuinely
-    empty — no workflow ran for this head — which the caller must distinguish from
-    ``None`` (``gh`` could not be asked).
-
-    Names come from ``context`` for legacy commit statuses and ``name`` for check
-    runs, the same identity :func:`ci_conclusion` dedupes on, so the two views agree
-    about what "one check" is.
+    Used for the **count** an operator sees, so "0 checks" is a visible fact rather
+    than something inferred from a blank word. Identity is ``context`` for legacy
+    commit statuses and ``name`` for check runs — the same identity
+    :func:`ci_conclusion` dedupes on, so the two views agree about what "one check"
+    is. ``[]`` means the rollup is genuinely empty; ``None`` means ``gh`` could not
+    be asked.
     """
     jq = (
         "[.statusCheckRollup[] "
@@ -99,6 +96,34 @@ def ci_check_names(pr: int | str, *, cwd: str | None = None, _run=None) -> list[
         "// empty] "
         "| unique | .[]"
     )
+    return _rollup_strings(pr, jq, cwd=cwd, _run=_run)
+
+
+def ci_workflow_names(pr: int | str, *, cwd: str | None = None, _run=None) -> list[str] | None:
+    """The distinct **workflow** names that reported for ``pr``, or ``None`` on failure.
+
+    Deliberately not :func:`ci_check_names`. ``knobs.ci_workflows`` is keyed by the
+    *workflow* name (``CI``, ``CodeQL``), but the rollup reports *job* names — a
+    matrix job appears as ``test (py3.13 / ubuntu-latest)``, never as ``CI``. Asking
+    the presence question against job names would report every declared workflow
+    missing on a repo that uses a matrix, which is most of them.
+
+    ``workflowName`` is what a check run carries for this; legacy commit statuses have
+    none, so they fall back to ``context``/``name`` — a project that declares a bare
+    status-check name still matches.
+    """
+    jq = (
+        "[.statusCheckRollup[] "
+        "| (.workflowName | select(. != null and . != \"\")) "
+        "// (.context | select(. != null and . != \"\")) "
+        "// (.name | select(. != null and . != \"\")) "
+        "// empty] "
+        "| unique | .[]"
+    )
+    return _rollup_strings(pr, jq, cwd=cwd, _run=_run)
+
+
+def _rollup_strings(pr, jq: str, *, cwd: str | None, _run) -> list[str] | None:
     result = run_argv(
         ["gh", "pr", "view", str(pr), "--json", "statusCheckRollup", "--jq", jq],
         cwd=cwd, **_kw(_run),

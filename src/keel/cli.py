@@ -989,6 +989,9 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     # workflows this project declares actually ran" are different questions, and
     # only the second one can be answered against knobs.ci_workflows (#675).
     ci_names = github.ci_check_names(args.pr, cwd=args.root) if read_ci else None
+    # Workflow names, not job names: knobs.ci_workflows is keyed "CI" while the
+    # rollup reports "test (py3.13 / ubuntu-latest)".
+    ci_wf_names = github.ci_workflow_names(args.pr, cwd=args.root) if read_ci else None
 
     a = ship.assess(
         # None-preserving on purpose: assess classifies an unreadable diff fail-closed,
@@ -1003,6 +1006,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         merge_window_mode=config.merge_window_mode,
         ci_conclusion=ci_conclusion,
         ci_check_names=ci_names,
+        ci_workflow_names=ci_wf_names,
         ci_workflows=config.knobs.ci_workflows,
         is_blocker=args.hotfix,
         # A required gate nobody dispatched has produced no verdict, so the assessment

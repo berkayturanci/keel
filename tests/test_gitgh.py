@@ -151,6 +151,20 @@ class TestGitHub(unittest.TestCase):
     def test_ci_check_names_failsoft(self):
         self.assertIsNone(github.ci_check_names(7, _run=_Recorder(code=1)))
 
+    def test_ci_workflow_names_prefers_workflow_over_job_name(self):
+        rec = _Recorder(out="CI\nCodeQL\n")
+        self.assertEqual(github.ci_workflow_names(7, _run=rec), ["CI", "CodeQL"])
+        jq_expr = rec.calls[0][rec.calls[0].index("--jq") + 1]
+        # workflowName first: the rollup's job names never equal the declared
+        # workflow name on a matrix build.
+        self.assertLess(jq_expr.index(".workflowName"), jq_expr.index(".context"))
+
+    def test_ci_workflow_names_failsoft(self):
+        self.assertIsNone(github.ci_workflow_names(7, _run=_Recorder(code=1)))
+
+    def test_ci_workflow_names_empty_rollup_is_empty_list(self):
+        self.assertEqual(github.ci_workflow_names(7, _run=_Recorder(out="\n")), [])
+
     def test_ci_check_names_uses_the_same_identity_as_ci_conclusion(self):
         # Both views must agree about what "one check" is, or a name could be
         # reported missing while its conclusion was counted.

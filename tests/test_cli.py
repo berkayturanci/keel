@@ -5854,12 +5854,13 @@ class TestShipCiVisibility(unittest.TestCase):
         runtime.Capability("github-mcp", False, "missing", "test"),
     ))
 
-    def _ship(self, conclusion, names, *, config=None):
+    def _ship(self, conclusion, names, *, config=None, workflows=None):
         import tempfile
         with tempfile.TemporaryDirectory() as d, \
                 patch("keel.cli.runtime.detect", return_value=self.GH_UP), \
                 patch("keel.cli.github.ci_conclusion", return_value=conclusion), \
-                patch("keel.cli.github.ci_check_names", return_value=names):
+                patch("keel.cli.github.ci_check_names", return_value=names), \
+                patch("keel.cli.github.ci_workflow_names", return_value=workflows):
             return run(["ship", config or _write_config("'true'"), "--root", d, "--pr", "7"])
 
     def test_zero_checks_is_printed_as_zero_not_as_passing(self):
@@ -5898,7 +5899,9 @@ class TestShipCiVisibility(unittest.TestCase):
             "gates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
             "  ci_workflows:\n    CI: '**'\n    CodeQL: '**'\n"
         )
-        rc, out, _ = self._ship("SUCCESS", ["CI"], config=config)
+        # Job names reported, workflow "CI" ran, "CodeQL" never did.
+        rc, out, _ = self._ship("SUCCESS", ["test (py3.13 / ubuntu-latest)"],
+                                config=config, workflows=["CI"])
         self.assertEqual(rc, 1)
         self.assertIn("ci MISSING", out)
         self.assertIn("CodeQL", out)
