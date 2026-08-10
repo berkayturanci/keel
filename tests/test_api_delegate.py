@@ -164,6 +164,76 @@ class TestBuildRequest(unittest.TestCase):
         self.assertEqual(payload["generationConfig"]["maxOutputTokens"], 100)
 
 
+class TestOpenAICompatible(unittest.TestCase):
+    """The one vendor whose URL and key-env come from config, not the table (#666)."""
+
+    ENDPOINT = "http://localhost:11434/v1/chat/completions"
+    ENV = {"MY_ROUTER_KEY": "k"}
+
+    def _ok_opener(self):
+        return FakeOpener(FakeResponse(json.dumps(
+            {"choices": [{"message": {"content": "diff"}}]}
+        )))
+
+    def test_uses_the_configured_endpoint_and_key_env(self):
+        result = api_delegate.generate(
+            "openai-compatible", "qwen2.5", "p",
+            endpoint=self.ENDPOINT, api_key_env="MY_ROUTER_KEY",
+            _env=self.ENV, _opener=self._ok_opener(),
+        )
+        self.assertTrue(result.ok, result.error)
+        self.assertEqual(result.text, "diff")
+
+    def test_request_is_openai_shaped(self):
+        url, headers, body = api_delegate._build_request(
+            "openai-compatible", "qwen2.5", "p", "k", 100, self.ENDPOINT
+        )
+        self.assertEqual(url, self.ENDPOINT)
+        self.assertEqual(headers["authorization"], "Bearer k")
+        payload = json.loads(body)
+        self.assertEqual(payload["model"], "qwen2.5")
+        self.assertEqual(payload["messages"], [{"role": "user", "content": "p"}])
+
+    def test_response_is_parsed_openai_shaped(self):
+        data = {"choices": [{"message": {"content": "hi"}}]}
+        self.assertEqual(api_delegate._parse_content("openai-compatible", data), "hi")
+        self.assertIsNone(api_delegate._parse_content("openai-compatible", {"choices": []}))
+
+    def test_missing_endpoint_or_key_env_is_refused_at_dispatch(self):
+        """config.endpoint_issues gates this at validate time; this is the belt.
+
+        A caller that reaches generate() without both fields has skipped
+        validation, so refuse rather than fall back to some default host.
+        """
+        for endpoint, key_env in ((None, "MY_ROUTER_KEY"), (self.ENDPOINT, None), (None, None)):
+            with self.subTest(endpoint=endpoint, api_key_env=key_env):
+                result = api_delegate.generate(
+                    "openai-compatible", "m", "p",
+                    endpoint=endpoint, api_key_env=key_env, _env=self.ENV, _opener=None,
+                )
+                self.assertFalse(result.ok)
+                self.assertEqual(result.error_code, "unknown-vendor")
+
+    def test_a_missing_key_in_the_environment_reports_the_configured_name(self):
+        result = api_delegate.generate(
+            "openai-compatible", "m", "p",
+            endpoint=self.ENDPOINT, api_key_env="ABSENT_KEY", _env={}, _opener=None,
+        )
+        self.assertFalse(result.ok)
+        self.assertEqual(result.error_code, "no-key")
+        self.assertIn("ABSENT_KEY", result.error)
+
+    def test_the_url_path_model_guard_does_not_apply(self):
+        # No {model} in a configured endpoint, so the google-api restriction is
+        # not silently inherited by a vendor whose model rides in the body.
+        result = api_delegate.generate(
+            "openai-compatible", "vendor/model-name", "p",
+            endpoint=self.ENDPOINT, api_key_env="MY_ROUTER_KEY",
+            _env=self.ENV, _opener=self._ok_opener(),
+        )
+        self.assertTrue(result.ok, result.error)
+
+
 class TestGoogleModelIsUrlPathInput(unittest.TestCase):
     """google-api is the only vendor that puts the model in the URL path (#666).
 

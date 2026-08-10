@@ -7,6 +7,26 @@ All notable changes to keel are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **`openai-compatible` delegate profiles — any OpenAI-shaped hosted API from config**
+  (#666): OpenRouter, Groq, DeepSeek, Together, LiteLLM and a local vLLM become
+  `knobs.delegate_profiles` entries rather than code changes, completing the "every model"
+  half of the issue. A profile names an `endpoint` and an `api_key_env`, and inherits the
+  no-tools contract, `secrets` scope, retry-×2-then-fall-back and no-retry-on-429 rules of
+  the hardcoded hosted vendors. Because this is the first keel delegate whose URL comes
+  from configuration, it carries a guard ported from ai-jury rather than reinvented:
+  loopback hosts pass freely; any other host — **including cloud-metadata addresses** — is
+  a `keel validate` error unless `KEEL_ALLOW_REMOTE_ENDPOINT` is set **in the environment**
+  (the threat model is an attacker-influenced config, so the opt-in must sit outside the
+  surface an attacker controls); non-`http(s)` schemes are refused, blocking `file://` and
+  `ftp://`; and a malformed URL is a clean config error rather than a traceback out of
+  `keel validate`. `api_key_env` takes a variable **name** and rejects anything shaped like
+  a pasted secret, because profile config is serialised into the command contract and
+  hashed into `config_hash` — a key there would be published.
+- A profile field belonging to a different vendor (`endpoint` on a `cli` profile,
+  `command` on an `openai-compatible` one) is now a validation error rather than a
+  silently-ignored key. The schema cannot catch it, since both fields are legal somewhere.
+
+### Added
 - **`google-api:MODEL` hosted delegate** (#666): Gemini can now be an implementer or
   reviewer with only `GEMINI_API_KEY` in the environment — no agent CLI. Same no-tools
   contract, `secrets` scope, retry-×2-then-fall-back and no-retry-on-429 rules as the

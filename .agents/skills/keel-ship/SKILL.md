@@ -351,6 +351,22 @@ Resolve the implementer: `implementer_agents` by the issue's role label, **overr
   `agent:*` labels, so recording `cursor` there against an `agent:cli` label reads as a
   vendor contradiction and blocks the merge. The profile name goes in `delegate_profile`,
   as above, which is what the closure comment reads.
+- **OpenAI-compatible implementer** (a `knobs.delegate_profiles` name whose
+  `vendor: openai-compatible`) — the same no-tools contract as the hosted-API path, with
+  the endpoint and key-env **named by config** instead of hardcoded, so one profile
+  reaches OpenRouter, Groq, DeepSeek, Together, LiteLLM or a local vLLM. Two rules that
+  do not apply to any other vendor, because config is the surface an attacker would
+  influence:
+  **(1) the endpoint is loopback-only by default.** A non-loopback host — including
+  internal and cloud-metadata addresses like `169.254.169.254` — is a `keel validate`
+  error unless `KEEL_ALLOW_REMOTE_ENDPOINT` is set **in the environment**. The opt-in is
+  env-only on purpose: someone who can edit `project.yaml` must not be able to grant it.
+  Non-`http(s)` schemes are refused outright, which blocks `file://`/`ftp://`.
+  **(2) `api_key_env` is a variable *name*, never a key.** Profile config is serialised
+  into the command contract and hashed into `config_hash`, so a pasted key would be
+  published; keel rejects a value that is not shaped like an env var name. The value is
+  read from the environment at dispatch under the same `secrets` scope as every other
+  hosted delegate.
 - **Hosted-API implementer** (`anthropic-api:MODEL`, `openai-api:MODEL`, `google-api:MODEL`) — the same
   no-tools contract as the local-model path with the endpoint swapped: the orchestrator
   does every git/PR step itself and requests only code generation via
@@ -822,4 +838,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=skills command=ship keel_version=1.11.0 source_sha256=4db27ccc50630ed37df6711a53df99a3ed09ae0dd2d8e62dde0b3a91c3906fec generated_sha256=ea36b2dc016ec8411886cdf7bc345f2a777cf1e05107523ec4a51d630b78f292 -->
+<!-- keel-generated: surface=skills command=ship keel_version=1.11.0 source_sha256=38fe75ceefbd872d8a5dc439b00e0d374cb6afe2c01f600aeb392026ce9b1d51 generated_sha256=687c739ac63cdcbc55bc3cefb228612863a5b477ce67daf994d32e0e10ac9076 -->

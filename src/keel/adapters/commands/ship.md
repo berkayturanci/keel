@@ -348,6 +348,22 @@ Resolve the implementer: `implementer_agents` by the issue's role label, **overr
   `agent:*` labels, so recording `cursor` there against an `agent:cli` label reads as a
   vendor contradiction and blocks the merge. The profile name goes in `delegate_profile`,
   as above, which is what the closure comment reads.
+- **OpenAI-compatible implementer** (a `knobs.delegate_profiles` name whose
+  `vendor: openai-compatible`) — the same no-tools contract as the hosted-API path, with
+  the endpoint and key-env **named by config** instead of hardcoded, so one profile
+  reaches OpenRouter, Groq, DeepSeek, Together, LiteLLM or a local vLLM. Two rules that
+  do not apply to any other vendor, because config is the surface an attacker would
+  influence:
+  **(1) the endpoint is loopback-only by default.** A non-loopback host — including
+  internal and cloud-metadata addresses like `169.254.169.254` — is a `keel validate`
+  error unless `KEEL_ALLOW_REMOTE_ENDPOINT` is set **in the environment**. The opt-in is
+  env-only on purpose: someone who can edit `project.yaml` must not be able to grant it.
+  Non-`http(s)` schemes are refused outright, which blocks `file://`/`ftp://`.
+  **(2) `api_key_env` is a variable *name*, never a key.** Profile config is serialised
+  into the command contract and hashed into `config_hash`, so a pasted key would be
+  published; keel rejects a value that is not shaped like an env var name. The value is
+  read from the environment at dispatch under the same `secrets` scope as every other
+  hosted delegate.
 - **Hosted-API implementer** (`anthropic-api:MODEL`, `openai-api:MODEL`, `google-api:MODEL`) — the same
   no-tools contract as the local-model path with the endpoint swapped: the orchestrator
   does every git/PR step itself and requests only code generation via
