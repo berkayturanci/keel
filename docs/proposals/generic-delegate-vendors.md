@@ -114,12 +114,33 @@ one the proposal had missed:
   states the precedence explicitly: `--delegate <profile>:<model>` beats the profile's
   `model`, which beats the CLI default. One `cursor` profile serves the whole family.
 - **The reviewer role is where a generic delegate earned its place, not the implementer
-  role.** Prompted to *refute* rather than approve, it correctly rejected a PR that claimed to
-  fix two directions of a defect but fixed one, with a test blind to the gap. As implementer
-  it produced sound code — but also a specific-looking external citation (registry reference
-  numbers, an archive snapshot id) presented as verified when nothing had verified it. s4 now
-  carries a rule that a delegate's external references are claims until the orchestrator
-  checks them.
+  role.** Prompted to *refute* rather than approve, `cursor-grok-4.5-high` reviewed three
+  PRs in that repo and refuted all three; each refutation was verified correct against the
+  file before being acted on, and **none of the three was visible to CI** — every one was
+  green (6/6, 16 tests, 16/16), plausible code, honest-sounding description. The common
+  shape was *a claim the artefact does not deliver*: a fix that closed one of two
+  directions with a test blind to the second; a gate whose verifier is invoked with an
+  unbound variable under `set -u`, so it aborts instead of running, in a `.sh` no test
+  exercises; a proving test fed an input the code under test makes unreachable. Gates check
+  whether code runs, not whether it does what the PR says — that gap is what an adversarial
+  reviewer covers.
+
+  As implementer the same CLI produced sound code — but also a specific-looking external
+  citation (registry reference numbers, an archive snapshot id) presented as verified when
+  nothing had verified it. Generalised in s4: a delegate emitting the *artefact* of a check
+  instead of the check is one failure mode with several costumes (invented citations, a
+  fabricated `keel.review-verdict.v1` marker written into a shipped file, "tests pass" with
+  no run behind it), so **any** verification a delegate reports is unperformed until the
+  orchestrator reproduces it.
+
+  **The tier-3 refusal is right for implementers and questionable for reviewers.** All
+  three refuted PRs matched that repo's `tier3_globs`, so this proposal's rule would have
+  declined exactly the cases where the delegate produced its entire value. The risk
+  profiles are not symmetric: an implementer's output becomes a commit, while a reviewer's
+  output is a claim the orchestrator must check before anything reaches the base branch — a
+  wrong refutation costs a verification round, a right one catches what CI cannot. Splitting
+  the tier gate **by role** rather than by vendor is tracked in #665; deliberately not done
+  here, since loosening a safety rule belongs in its own change.
 
 ## Deferred, with the hard parts named
 

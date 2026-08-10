@@ -323,11 +323,14 @@ Resolve the implementer: `implementer_agents` by the issue's role label, **overr
   `command`, the model can arrive from a `delegate-model:<name>` issue label, which is a
   lower-trust source — refuse the run rather than escaping it. Retry up to 2 times on a
   bad/unapplicable diff, then fall soft
-  back to `HOST_AGENT`. **Treat any external reference a delegate emits as a claim, not a fact** —
-  a delegate has been observed stating specific-looking citations (registry reference
-  numbers, archive snapshot ids) as verified when nothing verified them. Keep such
-  references out of committed comments and PR bodies unless the orchestrator checked them,
-  or mark them explicitly as unverified. **Generic-CLI implementers are refused on
+  back to `HOST_AGENT`. **Treat any verification a delegate reports as unperformed until
+  you reproduce it.** Not just external references — a delegate emitting the *artefact* of
+  a check instead of the check is one failure mode with several costumes, all observed:
+  specific-looking citations (registry reference numbers, archive snapshot ids) stated as
+  verified when nothing verified them; a fabricated `keel.review-verdict.v1` marker written
+  into a shipped file; "tests pass" with no run behind it. Re-run the check yourself, or
+  record the claim as unverified — never promote it to a fact in a commit, a comment, or a
+  PR body because a delegate asserted it. **Generic-CLI implementers are refused on
   tier-3**, same rule and fallback as local models — an unvetted CLI is not a
   high-risk-path implementer. No new
   consent scope: this is the `shell`/subprocess surface `codex`/`agy` already use, and
