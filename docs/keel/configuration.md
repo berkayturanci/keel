@@ -175,7 +175,8 @@ knobs:
     cursor:
       vendor: cli
       command: cursor-agent
-      args: ["-p", "--force"]   # standing flags: print mode, non-interactive
+      args: ["-p", "--force"]   # implementer: print mode + non-interactive approval
+      review_args: ["-p"]       # reviewer: same, minus permission to approve edits
       prompt_mode: arg          # "stdin" (default) | "arg"
       model: null               # optional default model for this profile
       model_arg: --model        # flag the model is passed on (default "--model")

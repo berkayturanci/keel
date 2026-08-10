@@ -48,7 +48,7 @@ __all__ = ["SLOTS", "DEFAULT_EXTENSIONS_DIR", "DELEGATE_PROFILE_VENDORS",
            "DELEGATE_PROMPT_MODES", "DEFAULT_PROMPT_MODE", "DEFAULT_MODEL_ARG",
            "Automation", "DelegateProfile",
            "Knobs", "ProjectConfig", "ConfigError", "load_config", "parse_config",
-           "validate_data", "load_schema", "config_hash"]
+           "validate_data", "load_schema", "config_hash", "delegate_profiles_dict"]
 
 
 class ConfigError(ValueError):
@@ -95,18 +95,18 @@ class DelegateProfile:
     #: ``args`` when unset — and keel cannot *enforce* read-only for an arbitrary CLI, so
     #: this is the operator's lever, not a guarantee. See :meth:`role_args`.
     review_args: tuple[str, ...] | None = None
-
-    def role_args(self, *, review: bool = False) -> tuple[str, ...]:
-        """Flags for this role: ``review_args`` for a reviewer when set, else ``args``."""
-        if review and self.review_args is not None:
-            return self.review_args
-        return self.args
     prompt_mode: str = DEFAULT_PROMPT_MODE
     model: str | None = None
     #: How the effective model reaches the command: ``<model_arg> <model>``. Without it
     #: the documented model precedence would be unimplementable for an arbitrary CLI —
     #: attribution would record a model that was never actually selected.
     model_arg: str = DEFAULT_MODEL_ARG
+
+    def role_args(self, *, review: bool = False) -> tuple[str, ...]:
+        """Flags for this role: ``review_args`` for a reviewer when set, else ``args``."""
+        if review and self.review_args is not None:
+            return self.review_args
+        return self.args
 
 
 @dataclass(frozen=True)
@@ -310,6 +310,16 @@ def _validate_delegate_profiles(profiles: Any, *, source: str) -> list[str]:
                 f"built-ins always win and may not be redefined "
                 f"({', '.join(BUILTIN_DELEGATE_VENDORS)}) — rename the profile"
             )
+        elif name in DELEGATE_PROFILE_VENDORS:
+            # `delegate_profile` exists to say *which* CLI ran. A profile named after its
+            # own vendor makes every attribution field read "cli", which is exactly the
+            # ambiguity the field was added to remove.
+            errors.append(
+                f"{where}: profile name {name!r} is a delegate vendor name and would make "
+                "attribution ambiguous — agent:cli, system 'cli' and delegate_profile "
+                "'cli' would all say the same nothing. Name it after the CLI, e.g. "
+                "'cursor'"
+            )
         # A name that can never be selected is a config error, not a silent dead entry:
         # ``--delegate`` is split on the first colon, so a name containing one resolves
         # to a different (missing) profile, and an empty name reads as no delegate at all.
@@ -364,7 +374,7 @@ def _policy_capability_fields(value: Any, path: str = "policy_pack") -> list[tup
     return fields
 
 
-def _delegate_profiles_dict(config: ProjectConfig) -> dict:
+def delegate_profiles_dict(config: ProjectConfig) -> dict:
     """``{"delegate_profiles": {...}}``, or ``{}`` when none are configured.
 
     Shared by :func:`_canonical` and ``contracts.project_as_dict`` so the hashed form
@@ -420,7 +430,7 @@ def _canonical(config: ProjectConfig) -> dict:
             # Omitted entirely when empty: emitting "delegate_profiles": {} would rotate
             # config_hash for every project that has never configured one, which is the
             # normal treatment for an added optional field.
-            **_delegate_profiles_dict(config),
+            **delegate_profiles_dict(config),
             "tier3_globs": list(config.knobs.tier3_globs),
             "ci_workflows": dict(sorted(config.knobs.ci_workflows.items())),
             "docs_gate_paths": list(config.knobs.docs_gate_paths),

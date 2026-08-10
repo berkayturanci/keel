@@ -38,7 +38,8 @@ knobs:
     cursor:
       vendor: cli
       command: cursor-agent
-      args: ["-p", "--force"]   # standing flags the CLI always needs
+      args: ["-p", "--force"]   # implementer: print mode + non-interactive approval
+      review_args: ["-p"]       # reviewer: same, minus permission to approve edits
       prompt_mode: arg          # "stdin" (default) | "arg"
       model: null               # default model; --delegate cursor:<model> beats it
       model_arg: --model        # how the model reaches the command
@@ -143,10 +144,21 @@ That deserves its own security pass rather than riding along here.
 | file | change |
 | --- | --- |
 | `src/keel/config.py` | `knobs.delegate_profiles`; parse + validate (known vendor, required fields per vendor, `prompt_mode` ∈ {stdin, arg}, no built-in shadowing) |
-| `src/keel/agents.py` | `CLI_VENDORS`; `resolve_delegate_profile()`; profile-aware `split_delegate` consumers — all pure |
+| `src/keel/agents.py` | `CLI_VENDORS`; `resolve_delegate_profile()`; `profile_attribution()`; `is_safe_model_token()`; profile-aware `split_delegate` consumers — all pure |
 | `src/keel/adapters/commands/ship.md` | s4/s7: generic-CLI dispatch, `prompt_mode`, tier-3 refusal, attribution; regenerate adapter surfaces |
 | `docs/keel/configuration.md`, `parameter-reference.md`, `runtime-capabilities.md` | document the profile block and the new delegate form |
 | `tests/test_config.py`, `tests/test_agents.py` | parsing, validation errors, resolution precedence, shadowing rejection — to the 100 % bar |
+
+**Two guarantees here are enforced by adapter prose, not by code**, and are recorded so
+they are not mistaken for something keel checks:
+
+- **Argv safety of the per-run model.** `agents.is_safe_model_token()` exists and is
+  tested, but nothing in `src/keel` calls it — keel core never spawns the delegate, the
+  orchestrator does. Same shape as `split_delegate`/`attribution`, but this one is
+  security-flavoured, so the obligation is written down rather than assumed.
+- **Read-only review for a `cli` profile.** Unlike every other reviewer vendor, a profile
+  is an arbitrary binary with one `command` for both roles. `review_args` is the
+  operator's lever; keel validates neither list.
 
 Out of scope: `openai-compatible`, `google-api`, any change to hosted-API delegates, and any
 relaxation of tier-3.

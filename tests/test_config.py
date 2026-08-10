@@ -629,6 +629,16 @@ class TestDelegateProfiles(unittest.TestCase):
         }))
         self.assertNotEqual(cfg.config_hash(base), cfg.config_hash(changed))
 
+    def test_profile_named_after_its_vendor_rejected(self):
+        """A profile called `cli` makes every attribution field say the same nothing."""
+        with self.assertRaises(cfg.ConfigError) as ctx:
+            cfg.parse_config(self._with({
+                "cli": {"vendor": "cli", "command": "cursor-agent"},
+            }))
+        message = str(ctx.exception)
+        self.assertIn("would make attribution ambiguous", message)
+        self.assertIn("e.g. 'cursor'", message)
+
     def test_model_arg_defaults_and_overrides(self):
         parsed = cfg.parse_config(self._with({
             "cursor": {"vendor": "cli", "command": "cursor-agent"},

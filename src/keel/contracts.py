@@ -747,7 +747,7 @@ def project_as_dict(config: cfg.ProjectConfig) -> dict[str, Any]:
             "build_gate_cmd": config.knobs.build_gate_cmd,
             "lint_cmd": config.knobs.lint_cmd,
             "implementer_agents": dict(sorted(config.knobs.implementer_agents.items())),
-            **cfg._delegate_profiles_dict(config),
+            **cfg.delegate_profiles_dict(config),
             "tier3_globs": list(config.knobs.tier3_globs),
             "ci_workflows": dict(sorted(config.knobs.ci_workflows.items())),
             "docs_gate_paths": list(config.knobs.docs_gate_paths),
