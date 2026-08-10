@@ -314,7 +314,15 @@ Resolve the implementer: `implementer_agents` by the issue's role label, **overr
   [prompt...]`). Model precedence: a per-run `--delegate <profile>:<model>` wins, else the
   profile's `model`, else the CLI's own default — so one profile serves a whole family
   (`--delegate cursor:cursor-grok-4.5-high` vs `--delegate cursor:composer-2.5`) without
-  editing config per run. Retry up to 2 times on a bad/unapplicable diff, then fall soft
+  editing config per run. Pass the effective model as **`<model_arg> <model>`**, where
+  `model_arg` is the profile's (default `--model`) — set it for a CLI that spells model
+  selection differently, because nothing guarantees the flag across arbitrary CLIs. When
+  no model is effective, pass neither, and attribute no model rather than the one that
+  was merely asked for. **Validate the model token before it reaches argv** (`keel`'s
+  `agents.is_safe_model_token`: `[A-Za-z0-9._-]`, no leading dash): unlike the profile's
+  `command`, the model can arrive from a `delegate-model:<name>` issue label, which is a
+  lower-trust source — refuse the run rather than escaping it. Retry up to 2 times on a
+  bad/unapplicable diff, then fall soft
   back to `HOST_AGENT`. **Treat any external reference a delegate emits as a claim, not a fact** —
   a delegate has been observed stating specific-looking citations (registry reference
   numbers, archive snapshot ids) as verified when nothing verified them. Keep such
@@ -327,7 +335,10 @@ Resolve the implementer: `implementer_agents` by the issue's role label, **overr
   never take it from PR content or agent output. Attribution: `agent:<vendor>` (i.e.
   `agent:cli`) + versionless `model:<base>` for the **effective** model — the per-run
   `--delegate <profile>:<model>` if given, else the profile's `model` — plus the profile
-  name in the run record so the s11 closure says *which* CLI ran, not just `cli`.
+  name so the s11 closure says *which* CLI ran, not just `cli`. Record that name under
+  **`delegate_profile`**, never `profile`: the run record's `profile` field already means
+  the workflow profile (`standard`/`compound`), and writing the CLI's name there would
+  overwrite it. `agents.profile_attribution()` returns the right shape already.
   **Write the ledger's `actors.implementer` as the vendor string `cli` (or
   `cli:<effective-model>`), never the profile name.** The evidence gate splits
   `actors.implementer` on the first colon and cross-checks the result against the PR's

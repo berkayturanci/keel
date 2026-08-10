@@ -530,6 +530,43 @@ class TestDelegateProfiles(unittest.TestCase):
                     }))
                 self.assertIn("may not be empty or blank", str(ctx.exception))
 
+    def test_non_string_key_reported_not_crashed(self):
+        """YAML keys are not necessarily strings, and the schema never checks key types.
+
+        SafeLoader resolves a bare `on:` to True, `2:` to 2 and `~:` to None. Reaching
+        the string checks with one of those raised an uncaught AttributeError straight
+        out of `keel validate`.
+        """
+        for key, kind in ((True, "bool"), (2, "int"), (None, "NoneType")):
+            with self.subTest(key=key):
+                with self.assertRaises(cfg.ConfigError) as ctx:
+                    cfg.parse_config(self._with({
+                        key: {"vendor": "cli", "command": "cursor-agent"},
+                    }))
+                message = str(ctx.exception)
+                self.assertIn(f"is {kind}, not a string", message)
+                self.assertIn("quote the key", message)
+
+    def test_model_arg_defaults_and_overrides(self):
+        parsed = cfg.parse_config(self._with({
+            "cursor": {"vendor": "cli", "command": "cursor-agent"},
+            "weird": {"vendor": "cli", "command": "weirdcli", "model_arg": "-m"},
+        }))
+        profiles = parsed.knobs.delegate_profiles
+        # Without a way to spell model selection, the documented precedence would be
+        # unimplementable for an arbitrary CLI.
+        self.assertEqual(profiles["cursor"].model_arg, "--model")
+        self.assertEqual(profiles["weird"].model_arg, "-m")
+
+    def test_model_arg_changes_the_config_hash(self):
+        base = cfg.parse_config(self._with({
+            "cursor": {"vendor": "cli", "command": "cursor-agent"},
+        }))
+        changed = cfg.parse_config(self._with({
+            "cursor": {"vendor": "cli", "command": "cursor-agent", "model_arg": "-m"},
+        }))
+        self.assertNotEqual(cfg.config_hash(base), cfg.config_hash(changed))
+
     def test_missing_vendor_left_to_the_schema(self):
         # No semantic "unknown vendor None" noise on top of the schema's required-field error.
         with self.assertRaises(cfg.ConfigError) as ctx:
@@ -570,12 +607,14 @@ class TestDelegateProfiles(unittest.TestCase):
             "command": "cursor-agent",
             "prompt_mode": "stdin",  # the default, made explicit on the way out
             "model": "composer-1",
+            "model_arg": "--model",  # ditto: how the model actually reaches the CLI
         })
         self.assertEqual(profiles["gemini-cli"], {
             "vendor": "cli",
             "command": "gemini",
             "prompt_mode": "arg",
             "model": None,
+            "model_arg": "--model",
         })
         # A round trip through the contract reparses to the same profiles.
         reparsed = self._with({name: dict(p) for name, p in profiles.items()})

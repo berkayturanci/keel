@@ -80,6 +80,11 @@
               "model": {
                 "type": ["string", "null"],
                 "description": "Optional model override passed through to the command."
+              },
+              "model_arg": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Flag the command takes the effective model on, applied as '<model_arg> <model>'. Defaults to --model; set it for a CLI that spells model selection differently."
               }
             }
           },

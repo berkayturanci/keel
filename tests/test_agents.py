@@ -205,7 +205,7 @@ class TestProfileAttribution(unittest.TestCase):
         self.assertEqual(a["agent_label"], "agent:cli")
         self.assertEqual(a["model_label"], "model:composer-1")
         self.assertEqual(a["system"], "cli:composer-1")
-        self.assertEqual(a["profile"], "cursor")
+        self.assertEqual(a["delegate_profile"], "cursor")
 
     def test_profile_without_model_names_the_cli_that_ran(self):
         profile = agents.resolve_delegate_profile(PROFILE_CONFIG, "gemini-cli")
@@ -214,7 +214,7 @@ class TestProfileAttribution(unittest.TestCase):
         self.assertIsNone(a["model_label"])
         self.assertEqual(a["system"], "cli")
         # Without this, the closure comment could only say "cli".
-        self.assertEqual(a["profile"], "gemini-cli")
+        self.assertEqual(a["delegate_profile"], "gemini-cli")
 
     def test_per_run_model_beats_the_profile_model(self):
         """`--delegate cursor:MODEL` must attribute the model that actually ran.
@@ -229,7 +229,7 @@ class TestProfileAttribution(unittest.TestCase):
         self.assertEqual(a["agent_label"], "agent:cli")
         self.assertEqual(a["model_label"], "model:cursor-grok-4")
         self.assertEqual(a["system"], "cli:cursor-grok-4.5-high")
-        self.assertEqual(a["profile"], "cursor")
+        self.assertEqual(a["delegate_profile"], "cursor")
 
     def test_per_run_model_supplies_one_when_the_profile_has_none(self):
         profile = agents.resolve_delegate_profile(PROFILE_CONFIG, "gemini-cli")
@@ -237,6 +237,37 @@ class TestProfileAttribution(unittest.TestCase):
         a = agents.profile_attribution("gemini-cli", profile, "gemini-2.5-pro")
         self.assertEqual(a["model_label"], "model:gemini-2")
         self.assertEqual(a["system"], "cli:gemini-2.5-pro")
+
+    def test_key_is_delegate_profile_not_profile(self):
+        """`profile` is taken: the run record uses it for standard/compound.
+
+        Merging this dict into a ship_run record under the shorter key would
+        silently overwrite the workflow profile.
+        """
+        profile = agents.resolve_delegate_profile(PROFILE_CONFIG, "cursor")
+        a = agents.profile_attribution("cursor", profile)
+        self.assertEqual(a["delegate_profile"], "cursor")
+        self.assertNotIn("profile", a)
+
+
+class TestSafeModelToken(unittest.TestCase):
+    """The model may come from an issue label, so it is argv-bound untrusted input."""
+
+    def test_accepts_real_model_ids(self):
+        for model in ("cursor-grok-4.5-high", "gpt-5.3-codex", "composer-2.5",
+                      "qwen2.5", "claude-sonnet-5", "gemini_2.5"):
+            with self.subTest(model=model):
+                self.assertTrue(agents.is_safe_model_token(model))
+
+    def test_rejects_argv_and_shell_hazards(self):
+        for model in ("--version", "-m", "a b", "a;rm -rf /", "a|b", "a$(id)",
+                      "a`id`", "a&b", "a>b", "a\nb", "a'b", 'a"b', "a/b", "a:b"):
+            with self.subTest(model=model):
+                self.assertFalse(agents.is_safe_model_token(model))
+
+    def test_rejects_empty(self):
+        self.assertFalse(agents.is_safe_model_token(""))
+        self.assertFalse(agents.is_safe_model_token(None))
 
 
 class TestExistingDelegateFormsUnchanged(unittest.TestCase):

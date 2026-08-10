@@ -142,8 +142,12 @@ def profile_attribution(
     """Attribution for a generic delegate profile (issue #659).
 
     ``agent:<vendor>`` (``agent:cli``) plus the **effective** model — the same shape as
-    :func:`attribution` — with the extra ``profile`` key naming the entry, so the
-    closure comment can say *which* CLI ran rather than just ``cli``.
+    :func:`attribution` — with an extra key naming the entry, so the closure comment can
+    say *which* CLI ran rather than just ``cli``.
+
+    That key is ``delegate_profile``, **not** ``profile``: the ship run record already
+    uses ``profile`` for the workflow profile (``standard``/``compound``), so merging
+    this dict into the record under the shorter name would silently overwrite it.
 
     ``model`` is the per-run override from ``--delegate <profile>:<model>`` and wins
     over the profile's own ``model``, matching the precedence s4 documents. Without it
@@ -152,5 +156,30 @@ def profile_attribution(
     picked a model per run.
     """
     record = attribution(profile.vendor, model or profile.model)
-    record["profile"] = name
+    record["delegate_profile"] = name
     return record
+
+
+#: Characters a per-run model token may contain. Deliberately tight: the effective model
+#: can arrive from ``--delegate <profile>:<model>`` or a ``delegate-model:<name>`` issue
+#: label, which is a lower-trust source than the operator-authored ``command``, and it
+#: ends up on a subprocess argv.
+_MODEL_TOKEN_OK = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
+)
+
+
+def is_safe_model_token(model: str | None) -> bool:
+    """True when ``model`` is safe to pass to a delegate CLI as an argument.
+
+    A profile's ``command`` is operator-authored config, but the *model* beside it may
+    come from an issue label, so it does not carry the same trust. Anything outside
+    ``[A-Za-z0-9._-]`` — whitespace, quotes, shell metacharacters, a leading dash that
+    would read as another flag — is rejected rather than escaped, because no legitimate
+    model id needs it. Empty/``None`` is False: pass no model instead.
+    """
+    if not model:
+        return False
+    if model.startswith("-"):
+        return False
+    return all(ch in _MODEL_TOKEN_OK for ch in model)

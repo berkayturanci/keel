@@ -753,6 +753,7 @@ def project_as_dict(config: cfg.ProjectConfig) -> dict[str, Any]:
                     "command": profile.command,
                     "prompt_mode": profile.prompt_mode,
                     "model": profile.model,
+                    "model_arg": profile.model_arg,
                 }
                 for name, profile in sorted(config.knobs.delegate_profiles.items())
             },

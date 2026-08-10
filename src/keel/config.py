@@ -39,8 +39,14 @@ DELEGATE_PROFILE_VENDORS = ("cli",)
 DELEGATE_PROMPT_MODES = ("stdin", "arg")
 DEFAULT_PROMPT_MODE = "stdin"
 
+#: Flag a ``cli`` profile's command takes the model on. Near-universal across coding-agent
+#: CLIs (``cursor-agent``, ``gemini``, Aider all spell it ``--model``), but configurable
+#: because "arbitrary CLI" is the whole point and nothing guarantees the spelling.
+DEFAULT_MODEL_ARG = "--model"
+
 __all__ = ["SLOTS", "DEFAULT_EXTENSIONS_DIR", "DELEGATE_PROFILE_VENDORS",
-           "DELEGATE_PROMPT_MODES", "DEFAULT_PROMPT_MODE", "Automation", "DelegateProfile",
+           "DELEGATE_PROMPT_MODES", "DEFAULT_PROMPT_MODE", "DEFAULT_MODEL_ARG",
+           "Automation", "DelegateProfile",
            "Knobs", "ProjectConfig", "ConfigError", "load_config", "parse_config",
            "validate_data", "load_schema", "config_hash"]
 
@@ -80,6 +86,10 @@ class DelegateProfile:
     command: str | None = None
     prompt_mode: str = DEFAULT_PROMPT_MODE
     model: str | None = None
+    #: How the effective model reaches the command: ``<model_arg> <model>``. Without it
+    #: the documented model precedence would be unimplementable for an arbitrary CLI —
+    #: attribution would record a model that was never actually selected.
+    model_arg: str = DEFAULT_MODEL_ARG
 
 
 @dataclass(frozen=True)
@@ -157,6 +167,7 @@ def _build(data: dict) -> ProjectConfig:
                 command=profile.get("command"),
                 prompt_mode=profile.get("prompt_mode", DEFAULT_PROMPT_MODE),
                 model=profile.get("model"),
+                model_arg=profile.get("model_arg") or DEFAULT_MODEL_ARG,
             )
             for name, profile in k.get("delegate_profiles", {}).items()
         },
@@ -256,6 +267,18 @@ def _validate_delegate_profiles(profiles: Any, *, source: str) -> list[str]:
         return errors  # the schema already reported the wrong shape
     for name, profile in profiles.items():
         where = f"{source}.{name}"
+        # A YAML mapping key is not necessarily a string: SafeLoader resolves an
+        # unquoted ``on:``/``2:``/``~:`` to bool/int/None, and the JSON schema validates
+        # property *values* only, never key types. So this has to be the first check —
+        # everything below assumes ``str`` methods, and reaching them with a bool raised
+        # an uncaught AttributeError out of ``keel validate``.
+        if not isinstance(name, str):
+            errors.append(
+                f"{source}: delegate profile name {name!r} is {type(name).__name__}, not a "
+                "string — quote the key (YAML reads a bare on/off/yes/no/true/false as a "
+                "boolean and a bare number as an int)"
+            )
+            continue
         if name in BUILTIN_DELEGATE_VENDORS:
             errors.append(
                 f"{where}: profile name {name!r} shadows a built-in delegate vendor; "
@@ -346,6 +369,7 @@ def _canonical(config: ProjectConfig) -> dict:
                     "command": profile.command,
                     "prompt_mode": profile.prompt_mode,
                     "model": profile.model,
+                    "model_arg": profile.model_arg,
                 }
                 for name, profile in sorted(config.knobs.delegate_profiles.items())
             },

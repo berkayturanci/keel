@@ -176,7 +176,8 @@ knobs:
       vendor: cli
       command: cursor-agent
       prompt_mode: arg          # "stdin" (default) | "arg"
-      model: null               # optional; passed through as the model override
+      model: null               # optional default model for this profile
+      model_arg: --model        # flag the model is passed on (default "--model")
     gemini-cli:
       vendor: cli
       command: gemini
@@ -190,12 +191,26 @@ Then: `/keel:ship 123 --delegate cursor`.
 | `vendor` | string | ✅ | the generic vendor. Only `cli` today |
 | `command` | string | ✅ for `cli` | the executable keel runs, e.g. `cursor-agent` |
 | `prompt_mode` | `stdin` \| `arg` | | how the prompt reaches the command (default `stdin`) |
-| `model` | string \| null | | optional model override passed through to the command |
+| `model` | string \| null | | default model for this profile; a per-run `--delegate <name>:<model>` beats it |
+| `model_arg` | string | | flag the model is passed on, as `<model_arg> <model>` (default `--model`) |
 
 **`prompt_mode` exists because stdin is not universal.** `stdin` (the default) writes the
 prompt to a temp file and pipes it in, because positional-arg passing hangs some CLIs. But
 `cursor-agent`'s usage is `agent [options] [command] [prompt...]` — the prompt *is* a
 positional argument — so those CLIs need `arg`.
+
+**`model_arg` exists for the same reason.** Model precedence is per-run
+`--delegate <name>:<model>` > the profile's `model` > the CLI's own default, so one
+`cursor` profile serves `cursor-grok-4.5-high`, `composer-2.5` and the rest without a
+config edit. But an *arbitrary* CLI shares no guaranteed model-selection syntax, so the
+profile has to say how: the effective model is applied as `<model_arg> <model>`. The
+default `--model` covers `cursor-agent`, `gemini` and Aider; set it for anything else.
+
+**Quote a profile name that YAML would not read as a string.** A bare `on:`, `yes:`,
+`2:` or `~:` key parses as a boolean, integer or null, not a name — `keel validate`
+rejects those with an explicit message. A name may also not be blank or contain `:`,
+since `--delegate` splits on the first colon to separate the profile from a per-run
+model, which would make such a name unselectable.
 
 **Name resolution is fail-closed.** A profile name is resolved *after* the built-in
 delegate vendors (`claude`, `codex`, `agy`, `ollama`, `anthropic-api`, `openai-api`), and a
