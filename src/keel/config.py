@@ -262,6 +262,20 @@ def _validate_delegate_profiles(profiles: Any, *, source: str) -> list[str]:
                 f"built-ins always win and may not be redefined "
                 f"({', '.join(BUILTIN_DELEGATE_VENDORS)}) — rename the profile"
             )
+        # A name that can never be selected is a config error, not a silent dead entry:
+        # ``--delegate`` is split on the first colon, so a name containing one resolves
+        # to a different (missing) profile, and an empty name reads as no delegate at all.
+        if not name.strip():
+            errors.append(
+                f"{source}: a delegate profile name may not be empty or blank — "
+                "an empty --delegate reads as no delegate at all"
+            )
+        elif ":" in name:
+            errors.append(
+                f"{where}: profile name {name!r} may not contain ':' — --delegate splits "
+                "on the first colon to separate the profile from a per-run model, so this "
+                "name could never be selected"
+            )
         if not isinstance(profile, dict) or "vendor" not in profile:
             continue  # shape + required-field errors are the schema's job
         vendor = profile["vendor"]

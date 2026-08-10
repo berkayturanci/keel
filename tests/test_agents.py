@@ -216,6 +216,28 @@ class TestProfileAttribution(unittest.TestCase):
         # Without this, the closure comment could only say "cli".
         self.assertEqual(a["profile"], "gemini-cli")
 
+    def test_per_run_model_beats_the_profile_model(self):
+        """`--delegate cursor:MODEL` must attribute the model that actually ran.
+
+        s4 documents per-run > profile > CLI default, and keel's rule is that
+        attribution records the *effective* implementer. Reporting the configured
+        model here would mislabel every run that overrode it.
+        """
+        profile = agents.resolve_delegate_profile(PROFILE_CONFIG, "cursor")
+        self.assertEqual(profile.model, "composer-1")
+        a = agents.profile_attribution("cursor", profile, "cursor-grok-4.5-high")
+        self.assertEqual(a["agent_label"], "agent:cli")
+        self.assertEqual(a["model_label"], "model:cursor-grok-4")
+        self.assertEqual(a["system"], "cli:cursor-grok-4.5-high")
+        self.assertEqual(a["profile"], "cursor")
+
+    def test_per_run_model_supplies_one_when_the_profile_has_none(self):
+        profile = agents.resolve_delegate_profile(PROFILE_CONFIG, "gemini-cli")
+        self.assertIsNone(profile.model)
+        a = agents.profile_attribution("gemini-cli", profile, "gemini-2.5-pro")
+        self.assertEqual(a["model_label"], "model:gemini-2")
+        self.assertEqual(a["system"], "cli:gemini-2.5-pro")
+
 
 class TestExistingDelegateFormsUnchanged(unittest.TestCase):
     """Every pre-existing delegate form must resolve exactly as it did before #659."""

@@ -506,6 +506,30 @@ class TestDelegateProfiles(unittest.TestCase):
                 self.assertIn(f"profile name {name!r} shadows a built-in delegate vendor", message)
                 self.assertIn("rename the profile", message)
 
+    def test_name_with_a_colon_rejected(self):
+        """``--delegate`` splits on the first colon, so such a name is unreachable.
+
+        ``--delegate cursor:pro`` would resolve to profile ``cursor`` with model
+        ``pro`` — never to a profile literally named ``cursor:pro``. Accepting the
+        name would leave a config entry that silently never runs.
+        """
+        with self.assertRaises(cfg.ConfigError) as ctx:
+            cfg.parse_config(self._with({
+                "cursor:pro": {"vendor": "cli", "command": "cursor-agent"},
+            }))
+        message = str(ctx.exception)
+        self.assertIn("may not contain ':'", message)
+        self.assertIn("could never be selected", message)
+
+    def test_blank_name_rejected(self):
+        for name in ("", "   "):
+            with self.subTest(name=name):
+                with self.assertRaises(cfg.ConfigError) as ctx:
+                    cfg.parse_config(self._with({
+                        name: {"vendor": "cli", "command": "cursor-agent"},
+                    }))
+                self.assertIn("may not be empty or blank", str(ctx.exception))
+
     def test_missing_vendor_left_to_the_schema(self):
         # No semantic "unknown vendor None" noise on top of the schema's required-field error.
         with self.assertRaises(cfg.ConfigError) as ctx:

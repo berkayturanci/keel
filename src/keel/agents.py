@@ -134,13 +134,23 @@ def attribution(vendor: str, model: str | None = None) -> dict[str, str | None]:
     }
 
 
-def profile_attribution(name: str, profile: DelegateProfile) -> dict[str, str | None]:
+def profile_attribution(
+    name: str,
+    profile: DelegateProfile,
+    model: str | None = None,
+) -> dict[str, str | None]:
     """Attribution for a generic delegate profile (issue #659).
 
-    ``agent:<vendor>`` (``agent:cli``) plus the profile's ``model`` when it sets one —
-    the same shape as :func:`attribution` — with the extra ``profile`` key naming the
-    entry, so the closure comment can say *which* CLI ran rather than just ``cli``.
+    ``agent:<vendor>`` (``agent:cli``) plus the **effective** model — the same shape as
+    :func:`attribution` — with the extra ``profile`` key naming the entry, so the
+    closure comment can say *which* CLI ran rather than just ``cli``.
+
+    ``model`` is the per-run override from ``--delegate <profile>:<model>`` and wins
+    over the profile's own ``model``, matching the precedence s4 documents. Without it
+    the helper could only ever report the configured model, which would break keel's
+    rule that attribution records the *effective* implementer whenever an operator
+    picked a model per run.
     """
-    record = attribution(profile.vendor, profile.model)
+    record = attribution(profile.vendor, model or profile.model)
     record["profile"] = name
     return record

@@ -325,8 +325,15 @@ Resolve the implementer: `implementer_agents` by the issue's role label, **overr
   consent scope: this is the `shell`/subprocess surface `codex`/`agy` already use, and
   the profile's `command` is operator-authored config exactly like `build_gate_cmd` —
   never take it from PR content or agent output. Attribution: `agent:<vendor>` (i.e.
-  `agent:cli`) + versionless `model:<base>` when the profile sets a model, plus the
-  profile name in the run record so the s11 closure says *which* CLI ran, not just `cli`.
+  `agent:cli`) + versionless `model:<base>` for the **effective** model — the per-run
+  `--delegate <profile>:<model>` if given, else the profile's `model` — plus the profile
+  name in the run record so the s11 closure says *which* CLI ran, not just `cli`.
+  **Write the ledger's `actors.implementer` as the vendor string `cli` (or
+  `cli:<effective-model>`), never the profile name.** The evidence gate splits
+  `actors.implementer` on the first colon and cross-checks the result against the PR's
+  `agent:*` labels, so recording `cursor` there against an `agent:cli` label reads as a
+  vendor contradiction and blocks the merge. The profile name belongs in the run record's
+  profile field, which is what the closure comment reads.
 - **Hosted-API implementer** (`anthropic-api:MODEL`, `openai-api:MODEL`) — the same
   no-tools contract as the local-model path with the endpoint swapped: the orchestrator
   does every git/PR step itself and requests only code generation via
@@ -758,4 +765,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=claude command=ship keel_version=1.11.0 source_sha256=d8f016c9d26270c1758f329bfbc2d5cefb1d89207c010d077bb6bd4620d9f4ee generated_sha256=d8f016c9d26270c1758f329bfbc2d5cefb1d89207c010d077bb6bd4620d9f4ee -->
+<!-- keel-generated: surface=claude command=ship keel_version=1.11.0 source_sha256=bee4d53b38b71628bed4ffdc7fef5f25de00d31bda83b2a0296e0a6f7075c263 generated_sha256=bee4d53b38b71628bed4ffdc7fef5f25de00d31bda83b2a0296e0a6f7075c263 -->
