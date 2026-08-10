@@ -747,17 +747,7 @@ def project_as_dict(config: cfg.ProjectConfig) -> dict[str, Any]:
             "build_gate_cmd": config.knobs.build_gate_cmd,
             "lint_cmd": config.knobs.lint_cmd,
             "implementer_agents": dict(sorted(config.knobs.implementer_agents.items())),
-            "delegate_profiles": {
-                name: {
-                    "vendor": profile.vendor,
-                    "command": profile.command,
-                    "args": list(profile.args),
-                    "prompt_mode": profile.prompt_mode,
-                    "model": profile.model,
-                    "model_arg": profile.model_arg,
-                }
-                for name, profile in sorted(config.knobs.delegate_profiles.items())
-            },
+            **cfg._delegate_profiles_dict(config),
             "tier3_globs": list(config.knobs.tier3_globs),
             "ci_workflows": dict(sorted(config.knobs.ci_workflows.items())),
             "docs_gate_paths": list(config.knobs.docs_gate_paths),

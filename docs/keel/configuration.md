@@ -192,6 +192,7 @@ Then: `/keel:ship 123 --delegate cursor`.
 | `vendor` | string | ✅ | the generic vendor. Only `cli` today |
 | `command` | string | ✅ for `cli` | the executable keel runs, e.g. `cursor-agent` |
 | `args` | string[] | | standing flags the command always takes, e.g. `["-p", "--force"]` |
+| `review_args` | string[] \| null | | flags for the **reviewer** role; falls back to `args` when unset (`null` ≠ `[]`) |
 | `prompt_mode` | `stdin` \| `arg` | | how the prompt reaches the command (default `stdin`) |
 | `model` | string \| null | | default model for this profile; a per-run `--delegate <name>:<model>` beats it |
 | `model_arg` | string | | flag the model is passed on, as `<model_arg> <model>` (default `--model`) |
@@ -207,6 +208,16 @@ positional argument — so those CLIs need `arg`.
 config edit. But an *arbitrary* CLI shares no guaranteed model-selection syntax, so the
 profile has to say how: the effective model is applied as `<model_arg> <model>`. The
 default `--model` covers `cursor-agent`, `gemini` and Aider; set it for anything else.
+
+**keel cannot make a generic CLI reviewer read-only — `review_args` is your lever.**
+Every other non-host reviewer vendor has a mechanism behind the "read-only / findings
+only" promise: a vendor read-only flag, a local endpoint, a single hosted-API call. A
+profile is an arbitrary binary, and the same `command` serves both the implementer and
+the reviewer role. `args` typically carries the implementer's write-enabling flags —
+`cursor-agent`'s `--force` approves edits non-interactively — so a reviewer invoked with
+them can edit the checkout. Set `review_args` to a read-only invocation for any profile
+you use as a reviewer. keel validates neither list; this is operator-configured, not
+enforced.
 
 **Quote a profile name that YAML would not read as a string.** A bare `on:`, `yes:`,
 `2:` or `~:` key parses as a boolean, integer or null, not a name — `keel validate`

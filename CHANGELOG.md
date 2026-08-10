@@ -16,7 +16,9 @@ All notable changes to keel are documented here. The format follows
   default (positional-arg passing hangs some CLIs), `arg` is the opt-in for CLIs whose usage
   makes the prompt a positional argument. `args` carries the standing flags a real CLI
   needs (`cursor-agent -p --force`), since `command` is one executable rather than a shell
-  line, and `model_arg` (default `--model`) says how the effective model reaches it —
+  line, `review_args` keeps the reviewer role off those write-enabling flags (keel cannot
+  enforce read-only on an arbitrary binary, so this is the operator's lever and s7 says so
+  plainly rather than promising what it cannot keep), and `model_arg` (default `--model`) says how the effective model reaches it —
   arbitrary CLIs share no model-selection syntax, so without it the documented precedence
   (per-run `--delegate <name>:<model>` > profile `model` > CLI default) would be
   unimplementable and attribution would report a model that was never selected. Name resolution is **fail-closed** — profiles

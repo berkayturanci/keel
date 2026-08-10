@@ -77,6 +77,11 @@
                 "items": { "type": "string", "minLength": 1 },
                 "description": "Fixed flags the command always takes, e.g. [\"-p\", \"--force\"] for cursor-agent. Operator-authored config, same trust level as command."
               },
+              "review_args": {
+                "type": ["array", "null"],
+                "items": { "type": "string", "minLength": 1 },
+                "description": "Flags for the reviewer role when they must differ from args, e.g. dropping --force so the CLI cannot approve edits. Falls back to args when absent. keel cannot enforce read-only on an arbitrary CLI; this is the operator's lever. null means unset (fall back to args), which is not the same as [] (pass no flags)."
+              },
               "prompt_mode": {
                 "type": "string",
                 "minLength": 1,

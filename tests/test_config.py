@@ -573,6 +573,62 @@ class TestDelegateProfiles(unittest.TestCase):
         }))
         self.assertNotEqual(cfg.config_hash(base), cfg.config_hash(changed))
 
+    def test_review_args_separate_the_reviewer_from_the_implementer(self):
+        """s7 wants findings only, but `args` carries write-enabling implementer flags.
+
+        `cursor-agent`'s `--force` approves edits non-interactively — exactly wrong for a
+        reviewer. keel cannot enforce read-only on an arbitrary CLI, so this is the
+        operator's lever; `role_args` is where the choice is made.
+        """
+        parsed = cfg.parse_config(self._with({
+            "cursor": {"vendor": "cli", "command": "cursor-agent",
+                       "args": ["-p", "--force"], "review_args": ["-p"]},
+            "shared": {"vendor": "cli", "command": "gemini", "args": ["-p"]},
+        }))
+        profiles = parsed.knobs.delegate_profiles
+        self.assertEqual(profiles["cursor"].role_args(), ("-p", "--force"))
+        self.assertEqual(profiles["cursor"].role_args(review=True), ("-p",))
+        # Unset falls back rather than emptying, so existing profiles keep working.
+        self.assertIsNone(profiles["shared"].review_args)
+        self.assertEqual(profiles["shared"].role_args(review=True), ("-p",))
+
+    def test_empty_review_args_is_not_the_same_as_unset(self):
+        parsed = cfg.parse_config(self._with({
+            "bare": {"vendor": "cli", "command": "x", "args": ["-p"], "review_args": []},
+        }))
+        self.assertEqual(parsed.knobs.delegate_profiles["bare"].role_args(review=True), ())
+
+    def test_no_profiles_does_not_appear_in_the_hashed_form(self):
+        """An added optional field must not rotate config_hash for projects without it.
+
+        Emitting `"delegate_profiles": {}` unconditionally changed the hash of every
+        existing config, and every other hash test asserts only *relative* differences,
+        so nothing would have caught it.
+        """
+        plain = cfg.parse_config(copy.deepcopy(VALID))
+        self.assertNotIn("delegate_profiles", cfg._canonical(plain)["knobs"])
+        self.assertNotIn("delegate_profiles", contracts.project_as_dict(plain)["knobs"])
+
+    def test_the_hashed_form_and_the_published_contract_agree(self):
+        """One helper feeds both, so the two serialisations cannot drift apart."""
+        parsed = cfg.parse_config(self._with({
+            "cursor": {"vendor": "cli", "command": "cursor-agent", "args": ["-p"]},
+        }))
+        self.assertEqual(
+            cfg._canonical(parsed)["knobs"]["delegate_profiles"],
+            contracts.project_as_dict(parsed)["knobs"]["delegate_profiles"],
+        )
+
+    def test_review_args_change_the_config_hash(self):
+        base = cfg.parse_config(self._with({
+            "cursor": {"vendor": "cli", "command": "cursor-agent", "args": ["-p"]},
+        }))
+        changed = cfg.parse_config(self._with({
+            "cursor": {"vendor": "cli", "command": "cursor-agent", "args": ["-p"],
+                       "review_args": []},
+        }))
+        self.assertNotEqual(cfg.config_hash(base), cfg.config_hash(changed))
+
     def test_model_arg_defaults_and_overrides(self):
         parsed = cfg.parse_config(self._with({
             "cursor": {"vendor": "cli", "command": "cursor-agent"},
@@ -632,6 +688,7 @@ class TestDelegateProfiles(unittest.TestCase):
             "vendor": "cli",
             "command": "cursor-agent",
             "args": [],
+            "review_args": None,     # unset -> the reviewer role falls back to args
             "prompt_mode": "stdin",  # the default, made explicit on the way out
             "model": "composer-1",
             "model_arg": "--model",  # ditto: how the model actually reaches the CLI
@@ -640,6 +697,7 @@ class TestDelegateProfiles(unittest.TestCase):
             "vendor": "cli",
             "command": "gemini",
             "args": [],
+            "review_args": None,
             "prompt_mode": "arg",
             "model": None,
             "model_arg": "--model",

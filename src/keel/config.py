@@ -89,6 +89,18 @@ class DelegateProfile:
     #: executable, so without this an operator would have to smuggle flags into it as a
     #: string keel would then treat as a filename.
     args: tuple[str, ...] = ()
+    #: Flags for the **reviewer** role, when they must differ from ``args``. s7 asks a
+    #: reviewer for findings only, but ``args`` typically carries the implementer's
+    #: write-enabling flags (``--force`` approves edits non-interactively). Falls back to
+    #: ``args`` when unset — and keel cannot *enforce* read-only for an arbitrary CLI, so
+    #: this is the operator's lever, not a guarantee. See :meth:`role_args`.
+    review_args: tuple[str, ...] | None = None
+
+    def role_args(self, *, review: bool = False) -> tuple[str, ...]:
+        """Flags for this role: ``review_args`` for a reviewer when set, else ``args``."""
+        if review and self.review_args is not None:
+            return self.review_args
+        return self.args
     prompt_mode: str = DEFAULT_PROMPT_MODE
     model: str | None = None
     #: How the effective model reaches the command: ``<model_arg> <model>``. Without it
@@ -171,6 +183,13 @@ def _build(data: dict) -> ProjectConfig:
                 vendor=profile["vendor"],
                 command=profile.get("command"),
                 args=tuple(profile.get("args", ())),
+                # An explicit null round-trips as "unset" — distinct from [], which
+                # means "the reviewer takes no flags at all".
+                review_args=(
+                    tuple(profile["review_args"])
+                    if profile.get("review_args") is not None
+                    else None
+                ),
                 prompt_mode=profile.get("prompt_mode", DEFAULT_PROMPT_MODE),
                 model=profile.get("model"),
                 model_arg=profile.get("model_arg") or DEFAULT_MODEL_ARG,
@@ -345,6 +364,35 @@ def _policy_capability_fields(value: Any, path: str = "policy_pack") -> list[tup
     return fields
 
 
+def _delegate_profiles_dict(config: ProjectConfig) -> dict:
+    """``{"delegate_profiles": {...}}``, or ``{}`` when none are configured.
+
+    Shared by :func:`_canonical` and ``contracts.project_as_dict`` so the hashed form
+    and the published contract cannot drift apart. Empty means **absent**, not ``{}``:
+    an added optional field must not change ``config_hash`` for projects that never
+    used it.
+    """
+    profiles = config.knobs.delegate_profiles
+    if not profiles:
+        return {}
+    return {
+        "delegate_profiles": {
+            name: {
+                "vendor": profile.vendor,
+                "command": profile.command,
+                "args": list(profile.args),
+                "review_args": (
+                    list(profile.review_args) if profile.review_args is not None else None
+                ),
+                "prompt_mode": profile.prompt_mode,
+                "model": profile.model,
+                "model_arg": profile.model_arg,
+            }
+            for name, profile in sorted(profiles.items())
+        }
+    }
+
+
 def _canonical(config: ProjectConfig) -> dict:
     return {
         "extends": config.extends,
@@ -369,17 +417,10 @@ def _canonical(config: ProjectConfig) -> dict:
             "build_gate_cmd": config.knobs.build_gate_cmd,
             "lint_cmd": config.knobs.lint_cmd,
             "implementer_agents": dict(sorted(config.knobs.implementer_agents.items())),
-            "delegate_profiles": {
-                name: {
-                    "vendor": profile.vendor,
-                    "command": profile.command,
-                    "args": list(profile.args),
-                    "prompt_mode": profile.prompt_mode,
-                    "model": profile.model,
-                    "model_arg": profile.model_arg,
-                }
-                for name, profile in sorted(config.knobs.delegate_profiles.items())
-            },
+            # Omitted entirely when empty: emitting "delegate_profiles": {} would rotate
+            # config_hash for every project that has never configured one, which is the
+            # normal treatment for an added optional field.
+            **_delegate_profiles_dict(config),
             "tier3_globs": list(config.knobs.tier3_globs),
             "ci_workflows": dict(sorted(config.knobs.ci_workflows.items())),
             "docs_gate_paths": list(config.knobs.docs_gate_paths),

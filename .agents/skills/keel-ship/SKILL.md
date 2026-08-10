@@ -456,13 +456,23 @@ abort the session** (counter resets after any merge).
 ### s7 review *(agent)* + slot `reviewers`
 Run **N reviewers** (N from the s5 tier, or `--reviewers`), the host or `--review-delegate`
 vendor. A non-host reviewer vendor runs **read-only / findings-only** (the vendor's
-read-only mode, local endpoint, for a `knobs.delegate_profiles` name the profile's
-`command` with the prompt delivered per its `prompt_mode` exactly as in s4, or — for
-`anthropic-api:`/`openai-api:` — one hosted-API
+read-only mode, local endpoint, or — for `anthropic-api:`/`openai-api:` — one hosted-API
 call via the `api_delegate` wrapper: diff + rubric in, structured verdict out; same
 `secrets`-scope and no-retry-on-429 rules as s4, no tier restriction since review output
 is advisory, not a mutation), the orchestrator still posts — the **orchestrator owns
-all writes**; reviewers never call a GitHub write API. Spawn all reviewers in a **single
+all writes**; reviewers never call a GitHub write API.
+A **`knobs.delegate_profiles` reviewer is the one case keel cannot make read-only for
+you.** Every other non-host vendor has a mechanism behind that promise — a vendor
+read-only flag, a local endpoint, a single hosted-API call — but a profile is an
+arbitrary binary, and the same `command` serves both roles. Its `args` typically carry
+the *implementer's* write-enabling flags (`cursor-agent`'s `--force` approves edits
+non-interactively), so reusing them for review hands a reviewer permission to edit the
+checkout. Invoke a profile reviewer with **`review_args`** when set, else `args`
+(`DelegateProfile.role_args(review=True)`), and set `review_args` to a read-only
+invocation for any profile used as a reviewer. keel validates neither — this is
+operator-configured, not enforced. Treat a profile reviewer's diff as advisory and
+**re-check the worktree is clean afterwards** rather than assuming it was untouched.
+Spawn all reviewers in a **single
 Agent message** so they run concurrently; each gets a fresh codename, the PR head SHA, its
 focus slice, and a no-cross-reading instruction. Coverage invariant: when the count drops,
 focus dimensions **merge, never drop** (a 1-reviewer slot covers all dimensions; suitable
@@ -779,4 +789,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=skills command=ship keel_version=1.11.0 source_sha256=4fc6a47c350caa1e0a4435357b69ea1d7d4dba6e419e3d8e2669961a638a081c generated_sha256=06bbf66713e1fe88a543cab55c97ff157a0035f0723c01c0d4abb6cf113fdd1e -->
+<!-- keel-generated: surface=skills command=ship keel_version=1.11.0 source_sha256=38ed8219eee514cc4957d532b0aa3345d14bb9fd3d7762af7566dda392aab10c generated_sha256=b10fda9de25e45e13f0f169c57606a4e7dc6000d9a8c341a9870305795613943 -->
