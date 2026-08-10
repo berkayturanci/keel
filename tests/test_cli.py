@@ -60,6 +60,34 @@ def run(argv):
     return rc, out.getvalue(), err.getvalue()
 
 
+#: Held between ``setUpModule`` and ``tearDownModule``.
+_NO_REAL_JURY = None
+
+
+def setUpModule():
+    """Keep this module away from a real ``jury`` install.
+
+    ``ship`` and ``run-gates`` run the ``jury`` built-in for real, so any test here
+    that produces a **non-empty** diff with ``jury`` in ``gates:`` shells out to the
+    CLI whenever it happens to be on PATH. CI never installs it, so such a test is
+    instant and green there and, on a developer machine, spends ~85 s running a
+    billed cross-vendor review of a throwaway diff — and fails outright if that
+    review returns anything blocking, because ``ship`` exits 1 on a blocking verdict.
+
+    Reporting unavailable is exactly what CI sees, so the gate takes its fail-soft
+    no-op path and behaviour matches. This module covers CLI wiring; the gate's own
+    behaviour is covered in ``tests/test_jury.py``, which drives it through the
+    ``_run=`` seam with a fake runner.
+    """
+    global _NO_REAL_JURY
+    _NO_REAL_JURY = patch("keel.jury.available", return_value=False)
+    _NO_REAL_JURY.start()
+
+
+def tearDownModule():
+    _NO_REAL_JURY.stop()
+
+
 class TestVersion(unittest.TestCase):
     def test_version_subcommand(self):
         rc, out, _ = run(["version"])
@@ -819,6 +847,9 @@ class TestShip(unittest.TestCase):
         self.assertEqual(data["contract"]["workflow_profile"]["profile"], "compound")
 
     def test_json_contract_matches_assessment_for_tier3_auto_jury(self):
+        # The only test here with a non-empty diff *and* jury in ``gates:``, so the
+        # only one that would reach a real ``jury`` install — see ``setUpModule``.
+        # What is under test is the contract tier-3 resolves to, not the review.
         import tempfile
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
