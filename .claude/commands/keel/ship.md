@@ -485,6 +485,28 @@ only for narrow tier-1 PRs). Run any `reviewers` Lego extensions. Capture per-re
 can zip them by index). On a missing/erroring delegate vendor, fall back to the host
 reviewer and log it (record the effective vendor that ran).
 
+**Reviewer stance — brief every reviewer to *refute*, not to approve.** The focus slices
+above say *where* to look; without a stance a reviewer reads the change sympathetically and
+confirms it looks right, which is how a defect ships past a green CI. Each reviewer's brief
+must carry all four of these together — the first without the rest is worse than neither:
+
+- **Refute it.** Default to the position that the change is wrong and concede only when the
+  code forces you to. The author already made the case for it; nobody has made the case
+  against it.
+- **A finding you cannot demonstrate is not a finding.** Prefer a reproduction — a failing
+  input, a trace through the code to the line — over an assertion. This is the counterweight
+  to the stance, not a footnote to it.
+- **Finish the trace.** Follow a defect from where you noticed it to where it actually lands.
+  A wrong value on a screen and a wrong value written to a record are the same bug with very
+  different severities, and only the second one is the reason to hold the merge.
+- **"I checked X, Y and Z and found nothing" is a complete review.** Say what you checked.
+  A reviewer with no way to report a clean result either goes quiet or manufactures
+  something, and a manufactured finding is a failure of the review, not a strict one.
+
+Gates check whether code *runs*, not whether it does what the PR *says* — a claim the
+artefact does not deliver is the class of defect this stance exists to catch, and the class
+CI structurally cannot.
+
 **Post findings per `--review-comments` (inline default):** review findings are public PR
 evidence. The orchestrator MUST post each reviewer's final verdict to the GitHub PR through
 the selected transport as a distinct PR review or PR comment. This applies on every path:
@@ -793,4 +815,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=claude command=ship keel_version=1.11.0 source_sha256=fbbdd6239164b81ee8294b35968921c2e10b4b97260d505795e2dd05fe0e0c35 generated_sha256=fbbdd6239164b81ee8294b35968921c2e10b4b97260d505795e2dd05fe0e0c35 -->
+<!-- keel-generated: surface=claude command=ship keel_version=1.11.0 source_sha256=e20d443faa6da4fe8cc2befb8be0fa80a5a1bc41c8f2394296959fae2ae9cce6 generated_sha256=e20d443faa6da4fe8cc2befb8be0fa80a5a1bc41c8f2394296959fae2ae9cce6 -->

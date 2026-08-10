@@ -106,6 +106,10 @@ here.
 
 Each reviewer prompt MUST carry:
 
+- The **reviewer stance** from the canonical rubric (ship.md s7): refute rather than
+  approve, a finding you cannot demonstrate is not a finding, finish the trace to where the
+  defect lands, and "I checked X, Y and Z and found nothing" is a complete review. Carry all
+  four — the stance without its counterweights invites manufactured findings.
 - A **fresh codename** per reviewer (unique per PR and per cycle), used as the audit-trail
   identifier on its findings.
 - The **no-cross-reading** rule: a reviewer must be fully independent and must NOT read any

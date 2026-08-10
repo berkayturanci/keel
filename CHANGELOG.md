@@ -6,6 +6,19 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **s7 reviewers are now briefed to refute, not to approve** (#679): the adapter told
+  reviewers *where* to look (`logic correctness`, `threading`, `test coverage`, …) and never
+  *how* — there was no `refute`, `adversarial` or "default to wrong" anywhere in it. A
+  reviewer with a topic list and no stance reads a change sympathetically and confirms it,
+  which is how a defect ships past a green CI. The brief now carries four rules together:
+  refute rather than approve; **a finding you cannot demonstrate is not a finding**; finish
+  the trace to where the defect lands, not where you noticed it; and "I checked X, Y and Z
+  and found nothing" is a complete review. The last three are the counterweight — an
+  aggressive reviewer with no way to report a clean result either goes quiet or invents. The
+  stance is project-neutral prose, so it lives in the adapter; naming a project's own
+  recurring failure shapes is config, tracked separately.
+
 ### Security
 - **Dependabot now watches `.github/requirements/`** (#664): the `pip` entry covered only
   the repo root, so the hash-locked release tooling for `publish.yml` was scanned for
