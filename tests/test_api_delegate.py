@@ -147,6 +147,111 @@ class TestBuildRequest(unittest.TestCase):
         self.assertEqual(payload["max_completion_tokens"], 100)
 
 
+    def test_google_shape_puts_the_key_in_a_header_not_the_url(self):
+        url, headers, body = api_delegate._build_request(
+            "google-api", "gemini-2.5-pro", "p", "key", 100
+        )
+        self.assertEqual(
+            url,
+            "https://generativelanguage.googleapis.com/v1beta/models/"
+            "gemini-2.5-pro:generateContent",
+        )
+        self.assertEqual(headers["x-goog-api-key"], "key")
+        # A URL carries into logs, referrers and error text; a header does not.
+        self.assertNotIn("key", url)
+        payload = json.loads(body)
+        self.assertEqual(payload["contents"], [{"parts": [{"text": "p"}]}])
+        self.assertEqual(payload["generationConfig"]["maxOutputTokens"], 100)
+
+
+class TestGoogleModelIsUrlPathInput(unittest.TestCase):
+    """google-api is the only vendor that puts the model in the URL path (#666).
+
+    The model arrives from `--delegate google-api:MODEL` or a `delegate-model:`
+    issue label, so for this vendor it is untrusted input reaching a URL that also
+    carries an API key header.
+    """
+
+    ENV = {"GEMINI_API_KEY": "k"}
+
+    def _generate(self, model):
+        return api_delegate.generate("google-api", model, "p", _env=self.ENV, _opener=None)
+
+    def test_real_model_ids_are_accepted(self):
+        for model in ("gemini-2.5-pro", "gemini-2.0-flash-001", "gemini_1.5"):
+            with self.subTest(model=model):
+                self.assertIsNone(api_delegate._unsafe_model_reason(model))
+
+    def test_path_and_query_characters_are_refused(self):
+        for model in ("a/b", "../../etc", "a?key=leak", "a#frag", "a b", "a%2f", "a:b"):
+            with self.subTest(model=model):
+                self.assertIsNotNone(api_delegate._unsafe_model_reason(model))
+
+    def test_empty_model_is_refused(self):
+        self.assertIsNotNone(api_delegate._unsafe_model_reason(""))
+
+    def test_dot_dot_is_refused_even_when_every_character_is_path_safe(self):
+        # ".." passes the charset check (both dots are allowed on their own), so
+        # the traversal test is a separate guard, not a redundant one.
+        self.assertTrue(all(c in api_delegate._MODEL_PATH_OK for c in "..-a"))
+        self.assertEqual(
+            api_delegate._unsafe_model_reason("..-a"),
+            "model contains a path traversal sequence",
+        )
+
+    def test_a_vendor_without_a_templated_url_skips_the_check_entirely(self):
+        # openai-api's URL has no {model}, so an odd model must not be rejected
+        # here — it rides in the body and the guard does not apply.
+        result = api_delegate.generate(
+            "openai-api", "a/b", "p",
+            _env={"OPENAI_API_KEY": "k"},
+            _opener=FakeOpener(FakeResponse(json.dumps(
+                {"choices": [{"message": {"content": "ok"}}]}
+            ))),
+        )
+        self.assertTrue(result.ok)
+
+    def test_generate_refuses_before_any_network_call(self):
+        # _opener=None would build a real opener, so reaching the network here
+        # would attempt a live request; the guard must return first.
+        result = self._generate("../../v1beta/models/other")
+        self.assertFalse(result.ok)
+        self.assertEqual(result.error_code, "bad-model")
+
+    def test_a_valid_model_passes_the_guard_and_completes(self):
+        # The guard must be a filter, not a wall: a real model id goes through.
+        result = api_delegate.generate(
+            "google-api", "gemini-2.5-pro", "p", _env=self.ENV,
+            _opener=FakeOpener(FakeResponse(json.dumps(
+                {"candidates": [{"content": {"parts": [{"text": "diff"}]}}]}
+            ))),
+        )
+        self.assertTrue(result.ok, result.error)
+        self.assertEqual(result.text, "diff")
+
+    def test_the_other_vendors_do_not_get_this_restriction(self):
+        # Their model rides in the JSON body, where a slash is inert.
+        _, _, body = api_delegate._build_request("openai-api", "a/b", "p", "k", 10)
+        self.assertEqual(json.loads(body)["model"], "a/b")
+
+
+class TestGoogleAuthStatusMapping(unittest.TestCase):
+    def test_google_400_for_a_bad_key_reads_as_auth_not_http(self):
+        """Verified against the live endpoint: Google answers a bad key with 400.
+
+        Classifying it as a generic `http` error would send an operator with a
+        mistyped GEMINI_API_KEY looking anywhere but at the key.
+        """
+        result = api_delegate._status_error(
+            400, '{"error":{"status":"INVALID_ARGUMENT","message":"API key not valid."}}'
+        )
+        self.assertEqual(result.error_code, "auth")
+
+    def test_an_unrelated_400_stays_http(self):
+        result = api_delegate._status_error(400, '{"error":{"message":"bad request shape"}}')
+        self.assertEqual(result.error_code, "http")
+
+
 class TestParseContent(unittest.TestCase):
     def test_anthropic_text_blocks_joined(self):
         data = {"content": [{"type": "text", "text": "a"}, {"type": "text", "text": "b"}]}
@@ -170,6 +275,17 @@ class TestParseContent(unittest.TestCase):
 
     def test_openai_malformed(self):
         self.assertIsNone(api_delegate._parse_content("openai-api", {"choices": []}))
+
+
+    def test_google_content(self):
+        data = {"candidates": [{"content": {"parts": [{"text": "hi"}, {"text": "!"}]}}]}
+        self.assertEqual(api_delegate._parse_content("google-api", data), "hi!")
+
+    def test_google_malformed(self):
+        for data in ({}, {"candidates": []}, {"candidates": [{"content": {}}]},
+                     {"candidates": [{"content": {"parts": [{"inlineData": {}}]}}]}):
+            with self.subTest(data=data):
+                self.assertIsNone(api_delegate._parse_content("google-api", data))
 
 
 class TestOpener(unittest.TestCase):

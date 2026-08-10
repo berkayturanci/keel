@@ -198,10 +198,10 @@ capture.
   `standard`; `--compound` is an alias for `--profile compound`. The compound profile swaps
   the `s4`/`s7`/`s9`/`s11` steps to compound behavior (see the **Compound profile** section)
   without forking the backbone. Composes with every other flag (e.g. `--compound --jury`).
-- `--delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL|PROFILE>` — the
+- `--delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL|google-api:MODEL|PROFILE>` — the
   **implementer**. Per-run override of any issue role/delegate label. `ollama:` and the
   `*-api:` values require a non-empty model. The `*-api:` values are the **hosted-API
-  delegates** (no agent CLI needed — just `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` in the
+  delegates** (no agent CLI needed — just `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/`GEMINI_API_KEY` in the
   environment; see s4). `PROFILE` is the name of a `knobs.delegate_profiles` entry — a
   **generic CLI vendor** configured in `.keel/project.yaml` (e.g. `--delegate cursor`;
   see s4). Built-in vendor names always win over a profile name. Default: the **host
@@ -351,13 +351,17 @@ Resolve the implementer: `implementer_agents` by the issue's role label, **overr
   `agent:*` labels, so recording `cursor` there against an `agent:cli` label reads as a
   vendor contradiction and blocks the merge. The profile name goes in `delegate_profile`,
   as above, which is what the closure comment reads.
-- **Hosted-API implementer** (`anthropic-api:MODEL`, `openai-api:MODEL`) — the same
+- **Hosted-API implementer** (`anthropic-api:MODEL`, `openai-api:MODEL`, `google-api:MODEL`) — the same
   no-tools contract as the local-model path with the endpoint swapped: the orchestrator
   does every git/PR step itself and requests only code generation via
   `keel`'s `api_delegate` wrapper (one stdlib HTTP call per attempt against the vendor's
-  API, keyed by `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` from the environment). Same
-  retry-×2-then-fall-back rule; **never retry HTTP 429 / rate-limit** — fail soft and
-  fall back immediately. Reading the token is `secret_access`, so the run's approved
+  API, keyed by `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/`GEMINI_API_KEY` from the
+  environment). Same retry-×2-then-fall-back rule; **never retry HTTP 429 /
+  rate-limit** — fail soft and fall back immediately. `google-api` is the one vendor
+  whose URL carries the **model in its path**, so an unsafe model id there is refused
+  before any request (`bad-model`) rather than escaped — treat a `delegate-model:`
+  label as untrusted for that vendor. It also answers an invalid key with HTTP **400**,
+  not 401, which keel maps to `auth` so a mistyped key reads as a key problem. Reading the token is `secret_access`, so the run's approved
   scope must include `secrets` — without it, resolve to `HOST_AGENT` before any key is
   read. **Hosted-API implementers are refused on tier-3**, same rule and fallback as
   local models. Attribution: `agent:<vendor>` (e.g. `agent:anthropic-api`) + versionless
@@ -463,7 +467,7 @@ abort the session** (counter resets after any merge).
 ### s7 review *(agent)* + slot `reviewers`
 Run **N reviewers** (N from the s5 tier, or `--reviewers`), the host or `--review-delegate`
 vendor. A non-host reviewer vendor runs **read-only / findings-only** (the vendor's
-read-only mode, local endpoint, or — for `anthropic-api:`/`openai-api:` — one hosted-API
+read-only mode, local endpoint, or — for `anthropic-api:`/`openai-api:`/`google-api:` — one hosted-API
 call via the `api_delegate` wrapper: diff + rubric in, structured verdict out; same
 `secrets`-scope and no-retry-on-429 rules as s4, no tier restriction since review output
 is advisory, not a mutation), the orchestrator still posts — the **orchestrator owns
@@ -818,4 +822,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=skills command=ship keel_version=1.11.0 source_sha256=e20d443faa6da4fe8cc2befb8be0fa80a5a1bc41c8f2394296959fae2ae9cce6 generated_sha256=941fa34b60a5bfab12fb8eba808933033d86e88c2e4140497155365959bc6c98 -->
+<!-- keel-generated: surface=skills command=ship keel_version=1.11.0 source_sha256=4db27ccc50630ed37df6711a53df99a3ed09ae0dd2d8e62dde0b3a91c3906fec generated_sha256=ea36b2dc016ec8411886cdf7bc345f2a777cf1e05107523ec4a51d630b78f292 -->

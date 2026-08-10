@@ -6,6 +6,19 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **`google-api:MODEL` hosted delegate** (#666): Gemini can now be an implementer or
+  reviewer with only `GEMINI_API_KEY` in the environment — no agent CLI. Same no-tools
+  contract, `secrets` scope, retry-×2-then-fall-back and no-retry-on-429 rules as the
+  existing `anthropic-api:`/`openai-api:` delegates. Two vendor-specific details are
+  handled rather than inherited, both verified against the live endpoint: Gemini puts
+  the **model in the URL path**, so a model id outside `[A-Za-z0-9._-]` (or containing
+  `..`) is refused as `bad-model` before any request instead of being escaped — for this
+  vendor a `delegate-model:` label is untrusted input reaching a URL; and it answers an
+  invalid key with **HTTP 400**, not 401, which now maps to `auth` so a mistyped key
+  does not read as a generic transport error. The key travels as an `x-goog-api-key`
+  header, never as a `?key=` query parameter.
+
 ### Changed
 - **s7 reviewers are now briefed to refute, not to approve** (#679): the adapter told
   reviewers *where* to look (`logic correctness`, `threading`, `test coverage`, …) and never

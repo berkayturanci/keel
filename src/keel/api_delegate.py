@@ -40,12 +40,46 @@ DEFAULT_TIMEOUT = 300
 
 _ANTHROPIC_VERSION = "2023-06-01"
 
-#: vendor -> (endpoint, env var carrying the key). Only these two vendors exist
-#: (``agents.API_VENDORS``); Gemini is additive later, same pattern.
+#: vendor -> (endpoint, env var carrying the key), matching ``agents.API_VENDORS``.
+#: Every URL here is a **hardcoded constant** — that is what keeps the SSRF story
+#: trivial, and why a config-supplied endpoint is a separate decision (#666).
+#:
+#: ``google-api``'s URL carries the model in its *path* rather than the body, so it
+#: is a template. See :func:`_unsafe_model_reason`: a model that reaches a URL path
+#: is untrusted input in a way the other two vendors' models are not.
 _VENDORS: dict[str, tuple[str, str]] = {
     "anthropic-api": ("https://api.anthropic.com/v1/messages", "ANTHROPIC_API_KEY"),
     "openai-api": ("https://api.openai.com/v1/chat/completions", "OPENAI_API_KEY"),
+    "google-api": (
+        "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+        "GEMINI_API_KEY",
+    ),
 }
+
+#: Characters a model id may contain when it is interpolated into a URL path.
+_MODEL_PATH_OK = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-_"
+)
+
+
+def _unsafe_model_reason(model: str) -> str | None:
+    """Reject a model id that cannot safely be interpolated into a URL path.
+
+    Only ``google-api`` puts the model in the URL; ``anthropic-api``/``openai-api``
+    carry it in the JSON body, where a stray ``/`` or ``?`` is inert. Here it is not:
+    the model arrives from ``--delegate google-api:MODEL`` or a ``delegate-model:``
+    issue label, so a value containing ``/``, ``..``, ``?`` or ``#`` could retarget
+    the request to a different path or smuggle query parameters onto a URL that also
+    carries an API key header. Rejected rather than escaped — no real Gemini model id
+    needs anything outside ``[A-Za-z0-9._-]``.
+    """
+    if not model:
+        return "model is empty"
+    if not all(ch in _MODEL_PATH_OK for ch in model):
+        return "model contains characters that are not URL-path safe"
+    if ".." in model:
+        return "model contains a path traversal sequence"
+    return None
 
 
 @dataclass(frozen=True)
@@ -55,8 +89,8 @@ class ApiResult:
     ok: bool
     text: str = ""
     #: machine-readable failure class: ``unknown-vendor`` | ``no-key`` |
-    #: ``bad-key`` | ``auth`` | ``rate-limit`` | ``http`` | ``network`` |
-    #: ``bad-response``; ``None`` on success.
+    #: ``bad-key`` | ``bad-model`` | ``auth`` | ``rate-limit`` | ``http`` |
+    #: ``network`` | ``bad-response``; ``None`` on success.
     error_code: str | None = None
     error: str | None = None
 
@@ -106,14 +140,24 @@ def _build_request(
     vendor: str, model: str, prompt: str, key: str, max_tokens: int
 ) -> tuple[str, dict[str, str], bytes]:
     """Build ``(url, headers, body)`` for one single-shot generation call."""
-    url = _VENDORS[vendor][0]
-    if vendor == "anthropic-api":
+    payload: dict
+    url = _VENDORS[vendor][0].format(model=model) if "{model}" in _VENDORS[vendor][0] \
+        else _VENDORS[vendor][0]
+    if vendor == "google-api":
+        # Key travels as a header, never as ?key= — a URL carries into logs,
+        # referrers and error text in a way a header does not.
+        headers = {"content-type": "application/json", "x-goog-api-key": key}
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"maxOutputTokens": max_tokens},
+        }
+    elif vendor == "anthropic-api":
         headers = {
             "content-type": "application/json",
             "x-api-key": key,
             "anthropic-version": _ANTHROPIC_VERSION,
         }
-        payload: dict = {
+        payload = {
             "model": model,
             "max_tokens": max_tokens,
             "messages": [{"role": "user", "content": prompt}],
@@ -134,7 +178,11 @@ def _build_request(
 def _parse_content(vendor: str, data: object) -> str | None:
     """Extract the completion text from a decoded response, ``None`` if malformed."""
     try:
-        if vendor == "anthropic-api":
+        if vendor == "google-api":
+            parts = data["candidates"][0]["content"]["parts"]  # type: ignore[index]
+            chunks = [p["text"] for p in parts if isinstance(p, dict) and "text" in p]
+            text = "".join(chunks) if chunks else None
+        elif vendor == "anthropic-api":
             blocks = data["content"]  # type: ignore[index]
             parts = [b["text"] for b in blocks if isinstance(b, dict) and b.get("type") == "text"]
             text = "".join(parts) if parts else None
@@ -158,7 +206,16 @@ def _build_opener() -> urllib.request.OpenerDirector:
 
 
 def _status_error(status: int, body: str) -> ApiResult:
-    """Map an HTTP error status onto the fail-soft vocabulary."""
+    """Map an HTTP error status onto the fail-soft vocabulary.
+
+    ``400`` is read as an auth failure when the body says so, because Google answers
+    an invalid ``GEMINI_API_KEY`` with ``400 INVALID_ARGUMENT: API key not valid``
+    rather than 401 (verified against the live endpoint). Classifying that as a
+    generic ``http`` error would tell an operator with a mistyped key to look
+    anywhere but at the key.
+    """
+    if status == 400 and "api key not valid" in body.lower():
+        return ApiResult(False, error_code="auth", error=f"HTTP {status}: {body[:200]}")
     if status in (401, 403):
         return ApiResult(False, error_code="auth", error=f"HTTP {status}: {body[:200]}")
     if status == 429:
@@ -194,6 +251,10 @@ def generate(
     reason = _invalid_key_reason(key)
     if reason is not None:
         return ApiResult(False, error_code="bad-key", error=reason)
+    if "{model}" in entry[0]:
+        unsafe = _unsafe_model_reason(model)
+        if unsafe is not None:
+            return ApiResult(False, error_code="bad-model", error=unsafe)
 
     url, headers, body = _build_request(vendor, model, prompt, key, max_tokens)
     # URL comes only from the hardcoded _VENDORS constants — never config, env,
