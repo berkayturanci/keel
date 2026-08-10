@@ -6,6 +6,15 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+- **Dependabot now watches `.github/requirements/`** (#664): the `pip` entry covered only
+  the repo root, so the hash-locked release tooling for `publish.yml` was scanned for
+  advisories but never got a fix PR — a `setuptools` alert had been sitting open with no
+  route to being resolved, and any future advisory against that file would have done the
+  same. Also bumps `setuptools` 80.9.0 → 84.0.0, clearing that alert. The new entry is
+  deliberately ungrouped: `publish.yml` runs only on a `v*` tag, so a bad pin there
+  surfaces during a release rather than in CI, and each bump should be reviewed alone.
+
 ### Added
 - **`knobs.delegate_profiles` — the generic `cli` delegate vendor** (#659): `--delegate`
   accepted a closed set of vendors, so every new provider was a code change. Installed and

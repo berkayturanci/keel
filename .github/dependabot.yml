@@ -29,6 +29,21 @@ updates:
         patterns:
           - "*"
 
+  # The hash-locked release tooling for publish.yml. It lives outside "/", so the
+  # entry above never sees it: Dependabot still raises *alerts* for this file but
+  # opens no PR to fix them, which left a setuptools advisory sitting open with no
+  # route to being fixed. Ungrouped on purpose — a bump here must be reviewed on its
+  # own, because publish.yml runs only on a v* tag, so a bad pin surfaces during a
+  # release rather than in CI.
+  - package-ecosystem: "pip"
+    directory: "/.github/requirements"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "build"
+    labels:
+      - "dependencies"
+
   # Keep local pre-commit hook pins current.
   - package-ecosystem: "pre-commit"
     directory: "/"

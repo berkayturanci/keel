@@ -107,10 +107,19 @@ class TestReleaseDocs(unittest.TestCase):
         self.assertIn("-r .github/requirements/publish-tools.txt", workflow)
         self.assertNotIn("python -m pip install build", workflow)
         self.assertNotIn("python -m pip install cyclonedx-bom", workflow)
-        self.assertIn("build==1.3.0 \\", lockfile)
-        self.assertIn("cyclonedx-bom==7.2.1 \\", lockfile)
-        self.assertIn("PyYAML==6.0.3 \\", lockfile)
-        self.assertIn("setuptools==80.9.0 \\", lockfile)
+        # Pinned + hashed, but deliberately not pinned to a *specific* version here:
+        # Dependabot now watches this file (#664), so asserting the exact version would
+        # turn every routine bump red and train people to edit the test to make a
+        # security update pass. What must hold is that each tool is present, exactly
+        # pinned with ==, and carries a hash.
+        for tool in ("build", "cyclonedx-bom", "PyYAML", "setuptools"):
+            with self.subTest(tool=tool):
+                pinned = re.search(
+                    rf"^{re.escape(tool)}==\S+ \\\n    --hash=sha256:[0-9a-f]{{64}}$",
+                    lockfile,
+                    re.MULTILINE,
+                )
+                self.assertIsNotNone(pinned, f"{tool} must be == pinned with a sha256")
         self.assertIn("python -m build --no-isolation", workflow)
         self.assertIn("python -m pip install --no-deps dist/*.whl", workflow)
         self.assertNotIn("python -m pip install dist/*.whl", workflow)
