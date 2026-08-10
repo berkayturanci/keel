@@ -62,29 +62,56 @@ def run(argv):
 
 #: Held between ``setUpModule`` and ``tearDownModule``.
 _NO_REAL_JURY = None
+_NO_GH_AUTH_PROBE = None
+
+#: The real ``runtime.detect``, called by the stub below with its ``run`` seam filled in.
+_REAL_DETECT = runtime.detect
+
+
+def _detect_without_probing_gh(root=".", **kwargs):
+    """``runtime.detect`` with its one subprocess replaced by a fixed answer.
+
+    ``detect`` shells out exactly once — ``gh auth status``, for the ``gh-auth``
+    capability — and takes a ``run`` seam for precisely this. Everything else it
+    reports (``shutil.which`` lookups, env flags, a write probe) is local and cheap,
+    so only the seam is filled and the rest runs for real.
+    """
+    kwargs.setdefault("run", lambda *_a, **_kw: _proc("gh auth status not probed", ok=False))
+    return _REAL_DETECT(root, **kwargs)
 
 
 def setUpModule():
-    """Keep this module away from a real ``jury`` install.
+    """Keep this module off the two external CLIs the code under test can reach.
 
-    ``ship`` and ``run-gates`` run the ``jury`` built-in for real, so any test here
-    that produces a **non-empty** diff with ``jury`` in ``gates:`` shells out to the
-    CLI whenever it happens to be on PATH. CI never installs it, so such a test is
-    instant and green there and, on a developer machine, spends ~85 s running a
-    billed cross-vendor review of a throwaway diff — and fails outright if that
-    review returns anything blocking, because ``ship`` exits 1 on a blocking verdict.
+    **jury.** ``ship`` and ``run-gates`` run the ``jury`` built-in for real, so any
+    test here that produces a **non-empty** diff with ``jury`` in ``gates:`` shells out
+    to the CLI whenever it happens to be on PATH. CI never installs it, so such a test
+    is instant and green there and, on a developer machine, spends ~85 s running a
+    billed cross-vendor review of a throwaway diff — and fails outright if that review
+    returns anything blocking, because ``ship`` exits 1 on a blocking verdict.
 
-    Reporting unavailable is exactly what CI sees, so the gate takes its fail-soft
-    no-op path and behaviour matches. This module covers CLI wiring; the gate's own
-    behaviour is covered in ``tests/test_jury.py``, which drives it through the
-    ``_run=`` seam with a fake runner.
+    **gh auth.** Eight-plus CLI commands call ``runtime.detect``, which probes
+    ``gh auth status`` for the ``gh-auth`` capability. Driving those commands through
+    ``cli.main`` ran the probe **111 times** in one pass of this module. On a machine
+    with an authenticated ``gh`` each probe validates the token against the API, which
+    was ~55 s of the module's ~65 s runtime — 85 % of it, spent on 111 requests that
+    tell the tests nothing.
+
+    Both stubs report the state CI actually runs in — no ``jury`` installed, and no
+    ``GH_TOKEN``, so the probe fails there too — which is why nothing had to change to
+    accommodate them. Each CLI's own behaviour is covered where it belongs:
+    ``tests/test_jury.py`` and ``tests/test_runtime.py`` both drive the real functions
+    through their injection seams.
     """
-    global _NO_REAL_JURY
+    global _NO_REAL_JURY, _NO_GH_AUTH_PROBE
     _NO_REAL_JURY = patch("keel.jury.available", return_value=False)
     _NO_REAL_JURY.start()
+    _NO_GH_AUTH_PROBE = patch("keel.runtime.detect", _detect_without_probing_gh)
+    _NO_GH_AUTH_PROBE.start()
 
 
 def tearDownModule():
+    _NO_GH_AUTH_PROBE.stop()
     _NO_REAL_JURY.stop()
 
 
