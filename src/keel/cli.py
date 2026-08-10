@@ -983,11 +983,12 @@ def _cmd_ship(args: argparse.Namespace) -> int:
               file=sys.stderr)
         return 1
     verdict = fnd.summarize(gates.collect_findings(outcomes))
-    ci_conclusion = (
-        github.ci_conclusion(args.pr, cwd=args.root)
-        if args.pr and transport.name == "gh"
-        else None
-    )
+    read_ci = bool(args.pr) and transport.name == "gh"
+    ci_conclusion = github.ci_conclusion(args.pr, cwd=args.root) if read_ci else None
+    # Read the *names* too, not just the conclusions: "everything passed" and "the
+    # workflows this project declares actually ran" are different questions, and
+    # only the second one can be answered against knobs.ci_workflows (#675).
+    ci_names = github.ci_check_names(args.pr, cwd=args.root) if read_ci else None
 
     a = ship.assess(
         # None-preserving on purpose: assess classifies an unreadable diff fail-closed,
@@ -1001,6 +1002,8 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         merge_window=config.merge_window,
         merge_window_mode=config.merge_window_mode,
         ci_conclusion=ci_conclusion,
+        ci_check_names=ci_names,
+        ci_workflows=config.knobs.ci_workflows,
         is_blocker=args.hotfix,
         # A required gate nobody dispatched has produced no verdict, so the assessment
         # must not report "clear to merge": `keel merge` will refuse the record, and
@@ -1141,8 +1144,19 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     print(f"  jury          : {jury_state} ({a.review_contract['jury']['reason']})")
     window = "OPEN" if a.window_open else f"CLOSED ({config.merge_window_mode}, night no-merge)"
     print(f"  merge window  : {window}")
-    ci_str = "unknown" if a.ci_ok is None else ("passing" if a.ci_ok else "FAILING")
+    if a.ci_ran is False:
+        # Print the count rather than a bare word: "0 checks" is the fact an
+        # operator needs, and it used to be indistinguishable from "passing".
+        ci_str = "NO CHECKS RAN (0 reported) — nothing verified this commit"
+    elif a.ci_ok is None:
+        ci_str = "unknown"
+    else:
+        ci_str = "passing" if a.ci_ok else "FAILING"
+        if ci_names is not None:
+            ci_str += f" ({len(ci_names)} check{'' if len(ci_names) == 1 else 's'})"
     print(f"  ci            : {ci_str}")
+    if a.missing_workflows:
+        print(f"  ci MISSING    : {', '.join(a.missing_workflows)} (declared, never ran)")
     print(f"  github        : {transport.name}")
     print(f"  consent       : {contract['operator_consent']['status']}")
     print(f"  intake        : {intake_record['status']}")

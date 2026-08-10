@@ -442,9 +442,13 @@ operator-applied `keel:evidence-waived` label may disarm it. Evaluate the rollup
 mixed state with any failure is a failure, never poll past it. Three branches:
 - **all green** (`success`/`skipped`/`neutral`/`stale`) ⇒ proceed.
 - **empty check set** ⇒ allow only if every changed path is in `docs_gate_paths`, else
-  mark blocked ("CI did not run on a non-docs PR"). `keel merge` enforces this itself —
-  it reports the rollup as `no-checks` (never `pass`) and applies the same carve-out — so
-  this branch is a description of core's behaviour, not a rule you implement.
+  mark blocked ("CI did not run on a non-docs PR"). Both `keel merge` **and** the `keel
+  ship` assessment enforce this themselves — merge reports the rollup as `no-checks`
+  (never `pass`), and ship reports `ci_ran: false` and blocks with *"no CI ran — nothing
+  verified this commit"* — applying the same docs-only carve-out, so the two never
+  disagree. This branch is a description of core's behaviour, not a rule you implement.
+  A **declared** `ci_workflows` entry that produced no check for this head also blocks,
+  named in the reason: green tells you what ran, not that the things you require ran.
 - **any failure/pending** ⇒ watch with a hard timeout (portable `timeout`/`gtimeout`
   wrapper; require `coreutils` on hosts lacking GNU `timeout`), then on a real failure run
   the fix-and-reply loop (read the failed log, fix, self-review, push) and re-enter s6.
@@ -789,4 +793,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=claude command=ship keel_version=1.11.0 source_sha256=3bd80c5cc0e783ec71c46b991ac777b0303278feb55691b6a3b5745dc2b5c1d4 generated_sha256=3bd80c5cc0e783ec71c46b991ac777b0303278feb55691b6a3b5745dc2b5c1d4 -->
+<!-- keel-generated: surface=claude command=ship keel_version=1.11.0 source_sha256=fbbdd6239164b81ee8294b35968921c2e10b4b97260d505795e2dd05fe0e0c35 generated_sha256=fbbdd6239164b81ee8294b35968921c2e10b4b97260d505795e2dd05fe0e0c35 -->

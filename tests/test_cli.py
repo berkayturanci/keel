@@ -5842,6 +5842,69 @@ class TestCoreMerge(unittest.TestCase):
         self.assertIn("extension not loaded", err)
 
 
+class TestShipCiVisibility(unittest.TestCase):
+    """The ship line must show what CI actually did, not just whether it was red (#675)."""
+
+    GH_UP = runtime.CapabilityReport((
+        runtime.Capability("shell", True, "ok", "test"),
+        runtime.Capability("git", True, "ok", "test"),
+        runtime.Capability("worktree", True, "ok", "test"),
+        runtime.Capability("gh", True, "ok", "test"),
+        runtime.Capability("gh-auth", True, "ok", "test"),
+        runtime.Capability("github-mcp", False, "missing", "test"),
+    ))
+
+    def _ship(self, conclusion, names, *, config=None):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d, \
+                patch("keel.cli.runtime.detect", return_value=self.GH_UP), \
+                patch("keel.cli.github.ci_conclusion", return_value=conclusion), \
+                patch("keel.cli.github.ci_check_names", return_value=names):
+            return run(["ship", config or _write_config("'true'"), "--root", d, "--pr", "7"])
+
+    def test_zero_checks_is_printed_as_zero_not_as_passing(self):
+        rc, out, _ = self._ship("", [])
+        # Blocking reaches the exit code too, so a script driving ship cannot
+        # treat "nothing ran" as a clean run either.
+        self.assertEqual(rc, 1)
+        self.assertIn("NO CHECKS RAN", out)
+        self.assertIn("nothing verified this commit", out)
+        self.assertIn("BLOCK", out.upper())
+
+    def test_passing_prints_the_check_count(self):
+        # "passing" alone was indistinguishable from "0 checks"; the count is the fact.
+        rc, out, _ = self._ship("SUCCESS", ["CI", "CodeQL"])
+        self.assertEqual(rc, 0)
+        self.assertIn("passing (2 checks)", out)
+
+    def test_one_check_is_singular(self):
+        rc, out, _ = self._ship("SUCCESS", ["CI"])
+        self.assertEqual(rc, 0)
+        self.assertIn("passing (1 check)", out)
+
+    def test_count_is_omitted_when_the_names_could_not_be_read(self):
+        # The conclusion call succeeded and the names call did not. Print no count
+        # rather than a wrong one — "0 checks" here would be a fact about gh, not
+        # about the PR, which is the confusion this whole change removes.
+        rc, out, _ = self._ship("SUCCESS", None)
+        self.assertEqual(rc, 0)
+        self.assertIn("ci            : passing", out)
+        self.assertNotIn("check)", out)
+        self.assertNotIn("checks)", out)
+
+    def test_a_declared_workflow_that_never_ran_is_named(self):
+        config = _write_raw(
+            "extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: x\n"
+            "gates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+            "  ci_workflows:\n    CI: '**'\n    CodeQL: '**'\n"
+        )
+        rc, out, _ = self._ship("SUCCESS", ["CI"], config=config)
+        self.assertEqual(rc, 1)
+        self.assertIn("ci MISSING", out)
+        self.assertIn("CodeQL", out)
+        self.assertIn("declared, never ran", out)
+
+
 class TestMergeCheckpointGate(unittest.TestCase):
     """The s10 checkpoint gate in `keel merge` (audit GAP-13)."""
 
