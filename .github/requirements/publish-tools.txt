@@ -10,8 +10,9 @@ build==1.3.0 \
     --hash=sha256:7145f0b5061ba90a1500d60bd1b13ca0a8a4cebdd0cc16ed8adf1c0e739f43b4
 chardet==5.2.0 \
     --hash=sha256:e1cf59446890a00105fe7b7912492ea04b6e6f06d4b742b2c788469e34c82970
-cyclonedx-bom==7.2.1 \
-    --hash=sha256:fdeabfec4f3274085320a40d916fc4dc2850abef7da5953d544eb5c98aa4afdd
+cyclonedx-bom==7.3.1 \
+    --hash=sha256:8c5adccefd593e89c0500463649c232625cee8e38dae1a433e057dfa495eff08 \
+    --hash=sha256:ebd99dc2cf62a7067e327bef2b2ffada99d57ed3fda2db6c4c8f3004e5bfd3cf
 cyclonedx-python-lib==11.10.0 \
     --hash=sha256:ffb9510b8d00a0896cfbe0a78b97c545d28f7d2a54e9d9dd5e5dc6e91ca9b375
 defusedxml==0.7.1 \
