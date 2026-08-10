@@ -39,6 +39,12 @@ the structured command contracts described in [`command-contracts.md`](command-c
 | `production-adjacent` | The operator/runtime explicitly allowed production-adjacent service access through `KEEL_PRODUCTION_ADJACENT=1`. |
 | `private-setup` | The operator/runtime explicitly confirmed private setup prerequisites through `KEEL_PRIVATE_SETUP=1`. |
 
+A generic CLI delegate (a `knobs.delegate_profiles` entry — see
+[`configuration.md`](configuration.md#delegate_profiles)) adds **no new capability**: running
+the profile's `command` is the same `shell` subprocess surface the built-in `codex`/`agy`
+delegates already use, and it needs no key, so neither `secret-access` nor `api-token`
+applies.
+
 ## Declaring requirements
 
 Project config can declare global requirements:

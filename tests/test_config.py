@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 from keel import config as cfg
+from keel import contracts
 
 PROJECTS_DIR = Path(__file__).resolve().parent.parent / "projects"
 DOGFOOD_CONFIG = Path(__file__).resolve().parent.parent / ".keel/project.yaml"
@@ -425,6 +426,168 @@ class TestParse(unittest.TestCase):
         with self.assertRaises(cfg.ConfigError) as ctx:
             cfg.parse_config(bad)
         self.assertIn("build_gate_cmd", str(ctx.exception))
+
+
+class TestDelegateProfiles(unittest.TestCase):
+    """`knobs.delegate_profiles` — generic delegate vendors (issue #659)."""
+
+    @staticmethod
+    def _with(profiles: object) -> dict:
+        data = copy.deepcopy(VALID)
+        data["knobs"]["delegate_profiles"] = profiles
+        return data
+
+    def test_absent_by_default(self):
+        self.assertEqual(cfg.parse_config(copy.deepcopy(VALID)).knobs.delegate_profiles, {})
+
+    def test_full_profile_parses(self):
+        config = cfg.parse_config(self._with({
+            "cursor": {
+                "vendor": "cli",
+                "command": "cursor-agent",
+                "prompt_mode": "arg",
+                "model": "composer-1",
+            },
+        }))
+        profile = config.knobs.delegate_profiles["cursor"]
+        self.assertEqual(profile, cfg.DelegateProfile("cli", "cursor-agent", "arg", "composer-1"))
+
+    def test_prompt_mode_defaults_to_stdin(self):
+        # The existing "pipe via stdin" guidance stays the norm; `arg` is the opt-in.
+        config = cfg.parse_config(self._with({
+            "gemini-cli": {"vendor": "cli", "command": "gemini"},
+        }))
+        profile = config.knobs.delegate_profiles["gemini-cli"]
+        self.assertEqual(profile.prompt_mode, cfg.DEFAULT_PROMPT_MODE)
+        self.assertEqual(profile.prompt_mode, "stdin")
+        self.assertIsNone(profile.model)
+
+    def test_explicit_null_model_parses(self):
+        config = cfg.parse_config(self._with({
+            "cursor": {"vendor": "cli", "command": "cursor-agent", "model": None},
+        }))
+        self.assertIsNone(config.knobs.delegate_profiles["cursor"].model)
+
+    def test_unknown_vendor_rejected(self):
+        with self.assertRaises(cfg.ConfigError) as ctx:
+            cfg.parse_config(self._with({"router": {"vendor": "openai-compatible"}}))
+        message = str(ctx.exception)
+        self.assertIn("unknown delegate vendor 'openai-compatible'", message)
+        self.assertIn("valid: cli", message)
+
+    def test_cli_without_command_rejected(self):
+        with self.assertRaises(cfg.ConfigError) as ctx:
+            cfg.parse_config(self._with({"cursor": {"vendor": "cli"}}))
+        self.assertIn("requires a non-empty 'command'", str(ctx.exception))
+
+    def test_cli_with_empty_command_rejected(self):
+        # minLength in the schema and the semantic check both refuse an empty command.
+        with self.assertRaises(cfg.ConfigError) as ctx:
+            cfg.parse_config(self._with({"cursor": {"vendor": "cli", "command": ""}}))
+        self.assertIn("requires a non-empty 'command'", str(ctx.exception))
+
+    def test_invalid_prompt_mode_rejected(self):
+        with self.assertRaises(cfg.ConfigError) as ctx:
+            cfg.parse_config(self._with({
+                "cursor": {"vendor": "cli", "command": "cursor-agent", "prompt_mode": "pipe"},
+            }))
+        message = str(ctx.exception)
+        self.assertIn("invalid prompt_mode 'pipe'", message)
+        self.assertIn("valid: stdin, arg", message)
+
+    def test_shadowing_a_builtin_vendor_rejected(self):
+        for name in ("claude", "codex", "agy", "ollama", "anthropic-api", "openai-api"):
+            with self.subTest(name=name):
+                with self.assertRaises(cfg.ConfigError) as ctx:
+                    cfg.parse_config(self._with({
+                        name: {"vendor": "cli", "command": "whatever"},
+                    }))
+                message = str(ctx.exception)
+                self.assertIn(f"profile name {name!r} shadows a built-in delegate vendor", message)
+                self.assertIn("rename the profile", message)
+
+    def test_missing_vendor_left_to_the_schema(self):
+        # No semantic "unknown vendor None" noise on top of the schema's required-field error.
+        with self.assertRaises(cfg.ConfigError) as ctx:
+            cfg.parse_config(self._with({"cursor": {"command": "cursor-agent"}}))
+        message = str(ctx.exception)
+        self.assertIn("missing required property 'vendor'", message)
+        self.assertNotIn("unknown delegate vendor", message)
+
+    def test_non_object_profile_left_to_the_schema(self):
+        with self.assertRaises(cfg.ConfigError) as ctx:
+            cfg.parse_config(self._with({"cursor": "cursor-agent"}))
+        message = str(ctx.exception)
+        self.assertIn("expected type object", message)
+        self.assertNotIn("unknown delegate vendor", message)
+
+    def test_non_object_block_left_to_the_schema(self):
+        with self.assertRaises(cfg.ConfigError) as ctx:
+            cfg.parse_config(self._with(["cursor"]))
+        self.assertIn("knobs.delegate_profiles: expected type object", str(ctx.exception))
+
+    def test_unknown_profile_field_rejected(self):
+        with self.assertRaises(cfg.ConfigError) as ctx:
+            cfg.parse_config(self._with({
+                "cursor": {"vendor": "cli", "command": "cursor-agent", "endpoint": "http://x"},
+            }))
+        self.assertIn("unknown property 'endpoint'", str(ctx.exception))
+
+    def test_round_trips_through_the_project_contract(self):
+        data = self._with({
+            "gemini-cli": {"vendor": "cli", "command": "gemini", "prompt_mode": "arg"},
+            "cursor": {"vendor": "cli", "command": "cursor-agent", "model": "composer-1"},
+        })
+        serialised = contracts.project_as_dict(cfg.parse_config(data))["knobs"]
+        profiles = serialised["delegate_profiles"]
+        self.assertEqual(list(profiles), ["cursor", "gemini-cli"])  # sorted, order-stable
+        self.assertEqual(profiles["cursor"], {
+            "vendor": "cli",
+            "command": "cursor-agent",
+            "prompt_mode": "stdin",  # the default, made explicit on the way out
+            "model": "composer-1",
+        })
+        self.assertEqual(profiles["gemini-cli"], {
+            "vendor": "cli",
+            "command": "gemini",
+            "prompt_mode": "arg",
+            "model": None,
+        })
+        # A round trip through the contract reparses to the same profiles.
+        reparsed = self._with({name: dict(p) for name, p in profiles.items()})
+        self.assertEqual(
+            cfg.parse_config(reparsed).knobs.delegate_profiles,
+            cfg.parse_config(data).knobs.delegate_profiles,
+        )
+
+    def test_profile_key_order_does_not_change_the_hash(self):
+        one = self._with({
+            "cursor": {"vendor": "cli", "command": "cursor-agent"},
+            "gemini-cli": {"vendor": "cli", "command": "gemini"},
+        })
+        two = self._with({
+            "gemini-cli": {"vendor": "cli", "command": "gemini"},
+            "cursor": {"vendor": "cli", "command": "cursor-agent"},
+        })
+        self.assertEqual(
+            cfg.config_hash(cfg.parse_config(one)), cfg.config_hash(cfg.parse_config(two))
+        )
+
+    def test_profiles_change_the_config_hash(self):
+        base = cfg.parse_config(copy.deepcopy(VALID))
+        changed = cfg.parse_config(self._with({
+            "cursor": {"vendor": "cli", "command": "cursor-agent"},
+        }))
+        self.assertNotEqual(cfg.config_hash(base), cfg.config_hash(changed))
+
+    def test_prompt_mode_changes_the_config_hash(self):
+        stdin = cfg.parse_config(self._with({
+            "cursor": {"vendor": "cli", "command": "cursor-agent"},
+        }))
+        arg = cfg.parse_config(self._with({
+            "cursor": {"vendor": "cli", "command": "cursor-agent", "prompt_mode": "arg"},
+        }))
+        self.assertNotEqual(cfg.config_hash(stdin), cfg.config_hash(arg))
 
 
 class TestSlots(unittest.TestCase):

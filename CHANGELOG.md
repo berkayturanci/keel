@@ -6,6 +6,23 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **`knobs.delegate_profiles` — the generic `cli` delegate vendor** (#659): `--delegate`
+  accepted a closed set of vendors, so every new provider was a code change. Installed and
+  authenticated CLIs like `cursor-agent` and `gemini` simply could not be used as a keel
+  implementer or reviewer. A named profile (`vendor: cli`, `command`, optional
+  `prompt_mode`/`model`) is now referenced as `--delegate <name>`, turning provider support
+  into configuration. `prompt_mode` exists because stdin is not universal: `stdin` stays the
+  default (positional-arg passing hangs some CLIs), `arg` is the opt-in for CLIs whose usage
+  makes the prompt a positional argument. Name resolution is **fail-closed** — profiles
+  resolve after the built-in vendors, and a profile that shadows `claude`/`codex`/`agy`/
+  `ollama`/`anthropic-api`/`openai-api` is a `keel validate` error, never a silent override.
+  A `cli` delegate inherits the local-model contract exactly: no tools, retry ×2 then fall
+  back to the host agent, and **refused on tier-3**. Attribution records `agent:cli` plus the
+  profile's model and the profile name, so the closure says which CLI ran. Design (including
+  the deliberately deferred `openai-compatible` / `google-api` vendors):
+  `docs/proposals/generic-delegate-vendors.md`.
+
 ## [1.11.0] — 2026-07-28
 
 Most of what follows is one defect in different clothes: **a value meaning "we could not

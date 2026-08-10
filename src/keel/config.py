@@ -28,9 +28,21 @@ SCHEMA_PATH = Path(__file__).parent / "schema" / "project.schema.json"
 
 DEFAULT_EXTENSIONS_DIR = ".keel/extensions"
 
-__all__ = ["SLOTS", "DEFAULT_EXTENSIONS_DIR", "Automation", "Knobs", "ProjectConfig",
-           "ConfigError", "load_config", "parse_config", "validate_data", "load_schema",
-           "config_hash"]
+#: Vendors a ``knobs.delegate_profiles`` entry may declare. Only the generic local-CLI
+#: vendor today (issue #659); ``openai-compatible``/``google-api`` are designed in
+#: ``docs/proposals/generic-delegate-vendors.md`` but deliberately deferred.
+DELEGATE_PROFILE_VENDORS = ("cli",)
+
+#: How a ``cli`` profile's prompt reaches the command. ``stdin`` stays the default
+#: (positional-arg passing hangs some CLIs); ``arg`` is the opt-in for CLIs whose usage
+#: makes the prompt a positional argument (e.g. ``cursor-agent``).
+DELEGATE_PROMPT_MODES = ("stdin", "arg")
+DEFAULT_PROMPT_MODE = "stdin"
+
+__all__ = ["SLOTS", "DEFAULT_EXTENSIONS_DIR", "DELEGATE_PROFILE_VENDORS",
+           "DELEGATE_PROMPT_MODES", "DEFAULT_PROMPT_MODE", "Automation", "DelegateProfile",
+           "Knobs", "ProjectConfig", "ConfigError", "load_config", "parse_config",
+           "validate_data", "load_schema", "config_hash"]
 
 
 class ConfigError(ValueError):
@@ -54,12 +66,32 @@ def validate_data(data: Any, schema: dict | None = None) -> list[str]:
 
 
 @dataclass(frozen=True)
+class DelegateProfile:
+    """A named generic-delegate vendor, referenced as ``--delegate <name>``.
+
+    Turns provider support into configuration: a ``cli`` profile names a local
+    coding-agent CLI (``command``) and how its prompt is delivered (``prompt_mode``),
+    so ``cursor-agent``/``gemini``/Aider/Goose become config entries rather than code
+    changes. ``command`` is operator-authored config with the same trust level as
+    ``build_gate_cmd`` — it is never taken from PR content or agent output.
+    """
+
+    vendor: str
+    command: str | None = None
+    prompt_mode: str = DEFAULT_PROMPT_MODE
+    model: str | None = None
+
+
+@dataclass(frozen=True)
 class Knobs:
     """Per-project values consumed by the (otherwise neutral) backbone steps."""
 
     build_gate_cmd: str
     lint_cmd: str | None = None
     implementer_agents: dict[str, str] = field(default_factory=dict)
+    #: Profile name -> generic delegate vendor config. Never shadows a built-in vendor
+    #: (``claude``/``codex``/``agy``/``ollama``/``*-api``); that is a validation error.
+    delegate_profiles: dict[str, DelegateProfile] = field(default_factory=dict)
     tier3_globs: tuple[str, ...] = ()
     ci_workflows: dict[str, str] = field(default_factory=dict)
     docs_gate_paths: tuple[str, ...] = ()
@@ -119,6 +151,15 @@ def _build(data: dict) -> ProjectConfig:
         build_gate_cmd=k["build_gate_cmd"],
         lint_cmd=k.get("lint_cmd"),
         implementer_agents=dict(k.get("implementer_agents", {})),
+        delegate_profiles={
+            name: DelegateProfile(
+                vendor=profile["vendor"],
+                command=profile.get("command"),
+                prompt_mode=profile.get("prompt_mode", DEFAULT_PROMPT_MODE),
+                model=profile.get("model"),
+            )
+            for name, profile in k.get("delegate_profiles", {}).items()
+        },
         tier3_globs=tuple(k.get("tier3_globs", [])),
         ci_workflows=dict(k.get("ci_workflows", {})),
         docs_gate_paths=tuple(k.get("docs_gate_paths", [])),
@@ -172,6 +213,10 @@ def parse_config(data: Any, *, source: str = "<dict>", schema: dict | None = Non
             tuple(knobs.get("optional_capabilities", [])),
             source=f"{source}: knobs.optional_capabilities",
         ))
+        errors.extend(_validate_delegate_profiles(
+            knobs.get("delegate_profiles", {}),
+            source=f"{source}: knobs.delegate_profiles",
+        ))
     if isinstance(data, dict) and isinstance(data.get("policy_pack"), dict):
         for path, names in _policy_capability_fields(data["policy_pack"]):
             errors.extend(validate_names(tuple(names), source=f"{source}: {path}"))
@@ -191,6 +236,52 @@ def config_hash(config: ProjectConfig) -> str:
     """Stable SHA-256 over the canonicalised config (cache key / determinism)."""
     payload = json.dumps(_canonical(config), sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _validate_delegate_profiles(profiles: Any, *, source: str) -> list[str]:
+    """Return semantic errors for ``knobs.delegate_profiles`` (empty == valid).
+
+    The schema owns the *shape* (object of objects, `vendor` required, field types);
+    this owns the *meaning*: which vendors exist, what each vendor requires, and the
+    fail-closed rule that a profile may never shadow a built-in delegate vendor.
+    """
+    # Local import on purpose: ``agents`` imports this module for ``ProjectConfig``, so
+    # naming it at module scope would close a real config <-> agents cycle. The vendor
+    # vocabulary belongs next to the dispatch logic in ``agents``, so the import moves
+    # instead of the constant (same pattern as ``runtime._api_token_capability``).
+    from .agents import BUILTIN_DELEGATE_VENDORS
+
+    errors: list[str] = []
+    if not isinstance(profiles, dict):
+        return errors  # the schema already reported the wrong shape
+    for name, profile in profiles.items():
+        where = f"{source}.{name}"
+        if name in BUILTIN_DELEGATE_VENDORS:
+            errors.append(
+                f"{where}: profile name {name!r} shadows a built-in delegate vendor; "
+                f"built-ins always win and may not be redefined "
+                f"({', '.join(BUILTIN_DELEGATE_VENDORS)}) — rename the profile"
+            )
+        if not isinstance(profile, dict) or "vendor" not in profile:
+            continue  # shape + required-field errors are the schema's job
+        vendor = profile["vendor"]
+        if vendor not in DELEGATE_PROFILE_VENDORS:
+            errors.append(
+                f"{where}: unknown delegate vendor {vendor!r}; "
+                f"valid: {', '.join(DELEGATE_PROFILE_VENDORS)}"
+            )
+        elif not profile.get("command"):
+            errors.append(
+                f"{where}: vendor {vendor!r} requires a non-empty 'command' — the "
+                "executable keel runs (e.g. cursor-agent)"
+            )
+        prompt_mode = profile.get("prompt_mode", DEFAULT_PROMPT_MODE)
+        if prompt_mode not in DELEGATE_PROMPT_MODES:
+            errors.append(
+                f"{where}: invalid prompt_mode {prompt_mode!r}; "
+                f"valid: {', '.join(DELEGATE_PROMPT_MODES)}"
+            )
+    return errors
 
 
 def _policy_capability_fields(value: Any, path: str = "policy_pack") -> list[tuple[str, list]]:
@@ -235,6 +326,15 @@ def _canonical(config: ProjectConfig) -> dict:
             "build_gate_cmd": config.knobs.build_gate_cmd,
             "lint_cmd": config.knobs.lint_cmd,
             "implementer_agents": dict(sorted(config.knobs.implementer_agents.items())),
+            "delegate_profiles": {
+                name: {
+                    "vendor": profile.vendor,
+                    "command": profile.command,
+                    "prompt_mode": profile.prompt_mode,
+                    "model": profile.model,
+                }
+                for name, profile in sorted(config.knobs.delegate_profiles.items())
+            },
             "tier3_globs": list(config.knobs.tier3_globs),
             "ci_workflows": dict(sorted(config.knobs.ci_workflows.items())),
             "docs_gate_paths": list(config.knobs.docs_gate_paths),

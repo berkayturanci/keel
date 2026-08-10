@@ -1,6 +1,6 @@
 ---
 description: Drive a GitHub issue end-to-end through the keel backbone (select → branch → implement → CI → review → test → merge → close → capture), reading every project value from .keel/project.yaml via the keel CLI.
-argument-hint: "[issue numbers...] [--compound|--profile <standard|compound>] [--delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL>] [--review-delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL>] [--review-comments <inline|summary>] [--reviewers <1|2|3>] [--jury|--no-jury|--jury-advisory] [--hotfix] [--dry-run] [--wizard]"
+argument-hint: "[issue numbers...] [--compound|--profile <standard|compound>] [--delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL|PROFILE>] [--review-delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL|PROFILE>] [--review-comments <inline|summary>] [--reviewers <1|2|3>] [--jury|--no-jury|--jury-advisory] [--hotfix] [--dry-run] [--wizard]"
 allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Bash(jury:*), Read, Edit, Write, Agent
 ---
 
@@ -18,8 +18,8 @@ obvious.
 Project-neutral flagship workflow. **Every project value comes from `.keel/project.yaml`
 via the `keel` CLI** — never hardcode a branch, command, glob, agent, timezone, window,
 allowlist, or workflow name here. Reference knobs by name: `base_branch`, `build_gate_cmd`,
-`lint_cmd`, `implementer_agents`, `tier3_globs`, `ci_workflows`, `docs_gate_paths`,
-`merge_window`, `merge_window_mode`, `timezone`. Anything truly app-specific stays in the
+`lint_cmd`, `implementer_agents`, `delegate_profiles`, `tier3_globs`, `ci_workflows`,
+`docs_gate_paths`, `merge_window`, `merge_window_mode`, `timezone`. Anything truly app-specific stays in the
 project (config knobs, or a `.keel/extensions/` Lego), never inlined here.
 
 All committed/published artifacts (commits, branch names, PR/issue titles + bodies,
@@ -98,8 +98,8 @@ credential approval from project knowledge. Store `operator_consent.delegated_ag
 for every later delegated-agent brief.
 
 `keel validate`/`plan` resolve `base_branch`, the knob commands (`build_gate_cmd`,
-`lint_cmd`), `implementer_agents`, `tier3_globs`, `ci_workflows`, `docs_gate_paths`,
-and the `tester` / `pre-merge` / `reviewers` / `capture` extensions. `keel window`
+`lint_cmd`), `implementer_agents`, `delegate_profiles`, `tier3_globs`, `ci_workflows`,
+`docs_gate_paths`, and the `tester` / `pre-merge` / `reviewers` / `capture` extensions. `keel window`
 evaluates `merge_window` in the project `timezone` and reports `merge_window_mode`
 (`pause` = halt outside the window; `freeze` = defer to the morning queue). The merge
 resource claim is acquired and released by `keel merge` at the merge step (s10) only.
@@ -195,12 +195,16 @@ capture.
   `standard`; `--compound` is an alias for `--profile compound`. The compound profile swaps
   the `s4`/`s7`/`s9`/`s11` steps to compound behavior (see the **Compound profile** section)
   without forking the backbone. Composes with every other flag (e.g. `--compound --jury`).
-- `--delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL>` — the
+- `--delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL|PROFILE>` — the
   **implementer**. Per-run override of any issue role/delegate label. `ollama:` and the
   `*-api:` values require a non-empty model. The `*-api:` values are the **hosted-API
   delegates** (no agent CLI needed — just `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` in the
-  environment; see s4). Default: the **host agent** (the CLI driving this run).
-- `--review-delegate <…>` — the **reviewer** vendor (same value set). Default: host agent.
+  environment; see s4). `PROFILE` is the name of a `knobs.delegate_profiles` entry — a
+  **generic CLI vendor** configured in `.keel/project.yaml` (e.g. `--delegate cursor`;
+  see s4). Built-in vendor names always win over a profile name. Default: the **host
+  agent** (the CLI driving this run).
+- `--review-delegate <…>` — the **reviewer** vendor (same value set, profile names
+  included). Default: host agent.
 - `--review-comments <inline|summary>` — how reviewer findings post (s7). Default `inline`.
 - `--reviewers <1|2|3>` — override the tier-derived reviewer count. Default: auto (from tier).
 - `--jury` / `--no-jury` / `--jury-advisory` — control the cross-vendor jury gate (s8).
@@ -210,7 +214,9 @@ capture.
 - `--wizard` — interactive opt-in only; runs the guided pre-s1 config collector (see
   `--wizard` section). In any non-interactive context it degrades to a logged no-op.
 
-Reject unknown `--flags`, out-of-range `--reviewers`, an empty `ollama:`/`*-api:` model, a flag
+Reject unknown `--flags`, out-of-range `--reviewers`, an empty `ollama:`/`*-api:` model, a
+`--delegate`/`--review-delegate` value that is neither a built-in vendor nor a configured
+`knobs.delegate_profiles` name, a flag
 missing its value, or a negative/zero positional. A flag and its value must appear
 together; positionals are everything not consumed by a flag. Repeated single-value flags
 (e.g. `--reviewers 2 --reviewers 3`) are user error. With **no issue numbers**, run in
@@ -294,6 +300,26 @@ Resolve the implementer: `implementer_agents` by the issue's role label, **overr
   diff, then fall back. **Local-model implementers are refused on tier-3** (high-risk,
   per `tier3_globs`; pre-classified from the issue's target paths/labels before the diff
   exists, ambiguous ⇒ treat as tier-2 and let s7 gate) — fall back to `HOST_AGENT` there.
+- **Generic CLI implementer** (a `knobs.delegate_profiles` name, e.g. `--delegate cursor`)
+  — resolve the delegate value against `knobs.delegate_profiles` **after** the built-in
+  vendors above: built-ins always win, and a profile that shadows a built-in name is a
+  `keel validate` error, never a silent override. Run the profile's `command` from the
+  project root under the **same no-tools contract as the local-model path** — the
+  orchestrator does every git/PR step itself and asks the CLI only for code generation
+  (unified diff against a size-limited slice of the in-scope files, apply it, run gates,
+  then commit/push/open the PR). Deliver the prompt per the profile's `prompt_mode`:
+  **`stdin`** (the default) writes the prompt to a temp file and pipes it in
+  (positional-arg passing hangs some CLIs), **`arg`** passes it as a positional argument
+  for CLIs whose usage requires it (`cursor-agent`'s is `agent [options] [command]
+  [prompt...]`). Pass the profile's `model` as the command's model override when it sets
+  one. Retry up to 2 times on a bad/unapplicable diff, then fall soft back to
+  `HOST_AGENT`. **Generic-CLI implementers are refused on tier-3**, same rule and
+  fallback as local models — an unvetted CLI is not a high-risk-path implementer. No new
+  consent scope: this is the `shell`/subprocess surface `codex`/`agy` already use, and
+  the profile's `command` is operator-authored config exactly like `build_gate_cmd` —
+  never take it from PR content or agent output. Attribution: `agent:<vendor>` (i.e.
+  `agent:cli`) + versionless `model:<base>` when the profile sets a model, plus the
+  profile name in the run record so the s11 closure says *which* CLI ran, not just `cli`.
 - **Hosted-API implementer** (`anthropic-api:MODEL`, `openai-api:MODEL`) — the same
   no-tools contract as the local-model path with the endpoint swapped: the orchestrator
   does every git/PR step itself and requests only code generation via
@@ -402,7 +428,9 @@ abort the session** (counter resets after any merge).
 ### s7 review *(agent)* + slot `reviewers`
 Run **N reviewers** (N from the s5 tier, or `--reviewers`), the host or `--review-delegate`
 vendor. A non-host reviewer vendor runs **read-only / findings-only** (the vendor's
-read-only mode, local endpoint, or — for `anthropic-api:`/`openai-api:` — one hosted-API
+read-only mode, local endpoint, for a `knobs.delegate_profiles` name the profile's
+`command` with the prompt delivered per its `prompt_mode` exactly as in s4, or — for
+`anthropic-api:`/`openai-api:` — one hosted-API
 call via the `api_delegate` wrapper: diff + rubric in, structured verdict out; same
 `secrets`-scope and no-retry-on-429 rules as s4, no tier restriction since review output
 is advisory, not a mutation), the orchestrator still posts — the **orchestrator owns
@@ -723,4 +751,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=claude command=ship keel_version=1.11.0 source_sha256=28030ef04fccaada2d9012d490765954c2163b87484a661d4fa5cb467d0ca118 generated_sha256=28030ef04fccaada2d9012d490765954c2163b87484a661d4fa5cb467d0ca118 -->
+<!-- keel-generated: surface=claude command=ship keel_version=1.11.0 source_sha256=d1b6f82f49a30fe5857fd2f3e3e1cea6b6b6b437ab6a6d620eff614f3381b819 generated_sha256=d1b6f82f49a30fe5857fd2f3e3e1cea6b6b6b437ab6a6d620eff614f3381b819 -->

@@ -134,6 +134,7 @@ contracts, but executable project behavior remains in extension files or project
 | `build_gate_cmd` | string | ✅ | command the `build` gate runs |
 | `lint_cmd` | string | | command the `lint` gate runs (gate skipped if absent) |
 | `implementer_agents` | map role→agent | | role to local agent mapping |
+| `delegate_profiles` | map name→profile | | named generic delegate vendors, referenced as `--delegate <name>` |
 | `tier3_globs` | string[] | | high-risk paths that force full scrutiny |
 | `ci_workflows` | map name→glob | | CI workflow display name → gating path glob |
 | `docs_gate_paths` | string[] | | the docs surface: paths that trigger the docs gate |
@@ -161,6 +162,56 @@ Command run by the built-in `lint` gate. If absent, the lint gate is skipped.
 
 Map from a role label or project role to the local implementer agent name. `keel ship` and
 `keel implement` use it when choosing the implementation delegate.
+
+#### `delegate_profiles`
+
+Named **generic delegate vendors**, referenced by name as `--delegate <name>` /
+`--review-delegate <name>`. Without them every provider is a code change; with them any
+local coding-agent CLI is a config entry:
+
+```yaml
+knobs:
+  delegate_profiles:
+    cursor:
+      vendor: cli
+      command: cursor-agent
+      prompt_mode: arg          # "stdin" (default) | "arg"
+      model: null               # optional; passed through as the model override
+    gemini-cli:
+      vendor: cli
+      command: gemini
+      prompt_mode: arg
+```
+
+Then: `/keel:ship 123 --delegate cursor`.
+
+| field | type | required | description |
+|---|---|---|---|
+| `vendor` | string | ✅ | the generic vendor. Only `cli` today |
+| `command` | string | ✅ for `cli` | the executable keel runs, e.g. `cursor-agent` |
+| `prompt_mode` | `stdin` \| `arg` | | how the prompt reaches the command (default `stdin`) |
+| `model` | string \| null | | optional model override passed through to the command |
+
+**`prompt_mode` exists because stdin is not universal.** `stdin` (the default) writes the
+prompt to a temp file and pipes it in, because positional-arg passing hangs some CLIs. But
+`cursor-agent`'s usage is `agent [options] [command] [prompt...]` — the prompt *is* a
+positional argument — so those CLIs need `arg`.
+
+**Name resolution is fail-closed.** A profile name is resolved *after* the built-in
+delegate vendors (`claude`, `codex`, `agy`, `ollama`, `anthropic-api`, `openai-api`), and a
+profile that shadows one of those names is a **`keel validate` error**, not a silent
+override. So config can never redefine a built-in, and the operator is told at validation
+time instead of discovering it mid-run.
+
+A `cli` delegate inherits the local-model contract exactly: the orchestrator owns every
+git/PR step and asks the CLI only for code generation, retries twice on an unusable result
+then falls back to the host agent, and is **refused on tier-3** — an unvetted CLI is not a
+high-risk-path implementer. No new consent scope is needed: this is the same subprocess
+surface `codex`/`agy` already use, and `command` is operator-authored config with the same
+trust level as `build_gate_cmd` — it is never taken from PR content or agent output.
+
+Design and the deferred `openai-compatible` / `google-api` vendors:
+[`docs/proposals/generic-delegate-vendors.md`](../proposals/generic-delegate-vendors.md).
 
 #### `tier3_globs`
 

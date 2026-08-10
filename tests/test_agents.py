@@ -15,6 +15,35 @@ CONFIG = cfg.parse_config({
     },
 })
 
+PROFILE_CONFIG = cfg.parse_config({
+    "extends": "keel",
+    "core_version": "^0.1",
+    "base_branch": "main",
+    "knobs": {
+        "build_gate_cmd": "make test",
+        "delegate_profiles": {
+            "cursor": {
+                "vendor": "cli",
+                "command": "cursor-agent",
+                "prompt_mode": "arg",
+                "model": "composer-1",
+            },
+            "gemini-cli": {"vendor": "cli", "command": "gemini", "prompt_mode": "arg"},
+        },
+    },
+})
+
+#: Every pre-existing delegate form, so a profile-aware resolver cannot quietly
+#: change what any of them mean.
+LEGACY_DELEGATES = (
+    ("claude", ("claude", None)),
+    ("codex", ("codex", None)),
+    ("agy", ("agy", None)),
+    ("ollama:qwen2.5", ("ollama", "qwen2.5")),
+    ("anthropic-api:claude-sonnet-5", ("anthropic-api", "claude-sonnet-5")),
+    ("openai-api:gpt-5", ("openai-api", "gpt-5")),
+)
+
 
 class TestSplitDelegate(unittest.TestCase):
     def test_with_model(self):
@@ -110,6 +139,116 @@ class TestApiDelegate(unittest.TestCase):
         self.assertEqual(a["agent_label"], "agent:anthropic-api")
         self.assertEqual(a["model_label"], "model:claude-sonnet-5")
         self.assertEqual(a["system"], "anthropic-api:claude-sonnet-5")
+
+
+class TestBuiltinVendors(unittest.TestCase):
+    def test_builtin_set_is_the_documented_one(self):
+        self.assertEqual(
+            agents.BUILTIN_DELEGATE_VENDORS,
+            ("claude", "codex", "agy", "ollama", "anthropic-api", "openai-api"),
+        )
+
+    def test_composed_from_the_per_category_tuples(self):
+        self.assertEqual(
+            agents.BUILTIN_DELEGATE_VENDORS,
+            agents.CLI_VENDORS + agents.LOCAL_VENDORS + agents.API_VENDORS,
+        )
+
+
+class TestResolveDelegateProfile(unittest.TestCase):
+    def test_configured_profile_resolves(self):
+        profile = agents.resolve_delegate_profile(PROFILE_CONFIG, "cursor")
+        self.assertEqual(profile, cfg.DelegateProfile("cli", "cursor-agent", "arg", "composer-1"))
+
+    def test_unknown_name_resolves_to_none(self):
+        self.assertIsNone(agents.resolve_delegate_profile(PROFILE_CONFIG, "aider"))
+
+    def test_no_profiles_configured(self):
+        self.assertIsNone(agents.resolve_delegate_profile(CONFIG, "cursor"))
+
+    def test_builtin_vendors_always_win(self):
+        # Fail-closed: even if a same-named profile reached the resolver (config
+        # validation rejects it), the built-in vendor is what runs.
+        shadowing = cfg.ProjectConfig(
+            extends=PROFILE_CONFIG.extends,
+            core_version=PROFILE_CONFIG.core_version,
+            base_branch=PROFILE_CONFIG.base_branch,
+            knobs=cfg.Knobs(
+                build_gate_cmd="make test",
+                delegate_profiles={
+                    name: cfg.DelegateProfile("cli", "evil") for name in
+                    agents.BUILTIN_DELEGATE_VENDORS
+                },
+            ),
+        )
+        for name in agents.BUILTIN_DELEGATE_VENDORS:
+            with self.subTest(vendor=name):
+                self.assertIsNone(agents.resolve_delegate_profile(shadowing, name))
+                self.assertFalse(agents.is_profile_delegate(shadowing, name))
+
+    def test_is_profile_delegate(self):
+        self.assertTrue(agents.is_profile_delegate(PROFILE_CONFIG, "gemini-cli"))
+        self.assertFalse(agents.is_profile_delegate(PROFILE_CONFIG, "codex"))
+        self.assertFalse(agents.is_profile_delegate(PROFILE_CONFIG, "aider"))
+
+    def test_profile_name_passes_through_resolve_agent(self):
+        # A profile name is just a delegate token; precedence is unchanged.
+        self.assertEqual(
+            agents.resolve_agent(PROFILE_CONFIG, role="mobile", delegate="cursor"), "cursor"
+        )
+
+
+class TestProfileAttribution(unittest.TestCase):
+    def test_profile_with_model(self):
+        profile = agents.resolve_delegate_profile(PROFILE_CONFIG, "cursor")
+        a = agents.profile_attribution("cursor", profile)
+        self.assertEqual(a["agent_label"], "agent:cli")
+        self.assertEqual(a["model_label"], "model:composer-1")
+        self.assertEqual(a["system"], "cli:composer-1")
+        self.assertEqual(a["profile"], "cursor")
+
+    def test_profile_without_model_names_the_cli_that_ran(self):
+        profile = agents.resolve_delegate_profile(PROFILE_CONFIG, "gemini-cli")
+        a = agents.profile_attribution("gemini-cli", profile)
+        self.assertEqual(a["agent_label"], "agent:cli")
+        self.assertIsNone(a["model_label"])
+        self.assertEqual(a["system"], "cli")
+        # Without this, the closure comment could only say "cli".
+        self.assertEqual(a["profile"], "gemini-cli")
+
+
+class TestExistingDelegateFormsUnchanged(unittest.TestCase):
+    """Every pre-existing delegate form must resolve exactly as it did before #659."""
+
+    def test_split_is_unchanged(self):
+        for value, expected in LEGACY_DELEGATES:
+            with self.subTest(delegate=value):
+                self.assertEqual(agents.split_delegate(value), expected)
+
+    def test_none_are_profiles(self):
+        for value, (vendor, _) in LEGACY_DELEGATES:
+            with self.subTest(delegate=value):
+                self.assertFalse(agents.is_profile_delegate(PROFILE_CONFIG, vendor))
+
+    def test_api_classification_is_unchanged(self):
+        for value, (vendor, _) in LEGACY_DELEGATES:
+            with self.subTest(delegate=value):
+                self.assertEqual(agents.is_api_delegate(vendor), vendor.endswith("-api"))
+
+    def test_attribution_is_unchanged(self):
+        for value, (vendor, model) in LEGACY_DELEGATES:
+            with self.subTest(delegate=value):
+                a = agents.attribution(vendor, model)
+                self.assertEqual(a["agent_label"], f"agent:{vendor}")
+                self.assertEqual(a["system"], value)
+                self.assertNotIn("profile", a)  # only profile runs carry that key
+
+    def test_resolve_agent_is_unchanged(self):
+        for value, _ in LEGACY_DELEGATES:
+            with self.subTest(delegate=value):
+                self.assertEqual(
+                    agents.resolve_agent(PROFILE_CONFIG, role="mobile", delegate=value), value
+                )
 
 
 if __name__ == "__main__":

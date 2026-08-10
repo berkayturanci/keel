@@ -1417,7 +1417,7 @@ keel implement <project.yaml> <issue> [--root DIR] [--delegate AGENT]
 | Flag | Type / values | Default | Effect |
 | --- | --- | --- | --- |
 | `issue` | positive int | required | Issue number to implement. |
-| `--delegate AGENT` | free-form delegate label (adapters use `claude`/`codex`/`agy`/`ollama:MODEL`/`anthropic-api:MODEL`/`openai-api:MODEL`) | `None` | Explicit implementer override, echoed in the contract/result. The CLI does not validate the value; the adapter grammar does. |
+| `--delegate AGENT` | free-form delegate label (adapters use `claude`/`codex`/`agy`/`ollama:MODEL`/`anthropic-api:MODEL`/`openai-api:MODEL`, or a `knobs.delegate_profiles` name) | `None` | Explicit implementer override, echoed in the contract/result. The CLI does not validate the value; the adapter grammar does. |
 | `--root` / `--dry-run` / `--live` / consent flags / `--target` / intake flags / `--json` | shared | — | Shared semantics. |
 
 ### Details
@@ -1638,8 +1638,8 @@ positionals are all rejected as user error.
 
 ```
 /keel:ship [issue numbers...] [--compound|--profile <standard|compound>]
-           [--delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL>]
-           [--review-delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL>]
+           [--delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL|PROFILE>]
+           [--review-delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL|PROFILE>]
            [--review-comments <inline|summary>] [--reviewers <1|2|3>]
            [--jury|--no-jury|--jury-advisory] [--hotfix] [--dry-run] [--wizard]
 ```
@@ -1648,8 +1648,8 @@ positionals are all rejected as user error.
 | --- | --- | --- | --- |
 | issue numbers | bare positive integers | none → **watch mode** | Explicit issue(s) to ship. With none, the run takes the top of the backlog (highest priority first, then ascending issue number), with a capped watch-mode batch. |
 | `--compound` / `--profile` | flag / `standard` \| `compound` | `standard` | Select the workflow profile. `--compound` ≡ `--profile compound`. |
-| `--delegate` | `claude` \| `codex` \| `agy` \| `ollama:MODEL` \| `anthropic-api:MODEL` \| `openai-api:MODEL` | host agent | The s4 implementer; per-run override of any issue role/delegate label. |
-| `--review-delegate` | same value set | host agent | The s7 reviewer vendor. |
+| `--delegate` | `claude` \| `codex` \| `agy` \| `ollama:MODEL` \| `anthropic-api:MODEL` \| `openai-api:MODEL` \| a `knobs.delegate_profiles` name | host agent | The s4 implementer; per-run override of any issue role/delegate label. A profile name selects a generic CLI vendor configured in `.keel/project.yaml`; built-in vendor names always win. |
+| `--review-delegate` | same value set (profile names included) | host agent | The s7 reviewer vendor. |
 | `--review-comments` | `inline` \| `summary` | `inline` | How reviewer findings post in s7. |
 | `--reviewers` | `1` \| `2` \| `3` | auto (from tier) | Override the tier-derived reviewer count. |
 | `--jury` / `--no-jury` / `--jury-advisory` | flags | tier-driven | Cross-vendor jury gate control (s8). |
@@ -1682,7 +1682,8 @@ compound `workflow_profile`. `--compound` composes with every other flag
 
 ### `--delegate` / `--review-delegate` — in depth
 
-Value set `claude | codex | agy | ollama:MODEL | anthropic-api:MODEL | openai-api:MODEL`;
+Value set `claude | codex | agy | ollama:MODEL | anthropic-api:MODEL | openai-api:MODEL`,
+plus the name of any `knobs.delegate_profiles` entry;
 `ollama:` and the `*-api:` values require a non-empty model
 (per-issue model overrides can also come from a `delegate-model:<name>` label).
 Implementer precedence at s4: `--delegate` flag > issue `delegate:*` label >
@@ -1694,7 +1695,15 @@ delegates (`anthropic-api:MODEL` / `openai-api:MODEL`, issue #548) follow the sa
 no-tools contract with the endpoint swapped: one stdlib HTTP call per attempt against
 the vendor's API, keyed by `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` from the environment —
 no agent CLI needed. Reading the token requires the `secrets` consent scope; without it
-the run resolves to `HOST_AGENT` before any key is read. **Local-model and hosted-API
+the run resolves to `HOST_AGENT` before any key is read. A **profile name** (issue #659)
+selects a generic `cli` vendor from `knobs.delegate_profiles`: resolved *after* the
+built-in vendors, which always win — a profile that shadows a built-in name is rejected
+at `keel validate` time rather than silently overriding it. The profile's `command` runs
+under the same no-tools contract as the local-model path, with the prompt delivered per
+its `prompt_mode` (`stdin` default; `arg` for CLIs like `cursor-agent` whose prompt is a
+positional argument) and its `model` passed through as the model override. See
+[`configuration.md`](configuration.md#delegate_profiles) for the profile block.
+**Local-model, hosted-API, and generic-CLI
 implementers are refused on tier-3** (pre-classified from the issue's target
 paths/labels; ambiguous ⇒ tier-2 and let s7 gate) — the run falls back to `HOST_AGENT`
 there. Quota errors (HTTP 429 / RESOURCE_EXHAUSTED, never retried), missing CLIs or
@@ -1702,7 +1711,9 @@ API keys, and unparseable JSON
 returns all fail over to `HOST_AGENT` with the reason logged. A non-host
 `--review-delegate` vendor runs strictly read-only/findings-only; the orchestrator owns
 all GitHub writes on every path. Attribution always records the **effective**
-vendor+model that actually ran, never the requested-but-fell-back one.
+vendor+model that actually ran, never the requested-but-fell-back one; for a profile
+that is `agent:cli` plus the profile's model when set, with the profile name carried in
+the run record so the closure says *which* CLI ran, not just `cli`.
 
 ### `--review-comments inline|summary`
 
