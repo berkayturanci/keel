@@ -487,6 +487,7 @@
       var ix = SC_SPEEDS.indexOf(window.__sceneSpeed);
       window.__sceneSpeed = SC_SPEEDS[(ix + 1) % SC_SPEEDS.length];
       scSpeed.textContent = window.__sceneSpeed + "×";
+      scSpeed.setAttribute("aria-label", "Animation speed " + window.__sceneSpeed + "×");
       var i = active; active = -1; activate(i); // restart the scene at the new speed
     });
     featured.forEach(function (c, i) {

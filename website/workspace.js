@@ -139,6 +139,7 @@
     if (speedBtn) speedBtn.addEventListener("click", function () {
       speedIx = (speedIx + 1) % SPEEDS.length; speed = SPEEDS[speedIx];
       speedBtn.textContent = speed + "\u00d7";
+      speedBtn.setAttribute("aria-label", "Animation speed " + speed + "\u00d7");
       run();
     });
     function run() {
