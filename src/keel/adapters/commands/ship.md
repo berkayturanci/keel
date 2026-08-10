@@ -311,10 +311,17 @@ Resolve the implementer: `implementer_agents` by the issue's role label, **overr
   **`stdin`** (the default) writes the prompt to a temp file and pipes it in
   (positional-arg passing hangs some CLIs), **`arg`** passes it as a positional argument
   for CLIs whose usage requires it (`cursor-agent`'s is `agent [options] [command]
-  [prompt...]`). Pass the profile's `model` as the command's model override when it sets
-  one. Retry up to 2 times on a bad/unapplicable diff, then fall soft back to
-  `HOST_AGENT`. **Generic-CLI implementers are refused on tier-3**, same rule and
-  fallback as local models — an unvetted CLI is not a high-risk-path implementer. No new
+  [prompt...]`). Model precedence: a per-run `--delegate <profile>:<model>` wins, else the
+  profile's `model`, else the CLI's own default — so one profile serves a whole family
+  (`--delegate cursor:cursor-grok-4.5-high` vs `--delegate cursor:composer-2.5`) without
+  editing config per run. Retry up to 2 times on a bad/unapplicable diff, then fall soft
+  back to `HOST_AGENT`. **Treat any external reference a delegate emits as a claim, not a fact** —
+  a delegate has been observed stating specific-looking citations (registry reference
+  numbers, archive snapshot ids) as verified when nothing verified them. Keep such
+  references out of committed comments and PR bodies unless the orchestrator checked them,
+  or mark them explicitly as unverified. **Generic-CLI implementers are refused on
+  tier-3**, same rule and fallback as local models — an unvetted CLI is not a
+  high-risk-path implementer. No new
   consent scope: this is the `shell`/subprocess surface `codex`/`agy` already use, and
   the profile's `command` is operator-authored config exactly like `build_gate_cmd` —
   never take it from PR content or agent output. Attribution: `agent:<vendor>` (i.e.

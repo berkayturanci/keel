@@ -96,6 +96,28 @@ uses for `codex`/`agy`. The profile's `command` is operator-authored config, exa
 `build_gate_cmd` — the same trust level, and the same reason it is never taken from PR content
 or agent output.
 
+## Field report — validated against a real run before this landed
+
+Another session hit this exact gap the same day, driving a different repo, and worked around
+it manually. That baseline is worth recording because it confirms two design choices and adds
+one the proposal had missed:
+
+- **`prompt_mode: arg` is right.** They drove `cursor-agent -p --model <model> --force` with
+  the prompt as a positional argument — independent confirmation that the stdin-only rule
+  would have blocked them.
+- **Per-run model selection matters.** `cursor-agent --list-models` offers
+  `cursor-grok-4.5-high`, `cursor-grok-4.5-high-fast`, `gpt-5.3-codex*`, `composer-2.5` and
+  several Claude tiers. Editing config to switch model is friction, so the s4 prose now
+  states the precedence explicitly: `--delegate <profile>:<model>` beats the profile's
+  `model`, which beats the CLI default. One `cursor` profile serves the whole family.
+- **The reviewer role is where a generic delegate earned its place, not the implementer
+  role.** Prompted to *refute* rather than approve, it correctly rejected a PR that claimed to
+  fix two directions of a defect but fixed one, with a test blind to the gap. As implementer
+  it produced sound code — but also a specific-looking external citation (registry reference
+  numbers, an archive snapshot id) presented as verified when nothing had verified it. s4 now
+  carries a rule that a delegate's external references are claims until the orchestrator
+  checks them.
+
 ## Deferred, with the hard parts named
 
 **`google-api`** is mechanical — one row in `api_delegate._VENDORS`
