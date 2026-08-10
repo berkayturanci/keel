@@ -343,8 +343,8 @@ Resolve the implementer: `implementer_agents` by the issue's role label, **overr
   `cli:<effective-model>`), never the profile name.** The evidence gate splits
   `actors.implementer` on the first colon and cross-checks the result against the PR's
   `agent:*` labels, so recording `cursor` there against an `agent:cli` label reads as a
-  vendor contradiction and blocks the merge. The profile name belongs in the run record's
-  profile field, which is what the closure comment reads.
+  vendor contradiction and blocks the merge. The profile name goes in `delegate_profile`,
+  as above, which is what the closure comment reads.
 - **Hosted-API implementer** (`anthropic-api:MODEL`, `openai-api:MODEL`) — the same
   no-tools contract as the local-model path with the endpoint swapped: the orchestrator
   does every git/PR step itself and requests only code generation via

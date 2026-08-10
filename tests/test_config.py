@@ -450,7 +450,8 @@ class TestDelegateProfiles(unittest.TestCase):
             },
         }))
         profile = config.knobs.delegate_profiles["cursor"]
-        self.assertEqual(profile, cfg.DelegateProfile("cli", "cursor-agent", "arg", "composer-1"))
+        self.assertEqual(profile, cfg.DelegateProfile(vendor="cli", command="cursor-agent",
+                                              prompt_mode="arg", model="composer-1"))
 
     def test_prompt_mode_defaults_to_stdin(self):
         # The existing "pipe via stdin" guidance stays the norm; `arg` is the opt-in.
@@ -547,6 +548,31 @@ class TestDelegateProfiles(unittest.TestCase):
                 self.assertIn(f"is {kind}, not a string", message)
                 self.assertIn("quote the key", message)
 
+    def test_args_carry_standing_flags(self):
+        """A real CLI needs standing flags; `command` is one executable, not a shell line.
+
+        The proposal's own field report drove `cursor-agent -p --model X --force`.
+        Without `args` an operator would have to fold `-p --force` into `command`,
+        which keel would then treat as a single filename.
+        """
+        parsed = cfg.parse_config(self._with({
+            "cursor": {"vendor": "cli", "command": "cursor-agent",
+                       "args": ["-p", "--force"]},
+            "plain": {"vendor": "cli", "command": "gemini"},
+        }))
+        profiles = parsed.knobs.delegate_profiles
+        self.assertEqual(profiles["cursor"].args, ("-p", "--force"))
+        self.assertEqual(profiles["plain"].args, ())
+
+    def test_args_change_the_config_hash(self):
+        base = cfg.parse_config(self._with({
+            "cursor": {"vendor": "cli", "command": "cursor-agent"},
+        }))
+        changed = cfg.parse_config(self._with({
+            "cursor": {"vendor": "cli", "command": "cursor-agent", "args": ["-p"]},
+        }))
+        self.assertNotEqual(cfg.config_hash(base), cfg.config_hash(changed))
+
     def test_model_arg_defaults_and_overrides(self):
         parsed = cfg.parse_config(self._with({
             "cursor": {"vendor": "cli", "command": "cursor-agent"},
@@ -605,6 +631,7 @@ class TestDelegateProfiles(unittest.TestCase):
         self.assertEqual(profiles["cursor"], {
             "vendor": "cli",
             "command": "cursor-agent",
+            "args": [],
             "prompt_mode": "stdin",  # the default, made explicit on the way out
             "model": "composer-1",
             "model_arg": "--model",  # ditto: how the model actually reaches the CLI
@@ -612,6 +639,7 @@ class TestDelegateProfiles(unittest.TestCase):
         self.assertEqual(profiles["gemini-cli"], {
             "vendor": "cli",
             "command": "gemini",
+            "args": [],
             "prompt_mode": "arg",
             "model": None,
             "model_arg": "--model",

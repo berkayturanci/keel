@@ -175,6 +175,7 @@ knobs:
     cursor:
       vendor: cli
       command: cursor-agent
+      args: ["-p", "--force"]   # standing flags: print mode, non-interactive
       prompt_mode: arg          # "stdin" (default) | "arg"
       model: null               # optional default model for this profile
       model_arg: --model        # flag the model is passed on (default "--model")
@@ -190,6 +191,7 @@ Then: `/keel:ship 123 --delegate cursor`.
 |---|---|---|---|
 | `vendor` | string | ✅ | the generic vendor. Only `cli` today |
 | `command` | string | ✅ for `cli` | the executable keel runs, e.g. `cursor-agent` |
+| `args` | string[] | | standing flags the command always takes, e.g. `["-p", "--force"]` |
 | `prompt_mode` | `stdin` \| `arg` | | how the prompt reaches the command (default `stdin`) |
 | `model` | string \| null | | default model for this profile; a per-run `--delegate <name>:<model>` beats it |
 | `model_arg` | string | | flag the model is passed on, as `<model_arg> <model>` (default `--model`) |

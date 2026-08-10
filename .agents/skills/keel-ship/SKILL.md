@@ -346,8 +346,8 @@ Resolve the implementer: `implementer_agents` by the issue's role label, **overr
   `cli:<effective-model>`), never the profile name.** The evidence gate splits
   `actors.implementer` on the first colon and cross-checks the result against the PR's
   `agent:*` labels, so recording `cursor` there against an `agent:cli` label reads as a
-  vendor contradiction and blocks the merge. The profile name belongs in the run record's
-  profile field, which is what the closure comment reads.
+  vendor contradiction and blocks the merge. The profile name goes in `delegate_profile`,
+  as above, which is what the closure comment reads.
 - **Hosted-API implementer** (`anthropic-api:MODEL`, `openai-api:MODEL`) — the same
   no-tools contract as the local-model path with the endpoint swapped: the orchestrator
   does every git/PR step itself and requests only code generation via
@@ -779,4 +779,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=skills command=ship keel_version=1.11.0 source_sha256=f6f50e9d3ac497cda16a4314e8c3092d8bf920b69be98561f9e59ed3714d1bd0 generated_sha256=e3636200e8d5126e13605c5a2cbc0bfd5bf550a9db561e0cd9a0dc6951612bd4 -->
+<!-- keel-generated: surface=skills command=ship keel_version=1.11.0 source_sha256=4fc6a47c350caa1e0a4435357b69ea1d7d4dba6e419e3d8e2669961a638a081c generated_sha256=06bbf66713e1fe88a543cab55c97ff157a0035f0723c01c0d4abb6cf113fdd1e -->

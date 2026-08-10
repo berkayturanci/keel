@@ -72,6 +72,11 @@
                 "minLength": 1,
                 "description": "Executable keel runs for vendor 'cli', e.g. cursor-agent. Required for 'cli'. Operator-authored config, same trust level as build_gate_cmd."
               },
+              "args": {
+                "type": "array",
+                "items": { "type": "string", "minLength": 1 },
+                "description": "Fixed flags the command always takes, e.g. [\"-p\", \"--force\"] for cursor-agent. Operator-authored config, same trust level as command."
+              },
               "prompt_mode": {
                 "type": "string",
                 "minLength": 1,

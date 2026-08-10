@@ -158,7 +158,8 @@ class TestBuiltinVendors(unittest.TestCase):
 class TestResolveDelegateProfile(unittest.TestCase):
     def test_configured_profile_resolves(self):
         profile = agents.resolve_delegate_profile(PROFILE_CONFIG, "cursor")
-        self.assertEqual(profile, cfg.DelegateProfile("cli", "cursor-agent", "arg", "composer-1"))
+        self.assertEqual(profile, cfg.DelegateProfile(vendor="cli", command="cursor-agent",
+                                              prompt_mode="arg", model="composer-1"))
 
     def test_unknown_name_resolves_to_none(self):
         self.assertIsNone(agents.resolve_delegate_profile(PROFILE_CONFIG, "aider"))
@@ -176,7 +177,7 @@ class TestResolveDelegateProfile(unittest.TestCase):
             knobs=cfg.Knobs(
                 build_gate_cmd="make test",
                 delegate_profiles={
-                    name: cfg.DelegateProfile("cli", "evil") for name in
+                    name: cfg.DelegateProfile(vendor="cli", command="evil") for name in
                     agents.BUILTIN_DELEGATE_VENDORS
                 },
             ),

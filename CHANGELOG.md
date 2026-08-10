@@ -10,16 +10,22 @@ All notable changes to keel are documented here. The format follows
 - **`knobs.delegate_profiles` — the generic `cli` delegate vendor** (#659): `--delegate`
   accepted a closed set of vendors, so every new provider was a code change. Installed and
   authenticated CLIs like `cursor-agent` and `gemini` simply could not be used as a keel
-  implementer or reviewer. A named profile (`vendor: cli`, `command`, optional
-  `prompt_mode`/`model`) is now referenced as `--delegate <name>`, turning provider support
-  into configuration. `prompt_mode` exists because stdin is not universal: `stdin` stays the
+  implementer or reviewer. A named profile (`vendor: cli`, `command`, optional `args`,
+  `prompt_mode`, `model`, `model_arg`) is now referenced as `--delegate <name>`, turning
+  provider support into configuration. `prompt_mode` exists because stdin is not universal: `stdin` stays the
   default (positional-arg passing hangs some CLIs), `arg` is the opt-in for CLIs whose usage
-  makes the prompt a positional argument. Name resolution is **fail-closed** — profiles
+  makes the prompt a positional argument. `args` carries the standing flags a real CLI
+  needs (`cursor-agent -p --force`), since `command` is one executable rather than a shell
+  line, and `model_arg` (default `--model`) says how the effective model reaches it —
+  arbitrary CLIs share no model-selection syntax, so without it the documented precedence
+  (per-run `--delegate <name>:<model>` > profile `model` > CLI default) would be
+  unimplementable and attribution would report a model that was never selected. Name resolution is **fail-closed** — profiles
   resolve after the built-in vendors, and a profile that shadows `claude`/`codex`/`agy`/
   `ollama`/`anthropic-api`/`openai-api` is a `keel validate` error, never a silent override.
   A `cli` delegate inherits the local-model contract exactly: no tools, retry ×2 then fall
   back to the host agent, and **refused on tier-3**. Attribution records `agent:cli` plus the
-  profile's model and the profile name, so the closure says which CLI ran. Design (including
+  effective model and the profile name under `delegate_profile` — not `profile`, which the
+  run record already uses for the workflow profile — so the closure says which CLI ran. Design (including
   the deliberately deferred `openai-compatible` / `google-api` vendors):
   `docs/proposals/generic-delegate-vendors.md`.
 

@@ -751,6 +751,7 @@ def project_as_dict(config: cfg.ProjectConfig) -> dict[str, Any]:
                 name: {
                     "vendor": profile.vendor,
                     "command": profile.command,
+                    "args": list(profile.args),
                     "prompt_mode": profile.prompt_mode,
                     "model": profile.model,
                     "model_arg": profile.model_arg,

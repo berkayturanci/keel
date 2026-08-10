@@ -38,8 +38,10 @@ knobs:
     cursor:
       vendor: cli
       command: cursor-agent
+      args: ["-p", "--force"]   # standing flags the CLI always needs
       prompt_mode: arg          # "stdin" (default) | "arg"
-      model: null               # optional; passed through as the model override
+      model: null               # default model; --delegate cursor:<model> beats it
+      model_arg: --model        # how the model reaches the command
     gemini-cli:
       vendor: cli
       command: gemini

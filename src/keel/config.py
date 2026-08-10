@@ -84,6 +84,11 @@ class DelegateProfile:
 
     vendor: str
     command: str | None = None
+    #: Fixed flags the command always needs, e.g. ``["-p", "--force"]`` for
+    #: ``cursor-agent`` (print mode + non-interactive approval). ``command`` is one
+    #: executable, so without this an operator would have to smuggle flags into it as a
+    #: string keel would then treat as a filename.
+    args: tuple[str, ...] = ()
     prompt_mode: str = DEFAULT_PROMPT_MODE
     model: str | None = None
     #: How the effective model reaches the command: ``<model_arg> <model>``. Without it
@@ -165,6 +170,7 @@ def _build(data: dict) -> ProjectConfig:
             name: DelegateProfile(
                 vendor=profile["vendor"],
                 command=profile.get("command"),
+                args=tuple(profile.get("args", ())),
                 prompt_mode=profile.get("prompt_mode", DEFAULT_PROMPT_MODE),
                 model=profile.get("model"),
                 model_arg=profile.get("model_arg") or DEFAULT_MODEL_ARG,
@@ -367,6 +373,7 @@ def _canonical(config: ProjectConfig) -> dict:
                 name: {
                     "vendor": profile.vendor,
                     "command": profile.command,
+                    "args": list(profile.args),
                     "prompt_mode": profile.prompt_mode,
                     "model": profile.model,
                     "model_arg": profile.model_arg,
