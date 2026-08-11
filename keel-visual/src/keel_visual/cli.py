@@ -457,6 +457,9 @@ def _activity_records_in_repo(root: str, config: cfg.ProjectConfig) -> list[tupl
             None,
             checkpoint_step=rec.get("phase"),
             command=rec.get("command") or "ship",
+            # An explicit "blocked" only. A missing verdict (an older record, or a
+            # phase with nothing to pass) must not read as either outcome.
+            blocked=rec.get("verdict") == "blocked",
         )
         status = rec.get("status")
         if status == "merged":

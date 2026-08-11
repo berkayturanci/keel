@@ -6,6 +6,20 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **A run that failed its gates no longer renders as one still working through them**
+  (#636): `keel run-gates` stamped the activity board on *reach* rather than on *pass*, so
+  a red gate recorded as `phase: s8, status: running` — carrying no failure signal at all —
+  and keel-visual painted it as in-progress indefinitely. The record now carries a
+  `verdict` (`pass` / `blocked`), stamped after the verdict exists rather than before, and
+  a missing verdict stays `None` because "nothing to report" must not read as a pass.
+  `status` keeps its meaning (the run *did* advance and has *not* finished), so the
+  never-regress rule is untouched. keel-visual gains a `blocked` step status that outranks
+  `gate`/`loop` on the active step, wired through both renderers — the terminal board
+  (red `✖`) and the HTML run view — because both recompute step status from position and
+  kind rather than reading `steps[].status`, so adding the field alone would have painted
+  nothing.
+
 ### Added
 - **`google-api:MODEL` hosted delegate** (#666): Gemini can now be an implementer or
   reviewer with only `GEMINI_API_KEY` in the environment — no agent CLI. Same no-tools

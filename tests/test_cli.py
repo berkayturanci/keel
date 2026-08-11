@@ -392,6 +392,22 @@ class TestAutoStamp(unittest.TestCase):
             cli._autostamp(self._config(), d, "ship", None, "s0")
             self.assertIsNone(self._rec(d, "x"))
 
+    def test_carries_a_verdict_when_one_is_given(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            cli._autostamp(self._config(), d, "ship", "rv", "s8", verdict="blocked")
+            r = self._rec(d, "rv")
+            # Position and outcome are separate facts: the run advanced to s8
+            # (status stays running) and did not pass it.
+            self.assertEqual((r["phase"], r["status"], r["verdict"]),
+                             ("s8", "running", "blocked"))
+
+    def test_a_stamp_without_a_verdict_records_none_not_pass(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            cli._autostamp(self._config(), d, "ship", "rn", "s4")
+            self.assertIsNone(self._rec(d, "rn")["verdict"])
+
     def test_unknown_command(self):
         import tempfile
         with tempfile.TemporaryDirectory() as d:
