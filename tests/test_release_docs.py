@@ -108,14 +108,20 @@ class TestReleaseDocs(unittest.TestCase):
         self.assertNotIn("python -m pip install build", workflow)
         self.assertNotIn("python -m pip install cyclonedx-bom", workflow)
         # Pinned + hashed, but deliberately not pinned to a *specific* version here:
-        # Dependabot now watches this file (#664), so asserting the exact version would
-        # turn every routine bump red and train people to edit the test to make a
-        # security update pass. What must hold is that each tool is present, exactly
-        # pinned with ==, and carries a hash.
+        # Dependabot watches this file (#664), so asserting the exact version would turn
+        # every routine bump red and train people to edit the test to make a security
+        # update pass. What must hold is that each tool is present, exactly pinned with
+        # ==, and carries at least one sha256.
+        #
+        # "At least one" is not slack: Dependabot writes a hash per artifact — a wheel
+        # and an sdist — as continuation lines, so requiring exactly one rejected the
+        # first real bump it produced (build 1.3.0 -> 1.5.0) and reintroduced the very
+        # breakage this assertion was written to prevent.
         for tool in ("build", "cyclonedx-bom", "PyYAML", "setuptools"):
             with self.subTest(tool=tool):
                 pinned = re.search(
-                    rf"^{re.escape(tool)}==\S+ \\\n    --hash=sha256:[0-9a-f]{{64}}$",
+                    rf"^{re.escape(tool)}==\S+"
+                    rf"(?: \\\n    --hash=sha256:[0-9a-f]{{64}})+$",
                     lockfile,
                     re.MULTILINE,
                 )

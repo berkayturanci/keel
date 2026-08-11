@@ -6,6 +6,105 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **A project's own review rubric now actually reaches its reviewers** (#677):
+  `policy_pack.review.additions` and `required_sections` have been in the schema, in the
+  docs and in the emitted contract (`review_merge_contract.reviewers.project_additions`)
+  all along — and **no adapter prose read either**, so a project that configured them got
+  nothing. `projects/example-flutter.yaml` ships with both set, and neither had ever
+  reached a reviewer's brief. s7 now passes them verbatim, and `review-cycle.md` references
+  the same source rather than restating it. This is the counterpart to #679's stance: the
+  stance is project-neutral and says *how* to review, while these name the shapes *this*
+  codebase keeps producing — measured to be what makes a reviewer follow a defect from the
+  symptom to where it lands, rather than what makes it find more.
+
+### Fixed
+- **`keel resume` observes the live state instead of being told it** (#635): the
+  `--live-pr-state` / `--live-worktree-state` flags defaulted to `unknown` and core never
+  looked, so every ambiguous outcome required the agent to volunteer the damning state — a
+  checkpoint pointing at a deleted worktree resumed as `ready / can_resume: true`. keel now
+  reads the PR state from `gh`, probes whether the recorded worktree exists, and resolves
+  the branch's real head; the flags become an explicit override for offline and fixture use
+  and `--no-observe` opts out. An unreadable `gh` yields `unknown`, never `missing` —
+  failing to reach GitHub is a fact about the runner, not about the PR.
+- **A crash mid-merge is no longer resumable without evidence** (#635): `merge: pending`
+  with unknown live state returned `pr-open / can_resume: true / next_step: s10`, which
+  would re-attempt a merge that may already have landed. It is now `ambiguous`; live
+  evidence either way (`merged` or `open`) still resolves it normally.
+- **A branch that moved since the checkpoint now warns** (#635): the checkpoint records a
+  head and nothing compared it, so a stale run resumed with stale context silently. A
+  mismatch warns rather than blocks — the usual cause is a legitimate push before a crash,
+  and the merge gate binds to the live head regardless.
+
+### Changed
+- **Documented what `step-verify` and the checkpoint gate actually prove** (#635).
+  `step-verify` is per-step and stateless across steps: `--step s10` passes against a
+  well-formed s10 handoff with no s7 or s8 handoff in existence, so *ordering* is enforced
+  by adapter prose, not by the command — and `s11`/`s12` ordering is advisory, since
+  `closeorder.reconcile` is a post-hoc reader. The merge itself is unaffected, being gated
+  separately on head-bound evidence. The covering-checkpoint gate proves "some attempt under
+  this run-id reached s10", not "this attempt did", because checkpoints are clock-free and
+  `RUN_ID` is stable across attempts. `docs/keel/command-contracts.md` now says so rather
+  than implying enforcement it does not perform.
+- **A run that failed its gates no longer renders as one still working through them**
+  (#636): `keel run-gates` stamped the activity board on *reach* rather than on *pass*, so
+  a red gate recorded as `phase: s8, status: running` — carrying no failure signal at all —
+  and keel-visual painted it as in-progress indefinitely. The record now carries a
+  `verdict` (`pass` / `blocked`), stamped after the verdict exists rather than before, and
+  a missing verdict stays `None` because "nothing to report" must not read as a pass.
+  `status` keeps its meaning (the run *did* advance and has *not* finished), so the
+  never-regress rule is untouched. keel-visual gains a `blocked` step status that outranks
+  `gate`/`loop` on the active step, wired through both renderers — the terminal board
+  (red `✖`) and the HTML run view — because both recompute step status from position and
+  kind rather than reading `steps[].status`, so adding the field alone would have painted
+  nothing.
+
+### Added
+- **`openai-compatible` delegate profiles — any OpenAI-shaped hosted API from config**
+  (#666): OpenRouter, Groq, DeepSeek, Together, LiteLLM and a local vLLM become
+  `knobs.delegate_profiles` entries rather than code changes, completing the "every model"
+  half of the issue. A profile names an `endpoint` and an `api_key_env`, and inherits the
+  no-tools contract, `secrets` scope, retry-×2-then-fall-back and no-retry-on-429 rules of
+  the hardcoded hosted vendors. Because this is the first keel delegate whose URL comes
+  from configuration, it carries a guard ported from ai-jury rather than reinvented:
+  loopback hosts pass freely; any other host — **including cloud-metadata addresses** — is
+  a `keel validate` error unless `KEEL_ALLOW_REMOTE_ENDPOINT` is set **in the environment**
+  (the threat model is an attacker-influenced config, so the opt-in must sit outside the
+  surface an attacker controls); non-`http(s)` schemes are refused, blocking `file://` and
+  `ftp://`; and a malformed URL is a clean config error rather than a traceback out of
+  `keel validate`. `api_key_env` takes a variable **name** and rejects anything shaped like
+  a pasted secret, because profile config is serialised into the command contract and
+  hashed into `config_hash` — a key there would be published.
+- A profile field belonging to a different vendor (`endpoint` on a `cli` profile,
+  `command` on an `openai-compatible` one) is now a validation error rather than a
+  silently-ignored key. The schema cannot catch it, since both fields are legal somewhere.
+
+### Added
+- **`google-api:MODEL` hosted delegate** (#666): Gemini can now be an implementer or
+  reviewer with only `GEMINI_API_KEY` in the environment — no agent CLI. Same no-tools
+  contract, `secrets` scope, retry-×2-then-fall-back and no-retry-on-429 rules as the
+  existing `anthropic-api:`/`openai-api:` delegates. Two vendor-specific details are
+  handled rather than inherited, both verified against the live endpoint: Gemini puts
+  the **model in the URL path**, so a model id outside `[A-Za-z0-9._-]` (or containing
+  `..`) is refused as `bad-model` before any request instead of being escaped — for this
+  vendor a `delegate-model:` label is untrusted input reaching a URL; and it answers an
+  invalid key with **HTTP 400**, not 401, which now maps to `auth` so a mistyped key
+  does not read as a generic transport error. The key travels as an `x-goog-api-key`
+  header, never as a `?key=` query parameter.
+
+### Changed
+- **s7 reviewers are now briefed to refute, not to approve** (#679): the adapter told
+  reviewers *where* to look (`logic correctness`, `threading`, `test coverage`, …) and never
+  *how* — there was no `refute`, `adversarial` or "default to wrong" anywhere in it. A
+  reviewer with a topic list and no stance reads a change sympathetically and confirms it,
+  which is how a defect ships past a green CI. The brief now carries four rules together:
+  refute rather than approve; **a finding you cannot demonstrate is not a finding**; finish
+  the trace to where the defect lands, not where you noticed it; and "I checked X, Y and Z
+  and found nothing" is a complete review. The last three are the counterweight — an
+  aggressive reviewer with no way to report a clean result either goes quiet or invents. The
+  stance is project-neutral prose, so it lives in the adapter; naming a project's own
+  recurring failure shapes is config, tracked separately.
+
 ### Security
 - **Dependabot now watches `.github/requirements/`** (#664): the `pip` entry covered only
   the repo root, so the hash-locked release tooling for `publish.yml` was scanned for

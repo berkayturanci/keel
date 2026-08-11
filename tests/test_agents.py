@@ -42,6 +42,7 @@ LEGACY_DELEGATES = (
     ("ollama:qwen2.5", ("ollama", "qwen2.5")),
     ("anthropic-api:claude-sonnet-5", ("anthropic-api", "claude-sonnet-5")),
     ("openai-api:gpt-5", ("openai-api", "gpt-5")),
+    ("google-api:gemini-2.5-pro", ("google-api", "gemini-2.5-pro")),
 )
 
 
@@ -145,7 +146,8 @@ class TestBuiltinVendors(unittest.TestCase):
     def test_builtin_set_is_the_documented_one(self):
         self.assertEqual(
             agents.BUILTIN_DELEGATE_VENDORS,
-            ("claude", "codex", "agy", "ollama", "anthropic-api", "openai-api"),
+            ("claude", "codex", "agy", "ollama",
+             "anthropic-api", "openai-api", "google-api"),
         )
 
     def test_composed_from_the_per_category_tuples(self):

@@ -31,6 +31,15 @@ RECORD_TYPE_ACTIVITY = "command_activity"
 DEFAULT_ACTIVITY_DIR = ".keel/activity"
 STATUSES = ("running", "done", "merged")
 
+#: Whether the phase the run reached was actually *passed*. Separate from
+#: :data:`STATUSES` because "advanced to s8" and "cleared s8" are different facts and
+#: were previously written identically (#636) — a run whose gates came back red
+#: recorded as ``phase: s8, status: running``, carrying no failure signal at all, and
+#: the board painted it as in-progress. ``None`` means the step reached this stamp
+#: without a verdict to report (planning, a phase with nothing to pass), which is not
+#: the same as passing.
+VERDICTS = ("pass", "blocked")
+
 # A run_id reduces to this slug for its filename; anything else is rejected so a
 # crafted run_id can never escape the activity directory.
 _RUN_ID_SLUG = re.compile(r"[^a-z0-9._-]+")
@@ -104,6 +113,7 @@ def build_activity_record(
     run_id: str,
     phase: str,
     status: str = "running",
+    verdict: str | None = None,
     issue: int | None = None,
     pr: int | None = None,
     note: str | None = None,
@@ -113,6 +123,12 @@ def build_activity_record(
     ``command`` must be a known :mod:`keel.flows` command and ``phase`` one of
     that command's flow phase ids. ``status`` is ``running``, ``done`` or
     ``merged`` (a real merge landed, distinct from a soft ``done``).
+
+    ``verdict`` (:data:`VERDICTS`) says whether the phase was **passed**, which
+    ``status`` deliberately does not: a blocked gate run is still ``running`` in the
+    board's sense — it advanced, it did not finish — and recording only that made a
+    red gate indistinguishable from an in-progress one (#636). ``None`` = no verdict
+    to report, which must not read as a pass.
     """
     if not flows.is_known(command):
         raise ActivityError(f"unknown command: {command!r}")
@@ -120,6 +136,8 @@ def build_activity_record(
         raise ActivityError(f"phase {phase!r} is not a {command} flow phase")
     if status not in STATUSES:
         raise ActivityError(f"unsupported status: {status!r}")
+    if verdict is not None and verdict not in VERDICTS:
+        raise ActivityError(f"unsupported verdict: {verdict!r}")
     return {
         "schema_version": ACTIVITY_SCHEMA_VERSION,
         "record_type": RECORD_TYPE_ACTIVITY,
@@ -127,6 +145,7 @@ def build_activity_record(
         "run_id": run_id,
         "phase": phase,
         "status": status,
+        "verdict": verdict,
         "issue": issue,
         "pr": pr,
         "note": note,
@@ -150,6 +169,10 @@ def validate_activity(record: Any) -> None:
         raise ActivityError("unsupported phase")
     if record.get("status") not in STATUSES:
         raise ActivityError("unsupported status")
+    # Absent is fine (older records, phases with nothing to pass); a *wrong* value is
+    # not — a board that trusts this field must never read a typo as a pass.
+    if record.get("verdict") is not None and record.get("verdict") not in VERDICTS:
+        raise ActivityError("unsupported verdict")
 
 
 def encode_activity(record: dict[str, Any]) -> str:

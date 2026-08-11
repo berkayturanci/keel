@@ -44,6 +44,24 @@ class TestDisplayStatus(unittest.TestCase):
 
     def test_loop_and_normal_on_playhead(self):
         self.assertEqual(t.display_status({"kind": "loop"}, 3, 3), "loop")
+
+    def test_blocked_marks_the_playhead_step(self):
+        """keel#636: reached and not passed must not paint as still running."""
+        gate = {"kind": "gate"}
+        self.assertEqual(t.display_status(gate, 5, 5, blocked=True), "blocked")
+        # It outranks the intrinsic kind — the old rendering showed only "gate".
+        self.assertNotEqual(t.display_status(gate, 5, 5, blocked=True), "gate")
+        self.assertEqual(t.display_status({"kind": "loop"}, 3, 3, blocked=True), "blocked")
+
+    def test_blocked_leaves_other_steps_alone(self):
+        self.assertEqual(t.display_status({"kind": "gate"}, 2, 5, blocked=True), "done")
+        self.assertEqual(t.display_status({"kind": "gate"}, 8, 5, blocked=True), "pending")
+
+    def test_blocked_has_its_own_glyph_and_colour(self):
+        # A status the renderer does not know would fall back to a hollow dim dot —
+        # quieter than the gate it replaced, which is the wrong direction.
+        self.assertIn("blocked", t._GLYPH)
+        self.assertEqual(t._STATUS_COLOR["blocked"], "red")
         self.assertEqual(t.display_status({"kind": "normal"}, 3, 3), "active")
         self.assertEqual(t.display_status({"kind": "merge"}, 3, 3), "gate")
 

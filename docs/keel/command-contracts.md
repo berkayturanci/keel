@@ -171,7 +171,11 @@ one fail-closed path:
    command-only runner does not dispatch agentic gates) never counts as passed when the
    project declared it `on_fail: block`;
 6. require a **covering checkpoint** for the run at the merge step `s10`, so a run that
-   never recorded state cannot cold-merge (audit GAP-13);
+   never recorded state cannot cold-merge (audit GAP-13). Checkpoints are deliberately
+   clock-free and `RUN_ID` is conventionally `ship-<issue-or-pr>`, i.e. **stable across
+   attempts** — so this proves *"some attempt under this run-id reached s10"*, not *"this
+   attempt did"*. A checkpoint left by an earlier aborted attempt still covers. The
+   freshness that matters is supplied by step 5 instead, which binds to the live head SHA;
 7. call GitHub's merge operation only when every prior gate passes.
 
 `--hotfix` bypasses both the merge window (step 2) and the gates-SHA requirement (step 5),
@@ -515,10 +519,24 @@ The required evidence ids are derived from the same `review_merge_contract` and 
 evidence contract used by `keel evidence-verify`. Review verdict evidence is attached to
 `s7 review`; gating jury evidence is attached to `s8 test`; closure comments are attached
 to `s12 close`. Steps without public GitHub evidence still require a complete structured
-handoff, so a generated command cannot silently skip or prematurely terminate a step.
+handoff, so a generated command cannot silently terminate a step *it claims to have run*.
 
 `keel step-verify` is the CLI enforcement surface for this block. Adapters persist the
 canonical handoff JSON and run the verifier before advancing each backbone transition.
+
+**What the verifier does and does not prove.** It is **per-step and stateless across
+steps**: it validates the handoff it is given — schema, status, markers — plus mapped
+public evidence for `s7`/`s8`/`s12`. It does **not** check that earlier steps happened.
+`keel step-verify --step s10` returns `pass` against a well-formed s10 handoff with **no
+s7 or s8 handoff in existence**, and the handoff is written by the same agent invoking the
+check. So *ordering* — "s10 cannot be reached without s7 and s8" — is enforced by adapter
+prose, not by this command.
+
+The **merge itself is not exposed** by that gap: `keel merge` independently requires posted
+review/jury evidence bound to the live head, a gates-pass for the exact head SHA, and the
+covering checkpoint below. **`s11`/`s12` ordering is advisory** — `closeorder.reconcile` is
+a post-hoc reader, not a gate. Making it a core gate is tracked separately; until then this
+paragraph is the contract, and it says advisory.
 
 ## Evidence block
 
@@ -669,9 +687,15 @@ merged, use idempotent anchors or skip duplicate comments, and refuse to continu
 recorded worktree path conflicts with live state.
 
 `keel resume <project.yaml> --root <repo> --json` reads the checkpoint and returns a
-dry-run resume plan. It never mutates git, files, GitHub, comments, or releases. Adapters
-must reconcile live state before resuming and can pass the reconciled state into the
-dry-run plan with `--live-pr-state` and `--live-worktree-state`. Missing checkpoints
+dry-run resume plan. It never mutates git, files, GitHub, comments, or releases — but it
+does **read** them: the live PR state, whether the recorded worktree still exists, and the
+branch's actual head are observed from `gh`/git, not taken on trust. `--live-pr-state` and
+`--live-worktree-state` **override** what is observed (the offline and fixture path), and
+`--no-observe` disables reading entirely. An unreadable `gh` yields `unknown`, never
+`missing`: failing to reach GitHub is a fact about the runner, not about the PR. When the
+branch head differs from the one the checkpoint recorded, the plan carries a warning — the
+recorded context may be stale — without blocking, since a legitimate push before a crash is
+the usual cause and the merge gate binds to the live head regardless. Missing checkpoints
 return `status: no-checkpoint`. Ambiguous state, such as a checkpoint that names a PR or
 worktree that live state reports missing, returns `status: ambiguous`, exits non-zero,
 and includes the reconcile action to perform before retrying. If a PR is already merged,
