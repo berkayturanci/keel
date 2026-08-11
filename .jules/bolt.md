@@ -50,3 +50,6 @@
 ## 2024-05-20 - Fast multiple regex matching
 **Learning:** Checking a string against multiple regex patterns by condensing them into a single pattern using the `|` (OR) operator is significantly faster (~44% faster) than evaluating them individually via multiple `re.search` calls or `any()` generator expressions.
 **Action:** When validating a string against multiple related regex patterns, combine them into a single regex string using `|` instead of checking them iteratively in a loop or generator expression.
+## 2024-08-11 - Fast dictionary key checks with explicit or
+**Learning:** Checking if any of a small set of keys are present and truthy in a dictionary using an `any()` generator expression (e.g. `any(d.get(k) for k in ("a", "b"))`) incurs significant generator overhead. Using explicit `or` conditions (e.g. `d.get("a") or d.get("b")`) is almost an order of magnitude faster.
+**Action:** When evaluating compound boolean checks on small, static sets of dictionary keys, use explicit chained `or` statements rather than an `any()` generator loop to bypass setup overhead.
