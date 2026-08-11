@@ -197,6 +197,38 @@ Then: `/keel:ship 123 --delegate cursor`.
 | `prompt_mode` | `stdin` \| `arg` | | how the prompt reaches the command (default `stdin`) |
 | `model` | string \| null | | default model for this profile; a per-run `--delegate <name>:<model>` beats it |
 | `model_arg` | string | | flag the model is passed on, as `<model_arg> <model>` (default `--model`) |
+| `endpoint` | string | ✅ for `openai-compatible` | the OpenAI-shaped chat-completions URL. Loopback by default |
+| `api_key_env` | string | ✅ for `openai-compatible` | the **name** of the env var holding the key — never the key |
+
+**`openai-compatible` reaches any OpenAI-shaped hosted API** — OpenRouter, Groq, DeepSeek,
+Together, LiteLLM, a local vLLM — from configuration rather than a code change:
+
+```yaml
+knobs:
+  delegate_profiles:
+    router:
+      vendor: openai-compatible
+      endpoint: https://openrouter.ai/api/v1/chat/completions
+      api_key_env: OPENROUTER_API_KEY     # the NAME, never the key
+      model: qwen/qwen-2.5-coder-32b-instruct
+```
+
+Then `--delegate router`, or `--delegate router:<model>` to switch model per run.
+
+**The endpoint is loopback-only until you say otherwise.** Every other keel delegate talks
+to a hardcoded URL, which is what makes their SSRF story trivial. A config-supplied host
+turns `project.yaml` into a request-forgery primitive pointed wherever it says, so:
+
+- `localhost` / `127.0.0.1` / `[::1]` are allowed with no ceremony;
+- any other host — **including `169.254.169.254` and other internal addresses** — is a
+  `keel validate` error unless `KEEL_ALLOW_REMOTE_ENDPOINT` is set;
+- that opt-in lives in the **environment, not this file**. The threat model is a config an
+  attacker influenced, so the switch permitting a remote host must sit outside it;
+- a non-`http(s)` scheme is refused outright, blocking `file://`, `ftp://` and friends;
+- a malformed URL is a config error, not a traceback.
+
+The same guard applies whether the endpoint is remote or a `vLLM` on your own machine —
+the local case simply passes it without an opt-in.
 
 **`prompt_mode` exists because stdin is not universal.** `stdin` (the default) writes the
 prompt to a temp file and pipes it in, because positional-arg passing hangs some CLIs. But
