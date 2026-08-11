@@ -19,7 +19,11 @@ Step status vocabulary (what the front-end paints):
 * ``active``  — the step the run is currently on
 * ``gate``    — the active step *and* it is a gate (test / merge)
 * ``loop``    — the active step *and* it is the fix loop
+* ``blocked`` — the active step, reached and **not passed** (keel#636)
 * ``pending`` — a step the run has not reached yet
+
+``blocked`` exists because reaching a step and clearing it used to render the same:
+a run whose gates came back red showed as the gate step in progress, indefinitely.
 """
 
 from __future__ import annotations
@@ -35,6 +39,7 @@ STATUS_ACTIVE = "active"
 STATUS_DONE = "done"
 STATUS_GATE = "gate"
 STATUS_LOOP = "loop"
+STATUS_BLOCKED = "blocked"
 
 # Ship backbone steps with ship-specific outcome data (merge gate, test gate).
 SHIP_COMMAND = "ship"
@@ -456,11 +461,19 @@ def _gate_for_phase(
     return {"kind": "gate", "outcome": "pending"}
 
 
-def _status(idx: int, active: int, kind: str) -> str:
+def _status(idx: int, active: int, kind: str, blocked: bool = False) -> str:
     if idx < active:
+        # Steps before the active one stay `done`: a full ship run that fails at s8
+        # genuinely did complete s0-s7, and the record carries no evidence either way
+        # for a standalone invocation. `blocked` marks the step that was not passed,
+        # which is the claim the run can actually support.
         return STATUS_DONE
     if idx > active:
         return STATUS_PENDING
+    if blocked:
+        # Outranks gate/loop: an operator needs "this did not pass" before "this is a
+        # gate", and the previous rendering said only the latter.
+        return STATUS_BLOCKED
     if kind in ("gate", "merge"):
         return STATUS_GATE
     if kind == "loop":
@@ -475,6 +488,7 @@ def build_run_state(
     checkpoint_state: dict[str, Any] | None = None,
     command: str = "ship",
     jury_verdict: dict[str, Any] | None = None,
+    blocked: bool = False,
 ) -> dict[str, Any]:
     """Project a keel ``record`` onto its command flow as a ``RunState``.
 
@@ -487,7 +501,10 @@ def build_run_state(
     kinds), since only ship-style runs expose that data. ``jury_verdict`` is an
     optional pre-computed summary of the run's saved ai-jury outcome (see
     :func:`jury_verdict_from_outcome`) — the CLI does the file read; this stays
-    pure and only validates the block (ship-only, ``None`` otherwise).
+    pure and only validates the block (ship-only, ``None`` otherwise). ``blocked`` is
+    the activity record's ``verdict == "blocked"`` — the run reached its current step
+    and did **not** pass it, which used to render identically to still working on it
+    (keel#636).
 
     Returns a flat JSON-serialisable dict the front-end animates. Pure — reads
     only its arguments.
@@ -514,7 +531,7 @@ def build_run_state(
             "id": phase.id,
             "name": phase.name,
             "kind": phase.kind,
-            "status": _status(idx, active, phase.kind),
+            "status": _status(idx, active, phase.kind, blocked=blocked),
             "exercised": True,
             "gate": _gate_for_phase(
                 phase, counts=counts, merge_outcome=merge_outcome, is_ship=is_ship,
@@ -570,6 +587,10 @@ def build_run_state(
         "active_index": active,
         "active_id": flow[active].id,
         "merged": merged,
+        # Exposed at the top level as well as on the step, so the renderers can read
+        # it the way they already read `merged` — they recompute step status from
+        # position and kind rather than trusting `steps[].status` (keel#636).
+        "blocked": bool(blocked),
         "merge_state": live_merge if isinstance(live_merge, str) else None,
         "jury": jury,
         "jury_verdict": _jury_verdict_block(jury_verdict) if is_ship else None,

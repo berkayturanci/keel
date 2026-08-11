@@ -127,11 +127,52 @@ class TestGitHub(unittest.TestCase):
     def test_ci_conclusion_parsed(self):
         self.assertEqual(github.ci_conclusion(7, _run=_Recorder(out="SUCCESS\n")), "SUCCESS")
 
-    def test_ci_conclusion_empty_is_none(self):
-        self.assertIsNone(github.ci_conclusion(7, _run=_Recorder(out="\n")))
+    def test_ci_conclusion_empty_rollup_is_not_none(self):
+        """An empty rollup is a fact about the PR; None is a fact about the runner.
+
+        Folding the first into the second is #675: nothing ran, so nothing
+        verified this head, and the merge gate must be able to see the difference.
+        """
+        self.assertEqual(github.ci_conclusion(7, _run=_Recorder(out="\n")), "")
 
     def test_ci_conclusion_failsoft(self):
         self.assertIsNone(github.ci_conclusion(7, _run=_Recorder(code=1)))
+
+    def test_ci_check_names_parsed(self):
+        rec = _Recorder(out="CI\nAnalyze (Python)\n")
+        self.assertEqual(github.ci_check_names(7, _run=rec), ["CI", "Analyze (Python)"])
+        argv = rec.calls[0]
+        self.assertEqual(argv[:4], ["gh", "pr", "view", "7"])
+        self.assertIn("statusCheckRollup", argv)
+
+    def test_ci_check_names_empty_rollup_is_empty_list(self):
+        self.assertEqual(github.ci_check_names(7, _run=_Recorder(out="\n")), [])
+
+    def test_ci_check_names_failsoft(self):
+        self.assertIsNone(github.ci_check_names(7, _run=_Recorder(code=1)))
+
+    def test_ci_workflow_names_prefers_workflow_over_job_name(self):
+        rec = _Recorder(out="CI\nCodeQL\n")
+        self.assertEqual(github.ci_workflow_names(7, _run=rec), ["CI", "CodeQL"])
+        jq_expr = rec.calls[0][rec.calls[0].index("--jq") + 1]
+        # workflowName first: the rollup's job names never equal the declared
+        # workflow name on a matrix build.
+        self.assertLess(jq_expr.index(".workflowName"), jq_expr.index(".context"))
+
+    def test_ci_workflow_names_failsoft(self):
+        self.assertIsNone(github.ci_workflow_names(7, _run=_Recorder(code=1)))
+
+    def test_ci_workflow_names_empty_rollup_is_empty_list(self):
+        self.assertEqual(github.ci_workflow_names(7, _run=_Recorder(out="\n")), [])
+
+    def test_ci_check_names_uses_the_same_identity_as_ci_conclusion(self):
+        # Both views must agree about what "one check" is, or a name could be
+        # reported missing while its conclusion was counted.
+        rec = _Recorder(out="CI\n")
+        github.ci_check_names(7, _run=rec)
+        jq_expr = rec.calls[0][rec.calls[0].index("--jq") + 1]
+        self.assertIn(".context", jq_expr)
+        self.assertIn(".name", jq_expr)
 
     def test_ci_conclusion_jq_dedupes_by_check_identity(self):
         rec = _Recorder(out="SUCCESS\n")
@@ -141,6 +182,20 @@ class TestGitHub(unittest.TestCase):
         jq_expr = argv[argv.index("--jq") + 1]
         self.assertIn("group_by", jq_expr)
         self.assertIn("max_by", jq_expr)
+
+    def test_pr_state_parsed(self):
+        for raw, expected in (("OPEN\n", "open"), ("MERGED\n", "merged"),
+                              ("CLOSED\n", "closed")):
+            with self.subTest(raw=raw):
+                self.assertEqual(github.pr_state(7, _run=_Recorder(out=raw)), expected)
+
+    def test_pr_state_unreadable_is_none_not_missing(self):
+        """A failed gh call is a fact about the runner, not about the PR (#635)."""
+        self.assertIsNone(github.pr_state(7, _run=_Recorder(code=1)))
+
+    def test_pr_state_unexpected_value_is_none(self):
+        self.assertIsNone(github.pr_state(7, _run=_Recorder(out="DRAFT\n")))
+        self.assertIsNone(github.pr_state(7, _run=_Recorder(out="\n")))
 
     def test_merge_pr_method(self):
         rec = _Recorder()

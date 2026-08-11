@@ -677,3 +677,36 @@ class JuryVerdictGateFidelityTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestBlockedStep(unittest.TestCase):
+    """A step reached and not passed must not render as one in progress (keel#636)."""
+
+    def _statuses(self, **kw):
+        st = rs.build_run_state(None, checkpoint_step="s8", command="ship", **kw)
+        return {step["id"]: step["status"] for step in st["steps"]}
+
+    def test_a_passing_gate_run_renders_as_a_gate(self):
+        self.assertEqual(self._statuses()["s8"], rs.STATUS_GATE)
+
+    def test_a_blocked_gate_run_renders_as_blocked(self):
+        self.assertEqual(self._statuses(blocked=True)["s8"], rs.STATUS_BLOCKED)
+
+    def test_blocked_outranks_the_gate_kind(self):
+        # "this did not pass" is the fact an operator needs first; the previous
+        # rendering said only "this is a gate".
+        self.assertNotEqual(self._statuses(blocked=True)["s8"], rs.STATUS_GATE)
+
+    def test_only_the_active_step_is_marked(self):
+        marked = self._statuses(blocked=True)
+        self.assertEqual(marked["s7"], rs.STATUS_DONE)
+        self.assertEqual(marked["s9"], rs.STATUS_PENDING)
+
+    def test_a_blocked_non_gate_step_is_still_blocked(self):
+        st = rs.build_run_state(None, checkpoint_step="s4", command="ship", blocked=True)
+        statuses = {step["id"]: step["status"] for step in st["steps"]}
+        self.assertEqual(statuses["s4"], rs.STATUS_BLOCKED)
+
+    def test_default_is_unblocked(self):
+        # An older activity record carries no verdict; it must not read as blocked.
+        self.assertEqual(self._statuses()["s8"], rs.STATUS_GATE)
