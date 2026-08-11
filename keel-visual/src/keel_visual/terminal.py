@@ -37,12 +37,13 @@ _CODES = {
 # Status / worst -> colour name.
 _STATUS_COLOR = {
     "done": "green", "active": "cyan", "gate": "amber",
-    "loop": "amber", "pending": "dim",
+    "loop": "amber", "pending": "dim", "blocked": "red",
 }
 _WORST_COLOR = {"none": "green", "minor": "yellow", "major": "amber", "critical": "red"}
 
 # Glyph per display status (filled = reached, hollow = pending).
-_GLYPH = {"done": "●", "active": "◉", "gate": "◆", "loop": "↻", "pending": "○"}
+_GLYPH = {"done": "●", "active": "◉", "gate": "◆", "loop": "↻", "pending": "○",
+          "blocked": "✖"}
 
 
 def paint(text: str, color: str | None, *, enable: bool) -> str:
@@ -53,17 +54,24 @@ def paint(text: str, color: str | None, *, enable: bool) -> str:
     return f"{code}{text}{RESET}" if code else text
 
 
-def display_status(step: dict[str, Any], idx: int, active: int) -> str:
+def display_status(step: dict[str, Any], idx: int, active: int,
+                   *, blocked: bool = False) -> str:
     """Resolve the *display* status of ``step`` for a given playhead ``active``.
 
     Independent of the run's recorded position so the CLI can scrub/animate: a
     step before the playhead is ``done``, after it is ``pending``, and the
     playhead step keeps its intrinsic gate/loop/active status.
+
+    ``blocked`` marks the playhead step as reached-and-not-passed (keel#636). It
+    outranks gate/loop, because "this did not pass" is the fact to show first — the
+    previous rendering painted a failed gate identically to one still running.
     """
     if idx < active:
         return "done"
     if idx > active:
         return "pending"
+    if blocked:
+        return "blocked"
     kind = step.get("kind")
     if kind in ("gate", "merge"):
         return "gate"
@@ -180,12 +188,13 @@ def _flow_body(
     steps: list[dict[str, Any]], active: int, *, run: dict[str, Any], color: bool
 ) -> str:
     merged_now = bool(run.get("merged")) and active >= 10
+    blocked_now = bool(run.get("blocked"))
     # Cell width adapts to the longest phase id so word-length ids (config,
     # preflight, …) align under their nodes instead of colliding.
     cell_w = max(4, max((len(step.get("id", "")) for step in steps), default=4) + 1)
     cells, labels = [], []
     for idx, step in enumerate(steps):
-        status = display_status(step, idx, active)
+        status = display_status(step, idx, active, blocked=blocked_now)
         if merged_now and idx <= active:
             status = "done"
         glyph = _GLYPH.get(status, "○")

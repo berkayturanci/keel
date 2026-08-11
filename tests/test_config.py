@@ -428,6 +428,113 @@ class TestParse(unittest.TestCase):
         self.assertIn("build_gate_cmd", str(ctx.exception))
 
 
+class TestOpenAICompatibleEndpointGuard(unittest.TestCase):
+    """A config-supplied URL is a request-forgery primitive (#666).
+
+    Ported from ai-jury's `_endpoint_issues`: loopback by default, remote only
+    behind an environment opt-in, scheme allowlisted, malformed URL a clean error.
+    """
+
+    def _issues(self, endpoint, env=None):
+        return cfg.endpoint_issues(endpoint, where="p.router", env=env or {})
+
+    def test_loopback_is_allowed_without_any_opt_in(self):
+        for endpoint in ("http://localhost:11434/v1", "http://127.0.0.1:8000/v1",
+                         "http://[::1]:8000/v1", "https://localhost/v1"):
+            with self.subTest(endpoint=endpoint):
+                self.assertEqual(self._issues(endpoint), [])
+
+    def test_a_remote_host_is_refused_by_default(self):
+        issues = self._issues("https://openrouter.ai/api/v1/chat/completions")
+        self.assertEqual(len(issues), 1)
+        self.assertIn("is not loopback", issues[0])
+        self.assertIn(cfg.ALLOW_REMOTE_ENDPOINT_ENV, issues[0])
+
+    def test_cloud_metadata_is_refused_like_any_other_remote_host(self):
+        # The address this guard exists for.
+        issues = self._issues("http://169.254.169.254/latest/meta-data/")
+        self.assertEqual(len(issues), 1)
+        self.assertIn("169.254.169.254", issues[0])
+
+    def test_the_opt_in_lives_in_the_environment_not_in_config(self):
+        endpoint = "https://openrouter.ai/api/v1/chat/completions"
+        self.assertNotEqual(self._issues(endpoint), [])
+        self.assertEqual(
+            self._issues(endpoint, {cfg.ALLOW_REMOTE_ENDPOINT_ENV: "1"}), []
+        )
+
+    def test_non_http_schemes_are_refused(self):
+        for endpoint in ("file:///etc/passwd", "ftp://host/x", "gopher://host/",
+                         "//host/x"):
+            with self.subTest(endpoint=endpoint):
+                issues = self._issues(endpoint, {cfg.ALLOW_REMOTE_ENDPOINT_ENV: "1"})
+                self.assertEqual(len(issues), 1)
+                self.assertIn("not allowed", issues[0])
+
+    def test_a_scheme_check_precedes_the_host_check(self):
+        # file:// has no host; reporting "not loopback" would be the wrong reason.
+        issues = self._issues("file:///etc/passwd")
+        self.assertIn("scheme", issues[0])
+
+    def test_a_malformed_url_is_a_config_error_not_a_traceback(self):
+        issues = self._issues("http://[::1")
+        self.assertEqual(len(issues), 1)
+        self.assertIn("not a valid URL", issues[0])
+
+    def test_missing_or_blank_endpoint_is_reported(self):
+        for endpoint in ("", "   ", None, 7):
+            with self.subTest(endpoint=endpoint):
+                self.assertIn("requires a non-empty 'endpoint'", self._issues(endpoint)[0])
+
+
+class TestOpenAICompatibleKeyEnv(unittest.TestCase):
+    """`api_key_env` takes a NAME. A value here would be published (#666)."""
+
+    def _with(self, profiles):
+        data = copy.deepcopy(VALID)
+        data["knobs"]["delegate_profiles"] = profiles
+        return data
+
+    def _profile(self, **over):
+        base = {"vendor": "openai-compatible",
+                "endpoint": "http://localhost:1/v1", "api_key_env": "MY_KEY"}
+        base.update(over)
+        return self._with({"router": base})
+
+    def test_missing_api_key_env_rejected(self):
+        data = self._profile()
+        del data["knobs"]["delegate_profiles"]["router"]["api_key_env"]
+        with self.assertRaises(cfg.ConfigError) as ctx:
+            cfg.parse_config(data)
+        self.assertIn("requires 'api_key_env'", str(ctx.exception))
+
+    def test_a_pasted_key_is_rejected_by_shape(self):
+        """The mistake worth catching: a secret where a variable name belongs.
+
+        Real keys carry '-' or '.' (sk-proj-..., sk-ant-api03-...), which are not
+        legal in an environment variable name, so the shape check refuses them.
+        """
+        for pasted in ("sk-proj-abc123", "sk-ant-api03-xyz", "ghp_abc.def", "1KEY"):
+            with self.subTest(value=pasted):
+                with self.assertRaises(cfg.ConfigError) as ctx:
+                    cfg.parse_config(self._profile(api_key_env=pasted))
+                self.assertIn("takes a name, not a key", str(ctx.exception))
+
+    def test_a_real_env_var_name_is_accepted(self):
+        for name in ("OPENROUTER_API_KEY", "MY_KEY_2", "_PRIVATE"):
+            with self.subTest(name=name):
+                cfg.parse_config(self._profile(api_key_env=name))
+
+    def test_the_key_name_is_published_but_a_key_would_be_too(self):
+        # The contract carries api_key_env verbatim, which is exactly why it must
+        # be a name: this dict is emitted publicly and hashed into config_hash.
+        serialised = contracts.project_as_dict(
+            cfg.parse_config(self._profile())
+        )["knobs"]["delegate_profiles"]["router"]
+        self.assertEqual(serialised["api_key_env"], "MY_KEY")
+        self.assertEqual(serialised["endpoint"], "http://localhost:1/v1")
+
+
 class TestDelegateProfiles(unittest.TestCase):
     """`knobs.delegate_profiles` — generic delegate vendors (issue #659)."""
 
@@ -469,12 +576,27 @@ class TestDelegateProfiles(unittest.TestCase):
         }))
         self.assertIsNone(config.knobs.delegate_profiles["cursor"].model)
 
+    def test_openai_compatible_full_profile_parses(self):
+        parsed = cfg.parse_config(self._with({
+            "local": {
+                "vendor": "openai-compatible",
+                "endpoint": "http://localhost:11434/v1/chat/completions",
+                "api_key_env": "OLLAMA_KEY",
+                "model": "qwen2.5",
+            },
+        }))
+        profile = parsed.knobs.delegate_profiles["local"]
+        self.assertEqual(profile.vendor, "openai-compatible")
+        self.assertEqual(profile.endpoint, "http://localhost:11434/v1/chat/completions")
+        self.assertEqual(profile.api_key_env, "OLLAMA_KEY")
+        self.assertIsNone(profile.command)
+
     def test_unknown_vendor_rejected(self):
         with self.assertRaises(cfg.ConfigError) as ctx:
-            cfg.parse_config(self._with({"router": {"vendor": "openai-compatible"}}))
+            cfg.parse_config(self._with({"router": {"vendor": "bedrock"}}))
         message = str(ctx.exception)
-        self.assertIn("unknown delegate vendor 'openai-compatible'", message)
-        self.assertIn("valid: cli", message)
+        self.assertIn("unknown delegate vendor 'bedrock'", message)
+        self.assertIn("valid: cli, openai-compatible", message)
 
     def test_cli_without_command_rejected(self):
         with self.assertRaises(cfg.ConfigError) as ctx:
@@ -682,9 +804,33 @@ class TestDelegateProfiles(unittest.TestCase):
     def test_unknown_profile_field_rejected(self):
         with self.assertRaises(cfg.ConfigError) as ctx:
             cfg.parse_config(self._with({
-                "cursor": {"vendor": "cli", "command": "cursor-agent", "endpoint": "http://x"},
+                "cursor": {"vendor": "cli", "command": "cursor-agent", "proxy": "http://x"},
             }))
-        self.assertIn("unknown property 'endpoint'", str(ctx.exception))
+        self.assertIn("unknown property 'proxy'", str(ctx.exception))
+
+    def test_a_field_belonging_to_another_vendor_is_rejected_not_ignored(self):
+        """`endpoint` is legal on openai-compatible, so the schema cannot catch this.
+
+        An operator who sets it on a `cli` profile has a wrong model of what will
+        run, and a silently-ignored key is how that survives to the first real run.
+        """
+        with self.assertRaises(cfg.ConfigError) as ctx:
+            cfg.parse_config(self._with({
+                "cursor": {"vendor": "cli", "command": "cursor-agent",
+                           "endpoint": "http://localhost:1/v1"},
+            }))
+        message = str(ctx.exception)
+        self.assertIn("'endpoint' does not apply to vendor 'cli'", message)
+        self.assertIn("silently ignored", message)
+
+    def test_command_on_an_endpoint_vendor_is_rejected_too(self):
+        with self.assertRaises(cfg.ConfigError) as ctx:
+            cfg.parse_config(self._with({
+                "router": {"vendor": "openai-compatible", "command": "curl",
+                           "endpoint": "http://localhost:1/v1", "api_key_env": "K"},
+            }))
+        self.assertIn("'command' does not apply to vendor 'openai-compatible'",
+                      str(ctx.exception))
 
     def test_round_trips_through_the_project_contract(self):
         data = self._with({
@@ -702,6 +848,8 @@ class TestDelegateProfiles(unittest.TestCase):
             "prompt_mode": "stdin",  # the default, made explicit on the way out
             "model": "composer-1",
             "model_arg": "--model",  # ditto: how the model actually reaches the CLI
+            "endpoint": None,        # cli profiles carry no endpoint
+            "api_key_env": None,
         })
         self.assertEqual(profiles["gemini-cli"], {
             "vendor": "cli",
@@ -711,6 +859,8 @@ class TestDelegateProfiles(unittest.TestCase):
             "prompt_mode": "arg",
             "model": None,
             "model_arg": "--model",
+            "endpoint": None,
+            "api_key_env": None,
         })
         # A round trip through the contract reparses to the same profiles.
         reparsed = self._with({name: dict(p) for name, p in profiles.items()})
