@@ -259,11 +259,13 @@ def pr_merge_window(pr: int | str, *, cwd: str | None = None, _run=None) -> dict
 
     ``None`` when ``gh`` cannot be asked or the PR is not merged.
     """
+    # Named rather than written as two adjacent literals inside the argv list: an
+    # implicit concatenation there reads as a possible missing comma (CodeQL flags it),
+    # and an argv list is exactly where that ambiguity is expensive.
+    jq = '[.createdAt, .mergedAt, .baseRefName, (.mergeCommit.oid // "")] | @tsv'
     result = run_argv(
         ["gh", "pr", "view", str(pr), "--json",
-         "createdAt,mergedAt,baseRefName,mergeCommit",
-         "--jq", '[.createdAt, .mergedAt, .baseRefName, (.mergeCommit.oid // "")]'
-                 " | @tsv"],
+         "createdAt,mergedAt,baseRefName,mergeCommit", "--jq", jq],
         cwd=cwd, **_kw(_run),
     )
     if not result.ok:
