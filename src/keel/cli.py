@@ -131,7 +131,7 @@ def _cmd_validate(args: argparse.Namespace) -> int:
 
 
 def _autostamp(config: cfg.ProjectConfig, root: str, command: str, run_id: str | None,
-               phase: str, *, status: str = "running",
+               phase: str, *, status: str = "running", verdict: str | None = None,
                issue: int | None = None, pr: int | None = None) -> None:
     """Record a run on keel-visual's board at ``phase`` from a deterministic core call.
 
@@ -145,6 +145,10 @@ def _autostamp(config: cfg.ProjectConfig, root: str, command: str, run_id: str |
     unknown phase / write error / pre-activity core is a no-op, never an aborted command.
     Never moves a run backward (a re-run of an earlier step won't undo later progress);
     ``merged`` is terminal and is never overwritten by a later stamp.
+
+    ``verdict`` records whether the phase was *passed*. The never-regress rule is about
+    position, so it stays keyed on phase alone — but position was all that was recorded,
+    which is why a red gate looked exactly like an in-progress one (#636).
     """
     if not run_id or not flows.is_known(command):
         return
@@ -162,7 +166,7 @@ def _autostamp(config: cfg.ProjectConfig, root: str, command: str, run_id: str |
             return   # don't regress a more-advanced still-running run
         record = activity.build_activity_record(
             command=command, run_id=run_id, phase=phase, status=status,
-            issue=issue, pr=pr)
+            verdict=verdict, issue=issue, pr=pr)
         activity.write_activity(path, record)
     except (activity.ActivityError, OSError):
         return
@@ -302,8 +306,13 @@ def _cmd_run_gates(args: argparse.Namespace) -> int:
     diff_text = git.diff(config.base_branch, "HEAD", cwd=args.root)
     outcomes = gates.run_gates(specs, _gate_runner(args.root, diff_text, jury_mode="gating",
                                                    timeout=config.knobs.gate_timeout_s))
+    verdict = fnd.summarize(gates.collect_findings(outcomes))
+    # Stamp *after* the verdict exists, and carry it. Stamping on reach alone recorded
+    # a red gate as `phase: s8, status: running` with no failure signal, so the board
+    # painted a run that failed its gates as one still working through them (#636).
     _autostamp(config, args.root, args.gate_command, getattr(args, "run_id", None),
-               args.gate_phase, issue=getattr(args, "issue", None),
+               args.gate_phase, verdict="blocked" if verdict.blocked else "pass",
+               issue=getattr(args, "issue", None),
                pr=getattr(args, "pull_request", None))   # the run reached the test gate (s8)
     for o in outcomes:
         # A timeout still blocks; it is labelled apart so a slow host does not read
@@ -311,7 +320,6 @@ def _cmd_run_gates(args: argparse.Namespace) -> int:
         status = _gate_status(o)
         print(f"  {status:>7}  {o.gate}")
 
-    verdict = fnd.summarize(gates.collect_findings(outcomes))
     for f in verdict.findings:
         print(f"    [{f.severity}] {f.source}: {f.message.splitlines()[0]}")
     if verdict.blocked:
@@ -983,11 +991,15 @@ def _cmd_ship(args: argparse.Namespace) -> int:
               file=sys.stderr)
         return 1
     verdict = fnd.summarize(gates.collect_findings(outcomes))
-    ci_conclusion = (
-        github.ci_conclusion(args.pr, cwd=args.root)
-        if args.pr and transport.name == "gh"
-        else None
-    )
+    read_ci = bool(args.pr) and transport.name == "gh"
+    ci_conclusion = github.ci_conclusion(args.pr, cwd=args.root) if read_ci else None
+    # Read the *names* too, not just the conclusions: "everything passed" and "the
+    # workflows this project declares actually ran" are different questions, and
+    # only the second one can be answered against knobs.ci_workflows (#675).
+    ci_names = github.ci_check_names(args.pr, cwd=args.root) if read_ci else None
+    # Workflow names, not job names: knobs.ci_workflows is keyed "CI" while the
+    # rollup reports "test (py3.13 / ubuntu-latest)".
+    ci_wf_names = github.ci_workflow_names(args.pr, cwd=args.root) if read_ci else None
 
     a = ship.assess(
         # None-preserving on purpose: assess classifies an unreadable diff fail-closed,
@@ -1001,6 +1013,9 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         merge_window=config.merge_window,
         merge_window_mode=config.merge_window_mode,
         ci_conclusion=ci_conclusion,
+        ci_check_names=ci_names,
+        ci_workflow_names=ci_wf_names,
+        ci_workflows=config.knobs.ci_workflows,
         is_blocker=args.hotfix,
         # A required gate nobody dispatched has produced no verdict, so the assessment
         # must not report "clear to merge": `keel merge` will refuse the record, and
@@ -1141,8 +1156,19 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     print(f"  jury          : {jury_state} ({a.review_contract['jury']['reason']})")
     window = "OPEN" if a.window_open else f"CLOSED ({config.merge_window_mode}, night no-merge)"
     print(f"  merge window  : {window}")
-    ci_str = "unknown" if a.ci_ok is None else ("passing" if a.ci_ok else "FAILING")
+    if a.ci_ran is False:
+        # Print the count rather than a bare word: "0 checks" is the fact an
+        # operator needs, and it used to be indistinguishable from "passing".
+        ci_str = "NO CHECKS RAN (0 reported) — nothing verified this commit"
+    elif a.ci_ok is None:
+        ci_str = "unknown"
+    else:
+        ci_str = "passing" if a.ci_ok else "FAILING"
+        if ci_names is not None:
+            ci_str += f" ({len(ci_names)} check{'' if len(ci_names) == 1 else 's'})"
     print(f"  ci            : {ci_str}")
+    if a.missing_workflows:
+        print(f"  ci MISSING    : {', '.join(a.missing_workflows)} (declared, never ran)")
     print(f"  github        : {transport.name}")
     print(f"  consent       : {contract['operator_consent']['status']}")
     print(f"  intake        : {intake_record['status']}")
@@ -2882,6 +2908,49 @@ def _cmd_gc(args: argparse.Namespace) -> int:
     return 0
 
 
+def _observe_live_state(
+    args: argparse.Namespace, record: dict | None
+) -> dict:
+    """Resolve the live PR / worktree / head state ``resume`` reconciles against.
+
+    Core used to be *told* this and never looked (#635): the flags defaulted to
+    ``unknown``, so every ambiguous outcome required the agent to volunteer the damning
+    state, and a checkpoint pointing at a deleted PR resumed as ``pr-open``. Now keel
+    observes by default and the flags become an explicit override for offline and
+    fixture use, with ``--no-observe`` to opt out entirely.
+
+    Unreadable is **unknown**, never ``missing``: failing to reach ``gh`` is a fact
+    about the runner, and reading it as a fact about the PR is the confusion #675 fixed
+    in the CI gate. The worktree probe is a local ``isdir`` and has no such ambiguity.
+    """
+    supplied_pr = getattr(args, "live_pr_state", None)
+    supplied_wt = getattr(args, "live_worktree_state", None)
+    observed: dict = {
+        "pr": supplied_pr or "unknown",
+        "worktree": supplied_wt or "unknown",
+        "head_sha": None,
+    }
+    if getattr(args, "no_observe", False) or not isinstance(record, dict):
+        return observed
+    identifiers = record.get("identifiers")
+    identifiers = identifiers if isinstance(identifiers, dict) else {}
+
+    if supplied_pr is None and identifiers.get("pull_request"):
+        state = github.pr_state(identifiers["pull_request"], cwd=args.root)
+        observed["pr"] = state or "unknown"
+    if supplied_wt is None and identifiers.get("worktree"):
+        observed["worktree"] = (
+            "present" if os.path.isdir(str(identifiers["worktree"])) else "missing"
+        )
+    if identifiers.get("branch"):
+        # Read the head from the recorded worktree when it still exists — a resume run
+        # from the main checkout would otherwise compare against the wrong branch.
+        cwd = str(identifiers["worktree"]) if observed["worktree"] == "present" \
+            else args.root
+        observed["head_sha"] = git.rev_parse(str(identifiers["branch"]), cwd=cwd)
+    return observed
+
+
 def _cmd_resume(args: argparse.Namespace) -> int:
     try:
         config = cfg.load_config(args.path)
@@ -2896,10 +2965,12 @@ def _cmd_resume(args: argparse.Namespace) -> int:
     path = checkpoint.resolve_path(args.root, config)
     try:
         record = checkpoint.read_checkpoint(path)
+        observed = _observe_live_state(args, record)
         plan = checkpoint.resume_plan_as_dict(
             record,
-            live_pr_state=args.live_pr_state,
-            live_worktree_state=args.live_worktree_state,
+            live_pr_state=observed["pr"],
+            live_worktree_state=observed["worktree"],
+            live_head_sha=observed["head_sha"],
         )
     except checkpoint.CheckpointError as exc:
         print(f"invalid checkpoint {path}: {exc}", file=sys.stderr)
@@ -5021,11 +5092,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_resume.add_argument("--root", default=".",
                           help="repo root for resolving the checkpoint path")
     p_resume.add_argument("--live-pr-state", choices=checkpoint.LIVE_PR_STATES,
-                          default="unknown",
-                          help="adapter-supplied live PR state for dry-run reconcile")
+                          default=None,
+                          help="override the observed live PR state (offline/fixture path)")
     p_resume.add_argument("--live-worktree-state", choices=checkpoint.LIVE_WORKTREE_STATES,
-                          default="unknown",
-                          help="adapter-supplied live worktree state for dry-run reconcile")
+                          default=None,
+                          help="override the observed live worktree state "
+                               "(offline/fixture path)")
+    p_resume.add_argument("--no-observe", action="store_true",
+                          help="do not read git/gh; treat unsupplied live state as unknown")
     p_resume.add_argument("--json", action="store_true", help="emit structured JSON")
     p_resume.set_defaults(func=_cmd_resume)
 

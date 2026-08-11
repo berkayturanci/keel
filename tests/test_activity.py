@@ -115,6 +115,24 @@ class TestBuild(unittest.TestCase):
     def test_build_merged_status(self):
         self.assertEqual(_record(status="merged")["status"], "merged")
 
+    def test_verdict_defaults_to_absent_not_to_pass(self):
+        """No verdict is not a pass. That conflation is the #636 defect."""
+        self.assertIsNone(_record()["verdict"])
+
+    def test_build_records_a_blocked_verdict(self):
+        rec = _record(verdict="blocked")
+        self.assertEqual(rec["verdict"], "blocked")
+        # status stays `running`: the run advanced but did not finish. The two
+        # facts are deliberately separate.
+        self.assertEqual(rec["status"], "running")
+
+    def test_build_records_a_pass_verdict(self):
+        self.assertEqual(_record(verdict="pass")["verdict"], "pass")
+
+    def test_build_bad_verdict(self):
+        with self.assertRaises(activity.ActivityError):
+            _record(verdict="green")
+
     def test_build_unknown_command(self):
         with self.assertRaises(activity.ActivityError):
             activity.build_activity_record(command="nope", run_id="x", phase="config")
@@ -132,6 +150,19 @@ class TestBuild(unittest.TestCase):
 class TestValidate(unittest.TestCase):
     def test_ok(self):
         activity.validate_activity(_record())
+
+    def test_a_missing_verdict_validates(self):
+        # Records written before #636 carry no verdict field at all.
+        rec = _record()
+        del rec["verdict"]
+        activity.validate_activity(rec)
+
+    def test_a_wrong_verdict_is_rejected(self):
+        # A board that trusts this field must never read a typo as a pass.
+        rec = _record()
+        rec["verdict"] = "ok"
+        with self.assertRaises(activity.ActivityError):
+            activity.validate_activity(rec)
 
     def test_merged_ok(self):
         activity.validate_activity(_record(status="merged"))
