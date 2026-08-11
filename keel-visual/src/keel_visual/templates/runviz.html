@@ -48,7 +48,7 @@
   .node.done .lab{color:var(--mut)}
   .node.act .dot{background:rgba(73,182,255,.18);border-color:var(--info);color:var(--info);box-shadow:0 0 18px rgba(73,182,255,.55);animation:pulse 1.2s ease-in-out infinite}
   .node.gate .dot{background:rgba(240,160,32,.18);border-color:var(--warn);color:var(--warn);box-shadow:0 0 18px rgba(240,160,32,.5);animation:pulse 1.2s ease-in-out infinite}
-  .node.gate.fail .dot{background:rgba(255,84,104,.2);border-color:var(--danger);color:var(--danger);box-shadow:0 0 18px rgba(255,84,104,.55)}
+  .node.fail .dot{background:rgba(255,84,104,.2);border-color:var(--danger);color:var(--danger);box-shadow:0 0 18px rgba(255,84,104,.55)}
   .node.act .lab,.node.gate .lab{color:var(--txt)}
   @keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.16)}}
   /* stage panel */
@@ -263,6 +263,9 @@
       else if(idx===active){
         if(s.kind==='gate'||s.kind==='merge'){ n.classList.add('gate'); if(gateOutcome(s)==='fail') n.classList.add('fail'); }
         else n.classList.add('act');
+        // keel#636: reached and not passed. Outranks gate/act — a red gate used to
+        // render exactly like one still running.
+        if(RUN.blocked) n.classList.add('fail');
       }
       if(mergedNow && idx<=active){ n.classList.remove('gate','act','fail'); n.classList.add('done'); }
     });
@@ -354,7 +357,8 @@
   function stepHex(k){ const s=steps[k]||{};
     if(mergedNow() && k<=active) return COL3.done;
     if(k<active) return COL3.done;
-    if(k===active){ if(s.kind==='gate'||s.kind==='merge') return gateOutcome(s)==='fail'?COL3.fail:COL3.gate; return COL3.act; }
+    if(k===active){ if(RUN.blocked) return COL3.fail;
+      if(s.kind==='gate'||s.kind==='merge') return gateOutcome(s)==='fail'?COL3.fail:COL3.gate; return COL3.act; }
     return COL3.idle; }
   function rgb3(h){ return [(h>>16&255)/255,(h>>8&255)/255,(h&255)/255]; }
   // progress colour by x position relative to the running head; merged paints all green

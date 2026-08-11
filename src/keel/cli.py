@@ -131,7 +131,7 @@ def _cmd_validate(args: argparse.Namespace) -> int:
 
 
 def _autostamp(config: cfg.ProjectConfig, root: str, command: str, run_id: str | None,
-               phase: str, *, status: str = "running",
+               phase: str, *, status: str = "running", verdict: str | None = None,
                issue: int | None = None, pr: int | None = None) -> None:
     """Record a run on keel-visual's board at ``phase`` from a deterministic core call.
 
@@ -145,6 +145,10 @@ def _autostamp(config: cfg.ProjectConfig, root: str, command: str, run_id: str |
     unknown phase / write error / pre-activity core is a no-op, never an aborted command.
     Never moves a run backward (a re-run of an earlier step won't undo later progress);
     ``merged`` is terminal and is never overwritten by a later stamp.
+
+    ``verdict`` records whether the phase was *passed*. The never-regress rule is about
+    position, so it stays keyed on phase alone — but position was all that was recorded,
+    which is why a red gate looked exactly like an in-progress one (#636).
     """
     if not run_id or not flows.is_known(command):
         return
@@ -162,7 +166,7 @@ def _autostamp(config: cfg.ProjectConfig, root: str, command: str, run_id: str |
             return   # don't regress a more-advanced still-running run
         record = activity.build_activity_record(
             command=command, run_id=run_id, phase=phase, status=status,
-            issue=issue, pr=pr)
+            verdict=verdict, issue=issue, pr=pr)
         activity.write_activity(path, record)
     except (activity.ActivityError, OSError):
         return
@@ -302,8 +306,13 @@ def _cmd_run_gates(args: argparse.Namespace) -> int:
     diff_text = git.diff(config.base_branch, "HEAD", cwd=args.root)
     outcomes = gates.run_gates(specs, _gate_runner(args.root, diff_text, jury_mode="gating",
                                                    timeout=config.knobs.gate_timeout_s))
+    verdict = fnd.summarize(gates.collect_findings(outcomes))
+    # Stamp *after* the verdict exists, and carry it. Stamping on reach alone recorded
+    # a red gate as `phase: s8, status: running` with no failure signal, so the board
+    # painted a run that failed its gates as one still working through them (#636).
     _autostamp(config, args.root, args.gate_command, getattr(args, "run_id", None),
-               args.gate_phase, issue=getattr(args, "issue", None),
+               args.gate_phase, verdict="blocked" if verdict.blocked else "pass",
+               issue=getattr(args, "issue", None),
                pr=getattr(args, "pull_request", None))   # the run reached the test gate (s8)
     for o in outcomes:
         # A timeout still blocks; it is labelled apart so a slow host does not read
@@ -311,7 +320,6 @@ def _cmd_run_gates(args: argparse.Namespace) -> int:
         status = _gate_status(o)
         print(f"  {status:>7}  {o.gate}")
 
-    verdict = fnd.summarize(gates.collect_findings(outcomes))
     for f in verdict.findings:
         print(f"    [{f.severity}] {f.source}: {f.message.splitlines()[0]}")
     if verdict.blocked:
