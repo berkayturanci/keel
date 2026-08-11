@@ -65,7 +65,7 @@
               "vendor": {
                 "type": "string",
                 "minLength": 1,
-                "description": "Generic delegate vendor. Only 'cli' is implemented today."
+                "description": "Generic delegate vendor: 'cli' (a local coding-agent CLI) or 'openai-compatible' (any OpenAI-shaped hosted API)."
               },
               "command": {
                 "type": "string",
@@ -90,6 +90,14 @@
               "model": {
                 "type": ["string", "null"],
                 "description": "Optional model override passed through to the command."
+              },
+              "endpoint": {
+                "type": ["string", "null"],
+                "description": "openai-compatible only: the OpenAI-shaped chat-completions URL. Loopback by default; a non-loopback host requires KEEL_ALLOW_REMOTE_ENDPOINT in the environment."
+              },
+              "api_key_env": {
+                "type": ["string", "null"],
+                "description": "openai-compatible only: the NAME of the environment variable holding the API key, never the key itself. Profile config is serialised into the command contract and hashed into config_hash."
               },
               "model_arg": {
                 "type": "string",

@@ -392,6 +392,22 @@ class TestAutoStamp(unittest.TestCase):
             cli._autostamp(self._config(), d, "ship", None, "s0")
             self.assertIsNone(self._rec(d, "x"))
 
+    def test_carries_a_verdict_when_one_is_given(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            cli._autostamp(self._config(), d, "ship", "rv", "s8", verdict="blocked")
+            r = self._rec(d, "rv")
+            # Position and outcome are separate facts: the run advanced to s8
+            # (status stays running) and did not pass it.
+            self.assertEqual((r["phase"], r["status"], r["verdict"]),
+                             ("s8", "running", "blocked"))
+
+    def test_a_stamp_without_a_verdict_records_none_not_pass(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            cli._autostamp(self._config(), d, "ship", "rn", "s4")
+            self.assertIsNone(self._rec(d, "rn")["verdict"])
+
     def test_unknown_command(self):
         import tempfile
         with tempfile.TemporaryDirectory() as d:
@@ -5840,6 +5856,158 @@ class TestCoreMerge(unittest.TestCase):
             rc, _, err = run(["ship", p, "--root", d])
         self.assertEqual(rc, 0)
         self.assertIn("extension not loaded", err)
+
+
+class TestShipCiVisibility(unittest.TestCase):
+    """The ship line must show what CI actually did, not just whether it was red (#675)."""
+
+    GH_UP = runtime.CapabilityReport((
+        runtime.Capability("shell", True, "ok", "test"),
+        runtime.Capability("git", True, "ok", "test"),
+        runtime.Capability("worktree", True, "ok", "test"),
+        runtime.Capability("gh", True, "ok", "test"),
+        runtime.Capability("gh-auth", True, "ok", "test"),
+        runtime.Capability("github-mcp", False, "missing", "test"),
+    ))
+
+    def _ship(self, conclusion, names, *, config=None, workflows=None):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d, \
+                patch("keel.cli.runtime.detect", return_value=self.GH_UP), \
+                patch("keel.cli.github.ci_conclusion", return_value=conclusion), \
+                patch("keel.cli.github.ci_check_names", return_value=names), \
+                patch("keel.cli.github.ci_workflow_names", return_value=workflows):
+            return run(["ship", config or _write_config("'true'"), "--root", d, "--pr", "7"])
+
+    def test_zero_checks_is_printed_as_zero_not_as_passing(self):
+        rc, out, _ = self._ship("", [])
+        # Blocking reaches the exit code too, so a script driving ship cannot
+        # treat "nothing ran" as a clean run either.
+        self.assertEqual(rc, 1)
+        self.assertIn("NO CHECKS RAN", out)
+        self.assertIn("nothing verified this commit", out)
+        self.assertIn("BLOCK", out.upper())
+
+    def test_passing_prints_the_check_count(self):
+        # "passing" alone was indistinguishable from "0 checks"; the count is the fact.
+        rc, out, _ = self._ship("SUCCESS", ["CI", "CodeQL"])
+        self.assertEqual(rc, 0)
+        self.assertIn("passing (2 checks)", out)
+
+    def test_one_check_is_singular(self):
+        rc, out, _ = self._ship("SUCCESS", ["CI"])
+        self.assertEqual(rc, 0)
+        self.assertIn("passing (1 check)", out)
+
+    def test_count_is_omitted_when_the_names_could_not_be_read(self):
+        # The conclusion call succeeded and the names call did not. Print no count
+        # rather than a wrong one — "0 checks" here would be a fact about gh, not
+        # about the PR, which is the confusion this whole change removes.
+        rc, out, _ = self._ship("SUCCESS", None)
+        self.assertEqual(rc, 0)
+        self.assertIn("ci            : passing", out)
+        self.assertNotIn("check)", out)
+        self.assertNotIn("checks)", out)
+
+    def test_a_declared_workflow_that_never_ran_is_named(self):
+        config = _write_raw(
+            "extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: x\n"
+            "gates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+            "  ci_workflows:\n    CI: '**'\n    CodeQL: '**'\n"
+        )
+        # Job names reported, workflow "CI" ran, "CodeQL" never did.
+        rc, out, _ = self._ship("SUCCESS", ["test (py3.13 / ubuntu-latest)"],
+                                config=config, workflows=["CI"])
+        self.assertEqual(rc, 1)
+        self.assertIn("ci MISSING", out)
+        self.assertIn("CodeQL", out)
+        self.assertIn("declared, never ran", out)
+
+
+class TestResumeObservation(unittest.TestCase):
+    """`keel resume` observes git/gh instead of being told (#635)."""
+
+    def _rec(self, **kw):
+        from keel import checkpoint
+        base = dict(run_id="ship-1", command="ship", current_step="s9",
+                    base_branch="main", branch="b", worktree="/tmp/keel-gone-xyz",
+                    pull_request=7, head_sha="a" * 40)
+        base.update(kw)
+        return checkpoint.build_checkpoint_record(**base)
+
+    def _args(self, **kw):
+        base = dict(root=".", live_pr_state=None, live_worktree_state=None,
+                    no_observe=False)
+        base.update(kw)
+        return Namespace(**base)
+
+    def test_an_explicit_flag_wins_over_observation(self):
+        # The offline / fixture path stays available.
+        with patch("keel.cli.github.pr_state", return_value="merged") as probe:
+            observed = cli._observe_live_state(
+                self._args(live_pr_state="open"), self._rec())
+        self.assertEqual(observed["pr"], "open")
+        probe.assert_not_called()
+
+    def test_no_observe_reads_nothing(self):
+        with patch("keel.cli.github.pr_state") as probe, \
+                patch("keel.cli.git.rev_parse") as head:
+            observed = cli._observe_live_state(self._args(no_observe=True), self._rec())
+        probe.assert_not_called()
+        head.assert_not_called()
+        self.assertEqual((observed["pr"], observed["worktree"]), ("unknown", "unknown"))
+
+    def test_an_unreadable_gh_is_unknown_not_missing(self):
+        """The #675 confusion, not repeated: gh failing says nothing about the PR."""
+        with patch("keel.cli.github.pr_state", return_value=None), \
+                patch("keel.cli.git.rev_parse", return_value=None):
+            observed = cli._observe_live_state(self._args(), self._rec())
+        self.assertEqual(observed["pr"], "unknown")
+
+    def test_a_deleted_worktree_is_observed_as_missing(self):
+        with patch("keel.cli.github.pr_state", return_value="open"), \
+                patch("keel.cli.git.rev_parse", return_value=None):
+            observed = cli._observe_live_state(self._args(), self._rec())
+        self.assertEqual(observed["worktree"], "missing")
+
+    def test_an_existing_worktree_is_observed_as_present(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d, \
+                patch("keel.cli.github.pr_state", return_value="open"), \
+                patch("keel.cli.git.rev_parse", return_value="b" * 40):
+            observed = cli._observe_live_state(self._args(), self._rec(worktree=d))
+        self.assertEqual(observed["worktree"], "present")
+        self.assertEqual(observed["head_sha"], "b" * 40)
+
+    def test_the_head_is_read_from_the_recorded_worktree_when_it_exists(self):
+        # Reading it from the main checkout would compare against the wrong branch.
+        import tempfile
+        with tempfile.TemporaryDirectory() as d, \
+                patch("keel.cli.github.pr_state", return_value="open"), \
+                patch("keel.cli.git.rev_parse", return_value="b" * 40) as head:
+            cli._observe_live_state(self._args(), self._rec(worktree=d))
+        self.assertEqual(head.call_args.kwargs["cwd"], d)
+
+    def test_a_missing_worktree_falls_back_to_the_root_for_the_head(self):
+        with patch("keel.cli.github.pr_state", return_value="open"), \
+                patch("keel.cli.git.rev_parse", return_value="b" * 40) as head:
+            cli._observe_live_state(self._args(root="/some/root"), self._rec())
+        self.assertEqual(head.call_args.kwargs["cwd"], "/some/root")
+
+    def test_no_checkpoint_observes_nothing(self):
+        with patch("keel.cli.github.pr_state") as probe:
+            observed = cli._observe_live_state(self._args(), None)
+        probe.assert_not_called()
+        self.assertIsNone(observed["head_sha"])
+
+    def test_a_checkpoint_without_identifiers_is_safe(self):
+        with patch("keel.cli.github.pr_state") as probe, \
+                patch("keel.cli.git.rev_parse") as head:
+            observed = cli._observe_live_state(
+                self._args(), self._rec(pull_request=None, worktree=None, branch=None))
+        probe.assert_not_called()
+        head.assert_not_called()
+        self.assertEqual(observed["pr"], "unknown")
 
 
 class TestMergeCheckpointGate(unittest.TestCase):

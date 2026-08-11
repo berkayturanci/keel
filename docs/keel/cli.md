@@ -809,15 +809,17 @@ keel checkpoint .keel/project.yaml --root . --write \
 The writer replaces the previous checkpoint. It is for the active resume point, not for
 append-only shipped-run history; use `keel ledger` for history.
 
-## `keel resume <project.yaml> [--root DIR] [--live-pr-state STATE] [--live-worktree-state STATE] [--json]`
+## `keel resume <project.yaml> [--root DIR] [--live-pr-state STATE] [--live-worktree-state STATE] [--no-observe] [--json]`
 
 Render a dry-run resume plan from the checkpoint. This command never mutates files, git,
-GitHub, comments, or releases.
+GitHub, comments, or releases — it does read them: by default it observes the live PR
+state, whether the recorded worktree still exists, and the branch's real head, instead of
+being told. The flags override what is observed, for offline and fixture use.
 
 ```bash
-keel resume .keel/project.yaml --root . --json
-keel resume .keel/project.yaml --root . --live-pr-state merged --json
-keel resume .keel/project.yaml --root . --live-worktree-state missing --json
+keel resume .keel/project.yaml --root . --json                       # observes
+keel resume .keel/project.yaml --root . --live-pr-state merged --json # override
+keel resume .keel/project.yaml --root . --no-observe --json           # read nothing
 ```
 
 `STATE` values are adapter-supplied live-state reconciliation hints:

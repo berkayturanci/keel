@@ -905,15 +905,16 @@ Render a dry-run resume plan from the checkpoint. Never mutates anything.
 
 ```
 keel resume <project.yaml> [--root DIR] [--live-pr-state STATE]
-            [--live-worktree-state STATE] [--json]
+            [--live-worktree-state STATE] [--no-observe] [--json]
 ```
 
 | Flag | Type / values | Default | Effect |
 | --- | --- | --- | --- |
 | `path` | file path | required | Project config. |
 | `--root DIR` | path | `.` | Root for resolving the checkpoint path. |
-| `--live-pr-state` | `unknown` \| `missing` \| `open` \| `merged` \| `closed` | `unknown` | Adapter-supplied live PR state for reconciliation. |
-| `--live-worktree-state` | `unknown` \| `present` \| `missing` | `unknown` | Adapter-supplied live worktree state. |
+| `--live-pr-state` | `unknown` \| `missing` \| `open` \| `merged` \| `closed` | *observed* | Override the live PR state read from `gh`. Offline/fixture path. |
+| `--live-worktree-state` | `unknown` \| `present` \| `missing` | *observed* | Override the worktree-exists probe. |
+| `--no-observe` | flag | off | Read neither git nor `gh`; unsupplied live state stays `unknown`. |
 | `--json` | flag | off | Structured resume plan. |
 
 ### Details
@@ -1638,8 +1639,8 @@ positionals are all rejected as user error.
 
 ```
 /keel:ship [issue numbers...] [--compound|--profile <standard|compound>]
-           [--delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL|PROFILE>]
-           [--review-delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL|PROFILE>]
+           [--delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL|google-api:MODEL|PROFILE>]
+           [--review-delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL|google-api:MODEL|PROFILE>]
            [--review-comments <inline|summary>] [--reviewers <1|2|3>]
            [--jury|--no-jury|--jury-advisory] [--hotfix] [--dry-run] [--wizard]
 ```
@@ -1693,7 +1694,7 @@ model cannot run tools, so the orchestrator does every git/PR step itself and de
 only diff generation (≤2 retries on a bad diff, then fall back). The hosted-API
 delegates (`anthropic-api:MODEL` / `openai-api:MODEL`, issue #548) follow the same
 no-tools contract with the endpoint swapped: one stdlib HTTP call per attempt against
-the vendor's API, keyed by `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` from the environment —
+the vendor's API, keyed by `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/`GEMINI_API_KEY` from the environment —
 no agent CLI needed. Reading the token requires the `secrets` consent scope; without it
 the run resolves to `HOST_AGENT` before any key is read. A **profile name** (issue #659)
 selects a generic `cli` vendor from `knobs.delegate_profiles`: resolved *after* the

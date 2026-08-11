@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from . import jsonschema_min
 from . import yaml_helper as yaml
@@ -28,10 +30,25 @@ SCHEMA_PATH = Path(__file__).parent / "schema" / "project.schema.json"
 
 DEFAULT_EXTENSIONS_DIR = ".keel/extensions"
 
-#: Vendors a ``knobs.delegate_profiles`` entry may declare. Only the generic local-CLI
-#: vendor today (issue #659); ``openai-compatible``/``google-api`` are designed in
-#: ``docs/proposals/generic-delegate-vendors.md`` but deliberately deferred.
-DELEGATE_PROFILE_VENDORS = ("cli",)
+#: Vendors a ``knobs.delegate_profiles`` entry may declare. ``cli`` drives a local
+#: coding-agent CLI (#659); ``openai-compatible`` reaches any OpenAI-shaped hosted API
+#: — OpenRouter, Groq, DeepSeek, Together, LiteLLM, vLLM — from config (#666).
+DELEGATE_PROFILE_VENDORS = ("cli", "openai-compatible")
+
+#: Vendors whose profile must name an executable.
+_COMMAND_VENDORS = ("cli",)
+#: Vendors whose profile must name an endpoint + the env var holding its key.
+_ENDPOINT_VENDORS = ("openai-compatible",)
+
+#: Hosts an ``openai-compatible`` endpoint may use without an explicit opt-in.
+LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "::1", "[::1]")
+
+#: Environment opt-in for a **non-loopback** endpoint. It lives in the environment and
+#: deliberately **not** in ``project.yaml``: the threat model here is an
+#: attacker-influenced config, so the switch that permits reaching a remote host must
+#: sit outside the surface an attacker would control. Ported from ai-jury's
+#: ``JURY_ALLOW_REMOTE_ENDPOINT`` (same reasoning, same default-closed posture).
+ALLOW_REMOTE_ENDPOINT_ENV = "KEEL_ALLOW_REMOTE_ENDPOINT"
 
 #: How a ``cli`` profile's prompt reaches the command. ``stdin`` stays the default
 #: (positional-arg passing hangs some CLIs); ``arg`` is the opt-in for CLIs whose usage
@@ -45,6 +62,7 @@ DEFAULT_PROMPT_MODE = "stdin"
 DEFAULT_MODEL_ARG = "--model"
 
 __all__ = ["SLOTS", "DEFAULT_EXTENSIONS_DIR", "DELEGATE_PROFILE_VENDORS",
+           "LOOPBACK_HOSTS", "ALLOW_REMOTE_ENDPOINT_ENV",
            "DELEGATE_PROMPT_MODES", "DEFAULT_PROMPT_MODE", "DEFAULT_MODEL_ARG",
            "Automation", "DelegateProfile",
            "Knobs", "ProjectConfig", "ConfigError", "load_config", "parse_config",
@@ -101,6 +119,13 @@ class DelegateProfile:
     #: the documented model precedence would be unimplementable for an arbitrary CLI —
     #: attribution would record a model that was never actually selected.
     model_arg: str = DEFAULT_MODEL_ARG
+    #: ``openai-compatible`` only: the OpenAI-shaped chat-completions URL. Validated
+    #: by :func:`endpoint_issues` — loopback by default, remote behind an env opt-in.
+    endpoint: str | None = None
+    #: ``openai-compatible`` only: the **name** of the env var holding the API key.
+    #: Never the key. Profile config is serialised into the command contract and
+    #: hashed into ``config_hash``, so a value here would be published.
+    api_key_env: str | None = None
 
     def role_args(self, *, review: bool = False) -> tuple[str, ...]:
         """Flags for this role: ``review_args`` for a reviewer when set, else ``args``."""
@@ -193,6 +218,8 @@ def _build(data: dict) -> ProjectConfig:
                 prompt_mode=profile.get("prompt_mode", DEFAULT_PROMPT_MODE),
                 model=profile.get("model"),
                 model_arg=profile.get("model_arg") or DEFAULT_MODEL_ARG,
+                endpoint=profile.get("endpoint"),
+                api_key_env=profile.get("api_key_env"),
             )
             for name, profile in k.get("delegate_profiles", {}).items()
         },
@@ -274,6 +301,60 @@ def config_hash(config: ProjectConfig) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _is_env_var_name(value: str) -> bool:
+    """Cheap shape check that ``api_key_env`` is a *name*, not a pasted secret."""
+    return bool(value) and not value[0].isdigit() and all(
+        ch.isalnum() or ch == "_" for ch in value
+    )
+
+
+def endpoint_issues(endpoint: Any, *, where: str, env=None) -> list[str]:
+    """Validate an ``openai-compatible`` endpoint URL. Empty list == acceptable.
+
+    A config-supplied URL is the one genuinely new risk in #666: every other keel
+    delegate talks to a hardcoded constant, which is why their SSRF story is trivial.
+    Letting config name the host makes ``project.yaml`` a request-forgery primitive
+    pointed wherever it says, including cloud-metadata addresses like
+    ``169.254.169.254``. Ported from ai-jury's ``_endpoint_issues`` rather than
+    reinvented — same decisions, same default-closed posture:
+
+    * a non-``http``/``https`` scheme is refused, which blocks ``file://``, ``ftp://``
+      and the other SSRF primitives;
+    * a malformed URL is a config error, not a stack trace out of ``keel validate``;
+    * a **non-loopback** host is refused unless the operator sets
+      :data:`ALLOW_REMOTE_ENDPOINT_ENV` in the environment. The opt-in is env-only on
+      purpose: an attacker who can edit config must not be able to grant it.
+
+    Plaintext ``http://`` to a permitted remote host is allowed but noted in the
+    message, since the prompt (and the diff in it) would cross the network in clear.
+    """
+    env = os.environ if env is None else env
+    if not isinstance(endpoint, str) or not endpoint.strip():
+        return [f"{where}: vendor 'openai-compatible' requires a non-empty 'endpoint'"]
+    try:
+        parsed = urlsplit(endpoint)
+        host = (parsed.hostname or "").lower()
+    except ValueError:
+        # urlsplit raises on e.g. "http://[::1" — by definition not a usable endpoint.
+        return [f"{where}: endpoint {endpoint!r} is not a valid URL"]
+    scheme = (parsed.scheme or "").lower()
+    if scheme not in ("http", "https"):
+        return [
+            f"{where}: endpoint scheme {parsed.scheme or '(none)'!r} is not allowed; "
+            "use http or https"
+        ]
+    if host in LOOPBACK_HOSTS:
+        return []
+    if not env.get(ALLOW_REMOTE_ENDPOINT_ENV):
+        return [
+            f"{where}: endpoint host {host or '(none)'!r} is not loopback; a remote "
+            "model server (including internal and cloud-metadata addresses) is refused "
+            f"by default. Set {ALLOW_REMOTE_ENDPOINT_ENV}=1 in the environment — not in "
+            "this file — to allow a trusted remote endpoint"
+        ]
+    return []
+
+
 def _validate_delegate_profiles(profiles: Any, *, source: str) -> list[str]:
     """Return semantic errors for ``knobs.delegate_profiles`` (empty == valid).
 
@@ -342,11 +423,40 @@ def _validate_delegate_profiles(profiles: Any, *, source: str) -> list[str]:
                 f"{where}: unknown delegate vendor {vendor!r}; "
                 f"valid: {', '.join(DELEGATE_PROFILE_VENDORS)}"
             )
-        elif not profile.get("command"):
+        elif vendor in _COMMAND_VENDORS and not profile.get("command"):
             errors.append(
                 f"{where}: vendor {vendor!r} requires a non-empty 'command' — the "
                 "executable keel runs (e.g. cursor-agent)"
             )
+        elif vendor in _ENDPOINT_VENDORS:
+            errors.extend(endpoint_issues(profile.get("endpoint"), where=where))
+            key_env = profile.get("api_key_env")
+            if not key_env or not isinstance(key_env, str) or not key_env.strip():
+                errors.append(
+                    f"{where}: vendor {vendor!r} requires 'api_key_env' — the *name* of "
+                    "the environment variable holding the key. Never the key itself: "
+                    "profile config is serialised into the command contract and hashed "
+                    "into config_hash, so a value here would be published"
+                )
+            elif not _is_env_var_name(key_env):
+                errors.append(
+                    f"{where}: api_key_env {key_env!r} is not a valid environment "
+                    "variable name (letters, digits, underscore; not starting with a "
+                    "digit) — this field takes a name, not a key"
+                )
+        # A field that does not apply to this vendor is a config error, not a
+        # silently-ignored key: an operator who sets `endpoint` on a `cli` profile has
+        # a mistaken model of what will run, and the schema cannot catch it because
+        # both fields are legal *somewhere*.
+        for field_name, owners in (("command", _COMMAND_VENDORS),
+                                   ("endpoint", _ENDPOINT_VENDORS),
+                                   ("api_key_env", _ENDPOINT_VENDORS)):
+            if profile.get(field_name) and vendor in DELEGATE_PROFILE_VENDORS \
+                    and vendor not in owners:
+                errors.append(
+                    f"{where}: {field_name!r} does not apply to vendor {vendor!r} "
+                    f"(only {', '.join(owners)}) — it would be silently ignored"
+                )
         prompt_mode = profile.get("prompt_mode", DEFAULT_PROMPT_MODE)
         if prompt_mode not in DELEGATE_PROMPT_MODES:
             errors.append(
@@ -397,6 +507,8 @@ def delegate_profiles_dict(config: ProjectConfig) -> dict:
                 "prompt_mode": profile.prompt_mode,
                 "model": profile.model,
                 "model_arg": profile.model_arg,
+                "endpoint": profile.endpoint,
+                "api_key_env": profile.api_key_env,
             }
             for name, profile in sorted(profiles.items())
         }
