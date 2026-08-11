@@ -5908,6 +5908,92 @@ class TestShipCiVisibility(unittest.TestCase):
         self.assertIn("declared, never ran", out)
 
 
+class TestResumeObservation(unittest.TestCase):
+    """`keel resume` observes git/gh instead of being told (#635)."""
+
+    def _rec(self, **kw):
+        from keel import checkpoint
+        base = dict(run_id="ship-1", command="ship", current_step="s9",
+                    base_branch="main", branch="b", worktree="/tmp/keel-gone-xyz",
+                    pull_request=7, head_sha="a" * 40)
+        base.update(kw)
+        return checkpoint.build_checkpoint_record(**base)
+
+    def _args(self, **kw):
+        base = dict(root=".", live_pr_state=None, live_worktree_state=None,
+                    no_observe=False)
+        base.update(kw)
+        return Namespace(**base)
+
+    def test_an_explicit_flag_wins_over_observation(self):
+        # The offline / fixture path stays available.
+        with patch("keel.cli.github.pr_state", return_value="merged") as probe:
+            observed = cli._observe_live_state(
+                self._args(live_pr_state="open"), self._rec())
+        self.assertEqual(observed["pr"], "open")
+        probe.assert_not_called()
+
+    def test_no_observe_reads_nothing(self):
+        with patch("keel.cli.github.pr_state") as probe, \
+                patch("keel.cli.git.rev_parse") as head:
+            observed = cli._observe_live_state(self._args(no_observe=True), self._rec())
+        probe.assert_not_called()
+        head.assert_not_called()
+        self.assertEqual((observed["pr"], observed["worktree"]), ("unknown", "unknown"))
+
+    def test_an_unreadable_gh_is_unknown_not_missing(self):
+        """The #675 confusion, not repeated: gh failing says nothing about the PR."""
+        with patch("keel.cli.github.pr_state", return_value=None), \
+                patch("keel.cli.git.rev_parse", return_value=None):
+            observed = cli._observe_live_state(self._args(), self._rec())
+        self.assertEqual(observed["pr"], "unknown")
+
+    def test_a_deleted_worktree_is_observed_as_missing(self):
+        with patch("keel.cli.github.pr_state", return_value="open"), \
+                patch("keel.cli.git.rev_parse", return_value=None):
+            observed = cli._observe_live_state(self._args(), self._rec())
+        self.assertEqual(observed["worktree"], "missing")
+
+    def test_an_existing_worktree_is_observed_as_present(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d, \
+                patch("keel.cli.github.pr_state", return_value="open"), \
+                patch("keel.cli.git.rev_parse", return_value="b" * 40):
+            observed = cli._observe_live_state(self._args(), self._rec(worktree=d))
+        self.assertEqual(observed["worktree"], "present")
+        self.assertEqual(observed["head_sha"], "b" * 40)
+
+    def test_the_head_is_read_from_the_recorded_worktree_when_it_exists(self):
+        # Reading it from the main checkout would compare against the wrong branch.
+        import tempfile
+        with tempfile.TemporaryDirectory() as d, \
+                patch("keel.cli.github.pr_state", return_value="open"), \
+                patch("keel.cli.git.rev_parse", return_value="b" * 40) as head:
+            cli._observe_live_state(self._args(), self._rec(worktree=d))
+        self.assertEqual(head.call_args.kwargs["cwd"], d)
+
+    def test_a_missing_worktree_falls_back_to_the_root_for_the_head(self):
+        with patch("keel.cli.github.pr_state", return_value="open"), \
+                patch("keel.cli.git.rev_parse", return_value="b" * 40) as head:
+            cli._observe_live_state(self._args(root="/some/root"), self._rec())
+        self.assertEqual(head.call_args.kwargs["cwd"], "/some/root")
+
+    def test_no_checkpoint_observes_nothing(self):
+        with patch("keel.cli.github.pr_state") as probe:
+            observed = cli._observe_live_state(self._args(), None)
+        probe.assert_not_called()
+        self.assertIsNone(observed["head_sha"])
+
+    def test_a_checkpoint_without_identifiers_is_safe(self):
+        with patch("keel.cli.github.pr_state") as probe, \
+                patch("keel.cli.git.rev_parse") as head:
+            observed = cli._observe_live_state(
+                self._args(), self._rec(pull_request=None, worktree=None, branch=None))
+        probe.assert_not_called()
+        head.assert_not_called()
+        self.assertEqual(observed["pr"], "unknown")
+
+
 class TestMergeCheckpointGate(unittest.TestCase):
     """The s10 checkpoint gate in `keel merge` (audit GAP-13)."""
 

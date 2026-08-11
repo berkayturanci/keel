@@ -168,6 +168,24 @@ def list_prs(
     return run_argv(argv, cwd=cwd, **_kw(_run))
 
 
+def pr_state(pr: int | str, *, cwd: str | None = None, _run=None) -> str | None:
+    """Live PR state as ``open`` / ``merged`` / ``closed``, or ``None`` when unreadable.
+
+    ``None`` is a fact about the **runner** (``gh`` missing, offline, no auth) and must
+    not be read as a fact about the PR — the caller maps it to ``unknown``, never to
+    ``missing``. A ``gh`` call that succeeds and reports no such PR is the only thing
+    that means the PR is gone.
+    """
+    result = run_argv(
+        ["gh", "pr", "view", str(pr), "--json", "state", "--jq", ".state"],
+        cwd=cwd, **_kw(_run),
+    )
+    if not result.ok:
+        return None
+    raw = result.stdout.strip().lower()
+    return raw if raw in ("open", "merged", "closed") else None
+
+
 def pr_merge_snapshot(pr: int | str, *, cwd: str | None = None, _run=None) -> CommandResult:
     return run_argv(
         [

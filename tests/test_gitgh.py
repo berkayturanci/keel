@@ -183,6 +183,20 @@ class TestGitHub(unittest.TestCase):
         self.assertIn("group_by", jq_expr)
         self.assertIn("max_by", jq_expr)
 
+    def test_pr_state_parsed(self):
+        for raw, expected in (("OPEN\n", "open"), ("MERGED\n", "merged"),
+                              ("CLOSED\n", "closed")):
+            with self.subTest(raw=raw):
+                self.assertEqual(github.pr_state(7, _run=_Recorder(out=raw)), expected)
+
+    def test_pr_state_unreadable_is_none_not_missing(self):
+        """A failed gh call is a fact about the runner, not about the PR (#635)."""
+        self.assertIsNone(github.pr_state(7, _run=_Recorder(code=1)))
+
+    def test_pr_state_unexpected_value_is_none(self):
+        self.assertIsNone(github.pr_state(7, _run=_Recorder(out="DRAFT\n")))
+        self.assertIsNone(github.pr_state(7, _run=_Recorder(out="\n")))
+
     def test_merge_pr_method(self):
         rec = _Recorder()
         github.merge_pr(7, method="rebase", _run=rec)

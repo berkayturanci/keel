@@ -6,6 +6,35 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **`keel resume` observes the live state instead of being told it** (#635): the
+  `--live-pr-state` / `--live-worktree-state` flags defaulted to `unknown` and core never
+  looked, so every ambiguous outcome required the agent to volunteer the damning state — a
+  checkpoint pointing at a deleted worktree resumed as `ready / can_resume: true`. keel now
+  reads the PR state from `gh`, probes whether the recorded worktree exists, and resolves
+  the branch's real head; the flags become an explicit override for offline and fixture use
+  and `--no-observe` opts out. An unreadable `gh` yields `unknown`, never `missing` —
+  failing to reach GitHub is a fact about the runner, not about the PR.
+- **A crash mid-merge is no longer resumable without evidence** (#635): `merge: pending`
+  with unknown live state returned `pr-open / can_resume: true / next_step: s10`, which
+  would re-attempt a merge that may already have landed. It is now `ambiguous`; live
+  evidence either way (`merged` or `open`) still resolves it normally.
+- **A branch that moved since the checkpoint now warns** (#635): the checkpoint records a
+  head and nothing compared it, so a stale run resumed with stale context silently. A
+  mismatch warns rather than blocks — the usual cause is a legitimate push before a crash,
+  and the merge gate binds to the live head regardless.
+
+### Changed
+- **Documented what `step-verify` and the checkpoint gate actually prove** (#635).
+  `step-verify` is per-step and stateless across steps: `--step s10` passes against a
+  well-formed s10 handoff with no s7 or s8 handoff in existence, so *ordering* is enforced
+  by adapter prose, not by the command — and `s11`/`s12` ordering is advisory, since
+  `closeorder.reconcile` is a post-hoc reader. The merge itself is unaffected, being gated
+  separately on head-bound evidence. The covering-checkpoint gate proves "some attempt under
+  this run-id reached s10", not "this attempt did", because checkpoints are clock-free and
+  `RUN_ID` is stable across attempts. `docs/keel/command-contracts.md` now says so rather
+  than implying enforcement it does not perform.
+
 ### Added
 - **`openai-compatible` delegate profiles — any OpenAI-shaped hosted API from config**
   (#666): OpenRouter, Groq, DeepSeek, Together, LiteLLM and a local vLLM become

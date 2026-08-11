@@ -905,15 +905,16 @@ Render a dry-run resume plan from the checkpoint. Never mutates anything.
 
 ```
 keel resume <project.yaml> [--root DIR] [--live-pr-state STATE]
-            [--live-worktree-state STATE] [--json]
+            [--live-worktree-state STATE] [--no-observe] [--json]
 ```
 
 | Flag | Type / values | Default | Effect |
 | --- | --- | --- | --- |
 | `path` | file path | required | Project config. |
 | `--root DIR` | path | `.` | Root for resolving the checkpoint path. |
-| `--live-pr-state` | `unknown` \| `missing` \| `open` \| `merged` \| `closed` | `unknown` | Adapter-supplied live PR state for reconciliation. |
-| `--live-worktree-state` | `unknown` \| `present` \| `missing` | `unknown` | Adapter-supplied live worktree state. |
+| `--live-pr-state` | `unknown` \| `missing` \| `open` \| `merged` \| `closed` | *observed* | Override the live PR state read from `gh`. Offline/fixture path. |
+| `--live-worktree-state` | `unknown` \| `present` \| `missing` | *observed* | Override the worktree-exists probe. |
+| `--no-observe` | flag | off | Read neither git nor `gh`; unsupplied live state stays `unknown`. |
 | `--json` | flag | off | Structured resume plan. |
 
 ### Details

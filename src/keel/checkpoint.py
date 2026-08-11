@@ -200,8 +200,17 @@ def resume_plan_as_dict(
     *,
     live_pr_state: str = "unknown",
     live_worktree_state: str = "unknown",
+    live_head_sha: str | None = None,
 ) -> dict[str, Any]:
-    """Return a deterministic dry-run resume plan after live-state reconciliation."""
+    """Return a deterministic dry-run resume plan after live-state reconciliation.
+
+    ``live_head_sha`` is the branch's actual head. The checkpoint records the head it
+    was written at, and nothing compared the two (#635), so a branch that moved since
+    resumed with stale context and no signal. A mismatch warns rather than blocks: the
+    common cause is a legitimate push that crashed before the next checkpoint, and s10
+    still fails closed on its own (``ledger.gates_pass_for_head`` pins the merge to the
+    live head).
+    """
     if live_pr_state not in LIVE_PR_STATES:
         raise CheckpointError("unsupported live_pr_state")
     if live_worktree_state not in LIVE_WORKTREE_STATES:
@@ -233,6 +242,14 @@ def resume_plan_as_dict(
     # that never merged. The post-hoc auditor cannot catch it either: `closeorder`
     # attests the merge *decision*, not the merge. Live evidence that the PR is not
     # merged is the stronger signal and makes this ambiguous.
+    recorded_head = identifiers.get("head_sha")
+    if live_head_sha and recorded_head and live_head_sha != recorded_head:
+        warnings.append(
+            f"branch head moved since the checkpoint was written "
+            f"({recorded_head[:12]} -> {live_head_sha[:12]}); the recorded context may be "
+            "stale — re-read the diff before resuming"
+        )
+
     claimed_merged = state["merge"] == "merged"
     contradicted = (
         claimed_merged
@@ -267,6 +284,22 @@ def resume_plan_as_dict(
             next_step = None
             action = None
             reason = "merge, capture, and close are already complete"
+    elif state["merge"] == "pending" and live_pr_state == "unknown" \
+            and identifiers.get("pull_request"):
+        # A crash *during* the merge is the genuinely ambiguous case, and it used to
+        # resume as a plain `pr-open / next: s10` with no warning at all (#635). Only
+        # live evidence resolves it: `merged` and `open` are handled above/below and
+        # both answer the question. `unknown` does not, so refuse to guess.
+        status = "ambiguous"
+        can_resume = False
+        reason = (
+            "checkpoint records the merge as in-flight and live state is unknown; "
+            "whether the merge landed cannot be determined from the checkpoint alone"
+        )
+        warnings.append(
+            "check whether the pull request merged before resuming; resuming here "
+            "would re-attempt a merge that may already have landed"
+        )
     elif live_pr_state == "closed" and identifiers.get("pull_request"):
         status = "ambiguous"
         can_resume = False

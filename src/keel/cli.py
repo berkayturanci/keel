@@ -2900,6 +2900,49 @@ def _cmd_gc(args: argparse.Namespace) -> int:
     return 0
 
 
+def _observe_live_state(
+    args: argparse.Namespace, record: dict | None
+) -> dict:
+    """Resolve the live PR / worktree / head state ``resume`` reconciles against.
+
+    Core used to be *told* this and never looked (#635): the flags defaulted to
+    ``unknown``, so every ambiguous outcome required the agent to volunteer the damning
+    state, and a checkpoint pointing at a deleted PR resumed as ``pr-open``. Now keel
+    observes by default and the flags become an explicit override for offline and
+    fixture use, with ``--no-observe`` to opt out entirely.
+
+    Unreadable is **unknown**, never ``missing``: failing to reach ``gh`` is a fact
+    about the runner, and reading it as a fact about the PR is the confusion #675 fixed
+    in the CI gate. The worktree probe is a local ``isdir`` and has no such ambiguity.
+    """
+    supplied_pr = getattr(args, "live_pr_state", None)
+    supplied_wt = getattr(args, "live_worktree_state", None)
+    observed: dict = {
+        "pr": supplied_pr or "unknown",
+        "worktree": supplied_wt or "unknown",
+        "head_sha": None,
+    }
+    if getattr(args, "no_observe", False) or not isinstance(record, dict):
+        return observed
+    identifiers = record.get("identifiers")
+    identifiers = identifiers if isinstance(identifiers, dict) else {}
+
+    if supplied_pr is None and identifiers.get("pull_request"):
+        state = github.pr_state(identifiers["pull_request"], cwd=args.root)
+        observed["pr"] = state or "unknown"
+    if supplied_wt is None and identifiers.get("worktree"):
+        observed["worktree"] = (
+            "present" if os.path.isdir(str(identifiers["worktree"])) else "missing"
+        )
+    if identifiers.get("branch"):
+        # Read the head from the recorded worktree when it still exists — a resume run
+        # from the main checkout would otherwise compare against the wrong branch.
+        cwd = str(identifiers["worktree"]) if observed["worktree"] == "present" \
+            else args.root
+        observed["head_sha"] = git.rev_parse(str(identifiers["branch"]), cwd=cwd)
+    return observed
+
+
 def _cmd_resume(args: argparse.Namespace) -> int:
     try:
         config = cfg.load_config(args.path)
@@ -2914,10 +2957,12 @@ def _cmd_resume(args: argparse.Namespace) -> int:
     path = checkpoint.resolve_path(args.root, config)
     try:
         record = checkpoint.read_checkpoint(path)
+        observed = _observe_live_state(args, record)
         plan = checkpoint.resume_plan_as_dict(
             record,
-            live_pr_state=args.live_pr_state,
-            live_worktree_state=args.live_worktree_state,
+            live_pr_state=observed["pr"],
+            live_worktree_state=observed["worktree"],
+            live_head_sha=observed["head_sha"],
         )
     except checkpoint.CheckpointError as exc:
         print(f"invalid checkpoint {path}: {exc}", file=sys.stderr)
@@ -5039,11 +5084,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_resume.add_argument("--root", default=".",
                           help="repo root for resolving the checkpoint path")
     p_resume.add_argument("--live-pr-state", choices=checkpoint.LIVE_PR_STATES,
-                          default="unknown",
-                          help="adapter-supplied live PR state for dry-run reconcile")
+                          default=None,
+                          help="override the observed live PR state (offline/fixture path)")
     p_resume.add_argument("--live-worktree-state", choices=checkpoint.LIVE_WORKTREE_STATES,
-                          default="unknown",
-                          help="adapter-supplied live worktree state for dry-run reconcile")
+                          default=None,
+                          help="override the observed live worktree state "
+                               "(offline/fixture path)")
+    p_resume.add_argument("--no-observe", action="store_true",
+                          help="do not read git/gh; treat unsupplied live state as unknown")
     p_resume.add_argument("--json", action="store_true", help="emit structured JSON")
     p_resume.set_defaults(func=_cmd_resume)
 
