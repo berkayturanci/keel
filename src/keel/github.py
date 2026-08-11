@@ -186,6 +186,99 @@ def pr_state(pr: int | str, *, cwd: str | None = None, _run=None) -> str | None:
     return raw if raw in ("open", "merged", "closed") else None
 
 
+def pr_files(pr: int | str, *, cwd: str | None = None, _run=None) -> list[str] | None:
+    """Paths the pull request changed — what it *meant* to change (#561).
+
+    Read from GitHub rather than from a local diff on purpose: after a squash-merge
+    the head branch is usually deleted, so the branch tip may not exist locally at
+    the moment this check runs. ``None`` when ``gh`` could not be asked.
+    """
+    return _lines(
+        ["gh", "pr", "view", str(pr), "--json", "files", "--jq", ".files[].path"],
+        cwd=cwd, _run=_run,
+    )
+
+
+def commit_files(sha: str, *, cwd: str | None = None, _run=None) -> list[str] | None:
+    """Paths a commit changed against its first parent — what actually *landed*.
+
+    For a squash-merge the commit has one parent, so this is precisely the set of
+    files the merge wrote onto the base branch. ``None`` when ``gh`` could not be
+    asked; an empty list means the commit changed nothing, which is itself a fact.
+    """
+    return _lines(
+        ["gh", "api", f"repos/{{owner}}/{{repo}}/commits/{sha}",
+         "--jq", ".files[].filename"],
+        cwd=cwd, _run=_run,
+    )
+
+
+def _lines(argv: list[str], *, cwd: str | None, _run) -> list[str] | None:
+    result = run_argv(argv, cwd=cwd, **_kw(_run))
+    if not result.ok:
+        return None
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def prs_merged_between(
+    base: str, since: str, until: str, *, cwd: str | None = None, _run=None
+) -> list[int] | None:
+    """Pull request numbers merged into ``base`` in the half-open window (#561).
+
+    ``since``/``until`` are ISO-8601 timestamps. This is the window in which another
+    merge can land work that a branch created before ``since`` will not contain — the
+    precondition for an update-branch squash reverting it.
+    """
+    return _ints(
+        ["gh", "pr", "list", "--base", base, "--state", "merged", "--limit", "100",
+         "--json", "number,mergedAt",
+         "--jq", f'.[] | select(.mergedAt > "{since}" and .mergedAt < "{until}") | .number'],
+        cwd=cwd, _run=_run,
+    )
+
+
+def _ints(argv: list[str], *, cwd: str | None, _run) -> list[int] | None:
+    lines = _lines(argv, cwd=cwd, _run=_run)
+    if lines is None:
+        return None
+    out = []
+    for line in lines:
+        try:
+            out.append(int(line))
+        except ValueError:
+            continue
+    return out
+
+
+def pr_merge_window(pr: int | str, *, cwd: str | None = None, _run=None) -> dict | None:
+    """When a PR branched and merged, its base, and the SHA it merged as (#561).
+
+    ``createdAt`` stands in for the branch point. It is the conservative choice: a
+    branch is cut at or before its PR is opened, so the window can only be too wide,
+    never too narrow — a wider window over-reports rather than missing a revert.
+
+    ``None`` when ``gh`` cannot be asked or the PR is not merged.
+    """
+    result = run_argv(
+        ["gh", "pr", "view", str(pr), "--json",
+         "createdAt,mergedAt,baseRefName,mergeCommit",
+         "--jq", '[.createdAt, .mergedAt, .baseRefName, (.mergeCommit.oid // "")]'
+                 " | @tsv"],
+        cwd=cwd, **_kw(_run),
+    )
+    if not result.ok:
+        return None
+    parts = result.stdout.strip().split("\t")
+    if len(parts) != 4 or not all(parts[:3]) or not parts[3]:
+        return None
+    return {
+        "branched_at": parts[0],
+        "merged_at": parts[1],
+        "base": parts[2],
+        "merge_commit": parts[3],
+    }
+
+
 def pr_merge_snapshot(pr: int | str, *, cwd: str | None = None, _run=None) -> CommandResult:
     return run_argv(
         [

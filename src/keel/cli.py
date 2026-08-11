@@ -43,6 +43,7 @@ from . import (
     jury,
     ledger,
     lock,
+    mergeverify,
     project_commands,
     review,
     runcontrols,
@@ -2422,6 +2423,68 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
             suffix = " (deferred)" if result["deferred"] else ""
             print(f"  {state:>4}  {result['id']}{suffix}")
     return 0 if report["status"] == "pass" else 1
+
+
+def _overtaking_prs(args: argparse.Namespace, timing: dict) -> dict:
+    """Map each path to a PR that changed it after ``args.pr`` branched (#561).
+
+    The window is (branch point, this merge). A pull request merged inside it landed
+    work the branch does not contain, so a squash of that branch can undo it — which
+    is precisely how #543 reverted #550 while every gate stayed green.
+    """
+    others = github.prs_merged_between(
+        timing["base"], timing["branched_at"], timing["merged_at"], cwd=args.root
+    ) or []
+    overtaken: dict = {}
+    for number in others:
+        if number == args.pr:
+            continue
+        for path in github.pr_files(number, cwd=args.root) or []:
+            overtaken.setdefault(path, number)
+    return overtaken
+
+
+def _cmd_verify_merge(args: argparse.Namespace) -> int:
+    """Did the merge apply what was reviewed? (#561)
+
+    `keel merge` proves the merge succeeded. This proves it applied the reviewed
+    diff and nothing else — the gap a squash over an `update-branch` merge commit
+    fell through twice in one day, silently reverting unrelated merged work while
+    the suite stayed green because the reverted state was internally consistent.
+    """
+    try:
+        config = cfg.load_config(args.path)
+    except FileNotFoundError:
+        print(f"no such config: {args.path}", file=sys.stderr)
+        return 1
+    except cfg.ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    del config  # loaded to validate the project; this check reads only GitHub
+
+    timing = github.pr_merge_window(args.pr, cwd=args.root)
+    merge_sha = args.merge_sha or (timing or {}).get("merge_commit")
+    if not merge_sha or not timing:
+        report = mergeverify.verify_merge(None)
+        report["reason"] = (
+            f"pull request #{args.pr} has no merge commit yet, or gh could not be asked"
+        )
+    else:
+        report = mergeverify.verify_merge(
+            github.commit_files(merge_sha, cwd=args.root),
+            overtaken=_overtaking_prs(args, timing),
+            intended=github.pr_files(args.pr, cwd=args.root),
+        )
+    report["pull_request"] = args.pr
+    report["merge_commit"] = merge_sha
+    if args.json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        print(mergeverify.render(report))
+    # Loud on drift, quiet otherwise. `incomplete` is usually an identical change
+    # already on the base, and `unknown` is a fact about the runner — neither is
+    # evidence that something was reverted, so neither fails the command.
+    return 1 if mergeverify.is_drift(report) else 0
 
 
 def _cmd_scope_verify(args: argparse.Namespace) -> int:
@@ -4895,6 +4958,19 @@ def build_parser() -> argparse.ArgumentParser:
                             help="override the operator-applied evidence waiver label")
     p_evidence.add_argument("--json", action="store_true", help="emit structured JSON")
     p_evidence.set_defaults(func=_cmd_evidence_verify)
+
+    p_vm = sub.add_parser(
+        "verify-merge",
+        help="confirm a merged PR's diff actually landed, and nothing else did",
+    )
+    p_vm.add_argument("path", help="path to project.yaml")
+    p_vm.add_argument("--root", default=".", help="repo root for live gh fetches")
+    p_vm.add_argument("--pr", type=_positive_int, required=True,
+                      help="merged pull request number to verify")
+    p_vm.add_argument("--merge-sha", default=None,
+                      help="merge commit SHA; read from the PR when omitted")
+    p_vm.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_vm.set_defaults(func=_cmd_verify_merge)
 
     p_scope = sub.add_parser(
         "scope-verify",

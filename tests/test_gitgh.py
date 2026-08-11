@@ -197,6 +197,53 @@ class TestGitHub(unittest.TestCase):
         self.assertIsNone(github.pr_state(7, _run=_Recorder(out="DRAFT\n")))
         self.assertIsNone(github.pr_state(7, _run=_Recorder(out="\n")))
 
+    def test_pr_files_parsed(self):
+        self.assertEqual(
+            github.pr_files(7, _run=_Recorder(out="a.py\nb.py\n")), ["a.py", "b.py"])
+
+    def test_pr_files_failsoft(self):
+        self.assertIsNone(github.pr_files(7, _run=_Recorder(code=1)))
+
+    def test_commit_files_parsed(self):
+        rec = _Recorder(out="src/x.py\n")
+        self.assertEqual(github.commit_files("abc", _run=rec), ["src/x.py"])
+        self.assertIn("abc", " ".join(rec.calls[0]))
+
+    def test_commit_files_failsoft(self):
+        self.assertIsNone(github.commit_files("abc", _run=_Recorder(code=1)))
+
+    def test_pr_merge_window_parsed(self):
+        rec = _Recorder(out="2026-07-08T23:02:16Z\t2026-07-10T15:19:57Z\tmain\t7c140f3\n")
+        self.assertEqual(github.pr_merge_window(543, _run=rec), {
+            "branched_at": "2026-07-08T23:02:16Z",
+            "merged_at": "2026-07-10T15:19:57Z",
+            "base": "main",
+            "merge_commit": "7c140f3",
+        })
+
+    def test_pr_merge_window_none_for_an_unmerged_pr(self):
+        # No merge commit -> the check has nothing to verify.
+        rec = _Recorder(out="2026-07-08T23:02:16Z\t\tmain\t\n")
+        self.assertIsNone(github.pr_merge_window(543, _run=rec))
+
+    def test_pr_merge_window_failsoft(self):
+        self.assertIsNone(github.pr_merge_window(543, _run=_Recorder(code=1)))
+        self.assertIsNone(github.pr_merge_window(543, _run=_Recorder(out="garbage\n")))
+
+    def test_prs_merged_between_parses_numbers(self):
+        rec = _Recorder(out="550\n546\n")
+        self.assertEqual(
+            github.prs_merged_between("main", "A", "B", _run=rec), [550, 546])
+
+    def test_prs_merged_between_skips_non_numeric_lines(self):
+        self.assertEqual(
+            github.prs_merged_between("main", "A", "B", _run=_Recorder(out="550\nnope\n")),
+            [550])
+
+    def test_prs_merged_between_failsoft(self):
+        self.assertIsNone(
+            github.prs_merged_between("main", "A", "B", _run=_Recorder(code=1)))
+
     def test_merge_pr_method(self):
         rec = _Recorder()
         github.merge_pr(7, method="rebase", _run=rec)

@@ -6,6 +6,25 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **`keel verify-merge` — a post-merge guardrail against silent reverts** (#561): `keel
+  merge` proved a merge *succeeded*, never that it applied the diff that was reviewed. Those
+  came apart twice in one day while shipping 1.8.1/1.8.2, when an `update-branch` merge
+  commit followed by a squash-merge reverted unrelated merged work; CI stayed green because
+  the reverted state was internally consistent, and both were found only by reading the
+  day's whole diff against a baseline. The new command asks whether a merge wrote to files
+  that another pull request changed **after this one branched** — the only way that revert
+  can occur — and exits non-zero naming each file and the PR it collided with. s10 now runs
+  it immediately after merging.
+
+  Validated against the actual incident rather than a synthetic: run on #543 it reports
+  `drift` and names both of that day's reverts (#550's four source and test files, #546's
+  four website files), while today's merges report `clean`. An earlier design that compared
+  the PR's file set against the merge's file set reported the incident as **clean** — the
+  `update-branch` commit had already pulled the reverting state into the branch, so the
+  revert was inside the diff a reviewer reads. Scope comparison cannot see it; it survives
+  as a weaker secondary signal.
+
 ### Fixed
 - **A project's own review rubric now actually reaches its reviewers** (#677):
   `policy_pack.review.additions` and `required_sections` have been in the schema, in the

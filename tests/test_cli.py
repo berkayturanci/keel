@@ -6010,6 +6010,104 @@ class TestResumeObservation(unittest.TestCase):
         self.assertEqual(observed["pr"], "unknown")
 
 
+class TestVerifyMergeCommand(unittest.TestCase):
+    """keel verify-merge: loud on the silent-revert shape, quiet otherwise (#561)."""
+
+    WINDOW = {"branched_at": "2026-07-08T23:02:16Z", "merged_at": "2026-07-10T15:19:57Z",
+              "base": "main", "merge_commit": "7c140f3"}
+
+    def _run(self, *, window=WINDOW, others=None, files_by_pr=None, commit_files=None,
+             argv_extra=()):
+        files_by_pr = files_by_pr or {}
+        with patch("keel.cli.github.pr_merge_window", return_value=window), \
+                patch("keel.cli.github.prs_merged_between", return_value=others), \
+                patch("keel.cli.github.commit_files", return_value=commit_files), \
+                patch("keel.cli.github.pr_files",
+                      side_effect=lambda pr, **kw: files_by_pr.get(pr)):
+            return run(["verify-merge", _write_config("'true'"), "--root", ".",
+                        "--pr", "543", *argv_extra])
+
+    def test_the_historical_incident_is_flagged(self):
+        """#543 merged after #550 and wrote to #550's files."""
+        rc, out, _ = self._run(
+            others=[550],
+            files_by_pr={543: ["website/index.html", "src/keel/github.py"],
+                         550: ["src/keel/github.py"]},
+            commit_files=["website/index.html", "src/keel/github.py"],
+        )
+        self.assertEqual(rc, 1, "drift must be loud in the exit code too")
+        self.assertIn("drift", out)
+        self.assertIn("src/keel/github.py", out)
+        self.assertIn("#550", out)
+
+    def test_a_clean_merge_is_quiet(self):
+        rc, out, _ = self._run(
+            others=[],
+            files_by_pr={543: ["website/index.html"]},
+            commit_files=["website/index.html"],
+        )
+        self.assertEqual(rc, 0)
+        self.assertIn("clean", out)
+
+    def test_the_pr_never_overtakes_itself(self):
+        # Its own number appearing in the window must not flag every file.
+        rc, out, _ = self._run(
+            others=[543],
+            files_by_pr={543: ["a.py"]},
+            commit_files=["a.py"],
+        )
+        self.assertEqual(rc, 0)
+        self.assertIn("clean", out)
+
+    def test_an_unmerged_pr_is_unknown_not_clean(self):
+        rc, out, _ = self._run(window=None)
+        self.assertEqual(rc, 0)
+        self.assertIn("unknown", out)
+        self.assertIn("no merge commit", out)
+
+    def test_json_output(self):
+        rc, out, _ = self._run(
+            others=[550],
+            files_by_pr={543: ["a.py"], 550: ["a.py"]},
+            commit_files=["a.py"],
+            argv_extra=("--json",),
+        )
+        payload = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertEqual(payload["status"], "drift")
+        self.assertEqual(payload["overtaken"], {"a.py": 550})
+        self.assertEqual(payload["pull_request"], 543)
+
+    def test_an_explicit_merge_sha_skips_the_lookup(self):
+        rc, out, _ = self._run(
+            others=[], files_by_pr={543: ["a.py"]}, commit_files=["a.py"],
+            argv_extra=("--merge-sha", "deadbeef"),
+        )
+        self.assertEqual(rc, 0)
+        self.assertIn("clean", out)
+
+    def test_an_unreadable_overtaking_list_does_not_claim_clean_falsely(self):
+        # gh failing yields no overtaking data; the scope check still applies.
+        rc, out, _ = self._run(
+            others=None,
+            files_by_pr={543: ["a.py"]},
+            commit_files=["a.py", "b.py"],
+        )
+        self.assertEqual(rc, 0)
+        self.assertIn("out-of-scope", out)
+
+    def test_a_bad_config_path_fails_cleanly(self):
+        rc, _, err = run(["verify-merge", "/nope/x.yaml", "--pr", "1"])
+        self.assertEqual(rc, 1)
+        self.assertIn("no such config", err)
+
+    def test_an_invalid_config_fails_cleanly(self):
+        bad = _write_raw("extends: nope\ncore_version: '^0.1'\nbase_branch: main\n")
+        rc, _, err = run(["verify-merge", bad, "--pr", "1"])
+        self.assertEqual(rc, 1)
+        self.assertIn("invalid keel config", err)
+
+
 class TestMergeCheckpointGate(unittest.TestCase):
     """The s10 checkpoint gate in `keel merge` (audit GAP-13)."""
 

@@ -730,6 +730,22 @@ refuse to certify the run at s10. Then
 queue. The merge claim and "the only merge path is `keel merge` at s10" are non-negotiable
 invariants.
 
+**Immediately after a successful merge, run `keel verify-merge <config> --root . --pr <PR>`.**
+A merge succeeding is not the same as a merge applying what was reviewed. A
+`gh api …/update-branch` merge commit followed by a squash-merge silently reverted
+unrelated already-merged work **twice in one day** while shipping 1.8.1/1.8.2, and CI never
+saw it: the reverted state was internally consistent — old code, no test for the removed
+behaviour — so every gate stayed green. Both were found only by reading the day's whole diff
+against a pre-session baseline.
+
+The check asks whether this merge wrote to files that another pull request changed **after
+this one branched**, which is the only way that revert can happen. `drift` exits non-zero
+and names each file with the pull request it collided with. Treat it as *stop and read the
+diff*, not as an automatic failure — two PRs editing one file in sequence is ordinary — and
+**never proceed to s11/s12 on a drift finding without a human confirming the merge is
+sound**. Silence is the failure mode being fixed here, so surface the report in the closure
+comment rather than only in the run log.
+
 ### s11 capture
 Record the run for `/keel:wrap`: the **effective** implementer + reviewer vendors/models,
 tier, rounds, window decision, and outcome. Post the **closure comment** to **both** the

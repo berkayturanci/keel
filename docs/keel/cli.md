@@ -809,6 +809,34 @@ keel checkpoint .keel/project.yaml --root . --write \
 The writer replaces the previous checkpoint. It is for the active resume point, not for
 append-only shipped-run history; use `keel ledger` for history.
 
+## `keel verify-merge <project.yaml> [--root DIR] --pr N [--merge-sha SHA] [--json]`
+
+Confirm a merged PR applied what was reviewed — and that nothing else rode along.
+Read-only: it queries GitHub and mutates nothing.
+
+A merge succeeding is not the same as a merge applying the reviewed diff. An
+`update-branch` merge commit followed by a squash-merge silently reverted unrelated
+merged work twice in one day while shipping 1.8.1/1.8.2, and CI never saw it — the
+reverted state was internally consistent, so every gate stayed green.
+
+The check asks whether the merge wrote to files another PR changed **after this one
+branched**, which is the only way that revert can happen.
+
+```bash
+keel verify-merge .keel/project.yaml --root . --pr 543
+keel verify-merge .keel/project.yaml --root . --pr 543 --json
+```
+
+| status | meaning | exit |
+| --- | --- | --- |
+| `drift` | wrote to files another PR changed after this one branched — read the diff | 1 |
+| `out-of-scope` | changed files the PR's own diff did not list | 0 |
+| `clean` | neither | 0 |
+| `unknown` | not merged yet, or `gh` unreadable — **not** a pass | 0 |
+
+`drift` is a *stop and look* signal, not proof: two PRs editing one file in sequence
+is ordinary. The report names the colliding PR for each file so a human can judge.
+
 ## `keel resume <project.yaml> [--root DIR] [--live-pr-state STATE] [--live-worktree-state STATE] [--no-observe] [--json]`
 
 Render a dry-run resume plan from the checkpoint. This command never mutates files, git,
