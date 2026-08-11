@@ -7,6 +7,18 @@ All notable changes to keel are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **A project's own review rubric now actually reaches its reviewers** (#677):
+  `policy_pack.review.additions` and `required_sections` have been in the schema, in the
+  docs and in the emitted contract (`review_merge_contract.reviewers.project_additions`)
+  all along — and **no adapter prose read either**, so a project that configured them got
+  nothing. `projects/example-flutter.yaml` ships with both set, and neither had ever
+  reached a reviewer's brief. s7 now passes them verbatim, and `review-cycle.md` references
+  the same source rather than restating it. This is the counterpart to #679's stance: the
+  stance is project-neutral and says *how* to review, while these name the shapes *this*
+  codebase keeps producing — measured to be what makes a reviewer follow a defect from the
+  symptom to where it lands, rather than what makes it find more.
+
+### Fixed
 - **`keel resume` observes the live state instead of being told it** (#635): the
   `--live-pr-state` / `--live-worktree-state` flags defaulted to `unknown` and core never
   looked, so every ambiguous outcome required the agent to volunteer the damning state — a

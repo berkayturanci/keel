@@ -110,6 +110,12 @@ Each reviewer prompt MUST carry:
   approve, a finding you cannot demonstrate is not a finding, finish the trace to where the
   defect lands, and "I checked X, Y and Z and found nothing" is a complete review. Carry all
   four — the stance without its counterweights invites manufactured findings.
+- The project's own **failure family**, verbatim:
+  `review_merge_contract.reviewers.project_additions` (from `policy_pack.review.additions`),
+  plus `required_sections` for what the review body must contain. The stance is
+  project-neutral; these are the part that names what *this* codebase keeps getting wrong,
+  and they are what makes a reviewer finish the trace rather than stop at the symptom.
+  Absent for most projects — pass nothing then, never invent entries.
 - A **fresh codename** per reviewer (unique per PR and per cycle), used as the audit-trail
   identifier on its findings.
 - The **no-cross-reading** rule: a reviewer must be fully independent and must NOT read any
@@ -267,4 +273,4 @@ Do every read plus `keel validate` / `keel plan` / `keel run-gates` and the revi
 but redirect every state-changing `gh` write (comments, label) to a logged
 `DRY-RUN: <action>` line.
 
-<!-- keel-generated: surface=plugin command=review-cycle keel_version=1.11.0 source_sha256=270d78a0136c5de3ed290c65175972d825266a5a3320558e197b9af6f35f68ec generated_sha256=270d78a0136c5de3ed290c65175972d825266a5a3320558e197b9af6f35f68ec -->
+<!-- keel-generated: surface=plugin command=review-cycle keel_version=1.11.0 source_sha256=3cf17718a03ace58ae14e87219334ee98486ae1148bba39d4514769e50212be8 generated_sha256=3cf17718a03ace58ae14e87219334ee98486ae1148bba39d4514769e50212be8 -->

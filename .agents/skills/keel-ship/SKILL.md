@@ -530,6 +530,22 @@ Gates check whether code *runs*, not whether it does what the PR *says* — a cl
 artefact does not deliver is the class of defect this stance exists to catch, and the class
 CI structurally cannot.
 
+**Give every reviewer the project's own failure family.** The stance above is
+project-neutral by construction — this file may not name a path glob, let alone the shapes
+a particular codebase keeps producing. The project can: `policy_pack.review.additions`
+reaches the contract as `review_merge_contract.reviewers.project_additions`. **Pass those
+entries into each reviewer's brief verbatim**, under a heading that marks them as recurring
+shapes to look for, not a checklist to tick. Measured on a controlled pair (same PR, same
+commit, same model, one reviewer with worked examples and one without): both found the
+defect, and only the briefed one **followed it from the screen into the persistence layer**,
+where a stale value turned out to be permanent data loss. The examples do not make a
+reviewer see more — they make it *finish the trace*, which is the difference between a
+follow-up ticket and a rollback. Likewise
+`review_merge_contract.reviewers.required_sections` (from `policy_pack.review.
+required_sections`) are sections a review body must contain; a review missing one is
+incomplete, not merely terse. Both are absent for most projects — pass nothing then, and
+never invent entries to fill the slot.
+
 **Post findings per `--review-comments` (inline default):** review findings are public PR
 evidence. The orchestrator MUST post each reviewer's final verdict to the GitHub PR through
 the selected transport as a distinct PR review or PR comment. This applies on every path:
@@ -838,4 +854,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=skills command=ship keel_version=1.11.0 source_sha256=38fe75ceefbd872d8a5dc439b00e0d374cb6afe2c01f600aeb392026ce9b1d51 generated_sha256=687c739ac63cdcbc55bc3cefb228612863a5b477ce67daf994d32e0e10ac9076 -->
+<!-- keel-generated: surface=skills command=ship keel_version=1.11.0 source_sha256=4762bbb4faba9a737fd64eaa0b6dec419eb656667f370168c9dbd301f11c6364 generated_sha256=a568d931495082e3ac42b398ebf6f20277545131113942ca5d554d233c2e5c4e -->

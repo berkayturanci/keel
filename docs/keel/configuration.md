@@ -548,6 +548,8 @@ Array of high-risk policy rules. Each entry requires:
 | `paths` | string[] | ✅ | path globs that activate the rule |
 | `required_gates` | string[] | | extra gate names expected for matching changes |
 | `review_additions` | string[] | | project-specific review checklist text |
+| `review.additions` | string[] | | recurring failure shapes, passed verbatim into every s7 reviewer's brief |
+| `review.required_sections` | string[] | | sections a review body must contain |
 | `docs_required` | boolean | | whether matching changes must update docs |
 
 Use `risk_rules` for project-owned elevated scrutiny beyond generic `tier3_globs`.
