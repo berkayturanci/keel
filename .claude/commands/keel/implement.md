@@ -1,6 +1,6 @@
 ---
 description: Delegate a single issue to the right implementer and drive the s4 implement step standalone. Project-neutral — every project specific is read from .keel/project.yaml via the keel CLI.
-argument-hint: "[issue number] [--delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL>]"
+argument-hint: "[issue number] [--delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL|google-api:MODEL>]"
 allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Read, Write, Agent
 ---
 
@@ -102,7 +102,7 @@ agent**. Do not hardcode an agent name — the mapping is config. The same value
 set as `/keel:ship` applies, including the hosted-API delegates
 (`anthropic-api:MODEL` / `openai-api:MODEL`) — those follow the ship.md s4
 no-tools contract (orchestrator does every git/PR step; the delegate produces
-only a diff via one API call, keyed by `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`;
+only a diff via one API call, keyed by `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/`GEMINI_API_KEY`;
 `secrets` consent scope required; refused on tier-3; never retry HTTP 429).
 
 Project-specific routing nuances (e.g. a particular file-pattern that demands a
@@ -171,4 +171,4 @@ review / CI / merge.
 Fail over to the host agent on delegate quota errors; attribute the **effective**
 agent.
 
-<!-- keel-generated: surface=claude command=implement keel_version=1.11.0 source_sha256=1521f1b3327a74b192a6eb72ac5bd4347c5f679fb8d3ce730f86cf749df33bc5 generated_sha256=1521f1b3327a74b192a6eb72ac5bd4347c5f679fb8d3ce730f86cf749df33bc5 -->
+<!-- keel-generated: surface=claude command=implement keel_version=1.11.0 source_sha256=eb0a32674c368e1b6eb768bb71f24e126ca997fa33d56cb274e9e38767d69794 generated_sha256=eb0a32674c368e1b6eb768bb71f24e126ca997fa33d56cb274e9e38767d69794 -->

@@ -18,12 +18,13 @@ from .config import DelegateProfile, ProjectConfig
 #: Default host agent when nothing else is resolved.
 HOST_DEFAULT = "claude"
 
-#: Hosted-API delegate vendors (issue #548): the vendor's real API keyed by an
-#: env token, no agent CLI installed. Same no-tools contract as ``ollama:`` — the
+#: Hosted-API delegate vendors (#548, ``google-api`` added in #666): the vendor's
+#: real API keyed by an env token, no agent CLI installed. Same no-tools contract
+#: as ``ollama:`` — the
 #: orchestrator owns every git/PR step and delegates only code generation. The
 #: vendor names match ai-jury's hosted-adapter vocabulary so the value fits the
 #: existing first-colon ``vendor:model`` split unchanged.
-API_VENDORS = ("anthropic-api", "openai-api")
+API_VENDORS = ("anthropic-api", "openai-api", "google-api")
 
 #: Agent-CLI delegate vendors keel drives as a subprocess. Hardcoded on purpose — not
 #: to be confused with the generic ``cli`` *profile* vendor (issue #659), which is the

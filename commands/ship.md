@@ -1,6 +1,6 @@
 ---
 description: Drive a GitHub issue end-to-end through the keel backbone (select → branch → implement → CI → review → test → merge → close → capture), reading every project value from .keel/project.yaml via the keel CLI.
-argument-hint: "[issue numbers...] [--compound|--profile <standard|compound>] [--delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL|PROFILE>] [--review-delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL|PROFILE>] [--review-comments <inline|summary>] [--reviewers <1|2|3>] [--jury|--no-jury|--jury-advisory] [--hotfix] [--dry-run] [--wizard]"
+argument-hint: "[issue numbers...] [--compound|--profile <standard|compound>] [--delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL|google-api:MODEL|PROFILE>] [--review-delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL|google-api:MODEL|PROFILE>] [--review-comments <inline|summary>] [--reviewers <1|2|3>] [--jury|--no-jury|--jury-advisory] [--hotfix] [--dry-run] [--wizard]"
 allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Bash(jury:*), Read, Edit, Write, Agent
 ---
 
@@ -195,10 +195,10 @@ capture.
   `standard`; `--compound` is an alias for `--profile compound`. The compound profile swaps
   the `s4`/`s7`/`s9`/`s11` steps to compound behavior (see the **Compound profile** section)
   without forking the backbone. Composes with every other flag (e.g. `--compound --jury`).
-- `--delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL|PROFILE>` — the
+- `--delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL|google-api:MODEL|PROFILE>` — the
   **implementer**. Per-run override of any issue role/delegate label. `ollama:` and the
   `*-api:` values require a non-empty model. The `*-api:` values are the **hosted-API
-  delegates** (no agent CLI needed — just `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` in the
+  delegates** (no agent CLI needed — just `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/`GEMINI_API_KEY` in the
   environment; see s4). `PROFILE` is the name of a `knobs.delegate_profiles` entry — a
   **generic CLI vendor** configured in `.keel/project.yaml` (e.g. `--delegate cursor`;
   see s4). Built-in vendor names always win over a profile name. Default: the **host
@@ -348,13 +348,33 @@ Resolve the implementer: `implementer_agents` by the issue's role label, **overr
   `agent:*` labels, so recording `cursor` there against an `agent:cli` label reads as a
   vendor contradiction and blocks the merge. The profile name goes in `delegate_profile`,
   as above, which is what the closure comment reads.
-- **Hosted-API implementer** (`anthropic-api:MODEL`, `openai-api:MODEL`) — the same
+- **OpenAI-compatible implementer** (a `knobs.delegate_profiles` name whose
+  `vendor: openai-compatible`) — the same no-tools contract as the hosted-API path, with
+  the endpoint and key-env **named by config** instead of hardcoded, so one profile
+  reaches OpenRouter, Groq, DeepSeek, Together, LiteLLM or a local vLLM. Two rules that
+  do not apply to any other vendor, because config is the surface an attacker would
+  influence:
+  **(1) the endpoint is loopback-only by default.** A non-loopback host — including
+  internal and cloud-metadata addresses like `169.254.169.254` — is a `keel validate`
+  error unless `KEEL_ALLOW_REMOTE_ENDPOINT` is set **in the environment**. The opt-in is
+  env-only on purpose: someone who can edit `project.yaml` must not be able to grant it.
+  Non-`http(s)` schemes are refused outright, which blocks `file://`/`ftp://`.
+  **(2) `api_key_env` is a variable *name*, never a key.** Profile config is serialised
+  into the command contract and hashed into `config_hash`, so a pasted key would be
+  published; keel rejects a value that is not shaped like an env var name. The value is
+  read from the environment at dispatch under the same `secrets` scope as every other
+  hosted delegate.
+- **Hosted-API implementer** (`anthropic-api:MODEL`, `openai-api:MODEL`, `google-api:MODEL`) — the same
   no-tools contract as the local-model path with the endpoint swapped: the orchestrator
   does every git/PR step itself and requests only code generation via
   `keel`'s `api_delegate` wrapper (one stdlib HTTP call per attempt against the vendor's
-  API, keyed by `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` from the environment). Same
-  retry-×2-then-fall-back rule; **never retry HTTP 429 / rate-limit** — fail soft and
-  fall back immediately. Reading the token is `secret_access`, so the run's approved
+  API, keyed by `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/`GEMINI_API_KEY` from the
+  environment). Same retry-×2-then-fall-back rule; **never retry HTTP 429 /
+  rate-limit** — fail soft and fall back immediately. `google-api` is the one vendor
+  whose URL carries the **model in its path**, so an unsafe model id there is refused
+  before any request (`bad-model`) rather than escaped — treat a `delegate-model:`
+  label as untrusted for that vendor. It also answers an invalid key with HTTP **400**,
+  not 401, which keel maps to `auth` so a mistyped key reads as a key problem. Reading the token is `secret_access`, so the run's approved
   scope must include `secrets` — without it, resolve to `HOST_AGENT` before any key is
   read. **Hosted-API implementers are refused on tier-3**, same rule and fallback as
   local models. Attribution: `agent:<vendor>` (e.g. `agent:anthropic-api`) + versionless
@@ -442,9 +462,13 @@ operator-applied `keel:evidence-waived` label may disarm it. Evaluate the rollup
 mixed state with any failure is a failure, never poll past it. Three branches:
 - **all green** (`success`/`skipped`/`neutral`/`stale`) ⇒ proceed.
 - **empty check set** ⇒ allow only if every changed path is in `docs_gate_paths`, else
-  mark blocked ("CI did not run on a non-docs PR"). `keel merge` enforces this itself —
-  it reports the rollup as `no-checks` (never `pass`) and applies the same carve-out — so
-  this branch is a description of core's behaviour, not a rule you implement.
+  mark blocked ("CI did not run on a non-docs PR"). Both `keel merge` **and** the `keel
+  ship` assessment enforce this themselves — merge reports the rollup as `no-checks`
+  (never `pass`), and ship reports `ci_ran: false` and blocks with *"no CI ran — nothing
+  verified this commit"* — applying the same docs-only carve-out, so the two never
+  disagree. This branch is a description of core's behaviour, not a rule you implement.
+  A **declared** `ci_workflows` entry that produced no check for this head also blocks,
+  named in the reason: green tells you what ran, not that the things you require ran.
 - **any failure/pending** ⇒ watch with a hard timeout (portable `timeout`/`gtimeout`
   wrapper; require `coreutils` on hosts lacking GNU `timeout`), then on a real failure run
   the fix-and-reply loop (read the failed log, fix, self-review, push) and re-enter s6.
@@ -456,7 +480,7 @@ abort the session** (counter resets after any merge).
 ### s7 review *(agent)* + slot `reviewers`
 Run **N reviewers** (N from the s5 tier, or `--reviewers`), the host or `--review-delegate`
 vendor. A non-host reviewer vendor runs **read-only / findings-only** (the vendor's
-read-only mode, local endpoint, or — for `anthropic-api:`/`openai-api:` — one hosted-API
+read-only mode, local endpoint, or — for `anthropic-api:`/`openai-api:`/`google-api:` — one hosted-API
 call via the `api_delegate` wrapper: diff + rubric in, structured verdict out; same
 `secrets`-scope and no-retry-on-429 rules as s4, no tier restriction since review output
 is advisory, not a mutation), the orchestrator still posts — the **orchestrator owns
@@ -480,6 +504,44 @@ only for narrow tier-1 PRs). Run any `reviewers` Lego extensions. Capture per-re
 **effective** vendor+model for attribution (lock-step parallel arrays so the s11 closure
 can zip them by index). On a missing/erroring delegate vendor, fall back to the host
 reviewer and log it (record the effective vendor that ran).
+
+**Reviewer stance — brief every reviewer to *refute*, not to approve.** The focus slices
+above say *where* to look; without a stance a reviewer reads the change sympathetically and
+confirms it looks right, which is how a defect ships past a green CI. Each reviewer's brief
+must carry all four of these together — the first without the rest is worse than neither:
+
+- **Refute it.** Default to the position that the change is wrong and concede only when the
+  code forces you to. The author already made the case for it; nobody has made the case
+  against it.
+- **A finding you cannot demonstrate is not a finding.** Prefer a reproduction — a failing
+  input, a trace through the code to the line — over an assertion. This is the counterweight
+  to the stance, not a footnote to it.
+- **Finish the trace.** Follow a defect from where you noticed it to where it actually lands.
+  A wrong value on a screen and a wrong value written to a record are the same bug with very
+  different severities, and only the second one is the reason to hold the merge.
+- **"I checked X, Y and Z and found nothing" is a complete review.** Say what you checked.
+  A reviewer with no way to report a clean result either goes quiet or manufactures
+  something, and a manufactured finding is a failure of the review, not a strict one.
+
+Gates check whether code *runs*, not whether it does what the PR *says* — a claim the
+artefact does not deliver is the class of defect this stance exists to catch, and the class
+CI structurally cannot.
+
+**Give every reviewer the project's own failure family.** The stance above is
+project-neutral by construction — this file may not name a path glob, let alone the shapes
+a particular codebase keeps producing. The project can: `policy_pack.review.additions`
+reaches the contract as `review_merge_contract.reviewers.project_additions`. **Pass those
+entries into each reviewer's brief verbatim**, under a heading that marks them as recurring
+shapes to look for, not a checklist to tick. Measured on a controlled pair (same PR, same
+commit, same model, one reviewer with worked examples and one without): both found the
+defect, and only the briefed one **followed it from the screen into the persistence layer**,
+where a stale value turned out to be permanent data loss. The examples do not make a
+reviewer see more — they make it *finish the trace*, which is the difference between a
+follow-up ticket and a rollback. Likewise
+`review_merge_contract.reviewers.required_sections` (from `policy_pack.review.
+required_sections`) are sections a review body must contain; a review missing one is
+incomplete, not merely terse. Both are absent for most projects — pass nothing then, and
+never invent entries to fill the slot.
 
 **Post findings per `--review-comments` (inline default):** review findings are public PR
 evidence. The orchestrator MUST post each reviewer's final verdict to the GitHub PR through
@@ -789,4 +851,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=plugin command=ship keel_version=1.11.0 source_sha256=3bd80c5cc0e783ec71c46b991ac777b0303278feb55691b6a3b5745dc2b5c1d4 generated_sha256=3bd80c5cc0e783ec71c46b991ac777b0303278feb55691b6a3b5745dc2b5c1d4 -->
+<!-- keel-generated: surface=plugin command=ship keel_version=1.11.0 source_sha256=4762bbb4faba9a737fd64eaa0b6dec419eb656667f370168c9dbd301f11c6364 generated_sha256=4762bbb4faba9a737fd64eaa0b6dec419eb656667f370168c9dbd301f11c6364 -->

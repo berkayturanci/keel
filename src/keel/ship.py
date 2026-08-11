@@ -7,6 +7,7 @@ fixing) are pure and live here, so they are reproducible and fully unit-tested.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -298,6 +299,55 @@ def ci_passing(ci_conclusion: str | None) -> bool | None:
     return CI_OK_STATES.issuperset(parts)
 
 
+def ci_ran(ci_conclusion: str | None) -> bool | None:
+    """Did any check report for this head? ``None`` == we could not find out.
+
+    Separate from :func:`ci_passing` on purpose. "Every check passed" and "no check
+    ran" are not the same fact, and folding them together is the defect in #675: an
+    empty rollup used to reach the merge decision as *unknown*, and unknown did not
+    block, so a PR nothing had verified assessed identically to a green one — then
+    that assessment was written into the run ledger as evidence.
+
+    ``""`` is ``gh`` reporting an empty rollup (a fact about the PR) and returns
+    **False**. ``None`` is ``gh`` never answered, or no PR was supplied at all (a
+    fact about the runner) and stays **None** — keel does not block on what it
+    could not observe, it blocks on having observed nothing.
+    """
+    if ci_conclusion is None:
+        return None
+    return bool(ci_conclusion.strip())
+
+
+def missing_ci_workflows(
+    workflow_names: Sequence[str] | None,
+    ci_workflows: dict[str, str] | None,
+) -> tuple[str, ...]:
+    """Declared workflows in ``ci_workflows`` that reported nothing for this head.
+
+    ``knobs.ci_workflows`` is the project stating which workflows gate a merge, so
+    presence can be checked against a **declaration** instead of inferred from an
+    empty set — the difference between "I saw no failures" and "I saw the things
+    that were supposed to run".
+
+    ``workflow_names`` must be *workflow* names (:func:`keel.github.ci_workflow_names`),
+    not job names. The distinction is not cosmetic: `ci_workflows` is keyed ``CI``,
+    while the rollup reports ``test (py3.13 / ubuntu-latest)``, so comparing against
+    job names would report every declared workflow missing on any repo using a matrix.
+    Matching is exact and case-insensitive — a prefix rule would let an unrelated
+    ``testing-utils`` satisfy a declared ``test``.
+
+    ``()`` when nothing is declared or the names could not be read — absence of a
+    declaration is not evidence of a missing run.
+    """
+    if not ci_workflows or workflow_names is None:
+        return ()
+    reported = {name.strip().lower() for name in workflow_names if name.strip()}
+    return tuple(sorted(
+        declared for declared in ci_workflows
+        if declared.strip().lower() not in reported
+    ))
+
+
 def is_hotfix(labels: list[str] | tuple[str, ...], *, hotfix_label: str = "hotfix") -> bool:
     """True if the issue/PR carries the hotfix label (case-insensitive)."""
     # ⚡ Bolt Optimization: Unroll any() generator and pre-compute lower() target
@@ -318,6 +368,11 @@ class ShipAssessment:
     halted: bool = False           # pause mode + outside window ⇒ pipeline halted
     bypassed_window: bool = False  # hotfix merged outside the window (audited)
     review_contract: dict[str, Any] | None = None
+    #: Did any check report? False == the rollup was empty (nothing verified this
+    #: head); None == keel could not find out. Distinct from ``ci_ok`` (#675).
+    ci_ran: bool | None = None
+    #: Declared ``knobs.ci_workflows`` that produced no check for this head.
+    missing_workflows: tuple[str, ...] = ()
 
 
 def assess(
@@ -331,6 +386,9 @@ def assess(
     merge_window: str | None = None,
     merge_window_mode: str = "freeze",
     ci_conclusion: str | None = None,
+    ci_check_names: Sequence[str] | None = None,
+    ci_workflow_names: Sequence[str] | None = None,
+    ci_workflows: dict[str, str] | None = None,
     now=None,
     is_blocker: bool = False,
     unrun_blocking_gates: tuple[str, ...] = (),
@@ -367,8 +425,27 @@ def assess(
     )
     halted = (merge_window_mode == "pause") and not window_open and not is_blocker
     ci_ok = ci_passing(ci_conclusion)
+    ran = ci_ran(ci_conclusion)
+    docs_only = changed_files is not None and classify.is_docs_only(
+        list(changed_files), docs_globs
+    )
+    missing = () if docs_only else missing_ci_workflows(ci_workflow_names, ci_workflows)
     if ci_ok is False:
         merge = MergeDecision("block", "CI failing")
+    elif ran is False and not docs_only:
+        # Fail closed, and say which it was: an operator needs "nothing verified
+        # this commit" to read differently from "a check went red".
+        #
+        # The docs-only carve-out is not a softening — it is what `keel merge`
+        # already applies to its own `no-checks` state (cli._ci_state), and this
+        # assessment must not contradict the gate it is predicting. A docs-only
+        # change legitimately matches no workflow's path filter; anything else
+        # with an empty rollup was simply never verified.
+        merge = MergeDecision("block", "no CI ran — nothing verified this commit")
+    elif missing:
+        merge = MergeDecision(
+            "block", f"declared CI workflow(s) never ran: {', '.join(missing)}"
+        )
     else:
         merge = decide_merge(gate_verdict, window_open=window_open, is_blocker=is_blocker,
                              unrun_blocking_gates=unrun_blocking_gates)
@@ -384,5 +461,6 @@ def assess(
         jury_advisory=jury_advisory,
     )
     return ShipAssessment(
-        tier, reviewers, window_open, ci_ok, merge, halted, bypassed, review_contract
+        tier, reviewers, window_open, ci_ok, merge, halted, bypassed, review_contract,
+        ran, missing,
     )

@@ -410,3 +410,58 @@ class TestFindOrphans(unittest.TestCase):
         self.assertEqual(result["pull_requests"], [999])
         self.assertEqual(result["known_branches"], [])
         self.assertEqual(result["known_pull_requests"], [])
+
+
+class TestResumeObservesReality(unittest.TestCase):
+    """#635: core was *told* the live state and never looked."""
+
+    def _rec(self, **kw):
+        base = dict(run_id="ship-1", command="ship", current_step="s10",
+                    base_branch="main", branch="b", worktree="/tmp/wt",
+                    pull_request=7, head_sha="a" * 40)
+        base.update(kw)
+        return checkpoint.build_checkpoint_record(**base)
+
+    def test_a_crash_mid_merge_with_unknown_live_state_is_ambiguous(self):
+        """The genuinely ambiguous case used to resume as a plain pr-open."""
+        plan = checkpoint.resume_plan_as_dict(self._rec(merge_state="pending"))
+        self.assertEqual(plan["status"], "ambiguous")
+        self.assertFalse(plan["can_resume"])
+        self.assertIn("in-flight", plan["reason"])
+        self.assertTrue(plan["warnings"])
+
+    def test_live_evidence_resolves_a_pending_merge_either_way(self):
+        merged = checkpoint.resume_plan_as_dict(
+            self._rec(merge_state="pending"), live_pr_state="merged")
+        self.assertEqual(merged["status"], "needs-capture")
+        still_open = checkpoint.resume_plan_as_dict(
+            self._rec(merge_state="pending"), live_pr_state="open")
+        self.assertEqual(still_open["status"], "pr-open")
+        self.assertTrue(still_open["can_resume"])
+
+    def test_pending_without_a_pull_request_is_not_ambiguous(self):
+        # Nothing to be ambiguous about: no PR was ever opened.
+        plan = checkpoint.resume_plan_as_dict(
+            self._rec(merge_state="pending", pull_request=None))
+        self.assertNotEqual(plan["status"], "ambiguous")
+
+    def test_a_moved_branch_head_warns(self):
+        plan = checkpoint.resume_plan_as_dict(self._rec(), live_head_sha="b" * 40)
+        self.assertEqual(len(plan["warnings"]), 1)
+        self.assertIn("head moved", plan["warnings"][0])
+        # A warning, not a block: the usual cause is a legitimate push that crashed
+        # before the next checkpoint, and s10 fails closed on its own.
+        self.assertTrue(plan["can_resume"])
+
+    def test_a_matching_head_says_nothing(self):
+        plan = checkpoint.resume_plan_as_dict(self._rec(), live_head_sha="a" * 40)
+        self.assertEqual(plan["warnings"], [])
+
+    def test_no_live_head_says_nothing(self):
+        # Unreadable head is not evidence of a moved branch.
+        self.assertEqual(checkpoint.resume_plan_as_dict(self._rec())["warnings"], [])
+
+    def test_a_checkpoint_without_a_head_says_nothing(self):
+        plan = checkpoint.resume_plan_as_dict(
+            self._rec(head_sha=None), live_head_sha="b" * 40)
+        self.assertEqual(plan["warnings"], [])

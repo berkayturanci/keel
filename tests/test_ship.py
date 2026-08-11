@@ -122,6 +122,77 @@ class TestFixLoop(unittest.TestCase):
         self.assertFalse(ship.should_run_fixloop(CLEAN, current_round=0))
 
 
+class TestCiRan(unittest.TestCase):
+    """"Everything passed" and "nothing ran" are different facts (#675)."""
+
+    def test_empty_rollup_means_nothing_ran(self):
+        self.assertIs(ship.ci_ran(""), False)
+        self.assertIs(ship.ci_ran("   "), False)
+
+    def test_unknown_when_gh_could_not_be_asked(self):
+        # Also the no-PR-supplied case. keel blocks on having observed nothing,
+        # not on having been unable to observe.
+        self.assertIsNone(ship.ci_ran(None))
+
+    def test_any_conclusion_means_something_ran(self):
+        for conclusion in ("SUCCESS", "FAILURE", "SUCCESS,FAILURE", "PENDING"):
+            with self.subTest(conclusion=conclusion):
+                self.assertIs(ship.ci_ran(conclusion), True)
+
+
+class TestMissingCiWorkflows(unittest.TestCase):
+    """Presence checked against the project's declaration, not inferred (#675)."""
+
+    WORKFLOWS = {"CI": "**", "CodeQL": "**"}
+
+    def test_none_missing_when_all_declared_reported(self):
+        self.assertEqual(
+            ship.missing_ci_workflows(["CI", "CodeQL"], self.WORKFLOWS), ()
+        )
+
+    def test_names_a_declared_workflow_that_never_ran(self):
+        self.assertEqual(ship.missing_ci_workflows(["CI"], self.WORKFLOWS), ("CodeQL",))
+
+    def test_job_names_are_the_wrong_input_and_this_is_why(self):
+        """Regression guard for a false block that would have hit every keel PR.
+
+        `ci_workflows` is keyed "CI"; the rollup reports job names like
+        "test (py3.13 / ubuntu-latest)". Feeding job names here reports the
+        workflow missing even though it ran, which is why the caller must pass
+        github.ci_workflow_names (workflowName) and not ci_check_names.
+        """
+        jobs = ["test (py3.13 / ubuntu-latest)", "Analyze (Python)"]
+        self.assertEqual(ship.missing_ci_workflows(jobs, {"CI": "**"}), ("CI",))
+        self.assertEqual(ship.missing_ci_workflows(["CI", "CodeQL"], {"CI": "**"}), ())
+
+    def test_matching_is_exact_not_a_prefix(self):
+        # A prefix rule would let an unrelated "testing-utils" satisfy "test".
+        self.assertEqual(
+            ship.missing_ci_workflows(["testing-utils"], {"test": "**"}), ("test",)
+        )
+
+    def test_case_insensitive(self):
+        self.assertEqual(ship.missing_ci_workflows(["ci", "codeql"], self.WORKFLOWS), ())
+
+    def test_everything_missing_when_nothing_ran(self):
+        self.assertEqual(
+            ship.missing_ci_workflows([], self.WORKFLOWS), ("CI", "CodeQL")
+        )
+
+    def test_no_declaration_means_no_finding(self):
+        # Absence of a declaration is not evidence of a missing run.
+        self.assertEqual(ship.missing_ci_workflows([], None), ())
+        self.assertEqual(ship.missing_ci_workflows([], {}), ())
+
+    def test_unreadable_names_means_no_finding(self):
+        self.assertEqual(ship.missing_ci_workflows(None, self.WORKFLOWS), ())
+
+    def test_blank_reported_names_are_ignored(self):
+        self.assertEqual(
+            ship.missing_ci_workflows(["  ", "CI", "CodeQL"], self.WORKFLOWS), ()
+        )
+
+
 class TestCiPassing(unittest.TestCase):
     def test_unknown(self):
         self.assertIsNone(ship.ci_passing(None))
@@ -222,6 +293,88 @@ class TestAssess(unittest.TestCase):
         a = ship.assess(changed_files=["x.py"], gate_verdict=CLEAN, ci_conclusion="SUCCESS")
         self.assertTrue(a.ci_ok)
         self.assertEqual(a.merge.action, "merge")
+
+    def test_zero_checks_blocks_and_says_so(self):
+        """The #675 regression: a PR nothing ran on used to assess as clear to merge.
+
+        The reason string matters as much as the block — an operator has to be able
+        to tell "nothing verified this commit" from "a check went red", and the
+        assessment is written into the run ledger as evidence.
+        """
+        a = ship.assess(changed_files=["x.py"], gate_verdict=CLEAN, ci_conclusion="")
+        self.assertIs(a.ci_ran, False)
+        self.assertEqual(a.merge.action, "block")
+        self.assertIn("no CI ran", a.merge.reason)
+        self.assertNotEqual(a.merge.reason, "CI failing")
+
+    def test_docs_only_with_zero_checks_still_merges(self):
+        """The carve-out `keel merge` already applies, mirrored so the two agree.
+
+        A docs-only change legitimately matches no workflow path filter, and
+        cli._ci_state's `no-checks` branch lets it through. An assessment that
+        blocked it would contradict the gate it exists to predict.
+        """
+        a = ship.assess(changed_files=["docs/a.md"], gate_verdict=CLEAN,
+                        ci_conclusion="", ci_check_names=[],
+                        docs_globs=("docs/**", "*.md"))
+        self.assertIs(a.ci_ran, False)
+        self.assertEqual(a.merge.action, "merge")
+
+    def test_docs_only_does_not_report_declared_workflows_as_missing(self):
+        a = ship.assess(changed_files=["docs/a.md"], gate_verdict=CLEAN,
+                        ci_conclusion="", ci_check_names=[],
+                        docs_globs=("docs/**", "*.md"),
+                        ci_workflows={"CI": "**"})
+        self.assertEqual(a.missing_workflows, ())
+        self.assertEqual(a.merge.action, "merge")
+
+    def test_an_unreadable_changeset_with_zero_checks_still_blocks(self):
+        # is_docs_only fails closed on an empty/unknown changeset, so the
+        # carve-out cannot be reached by simply failing to read the diff.
+        a = ship.assess(changed_files=None, gate_verdict=CLEAN, ci_conclusion="")
+        self.assertEqual(a.merge.action, "block")
+
+    def test_zero_checks_is_not_confused_with_gh_being_unavailable(self):
+        # Unreadable CI stays non-blocking: keel blocks on having observed
+        # nothing, not on having been unable to observe.
+        a = ship.assess(changed_files=["x.py"], gate_verdict=CLEAN, ci_conclusion=None)
+        self.assertIsNone(a.ci_ran)
+        self.assertEqual(a.merge.action, "merge")
+
+    def test_a_failing_check_still_reports_as_failing_not_as_unrun(self):
+        a = ship.assess(changed_files=["x.py"], gate_verdict=CLEAN,
+                        ci_conclusion="FAILURE", ci_check_names=["CI"])
+        self.assertIs(a.ci_ran, True)
+        self.assertEqual(a.merge.reason, "CI failing")
+
+    def test_declared_workflow_that_never_ran_blocks(self):
+        """Green is not enough when a workflow the project declares produced no run."""
+        a = ship.assess(changed_files=["x.py"], gate_verdict=CLEAN,
+                        ci_conclusion="SUCCESS", ci_check_names=["CI"],
+                        ci_workflow_names=["CI"],
+                        ci_workflows={"CI": "**", "CodeQL": "**"})
+        self.assertTrue(a.ci_ok)
+        self.assertEqual(a.missing_workflows, ("CodeQL",))
+        self.assertEqual(a.merge.action, "block")
+        self.assertIn("CodeQL", a.merge.reason)
+
+    def test_all_declared_workflows_present_merges(self):
+        a = ship.assess(changed_files=["x.py"], gate_verdict=CLEAN,
+                        ci_conclusion="SUCCESS",
+                        ci_check_names=["test (py3.13 / ubuntu-latest)", "CodeQL"],
+                        ci_workflow_names=["CI", "CodeQL"],
+                        ci_workflows={"CI": "**", "CodeQL": "**"})
+        self.assertEqual(a.missing_workflows, ())
+        self.assertEqual(a.merge.action, "merge")
+
+    def test_a_red_check_outranks_a_missing_workflow_in_the_reason(self):
+        # Both are true; the operator should be told about the failure first.
+        a = ship.assess(changed_files=["x.py"], gate_verdict=CLEAN,
+                        ci_conclusion="FAILURE", ci_check_names=["CI"],
+                        ci_workflow_names=["CI"],
+                        ci_workflows={"CI": "**", "CodeQL": "**"})
+        self.assertEqual(a.merge.action, "block")
+        self.assertEqual(a.merge.reason, "CI failing")
 
     def test_outside_window_defers(self):
         from datetime import datetime
