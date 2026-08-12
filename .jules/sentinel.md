@@ -24,3 +24,8 @@
 ## 2026-07-20 - [Bandit False Positive on Intentionally Safe Subprocess Import]
 **Learning:** `import subprocess` (B404) in `src/keel/runner.py` is flagged by Bandit as a low-severity risk, but the module is specifically intended for a fail-soft command runner boundary where execution commands are strictly operator-controlled and injected via configuration. Automated static analysis flags the module itself even without unsafe invocations.
 **Action:** When a known false positive is verified as a deliberate and secure architecture choice, correctly suppress the Bandit warning at the source (e.g., `# nosec B404` on the import line) rather than removing functionality.
+
+## 2026-07-28 - [SSRF via Bypassed Config Validation]
+**Vulnerability:** The `generate` function in `src/keel/api_delegate.py` relied entirely on upstream configuration validation (`keel validate`) to enforce SSRF protections on the `openai-compatible` endpoint. If this check was bypassed or the function was called directly, the application could be coerced into making arbitrary internal requests (e.g., `file:///`).
+**Learning:** Relying solely on asynchronous validation for critical security properties like SSRF protection is fragile (Time of Check vs Time of Use / bypassed checks). Security boundaries must validate untrusted inputs at the point of use.
+**Prevention:** Implement Defense in Depth. Always invoke the relevant security validation (like `endpoint_issues`) directly within the dispatch or execution function right before the sensitive operation occurs, even if it is "supposed" to have been checked earlier.

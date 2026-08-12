@@ -175,6 +175,16 @@ class TestOpenAICompatible(unittest.TestCase):
             {"choices": [{"message": {"content": "diff"}}]}
         )))
 
+    def test_ssrf_protection_rejects_unsafe_endpoints_at_dispatch(self):
+        result = api_delegate.generate(
+            "openai-compatible", "qwen2.5", "p",
+            endpoint="file:///etc/passwd", api_key_env="MY_ROUTER_KEY",
+            _env=self.ENV, _opener=None,
+        )
+        self.assertFalse(result.ok)
+        self.assertEqual(result.error_code, "bad-endpoint")
+        self.assertIn("dispatch: endpoint scheme 'file' is not allowed", result.error)
+
     def test_uses_the_configured_endpoint_and_key_env(self):
         result = api_delegate.generate(
             "openai-compatible", "qwen2.5", "p",

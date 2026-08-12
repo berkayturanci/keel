@@ -271,6 +271,11 @@ def generate(
                 False, error_code="unknown-vendor",
                 error=f"{OPENAI_COMPATIBLE} requires both endpoint and api_key_env",
             )
+
+        from .config import endpoint_issues
+        if issues := endpoint_issues(endpoint, where="dispatch", env=_env):
+            return ApiResult(False, error_code="bad-endpoint", error=issues[0])
+
         entry: tuple[str, str] | None = (endpoint, api_key_env)
     else:
         entry = _VENDORS.get(vendor)
