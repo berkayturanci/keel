@@ -183,4 +183,4 @@ def is_safe_model_token(model: str | None) -> bool:
         return False
     if model.startswith("-"):
         return False
-    return all(ch in _MODEL_TOKEN_OK for ch in model)
+    return _MODEL_TOKEN_OK.issuperset(model)

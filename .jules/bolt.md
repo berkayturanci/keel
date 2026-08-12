@@ -50,3 +50,6 @@
 ## 2024-05-20 - Fast multiple regex matching
 **Learning:** Checking a string against multiple regex patterns by condensing them into a single pattern using the `|` (OR) operator is significantly faster (~44% faster) than evaluating them individually via multiple `re.search` calls or `any()` generator expressions.
 **Action:** When validating a string against multiple related regex patterns, combine them into a single regex string using `|` instead of checking them iteratively in a loop or generator expression.
+## 2024-08-12 - Optimizing set superset checks
+**Learning:** In python, when verifying if an iterable contains only elements from an allowed set, using `.issuperset()` on a precomputed frozenset is ~4.7x faster than using a generator expression with `all(ch in SET for ch in model)`.
+**Action:** Replace `all(ch in ALLOWED for ch in value)` with `ALLOWED.issuperset(value)` when validating string or iterable contents against a known set of allowed characters or values.

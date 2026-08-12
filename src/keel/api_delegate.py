@@ -79,7 +79,7 @@ def _unsafe_model_reason(model: str) -> str | None:
     """
     if not model:
         return "model is empty"
-    if not all(ch in _MODEL_PATH_OK for ch in model):
+    if not _MODEL_PATH_OK.issuperset(model):
         return "model contains characters that are not URL-path safe"
     if ".." in model:
         return "model contains a path traversal sequence"
