@@ -52,3 +52,6 @@
 ## 2024-10-18 - Dynamically Syncing ARIA Labels on Status Buttons
 **Learning:** For dynamic UI buttons that only display an icon or generic text like a speed multiplier, screen readers may not detect visual updates to the text content alone.
 **Action:** When updating the textContent of a dynamic indicator button via JavaScript, always explicitly update its aria-label attribute in the same event handler to ensure screen reader users receive context-rich updates.
+## 2024-08-13 - Hide decorative button icon from screen readers
+**Learning:** The '↻' symbol in the replay button was being read aloud by screen readers, creating a confusing and verbose experience ("clockwise open circle arrow replay the run").
+**Action:** Wrap decorative/redundant text symbols inside buttons in `<span aria-hidden="true">` so they are ignored by screen readers, keeping the spoken label clean.
