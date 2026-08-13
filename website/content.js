@@ -345,6 +345,13 @@ window.KEEL = {
       source: "https://github.com/berkayturanci/keel/blob/main/docs/keel/configuration.md",
     },
     {
+      group: "Architecture", title: "Evidence chain & auditability", slug: "evidence",
+      summary: "How keel guarantees commit-SHA-bound review provenance, model attribution, and auditable exceptions.",
+      body:
+        "<p>Every PR merged through Keel carries an unbroken, tamper-evident record of reviewer verdicts, test results, and agent attribution. Approvals are cryptographically locked to the exact <code>HEAD_SHA</code> commit to prevent approval drift across subsequent pushes, with fully audited exception tracking via <code>--deferral</code>.</p>",
+      source: "https://github.com/berkayturanci/keel/blob/main/docs/keel/evidence.md",
+    },
+    {
       group: "Authoring", title: "Extensions (your Lego)", slug: "extensions",
       summary: "Add-only gates and steps snapped into named hooks — guard, tester, pre-merge, reviewers…",
       body:

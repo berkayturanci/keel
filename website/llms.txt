@@ -22,4 +22,5 @@
 - Fixed backbone: the invariant step sequence every issue flows through
 - Project-neutral core: all project specifics live in `project.yaml`, read via the `keel` CLI
 - Extension slots: named hooks where a project snaps in its own implementers/reviewers
+- Auditable evidence chain: commit-SHA-bound review provenance, model attribution, and audited deferrals
 - Pure-core / thin-I/O split with a strict 100% coverage bar
