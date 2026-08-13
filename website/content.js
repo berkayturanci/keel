@@ -58,7 +58,7 @@ window.KEEL = {
       cmd: "keel:ship",
       one: "Drive a GitHub issue end-to-end through the whole backbone.",
       detail:
-        "Select → branch → implement → CI → review → test → merge → close → capture. The full flow: per-round review, inline file:line comments, --delegate / --review-delegate (incl. hosted-API anthropic-api:MODEL / openai-api:MODEL — no agent CLI, just an API key), --reviewers N, the <a href='https://github.com/berkayturanci/ai-jury' target='_blank' rel='noopener'>ai-jury</a> gate, the timezone-aware merge window + mkdir merge lock, and vendor+model attribution. <b>--compound</b> selects the compound-engineering profile — same backbone and safety primitives, with implement / review / fixloop / capture (s4·s7·s9·s11) as compound step overrides.",
+        "Select → branch → implement → CI → review → test → merge → close → capture. The full flow: per-round review, inline file:line comments, --delegate / --review-delegate (incl. hosted-API anthropic-api:MODEL / openai-api:MODEL / google-api:MODEL — no agent CLI, just an API key; plus generic OpenAI-compatible and CLI profiles), --reviewers N, the <a href='https://github.com/berkayturanci/ai-jury' target='_blank' rel='noopener'>ai-jury</a> gate, the timezone-aware merge window + mkdir merge lock, and vendor+model attribution. <b>--compound</b> selects the compound-engineering profile — same backbone and safety primitives, with implement / review / fixloop / capture (s4·s7·s9·s11) as compound step overrides.",
     },
     {
       slug: "implement", name: "/keel:implement", group: "Per-step", featured: true, scene: "implement",

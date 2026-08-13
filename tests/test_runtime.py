@@ -62,6 +62,21 @@ class TestDetect(unittest.TestCase):
                 d, env={"OPENAI_API_KEY": "   "}, which=fake_which, run=fake_run
             )
         self.assertFalse(report.available("api-token"))
+        cap = next(c for c in report.capabilities if c.name == "api-token")
+        self.assertIn("GEMINI_API_KEY", cap.detail)
+
+    def test_api_token_gemini_detected(self):
+        with tempfile.TemporaryDirectory() as d:
+            report = runtime.detect(
+                d,
+                env={"GEMINI_API_KEY": "AIzaSySecret"},
+                which=fake_which,
+                run=fake_run,
+            )
+        self.assertTrue(report.available("api-token"))
+        cap = next(c for c in report.capabilities if c.name == "api-token")
+        self.assertIn("GEMINI_API_KEY", cap.detail)
+        self.assertNotIn("AIzaSySecret", cap.detail)
 
     def test_missing_gh_auth_degrades(self):
         with tempfile.TemporaryDirectory() as d:

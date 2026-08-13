@@ -259,7 +259,7 @@ since `--delegate` splits on the first colon to separate the profile from a per-
 model, which would make such a name unselectable.
 
 **Name resolution is fail-closed.** A profile name is resolved *after* the built-in
-delegate vendors (`claude`, `codex`, `agy`, `ollama`, `anthropic-api`, `openai-api`), and a
+delegate vendors (`claude`, `codex`, `agy`, `ollama`, `anthropic-api`, `openai-api`, `google-api`), and a
 profile that shadows one of those names is a **`keel validate` error**, not a silent
 override. So config can never redefine a built-in, and the operator is told at validation
 time instead of discovering it mid-run.

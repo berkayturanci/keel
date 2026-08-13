@@ -1418,7 +1418,7 @@ keel implement <project.yaml> <issue> [--root DIR] [--delegate AGENT]
 | Flag | Type / values | Default | Effect |
 | --- | --- | --- | --- |
 | `issue` | positive int | required | Issue number to implement. |
-| `--delegate AGENT` | free-form delegate label (adapters use `claude`/`codex`/`agy`/`ollama:MODEL`/`anthropic-api:MODEL`/`openai-api:MODEL`, or a `knobs.delegate_profiles` name) | `None` | Explicit implementer override, echoed in the contract/result. The CLI does not validate the value; the adapter grammar does. |
+| `--delegate AGENT` | free-form delegate label (adapters use `claude`/`codex`/`agy`/`ollama:MODEL`/`anthropic-api:MODEL`/`openai-api:MODEL`/`google-api:MODEL`, or a `knobs.delegate_profiles` name) | `None` | Explicit implementer override, echoed in the contract/result. The CLI does not validate the value; the adapter grammar does. |
 | `--root` / `--dry-run` / `--live` / consent flags / `--target` / intake flags / `--json` | shared | — | Shared semantics. |
 
 ### Details
@@ -1649,7 +1649,7 @@ positionals are all rejected as user error.
 | --- | --- | --- | --- |
 | issue numbers | bare positive integers | none → **watch mode** | Explicit issue(s) to ship. With none, the run takes the top of the backlog (highest priority first, then ascending issue number), with a capped watch-mode batch. |
 | `--compound` / `--profile` | flag / `standard` \| `compound` | `standard` | Select the workflow profile. `--compound` ≡ `--profile compound`. |
-| `--delegate` | `claude` \| `codex` \| `agy` \| `ollama:MODEL` \| `anthropic-api:MODEL` \| `openai-api:MODEL` \| a `knobs.delegate_profiles` name | host agent | The s4 implementer; per-run override of any issue role/delegate label. A profile name selects a generic CLI vendor configured in `.keel/project.yaml`; built-in vendor names always win. |
+| `--delegate` | `claude` \| `codex` \| `agy` \| `ollama:MODEL` \| `anthropic-api:MODEL` \| `openai-api:MODEL` \| `google-api:MODEL` \| a `knobs.delegate_profiles` name | host agent | The s4 implementer; per-run override of any issue role/delegate label. A profile name selects a generic CLI vendor configured in `.keel/project.yaml`; built-in vendor names always win. |
 | `--review-delegate` | same value set (profile names included) | host agent | The s7 reviewer vendor. |
 | `--review-comments` | `inline` \| `summary` | `inline` | How reviewer findings post in s7. |
 | `--reviewers` | `1` \| `2` \| `3` | auto (from tier) | Override the tier-derived reviewer count. |
@@ -1683,7 +1683,7 @@ compound `workflow_profile`. `--compound` composes with every other flag
 
 ### `--delegate` / `--review-delegate` — in depth
 
-Value set `claude | codex | agy | ollama:MODEL | anthropic-api:MODEL | openai-api:MODEL`,
+Value set `claude | codex | agy | ollama:MODEL | anthropic-api:MODEL | openai-api:MODEL | google-api:MODEL`,
 plus the name of any `knobs.delegate_profiles` entry;
 `ollama:` and the `*-api:` values require a non-empty model
 (per-issue model overrides can also come from a `delegate-model:<name>` label).
@@ -1692,7 +1692,7 @@ Implementer precedence at s4: `--delegate` flag > issue `delegate:*` label >
 implementers are fed the prompt via stdin and run network-enabled; a bare local (Ollama)
 model cannot run tools, so the orchestrator does every git/PR step itself and delegates
 only diff generation (≤2 retries on a bad diff, then fall back). The hosted-API
-delegates (`anthropic-api:MODEL` / `openai-api:MODEL`, issue #548) follow the same
+delegates (`anthropic-api:MODEL` / `openai-api:MODEL` / `google-api:MODEL`, issues #548, #666) follow the same
 no-tools contract with the endpoint swapped: one stdlib HTTP call per attempt against
 the vendor's API, keyed by `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/`GEMINI_API_KEY` from the environment —
 no agent CLI needed. Reading the token requires the `secrets` consent scope; without it

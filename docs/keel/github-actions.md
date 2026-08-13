@@ -81,7 +81,7 @@ adapters and their agent host, where operator consent, delegation, model attribu
 worktree isolation, and project extensions are available.
 
 The agent-host requirement for the agentic steps is narrower than it used to be: with the
-hosted-API delegates (`--delegate anthropic-api:MODEL` / `openai-api:MODEL`, issue #548) a
+hosted-API delegates (`--delegate anthropic-api:MODEL` / `openai-api:MODEL` / `google-api:MODEL`, or configured profiles) a
 runner needs only a vendor API key as a secret — no installed, authenticated agent CLI —
 to drive implement/review through the same adapter contract. The orchestration itself
 (the adapter prose, consent, attribution, worktrees) still runs in an agent host; the

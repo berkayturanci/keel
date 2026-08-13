@@ -2,11 +2,12 @@
 window.KEEL_ARGS = {
  "ship": {
   "desc": "Drive a GitHub issue end-to-end through the keel backbone (select → branch → implement → CI → review → test → merge → close → capture), reading every project value from .keel/project.yaml via the keel CLI.",
-  "hint": "[issue numbers...] [--delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL>] [--review-delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL>] [--review-comments <inline|summary>] [--reviewers <1|2|3>] [--jury|--no-jury|--jury-advisory] [--hotfix] [--dry-run] [--wizard]",
+  "hint": "[issue numbers...] [--compound|--profile <standard|compound>] [--delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL|google-api:MODEL|PROFILE>] [--review-delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL|google-api:MODEL|PROFILE>] [--review-comments <inline|summary>] [--reviewers <1|2|3>] [--jury|--no-jury|--jury-advisory] [--hotfix] [--dry-run] [--wizard]",
   "flags": [
    "issue numbers...",
-   "--delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL>",
-   "--review-delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL>",
+   "--compound|--profile <standard|compound>",
+   "--delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL|google-api:MODEL|PROFILE>",
+   "--review-delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL|google-api:MODEL|PROFILE>",
    "--review-comments <inline|summary>",
    "--reviewers <1|2|3>",
    "--jury|--no-jury|--jury-advisory",
@@ -18,10 +19,10 @@ window.KEEL_ARGS = {
  },
  "implement": {
   "desc": "Delegate a single issue to the right implementer and drive the s4 implement step standalone. Project-neutral — every project specific is read from .keel/project.yaml via the keel CLI.",
-  "hint": "[issue number] [--delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL>]",
+  "hint": "[issue number] [--delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL|google-api:MODEL|PROFILE>]",
   "flags": [
    "issue number",
-   "--delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL>"
+   "--delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL|google-api:MODEL|PROFILE>"
   ]
  },
  "review-cycle": {

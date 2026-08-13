@@ -103,7 +103,8 @@ Resolve the implementer agent from `implementer_agents` keyed by the issue's
 **role/platform label**, overridden by `--delegate`, defaulting to the **host
 agent**. Do not hardcode an agent name — the mapping is config. The same value
 set as `/keel:ship` applies, including the hosted-API delegates
-(`anthropic-api:MODEL` / `openai-api:MODEL`) — those follow the ship.md s4
+(`anthropic-api:MODEL` / `openai-api:MODEL` / `google-api:MODEL`) and configured
+`knobs.delegate_profiles` — those follow the ship.md s4
 no-tools contract (orchestrator does every git/PR step; the delegate produces
 only a diff via one API call, keyed by `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/`GEMINI_API_KEY`;
 `secrets` consent scope required; refused on tier-3; never retry HTTP 429).
@@ -174,4 +175,4 @@ review / CI / merge.
 Fail over to the host agent on delegate quota errors; attribute the **effective**
 agent.
 
-<!-- keel-generated: surface=skills command=implement keel_version=1.11.0 source_sha256=eb0a32674c368e1b6eb768bb71f24e126ca997fa33d56cb274e9e38767d69794 generated_sha256=c18516f8db4427af1d16a0114732d1872a6af61ed94d282748c51ceb8b70267b -->
+<!-- keel-generated: surface=skills command=implement keel_version=1.11.0 source_sha256=1574efb02a43784d572642319bef5b7422da59796f232d868aa1ee4b29480019 generated_sha256=71cff6e2433fa4bb26456421081d27d36d11a53ad31d668bc531d104266469b7 -->

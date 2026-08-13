@@ -220,7 +220,11 @@ def _api_token_capability(env: Mapping[str, str]) -> Capability:
     from .api_delegate import present_key_names
 
     names = present_key_names(_env=env)
-    detail = ", ".join(names) if names else "no vendor API key (ANTHROPIC_API_KEY/OPENAI_API_KEY)"
+    detail = (
+        ", ".join(names)
+        if names
+        else "no vendor API key (ANTHROPIC_API_KEY/OPENAI_API_KEY/GEMINI_API_KEY)"
+    )
     return Capability("api-token", bool(names), detail, "environment")
 
 

@@ -12,7 +12,7 @@ license = "Apache-2.0"
 license-files = ["LICENSE"]
 authors = [{ name = "Berkay Turancı", email = "berkayturanci@gmail.com" }]
 maintainers = [{ name = "Berkay Turancı", email = "berkayturanci@gmail.com" }]
-keywords = ["workflow", "automation", "ci", "agents", "code-review", "github", "merge-queue"]
+keywords = ["workflow", "automation", "ci", "agents", "code-review", "github", "merge-queue", "gemini", "claude", "llm"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
