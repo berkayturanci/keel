@@ -79,6 +79,23 @@ The verifier confirms:
 
 ---
 
+## Complete Enforcement: How to Prevent Agent Bypasses
+
+Keel enforces the evidence chain programmatically, but complete end-to-end enforcement requires pairing Keel's deterministic core with standard repository protections:
+
+### 1. Keel Core Deterministic Enforcement
+* **Fail-Closed Evidence Gate**: `keel merge` blocks unconditionally if required reviewer verdicts or quality gates are missing or mismatched against the head commit SHA.
+* **Independent Diff Verification**: The orchestrator inspects actual git filesystem diffs rather than trusting agent-declared file lists.
+* **Merge Lock & Window**: Simultaneous agent merges and out-of-window merges are blocked at the filesystem and clock level.
+
+### 2. GitHub Repository Protection (Recommended Setup)
+To prevent autonomous agents from bypassing the Keel backbone via direct `git push origin main`:
+* **Require Pull Requests**: Disable direct pushes to the default branch (`main` / `develop`).
+* **Require Status Checks**: Require the `keel-ship` / CI workflow checks to pass before merging.
+* **Restrict Bypass Permissions**: Only designated human administrators may bypass rulesets.
+
+---
+
 ## Comparison: Opaque Agents vs. Keel Evidence Chain
 
 | Dimension | Standard Coding Agents | Keel Evidence Chain |
