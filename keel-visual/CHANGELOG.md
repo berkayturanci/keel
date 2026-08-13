@@ -6,6 +6,17 @@ All notable changes to keel-visual are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-08-14
+
+### Added
+- **Blocked step rendering on failed gates.** When a gate failure occurs (e.g. at `s8`),
+  the terminal board and HTML run view now render the step as `blocked` (red `.fail`
+  node in runviz and dedicated glyph in terminal) rather than remaining indefinitely
+  in an in-progress/running state (#636).
+- **Distinct TIMEOUT outcome glyph.** Surfaced timed-out gate executions with a distinct
+  hourglass glyph (`⧗`) to distinguish machine/network timeouts from actual test
+  assertion failures (#622).
+
 ## [0.7.0] — 2026-07-17
 
 ### Added
