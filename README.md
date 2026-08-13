@@ -215,6 +215,7 @@ If a step's gate fails, keel blocks its own merge — the same backbone every co
   `pages.yml` workflow). Locally, `make site` builds the coverage HTML into
   `website/coverage/` and serves it at <http://localhost:8000>.
 - [`docs/keel/configuration.md`](docs/keel/configuration.md) — `project.yaml` reference
+- [`docs/keel/models.md`](docs/keel/models.md) — supported AI models, providers, and delegate profiles (Claude, OpenAI, Gemini, OpenRouter, DeepSeek, Groq, Ollama, CLI tools)
 - [`docs/keel/parameter-reference.md`](docs/keel/parameter-reference.md) — exhaustive per-flag reference for every CLI command and the `/keel:ship` adapter arguments
 - [`docs/keel/onboarding.md`](docs/keel/onboarding.md) — one-command consumer setup and follow-up checks
 - [`docs/keel/keel-visual.md`](docs/keel/keel-visual.md) — the live run board (`dash`/`render`/`serve`, the per-run 2D/3D drawer, `--all` multi-project, the auto-stamped `keel activity` channel)

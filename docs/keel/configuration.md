@@ -271,8 +271,8 @@ high-risk-path implementer. No new consent scope is needed: this is the same sub
 surface `codex`/`agy` already use, and `command` is operator-authored config with the same
 trust level as `build_gate_cmd` — it is never taken from PR content or agent output.
 
-Design and the deferred `openai-compatible` / `google-api` vendors:
-[`docs/proposals/generic-delegate-vendors.md`](../proposals/generic-delegate-vendors.md).
+For full model options and provider configurations, see the [Supported AI Models & Providers Guide](models.md).
+Design and proposals: [`docs/proposals/generic-delegate-vendors.md`](../proposals/generic-delegate-vendors.md).
 
 #### `tier3_globs`
 
