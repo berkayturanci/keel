@@ -6,7 +6,16 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-08-14
+
 ### Added
+- **Comprehensive AI Models & Providers Guide** (#693, #692): Added `docs/keel/models.md`
+  detailing how to use hosted APIs (Anthropic, OpenAI, Google Gemini via `GEMINI_API_KEY`),
+  OpenAI-compatible profiles (OpenRouter, DeepSeek, Groq, Together, local vLLM/Ollama), and
+  custom CLI agents. Reconciled all parameter tables, adapter help messages, and website surfaces.
+- **Auditable Evidence Chain & Compliance Guide** (#563): Added `docs/keel/evidence.md`
+  documenting commit-SHA binding, multi-vendor agent attribution, tamper-evident deferral records,
+  and repository protection rulesets.
 - **`keel verify-merge` — a post-merge guardrail against silent reverts** (#561): `keel
   merge` proved a merge *succeeded*, never that it applied the diff that was reviewed. Those
   came apart twice in one day while shipping 1.8.1/1.8.2, when an `update-branch` merge
@@ -56,6 +65,8 @@ All notable changes to keel are documented here. The format follows
   and the merge gate binds to the live head regardless.
 
 ### Changed
+- **Optimized model and delegate character validation** (#691): Replaced `all()` generator
+  expressions with `frozenset.issuperset(model)` checks in `agents.py` and `api_delegate.py`.
 - **Documented what `step-verify` and the checkpoint gate actually prove** (#635).
   `step-verify` is per-step and stateless across steps: `--step s10` passes against a
   well-formed s10 handoff with no s7 or s8 handoff in existence, so *ordering* is enforced
