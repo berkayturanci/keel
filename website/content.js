@@ -352,6 +352,13 @@ window.KEEL = {
       source: "https://github.com/berkayturanci/keel/blob/main/docs/keel/evidence.md",
     },
     {
+      group: "Architecture", title: "Supported AI models & providers", slug: "models",
+      summary: "How to use any AI model: hosted APIs (Claude, OpenAI, Gemini), OpenAI-compatible gateways (OpenRouter, Groq, DeepSeek), local Ollama/vLLM, and agent CLIs.",
+      body:
+        "<p>Keel is model-neutral. Drive implementations (<code>s4</code>) or reviews (<code>s7</code>) using direct hosted APIs (<code>anthropic-api:</code>, <code>openai-api:</code>, <code>google-api:</code>), OpenAI-compatible profiles for OpenRouter, DeepSeek, Groq, Together AI and local vLLM, local offline Ollama models, or official agent CLIs (Claude, Codex, Antigravity).</p>",
+      source: "https://github.com/berkayturanci/keel/blob/main/docs/keel/models.md",
+    },
+    {
       group: "Authoring", title: "Extensions (your Lego)", slug: "extensions",
       summary: "Add-only gates and steps snapped into named hooks — guard, tester, pre-merge, reviewers…",
       body:
