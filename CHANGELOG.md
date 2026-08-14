@@ -6,6 +6,21 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.14.0] - 2026-08-14
+
+### Added
+- **Security Policy Pack Dogfooding** (#704): Configured declarative `policy_pack.presets: ["bandit"]`
+  in `projects/keel.yaml` and `.keel/project.yaml`, automatically planning and running Bandit SAST
+  scans on every PR under `s8 test`.
+- **Adversarial & ReDoS Security Test Suite** (#705): Added dedicated test suites covering
+  exponential/dense JSON payloads, non-ASCII credential injections, deeply-nested schemas
+  (depth 50+), extreme numerical bounds, and path traversal escape defenses.
+
+### Fixed
+- **Bandit B311 False Positive Suppression** (#703): Added inline `# nosec B311` annotation to
+  non-cryptographic GitHub API retry delay jitter in `src/keel/github.py`, ensuring automated
+  SAST pipelines report zero warnings.
+
 ## [1.13.0] - 2026-08-14
 
 ### Added
