@@ -183,6 +183,48 @@ class SwarmRunResult:
         }
 
 
+@dataclass(frozen=True)
+class LandingDecision:
+    """Evaluation of whether a wave can directly land or requires sequential funneling."""
+
+    mode: str  # "direct_batch" or "sequential_funnel"
+    eligible: bool
+    cluster_ids: tuple[str, ...]
+    reason: str = "orthogonal_diffs"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "mode": self.mode,
+            "eligible": self.eligible,
+            "cluster_ids": list(self.cluster_ids),
+            "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True)
+class SwarmLandingResult:
+    """Outcome report for landing a swarm wave."""
+
+    swarm_id: str
+    wave_index: int
+    mode: str
+    landed_clusters: tuple[str, ...]
+    healed_clusters: tuple[str, ...]
+    failed_clusters: tuple[str, ...]
+    status: str  # "success", "partial_failure", "failed"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "swarm_id": self.swarm_id,
+            "wave_index": self.wave_index,
+            "mode": self.mode,
+            "landed_clusters": list(self.landed_clusters),
+            "healed_clusters": list(self.healed_clusters),
+            "failed_clusters": list(self.failed_clusters),
+            "status": self.status,
+        }
+
+
 def _normalize_path(p: str) -> str:
     cleaned = p.strip("`'\" \t\r\n.,;:()")
     cleaned = cleaned.replace("\\", "/").removeprefix("./").removeprefix("/")
@@ -664,4 +706,71 @@ def render_swarm_run_result(result: SwarmRunResult) -> str:
         f"  total waves   : {len(result.wave_results)}",
     ]
     return "\n".join(lines)
+
+
+def evaluate_wave_landing_mode(
+    wave: SwarmWave,
+    pr_diff_map: dict[str, list[str] | tuple[str, ...]],
+) -> LandingDecision:
+    """Evaluate whether a wave can directly land or requires sequential funneling."""
+    cluster_ids = tuple(c.cluster_id for c in wave.clusters)
+    if len(cluster_ids) <= 1:
+        return LandingDecision(
+            mode="direct_batch",
+            eligible=True,
+            cluster_ids=cluster_ids,
+            reason="single_cluster",
+        )
+
+    # Check pairwise disjointness of actual diff files
+    has_conflict = False
+    for i, c1 in enumerate(wave.clusters):
+        diff1 = pr_diff_map.get(c1.cluster_id, c1.combined_scope)
+        for c2 in wave.clusters[i + 1 :]:
+            diff2 = pr_diff_map.get(c2.cluster_id, c2.combined_scope)
+            for f1 in diff1:
+                for f2 in diff2:
+                    if paths_intersect(f1, f2):
+                        has_conflict = True
+                        break
+                if has_conflict:
+                    break
+            if has_conflict:
+                break
+        if has_conflict:
+            break
+
+    if not has_conflict:
+        return LandingDecision(
+            mode="direct_batch",
+            eligible=True,
+            cluster_ids=cluster_ids,
+            reason="orthogonal_diff_trees",
+        )
+
+    return LandingDecision(
+        mode="sequential_funnel",
+        eligible=False,
+        cluster_ids=cluster_ids,
+        reason="overlapping_diff_trees",
+    )
+
+
+def render_swarm_landing_result(result: SwarmLandingResult) -> str:
+    """Render human-readable summary of a SwarmLandingResult."""
+    status_icon = (
+        "✓"
+        if result.status == "success"
+        else ("⚠️" if result.status == "partial_failure" else "✗")
+    )
+    lines = [
+        f"keel swarm land — {result.swarm_id} (wave {result.wave_index})",
+        f"  status  : {result.status} {status_icon}",
+        f"  mode    : {result.mode}",
+        f"  landed  : {', '.join(result.landed_clusters) if result.landed_clusters else 'none'}",
+        f"  healed  : {', '.join(result.healed_clusters) if result.healed_clusters else 'none'}",
+        f"  failed  : {', '.join(result.failed_clusters) if result.failed_clusters else 'none'}",
+    ]
+    return "\n".join(lines)
+
 

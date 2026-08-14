@@ -4330,6 +4330,91 @@ def _cmd_swarm_run(args: argparse.Namespace) -> int:
     return 0 if result.status == "success" else (1 if result.status == "failed" else 0)
 
 
+def _cmd_swarm_land(args: argparse.Namespace) -> int:
+    try:
+        config = cfg.load_config(args.path)
+    except FileNotFoundError:
+        print(f"no such config: {args.path}", file=sys.stderr)
+        return 1
+    except cfg.ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    swarm_id = args.swarm_id
+    if not swarm_id:
+        state_dir = Path(args.root) / ".keel" / "state" / "swarm"
+        if state_dir.exists():
+            files = sorted(
+                state_dir.glob("*.json"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+            if files:
+                swarm_id = files[0].stem
+
+    issue_nums: list[int] = []
+    if args.issues:
+        for part in args.issues.split(","):
+            part = part.strip().lstrip("#")
+            if part.isdigit():
+                issue_nums.append(int(part))
+    if args.issue:
+        issue_nums.extend(args.issue)
+
+    seen: set[int] = set()
+    unique_issues: list[int] = []
+    for num in issue_nums:
+        if num not in seen:
+            seen.add(num)
+            unique_issues.append(num)
+
+    labels = _issue_labels(args)
+    scopes: list[swarm.IssueScope] = []
+
+    if unique_issues:
+        for num in unique_issues:
+            scopes.append(
+                swarm.extract_issue_scope(
+                    num,
+                    title=args.issue_title or "",
+                    body=args.issue_body or "",
+                    labels=labels,
+                    declared_files=args.declared_file,
+                    config=config,
+                )
+            )
+    elif args.issue_title or args.issue_body or args.declared_file or labels:
+        scopes.append(
+            swarm.extract_issue_scope(
+                1,
+                title=args.issue_title or "",
+                body=args.issue_body or "",
+                labels=labels,
+                declared_files=args.declared_file,
+                config=config,
+            )
+        )
+
+    plan = swarm.build_swarm_plan(scopes, swarm_id=swarm_id, config=config)
+
+    from . import swarm_landing
+
+    result = swarm_landing.land_wave_clusters(
+        plan,
+        wave_index=args.wave,
+        project_yaml=args.path,
+        root=args.root,
+        dry_run=not args.live,
+    )
+
+    if args.json:
+        print(json.dumps(result.to_dict(), indent=2))
+    else:
+        print(swarm.render_swarm_landing_result(result))
+
+    return 0 if result.status == "success" else (1 if result.status == "failed" else 0)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="keel", description="keel — workflow core")
     parser.add_argument("--version", action="version", version=f"keel {__version__}")
@@ -5444,6 +5529,31 @@ def build_parser() -> argparse.ArgumentParser:
     p_sr.add_argument("--tree", action="store_true", help="render visual DAG tree")
     p_sr.add_argument("--json", action="store_true", help="emit structured JSON")
     p_sr.set_defaults(func=_cmd_swarm_run)
+
+    p_sl = sub.add_parser(
+        "swarm-land",
+        help="land a wave of clusters via direct batch landing or sequential funneling",
+    )
+    p_sl.add_argument("path", help="path to project.yaml")
+    p_sl.add_argument("--root", default=".", help="repo root for git, gates + extensions")
+    p_sl.add_argument(
+        "--wave", type=_positive_int, default=1, help="wave index to land (default: 1)"
+    )
+    p_sl.add_argument(
+        "--issues", default=None, help="comma-separated issue numbers (e.g. 101,102,103)"
+    )
+    p_sl.add_argument("--issue", type=_positive_int, action="append", default=[],
+                      help="specific issue number; repeat for multiple")
+    p_sl.add_argument("--declared-file", action="append", default=[],
+                      help="declared file path; repeat for multiple")
+    p_sl.add_argument("--issue-title", default=None, help="issue title")
+    p_sl.add_argument("--issue-body", default=None, help="issue body markdown")
+    p_sl.add_argument("--issue-label", action="append", default=[],
+                      help="issue label; repeat or comma-separate")
+    p_sl.add_argument("--swarm-id", default=None, help="custom swarm ID")
+    p_sl.add_argument("--live", action="store_true", help="run live mutating git landing")
+    p_sl.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_sl.set_defaults(func=_cmd_swarm_land)
 
     return parser
 
