@@ -1,65 +1,114 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="300" viewBox="0 0 1200 300" role="img" aria-label="keel — drive every issue to merged">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#101820"></stop>
-      <stop offset="1" stop-color="#0a0d12"></stop>
+    <linearGradient id="bg-dark" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0c1118"></stop>
+      <stop offset="100%" stop-color="#06090e"></stop>
     </linearGradient>
-    <linearGradient id="merged" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#4fe0d0"></stop>
-      <stop offset="1" stop-color="#86efac"></stop>
+    <linearGradient id="merged-dark" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#2dd4bf"></stop>
+      <stop offset="100%" stop-color="#4ade80"></stop>
     </linearGradient>
-    <radialGradient id="glow" cx="0.82" cy="0.2" r="0.6">
-      <stop offset="0" stop-color="#2dd4bf" stop-opacity="0.16"></stop>
-      <stop offset="1" stop-color="#2dd4bf" stop-opacity="0"></stop>
+    <radialGradient id="glow-teal-dark" cx="0.85" cy="0.25" r="0.55">
+      <stop offset="0%" stop-color="#2dd4bf" stop-opacity="0.14"></stop>
+      <stop offset="100%" stop-color="#2dd4bf" stop-opacity="0"></stop>
     </radialGradient>
+    <linearGradient id="badge-glow-dark" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#4ade80" stop-opacity="0.18"></stop>
+      <stop offset="100%" stop-color="#2dd4bf" stop-opacity="0.08"></stop>
+    </linearGradient>
   </defs>
 
-  <rect width="1200" height="300" rx="24" fill="url(#bg)"></rect>
-  <rect width="1200" height="300" rx="24" fill="url(#glow)"></rect>
-  <g stroke="#2dd4bf" stroke-opacity="0.05">
-    <path d="M150 0v300M300 0v300M450 0v300M600 0v300M750 0v300M900 0v300M1050 0v300"></path>
-    <path d="M0 75h1200M0 150h1200M0 225h1200"></path>
+  <!-- Background Base & Micro Grid -->
+  <rect width="1200" height="300" rx="24" fill="url(#bg-dark)"></rect>
+  <rect width="1200" height="300" rx="24" fill="url(#glow-teal-dark)"></rect>
+  <g stroke="#2dd4bf" stroke-opacity="0.04">
+    <path d="M120 0v300M240 0v300M360 0v300M480 0v300M600 0v300M720 0v300M840 0v300M960 0v300M1080 0v300"></path>
+    <path d="M0 60h1200M0 120h1200M0 180h1200M0 240h1200"></path>
   </g>
-  <rect x="1" y="1" width="1198" height="298" rx="23" fill="none" stroke="#232c38" stroke-width="2"></rect>
+  <rect x="1" y="1" width="1198" height="298" rx="23" fill="none" stroke="#1f2937" stroke-width="1.8"></rect>
 
-  
-  <g transform="translate(64,52)">
-    <rect width="56" height="56" rx="13" fill="#0c1118"></rect>
-    <rect x="0.7" y="0.7" width="54.6" height="54.6" rx="12.5" fill="none" stroke="#2a3543"></rect>
-    <line x1="10.5" y1="35" x2="28" y2="35" stroke="#2a3744" stroke-width="2.6" stroke-linecap="round"></line>
-    <circle cx="10.5" cy="35" r="2.8" fill="#2dd4bf"></circle>
-    <circle cx="17.5" cy="35" r="2.8" fill="#2dd4bf"></circle>
-    <circle cx="24.5" cy="35" r="2.8" fill="#2dd4bf"></circle>
-    <circle cx="28" cy="35" r="3.3" fill="#f5a524"></circle>
-    <path d="M28 35 Q38.5 29.7 45.5 16.6" stroke="#4ade80" stroke-width="4.8" fill="none" stroke-linecap="round"></path>
-    <circle cx="45.5" cy="16.6" r="3.9" fill="#4ade80"></circle>
+  <!-- Left: Keel Brand & Typography -->
+  <g transform="translate(60, 46)">
+    <!-- Anchor Icon Container -->
+    <rect width="52" height="52" rx="12" fill="#111827"></rect>
+    <rect x="0.6" y="0.6" width="50.8" height="50.8" rx="11.4" fill="none" stroke="#374151"></rect>
+    
+    <!-- Ship Backbone Symbol -->
+    <line x1="12" y1="33" x2="26" y2="33" stroke="#4b5563" stroke-width="2.5" stroke-linecap="round"></line>
+    <circle cx="12" cy="33" r="2.6" fill="#2dd4bf"></circle>
+    <circle cx="19" cy="33" r="2.6" fill="#38bdf8"></circle>
+    <circle cx="26" cy="33" r="2.8" fill="#f59e0b"></circle>
+    <path d="M26 33 Q35 27 41 15" stroke="#4ade80" stroke-width="4.2" fill="none" stroke-linecap="round"></path>
+    <circle cx="41" cy="15" r="3.4" fill="#4ade80"></circle>
+    
+    <!-- Brand Titles -->
+    <text x="68" y="30" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="28" font-weight="800" fill="#f3f4f6" letter-spacing="-0.02em">keel</text>
+    <text x="68" y="48" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="12.5" fill="#9ca3af">turn coding agents into work owners</text>
   </g>
-  <text x="136" y="84" font-family="ui-sans-serif, system-ui, -apple-system, &#39;Segoe UI&#39;, sans-serif" font-size="30" font-weight="700" fill="#e6edf3">keel</text>
-  <text x="136" y="104" font-family="ui-monospace, &#39;SF Mono&#39;, Menlo, Consolas, monospace" font-size="13" fill="#8b97a6">turn coding agents into work owners</text>
 
-  
-  <text x="64" y="172" font-family="ui-sans-serif, system-ui, -apple-system, &#39;Segoe UI&#39;, sans-serif" font-size="46" font-weight="800" fill="#e6edf3">Drive every issue to <tspan fill="url(#merged)">merged.</tspan></text>
-  <text x="64" y="206" font-family="ui-sans-serif, system-ui, -apple-system, &#39;Segoe UI&#39;, sans-serif" font-size="17" fill="#8b97a6">One fixed backbone — you set the values, snap in the Lego. It never forks.</text>
+  <!-- Slogan & Description -->
+  <text x="60" y="160" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="44" font-weight="800" fill="#f9fafb" letter-spacing="-0.03em">Drive every issue to <tspan fill="url(#merged-dark)">merged.</tspan></text>
+  <text x="60" y="196" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="16.5" fill="#9ca3af">Universal workflow spine — any AI agent, multi-layer review, and commit-bound evidence.</text>
 
-  
-  <text x="64" y="252" font-family="ui-monospace, &#39;SF Mono&#39;, Menlo, Consolas, monospace" font-size="13" fill="#5d6b7c">13 steps s0→s12  ·  28 extension slots  ·  16 /keel commands  ·  100% covered  ·  Apache-2.0</text>
+  <!-- Highlights Badge Strip -->
+  <g transform="translate(60, 248)">
+    <text font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="12.5" fill="#6b7280">
+      <tspan fill="#2dd4bf" font-weight="600">s0→s12 backbone</tspan>
+      <tspan fill="#4b5563"> · </tspan>
+      <tspan fill="#e5e7eb" font-weight="600">All AI Agents &amp; Models</tspan>
+      <tspan fill="#4b5563"> · </tspan>
+      <tspan fill="#f59e0b">Security Presets</tspan>
+      <tspan fill="#4b5563"> · </tspan>
+      <tspan fill="#4ade80" font-weight="600">100% covered</tspan>
+      <tspan fill="#4b5563"> · </tspan>
+      <tspan fill="#9ca3af">Apache-2.0</tspan>
+    </text>
+  </g>
 
-  
-  <g transform="translate(712,0)">
-    <line x1="40" y1="150" x2="320" y2="150" stroke="#2a3744" stroke-width="3" stroke-linecap="round"></line>
-    <circle cx="40" cy="150" r="4.5" fill="#2dd4bf"></circle>
-    <circle cx="80" cy="150" r="4.5" fill="#2dd4bf"></circle>
-    <circle cx="120" cy="150" r="4.5" fill="#2dd4bf"></circle>
-    <circle cx="160" cy="150" r="4.5" fill="#2dd4bf"></circle>
-    <circle cx="200" cy="150" r="4.5" fill="#2dd4bf"></circle>
-    <circle cx="240" cy="150" r="4.5" fill="#2dd4bf"></circle>
-    <circle cx="280" cy="150" r="4.5" fill="#2dd4bf"></circle>
-    <circle cx="320" cy="150" r="5.2" fill="#f5a524"></circle>
-    <path d="M320 150 Q360 138 384 92" stroke="#4ade80" stroke-width="7" fill="none" stroke-linecap="round"></path>
-    <circle cx="384" cy="92" r="7" fill="#4ade80"></circle>
-    <text x="40" y="178" font-family="ui-monospace, &#39;SF Mono&#39;, Menlo, Consolas, monospace" font-size="11" fill="#5d6b7c">s0 intake</text>
-    <text x="299" y="178" font-family="ui-monospace, &#39;SF Mono&#39;, Menlo, Consolas, monospace" font-size="11" fill="#b9851f">s10 merge</text>
-    <rect x="312" y="60" width="158" height="26" rx="13" fill="#4ade80" fill-opacity="0.14"></rect>
-    <text x="328" y="77" font-family="ui-monospace, &#39;SF Mono&#39;, Menlo, Consolas, monospace" font-size="12" font-weight="700" fill="#6ee7a0">merged + closed ✓</text>
+  <!-- Right: Iconic Upward Merge Curve Pipeline with Evidence Badge -->
+  <g transform="translate(710, 0)">
+    <!-- Top Evidence Locked Badge -->
+    <g transform="translate(230, 44)">
+      <rect width="170" height="26" rx="13" fill="url(#badge-glow-dark)" stroke="#4ade80" stroke-opacity="0.3" stroke-width="1.2"></rect>
+      <circle cx="16" cy="13" r="3.6" fill="#4ade80"></circle>
+      <text x="96" y="17.5" text-anchor="middle" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="11.5" font-weight="700" fill="#86efac">evidence locked ✓</text>
+    </g>
+
+    <!-- Main Backbone Track Line (Horizontal s0 -> s10) -->
+    <line x1="30" y1="165" x2="315" y2="165" stroke="#2a3744" stroke-width="3" stroke-linecap="round"></line>
+
+    <!-- Upward Merge Branch Curve (s10 merge -> s12 destination) -->
+    <path d="M 315 165 Q 355 152 380 95" stroke="#4ade80" stroke-width="5.5" fill="none" stroke-linecap="round"></path>
+    <circle cx="380" cy="95" r="7.5" fill="#4ade80"></circle>
+    <path d="M 376 95 L 379 98 L 385 91" stroke="#064e3b" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"></path>
+
+    <!-- s12 captured label placed to the right of node (Zero overlap!) -->
+    <text x="396" y="93" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="12" font-weight="700" fill="#4ade80">s12</text>
+    <text x="396" y="107" font-family="ui-sans-serif, system-ui, sans-serif" font-size="11" font-weight="600" fill="#86efac">captured ✓</text>
+
+    <!-- Node 1: s0 Intake -->
+    <circle cx="30" cy="165" r="5" fill="#2dd4bf"></circle>
+    <text x="30" y="192" text-anchor="middle" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="11" font-weight="600" fill="#9ca3af">s0</text>
+    <text x="30" y="206" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="10.5" fill="#6b7280">intake</text>
+
+    <!-- Node 2: s4 Implement -->
+    <circle cx="100" cy="165" r="5" fill="#38bdf8"></circle>
+    <text x="100" y="192" text-anchor="middle" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="11" font-weight="600" fill="#38bdf8">s4</text>
+    <text x="100" y="206" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="10.5" fill="#6b7280">implement</text>
+
+    <!-- Node 3: s7 Review -->
+    <circle cx="170" cy="165" r="5" fill="#a855f7"></circle>
+    <text x="170" y="192" text-anchor="middle" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="11" font-weight="600" fill="#c084fc">s7</text>
+    <text x="170" y="206" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="10.5" fill="#6b7280">review</text>
+
+    <!-- Node 4: s8 Gates -->
+    <circle cx="240" cy="165" r="5" fill="#22c55e"></circle>
+    <text x="240" y="192" text-anchor="middle" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="11" font-weight="600" fill="#4ade80">s8</text>
+    <text x="240" y="206" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="10.5" fill="#6b7280">gates</text>
+
+    <!-- Node 5: s10 Merge Lock -->
+    <circle cx="315" cy="165" r="6.5" fill="#f5a524"></circle>
+    <text x="315" y="192" text-anchor="middle" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="11" font-weight="600" fill="#f5a524">s10</text>
+    <text x="315" y="206" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="10.5" fill="#b9851f">merge lock</text>
   </g>
 </svg>
