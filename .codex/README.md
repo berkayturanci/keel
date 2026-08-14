@@ -31,6 +31,7 @@ load the matching skill under `.agents/skills/` and follow it exactly:
 - `regression` or `/keel:regression` -> `.agents/skills/keel-regression/SKILL.md`
 - `review-all-day` or `/keel:review-all-day` -> `.agents/skills/keel-review-all-day/SKILL.md`
 - `stale-prs` or `/keel:stale-prs` -> `.agents/skills/keel-stale-prs/SKILL.md`
+- `swarm` or `/keel:swarm` -> `.agents/skills/keel-swarm/SKILL.md`
 
 The matching Claude command files under `.claude/commands/keel/` are compatibility
 entry points. The skill files are the Codex entry points.

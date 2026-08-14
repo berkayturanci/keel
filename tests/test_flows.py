@@ -21,13 +21,14 @@ class TestShipFlow(unittest.TestCase):
 
 
 class TestRegistry(unittest.TestCase):
-    def test_all_sixteen_commands_present(self):
-        self.assertEqual(len(flows.FLOWS), 16)
+    def test_all_seventeen_commands_present(self):
+        self.assertEqual(len(flows.FLOWS), 17)
 
     def test_command_names_sorted(self):
         names = flows.command_names()
         self.assertEqual(list(names), sorted(names))
         self.assertIn("overnight", names)
+        self.assertIn("swarm", names)
         self.assertIn("wrap", names)
 
     def test_every_flow_is_nonempty_with_valid_kinds(self):
@@ -46,13 +47,14 @@ class TestRegistry(unittest.TestCase):
 
     def test_known_commands(self):
         self.assertTrue(flows.is_known("overnight"))
+        self.assertTrue(flows.is_known("swarm"))
         self.assertFalse(flows.is_known("nope"))
 
     def test_flow_for_unknown_falls_back_to_ship(self):
         self.assertEqual(flows.flow_for("nope"), flows.flow_for("ship"))
 
     def test_loop_kinds_present_in_loop_commands(self):
-        for command in ("overnight", "work-block", "regression", "triage"):
+        for command in ("overnight", "work-block", "regression", "triage", "swarm"):
             kinds = [p.kind for p in flows.flow_for(command)]
             self.assertIn("loop", kinds, command)
 

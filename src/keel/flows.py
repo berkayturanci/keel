@@ -161,6 +161,14 @@ FLOWS: dict[str, tuple[Phase, ...]] = {
         ("rebase", "rebase", "normal"),
         ("summary", "summary", "report"),
     ),
+    "swarm": _flow(
+        ("config", "config", "normal"),
+        ("plan", "dag partition", "normal"),
+        ("isolate", "worktrees", "normal"),
+        ("execute", "parallel waves", "loop"),
+        ("land", "batch landing", "merge"),
+        ("report", "swarm report", "report"),
+    ),
     "triage": _flow(
         ("config", "config", "normal"),
         ("find", "find", "normal"),

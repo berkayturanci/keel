@@ -18,6 +18,7 @@ MUTATING_COMMANDS = (
     "review-cycle",
     "ship",
     "stale-prs",
+    "swarm",
     "triage",
     "work-block",
     "wrap",
@@ -31,6 +32,7 @@ DELEGATING_COMMANDS = (
     "review-all-day",
     "review-cycle",
     "ship",
+    "swarm",
     "triage",
     "work-block",
 )
