@@ -71,7 +71,7 @@ def run_argv_retry(
             return result
         delay = backoff_factor * (2 ** (attempt - 1))
         if jitter:
-            delay += random.uniform(0.0, 0.5) if _sleep is None else 0.1
+            delay += random.uniform(0.0, 0.5) if _sleep is None else 0.1  # nosec B311
         sleep_fn(delay)
         attempt += 1
 
