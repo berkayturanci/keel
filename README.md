@@ -28,6 +28,14 @@ take an issue from the queue, decide whether it is ready, own the implementation
 get it reviewed, keep the quality gates green, merge inside policy, and leave useful
 memory behind for the next session. keel focuses on one agent owning work end to end.
 
+### The Vision-to-Production Gap in Agentic AI
+
+While over 70% of engineering organizations experiment with autonomous AI agents, only a small fraction (~11-15%) successfully run agentic workflows in production. The bottleneck is rarely code generation—it is **work ownership and delivery governance**.
+
+Most coding agents stop at *"I opened a PR."* Without an invariant delivery backbone, agent-written code stalls in review loops, introduces silent regressions, causes merge collisions, or bypasses compliance.
+
+**Keel closes the vision-to-production gap.** It provides the fixed backbone (`s0`–`s12`) that drives every unit of work through scope validation, multi-agent adversarial reviews, commit-bound evidence verification, timezone-aware merge locks, and post-merge proof—guaranteeing work either lands safely in production or fails loudly at a named step.
+
 > keel uses a thin-consumer model: the core is installed + pinned, never copied, so the
 > drift/overwrite class of bug is structurally gone. Background:
 > [`docs/proposals/keel-architecture.md`](docs/proposals/keel-architecture.md).

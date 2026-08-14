@@ -270,7 +270,7 @@ window.KEEL = {
       group: "Start here", title: "What keel is", slug: "what-keel-is",
       summary: "A project-neutral, multi-agent workflow core: one fixed backbone, projects set values and snap in Lego.",
       body:
-        "<p><b>keel</b> is a project-neutral, multi-agent <b>workflow backbone</b>. A <i>fixed backbone</i> of steps drives a unit of work — a GitHub issue — from backlog to done: branch → implement → CI → review → test → merge → close. Projects never fork the backbone; they set per-project <b>values</b> in <code>project.yaml</code> and snap their own <b>Lego pieces</b> into named extension slots.</p>" +
+        "<p><b>keel</b> closes the <b>vision-to-production gap</b> in agentic AI. While most coding agents stop at opening a PR, keel is a project-neutral, multi-agent <b>workflow backbone</b> that drives a unit of work from backlog to production: branch → implement → CI → review → test → merge → close → capture. Projects never fork the backbone; they set per-project <b>values</b> in <code>project.yaml</code> and snap their own <b>Lego pieces</b> into named extension slots.</p>" +
         "<p>The keel is a ship's backbone — the fixed spine every project builds on. The flagship command is <code>/keel:ship</code>; keel is where ships are built.</p>",
       source: "https://github.com/berkayturanci/keel/blob/main/README.md",
     },
