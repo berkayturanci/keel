@@ -19,6 +19,7 @@ import sys
 import time
 from importlib import resources
 from pathlib import Path
+from typing import Any
 
 from keel import checkpoint, flows, git, ledger, runner
 from keel import config as cfg
@@ -50,6 +51,13 @@ def load_board_template() -> str:
 def load_dashboard_template() -> str:
     """Load the packaged live-dashboard HTML template (polls ``/board.json``)."""
     return resources.files("keel_visual.templates").joinpath("dashboard.html").read_text(
+        encoding="utf-8"
+    )
+
+
+def load_swarm_template() -> str:
+    """Load the packaged swarm visualizer HTML template text."""
+    return resources.files("keel_visual.templates").joinpath("swarm.html").read_text(
         encoding="utf-8"
     )
 
@@ -815,7 +823,124 @@ def build_parser() -> argparse.ArgumentParser:
     ps.add_argument("--host", default="127.0.0.1", help="bind host (localhost-only by default)")
     ps.add_argument("--port", type=int, default=8765, help="bind port")
     ps.set_defaults(func=cmd_serve)
+
+    p_swarm = sub.add_parser(
+        "swarm", help="render multi-wave swarm topology and 2D DAG partition graph"
+    )
+    p_swarm.add_argument("path", nargs="?", default=None, help="path to project.yaml")
+    p_swarm.add_argument("--root", default=".", help="repo root for state directory")
+    p_swarm.add_argument("--swarm-id", default=None, help="swarm execution ID (default: latest)")
+    p_swarm.add_argument(
+        "--swarm-json", default=None, help="offline swarm run state JSON fixture"
+    )
+    p_swarm.add_argument("--out", default="keel-swarm.html", help="output HTML path")
+    p_swarm.add_argument(
+        "--serve", action="store_true", help="serve the swarm visualizer on localhost"
+    )
+    p_swarm.add_argument("--host", default="127.0.0.1", help="bind host for server")
+    p_swarm.add_argument("--port", type=int, default=8766, help="bind port for server")
+    p_swarm.add_argument("--json", action="store_true", help="emit structured JSON to stdout")
+    p_swarm.set_defaults(func=cmd_swarm)
     return parser
+
+
+def _resolve_swarm_data(args: argparse.Namespace) -> dict[str, Any]:
+    """Resolve swarm plan and state dictionaries from state files or fixture."""
+    fixture = getattr(args, "swarm_json", None)
+    if fixture is not None:
+        return json.loads(Path(fixture).read_text(encoding="utf-8"))
+
+    root_path = Path(args.root).resolve()
+    state_dir = root_path / ".keel" / "state" / "swarm"
+
+    swarm_id = getattr(args, "swarm_id", None)
+    selected_file: Path | None = None
+
+    if state_dir.exists():
+        if swarm_id:
+            candidate = state_dir / f"{swarm_id}.json"
+            if candidate.exists():
+                selected_file = candidate
+        else:
+            files = sorted(
+                state_dir.glob("*.json"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+            if files:
+                selected_file = files[0]
+                swarm_id = selected_file.stem
+
+    state_dict: dict[str, Any] = {}
+    if selected_file and selected_file.exists():
+        try:
+            state_dict = json.loads(selected_file.read_text(encoding="utf-8"))
+        except Exception:
+            state_dict = {}
+
+    from keel import swarm as core_swarm
+
+    scopes: list[core_swarm.IssueScope] = []
+    if "workers" in state_dict:
+        for w in state_dict["workers"]:
+            scopes.append(
+                core_swarm.IssueScope(
+                    issue=w.get("issue", 1),
+                    title=f"Worker {w.get('issue', 1)}",
+                    role=w.get("role", "core"),
+                )
+            )
+
+    plan = core_swarm.build_swarm_plan(scopes, swarm_id=swarm_id or "swarm-empty")
+
+    return {
+        "swarm_id": swarm_id or "swarm-empty",
+        "plan": plan.to_dict(),
+        "state": state_dict,
+    }
+
+
+def cmd_swarm(args: argparse.Namespace) -> int:
+    """Render multi-wave swarm topology and 2D DAG partition graph."""
+    if args.path:
+        try:
+            cfg.load_config(args.path)
+        except FileNotFoundError:
+            print(f"no such config: {args.path}", file=sys.stderr)
+            return 1
+        except cfg.ConfigError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+
+    swarm_data = _resolve_swarm_data(args)
+
+    if getattr(args, "json", False):
+        print(json.dumps(swarm_data, indent=2))
+        return 0
+
+    tpl = load_swarm_template()
+    title = f"keel swarm · {swarm_data.get('swarm_id', 'live')}"
+    html = render.render_swarm_html(tpl, swarm_data, title=title)
+
+    out_path = Path(args.out)
+    out_path.write_text(html, encoding="utf-8")
+    print(f"keel-visual — wrote {out_path.resolve()}  ({swarm_data.get('swarm_id')})")
+
+    if getattr(args, "serve", False):
+        def provider() -> dict[str, Any]:
+            return _resolve_swarm_data(args)
+
+        httpd = serve.make_server(provider, html, host=args.host, port=args.port)
+        host, port = httpd.server_address[0], httpd.server_address[1]
+        print(f"keel-visual — live swarm topology on http://{host}:{port}  (Ctrl-C to stop)")
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            print("\nkeel-visual — server stopped")
+        finally:
+            httpd.server_close()
+
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:

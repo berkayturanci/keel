@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__ · keel-visual</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHJlY3QgeD0iMiIgeT0iMiIgd2lkdGg9IjYwIiBoZWlnaHQ9IjYwIiByeD0iMTQiIGZpbGw9IiMwYzExMTgiIHN0cm9rZT0iIzEwYjk4MSIgc3Ryb2tlLXdpZHRoPSIyLjUiLz48bGluZSB4MT0iMTIiIHkxPSI0MCIgeDI9IjMyIiB5Mj0iNDAiIHN0cm9rZT0iIzNhNGE1YyIgc3Ryb2tlLXdpZHRoPSIzIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz48Y2lyY2xlIGN4PSIxMiIgY3k9IjQwIiByPSIzLjIiIGZpbGw9IiM2MzY2ZjEiLz48Y2lyY2xlIGN4PSIyMCIgY3k9IjQwIiByPSIzLjIiIGZpbGw9IiM2MzY2ZjEiLz48Y2lyY2xlIGN4PSIyOCIgY3k9IjQwIiByPSIzLjIiIGZpbGw9IiM2MzY2ZjEiLz48Y2lyY2xlIGN4PSIzMiIgY3k9IjQwIiByPSIzLjgiIGZpbGw9IiNmNWE1MjQiLz48cGF0aCBkPSJNMzIgNDAgUTQ0IDM0IDUyIDE5IiBzdHJva2U9IiMxMGI5ODEiIHN0cm9rZS13aWR0aD0iNS41IiBmaWxsPSJub25lIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz48Y2lyY2xlIGN4PSI1MiIgY3k9IjE5IiByPSI0LjUiIGZpbGw9IiMxMGI5ODEiLz48L3N2Zz4=">
+<style>
+  :root{
+    --bg:#0a0e1a; --panel:#111728; --panel2:#0e1422; --line:#1d2740; --line2:#2a3756;
+    --txt:#e7ecf7; --mut:#8ea0c6; --dim:#5b6b92;
+    --idle:#2a3550; --info:#49b6ff; --warn:#f0a020; --minor:#e6c12e;
+    --danger:#ff5468; --ok:#7ad14a; --r:14px;
+    --markbg:#0c1118; --scene-a:#10182e; --scene-b:#080c16;
+  }
+  @media (prefers-color-scheme: light){ :root:not([data-theme]){
+      --bg:#f4f7fc; --panel:#ffffff; --panel2:#eef2f9; --line:#dce3f0; --line2:#c6d1e5;
+      --txt:#1a2336; --mut:#55627d; --dim:#8694b1;
+      --idle:#cbd5e8; --info:#1f8fe6; --warn:#cf8410; --minor:#b8950f;
+      --danger:#e0364f; --ok:#4ba322;
+      --markbg:#eef3fb; --scene-a:#eef3fb; --scene-b:#dde6f4; } }
+  :root[data-theme="light"]{
+      --bg:#f4f7fc; --panel:#ffffff; --panel2:#eef2f9; --line:#dce3f0; --line2:#c6d1e5;
+      --txt:#1a2336; --mut:#55627d; --dim:#8694b1;
+      --idle:#cbd5e8; --info:#1f8fe6; --warn:#cf8410; --minor:#b8950f;
+      --danger:#e0364f; --ok:#4ba322;
+      --markbg:#eef3fb; --scene-a:#eef3fb; --scene-b:#dde6f4; }
+  :root[data-theme="dark"]{
+      --bg:#0a0e1a; --panel:#111728; --panel2:#0e1422; --line:#1d2740; --line2:#2a3756;
+      --txt:#e7ecf7; --mut:#8ea0c6; --dim:#5b6b92;
+      --idle:#2a3550; --info:#49b6ff; --warn:#f0a020; --minor:#e6c12e;
+      --danger:#ff5468; --ok:#7ad14a;
+      --markbg:#0c1118; --scene-a:#10182e; --scene-b:#080c16; }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--txt);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+  body{padding:clamp(14px,2.4vw,30px);max-width:min(1680px,100%);margin:0 auto}
+  header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:20px}
+  .brand{display:flex;align-items:center;gap:10px;font-size:18px;font-weight:600}
+  .brand .mark{width:30px;height:30px;border-radius:9px;background:var(--markbg);border:1.5px solid var(--ok);box-shadow:0 0 16px rgba(122,209,74,.45);display:inline-flex;align-items:center;justify-content:center;overflow:hidden}
+  .brand .mark svg{width:100%;height:100%;display:block}
+  .seg3{display:flex;background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .seg3 button{border:0;background:transparent;color:var(--mut);font:inherit;font-size:13px;padding:7px 14px;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+  .seg3 button.on{background:rgba(73,182,255,.16);color:var(--info);font-weight:600}
+  .stats-bar{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px}
+  .stat-pill{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 16px;flex:1;min-width:140px;display:flex;flex-direction:column;gap:4px}
+  .stat-pill .lbl{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.05em}
+  .stat-pill .val{font-size:18px;font-weight:700;color:var(--txt);font-family:ui-monospace,Menlo,monospace}
+  .view{display:none}
+  .view.show{display:block}
+  .dag-container{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:24px;overflow-x:auto;position:relative}
+  .waves-row{display:flex;gap:32px;align-items:flex-start;min-width:max-content}
+  .wave-col{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:16px;width:320px;display:flex;flex-direction:column;gap:14px;position:relative}
+  .wave-head{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);padding-bottom:10px}
+  .wave-title{font-size:14px;font-weight:700;color:var(--txt)}
+  .wave-mode{font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px}
+  .wave-mode.parallel{background:rgba(122,209,74,.16);color:var(--ok)}
+  .wave-mode.sequential{background:rgba(240,160,32,.16);color:var(--warn)}
+  .cluster-card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:8px;position:relative;transition:all .18s}
+  .cluster-card:hover{border-color:var(--info);transform:translateY(-2px);box-shadow:0 6px 18px rgba(0,0,0,.25)}
+  .cluster-card.active{border-color:var(--info);box-shadow:0 0 0 2px rgba(73,182,255,.3)}
+  .cluster-card.passed{border-color:var(--ok)}
+  .cluster-card.failed{border-color:var(--danger)}
+  .cluster-header{display:flex;align-items:center;justify-content:space-between}
+  .cluster-id{font-family:ui-monospace,Menlo,monospace;font-size:12px;font-weight:600;color:var(--mut)}
+  .role-badge{font-size:11px;font-weight:600;padding:2px 8px;border-radius:6px;background:var(--panel2);color:var(--info);border:1px solid var(--line)}
+  .issues-row{display:flex;flex-wrap:wrap;gap:6px}
+  .issue-pill{font-family:ui-monospace,Menlo,monospace;font-size:12px;font-weight:700;padding:2px 8px;border-radius:999px;background:rgba(73,182,255,.12);color:var(--txt)}
+  .scope-list{font-size:11px;color:var(--dim);display:flex;flex-direction:column;gap:2px}
+  .scope-item{font-family:ui-monospace,Menlo,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #scene3d{position:relative;height:clamp(440px,70vh,820px);border-radius:var(--r);overflow:hidden;background:radial-gradient(120% 100% at 50% 0%,var(--scene-a) 0%,var(--scene-b) 70%);border:1px solid var(--line)}
+  #canvas3d{display:block;width:100%;height:100%}
+  .hud3d{position:absolute;left:18px;bottom:16px;font-size:12px;color:var(--dim);display:flex;gap:16px;align-items:center}
+  .workers-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(380px,100%),1fr));gap:16px}
+  .worker-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:18px;display:flex;flex-direction:column;gap:10px}
+  .worker-status{font-size:11px;font-weight:700;padding:3px 10px;border-radius:999px;margin-left:auto}
+  .worker-status.running{background:rgba(73,182,255,.16);color:var(--info);animation:pulse 1.3s infinite}
+  .worker-status.passed{background:rgba(122,209,74,.16);color:var(--ok)}
+  .worker-status.failed{background:rgba(255,84,104,.16);color:var(--danger)}
+  .worker-status.queued{background:var(--panel2);color:var(--mut)}
+  .tgl{border:1px solid var(--line);background:var(--panel);color:var(--mut);border-radius:10px;width:34px;height:34px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;font-size:15px;margin-left:auto}
+  .tgl:hover{color:var(--txt);border-color:var(--line2)}
+  @keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.08)}}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <span class="mark"><svg viewBox="0 0 64 64"><rect x="2" y="2" width="60" height="60" rx="14" fill="#0c1118" stroke="#10b981" stroke-width="2.5"/><line x1="12" y1="40" x2="32" y2="40" stroke="#3a4a5c" stroke-width="3" stroke-linecap="round"/><circle cx="12" cy="40" r="3.2" fill="#6366f1"/><circle cx="20" cy="40" r="3.2" fill="#6366f1"/><circle cx="28" cy="40" r="3.2" fill="#6366f1"/><circle cx="32" cy="40" r="3.8" fill="#f5a524"/><path d="M32 40 Q44 34 52 19" stroke="#10b981" stroke-width="5.5" fill="none" stroke-linecap="round"/><circle cx="52" cy="19" r="4.5" fill="#10b981"/></svg></span>
+    <span>keel swarm</span>
+    <span id="swarm-id-badge" style="font-family:ui-monospace,Menlo,monospace;font-size:13px;color:var(--mut);background:var(--panel);padding:3px 10px;border-radius:8px;border:1px solid var(--line)"></span>
+  </div>
+  <div class="seg3">
+    <button id="btn-dag" class="on" onclick="switchView('dag')">2D DAG Partition</button>
+    <button id="btn-3d" onclick="switchView('3d')">3D Topology</button>
+    <button id="btn-matrix" onclick="switchView('matrix')">Live Workers</button>
+  </div>
+  <button class="tgl" id="tgl-theme" onclick="toggleTheme()" title="Toggle theme">◐</button>
+</header>
+
+<div class="stats-bar">
+  <div class="stat-pill">
+    <span class="lbl">Total Issues</span>
+    <span class="val" id="stat-issues">0</span>
+  </div>
+  <div class="stat-pill">
+    <span class="lbl">Total Waves</span>
+    <span class="val" id="stat-waves">0</span>
+  </div>
+  <div class="stat-pill">
+    <span class="lbl">Active Wave</span>
+    <span class="val" id="stat-active-wave">0</span>
+  </div>
+  <div class="stat-pill">
+    <span class="lbl">Workers Passed</span>
+    <span class="val" id="stat-passed" style="color:var(--ok)">0</span>
+  </div>
+  <div class="stat-pill">
+    <span class="lbl">Landing Mode</span>
+    <span class="val" id="stat-landing-mode" style="font-size:14px;color:var(--info)">Direct Batch</span>
+  </div>
+</div>
+
+<main>
+  <!-- 2D DAG Partition View -->
+  <section id="view-dag" class="view show">
+    <div class="dag-container">
+      <div id="waves-dag-row" class="waves-row"></div>
+    </div>
+  </section>
+
+  <!-- 3D Swarm Topology View -->
+  <section id="view-3d" class="view">
+    <div id="scene3d">
+      <canvas id="canvas3d"></canvas>
+      <div class="hud3d">
+        <span>3D Swarm Multi-Wave Spatial Topology</span>
+        <span>· Drag to rotate · Scroll to zoom</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Live Worker Matrix View -->
+  <section id="view-matrix" class="view">
+    <div id="workers-matrix-grid" class="workers-grid"></div>
+  </section>
+</main>
+
+<script>
+window.KEEL_SWARM = __KEEL_SWARM__;
+
+function toggleTheme(){
+  const cur = document.documentElement.getAttribute('data-theme') || (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+  const next = cur === 'light' ? 'dark' : 'light';
+  document.documentElement.setAttribute('data-theme', next);
+  try{ localStorage.setItem('keel-theme', next); }catch(e){}
+}
+
+function switchView(viewName){
+  document.getElementById('btn-dag').classList.toggle('on', viewName === 'dag');
+  document.getElementById('btn-3d').classList.toggle('on', viewName === '3d');
+  document.getElementById('btn-matrix').classList.toggle('on', viewName === 'matrix');
+
+  document.getElementById('view-dag').classList.toggle('show', viewName === 'dag');
+  document.getElementById('view-3d').classList.toggle('show', viewName === '3d');
+  document.getElementById('view-matrix').classList.toggle('show', viewName === 'matrix');
+
+  if(viewName === '3d'){
+    draw3DTopology();
+  }
+}
+
+function renderSwarmData(){
+  const data = window.KEEL_SWARM || {};
+  const plan = data.plan || {};
+  const state = data.state || {};
+  const waves = plan.waves || [];
+  const workers = state.workers || [];
+
+  document.getElementById('swarm-id-badge').textContent = data.swarm_id || plan.swarm_id || 'swarm-live';
+  document.getElementById('stat-issues').textContent = plan.total_issues || workers.length || 0;
+  document.getElementById('stat-waves').textContent = waves.length || 0;
+  document.getElementById('stat-active-wave').textContent = state.active_wave || (waves.length > 0 ? 1 : 0);
+
+  const passedCount = workers.filter(w => w.status === 'passed' || w.status === 'merged').length;
+  document.getElementById('stat-passed').textContent = passedCount;
+
+  const isParallel = waves.every(w => w.eligible_direct_landing);
+  document.getElementById('stat-landing-mode').textContent = isParallel ? 'Direct Batch' : 'Adaptive Funnel';
+
+  // Render 2D DAG
+  const dagRow = document.getElementById('waves-dag-row');
+  dagRow.innerHTML = '';
+  waves.forEach((w, wIdx) => {
+    const col = document.createElement('div');
+    col.className = 'wave-col';
+    const modeClass = w.eligible_direct_landing ? 'parallel' : 'sequential';
+    const modeLabel = w.eligible_direct_landing ? 'Orthogonal Parallel' : 'Sequential Funnel';
+
+    col.innerHTML = `
+      <div class="wave-head">
+        <span class="wave-title">Wave ${w.wave_index || (wIdx + 1)}</span>
+        <span class="wave-mode ${modeClass}">${modeLabel}</span>
+      </div>
+    `;
+
+    (w.clusters || []).forEach(c => {
+      const card = document.createElement('div');
+      const workerMatch = workers.find(wk => wk.cluster_id === c.cluster_id);
+      const st = workerMatch ? workerMatch.status : 'queued';
+      card.className = `cluster-card ${st}`;
+
+      const issuesHtml = (c.issues || []).map(num => `<span class="issue-pill">#${num}</span>`).join('');
+      const scopeHtml = (c.combined_scope || []).slice(0, 3).map(s => `<span class="scope-item">${s}</span>`).join('');
+
+      card.innerHTML = `
+        <div class="cluster-header">
+          <span class="cluster-id">${c.cluster_id}</span>
+          <span class="role-badge">${c.role || 'core'}</span>
+        </div>
+        <div class="issues-row">${issuesHtml}</div>
+        <div class="scope-list">${scopeHtml}</div>
+      `;
+      col.appendChild(card);
+    });
+
+    dagRow.appendChild(col);
+  });
+
+  // Render Matrix Workers
+  const matrixGrid = document.getElementById('workers-matrix-grid');
+  matrixGrid.innerHTML = '';
+  workers.forEach(w => {
+    const card = document.createElement('div');
+    card.className = 'worker-card';
+    card.innerHTML = `
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-weight:700;font-size:15px;color:var(--txt)">Issue #${w.issue}</span>
+        <span class="role-badge">${w.role || 'core'}</span>
+        <span class="worker-status ${w.status || 'queued'}">${w.status || 'queued'}</span>
+      </div>
+      <div style="font-size:12px;color:var(--mut);font-family:ui-monospace,Menlo,monospace">Cluster: ${w.cluster_id} · Step: ${w.step || 's4'}</div>
+      ${w.details ? `<div style="font-size:11px;color:var(--dim);background:var(--panel2);padding:6px 10px;border-radius:6px">${w.details}</div>` : ''}
+    `;
+    matrixGrid.appendChild(card);
+  });
+}
+
+// 3D Multi-Wave Canvas Topology Renderer
+let rotX = 0.45, rotY = 0.55, zoom = 1.0;
+let isDragging = false, lastMouseX = 0, lastMouseY = 0;
+
+function setup3DControls(){
+  const canvas = document.getElementById('canvas3d');
+  canvas.addEventListener('mousedown', e => {
+    isDragging = true;
+    lastMouseX = e.clientX;
+    lastMouseY = e.clientY;
+  });
+  window.addEventListener('mousemove', e => {
+    if(!isDragging) return;
+    const dx = e.clientX - lastMouseX;
+    const dy = e.clientY - lastMouseY;
+    rotY += dx * 0.008;
+    rotX += dy * 0.008;
+    lastMouseX = e.clientX;
+    lastMouseY = e.clientY;
+    draw3DTopology();
+  });
+  window.addEventListener('mouseup', () => { isDragging = false; });
+  canvas.addEventListener('wheel', e => {
+    e.preventDefault();
+    zoom = Math.max(0.4, Math.min(2.5, zoom - e.deltaY * 0.0015));
+    draw3DTopology();
+  });
+}
+
+function draw3DTopology(){
+  const canvas = document.getElementById('canvas3d');
+  if(!canvas) return;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * window.devicePixelRatio;
+  canvas.height = rect.height * window.devicePixelRatio;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+
+  const w = rect.width, h = rect.height;
+  ctx.clearRect(0, 0, w, h);
+
+  const data = window.KEEL_SWARM || {};
+  const waves = (data.plan && data.plan.waves) || [];
+  const cx = w / 2, cy = h / 2;
+
+  function project(x, y, z){
+    // Rotate Y
+    const cosY = Math.cos(rotY), sinY = Math.sin(rotY);
+    const x1 = x * cosY - z * sinY;
+    const z1 = x * sinY + z * cosY;
+
+    // Rotate X
+    const cosX = Math.cos(rotX), sinX = Math.sin(rotX);
+    const y2 = y * cosX - z1 * sinX;
+    const z2 = y * sinX + z1 * cosX;
+
+    const fov = 450 * zoom;
+    const pz = z2 + 500;
+    const scale = fov / Math.max(pz, 50);
+    return {
+      px: cx + x1 * scale,
+      py: cy + y2 * scale,
+      scale: scale,
+      depth: z2
+    };
+  }
+
+  // Draw stacked wave planes and nodes
+  waves.forEach((wave, wIdx) => {
+    const waveZ = (wIdx - (waves.length - 1) / 2) * 160;
+    const clusters = wave.clusters || [];
+
+    // Draw wave boundary ring
+    ctx.strokeStyle = wave.eligible_direct_landing ? 'rgba(122,209,74,0.3)' : 'rgba(240,160,32,0.3)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for(let a = 0; a <= Math.PI * 2; a += 0.2){
+      const rx = Math.cos(a) * 180;
+      const ry = Math.sin(a) * 110;
+      const pt = project(rx, ry, waveZ);
+      if(a === 0) ctx.moveTo(pt.px, pt.py);
+      else ctx.lineTo(pt.px, pt.py);
+    }
+    ctx.closePath();
+    ctx.stroke();
+
+    // Draw cluster nodes
+    clusters.forEach((c, cIdx) => {
+      const angle = (cIdx / Math.max(clusters.length, 1)) * Math.PI * 2;
+      const nx = Math.cos(angle) * 120;
+      const ny = Math.sin(angle) * 70;
+      const pt = project(nx, ny, waveZ);
+
+      // Node circle
+      ctx.fillStyle = '#49b6ff';
+      ctx.beginPath();
+      ctx.arc(pt.px, pt.py, 8 * pt.scale, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Label
+      ctx.fillStyle = '#e7ecf7';
+      ctx.font = `${Math.max(10, 11 * pt.scale)}px monospace`;
+      ctx.fillText(c.cluster_id, pt.px + 12 * pt.scale, pt.py + 4 * pt.scale);
+    });
+  });
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+  renderSwarmData();
+  setup3DControls();
+});
+</script>
+</body>
+</html>

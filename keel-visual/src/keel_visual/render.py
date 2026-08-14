@@ -14,6 +14,7 @@ from typing import Any
 
 RUN_PLACEHOLDER = "__KEEL_RUN__"
 BOARD_PLACEHOLDER = "__KEEL_BOARD__"
+SWARM_PLACEHOLDER = "__KEEL_SWARM__"
 TITLE_PLACEHOLDER = "__TITLE__"
 
 
@@ -59,4 +60,13 @@ def render_board_html(
     """
     return (template
             .replace(BOARD_PLACEHOLDER, _embed(board))
+            .replace(TITLE_PLACEHOLDER, _safe_title(title)))
+
+
+def render_swarm_html(
+    template: str, swarm_data: dict[str, Any], *, title: str = "keel swarm",
+) -> str:
+    """Return the swarm template with the swarm-data JSON and title substituted in."""
+    return (template
+            .replace(SWARM_PLACEHOLDER, _embed(swarm_data))
             .replace(TITLE_PLACEHOLDER, _safe_title(title)))
