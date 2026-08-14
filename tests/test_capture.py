@@ -594,3 +594,47 @@ class TestCaptureContract(unittest.TestCase):
     def test_reconcile_rejects_invalid_pr_info(self):
         with self.assertRaisesRegex(capture.CaptureError, "positive number"):
             capture.reconcile_session([], [{"number": 0}])
+
+
+class TestRetrieveRelevantLearnings(unittest.TestCase):
+    def test_missing_or_empty_dir_returns_empty(self):
+        self.assertEqual(capture.retrieve_relevant_learnings("auth token", "/nonexistent/dir"), [])
+
+    def test_empty_tokens_returns_empty(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            self.assertEqual(capture.retrieve_relevant_learnings("the and for", td), [])
+
+    def test_retrieves_relevant_learning_records(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td)
+            (p / "auth_tokens.md").write_text(
+                "# Auth Token Handling\nAlways refresh expired bearer tokens."
+            )
+            (p / "database_lock.md").write_text(
+                "# SQLite Locking\nDo not hold write locks across network calls."
+            )
+            (p / "ignored.bin").write_bytes(b"\x00\x01\x02")
+
+            results = capture.retrieve_relevant_learnings("fix auth token expiry", td)
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0]["file"], "auth_tokens.md")
+            self.assertEqual(results[0]["title"], "Auth Token Handling")
+            self.assertEqual(results[0]["summary"], "Always refresh expired bearer tokens.")
+            self.assertGreater(results[0]["score"], 0)
+
+    def test_unreadable_file_is_skipped_fail_soft(self):
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td)
+            (p / "lesson.md").write_text("# Lesson\nSome content")
+            with patch.object(Path, "read_text", side_effect=OSError("permission denied")):
+                self.assertEqual(capture.retrieve_relevant_learnings("lesson content", td), [])
+
+
+if __name__ == "__main__":
+    unittest.main()

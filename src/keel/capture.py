@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from . import config as cfg
@@ -786,3 +787,64 @@ def _normalize_text(value: str | None) -> str:
 
 def _normalize_path(value: str) -> str:
     return "/".join(value.strip().lower().replace("\\", "/").split("/"))
+
+
+def retrieve_relevant_learnings(
+    query_text: str,
+    learning_dir: str | Path,
+    *,
+    max_results: int = 3,
+    min_score: int = 1,
+) -> list[dict[str, Any]]:
+    """Retrieve relevant historical learning records for an issue or task.
+
+    Pure, stdlib-first token matching against Markdown or JSON learning files
+    in ``learning_dir`` (e.g. ``.keel/learning/``). Returns the top matching lessons
+    to be injected into implementation / review contexts.
+    """
+    path = Path(learning_dir)
+    if not path.is_dir():
+        return []
+
+    tokens = {
+        w.lower()
+        for w in re.findall(r"[A-Za-z0-9_-]{3,}", query_text)
+        if w.lower() not in {"the", "and", "for", "with", "this", "that", "issue", "feat", "fix"}
+    }
+    if not tokens:
+        return []
+
+    results: list[dict[str, Any]] = []
+    for file_path in sorted(path.glob("*")):
+        if not file_path.is_file() or file_path.suffix not in {".md", ".json", ".txt"}:
+            continue
+        try:
+            content = file_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+
+        score = 0
+        content_lower = content.lower()
+        filename_lower = file_path.name.lower()
+
+        for token in tokens:
+            if token in filename_lower:
+                score += 3
+            count = content_lower.count(token)
+            if count > 0:
+                score += min(count, 5)
+
+        if score >= min_score:
+            lines = [line.strip() for line in content.splitlines() if line.strip()]
+            title = lines[0].lstrip("#").strip() if lines else file_path.name
+            summary = lines[1] if len(lines) > 1 else ""
+            results.append({
+                "file": file_path.name,
+                "path": str(file_path),
+                "title": title,
+                "summary": summary,
+                "score": score,
+            })
+
+    results.sort(key=lambda r: (-r["score"], r["file"]))
+    return results[:max_results]
