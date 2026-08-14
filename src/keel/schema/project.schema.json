@@ -225,6 +225,14 @@
           "minLength": 1,
           "description": "Stable policy pack id for this consumer/project family."
         },
+        "presets": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["gitleaks", "semgrep", "bandit", "trivy"]
+          },
+          "description": "Pre-configured security and SAST policy pack presets slotted into guard (s3) or test (s8) gates."
+        },
         "labels": {
           "type": "object",
           "additionalProperties": { "type": "array", "items": { "type": "string" } },

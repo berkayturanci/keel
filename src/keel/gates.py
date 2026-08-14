@@ -23,6 +23,15 @@ if TYPE_CHECKING:  # pragma: no cover
 #: Built-in gate names accepted in ``project.yaml``'s ``gates:`` list.
 BUILTIN_GATES: tuple[str, ...] = ("build", "lint", "jury")
 
+#: Declarative security & SAST presets supported in ``policy_pack.presets``.
+POLICY_PACK_PRESETS: dict[str, tuple[str, str, str, str]] = {
+    # preset: (gate_id, phase, on_fail, run_cmd)
+    "gitleaks": ("gitleaks", "guard", "block", "gitleaks detect --no-git -v"),
+    "semgrep": ("semgrep", "test", "suggest", "semgrep scan"),
+    "bandit": ("bandit", "test", "suggest", "bandit -r . -ll"),
+    "trivy": ("trivy", "test", "warn", "trivy fs ."),
+}
+
 # A failed gate with no explicit findings is reported at this severity.
 _ON_FAIL_SEVERITY: dict[str, str] = {"block": "major", "suggest": "minor", "warn": "nit"}
 
@@ -112,6 +121,11 @@ def plan_gates(config: ProjectConfig, loaded: dict[str, list[Extension]]) -> tup
         return e.timeout if e.timeout is not None else project_timeout
 
     specs: list[GateSpec] = []
+    presets = (
+        tuple(config.policy_pack.get("presets", ()))
+        if isinstance(config.policy_pack, dict)
+        else ()
+    )
 
     for e in loaded.get("guard", []):
         specs.append(GateSpec(e.id, e.kind, "guard", e.on_fail,
@@ -119,6 +133,11 @@ def plan_gates(config: ProjectConfig, loaded: dict[str, list[Extension]]) -> tup
                               required_capabilities=e.required_capabilities,
                               optional_capabilities=e.optional_capabilities,
                               timeout=_timeout_for(e)))
+
+    if "gitleaks" in presets:
+        gid, phase, on_fail, run_cmd = POLICY_PACK_PRESETS["gitleaks"]
+        specs.append(GateSpec(gid, "command", phase, on_fail, run=run_cmd,
+                              source="policy_pack:preset:gitleaks", timeout=project_timeout))
 
     for name in config.gates:
         if name == "build":
@@ -136,6 +155,13 @@ def plan_gates(config: ProjectConfig, loaded: dict[str, list[Extension]]) -> tup
                 f"unknown built-in gate {name!r}; valid: {', '.join(BUILTIN_GATES)} "
                 "(project gates belong in extension slots, not in gates:)"
             )
+
+    for preset_name in ("semgrep", "bandit", "trivy"):
+        if preset_name in presets:
+            gid, phase, on_fail, run_cmd = POLICY_PACK_PRESETS[preset_name]
+            specs.append(GateSpec(gid, "command", phase, on_fail, run=run_cmd,
+                                  source=f"policy_pack:preset:{preset_name}",
+                                  timeout=project_timeout))
 
     for slot, phase in (("tester", "test"), ("test", "test"), ("pre-merge", "pre-merge")):
         for e in loaded.get(slot, []):

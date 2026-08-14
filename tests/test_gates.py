@@ -56,6 +56,33 @@ class TestPlan(unittest.TestCase):
         self.assertEqual([s.phase for s in specs],
                          ["guard", "test", "test", "test", "pre-merge"])
 
+    def test_policy_pack_presets_slotted(self):
+        data = {
+            "extends": "keel",
+            "core_version": "^0.1",
+            "base_branch": "main",
+            "knobs": {"build_gate_cmd": "make test"},
+            "gates": ["build"],
+            "policy_pack": {
+                "name": "sec",
+                "presets": ["gitleaks", "semgrep", "bandit", "trivy"],
+            },
+        }
+        specs = gates.plan_gates(cfg.parse_config(data), {})
+        self.assertEqual(
+            [s.id for s in specs],
+            ["gitleaks", "build", "semgrep", "bandit", "trivy"],
+        )
+        self.assertEqual(
+            [s.phase for s in specs],
+            ["guard", "test", "test", "test", "test"],
+        )
+        self.assertEqual(specs[0].on_fail, "block")
+        self.assertEqual(specs[1].on_fail, "block")
+        self.assertEqual(specs[2].on_fail, "suggest")
+        self.assertEqual(specs[3].on_fail, "suggest")
+        self.assertEqual(specs[4].on_fail, "warn")
+
 
 class TestRun(unittest.TestCase):
     def _specs(self):
