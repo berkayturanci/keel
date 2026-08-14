@@ -57,6 +57,9 @@ Changing the backbone is a keel-core change. Projects only ever touch layers 2�
 - **Project Lego + policy packs** — snap gates/steps into named hooks (`guard`, `tester`,
   `pre-merge`, …) and keep labels, path policy, health sources, local commands, and
   workflow preferences in `policy_pack` data instead of packaged command prose.
+- **Security presets & concurrent gates** — declarative `policy_pack.presets: ["bandit", "gitleaks", "semgrep", "trivy"]`
+  automatically slot SAST, secret scanning, and vulnerability auditing into the pipeline. Concurrent gate runner
+  (`keel run-gates --concurrency N`) parallelizes independent test gates while preserving deterministic output order.
 - **Opt-in `jury` gate** — runs the [ai-jury](https://github.com/berkayturanci/ai-jury) multi-agent
   reviewer on the diff when installed; a fail-soft no-op otherwise. Core resolves the mode from
   the panel that actually ran: a cross-vendor gate needs ≥2 distinct vendors, so a short panel

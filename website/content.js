@@ -359,6 +359,13 @@ window.KEEL = {
       source: "https://github.com/berkayturanci/keel/blob/main/docs/keel/models.md",
     },
     {
+      group: "Architecture", title: "Security & policy presets", slug: "security",
+      summary: "Declarative security presets (Bandit, Gitleaks, Semgrep, Trivy), ReDoS-safe redaction, and concurrent gates.",
+      body:
+        "<p>Keel provides built-in declarative security presets (<code>policy_pack.presets: ['bandit', 'gitleaks', 'semgrep', 'trivy']</code>) that automatically slot static analysis and secret scanning into the backbone. Combined with ReDoS-resilient capture redaction, least-privilege CI actions, and concurrent gate execution (<code>--concurrency</code>), projects achieve robust security auditing with zero custom scripts.</p>",
+      source: "https://github.com/berkayturanci/keel/blob/main/docs/keel/configuration.md#policy_packpresets",
+    },
+    {
       group: "Authoring", title: "Extensions (your Lego)", slug: "extensions",
       summary: "Add-only gates and steps snapped into named hooks — guard, tester, pre-merge, reviewers…",
       body:

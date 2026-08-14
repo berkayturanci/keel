@@ -473,6 +473,32 @@ automation:
 Stable identifier for this policy pack. It is required whenever `policy_pack` is present
 and helps generated plans distinguish the consumer policy from Keel core.
 
+### `policy_pack.presets`
+
+Declarative security and SAST scanning presets (`1.13.0+`). Keel provides built-in,
+dependency-free preset definitions that automatically slot static analysis tools into
+the backbone without writing custom gate scripts:
+
+| preset | target tool | planned backbone step | fail-soft behavior |
+|---|---|---|---|
+| `bandit` | [Bandit](https://github.com/PyCQA/bandit) (Python SAST) | `s8 test` (as a gate) | degraded / skipped if `bandit` is not installed |
+| `gitleaks` | [Gitleaks](https://github.com/gitleaks/gitleaks) (Secret scanner) | `s3 guard` / `s8 test` | degraded / skipped if `gitleaks` is not installed |
+| `semgrep` | [Semgrep](https://github.com/semgrep/semgrep) (Static analysis) | `s8 test` | degraded / skipped if `semgrep` is not installed |
+| `trivy` | [Trivy](https://github.com/aquasecurity/trivy) (Vulnerability scanner) | `s8 test` | degraded / skipped if `trivy` is not installed |
+
+Example enabling Bandit and Gitleaks on a Python repository:
+
+```yaml
+policy_pack:
+  name: keel-python
+  presets: ["bandit", "gitleaks"]
+```
+
+When enabled, `keel plan` automatically renders the preset gates under `s8 test`, and
+`keel run-gates` executes them. All presets are strictly fail-soft: if the host environment
+lacks the tool binary, the pipeline degrades cleanly with structured feedback rather than
+crashing.
+
 ### `policy_pack.labels`
 
 Map from label group to allowed label names. Common groups include `status`, `priority`,
