@@ -379,6 +379,15 @@ class TestNotRunPropagation(unittest.TestCase):
                 self.assertFalse(applied[0].skipped)
                 self.assertFalse(applied[0].not_run)
 
+    def test_a_not_run_gate_reported_as_failing_keeps_the_flag(self):
+        # Unreachable with the in-tree runners, but the contract allows it and a dropped
+        # flag would silently re-open the certification hole.
+        def runner(spec):
+            return False, [], False, True
+
+        outcomes = gates.run_gates([self._spec("block")], runner)
+        self.assertTrue(outcomes[0].not_run)
+
     def test_concurrent_execution_preserves_order(self):
         import time
 
