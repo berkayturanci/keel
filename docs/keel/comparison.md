@@ -46,21 +46,23 @@ Keel's product claim is narrower and more integrated: it turns a coding agent in
 work owner. It starts before the PR exists and ends after merge, closure, capture markers,
 and optional project-owned learning decisions.
 
-| capability | Keel | Coding agents | PR reviewers | Merge queues |
-|---|---:|---:|---:|---:|
-| Takes an issue as input | yes | yes | no | no |
-| Performs intake/readiness gating | yes | partial | no | no |
-| Implements code | yes, through adapters | yes | no | no |
-| Opens or updates a PR | yes | yes | no | no |
-| Performs independent review / jury | yes | partial | yes | no |
-| Runs project gates | yes | partial | partial | yes, as required checks |
-| Owns merge window + lock | yes | no | no | partial queue controls |
-| Closes the issue / PR loop | yes | partial | no | partial |
-| Supports multi-issue work blocks | yes | partial | no | queue-only |
-| Supports resume/checkpoint/reconcile | yes | partial | no | partial queue state |
-| Captures post-merge learning | yes, policy-gated | no | partial repo memory | no |
-| Project policy extensibility | yes | partial | partial | yes |
-| Agent/vendor agnostic | yes | partial | no | not applicable |
+| capability | Keel | Coding agents | PR reviewers | Merge queues | Multi-Agent Swarms (CrewAI/AutoGen/Swarm) |
+|---|---:|---:|---:|---:|---:|
+| Takes an issue as input | yes | yes | no | no | yes |
+| Performs intake/readiness gating | yes | partial | no | no | no |
+| Implements code | yes, through adapters | yes | no | no | yes |
+| Opens or updates a PR | yes | yes | no | no | partial |
+| Performs independent review / jury | yes | partial | yes | no | ❌ (LLM chat only) |
+| Runs project gates | yes | partial | partial | yes, as required checks | ❌ |
+| Owns merge window + lock | yes | no | no | partial queue controls | ❌ |
+| Closes the issue / PR loop | yes | partial | no | partial | no |
+| Supports multi-issue work blocks | yes | partial | no | queue-only | yes (unconstrained) |
+| Conflict-free DAG clustering | yes (Keel Swarm) | no | no | no | ❌ |
+| Direct batch landing & self-healing | yes (Keel Swarm) | no | no | partial | ❌ |
+| Supports resume/checkpoint/reconcile | yes | partial | no | partial queue state | partial |
+| Captures post-merge learning | yes, policy-gated | no | partial repo memory | no | no |
+| Project policy extensibility | yes | partial | partial | yes | partial |
+| Agent/vendor agnostic | yes | partial | no | not applicable | yes |
 
 **Assessment:** no reviewed tool owns this whole loop as a single product contract. The
 individual parts are proven elsewhere, which lowers risk: coding agents prove issue→PR,
@@ -207,20 +209,32 @@ job is to connect those proven pieces into one deterministic, project-neutral li
 
 ---
 
-## Category 4 — Multi-agent orchestration frameworks (positioning only)
+## Category 4 — Multi-agent swarms & orchestration frameworks
 
-| Framework | Model | License | Stars (order) | Orchestration model |
-|---|---|---|---|---|
-| **CrewAI** | role-based crews | MIT | ~30k | Roles + process types [datacamp](https://www.datacamp.com/tutorial/crewai-vs-langgraph-vs-autogen) |
-| **LangGraph** | graph of nodes/edges | OSS (MIT-family; paid hosted/LangSmith) | surpassed CrewAI in 2026 | Directed graph w/ conditional edges |
-| **AutoGen** (→ Microsoft Agent Framework) | conversational group chat | OSS (Microsoft) | >54k; now maintenance mode, merged into MS Agent Framework v1.0 (Apr 2026) | GroupChat |
-| **Magentic-One** | generalist pre-packaged team | OSS (Microsoft) | — | Orchestrator + specialists |
+| Framework | Model | License | Orchestration model | Git / Merge Awareness | Production Delivery Invariants |
+|---|---|---|---|---|---|
+| **CrewAI** | role-based crews | MIT | Sequential/Hierarchical role processes | ❌ None (memory only) | ❌ LLM self-reflection only |
+| **LangGraph** | stateful agent graphs | OSS | Directed graph w/ conditional edges | ❌ None | ❌ None |
+| **AutoGen / Magentic-One** | conversational group chat | OSS | GroupChat / Lead orchestrator | ❌ None | ❌ None |
+| **OpenAI Swarm** | lightweight client-side handoffs | MIT | Stateless agent routines + handoffs | ❌ None | ❌ None |
+| **MetaGPT / ChatDev** | simulated software company | MIT | SOP-driven conversational roles | ❌ None | ❌ None |
+| **Keel Swarm** | **deterministic backbone swarm** | Apache-2.0 | **DAG conflict clustering + git worktree fan-out** | ✅ **Physical worktree isolation** | ✅ **100% test gates + dual-mode batch landing** |
 
 Sources: [gurusup.com/blog/best-multi-agent-frameworks-2026](https://gurusup.com/blog/best-multi-agent-frameworks-2026), [medium.com/.../magentic-one-autogen-langgraph-crewai-or-openai-swarm](https://medium.com/data-science-in-your-pocket/magentic-one-autogen-langgraph-crewai-or-openai-swarm-which-multi-ai-agent-framework-is-best-6629d8bd9509)
 
-**Positioning (Assessment)**: These are *general* frameworks — you assemble arbitrary agent graphs/conversations. keel is the opposite: a **fixed, opinionated backbone** for one domain (issue→merge). You would not rebuild keel *on* LangGraph and keep the stdlib-only ethos. The fixed backbone is a deliberate constraint (determinism, testability) that general frameworks explicitly avoid. keel competes with them only in the sense that it refuses their flexibility on purpose.
+**Positioning & Failure Mode Analysis (Assessment)**:
+General swarm frameworks operate on unstructured conversational abstractions without git-tree or physical file boundary awareness. In production, unconstrained multi-agent swarms fail due to three core bottlenecks:
+1. **Merge Collision Chaos**: Agents concurrently edit overlapping repository files without dependency awareness, producing corrupt git histories and broken builds.
+2. **Hallucinated Verification**: Agents declare tasks complete based on conversational LLM self-affirmation rather than deterministic compiler, linter, and unit test gates.
+3. **Approval & Evidence Drift**: Reviews performed mid-stream lose validity when underlying commits shift before landing.
 
-On multi-agent *debate* specifically: the propose→critique→revise→synthesize→ratify loop and consensus/stability-detection ideas are active research and a Claude Code skill ("Star Chamber"), **not** a shipped product. [arxiv.org/abs/2510.12697](https://arxiv.org/html/2510.12697v1), [blog.mozilla.ai/the-star-chamber-multi-llm-consensus-for-code-quality](https://blog.mozilla.ai/the-star-chamber-multi-llm-consensus-for-code-quality/) — borrowable idea: **adaptive stability-based early stopping** for ai-jury's debate rounds.
+**How Keel Swarm Solves This**:
+Keel Swarm anchors multi-agent parallelism inside deterministic engineering invariants:
+- **Static DAG Dependency Clustering**: Pre-analyzes issue blast radiuses to schedule orthogonal tasks in parallel waves while serializing dependent tasks.
+- **Physical Git Worktree Isolation**: Workers develop inside dedicated `.keel/workspaces/swarm-<id>/` sandboxes.
+- **Dual-Mode Landing Engine**: Merges 100% disjoint trees via Direct Orthogonal Batch Landing while routing overlapping trees through the atomic `merge_lock` with automated rebase and `s9 fixloop` conflict self-healing.
+- **Commit-Bound Evidence & Multi-Vendor Jury**: Every PR carries an immutable, commit-SHA-locked evidence record and cross-vendor panel verdict.
+- **Full-Spectrum Observability**: Live terminal ASCII DAG diagrams (`keel swarm-plan --tree`, `keel swarm-status`) paired with `keel-visual` 2D/3D WebGL swarm galaxy scenes.
 
 ---
 
@@ -283,6 +297,8 @@ Legend: ✅ yes · ◑ partial/limited · ❌ no · `OSS`/`Prop.`
 | **OPA / Conftest** | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ (Rego) | ✅ (policies) | OSS (Apache-2.0) |
 | **Backstage templates** | ❌ | ❌ | ❌ | ❌ | ❌ | ◑ | ✅ (YAML golden paths) | OSS (Apache-2.0) |
 | **CrewAI / LangGraph / AutoGen** | ✅ (general) | ❌ | ❌ | ◑ (buildable) | ◑ (buildable) | ❌ | ❌ | OSS (MIT / OSS) |
+| **OpenAI Swarm** | ❌ (OpenAI-only) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | OSS (MIT) |
+| **MetaGPT / ChatDev** | ❌ (simulated roles) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | OSS (MIT) |
 
 > Note: ◑ for the general frameworks under "AI review / debate" means *you could build it*, not that it ships. keel's value is that the backbone is *fixed and shipped*, not assemble-it-yourself.
 
