@@ -5,7 +5,7 @@ name: keel-ship
 # PR's CI status, post its assessment as a comment, and gate the merge on the decision.
 #
 # Consumers copy this workflow and swap `pip install -e .` for a pinned keel install
-# (`pip install "git+https://github.com/berkayturanci/keel@v1.14.0"`) and the config path
+# (`pip install "git+https://github.com/berkayturanci/keel@v1.14.1"`) and the config path
 # for their own `.keel/project.yaml`.
 
 on:

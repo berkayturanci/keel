@@ -6,6 +6,17 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.14.1] - 2026-08-14
+
+### Added
+- **Policy Pack Presets Reference Documentation** (#708): Added full reference guide in
+  `docs/keel/configuration.md` for declarative `policy_pack.presets` (`bandit`, `gitleaks`,
+  `semgrep`, `trivy`), step mappings (`s3 guard` / `s8 test`), and fail-soft behavior.
+- **Concurrent Gate Runner Documentation** (#708): Documented `--concurrency` and
+  `knobs.concurrency` in `docs/keel/cli.md`.
+- **Website & Interactive Documentation Updates** (#708): Added Security & policy presets topic
+  in `website/content.js` and updated feature highlights in `README.md`.
+
 ## [1.14.0] - 2026-08-14
 
 ### Added
