@@ -6,6 +6,32 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.13.0] - 2026-08-14
+
+### Added
+- **Concurrent Gate Execution** (#698): Added `concurrency` support to `run_gates` using
+  standard library `ThreadPoolExecutor`. Independent build and lint command gates now
+  execute concurrently while strictly preserving deterministic output order and fail-soft
+  error handling.
+- **GitHub API Jittered Exponential Backoff** (#699): Added `run_argv_retry` with
+  exponential backoff and randomized jitter to fail-soft handle transient network
+  interruptions, rate-limit responses (`429/403`), and upstream 5xx errors.
+- **Security & SAST Policy Pack Presets** (#700): Introduced declarative `policy_pack.presets`
+  (`gitleaks`, `semgrep`, `bandit`, `trivy`) automatically slotting security scans into
+  blocking `s3 guard` or advisory `s8 test` steps without requiring custom scripts.
+- **Compound Learning Retrieval Bridge** (#701): Added zero-dependency, pure-Python
+  keyword retrieval (`retrieve_relevant_learnings` in `src/keel/capture.py`) matching past
+  lessons from `.keel/learning/` directly into issue intake and implementation prompt context.
+- **Vision-to-Production Positioning** (#562): Added "The Vision-to-Production Gap in Agentic
+  AI" to README and website documentation, articulating Keel's role as a fixed workflow
+  backbone driving code to production.
+
+### Refactored
+- **Modular CLI Command Handlers** (#697): Modularized `src/keel/cli.py` by extracting
+  standalone subagent execution logic into `src/keel/standalone.py` and capability
+  requirements into `src/keel/capabilities.py`, reducing monolith footprint while retaining
+  100% backward-compatible test hooks.
+
 ## [1.12.0] - 2026-08-14
 
 ### Added
