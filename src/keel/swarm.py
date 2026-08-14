@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import datetime
 import fnmatch
-import os
+import posixpath
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -109,8 +109,8 @@ class SwarmPlan:
 
 def _normalize_path(p: str) -> str:
     cleaned = p.strip("`'\" \t\r\n.,;:()")
-    cleaned = cleaned.removeprefix("./").removeprefix("/")
-    return os.path.normpath(cleaned) if cleaned else ""
+    cleaned = cleaned.replace("\\", "/").removeprefix("./").removeprefix("/")
+    return posixpath.normpath(cleaned) if cleaned else ""
 
 
 def extract_predicted_paths(text: str) -> list[str]:
