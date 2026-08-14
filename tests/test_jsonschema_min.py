@@ -208,5 +208,41 @@ class TestNonDictSchema(unittest.TestCase):
         self.assertEqual(js.validate("anything", True), [])
 
 
+class TestAdversarialSchemas(unittest.TestCase):
+    def test_deeply_nested_schema_and_instance(self):
+        depth = 50
+        schema = {"type": "object", "properties": {}}
+        curr_schema = schema
+        instance = {}
+        curr_instance = instance
+        for i in range(depth):
+            curr_schema["properties"][f"level_{i}"] = {"type": "object", "properties": {}}
+            curr_schema = curr_schema["properties"][f"level_{i}"]
+            curr_instance[f"level_{i}"] = {}
+            curr_instance = curr_instance[f"level_{i}"]
+        curr_schema["properties"]["leaf"] = {"type": "string"}
+        curr_instance["leaf"] = "safe"
+
+        self.assertEqual(js.validate(instance, schema), [])
+
+    def test_extreme_number_bounds(self):
+        import sys
+
+        schema = {"type": "number", "minimum": -1e308, "maximum": 1e308}
+        self.assertEqual(js.validate(sys.maxsize, schema), [])
+        self.assertEqual(js.validate(-sys.maxsize, schema), [])
+
+    def test_unknown_type_and_unsupported_keywords_fail_safe(self):
+        schema = {
+            "type": "custom_future_type",
+            "unknownKeyword": {"nested": 123},
+            "if": {"properties": {}},
+            "then": {},
+        }
+        # Unknown type or unsupported keywords do not raise unhandled exceptions
+        self.assertEqual(js.validate({"any": "value"}, schema), [])
+
+
 if __name__ == "__main__":
     unittest.main()
+

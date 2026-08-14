@@ -390,6 +390,14 @@ class TestGcCommand(unittest.TestCase):
             self.assertIn("degraded", err)
             self.assertIn("activity", err)
 
+    def test_path_traversal_payloads_in_activity_path_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = _write_config(tmp, activity_path="../../etc/shadow")
+            rc, _, err = self._run(["gc", cfg_path, "--root", tmp, "--no-scratch"])
+            self.assertEqual(rc, 0)
+            self.assertIn("degraded", err)
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
+

@@ -289,6 +289,30 @@ class CredentialAssignmentRedactionTest(unittest.TestCase):
         redaction.sanitize(value, self.policy)
         self.assertLess(time.perf_counter() - start, 2.0)
 
+    def test_adversarial_dense_json_payloads_do_not_reDoS_or_leak(self) -> None:
+        """Dense JSON with hundreds of mixed assignments is processed in bounded time."""
+        import time
+
+        items = [f'"item_{i}_token": "secret_token_value_{i:04d}"' for i in range(200)]
+        dense = "{" + ",".join(items) + "}"
+        start = time.perf_counter()
+        result = redaction.sanitize(dense, self.policy)
+        duration = time.perf_counter() - start
+        self.assertLess(duration, 0.5)
+        self.assertNotIn("secret_token_value_0001", result.value)
+
+    def test_unicode_and_null_byte_injections_handled_safely(self) -> None:
+        """Unicode lookalikes, null bytes, and control chars do not crash the sanitizer."""
+        injections = [
+            "token=secret\x00hidden",
+            "password: \u200bsecret_long_value\u200b",
+            "api_key: 'öçşğıü-secret-key-12345'",
+        ]
+        for item in injections:
+            result = redaction.sanitize(item, self.policy)
+            self.assertIsInstance(result.value, str)
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
+
