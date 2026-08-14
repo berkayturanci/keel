@@ -21,7 +21,6 @@ from . import (
     activity,
     artifacts,
     branchscope,
-    capabilities,
     capture,
     captureverify,
     checkpoint,
@@ -212,7 +211,7 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
     requirement = (
-        _scan_capability_requirement(args.command_contract, config)
+        runtime.scan_capability_requirement(args.command_contract, config)
         if args.command_contract in {"regression", "review-all-day"}
         else _capability_requirement(args.command_contract, config, loaded)
     )
@@ -3664,43 +3663,25 @@ def _approved_consent(
     has_standing_scope: bool,
 ) -> tuple[tuple[str, ...], str, str | None, str]:
     mode = _consent_mode(args, config)
-    explicit = tuple(getattr(args, "approve_scope", ()) or ())
-    if explicit:
-        return consent.normalize_scopes(explicit), "flag", getattr(args, "operator", None), mode
-    if mode == "agent" or not getattr(args, "live", False):
-        return (), "none", getattr(args, "operator", None), mode
-    if mode == "explicit":
-        return (), "none", getattr(args, "operator", None), mode
-    if not has_standing_scope:
-        return (), "none", getattr(args, "operator", None), mode
-    env_value = os.environ.get("KEEL_APPROVE_SCOPE")
-    if env_value:
-        operator = os.environ.get("KEEL_OPERATOR")
-        if not operator:
-            raise ValueError("KEEL_OPERATOR is required when KEEL_APPROVE_SCOPE is used")
-        return consent.normalize_scopes((env_value,)), "env", operator, mode
-    if config.automation.approved_scopes:
-        if not config.automation.operator:
-            raise ValueError(
-                "automation.operator is required when automation.approved_scopes is used"
-            )
-        return (
-            consent.normalize_scopes(config.automation.approved_scopes),
-            "config",
-            config.automation.operator,
-            mode,
-        )
-    return (), "none", getattr(args, "operator", None), mode
+    return consent.resolve_approved_consent(
+        mode=mode,
+        explicit_scopes=tuple(getattr(args, "approve_scope", ()) or ()),
+        operator=getattr(args, "operator", None),
+        is_live=getattr(args, "live", False),
+        has_standing_scope=has_standing_scope,
+        env_scopes=os.environ.get("KEEL_APPROVE_SCOPE"),
+        env_operator=os.environ.get("KEEL_OPERATOR"),
+        config_approved_scopes=config.automation.approved_scopes,
+        config_operator=config.automation.operator,
+    )
 
 
 def _consent_mode(args: argparse.Namespace, config: cfg.ProjectConfig) -> str:
-    mode = getattr(args, "consent_mode", None) or os.environ.get("KEEL_CONSENT_MODE")
-    mode = mode or config.consent_mode
-    if mode not in consent.CONSENT_MODES:
-        raise ValueError(
-            f"unknown consent mode {mode!r}; valid: {', '.join(consent.CONSENT_MODES)}"
-        )
-    return mode
+    return consent.resolve_consent_mode(
+        getattr(args, "consent_mode", None),
+        config.consent_mode,
+        env_mode=os.environ.get("KEEL_CONSENT_MODE"),
+    )
 
 
 def _has_live_consent_scope(
@@ -3713,19 +3694,8 @@ def _has_live_consent_scope(
     return standalone._has_live_consent_scope(args, command, config, requirement, loaded)
 
 
-def _ci_check_capability_requirement(config: cfg.ProjectConfig) -> runtime.CapabilityRequirement:
-    return capabilities.ci_check_capability_requirement(config)
 
 
-def _morning_capability_requirement(config: cfg.ProjectConfig) -> runtime.CapabilityRequirement:
-    return capabilities.morning_capability_requirement(config)
-
-
-def _scan_capability_requirement(
-    command: str,
-    config: cfg.ProjectConfig,
-) -> runtime.CapabilityRequirement:
-    return capabilities.scan_capability_requirement(command, config)
 
 
 
@@ -4184,7 +4154,8 @@ def _capability_requirement(
     *,
     pr: int | None = None,
 ) -> runtime.CapabilityRequirement:
-    return capabilities.build_capability_requirement(command, config, loaded, pr=pr)
+    return runtime.build_capability_requirement(command, config, loaded, pr=pr)
+
 
 
 

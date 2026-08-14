@@ -236,3 +236,97 @@ def _can_write(root: Path) -> bool:
 
 def _unique(values: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(values))
+
+
+def build_capability_requirement(
+    command: str,
+    config,
+    loaded: dict[str, list],
+    *,
+    pr: int | None = None,
+) -> CapabilityRequirement:
+    """Build the runtime capability requirement for a given command, config,
+    and loaded extensions.
+    """
+    from . import gates, project_commands
+
+    del pr
+    req = CapabilityRequirement(
+        required=config.knobs.required_capabilities,
+        optional=config.knobs.optional_capabilities,
+    )
+    try:
+        specs = gates.plan_gates(config, loaded)
+    except gates.GateError:
+        return req
+    if project_command := project_commands.get_project_command(config, command):
+        req = req.merged(CapabilityRequirement(
+            required=project_command.required_capabilities,
+            optional=project_command.optional_capabilities,
+        ))
+
+    command_gate_commands = {
+        "run-gates", "ship", "pr-loop", "wrap", "work-block", "overnight",
+        "implement", "coverage", "deps-audit", "flake-audit",
+    }
+    if command in command_gate_commands and any(s.kind == "command" for s in specs):
+        req = req.merged(CapabilityRequirement(required=("shell",)))
+    worktree_commands = {
+        "ship", "pr-loop", "wrap", "work-block", "overnight", "implement"
+    }
+    github_read_commands = {
+        "morning", "review-cycle", "triage", "stale-prs", "regression", "review-all-day",
+        "coverage", "deps-audit", "flake-audit", "ci-check",
+    }
+    if command in worktree_commands:
+        req = req.merged(CapabilityRequirement(required=("git", "worktree"),
+                                               optional=("gh", "gh-auth")))
+    elif command in github_read_commands:
+        req = req.merged(CapabilityRequirement(optional=("gh", "gh-auth")))
+    for spec in specs:
+        if spec.required_capabilities or spec.optional_capabilities:
+            req = req.merged(CapabilityRequirement(
+                required=spec.required_capabilities,
+                optional=spec.optional_capabilities,
+            ))
+    return req
+
+
+def ci_check_capability_requirement(config) -> CapabilityRequirement:
+    """Capability requirements for ci-check command."""
+    optional = ["gh", "gh-auth"]
+    if config.knobs.ci_workflows:
+        optional.append("raw-actions-logs")
+    return CapabilityRequirement(optional=tuple(optional))
+
+
+def morning_capability_requirement(config) -> CapabilityRequirement:
+    """Capability requirements for morning command."""
+    required: list[str] = []
+    optional: list[str] = ["gh", "gh-auth"]
+    pack = config.policy_pack or {}
+    health = pack.get("health_providers") if isinstance(pack.get("health_providers"), dict) else {}
+    for provider in health.values():
+        if not isinstance(provider, dict):
+            continue
+        required.extend(provider.get("required_capabilities") or ())
+        optional.extend(provider.get("optional_capabilities") or ())
+    return CapabilityRequirement(
+        required=tuple(dict.fromkeys(required)),
+        optional=tuple(dict.fromkeys(optional)),
+    )
+
+
+def scan_capability_requirement(command: str, config) -> CapabilityRequirement:
+    """Capability requirements for scan commands (regression, review-all-day)."""
+    del config
+    if command == "regression":
+        return CapabilityRequirement(
+            required=("git", "worktree"),
+            optional=("gh", "gh-auth", "github-mcp", "parallel-subagents"),
+        )
+    return CapabilityRequirement(
+        required=("git",),
+        optional=("gh", "gh-auth", "github-mcp", "parallel-subagents"),
+    )
+

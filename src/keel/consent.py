@@ -371,3 +371,53 @@ def _escalation_reason(
     if sample["selected"]:
         return True, "low-risk-sample"
     return False, "below-escalation-threshold"
+
+
+def resolve_consent_mode(
+    mode_override: str | None,
+    config_mode: str,
+    env_mode: str | None = None,
+) -> str:
+    """Resolve and validate the effective consent mode."""
+    mode = mode_override or env_mode or config_mode
+    if mode not in CONSENT_MODES:
+        raise ValueError(
+            f"unknown consent mode {mode!r}; valid: {', '.join(CONSENT_MODES)}"
+        )
+    return mode
+
+
+def resolve_approved_consent(
+    *,
+    mode: str,
+    explicit_scopes: Iterable[str] | str = (),
+    operator: str | None = None,
+    is_live: bool = False,
+    has_standing_scope: bool = True,
+    env_scopes: str | None = None,
+    env_operator: str | None = None,
+    config_approved_scopes: tuple[str, ...] | list[str] = (),
+    config_operator: str | None = None,
+) -> tuple[tuple[str, ...], str, str | None, str]:
+    """Resolve operator approved scopes and their source."""
+    if explicit_scopes:
+        scopes_tuple = (explicit_scopes,) if isinstance(explicit_scopes, str) else explicit_scopes
+        return normalize_scopes(scopes_tuple), "flag", operator, mode
+    if mode == "agent" or not is_live:
+        return (), "none", operator, mode
+    if mode == "explicit":
+        return (), "none", operator, mode
+    if not has_standing_scope:
+        return (), "none", operator, mode
+    if env_scopes:
+        if not env_operator:
+            raise ValueError("KEEL_OPERATOR is required when KEEL_APPROVE_SCOPE is used")
+        return normalize_scopes((env_scopes,)), "env", env_operator, mode
+    if config_approved_scopes:
+        if not config_operator:
+            raise ValueError(
+                "automation.operator is required when automation.approved_scopes is used"
+            )
+        return normalize_scopes(config_approved_scopes), "config", config_operator, mode
+    return (), "none", operator, mode
+

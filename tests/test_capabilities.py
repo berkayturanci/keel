@@ -1,8 +1,8 @@
-"""Tests for capabilities module."""
+"""Tests for capabilities and runtime requirement resolution."""
 
 import unittest
 
-from keel import capabilities
+from keel import capabilities, runtime
 from keel import config as cfg
 
 
@@ -23,7 +23,7 @@ class TestCapabilities(unittest.TestCase):
             base_branch="main",
             knobs=cfg.Knobs(build_gate_cmd="true", ci_workflows=["ci.yml"]),
         )
-        req = capabilities.ci_check_capability_requirement(config)
+        req = runtime.ci_check_capability_requirement(config)
         self.assertIn("raw-actions-logs", req.optional)
 
     def test_morning_capability_requirement(self):
@@ -43,7 +43,7 @@ class TestCapabilities(unittest.TestCase):
                 },
             },
         )
-        req = capabilities.morning_capability_requirement(config)
+        req = runtime.morning_capability_requirement(config)
         self.assertIn("api-token", req.required)
         self.assertIn("browser", req.optional)
 
@@ -54,10 +54,10 @@ class TestCapabilities(unittest.TestCase):
             base_branch="main",
             knobs=cfg.Knobs(build_gate_cmd="true"),
         )
-        reg_req = capabilities.scan_capability_requirement("regression", config)
+        reg_req = runtime.scan_capability_requirement("regression", config)
         self.assertIn("worktree", reg_req.required)
 
-        rad_req = capabilities.scan_capability_requirement("review-all-day", config)
+        rad_req = runtime.scan_capability_requirement("review-all-day", config)
         self.assertNotIn("worktree", rad_req.required)
         self.assertIn("git", rad_req.required)
 
@@ -70,7 +70,7 @@ class TestCapabilities(unittest.TestCase):
             knobs=cfg.Knobs(build_gate_cmd="true"),
             gates={"invalid": {"kind": "unknown-kind"}},
         )
-        req = capabilities.build_capability_requirement("ship", config, {})
+        req = runtime.build_capability_requirement("ship", config, {})
         self.assertEqual(req.required, ())
 
 

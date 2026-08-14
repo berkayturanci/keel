@@ -6472,7 +6472,7 @@ class TestStandaloneCommands(unittest.TestCase):
                 },
             },
         )
-        requirement = cli._morning_capability_requirement(config)
+        requirement = runtime.morning_capability_requirement(config)
         self.assertEqual(requirement.required, ("firebase",))
 
     def test_wrap_json_contract_surfaces_session_reports_and_worktree_guard(self):

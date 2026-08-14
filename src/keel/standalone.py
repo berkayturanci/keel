@@ -8,7 +8,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+
+from . import config as cfg
+from . import consent, contracts, github_transport, runtime
+from . import orchestrator as orch
+from .extensions import load_extensions
+from .gates import GateError
 
 
 def _issue_labels(args: argparse.Namespace) -> tuple[str, ...]:
@@ -19,9 +26,10 @@ def _issue_labels(args: argparse.Namespace) -> tuple[str, ...]:
 
 
 def _issue_context_provided(args: argparse.Namespace) -> bool:
-    return any(
-        getattr(args, attr, None)
-        for attr in ("issue", "issue_title", "issue_body", "issue_label")
+    return bool(
+        (getattr(args, "issue_title", None) or "").strip()
+        or (getattr(args, "issue_body", None) or "").strip()
+        or _issue_labels(args)
     )
 
 
@@ -70,11 +78,10 @@ def _standalone_target(args: argparse.Namespace) -> str | None:
 def _has_live_consent_scope(
     args: argparse.Namespace,
     command: str,
-    config,
-    requirement,
+    config: cfg.ProjectConfig,
+    requirement: runtime.CapabilityRequirement,
     loaded: dict,
 ) -> bool:
-    from . import consent, contracts
     if not getattr(args, "live", False):
         return False
     side_effects = contracts.command_side_effects(command, config, requirement, loaded)
@@ -83,53 +90,71 @@ def _has_live_consent_scope(
 
 def cmd_standalone(args: argparse.Namespace) -> int:
     """Execute any standalone subagent command."""
-    from . import cli
     if getattr(args, "dry_run", False) and getattr(args, "live", False):
         print("--dry-run and --live cannot be used together", file=sys.stderr)
         return 1
     command = args.standalone_command
     try:
-        config = cli.cfg.load_config(args.path)
+        config = cfg.load_config(args.path)
     except FileNotFoundError:
         print(f"no such config: {args.path}", file=sys.stderr)
         return 1
-    except cli.cfg.ConfigError as exc:
+    except cfg.ConfigError as exc:
         print(str(exc), file=sys.stderr)
         return 1
 
-    loaded, problems = cli.load_extensions(config, args.root, strict=False)
+    loaded, problems = load_extensions(config, args.root, strict=False)
     for prob in problems:
         print(f"  ! extension not loaded: {prob}", file=sys.stderr)
 
     requirement = (
-        cli._ci_check_capability_requirement(config)
+        runtime.ci_check_capability_requirement(config)
         if command == "ci-check"
-        else cli._morning_capability_requirement(config)
+        else runtime.morning_capability_requirement(config)
         if command == "morning"
-        else cli._scan_capability_requirement(command, config)
+        else runtime.scan_capability_requirement(command, config)
         if command in {"regression", "review-all-day"}
-        else cli._capability_requirement(command, config, loaded, pr=getattr(args, "pr", None))
+        else runtime.build_capability_requirement(
+            command, config, loaded, pr=getattr(args, "pr", None)
+        )
     )
-    report = cli.runtime.detect(args.root)
-    evaluation = cli.runtime.evaluate(requirement, report)
+    report = runtime.detect(args.root)
+    evaluation = runtime.evaluate(requirement, report)
     if not evaluation.ok:
         print(evaluation.render(), file=sys.stderr)
         return 1
-    transport = cli.github_transport.resolve(report)
-    target = cli._standalone_target(args)
+    transport = github_transport.resolve(report)
+    target = _standalone_target(args)
     try:
-        approved_scopes, approval_source, approval_operator, consent_mode = cli._approved_consent(
-            args, config, cli._has_live_consent_scope(args, command, config, requirement, loaded)
+        consent_mode = consent.resolve_consent_mode(
+            getattr(args, "consent_mode", None),
+            config.consent_mode,
+            env_mode=os.environ.get("KEEL_CONSENT_MODE"),
+        )
+        approved_scopes, approval_source, approval_operator, consent_mode = (
+            consent.resolve_approved_consent(
+                mode=consent_mode,
+                explicit_scopes=tuple(getattr(args, "approve_scope", ()) or ()),
+                operator=getattr(args, "operator", None),
+                is_live=getattr(args, "live", False),
+                has_standing_scope=_has_live_consent_scope(
+                    args, command, config, requirement, loaded
+                ),
+                env_scopes=os.environ.get("KEEL_APPROVE_SCOPE"),
+                env_operator=os.environ.get("KEEL_OPERATOR"),
+                config_approved_scopes=config.automation.approved_scopes,
+                config_operator=config.automation.operator,
+            )
         )
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
     try:
-        plan = cli.orch.build_plan(config, loaded)
-    except cli.gates.GateError as exc:
+        plan = orch.build_plan(config, loaded)
+    except GateError as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    contract = cli.contracts.build_command_contract(
+    contract = contracts.build_command_contract(
         command=command,
         config=config,
         loaded=loaded,
@@ -148,10 +173,10 @@ def cmd_standalone(args: argparse.Namespace) -> int:
         review_comments=getattr(args, "review_comments", "inline"),
         issue_title=getattr(args, "issue_title", None),
         issue_body=getattr(args, "issue_body", None),
-        issue_labels=cli._issue_labels(args),
+        issue_labels=_issue_labels(args),
     )
-    consent_ok, consent_message = cli.consent.assert_operator_consent(contract["operator_consent"])
-    result = cli.contracts.standalone_result_as_dict(
+    consent_ok, consent_message = consent.assert_operator_consent(contract["operator_consent"])
+    result = contracts.standalone_result_as_dict(
         command=command,
         config=config,
         target=target,
@@ -168,7 +193,7 @@ def cmd_standalone(args: argparse.Namespace) -> int:
         return 1
     intake_record = contract.get("issue_intake")
     is_live_implement = command == "implement" and getattr(args, "live", False)
-    if is_live_implement and cli._issue_context_provided(args):
+    if is_live_implement and _issue_context_provided(args):
         if intake_record and not intake_record["can_mutate_code"]:
             if args.json:
                 print(json.dumps({"contract": contract, "result": result}, indent=2,

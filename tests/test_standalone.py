@@ -18,8 +18,9 @@ class TestStandaloneHelpers(unittest.TestCase):
         self.assertEqual(standalone._issue_labels(empty_args), ())
 
     def test_issue_context_provided(self):
-        self.assertTrue(standalone._issue_context_provided(argparse.Namespace(issue=42)))
         self.assertTrue(standalone._issue_context_provided(argparse.Namespace(issue_title="Bug")))
+        self.assertTrue(standalone._issue_context_provided(argparse.Namespace(issue_label=["bug"])))
+        self.assertFalse(standalone._issue_context_provided(argparse.Namespace(issue=42)))
         self.assertFalse(standalone._issue_context_provided(argparse.Namespace()))
 
     def test_standalone_target(self):
