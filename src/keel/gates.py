@@ -147,10 +147,20 @@ def plan_gates(config: ProjectConfig, loaded: dict[str, list[Extension]]) -> tup
     return tuple(specs)
 
 
-def run_gates(specs, runner: GateRunner, *, fail_soft: bool = True) -> list[GateOutcome]:
-    """Run each gate via ``runner``; normalise to outcomes (fail-soft by default)."""
-    outcomes: list[GateOutcome] = []
-    for spec in specs:
+def run_gates(
+    specs,
+    runner: GateRunner,
+    *,
+    fail_soft: bool = True,
+    concurrency: int = 1,
+) -> list[GateOutcome]:
+    """Run each gate via ``runner``; normalise to outcomes (fail-soft by default).
+
+    When ``concurrency > 1``, independent gates are executed concurrently using
+    standard library ``concurrent.futures.ThreadPoolExecutor``, while preserving
+    exact deterministic outcome ordering.
+    """
+    def _run_single(spec: GateSpec) -> GateOutcome:
         try:
             # tuple() first: the runner contract has always been "any 2-iterable",
             # so indexing the raw return would reject a generator that used to work.
@@ -166,28 +176,33 @@ def run_gates(specs, runner: GateRunner, *, fail_soft: bool = True) -> list[Gate
             if spec.on_fail == "block":
                 # A hard gate that errors must still block (can't silently pass).
                 finding = Finding("major", f"gate {spec.id!r} errored: {exc}", spec.id)
-                outcomes.append(GateOutcome(spec.id, False, (finding,), error=str(exc),
-                                            on_fail=spec.on_fail))
-            else:
-                # Soft gate broke -> degrade to a no-op (logged), never abort.
-                outcomes.append(GateOutcome(spec.id, True, (), error=str(exc), skipped=True,
-                                            on_fail=spec.on_fail))
-            continue
+                return GateOutcome(spec.id, False, (finding,), error=str(exc),
+                                   on_fail=spec.on_fail)
+            # Soft gate broke -> degrade to a no-op (logged), never abort.
+            return GateOutcome(spec.id, True, (), error=str(exc), skipped=True,
+                               on_fail=spec.on_fail)
 
         found = tuple(found)
         if ok:
-            outcomes.append(GateOutcome(spec.id, True, found, not_run=not_run,
-                                        on_fail=spec.on_fail))
-        else:
-            if not found:
-                sev = _ON_FAIL_SEVERITY[spec.on_fail]
-                found = (Finding(sev, f"gate {spec.id!r} failed", spec.id),)
-            # ok stays False for a timeout: the merge gate is unchanged, only the label.
-            # not_run rides along on this branch too: dropping it would let a future
-            # runner that reports a not-run gate as *failing* certify the merge anyway.
-            outcomes.append(GateOutcome(spec.id, False, found, timed_out=timed_out,
-                                        not_run=not_run, on_fail=spec.on_fail))
-    return outcomes
+            return GateOutcome(spec.id, True, found, not_run=not_run,
+                               on_fail=spec.on_fail)
+        if not found:
+            sev = _ON_FAIL_SEVERITY[spec.on_fail]
+            found = (Finding(sev, f"gate {spec.id!r} failed", spec.id),)
+        # ok stays False for a timeout: the merge gate is unchanged, only the label.
+        # not_run rides along on this branch too: dropping it would let a future
+        # runner that reports a not-run gate as *failing* certify the merge anyway.
+        return GateOutcome(spec.id, False, found, timed_out=timed_out,
+                           not_run=not_run, on_fail=spec.on_fail)
+
+    spec_list = list(specs)
+    if concurrency <= 1 or len(spec_list) <= 1:
+        return [_run_single(s) for s in spec_list]
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=concurrency) as executor:
+        return list(executor.map(_run_single, spec_list))
 
 
 def unrun_blocking(outcomes: list[GateOutcome]) -> tuple[str, ...]:
