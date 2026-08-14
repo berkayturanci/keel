@@ -21,6 +21,7 @@ from . import (
     activity,
     artifacts,
     branchscope,
+    capabilities,
     capture,
     captureverify,
     checkpoint,
@@ -51,6 +52,7 @@ from . import (
     scaffold,
     scope,
     ship,
+    standalone,
     status,
     stepverifier,
     window,
@@ -3057,213 +3059,16 @@ def _cmd_resume(args: argparse.Namespace) -> int:
 
 
 def _cmd_standalone(args: argparse.Namespace) -> int:
-    if getattr(args, "dry_run", False) and getattr(args, "live", False):
-        print("--dry-run and --live cannot be used together", file=sys.stderr)
-        return 1
-    command = args.standalone_command
-    try:
-        config = cfg.load_config(args.path)
-    except FileNotFoundError:
-        print(f"no such config: {args.path}", file=sys.stderr)
-        return 1
-    except cfg.ConfigError as exc:
-        print(str(exc), file=sys.stderr)
-        return 1
-
-    loaded, problems = load_extensions(config, args.root, strict=False)
-    for prob in problems:
-        print(f"  ! extension not loaded: {prob}", file=sys.stderr)
-
-    requirement = (
-        _ci_check_capability_requirement(config)
-        if command == "ci-check"
-        else _morning_capability_requirement(config)
-        if command == "morning"
-        else _scan_capability_requirement(command, config)
-        if command in {"regression", "review-all-day"}
-        else _capability_requirement(command, config, loaded, pr=getattr(args, "pr", None))
-    )
-    report = runtime.detect(args.root)
-    evaluation = runtime.evaluate(requirement, report)
-    if not evaluation.ok:
-        print(evaluation.render(), file=sys.stderr)
-        return 1
-    transport = github_transport.resolve(report)
-    target = _standalone_target(args)
-    try:
-        approved_scopes, approval_source, approval_operator, consent_mode = _approved_consent(
-            args, config, _has_live_consent_scope(args, command, config, requirement, loaded)
-        )
-    except ValueError as exc:
-        print(str(exc), file=sys.stderr)
-        return 1
-    try:
-        plan = orch.build_plan(config, loaded)
-    except gates.GateError as exc:
-        print(str(exc), file=sys.stderr)
-        return 1
-    contract = contracts.build_command_contract(
-        command=command,
-        config=config,
-        loaded=loaded,
-        plan=plan,
-        requirement=requirement,
-        evaluation=evaluation,
-        transport=transport,
-        extension_problems=tuple(problems),
-        dry_run=not getattr(args, "live", False),
-        approved_consent_scopes=approved_scopes,
-        consent_approval_source=approval_source,
-        consent_mode=consent_mode,
-        operator=approval_operator,
-        target=target,
-        reviewer_override=getattr(args, "reviewers", None),
-        review_comments=getattr(args, "review_comments", "inline"),
-        issue_title=getattr(args, "issue_title", None),
-        issue_body=getattr(args, "issue_body", None),
-        issue_labels=_issue_labels(args),
-    )
-    consent_ok, consent_message = consent.assert_operator_consent(contract["operator_consent"])
-    result = contracts.standalone_result_as_dict(
-        command=command,
-        config=config,
-        target=target,
-        delegate=getattr(args, "delegate", None),
-        transport=transport,
-        evaluation=evaluation,
-    )
-    if not consent_ok:
-        if args.json:
-            print(json.dumps({"contract": contract, "result": result}, indent=2,
-                             sort_keys=True))
-        else:
-            print(consent_message, file=sys.stderr)
-        return 1
-    intake_record = contract.get("issue_intake")
-    if command == "implement" and getattr(args, "live", False) and _issue_context_provided(args):
-        if intake_record and not intake_record["can_mutate_code"]:
-            if args.json:
-                print(json.dumps({"contract": contract, "result": result}, indent=2,
-                                 sort_keys=True))
-            else:
-                print(f"issue intake: {intake_record['status']} — {intake_record['reason']}",
-                      file=sys.stderr)
-                for question in intake_record["questions"]:
-                    print(f"  question: {question}", file=sys.stderr)
-            return 1
-    if args.json:
-        print(json.dumps({"contract": contract, "result": result}, indent=2, sort_keys=True))
-        return 0
-
-    name = config.repo or config.extends
-    print(f"keel {command} — {name}  (base {config.base_branch})")
-    print(f"  target        : {target or 'not specified'}")
-    print(f"  profile       : {contract['workflow_profile']['profile']}")
-    print(f"  github        : {transport.name}")
-    print(f"  consent       : {contract['operator_consent']['status']}")
-    if evaluation.missing_optional:
-        print(f"  degraded opt. : {', '.join(evaluation.missing_optional)}")
-    if command == "implement":
-        print(f"  worktree      : {result['worktree_path_pattern']}")
-        print(f"  branch        : {result['branch_pattern']}")
-        print("  merge         : never in standalone implement")
-        if args.delegate:
-            print(f"  delegate      : {args.delegate}")
-    elif command == "ci-check":
-        workflows = ", ".join(result["ci_workflows"]) or "not configured"
-        print(f"  workflows     : {workflows}")
-        print("  mode          : read-only; propose one fix, never apply")
-    elif command == "morning":
-        brief = result["brief"]
-        health = brief["health_providers"]
-        unavailable = [p["name"] for p in health if p["status"] in {"blocked", "unavailable"}]
-        report_names = ", ".join(brief["reports"]) or "not configured"
-        print(f"  reports       : {report_names}")
-        print(f"  health        : {len(health)} provider(s)")
-        if unavailable:
-            print(f"  unavailable   : {', '.join(unavailable)}")
-        print(f"  deferrals     : {brief['deferral_queue']['status']}")
-    elif command in {"wrap", "work-block", "overnight"}:
-        session = result["session"]
-        report_names = ", ".join(session["reports"]) or "not configured"
-        print(f"  reports       : {report_names}")
-        print(f"  deferrals     : {session['deferral_queue']['status']}")
-        if command == "wrap":
-            linked_required = (
-                session["wrap"]["workspace_preflight"]["must_run_from_linked_worktree"]
-            )
-            print(f"  worktree      : linked required={linked_required}")
-            print("  pr            : ready PR after configured gates")
-        elif command == "work-block":
-            print("  mode source   : keel work-block")
-            print("  queue         : explicit issues or selector")
-            print("  handoff       : ship per issue")
-            print("  outcomes      : shipped, PR-open, deferred, blocked, skipped, needs-input")
-        else:
-            print(f"  window        : {session['merge_window'] or 'not configured'}")
-            print(f"  mode source   : {session['overnight']['mode_source']['command']}")
-            print("  merge policy  : ship window + no-night-merge")
-    elif command in {"regression", "review-all-day"}:
-        scan = result["scan"]
-        print(f"  areas         : {len(scan['areas'])} configured")
-        print(f"  dedupe        : similarity>={scan['dedupe']['near_text_similarity']}")
-        print("  writes        : issues only after consent; no code/PR mutation")
-        if command == "review-all-day":
-            print(f"  title prefix  : {scan['review_all_day']['issue_creation']['title_prefix']}")
-        else:
-            print(f"  handoff       : {scan['regression']['issue_creation']['route_to']}")
-    mode = "live preflight contract" if getattr(args, "live", False) else "dry-run contract"
-    print(f"  note          : {mode}; adapters perform any approved live work.")
-    return 0
+    return standalone.cmd_standalone(args)
 
 
 def _standalone_target(args: argparse.Namespace) -> str | None:
-    if getattr(args, "issue", None) is not None:
-        issue = f"issue #{args.issue}"
-        extra = getattr(args, "target", None)
-        return f"{issue} ({extra})" if extra else issue
-    if getattr(args, "pr", None) is not None:
-        return f"PR #{args.pr}"
-    if getattr(args, "since", None) is not None:
-        extra = getattr(args, "target", None)
-        target = f"since {args.since}"
-        return f"{target} ({extra})" if extra else target
-    if getattr(args, "scope", None) is not None:
-        scope = f"scope {args.scope}"
-        extra = getattr(args, "target", None)
-        if getattr(args, "days", None) is not None:
-            scope = f"{args.days} day scan ({scope})"
-        return f"{scope} ({extra})" if extra else scope
-    if getattr(args, "days", None) is not None:
-        return f"{args.days} day scan"
-    if getattr(args, "issues", None):
-        target = "issues " + ", ".join(f"#{issue}" for issue in args.issues)
-        max_items = getattr(args, "max_items", None)
-        extra = getattr(args, "target", None)
-        if max_items is not None:
-            target = f"{target} (max {max_items})"
-        return f"{target} ({extra})" if extra else target
-    if getattr(args, "queue", None) is not None:
-        target = f"queue {args.queue}"
-        max_items = getattr(args, "max_items", None)
-        extra = getattr(args, "target", None)
-        if max_items is not None:
-            target = f"{target} (max {max_items})"
-        return f"{target} ({extra})" if extra else target
-    if getattr(args, "title", None) is not None:
-        return args.title
-    if getattr(args, "hours", None) is not None:
-        target = f"{args.hours:g}h session"
-        max_items = getattr(args, "max_items", None)
-        return f"{target} (max {max_items})" if max_items is not None else target
-    return getattr(args, "target", None)
+    return standalone._standalone_target(args)
 
 
 def _issue_labels(args: argparse.Namespace) -> tuple[str, ...]:
-    labels: list[str] = []
-    for raw in getattr(args, "issue_label", ()) or ():
-        labels.extend(part.strip() for part in raw.split(",") if part.strip())
-    return tuple(dict.fromkeys(labels))
+    return standalone._issue_labels(args)
+
 
 
 def _lock_root(root: str | Path) -> Path:
@@ -3905,49 +3710,23 @@ def _has_live_consent_scope(
     requirement: runtime.CapabilityRequirement,
     loaded: dict,
 ) -> bool:
-    if not getattr(args, "live", False):
-        return False
-    side_effects = contracts.command_side_effects(command, config, requirement, loaded)
-    return bool(consent.side_effect_scopes(side_effects))
+    return standalone._has_live_consent_scope(args, command, config, requirement, loaded)
 
 
 def _ci_check_capability_requirement(config: cfg.ProjectConfig) -> runtime.CapabilityRequirement:
-    optional = ["gh", "gh-auth"]
-    if config.knobs.ci_workflows:
-        optional.append("raw-actions-logs")
-    return runtime.CapabilityRequirement(optional=tuple(optional))
+    return capabilities.ci_check_capability_requirement(config)
 
 
 def _morning_capability_requirement(config: cfg.ProjectConfig) -> runtime.CapabilityRequirement:
-    required: list[str] = []
-    optional: list[str] = ["gh", "gh-auth"]
-    pack = config.policy_pack or {}
-    health = pack.get("health_providers") if isinstance(pack.get("health_providers"), dict) else {}
-    for provider in health.values():
-        if not isinstance(provider, dict):
-            continue
-        required.extend(provider.get("required_capabilities") or ())
-        optional.extend(provider.get("optional_capabilities") or ())
-    return runtime.CapabilityRequirement(
-        required=tuple(dict.fromkeys(required)),
-        optional=tuple(dict.fromkeys(optional)),
-    )
+    return capabilities.morning_capability_requirement(config)
 
 
 def _scan_capability_requirement(
     command: str,
     config: cfg.ProjectConfig,
 ) -> runtime.CapabilityRequirement:
-    del config
-    if command == "regression":
-        return runtime.CapabilityRequirement(
-            required=("git", "worktree"),
-            optional=("gh", "gh-auth", "github-mcp", "parallel-subagents"),
-        )
-    return runtime.CapabilityRequirement(
-        required=("git",),
-        optional=("gh", "gh-auth", "github-mcp", "parallel-subagents"),
-    )
+    return capabilities.scan_capability_requirement(command, config)
+
 
 
 def _cmd_capabilities(args: argparse.Namespace) -> int:
@@ -4405,45 +4184,8 @@ def _capability_requirement(
     *,
     pr: int | None = None,
 ) -> runtime.CapabilityRequirement:
-    req = runtime.CapabilityRequirement(
-        required=config.knobs.required_capabilities,
-        optional=config.knobs.optional_capabilities,
-    )
-    try:
-        specs = gates.plan_gates(config, loaded)
-    except gates.GateError:
-        return req
-    if project_command := project_commands.get_project_command(config, command):
-        req = req.merged(runtime.CapabilityRequirement(
-            required=project_command.required_capabilities,
-            optional=project_command.optional_capabilities,
-        ))
+    return capabilities.build_capability_requirement(command, config, loaded, pr=pr)
 
-    command_gate_commands = {
-        "run-gates", "ship", "pr-loop", "wrap", "work-block", "overnight",
-        "implement", "coverage", "deps-audit", "flake-audit",
-    }
-    if command in command_gate_commands and any(s.kind == "command" for s in specs):
-        req = req.merged(runtime.CapabilityRequirement(required=("shell",)))
-    worktree_commands = {
-        "ship", "pr-loop", "wrap", "work-block", "overnight", "implement"
-    }
-    github_read_commands = {
-        "morning", "review-cycle", "triage", "stale-prs", "regression", "review-all-day",
-        "coverage", "deps-audit", "flake-audit", "ci-check",
-    }
-    if command in worktree_commands:
-        req = req.merged(runtime.CapabilityRequirement(required=("git", "worktree"),
-                                                       optional=("gh", "gh-auth")))
-    elif command in github_read_commands:
-        req = req.merged(runtime.CapabilityRequirement(optional=("gh", "gh-auth")))
-    for spec in specs:
-        if spec.required_capabilities or spec.optional_capabilities:
-            req = req.merged(runtime.CapabilityRequirement(
-                required=spec.required_capabilities,
-                optional=spec.optional_capabilities,
-            ))
-    return req
 
 
 def build_parser() -> argparse.ArgumentParser:
