@@ -30,6 +30,7 @@ extensions_dir: .keel/extensions
 
 policy_pack:
   name: keel-python
+  presets: ["bandit"]
   labels:
     status: ["status:backlog", "status:in-progress", "status:needs-review", "status:done"]
     priority: ["priority:high", "priority:medium", "priority:low"]
