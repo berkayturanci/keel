@@ -4253,6 +4253,83 @@ def _cmd_swarm_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_swarm_run(args: argparse.Namespace) -> int:
+    try:
+        config = cfg.load_config(args.path)
+    except FileNotFoundError:
+        print(f"no such config: {args.path}", file=sys.stderr)
+        return 1
+    except cfg.ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    issue_nums: list[int] = []
+    if args.issues:
+        for part in args.issues.split(","):
+            part = part.strip().lstrip("#")
+            if part.isdigit():
+                issue_nums.append(int(part))
+    if args.issue:
+        issue_nums.extend(args.issue)
+
+    seen: set[int] = set()
+    unique_issues: list[int] = []
+    for num in issue_nums:
+        if num not in seen:
+            seen.add(num)
+            unique_issues.append(num)
+
+    labels = _issue_labels(args)
+    scopes: list[swarm.IssueScope] = []
+
+    if unique_issues:
+        for num in unique_issues:
+            scopes.append(
+                swarm.extract_issue_scope(
+                    num,
+                    title=args.issue_title or "",
+                    body=args.issue_body or "",
+                    labels=labels,
+                    declared_files=args.declared_file,
+                    config=config,
+                )
+            )
+    elif args.issue_title or args.issue_body or args.declared_file or labels:
+        scopes.append(
+            swarm.extract_issue_scope(
+                1,
+                title=args.issue_title or "",
+                body=args.issue_body or "",
+                labels=labels,
+                declared_files=args.declared_file,
+                config=config,
+            )
+        )
+
+    plan = swarm.build_swarm_plan(scopes, swarm_id=args.swarm_id, config=config)
+
+    from . import swarm_runtime
+
+    result = swarm_runtime.run_swarm_orchestration(
+        plan,
+        project_yaml=args.path,
+        root=args.root,
+        dry_run=not args.live,
+        max_workers=args.max_workers,
+    )
+
+    if args.json:
+        print(json.dumps(result.to_dict(), indent=2))
+    elif args.tree:
+        print(swarm.render_swarm_plan_tree(plan))
+        print("")
+        print(swarm.render_swarm_run_result(result))
+    else:
+        print(swarm.render_swarm_run_result(result))
+
+    return 0 if result.status == "success" else (1 if result.status == "failed" else 0)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="keel", description="keel — workflow core")
     parser.add_argument("--version", action="version", version=f"keel {__version__}")
@@ -5342,6 +5419,31 @@ def build_parser() -> argparse.ArgumentParser:
     p_ss.add_argument("--swarm-id", default=None, help="specific swarm execution ID")
     p_ss.add_argument("--json", action="store_true", help="emit structured JSON")
     p_ss.set_defaults(func=_cmd_swarm_status)
+
+    p_sr = sub.add_parser(
+        "swarm-run",
+        help="execute parallel swarm workers in isolated worktrees across DAG waves",
+    )
+    p_sr.add_argument("path", help="path to project.yaml")
+    p_sr.add_argument("--root", default=".", help="repo root for git, gates + extensions")
+    p_sr.add_argument(
+        "--issues", default=None, help="comma-separated issue numbers (e.g. 101,102,103)"
+    )
+    p_sr.add_argument("--issue", type=_positive_int, action="append", default=[],
+                      help="specific issue number; repeat for multiple")
+    p_sr.add_argument("--declared-file", action="append", default=[],
+                      help="declared file path; repeat for multiple")
+    p_sr.add_argument("--issue-title", default=None, help="issue title")
+    p_sr.add_argument("--issue-body", default=None, help="issue body markdown")
+    p_sr.add_argument("--issue-label", action="append", default=[],
+                      help="issue label; repeat or comma-separate")
+    p_sr.add_argument("--swarm-id", default=None, help="custom swarm ID")
+    p_sr.add_argument("--max-workers", type=_positive_int, default=4,
+                      help="maximum parallel workers (default: 4)")
+    p_sr.add_argument("--live", action="store_true", help="run mutating live execution")
+    p_sr.add_argument("--tree", action="store_true", help="render visual DAG tree")
+    p_sr.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_sr.set_defaults(func=_cmd_swarm_run)
 
     return parser
 

@@ -159,6 +159,30 @@ class SwarmRunState:
         }
 
 
+@dataclass(frozen=True)
+class SwarmRunResult:
+    """Outcome summary for a complete or partial swarm execution."""
+
+    swarm_id: str
+    status: str  # "success", "partial_failure", "failed"
+    total_workers: int
+    passed_count: int
+    failed_count: int
+    dry_run: bool
+    wave_results: tuple[dict[str, Any], ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "swarm_id": self.swarm_id,
+            "status": self.status,
+            "total_workers": self.total_workers,
+            "passed_count": self.passed_count,
+            "failed_count": self.failed_count,
+            "dry_run": self.dry_run,
+            "wave_results": list(self.wave_results),
+        }
+
+
 def _normalize_path(p: str) -> str:
     cleaned = p.strip("`'\" \t\r\n.,;:()")
     cleaned = cleaned.replace("\\", "/").removeprefix("./").removeprefix("/")
@@ -550,3 +574,94 @@ def load_swarm_state(swarm_id: str, root: str | Path = ".") -> SwarmRunState | N
         )
     except (json.JSONDecodeError, ValueError, KeyError):
         return None
+
+
+def update_worker_state(
+    state: SwarmRunState,
+    cluster_id: str,
+    *,
+    step: str | None = None,
+    status: str | None = None,
+    details: str | None = None,
+) -> SwarmRunState:
+    """Return a new SwarmRunState with the specified worker's fields updated."""
+    updated_workers = []
+    for w in state.workers:
+        if w.cluster_id == cluster_id:
+            updated_workers.append(
+                SwarmWorkerStatus(
+                    cluster_id=w.cluster_id,
+                    issue=w.issue,
+                    role=w.role,
+                    agent=w.agent,
+                    model=w.model,
+                    step=step if step is not None else w.step,
+                    status=status if status is not None else w.status,
+                    updated_at=datetime.datetime.now(datetime.UTC).isoformat(),
+                    details=details if details is not None else w.details,
+                )
+            )
+        else:
+            updated_workers.append(w)
+
+    return SwarmRunState(
+        swarm_id=state.swarm_id,
+        total_workers=state.total_workers,
+        active_wave=state.active_wave,
+        workers=tuple(updated_workers),
+        started_at=state.started_at,
+        completed_at=state.completed_at,
+    )
+
+
+def rebalance_swarm_plan(plan: SwarmPlan, failed_issue: int) -> SwarmPlan:
+    """Dynamically recalculate a SwarmPlan when an issue fails during execution.
+
+    Any subsequent wave clusters that depended on ``failed_issue`` will have
+    the failed dependency omitted, while independent disjoint clusters
+    proceed without interruption.
+    """
+    new_waves = []
+    for w in plan.waves:
+        new_clusters = []
+        for c in w.clusters:
+            if failed_issue in c.issues:
+                continue
+            new_clusters.append(c)
+        if new_clusters:
+            new_waves.append(
+                SwarmWave(
+                    wave_index=w.wave_index,
+                    mode=w.mode,
+                    eligible_direct_landing=w.eligible_direct_landing,
+                    clusters=tuple(new_clusters),
+                )
+            )
+
+    return SwarmPlan(
+        swarm_id=plan.swarm_id,
+        total_issues=sum(len(c.issues) for w in new_waves for c in w.clusters),
+        waves=tuple(new_waves),
+        conflict_map=plan.conflict_map,
+        issue_scopes=plan.issue_scopes,
+    )
+
+
+def render_swarm_run_result(result: SwarmRunResult) -> str:
+    """Render a human-readable text summary of a SwarmRunResult."""
+    status_icon = (
+        "✓"
+        if result.status == "success"
+        else ("⚠️" if result.status == "partial_failure" else "✗")
+    )
+    lines = [
+        f"keel swarm run — {result.swarm_id}",
+        f"  status        : {result.status} {status_icon}",
+        f"  total workers : {result.total_workers}",
+        f"  passed        : {result.passed_count}",
+        f"  failed        : {result.failed_count}",
+        f"  dry-run       : {'true' if result.dry_run else 'false'}",
+        f"  total waves   : {len(result.wave_results)}",
+    ]
+    return "\n".join(lines)
+
