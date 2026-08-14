@@ -4215,8 +4215,41 @@ def _cmd_swarm_plan(args: argparse.Namespace) -> int:
 
     if args.json:
         print(json.dumps(plan.to_dict(), indent=2))
+    elif args.tree:
+        print(swarm.render_swarm_plan_tree(plan))
     else:
         print(swarm.render_swarm_plan_text(plan))
+    return 0
+
+
+def _cmd_swarm_status(args: argparse.Namespace) -> int:
+    try:
+        cfg.load_config(args.path)
+    except FileNotFoundError:
+        print(f"no such config: {args.path}", file=sys.stderr)
+        return 1
+    except cfg.ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    swarm_id = args.swarm_id
+    if not swarm_id:
+        state_dir = Path(args.root) / ".keel" / "state" / "swarm"
+        if state_dir.exists():
+            files = sorted(
+                state_dir.glob("*.json"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+            if files:
+                swarm_id = files[0].stem
+
+    state = swarm.load_swarm_state(swarm_id, root=args.root) if swarm_id else None
+
+    if args.json:
+        print(json.dumps(state.to_dict() if state else {}, indent=2))
+    else:
+        print(swarm.render_swarm_status_dashboard(state))
     return 0
 
 
@@ -5296,8 +5329,19 @@ def build_parser() -> argparse.ArgumentParser:
     p_sp.add_argument("--issue-label", action="append", default=[],
                       help="issue label; repeat or comma-separate")
     p_sp.add_argument("--swarm-id", default=None, help="custom swarm ID")
+    p_sp.add_argument("--tree", action="store_true", help="render visual ASCII/Unicode DAG tree")
     p_sp.add_argument("--json", action="store_true", help="emit structured JSON")
     p_sp.set_defaults(func=_cmd_swarm_plan)
+
+    p_ss = sub.add_parser(
+        "swarm-status",
+        help="display live/recent swarm execution status and cluster dashboard",
+    )
+    p_ss.add_argument("path", help="path to project.yaml")
+    p_ss.add_argument("--root", default=".", help="repo root for state")
+    p_ss.add_argument("--swarm-id", default=None, help="specific swarm execution ID")
+    p_ss.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_ss.set_defaults(func=_cmd_swarm_status)
 
     return parser
 

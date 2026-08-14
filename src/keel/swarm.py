@@ -12,9 +12,11 @@ from __future__ import annotations
 
 import datetime
 import fnmatch
+import json
 import posixpath
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from .config import ProjectConfig
@@ -104,6 +106,56 @@ class SwarmPlan:
             "waves": [w.to_dict() for w in self.waves],
             "conflict_map": {str(k): list(v) for k, v in self.conflict_map.items()},
             "issue_scopes": {str(k): v.to_dict() for k, v in self.issue_scopes.items()},
+        }
+
+
+@dataclass(frozen=True)
+class SwarmWorkerStatus:
+    """Live state for an individual worker operating on a swarm cluster."""
+
+    cluster_id: str
+    issue: int
+    role: str
+    agent: str = "claude"
+    model: str = "default"
+    step: str = "s0"
+    status: str = "queued"  # queued, running, passed, failed, merged
+    updated_at: str = ""
+    details: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "cluster_id": self.cluster_id,
+            "issue": self.issue,
+            "role": self.role,
+            "agent": self.agent,
+            "model": self.model,
+            "step": self.step,
+            "status": self.status,
+            "updated_at": self.updated_at,
+            "details": self.details,
+        }
+
+
+@dataclass(frozen=True)
+class SwarmRunState:
+    """State tracking for a live or completed swarm execution."""
+
+    swarm_id: str
+    total_workers: int
+    active_wave: int = 1
+    workers: tuple[SwarmWorkerStatus, ...] = ()
+    started_at: str = ""
+    completed_at: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "swarm_id": self.swarm_id,
+            "total_workers": self.total_workers,
+            "active_wave": self.active_wave,
+            "workers": [w.to_dict() for w in self.workers],
+            "started_at": self.started_at,
+            "completed_at": self.completed_at,
         }
 
 
@@ -353,3 +405,148 @@ def render_swarm_plan_text(plan: SwarmPlan) -> str:
             )
         lines.append("")
     return "\n".join(lines).strip()
+
+
+def render_swarm_plan_tree(plan: SwarmPlan) -> str:
+    """Render a visual ASCII/Unicode DAG dependency tree of the SwarmPlan."""
+    if plan.total_issues == 0:
+        return f"keel swarm plan — {plan.swarm_id} (0 issues)"
+
+    direct_count = sum(1 for w in plan.waves if w.eligible_direct_landing)
+    hdr_a = f"│ 🐝 Keel Swarm Plan — {plan.swarm_id:<38} │"
+    hdr_b = (
+        f"│ Issues: {plan.total_issues:<3} │ Waves: {len(plan.waves):<3} "
+        f"│ Direct Landing Waves: {direct_count:<2} │"
+    )
+    lines: list[str] = [
+        "╭" + "─" * 62 + "╮",
+        hdr_a,
+        hdr_b,
+        "╰" + "─" * 62 + "╯",
+        "",
+    ]
+
+    for w in plan.waves:
+        mode_icon = "⚡" if w.eligible_direct_landing else "⏳"
+        landing_label = (
+            "Direct Batch Landing" if w.eligible_direct_landing else "Sequential Funnel"
+        )
+        lines.append(f"{mode_icon} Wave {w.wave_index} [{w.mode}] — {landing_label}")
+
+        num_clusters = len(w.clusters)
+        for i, c in enumerate(w.clusters):
+            is_last_cluster = i == num_clusters - 1
+            c_prefix = "└── " if is_last_cluster else "├── "
+            c_indent = "    " if is_last_cluster else "│   "
+
+            issues_str = ", ".join(f"#{num}" for num in c.issues)
+            lines.append(f"{c_prefix}📦 Cluster {c.cluster_id} ({issues_str}) [{c.role}]")
+
+            scope_items = list(c.combined_scope)
+            has_deps = bool(c.depends_on_issues)
+
+            scope_branch = "├── " if has_deps else "└── "
+            lines.append(
+                f"{c_indent}{scope_branch}Scope: {', '.join(scope_items[:3])}"
+                f"{'...' if len(scope_items) > 3 else ''}"
+            )
+
+            if has_deps:
+                dep_issues = ", ".join(f"#{d}" for d in c.depends_on_issues)
+                lines.append(f"{c_indent}└── ⛓️ Depends on: {dep_issues}")
+        lines.append("")
+
+    return "\n".join(lines).rstrip()
+
+
+def render_swarm_status_dashboard(state: SwarmRunState | None) -> str:
+    """Render a live terminal ASCII matrix status board of the swarm run."""
+    if state is None:
+        return "keel swarm status — no active or recent swarm run found."
+
+    status_badges = {
+        "queued": "[QUEUED ⏳]",
+        "running": "[RUNNING ⚙️]",
+        "passed": "[PASSED ✓]",
+        "failed": "[FAILED ✗]",
+        "merged": "[MERGED 🚢]",
+    }
+
+    start_str = state.started_at[:19] if state.started_at else "pending"
+    hdr_info = (
+        f"│ Active Wave: {state.active_wave:<3} │ Total Workers: {state.total_workers:<3} "
+        f"│ Started: {start_str:<24} │"
+    )
+    cols_hdr = (
+        f"│ {'Cluster':<16} │ {'Issue':<6} │ {'Role':<8} │ {'Step':<5} "
+        f"│ {'Agent / Model':<16} │ {'Status':<10} │"
+    )
+    lines = [
+        "╭" + "─" * 74 + "╮",
+        f"│ 🐝 Keel Swarm Live Status — {state.swarm_id:<44} │",
+        hdr_info,
+        "├" + "─" * 74 + "┤",
+        cols_hdr,
+        "├" + "─" * 74 + "┤",
+    ]
+
+    for w in state.workers:
+        badge = status_badges.get(w.status, f"[{w.status.upper()}]")
+        agent_str = f"{w.agent}:{w.model}"[:16]
+        row_str = (
+            f"│ {w.cluster_id:<16} │ #{w.issue:<5} │ {w.role:<8} │ {w.step:<5} "
+            f"│ {agent_str:<16} │ {badge:<10} │"
+        )
+        lines.append(row_str)
+
+    lines.append("╰" + "─" * 74 + "╯")
+    return "\n".join(lines)
+
+
+def resolve_swarm_state_dir(root: str | Path = ".") -> Path:
+    """Ensure and return the path to `.keel/state/swarm/` directory."""
+    p = Path(root) / ".keel" / "state" / "swarm"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def save_swarm_state(state: SwarmRunState, root: str | Path = ".") -> Path:
+    """Persist a SwarmRunState JSON snapshot to `.keel/state/swarm/<swarm_id>.json`."""
+    state_dir = resolve_swarm_state_dir(root)
+    file_path = state_dir / f"{state.swarm_id}.json"
+    file_path.write_text(json.dumps(state.to_dict(), indent=2), encoding="utf-8")
+    return file_path
+
+
+def load_swarm_state(swarm_id: str, root: str | Path = ".") -> SwarmRunState | None:
+    """Load a SwarmRunState from disk if present."""
+    state_dir = Path(root) / ".keel" / "state" / "swarm"
+    file_path = state_dir / f"{swarm_id}.json"
+    if not file_path.exists():
+        return None
+    try:
+        data = json.loads(file_path.read_text(encoding="utf-8"))
+        workers = tuple(
+            SwarmWorkerStatus(
+                cluster_id=str(w.get("cluster_id", "")),
+                issue=int(w.get("issue", 0)),
+                role=str(w.get("role", "core")),
+                agent=str(w.get("agent", "claude")),
+                model=str(w.get("model", "default")),
+                step=str(w.get("step", "s0")),
+                status=str(w.get("status", "queued")),
+                updated_at=str(w.get("updated_at", "")),
+                details=str(w.get("details", "")),
+            )
+            for w in data.get("workers", [])
+        )
+        return SwarmRunState(
+            swarm_id=str(data.get("swarm_id", swarm_id)),
+            total_workers=int(data.get("total_workers", len(workers))),
+            active_wave=int(data.get("active_wave", 1)),
+            workers=workers,
+            started_at=str(data.get("started_at", "")),
+            completed_at=data.get("completed_at"),
+        )
+    except (json.JSONDecodeError, ValueError, KeyError):
+        return None

@@ -1,4 +1,4 @@
-"""Unit tests for Keel Swarm dependency analysis & conflict clustering."""
+"""Unit tests for Keel Swarm dependency analysis, tree rendering & status dashboard."""
 
 from __future__ import annotations
 
@@ -8,17 +8,25 @@ import os
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
 
 from keel.cli import main
 from keel.config import Knobs, ProjectConfig
 from keel.swarm import (
     IssueScope,
+    SwarmRunState,
+    SwarmWorkerStatus,
     _normalize_path,
     build_swarm_plan,
     extract_issue_scope,
     extract_predicted_paths,
+    load_swarm_state,
     paths_intersect,
     render_swarm_plan_text,
+    render_swarm_plan_tree,
+    render_swarm_status_dashboard,
+    resolve_swarm_state_dir,
+    save_swarm_state,
     scopes_intersect,
 )
 
@@ -30,6 +38,7 @@ class TestSwarmPathExtraction(unittest.TestCase):
         self.assertEqual(_normalize_path("/docs/assets/hero.svg,"), "docs/assets/hero.svg")
         self.assertEqual(_normalize_path("`src/keel/cli.py`"), "src/keel/cli.py")
         self.assertEqual(_normalize_path(" 'website/index.html' "), "website/index.html")
+        self.assertEqual(_normalize_path("src\\keel\\swarm.py"), "src/keel/swarm.py")
 
     def test_extract_predicted_paths_backticks_and_text(self):
         text = """
@@ -148,6 +157,7 @@ class TestSwarmPlanClustering(unittest.TestCase):
         self.assertEqual(len(plan.waves), 0)
         d = plan.to_dict()
         self.assertEqual(d["total_issues"], 0)
+        self.assertIn("0 issues", render_swarm_plan_tree(plan))
 
     def test_single_issue_plan(self):
         scope = IssueScope(issue=101, title="Single Issue", predicted_files=("docs/readme.md",))
@@ -157,6 +167,11 @@ class TestSwarmPlanClustering(unittest.TestCase):
         self.assertTrue(plan.waves[0].eligible_direct_landing)
         self.assertEqual(plan.waves[0].mode, "orthogonal_parallel")
         self.assertEqual(len(plan.waves[0].clusters), 1)
+
+        tree = render_swarm_plan_tree(plan)
+        self.assertIn("Keel Swarm Plan — swarm-single", tree)
+        self.assertIn("Wave 1", tree)
+        self.assertIn("Direct Batch Landing", tree)
 
     def test_disjoint_multi_issue_plan(self):
         s1 = IssueScope(issue=1, title="Doc update", predicted_files=("docs/a.md",))
@@ -196,6 +211,9 @@ class TestSwarmPlanClustering(unittest.TestCase):
         self.assertEqual(w2_issues, [2])
         self.assertEqual(plan.waves[1].clusters[0].depends_on_issues, (1, 4))
 
+        tree = render_swarm_plan_tree(plan)
+        self.assertIn("Depends on: #1, #4", tree)
+
     def test_to_dict_and_render_text(self):
         s1 = IssueScope(
             issue=714,
@@ -229,6 +247,96 @@ class TestSwarmPlanClustering(unittest.TestCase):
         self.assertIn("depends on:", rendered)
 
 
+class TestSwarmStateAndDashboard(unittest.TestCase):
+    def test_render_swarm_status_dashboard_none(self):
+        rendered = render_swarm_status_dashboard(None)
+        self.assertIn("no active or recent swarm run found", rendered)
+
+    def test_render_swarm_status_dashboard_active(self):
+        w1 = SwarmWorkerStatus(
+            cluster_id="cluster-1-715",
+            issue=715,
+            role="core",
+            agent="gemini",
+            model="gemini-2.5-pro",
+            step="s4",
+            status="running",
+            updated_at="2026-08-15T00:40:00Z",
+        )
+        w2 = SwarmWorkerStatus(
+            cluster_id="cluster-1-714",
+            issue=714,
+            role="docs",
+            agent="claude",
+            model="claude-3-7-sonnet",
+            step="s10",
+            status="merged",
+        )
+        w3 = SwarmWorkerStatus(
+            cluster_id="cluster-2-716",
+            issue=716,
+            role="core",
+            agent="codex",
+            model="gpt-5",
+            step="s0",
+            status="queued",
+        )
+        state = SwarmRunState(
+            swarm_id="swarm-20260815-test",
+            total_workers=3,
+            active_wave=1,
+            workers=(w1, w2, w3),
+            started_at="2026-08-15T00:30:00Z",
+        )
+
+        d = state.to_dict()
+        self.assertEqual(d["swarm_id"], "swarm-20260815-test")
+        self.assertEqual(len(d["workers"]), 3)
+
+        rendered = render_swarm_status_dashboard(state)
+        self.assertIn("Keel Swarm Live Status — swarm-20260815-test", rendered)
+        self.assertIn("cluster-1-715", rendered)
+        self.assertIn("[RUNNING ⚙️]", rendered)
+        self.assertIn("[MERGED 🚢]", rendered)
+        self.assertIn("[QUEUED ⏳]", rendered)
+
+    def test_save_and_load_swarm_state(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            resolve_swarm_state_dir(tmpdir)
+            w1 = SwarmWorkerStatus(
+                cluster_id="cluster-1-101",
+                issue=101,
+                role="core",
+                agent="gemini",
+                model="pro",
+                step="s8",
+                status="passed",
+            )
+            state = SwarmRunState(
+                swarm_id="swarm-roundtrip",
+                total_workers=1,
+                active_wave=1,
+                workers=(w1,),
+                started_at="2026-08-15T00:00:00Z",
+            )
+            saved_path = save_swarm_state(state, root=tmpdir)
+            self.assertTrue(saved_path.exists())
+
+            loaded = load_swarm_state("swarm-roundtrip", root=tmpdir)
+            self.assertIsNotNone(loaded)
+            assert loaded is not None
+            self.assertEqual(loaded.swarm_id, "swarm-roundtrip")
+            self.assertEqual(loaded.workers[0].status, "passed")
+
+            # Nonexistent
+            self.assertIsNone(load_swarm_state("nonexistent", root=tmpdir))
+
+            # Corrupt JSON file
+            corrupt_file = Path(tmpdir) / ".keel" / "state" / "swarm" / "corrupt.json"
+            corrupt_file.write_text("{bad json", encoding="utf-8")
+            self.assertIsNone(load_swarm_state("corrupt", root=tmpdir))
+
+
 class TestSwarmCLI(unittest.TestCase):
     def test_swarm_plan_cli_missing_config(self):
         buf = io.StringIO()
@@ -251,7 +359,7 @@ class TestSwarmCLI(unittest.TestCase):
             if os.path.exists(path):
                 os.unlink(path)
 
-    def test_swarm_plan_cli_success_text_and_json(self):
+    def test_swarm_plan_cli_success_text_tree_and_json(self):
         # Text mode with comma separated and invalid/duplicate parts
         buf = io.StringIO()
         with redirect_stdout(buf):
@@ -263,6 +371,19 @@ class TestSwarmCLI(unittest.TestCase):
             ])
         self.assertEqual(code, 0)
         self.assertIn("keel swarm plan — swarm-test-123", buf.getvalue())
+
+        # Tree mode
+        buf_tree = io.StringIO()
+        with redirect_stdout(buf_tree):
+            code = main([
+                "swarm-plan",
+                ".keel/project.yaml",
+                "--issues", "714,715,716",
+                "--swarm-id", "swarm-tree-123",
+                "--tree",
+            ])
+        self.assertEqual(code, 0)
+        self.assertIn("Keel Swarm Plan — swarm-tree-123", buf_tree.getvalue())
 
         # JSON mode
         buf_json = io.StringIO()
@@ -306,6 +427,91 @@ class TestSwarmCLI(unittest.TestCase):
         self.assertEqual(code, 0)
         parsed = json.loads(buf.getvalue())
         self.assertEqual(parsed["total_issues"], 0)
+
+    def test_swarm_status_cli_missing_and_invalid_config(self):
+        buf = io.StringIO()
+        with redirect_stderr(buf):
+            code = main(["swarm-status", "nonexistent.yaml"])
+        self.assertEqual(code, 1)
+        self.assertIn("no such config", buf.getvalue())
+
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as tf:
+            tf.write("invalid_root_key: true\n")
+            path = tf.name
+
+        buf = io.StringIO()
+        try:
+            with redirect_stderr(buf):
+                code = main(["swarm-status", path])
+            self.assertEqual(code, 1)
+        finally:
+            if os.path.exists(path):
+                os.unlink(path)
+
+    def test_swarm_status_cli_empty_and_active_runs(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # State directory exists but has no JSON files
+            resolve_swarm_state_dir(tmpdir)
+            buf_empty_dir = io.StringIO()
+            with redirect_stdout(buf_empty_dir):
+                code = main(["swarm-status", ".keel/project.yaml", "--root", tmpdir])
+            self.assertEqual(code, 0)
+            self.assertIn("no active or recent swarm run found", buf_empty_dir.getvalue())
+
+            # Empty root directory without state dir
+            tmp_fresh = tempfile.mkdtemp()
+            try:
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    code = main(["swarm-status", ".keel/project.yaml", "--root", tmp_fresh])
+                self.assertEqual(code, 0)
+                self.assertIn("no active or recent swarm run found", buf.getvalue())
+            finally:
+                import shutil
+                shutil.rmtree(tmp_fresh, ignore_errors=True)
+
+            # Empty root directory with --json
+            buf_json = io.StringIO()
+            with redirect_stdout(buf_json):
+                code = main(["swarm-status", ".keel/project.yaml", "--root", tmpdir, "--json"])
+            self.assertEqual(code, 0)
+            self.assertEqual(json.loads(buf_json.getvalue()), {})
+
+            # Save an active swarm run
+            w1 = SwarmWorkerStatus(
+                cluster_id="cluster-1-715",
+                issue=715,
+                role="core",
+                status="running",
+            )
+            state = SwarmRunState(
+                swarm_id="swarm-live-999",
+                total_workers=1,
+                workers=(w1,),
+                started_at="2026-08-15T00:00:00Z",
+            )
+            save_swarm_state(state, root=tmpdir)
+
+            # Auto-discovery
+            buf_auto = io.StringIO()
+            with redirect_stdout(buf_auto):
+                code = main(["swarm-status", ".keel/project.yaml", "--root", tmpdir])
+            self.assertEqual(code, 0)
+            self.assertIn("swarm-live-999", buf_auto.getvalue())
+
+            # Explicit ID with --json
+            buf_id_json = io.StringIO()
+            with redirect_stdout(buf_id_json):
+                code = main([
+                    "swarm-status",
+                    ".keel/project.yaml",
+                    "--root", tmpdir,
+                    "--swarm-id", "swarm-live-999",
+                    "--json",
+                ])
+            self.assertEqual(code, 0)
+            parsed = json.loads(buf_id_json.getvalue())
+            self.assertEqual(parsed["swarm_id"], "swarm-live-999")
 
 
 if __name__ == "__main__":
