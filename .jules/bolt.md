@@ -50,3 +50,7 @@
 ## 2024-05-20 - Fast multiple regex matching
 **Learning:** Checking a string against multiple regex patterns by condensing them into a single pattern using the `|` (OR) operator is significantly faster (~44% faster) than evaluating them individually via multiple `re.search` calls or `any()` generator expressions.
 **Action:** When validating a string against multiple related regex patterns, combine them into a single regex string using `|` instead of checking them iteratively in a loop or generator expression.
+
+## 2024-05-24 - Unroll any() and all() for performance in hot paths
+**Learning:** Using `any()` or `all()` with a generator expression introduces setup overhead that can be bypassed by unrolling them into explicit `for` loops. This can provide a significant performance boost in hot paths.
+**Action:** When a check involves small sets or requires fast short-circuiting in performance-critical code, explicitly unroll the generator into a loop.

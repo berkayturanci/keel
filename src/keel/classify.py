@@ -37,7 +37,12 @@ def is_docs_only(changed: list[str], docs_globs: tuple[str, ...]) -> bool:
 
     An empty list is not docs-only: an unreadable or empty changeset must fail closed.
     """
-    return bool(changed) and all(_matches_any(p, docs_globs) for p in changed)
+    if not changed:
+        return False
+    for p in changed:
+        if not _matches_any(p, docs_globs):
+            return False
+    return True
 
 
 def tier_for_files(

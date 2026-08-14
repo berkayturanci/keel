@@ -44,7 +44,10 @@ def is_transient_error(result: CommandResult) -> bool:
     if result.timed_out:
         return True
     combined = f"{result.stderr} {result.stdout}".lower()
-    return any(pattern in combined for pattern in _TRANSIENT_PATTERNS)
+    for pattern in _TRANSIENT_PATTERNS:
+        if pattern in combined:
+            return True
+    return False
 
 
 def run_argv_retry(
