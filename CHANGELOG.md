@@ -6,6 +6,14 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.14.2] - 2026-08-14
+
+### Changed
+- **Modernized Documentation & Hero Visuals** (#711): Upgraded `docs/assets/hero.svg` and
+  `docs/assets/hero-light.svg` with generalized multi-agent / multi-model positioning,
+  isolated gradient namespaces for zero DOM collisions, crystal-clear linear step geometry,
+  and dedicated `evidence locked ✓` guarantee badge.
+
 ## [1.14.1] - 2026-08-14
 
 ### Added
