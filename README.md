@@ -54,6 +54,7 @@ Changing the backbone is a keel-core change. Projects only ever touch layers 2�
 
 - **One backbone, every agent** — install once; `/keel:<command>` runs as native Claude commands
   *and* as a single shared skill set every other agent (Codex, Antigravity, Gemini) reads.
+- **High-concurrency Swarm orchestration** — cluster entire backlogs into topological dependency waves, execute disjoint clusters in isolated git worktrees, and land batches through orthogonal fast-forward merges or drift self-healing funnel rebases ([guide](docs/keel/swarm.md)).
 - **Project Lego + policy packs** — snap gates/steps into named hooks (`guard`, `tester`,
   `pre-merge`, …) and keep labels, path policy, health sources, local commands, and
   workflow preferences in `policy_pack` data instead of packaged command prose.

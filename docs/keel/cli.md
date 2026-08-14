@@ -1532,6 +1532,60 @@ behavior, and issue/PR targeting, then delegates to the installed keel adapter. 
 files carry a `keel-generated` marker on the `legacy-*` surfaces so adapter updates and local
 compatibility shims remain distinguishable.
 
+## `keel swarm-plan <project.yaml> [issues...] [--root DIR] [--tree] [--landing {batch,funnel,auto}] [--rebalance] [--json]`
+
+Perform deterministic static dependency analysis, scope prediction, conflict matrix calculation,
+and wave tier partitioning across a list of backlog issues without mutating git or spawning workers.
+
+```bash
+keel swarm-plan .keel/project.yaml --root . 714 715 716 717 --tree
+keel swarm-plan .keel/project.yaml --root . 714 715 716 717 --json
+```
+
+Use `--tree` to render an interactive ASCII DAG execution diagram directly in your terminal.
+
+## `keel swarm-status <project.yaml> [--root DIR] [--swarm-id ID] [--json]`
+
+Inspect live worker progress, wave execution status, and cluster health across active or recent
+multi-agent swarm runs:
+
+```bash
+keel swarm-status .keel/project.yaml --root .
+keel swarm-status .keel/project.yaml --root . --swarm-id swarm-2026-08-15 --json
+```
+
+## `keel swarm-run <project.yaml> [issues...] [--root DIR] [--swarm-id ID] [--rebalance] [--json]`
+
+Launch parallel workers per cluster in dedicated git worktrees under `.keel/worktrees/swarm/`:
+
+```bash
+keel swarm-run .keel/project.yaml --root . 714 715 716 717 --rebalance
+```
+
+Each worker runs the standard `keel ship` backbone machine in its isolated worktree. If runtime
+file modification divergence is detected, `--rebalance` partitions the conflicting worker to
+subsequent waves.
+
+## `keel swarm-land <project.yaml> [--root DIR] [--swarm-id ID] [--mode {batch,funnel,auto}] [--json]`
+
+Land passing cluster branches from completed execution waves into `main` under atomic `merge_lock`:
+
+```bash
+keel swarm-land .keel/project.yaml --root . --mode auto
+```
+
+- **Direct Batch Mode**: Orthogonal disjoint diff trees land concurrently.
+- **Adaptive Funnel Mode**: Overlapping trees land sequentially with automatic fail-soft rebase healing.
+
+## `keel-visual swarm <project.yaml> [--root DIR] [--swarm-id ID] [--out FILE] [--serve] [--port PORT] [--json]`
+
+Render interactive 2D DAG cluster partition graphs and 3D multi-wave spatial topologies:
+
+```bash
+keel-visual swarm .keel/project.yaml --root . --out keel-swarm.html
+keel-visual swarm .keel/project.yaml --root . --serve --port 8766
+```
+
 ## Exit codes
 
 | code | meaning |

@@ -281,6 +281,7 @@ Legend: ✅ yes · ◑ partial/limited · ❌ no · `OSS`/`Prop.`
 | Tool | Agent-agnostic | Merge queue | Merge window/freeze | AI review | Multi-agent debate | Policy/gate aggregation | Project config | Open source |
 |---|---|---|---|---|---|---|---|---|
 | **keel** | ✅ (CLI adapters) | ❌ (one-at-a-time + lock) | ✅ (native, TZ-aware) | ✅ (via ai-jury) | ✅ (review→debate→verify→synth) | ✅ (Lego gates) | ✅ (`.keel/project.yaml`) | OSS (Apache-2.0) |
+| **keel-swarm** | ✅ (CLI adapters) | ✅ (Orthogonal Batch + Funnel) | ✅ (native, TZ-aware) | ✅ (via ai-jury) | ✅ (multi-wave consensus) | ✅ (Lego gates) | ✅ (`.keel/project.yaml`) | OSS (Apache-2.0) |
 | **Mergify** | ❌ | ✅ | ✅ (schedule + pause/freeze) | ❌ | ❌ | ◑ (conditions) | ◑ (config.yml) | Prop. (OSS repo exists) |
 | **GitHub merge queue** | ❌ | ✅ | ❌ (workarounds only) | ❌ | ❌ | ◑ (required checks) | ◑ | Prop. |
 | **bors-ng** | ❌ | ✅ (batch+bisect) | ❌ | ❌ | ❌ | ◑ | ◑ | OSS (Apache-2.0, deprecated) |

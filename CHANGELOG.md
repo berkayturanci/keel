@@ -6,6 +6,16 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Keel Swarm High-Concurrency Multi-Agent Orchestration** (#714, #715, #716, #717, #718, #719, #720, #721):
+  - **Deterministic Static Dependency Analysis & Clustering Engine** (#715): Static scope prediction, disjointness matrix calculation, and topological wave tier partitioning via `keel swarm-plan`.
+  - **Terminal ASCII DAG Tree Visualizer & Live Dashboard** (#720): Terminal execution tree renderer (`keel swarm-plan --tree`) and live cluster status dashboard (`keel swarm-status`).
+  - **Isolated Multi-Worktree Execution Runtime** (#716): Parallel cluster worker execution in dedicated git worktrees under `.keel/worktrees/swarm/` with dynamic drift rebalancing (`keel swarm-run`).
+  - **Orthogonal Batch Landing & Drift Self-Healing Merge Engine** (#717): Dual-mode landing supporting Direct Orthogonal Batch Landing for disjoint trees and Adaptive Atomic Funnel Landing with automated rebase healing (`keel swarm-land`).
+  - **Interactive 2D DAG Partition Graphs & 3D Multi-Wave Spatial Topology** (#721): Comprehensive visualizer additions in `keel-visual swarm` with interactive SVG DAG connectors and 3D WebGL/Canvas wave layer projection.
+  - **Cross-Agent Swarm Command & Skill Adapters** (#718): Generated `/keel:swarm` command adapter for Claude Code and `keel-swarm` shared skill for Codex, Gemini, and Antigravity.
+  - **Comprehensive Swarm Guide & Competitive Analysis** (#714, #719): Detailed architecture guide in `docs/keel/swarm.md`, competitive benchmark matrix in `docs/keel/comparison.md`, and proposal in `docs/proposals/keel-swarm.md`.
+
 ## [1.14.2] - 2026-08-14
 
 ### Changed
