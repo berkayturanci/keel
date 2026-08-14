@@ -7,7 +7,73 @@ unit-tested offline; live behaviour is opt-in.
 
 from __future__ import annotations
 
+import random
+import time
+from collections.abc import Sequence
+
 from .runner import CommandResult, run_argv
+
+_TRANSIENT_PATTERNS = (
+    "rate limit",
+    "secondary rate limit",
+    "too many requests",
+    "connection reset",
+    "connection refused",
+    "could not resolve host",
+    "network is unreachable",
+    "tls handshake",
+    "ssl error",
+    "timed out",
+    "timeout",
+    "500 internal server error",
+    "502 bad gateway",
+    "503 service unavailable",
+    "504 gateway timeout",
+    "http 429",
+    "http 500",
+    "http 502",
+    "http 503",
+    "http 504",
+)
+
+
+def is_transient_error(result: CommandResult) -> bool:
+    """Return whether ``result`` failed due to a transient network or rate limit error."""
+    if result.ok:
+        return False
+    if result.timed_out:
+        return True
+    combined = f"{result.stderr} {result.stdout}".lower()
+    return any(pattern in combined for pattern in _TRANSIENT_PATTERNS)
+
+
+def run_argv_retry(
+    argv: Sequence[str],
+    *,
+    cwd: str | None = None,
+    max_attempts: int = 3,
+    backoff_factor: float = 1.0,
+    jitter: bool = True,
+    _run=None,
+    _sleep=None,
+) -> CommandResult:
+    """Execute a ``gh`` command with jittered exponential backoff on transient errors.
+
+    Retries only transient network, 5xx server errors, or secondary rate limit errors.
+    Deterministic and dependency-free, with injectable ``_run`` and ``_sleep`` seams
+    for offline testing at 100% line + branch coverage.
+    """
+    sleep_fn = _sleep or time.sleep
+    attempt = 1
+    while True:
+        result = run_argv(argv, cwd=cwd, **_kw(_run))
+        if result.ok or attempt >= max_attempts or not is_transient_error(result):
+            return result
+        delay = backoff_factor * (2 ** (attempt - 1))
+        if jitter:
+            delay += random.uniform(0.0, 0.5) if _sleep is None else 0.1
+        sleep_fn(delay)
+        attempt += 1
 
 
 def open_pr(

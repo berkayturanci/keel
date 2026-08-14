@@ -371,5 +371,106 @@ class TestStderrContamination(unittest.TestCase):
         self.assertEqual(r.output, "payloadnoise")  # diagnostics still see both
 
 
+class TestGithubRetry(unittest.TestCase):
+    def test_is_transient_error(self):
+        from keel.runner import CommandResult
+        # ok result is not transient
+        self.assertFalse(github.is_transient_error(CommandResult(True, 0, "ok", stdout="ok")))
+        # timed out result is transient
+        self.assertTrue(
+            github.is_transient_error(
+                CommandResult(False, 124, "timed out", timed_out=True, stderr="timed out")
+            )
+        )
+        # rate limit in stderr/stdout is transient
+        self.assertTrue(
+            github.is_transient_error(
+                CommandResult(False, 1, "HTTP 429", stderr="HTTP 429: Too Many Requests")
+            )
+        )
+        self.assertTrue(
+            github.is_transient_error(
+                CommandResult(False, 1, "rate", stderr="secondary rate limit reached")
+            )
+        )
+        self.assertTrue(
+            github.is_transient_error(CommandResult(False, 1, "502", stdout="502 Bad Gateway"))
+        )
+        self.assertTrue(
+            github.is_transient_error(
+                CommandResult(False, 1, "net", stderr="Could not resolve host: github.com")
+            )
+        )
+        # non-transient error (e.g. 404 not found, validation error)
+        self.assertFalse(
+            github.is_transient_error(
+                CommandResult(False, 1, "404", stderr="HTTP 404: Not Found")
+            )
+        )
+        self.assertFalse(
+            github.is_transient_error(
+                CommandResult(False, 1, "bad flag", stderr="invalid flag --foo")
+            )
+        )
+
+    def test_run_argv_retry_succeeds_first_attempt(self):
+        sleeps = []
+        rec = _Recorder(code=0, out="success")
+        res = github.run_argv_retry(
+            ["gh", "pr", "view"], _run=rec, _sleep=sleeps.append, max_attempts=3
+        )
+        self.assertTrue(res.ok)
+        self.assertEqual(len(rec.calls), 1)
+        self.assertEqual(sleeps, [])
+
+    def test_run_argv_retry_recovers_on_second_attempt(self):
+        sleeps = []
+        call_count = [0]
+
+        def flaky_run(argv, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return _Proc(1, "", "HTTP 503 Service Unavailable")
+            return _Proc(0, "data", "")
+
+        res = github.run_argv_retry(
+            ["gh", "api", "foo"],
+            _run=flaky_run,
+            _sleep=sleeps.append,
+            max_attempts=3,
+            backoff_factor=1.0,
+            jitter=False,
+        )
+        self.assertTrue(res.ok)
+        self.assertEqual(call_count[0], 2)
+        self.assertEqual(sleeps, [1.0])
+
+    def test_run_argv_retry_exhausts_attempts(self):
+        sleeps = []
+        rec = _Recorder(code=1, err="rate limit exceeded")
+        res = github.run_argv_retry(
+            ["gh", "api", "foo"],
+            _run=rec,
+            _sleep=sleeps.append,
+            max_attempts=3,
+            backoff_factor=0.5,
+            jitter=True,
+        )
+        self.assertFalse(res.ok)
+        self.assertEqual(len(rec.calls), 3)
+        # Attempt 1 -> 0.5 * 1 + 0.1 = 0.6, Attempt 2 -> 0.5 * 2 + 0.1 = 1.1
+        self.assertEqual(sleeps, [0.6, 1.1])
+
+    def test_run_argv_retry_no_retry_on_fatal_error(self):
+        sleeps = []
+        rec = _Recorder(code=1, err="HTTP 404: Not Found")
+        res = github.run_argv_retry(
+            ["gh", "api", "foo"], _run=rec, _sleep=sleeps.append, max_attempts=3
+        )
+        self.assertFalse(res.ok)
+        self.assertEqual(len(rec.calls), 1)
+        self.assertEqual(sleeps, [])
+
+
 if __name__ == "__main__":
     unittest.main()
