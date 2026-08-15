@@ -51,7 +51,7 @@ window.KEEL = {
     ["vendor + model attribution", "Every action records which agent and model produced it."],
   ],
 
-  /* ---- 16 shipped commands. featured: true → animated showcase --- */
+  /* ---- 17 shipped commands. featured: true → animated showcase --- */
   commands: [
     {
       slug: "ship", name: "/keel:ship", group: "Flagship", flagship: true, featured: true, scene: "ship",
@@ -59,6 +59,13 @@ window.KEEL = {
       one: "Drive a GitHub issue end-to-end through the whole backbone.",
       detail:
         "Select → branch → implement → CI → review → test → merge → close → capture. The full flow: per-round review, inline file:line comments, --delegate / --review-delegate (incl. hosted-API anthropic-api:MODEL / openai-api:MODEL / google-api:MODEL — no agent CLI, just an API key; plus generic OpenAI-compatible and CLI profiles), --reviewers N, the <a href='https://github.com/berkayturanci/ai-jury' target='_blank' rel='noopener'>ai-jury</a> gate, the timezone-aware merge window + mkdir merge lock, and vendor+model attribution. <b>--compound</b> selects the compound-engineering profile — same backbone and safety primitives, with implement / review / fixloop / capture (s4·s7·s9·s11) as compound step overrides.",
+    },
+    {
+      slug: "swarm", name: "/keel:swarm", group: "Flagship", flagship: true, featured: true, scene: "swarm",
+      cmd: "keel:swarm",
+      one: "Multi-agent swarm coordinator — cluster backlog issues, run parallel waves, and batch land.",
+      detail:
+        "Clusters backlog issues into disjoint execution waves based on static file-overlap and explicit DAG dependencies. Spawns parallel workers across isolated git worktrees (.keel/worktrees/swarm/), supports cross-model agent routing (Claude, Gemini, Codex, DeepSeek, Local Ollama), unifies reviews under the AI Jury consensus panel, and executes dual-mode batch landing under the merge lock with self-healing conflict rollback.",
     },
     {
       slug: "implement", name: "/keel:implement", group: "Per-step", featured: true, scene: "implement",
@@ -149,13 +156,6 @@ window.KEEL = {
       one: "Find quiet / drifted PRs; triage, comment, optionally rebase.",
       detail:
         "Finds open PRs that have gone quiet or drifted off the base branch; triages, comments, and optionally rebases — respecting the merge window.",
-    },
-    {
-      slug: "swarm", name: "/keel:swarm", group: "Flagship", flagship: true, featured: true, scene: "swarm",
-      cmd: "keel:swarm",
-      one: "Multi-agent swarm coordinator — cluster backlog issues, run parallel waves, and batch land.",
-      detail:
-        "Clusters backlog issues into disjoint execution waves based on static file-overlap and explicit DAG dependencies. Spawns parallel workers across isolated git worktrees (.keel/worktrees/swarm/), supports cross-model agent routing (Claude, Gemini, Codex, DeepSeek, Local Ollama), unifies reviews under the AI Jury consensus panel, and executes dual-mode batch landing under the merge lock with self-healing conflict rollback.",
     },
   ],
 
