@@ -48,20 +48,20 @@
 
   <!-- Slogan & Description -->
   <text x="60" y="160" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="44" font-weight="800" fill="#0f172a" letter-spacing="-0.03em">Drive every issue to <tspan fill="url(#merged-light)">merged.</tspan></text>
-  <text x="60" y="196" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="16.5" fill="#475569">Universal workflow spine — any AI agent, multi-layer review, and commit-bound evidence.</text>
+  <text x="60" y="196" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="16.5" fill="#475569">Universal workflow spine — multi-agent swarms, cross-model review, and commit-bound evidence.</text>
 
   <!-- Highlights Badge Strip -->
   <g transform="translate(60, 248)">
     <text font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="12.5" fill="#64748b">
       <tspan fill="#0d9488" font-weight="600">s0→s12 backbone</tspan>
       <tspan fill="#94a3b8"> · </tspan>
-      <tspan fill="#1e293b" font-weight="600">All AI Agents &amp; Models</tspan>
+      <tspan fill="#1e293b" font-weight="600">Multi-Agent Swarms</tspan>
+      <tspan fill="#94a3b8"> · </tspan>
+      <tspan fill="#0284c7" font-weight="600">All AI Models</tspan>
       <tspan fill="#94a3b8"> · </tspan>
       <tspan fill="#b45309">Security Presets</tspan>
       <tspan fill="#94a3b8"> · </tspan>
       <tspan fill="#15803d" font-weight="600">100% covered</tspan>
-      <tspan fill="#94a3b8"> · </tspan>
-      <tspan fill="#64748b">Apache-2.0</tspan>
     </text>
   </g>
 

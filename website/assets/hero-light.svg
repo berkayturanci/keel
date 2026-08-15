@@ -42,7 +42,7 @@
   <text x="64" y="206" font-family="ui-sans-serif, system-ui, -apple-system, &#39;Segoe UI&#39;, sans-serif" font-size="17" fill="#5b6878">One fixed backbone — you set the values, snap in the Lego. It never forks.</text>
 
   
-  <text x="64" y="252" font-family="ui-monospace, &#39;SF Mono&#39;, Menlo, Consolas, monospace" font-size="13" fill="#7c8898">13 steps s0→s12  ·  28 extension slots  ·  16 /keel commands  ·  100% covered  ·  Apache-2.0</text>
+  <text x="64" y="252" font-family="ui-monospace, &#39;SF Mono&#39;, Menlo, Consolas, monospace" font-size="13" fill="#7c8898">13 steps s0→s12  ·  28 extension slots  ·  17 /keel commands  ·  Multi-Agent Swarms  ·  100% covered</text>
 
   
   <g transform="translate(712,0)">

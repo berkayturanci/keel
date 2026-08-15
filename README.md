@@ -1,7 +1,7 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hero.svg">
   <source media="(prefers-color-scheme: light)" srcset="docs/assets/hero-light.svg">
-  <img src="docs/assets/hero-light.svg" alt="keel — drive every issue to merged on one fixed backbone: 13 steps, 28 extension slots, 17 /keel commands, 100% covered">
+  <img src="docs/assets/hero-light.svg" alt="keel — drive every issue to merged on one fixed backbone: 13 steps, 28 extension slots, 17 /keel commands, multi-agent swarm DAGs, 100% covered">
 </picture>
 
 # keel ⚓
@@ -20,8 +20,9 @@
 > backbone: they set per-project **values** in `project.yaml` and snap their own
 > **Lego pieces** into named extension slots.
 
-The keel is a ship's backbone — the fixed spine every project builds on. The flagship
-command is `keel:ship`; keel is where ships are built.
+The keel is a ship's backbone — the fixed spine every project builds on. Linear work
+is driven by `keel:ship`, while high-concurrency parallel backlogs are orchestrated by
+`keel:swarm`; keel is where ships and fleets are built.
 
 Keel is based on the work pattern of a strong teammate in a real engineering team:
 take an issue from the queue, decide whether it is ready, own the implementation,
