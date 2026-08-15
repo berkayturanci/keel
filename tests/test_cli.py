@@ -7003,6 +7003,17 @@ class TestInit(unittest.TestCase):
             vrc, _, _ = run(["validate", str(Path(d) / ".keel" / "project.yaml")])
             self.assertEqual(vrc, 0)
 
+    def test_auto_mode_generic_stack(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, err = run(["init", "--root", d, "--auto"])
+            self.assertEqual(rc, 0, err)
+            self.assertIn("keel init --auto", out)
+            self.assertIn("stack        : generic (generic)", out)
+            self.assertNotIn("lint gate", out)
+            vrc, _, _ = run(["validate", str(Path(d) / ".keel" / "project.yaml")])
+            self.assertEqual(vrc, 0)
+
 
 class TestSetup(unittest.TestCase):
     def test_scaffolds_installs_validates_and_plans(self):
