@@ -53,6 +53,6 @@
 **Learning:** For dynamic UI buttons that only display an icon or generic text like a speed multiplier, screen readers may not detect visual updates to the text content alone.
 **Action:** When updating the textContent of a dynamic indicator button via JavaScript, always explicitly update its aria-label attribute in the same event handler to ensure screen reader users receive context-rich updates.
 
-## 2026-10-31 - Faint Text Color Contrast
+## 2026-08-15 - Faint Text Color Contrast
 **Learning:** FAQ body text and supplementary notes were using the `--faint` color token, which fell below the WCAG AA 4.5:1 contrast ratio requirement for both light and dark themes, making long-form text hard to read.
 **Action:** Ensure semantic text elements do not use decorative faint color tokens, or ensure the lowest-contrast text token still passes 4.5:1.
