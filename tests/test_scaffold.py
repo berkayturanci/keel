@@ -94,6 +94,21 @@ class TestDetectBaseBranch(unittest.TestCase):
         (git_dir / "HEAD").write_text("ref: refs/heads/feat/my-feature\n", encoding="utf-8")
         self.assertEqual(scaffold.detect_base_branch(root), "main")
 
+    def test_defaults_to_main_when_detached_sha(self):
+        root = Path(_root_with())
+        git_dir = root / ".git"
+        git_dir.mkdir()
+        (git_dir / "HEAD").write_text("d0eeca895b6878\n", encoding="utf-8")
+        self.assertEqual(scaffold.detect_base_branch(root), "main")
+
+    def test_defaults_to_main_when_head_unreadable(self):
+        root = Path(_root_with())
+        git_dir = root / ".git"
+        git_dir.mkdir()
+        # Create HEAD as a directory so read_text() raises IsADirectoryError (OSError)
+        (git_dir / "HEAD").mkdir()
+        self.assertEqual(scaffold.detect_base_branch(root), "main")
+
 
 class TestAutoDetectConfig(unittest.TestCase):
     def test_auto_detect_rust(self):
