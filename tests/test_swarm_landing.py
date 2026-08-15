@@ -25,10 +25,94 @@ from keel.swarm import (
     save_swarm_state,
 )
 from keel.swarm_landing import (
+    is_safe_declarative_chunk,
     land_wave_clusters,
     merge_cluster_branch,
+    parse_conflict_hunks,
     rebase_and_heal_cluster_branch,
+    resolve_adjacent_conflict,
+    resolve_conflict_content,
 )
+
+
+class TestConflictHealing(unittest.TestCase):
+    def test_is_safe_declarative_chunk(self):
+        self.assertTrue(is_safe_declarative_chunk(["   ", "import os", "from sys import path"]))
+        self.assertFalse(is_safe_declarative_chunk(["x = 1"]))
+
+    def test_parse_conflict_hunks(self):
+        sample = """
+header line
+<<<<<<< HEAD
+import os
+import sys
+=======
+import json
+import math
+>>>>>>> feat/new-feature
+footer line
+"""
+        hunks = parse_conflict_hunks(sample)
+        self.assertEqual(len(hunks), 1)
+        self.assertIn("import os", hunks[0]["ours"])
+        self.assertIn("import json", hunks[0]["theirs"])
+
+    def test_resolve_adjacent_conflict_empty(self):
+        self.assertEqual(resolve_adjacent_conflict("", "theirs\n"), "theirs\n")
+        self.assertEqual(resolve_adjacent_conflict("ours\n", ""), "ours\n")
+
+    def test_resolve_adjacent_conflict_disjoint_and_overlap(self):
+        ours = "import os\n"
+        theirs = "import sys\n"
+        res = resolve_adjacent_conflict(ours, theirs)
+        self.assertEqual(res, "import os\nimport sys\n")
+
+        # Overlapping conflict cannot resolve safely
+        ours_dup = "x = 1\n"
+        theirs_dup = "x = 2\n"
+        self.assertIsNone(resolve_adjacent_conflict(ours_dup, theirs_dup))
+
+    def test_declarative_chunks_bullets_quotes_and_comments(self):
+        ours = "- feature A\n* feature B\n// comment\n/* block */\n\n\"entry1\",\n'entry2',\n"
+        theirs = "- feature C\n\"entry3\",\n"
+        res = resolve_adjacent_conflict(ours, theirs)
+        self.assertIsNotNone(res)
+        self.assertIn("feature A", res)
+        self.assertIn("feature C", res)
+
+    def test_resolve_adjacent_conflict_duplicate_import(self):
+        ours = "import os\n"
+        theirs = "import os\n"
+        self.assertIsNone(resolve_adjacent_conflict(ours, theirs))
+
+    def test_resolve_conflict_content(self):
+        clean = "def foo():\n    return 42\n"
+        self.assertEqual(resolve_conflict_content(clean), clean)
+
+        conflict_resolvable = (
+            "header\n"
+            "<<<<<<< HEAD\n"
+            "import os\n"
+            "=======\n"
+            "import sys\n"
+            ">>>>>>> branch\n"
+            "footer\n"
+        )
+        resolved = resolve_conflict_content(conflict_resolvable)
+        self.assertIsNotNone(resolved)
+        self.assertIn("import os", resolved)
+        self.assertIn("import sys", resolved)
+        self.assertNotIn("<<<<<<<", resolved)
+
+        conflict_unresolvable = (
+            "header\n"
+            "<<<<<<< HEAD\n"
+            "val = 1\n"
+            "=======\n"
+            "val = 2\n"
+            ">>>>>>> branch\n"
+        )
+        self.assertIsNone(resolve_conflict_content(conflict_unresolvable))
 
 
 class TestSwarmLandingPureLogic(unittest.TestCase):
@@ -136,8 +220,10 @@ class TestSwarmLandingThinIO(unittest.TestCase):
             self.assertTrue(ok)
             self.assertEqual(reason, "clean_rebase")
 
-            # Conflicting rebase
+            # Conflicting rebase without resolvable files
             def mock_conflict_runner(cmd: list[str], cwd: Path) -> CommandResult:
+                if "status" in cmd:
+                    return CommandResult(ok=True, code=0, output="")
                 if "rebase" in cmd and "--abort" not in cmd:
                     return CommandResult(ok=False, code=1, output="conflict")
                 return CommandResult(ok=True, code=0, output="aborted")
@@ -147,6 +233,102 @@ class TestSwarmLandingThinIO(unittest.TestCase):
             )
             self.assertFalse(ok_c)
             self.assertEqual(reason_c, "conflict_detected")
+
+            # Self-healing rebase on resolvable conflict file
+            conflict_file = p_root / "src" / "feature.py"
+            conflict_file.parent.mkdir(parents=True, exist_ok=True)
+            conflict_file.write_text(
+                "import os\n<<<<<<< HEAD\nimport sys\n=======\nimport json\n>>>>>>> feat/b\n",
+                encoding="utf-8",
+            )
+
+            def mock_heal_runner(cmd: list[str], cwd: Path) -> CommandResult:
+                if "status" in cmd:
+                    return CommandResult(ok=True, code=0, output="UU src/feature.py")
+                if "--continue" in cmd:
+                    return CommandResult(ok=True, code=0, output="rebased")
+                if "rebase" in cmd and "--abort" not in cmd:
+                    return CommandResult(ok=False, code=1, output="conflict")
+                return CommandResult(ok=True, code=0, output="ok")
+
+            ok_h, reason_h = rebase_and_heal_cluster_branch(
+                p_root, "branch-heal", runner=mock_heal_runner
+            )
+            self.assertTrue(ok_h)
+            self.assertEqual(reason_h, "self_healed_rebase")
+            self.assertNotIn("<<<<<<<", conflict_file.read_text(encoding="utf-8"))
+
+            # Self-healing rebase where rebase --continue fails
+            conflict_file.write_text(
+                "import os\n<<<<<<< HEAD\nimport sys\n=======\nimport json\n>>>>>>> feat/b\n",
+                encoding="utf-8",
+            )
+
+            def mock_continue_fail_runner(cmd: list[str], cwd: Path) -> CommandResult:
+                if "status" in cmd:
+                    return CommandResult(ok=True, code=0, output="UU src/feature.py")
+                if "--continue" in cmd:
+                    return CommandResult(ok=False, code=1, output="continue failed")
+                if "rebase" in cmd and "--abort" not in cmd:
+                    return CommandResult(ok=False, code=1, output="conflict")
+                return CommandResult(ok=True, code=0, output="ok")
+
+            ok_cf, reason_cf = rebase_and_heal_cluster_branch(
+                p_root, "branch-fail-cont", runner=mock_continue_fail_runner
+            )
+            self.assertFalse(ok_cf)
+            self.assertEqual(reason_cf, "conflict_detected")
+
+            # Self-healing rebase where file does not exist on disk
+            def mock_missing_file_runner(cmd: list[str], cwd: Path) -> CommandResult:
+                if "status" in cmd:
+                    return CommandResult(ok=True, code=0, output="UU src/nonexistent.py")
+                if "rebase" in cmd and "--abort" not in cmd:
+                    return CommandResult(ok=False, code=1, output="conflict")
+                return CommandResult(ok=True, code=0, output="ok")
+
+            ok_mf, reason_mf = rebase_and_heal_cluster_branch(
+                p_root, "branch-missing", runner=mock_missing_file_runner
+            )
+            self.assertFalse(ok_mf)
+            self.assertEqual(reason_mf, "conflict_detected")
+
+            # Self-healing rebase where conflict cannot be resolved
+            unresolvable_file = p_root / "src" / "unresolvable.py"
+            unresolvable_file.write_text(
+                "val = 1\n<<<<<<< HEAD\nval = 2\n=======\nval = 3\n>>>>>>> feat/c\n",
+                encoding="utf-8",
+            )
+
+            def mock_unresolvable_runner(cmd: list[str], cwd: Path) -> CommandResult:
+                if "status" in cmd:
+                    return CommandResult(ok=True, code=0, output="UU src/unresolvable.py")
+                if "rebase" in cmd and "--abort" not in cmd:
+                    return CommandResult(ok=False, code=1, output="conflict")
+                return CommandResult(ok=True, code=0, output="ok")
+
+            ok_un, reason_un = rebase_and_heal_cluster_branch(
+                p_root, "branch-unres", runner=mock_unresolvable_runner
+            )
+            self.assertFalse(ok_un)
+            self.assertEqual(reason_un, "conflict_detected")
+
+            # Self-healing rebase where reading file triggers OSError / is dir
+            dir_conflict = p_root / "src" / "dir_conflict"
+            dir_conflict.mkdir(parents=True, exist_ok=True)
+
+            def mock_oserror_runner(cmd: list[str], cwd: Path) -> CommandResult:
+                if "status" in cmd:
+                    return CommandResult(ok=True, code=0, output="UU src/dir_conflict")
+                if "rebase" in cmd and "--abort" not in cmd:
+                    return CommandResult(ok=False, code=1, output="conflict")
+                return CommandResult(ok=True, code=0, output="ok")
+
+            ok_oe, reason_oe = rebase_and_heal_cluster_branch(
+                p_root, "branch-oserror", runner=mock_oserror_runner
+            )
+            self.assertFalse(ok_oe)
+            self.assertEqual(reason_oe, "conflict_detected")
 
     def test_merge_cluster_branch(self):
         with tempfile.TemporaryDirectory() as tmpdir:

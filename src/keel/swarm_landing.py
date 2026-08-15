@@ -6,6 +6,7 @@ under atomic merge locks, and automatically rebasing / healing drifted sequentia
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 from .lock import merge_lock
@@ -21,13 +22,123 @@ from .swarm import (
 from .swarm_runtime import SubprocessRunner, default_runner
 
 
+def parse_conflict_hunks(text: str) -> list[dict[str, str]]:
+    """Parse standard git conflict markers (<<<<<<<, =======, >>>>>>>) into hunks."""
+    lines = text.splitlines(keepends=True)
+    hunks: list[dict[str, str]] = []
+    in_conflict = False
+    in_theirs = False
+    ours_lines: list[str] = []
+    theirs_lines: list[str] = []
+
+    for line in lines:
+        if line.startswith("<<<<<<<"):
+            in_conflict = True
+            in_theirs = False
+            ours_lines = []
+            theirs_lines = []
+        elif in_conflict and line.startswith("======="):
+            in_theirs = True
+        elif in_conflict and line.startswith(">>>>>>>"):
+            in_conflict = False
+            hunks.append({
+                "ours": "".join(ours_lines),
+                "theirs": "".join(theirs_lines),
+            })
+        elif in_conflict:
+            if in_theirs:
+                theirs_lines.append(line)
+            else:
+                ours_lines.append(line)
+
+    return hunks
+
+
+def is_safe_declarative_chunk(lines: list[str]) -> bool:
+    """Check if lines consist entirely of safe declarative items."""
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith(("import ", "from ", "#", "//", "/*", "*")):
+            continue
+        if stripped.startswith(("- ", "* ")):
+            continue
+        if (stripped.startswith('"') or stripped.startswith("'")) and stripped.endswith(
+            (",", ";", '",', "',")
+        ):
+            continue
+        return False
+    return True
+
+
+def resolve_adjacent_conflict(ours: str, theirs: str) -> str | None:
+    """Smart resolution for adjacent non-conflicting additions (e.g. imports or lists)."""
+    ours_stripped = ours.strip()
+    theirs_stripped = theirs.strip()
+    if not ours_stripped:
+        return theirs
+    if not theirs_stripped:
+        return ours
+    ours_lines = [line for line in ours.splitlines() if line.strip()]
+    theirs_lines = [line for line in theirs.splitlines() if line.strip()]
+    if is_safe_declarative_chunk(ours_lines) and is_safe_declarative_chunk(theirs_lines):
+        if set(ours_lines).isdisjoint(set(theirs_lines)):
+            combined = []
+            combined.extend(ours.splitlines())
+            combined.extend(theirs.splitlines())
+            trailing = "\n" if (ours.endswith("\n") or theirs.endswith("\n")) else ""
+            return "\n".join(combined) + trailing
+    return None
+
+
+def resolve_conflict_content(content: str) -> str | None:
+    """Attempt deterministic self-healing on conflict-marked text. Returns resolved text or None."""
+    if "<<<<<<<" not in content or ">>>>>>>" not in content:
+        return content
+
+    lines = content.splitlines(keepends=True)
+    resolved_lines: list[str] = []
+    in_conflict = False
+    in_theirs = False
+    ours_lines: list[str] = []
+    theirs_lines: list[str] = []
+
+    for line in lines:
+        if line.startswith("<<<<<<<"):
+            in_conflict = True
+            in_theirs = False
+            ours_lines = []
+            theirs_lines = []
+        elif in_conflict and line.startswith("======="):
+            in_theirs = True
+        elif in_conflict and line.startswith(">>>>>>>"):
+            in_conflict = False
+            ours_text = "".join(ours_lines)
+            theirs_text = "".join(theirs_lines)
+            resolved = resolve_adjacent_conflict(ours_text, theirs_text)
+            if resolved is None:
+                return None
+            resolved_lines.append(resolved)
+        elif in_conflict:
+            if in_theirs:
+                theirs_lines.append(line)
+            else:
+                ours_lines.append(line)
+        else:
+            resolved_lines.append(line)
+
+    return "".join(resolved_lines)
+
+
 def rebase_and_heal_cluster_branch(
     repo_root: Path,
     branch_name: str,
     base_branch: str = "main",
     runner: SubprocessRunner | None = None,
+    resolver: Callable[[str], str | None] | None = None,
 ) -> tuple[bool, str]:
-    """Rebase a cluster branch onto base branch, with fail-soft abort on conflict."""
+    """Rebase a cluster branch onto base branch, with intelligent self-healing on conflict."""
     run = runner or default_runner
     # Checkout branch
     run(["git", "checkout", branch_name], repo_root)
@@ -35,6 +146,43 @@ def rebase_and_heal_cluster_branch(
     res = run(["git", "rebase", f"origin/{base_branch}"], repo_root)
     if res.ok:
         return True, "clean_rebase"
+
+    # Inspect status for unmerged conflict paths
+    status_res = run(["git", "status", "--porcelain"], repo_root)
+    conflict_files: list[str] = []
+    raw_status = getattr(status_res, "output", getattr(status_res, "stdout", ""))
+    for line in str(raw_status).splitlines():
+        if line.startswith("UU ") or line.startswith("AA ") or line.startswith("UD "):
+            conflict_files.append(line[3:].strip())
+
+    if conflict_files:
+        healed_all = True
+        resolve_fn = resolver or resolve_conflict_content
+        for rel_path in conflict_files:
+            file_path = repo_root / rel_path
+            if file_path.exists():
+                try:
+                    text = file_path.read_text(encoding="utf-8")
+                    resolved = resolve_fn(text)
+                    if resolved is not None:
+                        file_path.write_text(resolved, encoding="utf-8")
+                        run(["git", "add", rel_path], repo_root)
+                    else:
+                        healed_all = False
+                        break
+                except (OSError, UnicodeDecodeError):
+                    healed_all = False
+                    break
+            else:
+                healed_all = False
+                break
+
+        if healed_all:
+            continue_res = run(
+                ["git", "-c", "core.editor=true", "rebase", "--continue"], repo_root
+            )
+            if continue_res.ok:
+                return True, "self_healed_rebase"
 
     # Fail soft: abort rebase cleanly so git workspace remains in valid state
     run(["git", "rebase", "--abort"], repo_root)
@@ -64,6 +212,7 @@ def land_wave_clusters(
     dry_run: bool = True,
     pr_diff_map: dict[str, list[str] | tuple[str, ...]] | None = None,
     runner: SubprocessRunner | None = None,
+    resolver: Callable[[str], str | None] | None = None,
 ) -> SwarmLandingResult:
     """Execute orthogonal batch landing or adaptive sequential funneling for a wave."""
     root_path = Path(root).resolve()
@@ -130,7 +279,7 @@ def land_wave_clusters(
             else:
                 # Sequential funnel with rebase & heal
                 rebase_ok, reason = rebase_and_heal_cluster_branch(
-                    root_path, branch_name, runner=runner
+                    root_path, branch_name, runner=runner, resolver=resolver
                 )
                 if rebase_ok:
                     healed.append(c.cluster_id)
