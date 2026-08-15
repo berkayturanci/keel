@@ -1,0 +1,145 @@
+name: "Keel Autonomous Delivery Action"
+description: "Project-neutral, multi-agent workflow core and autonomous issue shipping backbone"
+author: "Berkay Turancı"
+branding:
+  icon: "anchor"
+  color: "blue"
+
+inputs:
+  command:
+    description: "Keel command to run (ship, swarm, run-gates, validate, plan)"
+    required: false
+    default: "ship"
+  config-path:
+    description: "Path to .keel/project.yaml config file"
+    required: false
+    default: ".keel/project.yaml"
+  issue:
+    description: "Issue number to ship (e.g. 123)"
+    required: false
+    default: ""
+  issues:
+    description: "Space-separated issue numbers for swarm execution (e.g. '101 102 103')"
+    required: false
+    default: ""
+  delegate:
+    description: "Implementer delegate override (e.g. google-api:gemini-2.5-pro, openai-api:gpt-5)"
+    required: false
+    default: ""
+  reviewers:
+    description: "Number of parallel reviewers (1, 2, 3)"
+    required: false
+    default: ""
+  jury:
+    description: "Enable AI Jury multi-agent consensus panel (true/false)"
+    required: false
+    default: "true"
+  live:
+    description: "Run live mutations (git, pr, comment, merge)"
+    required: false
+    default: "true"
+  hotfix:
+    description: "Bypass merge window gate for critical hotfixes"
+    required: false
+    default: "false"
+  github-token:
+    description: "GitHub Token for PR creation, labeling, and merging (secrets.GITHUB_TOKEN or PAT)"
+    required: false
+    default: ""
+  gemini-api-key:
+    description: "Google Gemini API key for delegate operations"
+    required: false
+    default: ""
+  openai-api-key:
+    description: "OpenAI API key for delegate operations"
+    required: false
+    default: ""
+  anthropic-api-key:
+    description: "Anthropic API key for delegate operations"
+    required: false
+    default: ""
+  version:
+    description: "Version of keel-workflow to install (default: latest from PyPI)"
+    required: false
+    default: "latest"
+
+outputs:
+  status:
+    description: "Execution status result"
+    value: ${{ steps.run-keel.outputs.status }}
+  decision:
+    description: "Ship decision (merge, defer, block)"
+    value: ${{ steps.run-keel.outputs.decision }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install Keel
+      shell: bash
+      run: |
+        if [ "${{ inputs.version }}" = "latest" ]; then
+          python -m pip install --upgrade pip keel-workflow
+        else
+          python -m pip install --upgrade pip "keel-workflow==${{ inputs.version }}"
+        fi
+
+    - name: Configure Git Identity
+      shell: bash
+      run: |
+        git config --global user.name "keel[bot]"
+        git config --global user.email "keel-bot@users.noreply.github.com"
+
+    - name: Run Keel Command
+      id: run-keel
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token || env.GITHUB_TOKEN }}
+        GITHUB_TOKEN: ${{ inputs.github-token || env.GITHUB_TOKEN }}
+        GEMINI_API_KEY: ${{ inputs.gemini-api-key }}
+        OPENAI_API_KEY: ${{ inputs.openai-api-key }}
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+      run: |
+        CMD="${{ inputs.command }}"
+        CONFIG="${{ inputs.config-path }}"
+        ARGS=""
+        if [ "${{ inputs.live }}" = "true" ]; then
+          ARGS="$ARGS --live"
+        fi
+        if [ "${{ inputs.hotfix }}" = "true" ]; then
+          ARGS="$ARGS --hotfix"
+        fi
+        if [ -n "${{ inputs.delegate }}" ]; then
+          ARGS="$ARGS --delegate ${{ inputs.delegate }}"
+        fi
+        if [ -n "${{ inputs.reviewers }}" ]; then
+          ARGS="$ARGS --reviewers ${{ inputs.reviewers }}"
+        fi
+        if [ "${{ inputs.jury }}" = "true" ]; then
+          ARGS="$ARGS --jury"
+        fi
+
+        if [ "$CMD" = "ship" ]; then
+          if [ -n "${{ inputs.issue }}" ]; then
+            ARGS="$ARGS --issue ${{ inputs.issue }}"
+          fi
+          python -m keel ship "$CONFIG" --root . $ARGS
+        elif [ "$CMD" = "swarm" ]; then
+          if [ -n "${{ inputs.issues }}" ]; then
+            python -m keel swarm "$CONFIG" --root . --issues ${{ inputs.issues }} $ARGS
+          else
+            python -m keel swarm "$CONFIG" --root . $ARGS
+          fi
+        elif [ "$CMD" = "run-gates" ]; then
+          python -m keel run-gates "$CONFIG" --root .
+        elif [ "$CMD" = "validate" ]; then
+          python -m keel validate "$CONFIG" --root .
+        elif [ "$CMD" = "plan" ]; then
+          python -m keel plan "$CONFIG" --root .
+        else
+          python -m keel "$CMD" "$CONFIG" --root . $ARGS
+        fi

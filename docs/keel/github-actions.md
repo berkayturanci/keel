@@ -51,17 +51,66 @@ reports which arming rule fired (or which waiver applied) in its human and `--js
 so a skipped gate is always attributable to an explicit operator decision rather than a
 forgotten label.
 
+## Official 1-Click GitHub Action (`berkayturanci/keel-action`)
+
+Instead of writing manual pip install steps, use the official composite action:
+
+```yaml
+name: Keel Autonomous Delivery
+on:
+  issues:
+    types: [labeled]
+
+jobs:
+  ship:
+    if: github.event.label.name == 'keel:ship'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: berkayturanci/keel-action@v1
+        with:
+          command: ship
+          issue: ${{ github.event.issue.number }}
+          delegate: "google-api:gemini-2.5-pro"
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          gemini-api-key: ${{ secrets.GEMINI_API_KEY }}
+```
+
+### Nightly Swarm Delivery Workflow
+```yaml
+name: Nightly Swarm
+on:
+  schedule:
+    - cron: "0 2 * * *" # Every night at 02:00
+  workflow_dispatch:
+
+jobs:
+  swarm:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: berkayturanci/keel-action@v1
+        with:
+          command: swarm
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          gemini-api-key: ${{ secrets.GEMINI_API_KEY }}
+```
+
 ## Adopting it in a consumer repo
 
-Copy the workflow and change two things:
-
-- **Install keel from a controlled ref** instead of the local checkout:
-  ```yaml
-  - run: pip install "git+https://github.com/berkayturanci/keel@v1.5.0"
-  ```
-- **Point at your config**: `keel ship .keel/project.yaml --root . --pr <N>`.
-
-Everything else (the runner, `git`, `gh`, the free minutes) comes from GitHub.
+Add `.github/workflows/keel-ship.yml` with `uses: berkayturanci/keel-action@v1` and supply your project's API key secrets (`GEMINI_API_KEY`, `OPENAI_API_KEY`, or `ANTHROPIC_API_KEY`). Everything else (the runner, git, gh, quality gates, and reviewer panel) is handled automatically.
 
 ## Branch protection
 
