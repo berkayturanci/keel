@@ -1,0 +1,91 @@
+{
+  "name": "keel-vscode",
+  "displayName": "Keel Workflow Core",
+  "description": "Multi-agent workflow core companion for VS Code and Cursor — status bar merge window indicator, live swarm activity, and command palette integration.",
+  "version": "1.8.0",
+  "publisher": "berkayturanci",
+  "icon": "icon.png",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other",
+    "Productivity",
+    "SCM Providers"
+  ],
+  "keywords": [
+    "keel",
+    "swarm",
+    "multi-agent",
+    "workflow",
+    "merge-queue",
+    "cursor",
+    "claude",
+    "gemini"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "workspaceContains:.keel/project.yaml",
+    "workspaceContains:projects/*.yaml",
+    "onCommand:keel.ship",
+    "onCommand:keel.swarm",
+    "onCommand:keel.window",
+    "onCommand:keel.gates",
+    "onCommand:keel.cost",
+    "onCommand:keel.visual"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "keel.ship",
+        "title": "Keel: Ship Issue End-to-End (/keel:ship)",
+        "category": "Keel"
+      },
+      {
+        "command": "keel.swarm",
+        "title": "Keel: Run Swarm on Backlog (/keel:swarm)",
+        "category": "Keel"
+      },
+      {
+        "command": "keel.window",
+        "title": "Keel: Check Merge Window Status",
+        "category": "Keel"
+      },
+      {
+        "command": "keel.gates",
+        "title": "Keel: Run Command Gates (Test & Lint)",
+        "category": "Keel"
+      },
+      {
+        "command": "keel.cost",
+        "title": "Keel: View Token & USD Cost Report",
+        "category": "Keel"
+      },
+      {
+        "command": "keel.visual",
+        "title": "Keel: Open Web Visualizer",
+        "category": "Keel"
+      }
+    ],
+    "configuration": {
+      "title": "Keel Workflow",
+      "properties": {
+        "keel.executablePath": {
+          "type": "string",
+          "default": "keel",
+          "description": "Path to the keel executable (default: 'keel' from PATH or python3 -m keel)."
+        },
+        "keel.autoRefreshInterval": {
+          "type": "number",
+          "default": 30,
+          "description": "Interval in seconds to refresh merge window status and active run activity."
+        }
+      }
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/berkayturanci/keel.git"
+  },
+  "license": "Apache-2.0"
+}
