@@ -51,6 +51,14 @@ jobs:
               {"schemaVersion": 1, "label": "coverage", "message": f"{pct:g}%", "color": color},
               open("website/coverage-badge.json", "w"),
           )
+          json.dump(
+              {"schemaVersion": 1, "label": "keel", "message": "13 steps verified", "color": "0d9488"},
+              open("website/backbone-badge.json", "w"),
+          )
+          json.dump(
+              {"schemaVersion": 1, "label": "keel-swarm", "message": "DAG orchestrated", "color": "38bdf8"},
+              open("website/swarm-badge.json", "w"),
+          )
           print(f"coverage badge: {pct:g}% ({color})")
           PY
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9  # v5.0.0

@@ -22,3 +22,7 @@
 - **Profile:** compound
 - **Jury:** gating
 - **Consent:** approved (scopes: pr-merge, label)
+
+---
+⚓ **Shipped by [keel](https://github.com/berkayturanci/keel)** — *Driven on fixed backbone `s0`→`s12` (with [ai-jury](https://github.com/berkayturanci/ai-jury) consensus)*  
+[⭐ Star on GitHub](https://github.com/berkayturanci/keel) · [Add Keel to your repo](https://github.com/berkayturanci/keel#readme)

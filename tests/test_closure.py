@@ -102,7 +102,10 @@ class TestRenderClosureComment(unittest.TestCase):
                                  "reviewers": ["AI Jury"], "tester": None})
         rendered = closure.render_closure_comment(record)
         self.assertIn(f"- **Reviewers:** {closure.JURY_LABEL}", rendered)
-        self.assertNotIn("—", rendered)
+        reviewer_lines = [
+            line for line in rendered.splitlines() if line.startswith("- **Reviewers:**")
+        ]
+        self.assertNotIn("—", reviewer_lines[0])
 
     def test_reviewers_blank_strings_only(self):
         record = _record(actors={"implementer": "codex (gpt-5)",
@@ -422,6 +425,26 @@ class TestRunContext(unittest.TestCase):
         )
 
 
+class TestWatermark(unittest.TestCase):
+    def test_watermark_emitted_by_default(self):
+        rendered = closure.render_closure_comment(_record())
+        self.assertIn("---", rendered)
+        self.assertIn("⚓ **Shipped by [keel](https://github.com/berkayturanci/keel)**", rendered)
+        self.assertIn("[⭐ Star on GitHub](https://github.com/berkayturanci/keel)", rendered)
+
+    def test_watermark_opt_out(self):
+        record = _record(watermark=False)
+        rendered = closure.render_closure_comment(record)
+        self.assertNotIn("⚓ **Shipped by [keel]", rendered)
+        self.assertNotIn("⭐ Star on GitHub", rendered)
+
+    def test_watermark_custom_string(self):
+        record = _record(watermark="Custom team signature")
+        rendered = closure.render_closure_comment(record)
+        self.assertIn("Custom team signature", rendered)
+        self.assertIn("---\nCustom team signature\n", rendered)
+
+
 class TestClosureContract(unittest.TestCase):
     def test_contract_shape(self):
         contract = closure.contract_as_dict()
@@ -432,16 +455,17 @@ class TestClosureContract(unittest.TestCase):
         self.assertTrue(contract["consumer_neutral"])
         self.assertTrue(contract["mirror_not_parser"])
         self.assertEqual(contract["jury_label"], closure.JURY_LABEL)
+        self.assertEqual(contract["watermark_marker"], closure.WATERMARK_MARKER)
         self.assertIn("implementer", contract["sections"])
         self.assertIn("capture", contract["sections"])
         self.assertIn("docs_touched", contract["sections"])
         self.assertIn("run_context", contract["sections"])
+        self.assertIn("watermark", contract["sections"])
         sections = contract["sections"]
         self.assertEqual(
             sections.index("docs_touched"), sections.index("changed_files") + 1
         )
-        # Run context is the final, additive section.
-        self.assertEqual(sections[-1], "run_context")
+        self.assertEqual(sections[-1], "watermark")
         self.assertEqual(
             contract["run_context_fields"],
             ["host_agent", "transport", "profile", "jury_mode", "consent"],

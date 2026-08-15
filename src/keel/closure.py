@@ -19,6 +19,14 @@ CLOSURE_SCHEMA_VERSION = "keel.closure-comment.v1"
 COMMENT_MARKER = f"<!-- {CLOSURE_SCHEMA_VERSION} -->"
 HEADING = "Ship outcome"
 JURY_LABEL = "AI Jury"
+WATERMARK_MARKER = "<!-- keel.watermark.v1 -->"
+WATERMARK_BODY = (
+    "⚓ **Shipped by [keel](https://github.com/berkayturanci/keel)** — "
+    "*Driven on fixed backbone `s0`→`s12` "
+    "(with [ai-jury](https://github.com/berkayturanci/ai-jury) consensus)*  \n"
+    "[⭐ Star on GitHub](https://github.com/berkayturanci/keel) · "
+    "[Add Keel to your repo](https://github.com/berkayturanci/keel#readme)"
+)
 
 # Project-neutral documentation detection. A changed file counts as docs when any
 # path component equals ``docs`` (case-insensitive) or its suffix is a documentation
@@ -54,6 +62,7 @@ def contract_as_dict() -> dict[str, Any]:
             "capture",
             "run_id",
             "run_context",
+            "watermark",
         ],
         "run_context_fields": [
             "host_agent",
@@ -63,6 +72,7 @@ def contract_as_dict() -> dict[str, Any]:
             "consent",
         ],
         "jury_label": JURY_LABEL,
+        "watermark_marker": WATERMARK_MARKER,
     }
 
 
@@ -88,6 +98,7 @@ def render_closure_comment(record: dict[str, Any]) -> str:
     lines.append(f"- **Capture:** {_capture(record.get('capture'))}")
     lines.append(f"- **Run id:** {_value(record.get('run_id'))}")
     lines.extend(_run_context(record.get("run_context")))
+    lines.extend(_watermark(record.get("watermark")))
     return "\n".join(lines) + "\n"
 
 
@@ -241,3 +252,16 @@ def _value(value: Any) -> str:
     if isinstance(value, str) and value.strip():
         return value.strip()
     return "none"
+
+
+def _watermark(watermark: Any) -> list[str]:
+    """Render the optional attribution and viral watermark signature.
+
+    Emitted by default (when ``watermark is not False``). Can be disabled via
+    ``watermark: false`` in record or customized with a string value.
+    """
+    if watermark is False:
+        return []
+    if isinstance(watermark, str) and watermark.strip():
+        return ["", "---", watermark.strip()]
+    return ["", "---", WATERMARK_BODY]
