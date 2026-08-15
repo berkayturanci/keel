@@ -150,11 +150,19 @@ window.KEEL = {
       detail:
         "Finds open PRs that have gone quiet or drifted off the base branch; triages, comments, and optionally rebases — respecting the merge window.",
     },
+    {
+      slug: "swarm", name: "/keel:swarm", group: "Flagship", flagship: true, featured: true, scene: "swarm",
+      cmd: "keel:swarm",
+      one: "Multi-agent swarm coordinator — cluster backlog issues, run parallel waves, and batch land.",
+      detail:
+        "Clusters backlog issues into disjoint execution waves based on static file-overlap and explicit DAG dependencies. Spawns parallel workers across isolated git worktrees (.keel/worktrees/swarm/), supports cross-model agent routing (Claude, Gemini, Codex, DeepSeek, Local Ollama), unifies reviews under the AI Jury consensus panel, and executes dual-mode batch landing under the merge lock with self-healing conflict rollback.",
+    },
   ],
 
   /* ---- example invocation per command (illustrative) ------------- */
   cmdExample: {
     "ship": "/keel:ship --issue 128 --reviewers 3",
+    "swarm": "/keel:swarm 714 715 716 717 --rebalance",
     "implement": "/keel:implement --issue 128",
     "review-cycle": "/keel:review-cycle --pr 214 --comments inline",
     "pr-loop": "/keel:pr-loop --pr 214",
@@ -179,6 +187,11 @@ window.KEEL = {
     ["keel init [--wizard]", "scaffold .keel/project.yaml (detects the stack)"],
     ["keel validate <cfg>", "validate a config (and its extensions) against the schema"],
     ["keel plan <cfg> [--live --json]", "render the backbone + the full structured command contract; --live runs the s0 consent preflight"],
+    ["keel swarm-plan <cfg> [issues...]", "cluster backlog issues into disjoint execution waves and compute batch vs funnel landing plan"],
+    ["keel swarm-status <cfg>", "real-time multi-cluster execution snapshot, worker health, and DAG progress"],
+    ["keel swarm-run <cfg>", "orchestrate parallel workers in isolated worktrees with dynamic rebalancing"],
+    ["keel swarm-land <cfg>", "dual-mode batch landing under merge lock with self-healing conflict rollback"],
+    ["keel-visual swarm", "live 2D DAG graph and 3D spatial worktree topology dashboard"],
     ["keel run-gates <cfg>", "run the project's build / lint / command gates"],
     ["keel window <cfg>", "is the merge window open right now?"],
     ["keel ship <cfg>", "full dry assessment: tier, window, gates, decision"],
@@ -359,6 +372,32 @@ window.KEEL = {
       source: "https://github.com/berkayturanci/keel/blob/main/docs/keel/models.md",
     },
     {
+      group: "Architecture", title: "Keel Swarm (Multi-Agent Concurrency & Cross-Model Topology)", slug: "swarm",
+      summary: "High-concurrency multi-agent orchestration — static DAG clustering, isolated git worktrees, cross-model routing, and dual-mode batch landing.",
+      body:
+        "<p><b>Keel Swarm</b> is Keel's high-concurrency multi-agent orchestration subsystem. While <code>/keel:ship</code> drives a single issue linearly, <code>/keel:swarm</code> clusters a list or backlog of issues into disjoint execution waves and executes them across isolated git worktrees in parallel.</p>" +
+        "<h3>1. Static Dependency DAG & Wave Partitioning</h3>" +
+        "<p>Swarm computes file-overlap conflict graphs and explicit issue dependencies (<code>blocks #N</code> / <code>depends on #N</code>) without executing code. Orthogonal clusters are scheduled in parallel in <b>Wave 1</b>, while dependent or overlapping clusters are sequenced into subsequent waves (<code>Wave 2</code>, <code>Wave 3</code>).</p>" +
+        "<h3>2. Cross-Model Routing & Unified AI Jury Panel</h3>" +
+        "<p>Different clusters can be assigned to different models and agent vendors concurrently via <code>knobs.implementer_agents</code> and <code>knobs.delegate_profiles</code>:</p>" +
+        "<ul>" +
+        "<li><b>Core / Architecture</b>: Claude 3.7 Sonnet / Claude Code (<code>claude</code>)</li>" +
+        "<li><b>Frontend / Visual</b>: Google Gemini 2.5 Flash / Antigravity (<code>agy</code> / <code>google-api:</code>)</li>" +
+        "<li><b>Documentation / Scripts</b>: OpenAI GPT-4o / Codex (<code>codex</code> / <code>openai-api:</code>)</li>" +
+        "<li><b>Local / Offline Worktrees</b>: Local Ollama / vLLM (<code>ollama:qwen2.5-coder</code>)</li>" +
+        "</ul>" +
+        "<p>Regardless of which model authored the PR, every cluster goes through the cross-vendor <b>AI Jury</b> panel (Anthropic + OpenAI + Google) for unanimous review consensus before merging.</p>" +
+        "<h3>3. Dual-Mode Landing</h3>" +
+        "<p>Swarm supports two landing strategies under the single-writer <code>merge_lock</code>:</p>" +
+        "<ul>" +
+        "<li><b>Direct Orthogonal Batch Landing</b>: Disjoint branches with zero file collisions are squashed directly into the base branch without intermediate rebases.</li>" +
+        "<li><b>Adaptive Atomic Funnel</b>: Overlapping clusters trigger a self-healing git rebase onto the newly merged base branch, re-running gates before completing the merge. Conflicts trigger an immediate safe rollback (<code>git rebase --abort</code>).</li>" +
+        "</ul>" +
+        "<h3>4. Live 2D & 3D Spatial Dashboard</h3>" +
+        "<p><code>keel-visual swarm</code> renders real-time interactive DAG topological graphs and 3D spatial node networks in the terminal or browser, tracking worker progress, cluster state, and landing queues live.</p>",
+      source: "https://github.com/berkayturanci/keel/blob/main/docs/keel/swarm.md",
+    },
+    {
       group: "Architecture", title: "Security & policy presets", slug: "security",
       summary: "Declarative security presets (Bandit, Gitleaks, Semgrep, Trivy), ReDoS-safe redaction, and concurrent gates.",
       body:
@@ -444,6 +483,8 @@ window.KEEL = {
       summary: "Published security audit reports — scope, verdicts, and follow-up status for each release line.",
       body:
         "<p>keel ships with recurring security audits, published in the repository under <code>docs/security/</code>. Each report covers source-level vulnerability classes (command injection, path traversal, unsafe deserialization, secret leakage), data-flow from untrusted GitHub inputs to dangerous sinks, dependency exposure (<code>pip-audit</code>), static analysis (<code>bandit</code>), and GitHub Actions / repository-settings review.</p>" +
+        "<h3>2026-08-15 — Swarm Milestone 12 Line</h3>" +
+        "<p><b>Zero critical, high, or medium findings (40/40 tests passed).</b> Comprehensive security and fuzzing audit of multi-agent swarm orchestration, worktree filesystem isolation, single-writer atomic mutex under heavy load, command injection defenses across subprocess runners, and ReDoS-resilient redaction. <a href='https://github.com/berkayturanci/keel/blob/main/docs/security/2026-08-15-security-audit.md'>full report →</a></p>" +
         "<h3>2026-06-11 — v1.2.1 line</h3>" +
         "<p><b>No critical, high, or medium-severity finding.</b> The core remains deterministic, uses <code>yaml.safe_load</code> exclusively, keeps all <code>git</code>/<code>gh</code> calls on argv wrappers (no shell), enforces path containment for checkpoint/ledger/worktree paths, and redacts capture artifacts before durability. Both follow-ups from the previous audit are confirmed resolved: secret scanning + push protection enabled, and required PR approvals enforced by branch protection. <a href='https://github.com/berkayturanci/keel/blob/main/docs/security/2026-06-11-security-audit.md'>full report →</a></p>" +
         "<h3>2026-06-09 — v1.0.1 line</h3>" +

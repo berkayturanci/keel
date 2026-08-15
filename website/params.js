@@ -155,5 +155,16 @@ window.KEEL_ARGS = {
    "--rebase|--merge-develop",
    "--dry-run"
   ]
+ },
+ "swarm": {
+  "desc": "Multi-agent swarm coordinator — cluster backlog issues, execute parallel waves in isolated worktrees, and land orthogonal batches with self-healing rebase.",
+  "hint": "[issue numbers...] [--rebalance] [--landing <batch|funnel|auto>] [--tree] [--dry-run]",
+  "flags": [
+   "issue numbers...",
+   "--rebalance",
+   "--landing <batch|funnel|auto>",
+   "--tree",
+   "--dry-run"
+  ]
  }
 };

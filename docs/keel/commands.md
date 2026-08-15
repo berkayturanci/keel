@@ -1,6 +1,6 @@
 # keel commands (`/keel:<command>`)
 
-keel ships **16** `/keel:<command>` agentic workflows with the package (plus the
+keel ships **17** `/keel:<command>` agentic workflows with the package (plus the
 `keel status` progress command described below). Install them with
 [`keel install-adapter`](cli.md#keel-install-adapter-target---root-dir---force):
 
@@ -18,11 +18,9 @@ flows the host agent runs (per-round review, inline comments, delegation). Every
 project's `.keel/project.yaml`.
 
 Keel's product model is work ownership, not isolated automation. `/keel:ship` is the
-one-issue "own this until done" flow; daily commands such as `/keel:morning`,
-`/keel:overnight`, and `/keel:wrap` turn that same backbone into a workday rhythm.
-Future team-level autonomy builds on this base, but the v1 command surface remains focused
-on one agent or delegated agent path owning each issue with review, gates, safe merge, and
-closure.
+one-issue "own this until done" flow; `/keel:swarm` coordinates multi-agent concurrency;
+daily commands such as `/keel:morning`, `/keel:overnight`, and `/keel:wrap` turn that same
+backbone into a workday rhythm.
 
 Every command step is an evidence-bearing contract. A generated adapter must complete the
 step, record the requested evidence, or explicitly mark the step `N/A — <reason>` before
@@ -48,15 +46,16 @@ queued issue without parsing free-form logs.
 
 Every **stepped non-ship command** also stamps its own `keel.flows` phase as it runs through
 the additive [`keel activity`](cli.md) channel (`.keel/activity/`), so non-ship runs
-(`triage`, `morning`, `pr-loop`, …) appear **live** on `keel-visual`'s board, each with its
+(`swarm`, `triage`, `morning`, `pr-loop`, …) appear **live** on `keel-visual`'s board, each with its
 own phases — not just `ship`. It's additive and never touches the resumable checkpoint
 contract.
 
-## Flagship
+## Flagship & Swarm
 
 | command | what it does |
 |---|---|
 | **`/keel:ship`** | Drive a GitHub issue end-to-end through the keel backbone (select → branch → implement → CI → review → test → merge → close → capture). The full flow: per-round review, inline `file:line` comments, `--delegate` / `--review-delegate` (including hosted-API `anthropic-api:MODEL`/`openai-api:MODEL`/`google-api:MODEL` values — no agent CLI, just an API key; plus configured `openai-compatible` and generic `cli` profiles, see [models guide](models.md)), `--review-comments inline\|summary`, `--reviewers N`, the `jury` gate, the timezone-aware merge window + `mkdir` merge lock, and vendor+model attribution. `--compound` (`--profile compound`) selects the compound-engineering profile: the same backbone, gates, and safety primitives, with `workflow_profile` marking `implement`, `review`, `fixloop`, and `capture` (s4/s7/s9/s11) as compound step overrides. |
+| **`/keel:swarm`** | Multi-agent swarm coordinator — clusters a backlog of issues into disjoint execution waves based on static file overlaps and explicit DAG dependencies, runs parallel workers across isolated git worktrees with dynamic rebalancing, routes across diverse AI vendors (Claude, Gemini, Codex, DeepSeek, Local Ollama), unifies reviews under the AI Jury consensus panel, and executes dual-mode batch landing under the merge lock with self-healing conflict rollback. |
 | `keel status` | Read checkpoint + run ledger state and print a concise active/recent progress snapshot for long-running work blocks. Use `--json` for the machine-readable `keel.progress-status.v1` surface. |
 
 ## Per-step (standalone slices of the backbone)

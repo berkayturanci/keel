@@ -435,6 +435,65 @@
       });
       at(600 + rows.length * 800 + 2800, loop);
     },
+
+    /* swarm — multi-agent parallel wave clustering & batch landing */
+    swarm: function (stage, at, loop) {
+      stage.appendChild(el("div", "sc-lab", "multi-agent swarm · DAG wave clustering & batch landing"));
+      var plan = el("div", "lanes");
+      var w1 = el("div", "chip", '<span class="dot"></span>Wave 1 · Direct Orthogonal Batch<span class="meta">2 parallel clusters</span>');
+      var w2 = el("div", "chip muted", '<span class="dot"></span>Wave 2 · Adaptive Atomic Funnel<span class="meta">1 cluster (rebase)</span>');
+      plan.appendChild(w1); plan.appendChild(w2);
+      stage.appendChild(plan);
+
+      var clusters = [
+        ["cluster-1", "#714 docs", "docs/proposals/**", "claude-code"],
+        ["cluster-2", "#715 core", "src/keel/swarm.py", "gemini-flash"],
+        ["cluster-3", "#721 visual", "keel-visual/**", "codex"],
+      ];
+
+      var lanes = el("div", "lanes");
+      var fills = [];
+      clusters.forEach(function (c, i) {
+        var lane = el("div", "lane" + (i === 2 ? " muted" : ""));
+        lane.appendChild(el("div", "chip", '<span class="dot"></span>' + c[0] + ' · ' + c[1] + '<span class="meta">' + c[3] + '</span>'));
+        var track = el("div", "lane-track"); var f = el("div", "lane-fill"); track.appendChild(f); lane.appendChild(track);
+        var out = el("div", "lane-out", i === 2 ? "waiting" : "working"); lane.appendChild(out);
+        fills.push({ lane: lane, fill: f, out: out, name: c[0] });
+        lanes.appendChild(lane);
+      });
+      stage.appendChild(lanes);
+
+      var cap = el("div", "sc-cap", '<span class="blink"></span><span>keel swarm-plan · computing disjointness DAG…</span>');
+      stage.appendChild(cap); var capt = cap.querySelector("span:last-child");
+
+      at(600, function () {
+        capt.textContent = "Wave 1 running in parallel worktrees (.keel/worktrees/swarm/)…";
+        fills[0].fill.style.width = "70%";
+        fills[1].fill.style.width = "70%";
+      });
+
+      at(1800, function () {
+        fills[0].fill.style.width = "100%"; fills[0].out.textContent = "passed"; fills[0].lane.classList.add("done");
+        fills[1].fill.style.width = "100%"; fills[1].out.textContent = "passed"; fills[1].lane.classList.add("done");
+        capt.textContent = "Wave 1: Direct Orthogonal Batch Landing into main under merge_lock…";
+      });
+
+      at(2800, function () {
+        w1.classList.add("done");
+        w2.classList.remove("muted"); w2.classList.add("work");
+        fills[2].lane.classList.remove("muted");
+        fills[2].out.textContent = "rebasing"; fills[2].fill.style.width = "40%";
+        capt.textContent = "Wave 2: Self-healing rebase & funnel merge…";
+      });
+
+      at(3800, function () {
+        fills[2].fill.style.width = "100%"; fills[2].out.textContent = "merged"; fills[2].lane.classList.add("done");
+        w2.classList.remove("work"); w2.classList.add("done");
+        cap.classList.add("ok"); capt.textContent = "✓ Swarm complete: 3 clusters landed · 0 conflicts · AI Jury unanimous";
+      });
+
+      at(6000, loop);
+    },
   };
 
   function buildShowcase() {
