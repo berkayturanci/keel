@@ -351,7 +351,7 @@
         '  <p class="integ-desc">' + item.desc + '</p>',
         '  <div class="integ-cmd-box">',
         '    <code>' + item.cmd + '</code>',
-        '    <button type="button" class="integ-copy-btn" data-copy="' + item.cmd.replace(/"/g, '&quot;') + '" title="Copy command" aria-label="Copy command">Copy</button>',
+        '    <button type="button" class="integ-copy-btn" data-copy="' + item.cmd.replace(/"/g, '&quot;') + '" title="Copy command">Copy</button>',
         '  </div>',
         '</div>'
       );
@@ -368,8 +368,7 @@
         if (navigator.clipboard && navigator.clipboard.writeText) {
           navigator.clipboard.writeText(text).then(function () {
             btn.textContent = "Copied! ✓";
-            btn.setAttribute("aria-label", "Copied to clipboard");
-            setTimeout(function () { btn.textContent = "Copy"; btn.setAttribute("aria-label", "Copy command"); }, 2000);
+            setTimeout(function () { btn.textContent = "Copy"; }, 2000);
           });
         }
       };
