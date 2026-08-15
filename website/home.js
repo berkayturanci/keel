@@ -59,6 +59,7 @@
     var stripTop = 176, rowH = 36;
     var covRows = [
       { name: "/keel:ship — flagship · full traversal", kind: "span", a: 0, b: 12, col: "var(--accent)" },
+      { name: "/keel:swarm — multi-agent DAG wave clustering & batch landing", kind: "span", a: 0, b: 12, col: "var(--green)" },
       { name: "work-block · overnight — ×N over a queue", kind: "span", a: 0, b: 12, col: "var(--accent)", dash: true },
       { name: "pr-loop — s6→s12", kind: "span", a: 6, b: 12, col: "var(--accent-2)" },
       { name: "review-cycle — s7 + s9", kind: "dots", at: [7, 9], col: "var(--brass)" },

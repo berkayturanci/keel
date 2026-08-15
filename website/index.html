@@ -127,6 +127,7 @@
         <button class="sb-item" data-view="backbone"><span class="ic"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/><path d="M7 12h3M14 12h3"/></svg></span> The backbone</button>
         <button class="sb-item" data-view="compare"><span class="ic"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v18M5 8l-3 6h6zM19 8l-3 6h6zM5 8V6M19 8V6M5 6h14"/></svg></span> How it compares</button>
         <button class="sb-item" data-view="visual"><span class="ic"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h3l2-6 4 14 3-9 2 3h4"/></svg></span> Visual</button>
+        <button class="sb-item" data-view="swarm"><span class="ic"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg></span> Swarm</button>
 
         <div class="sb-lab">Use</div>
         <button class="sb-item" data-view="commands"><span class="ic"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/></svg></span> Workflow commands <span class="badge">17</span></button>
@@ -258,6 +259,51 @@
           <div class="cli-grid">
             <div class="cli-row"><code>docs</code><span>The visualizer reference, ship deep-dive, and the 17-command gallery. <a href="docs.html#keel-visual">keel-visual docs →</a></span></div>
             <div class="cli-row"><code>pypi</code><span>Download and version history. <a href="https://pypi.org/project/keel-visual/" target="_blank" rel="noopener">pypi.org/project/keel-visual →</a></span></div>
+          </div>
+        </section>
+
+        <!-- Swarm -->
+        <section class="view" id="view-swarm" data-view="swarm">
+          <div class="view-head">
+            <p class="view-kicker green">Multi-agent concurrency</p>
+            <h1>Keel Swarm — parallel waves &amp; cross-model topology</h1>
+            <p><strong>Keel Swarm</strong> scales work ownership from single-issue execution to high-concurrency multi-agent orchestration. It clusters backlogs into topological dependency waves, runs parallel workers in isolated worktrees, routes across diverse AI models, and lands batches safely under the merge lock.</p>
+          </div>
+
+          <div class="invs">
+            <div class="inv">
+              <b>Static DAG &amp; Disjoint Wave Partitioning</b>
+              <span><code>keel swarm-plan</code> analyzes file-overlap conflict graphs and explicit dependency markers (<code>blocks #N</code> / <code>depends on #N</code>) without executing code. Orthogonal issues run concurrently in <b>Wave 1</b>; dependent items sequence automatically into subsequent waves.</span>
+            </div>
+            <div class="inv">
+              <b>Worktree Filesystem Sandboxing</b>
+              <span>Every parallel cluster worker runs in an isolated directory (<code>.keel/worktrees/swarm/&lt;swarm_id&gt;/&lt;cluster_id&gt;/</code>). Workers never collide, dirty state stays contained, and local branches remain clean.</span>
+            </div>
+            <div class="inv">
+              <b>Cross-Model Delegation Topology</b>
+              <span>Assign different clusters to different models and vendors simultaneously: <b>Claude 3.7 Sonnet</b> on core architecture, <b>Gemini 2.5 Flash / Antigravity</b> on frontend/visualizers, <b>OpenAI GPT-4o / Codex</b> on tests and documentation, and <b>Local Ollama / vLLM</b> for offline nodes.</span>
+            </div>
+            <div class="inv">
+              <b>Unified Multi-Vendor AI Jury Panel</b>
+              <span>Regardless of which AI model authors a PR, every cluster is evaluated by an independent 3-vendor jury panel (Anthropic + OpenAI + Google) for unanimous review consensus before merging.</span>
+            </div>
+            <div class="inv">
+              <b>Dual-Mode Batch Landing</b>
+              <span>Under the single-writer <code>merge_lock</code>, <b>Direct Orthogonal Batch Landing</b> fast-forwards disjoint branches directly into main, while <b>Adaptive Atomic Funnel</b> rebases overlapping clusters and rolls back safely on conflict.</span>
+            </div>
+            <div class="inv">
+              <b>Real-Time 2D DAG &amp; 3D Spatial Visualizer</b>
+              <span>Run <code style="font-family:var(--font-mono)">keel-visual swarm</code> in terminal or browser to inspect the live dependency DAG graph, active worktree clusters, worker health, and landing queues in real time.</span>
+            </div>
+          </div>
+
+          <p class="view-kicker" style="margin:2rem 0 .8rem">Swarm CLI commands</p>
+          <div class="cli-grid">
+            <div class="cli-row"><code>keel swarm-plan &lt;cfg&gt; [issues...]</code><span>Compute the dependency DAG, partition into parallel execution waves, and determine batch vs funnel landing strategy. <a href="docs.html#swarm">Swarm docs →</a></span></div>
+            <div class="cli-row"><code>keel swarm-run &lt;cfg&gt; [issues...]</code><span>Execute parallel cluster workers in isolated worktrees with dynamic rebalancing and heartbeat health monitoring.</span></div>
+            <div class="cli-row"><code>keel swarm-status &lt;cfg&gt;</code><span>Inspect live cluster status, active worker progress, and DAG wave execution state.</span></div>
+            <div class="cli-row"><code>keel swarm-land &lt;cfg&gt; [cluster_ids...]</code><span>Land completed cluster batches under the merge lock with self-healing conflict rollback.</span></div>
+            <div class="cli-row"><code>keel-visual swarm</code><span>Open the real-time interactive 2D DAG and 3D spatial node topology dashboard.</span></div>
           </div>
         </section>
 
