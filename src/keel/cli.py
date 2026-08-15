@@ -4468,6 +4468,19 @@ def _cmd_rollback(args: argparse.Namespace) -> int:
     return 0 if result.success else 1
 
 
+def _cmd_cost_report(args: argparse.Namespace) -> int:
+    from . import cost
+
+    report = cost.generate_cost_report(root=args.root)
+
+    if args.json:
+        print(json.dumps(report.to_dict(), indent=2))
+    else:
+        print(cost.render_cost_report(report))
+
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="keel", description="keel — workflow core")
     parser.add_argument("--version", action="version", version=f"keel {__version__}")
@@ -5637,6 +5650,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_rb.add_argument("--root", default=".", help="repo root")
     p_rb.add_argument("--json", action="store_true", help="emit structured JSON")
     p_rb.set_defaults(func=_cmd_rollback)
+
+    p_cost = sub.add_parser(
+        "cost-report",
+        help="report token consumption, estimated USD costs, and model analytics",
+    )
+    p_cost.add_argument("--root", default=".", help="repo root containing .keel/activity")
+    p_cost.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_cost.set_defaults(func=_cmd_cost_report)
 
     return parser
 
