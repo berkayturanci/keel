@@ -130,11 +130,20 @@ are suppressed by stable fingerprints so routine merges do not flood the learnin
 
 ## Install
 
-keel runs on Linux, macOS, and Windows — a Python (≥3.11) package with one runtime
-dependency, PyYAML. (On Windows it also installs `tzdata`, which supplies the timezone
-database the standard library has no system source for there.)
-
+### Homebrew (macOS & Linux)
 ```bash
+brew tap berkayturanci/keel https://github.com/berkayturanci/keel
+brew install keel
+```
+
+### Standalone Curl Installer (macOS, Linux, WSL)
+```bash
+curl -fsSL https://raw.githubusercontent.com/berkayturanci/keel/main/scripts/install.sh | sh
+```
+
+### PyPI / pipx / uv
+```bash
+pipx install keel-workflow                                    # isolated global CLI tool
 pip install keel-workflow                                     # from PyPI (provides the `keel` command)
 pip install "git+https://github.com/berkayturanci/keel@v1.14.2"  # or pin an existing git tag
 ```
