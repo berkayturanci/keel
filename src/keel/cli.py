@@ -3781,13 +3781,23 @@ def _cmd_init(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
-    stack = scaffold.detect_stack(root)
     repo = root.resolve().name
     try:
-        if args.wizard:
+        if getattr(args, "auto", False):
+            text, meta = scaffold.auto_detect_config(root, repo=repo)
+            stack = meta["stack"]
+            print("keel init --auto")
+            print(f"  stack        : {meta['stack']} ({meta['platform']})")
+            print(f"  base branch  : {meta['base_branch']}")
+            print(f"  build gate   : {meta['build_cmd']}")
+            if meta.get("lint_cmd"):
+                print(f"  lint gate    : {meta['lint_cmd']}")
+        elif args.wizard:
+            stack = scaffold.detect_stack(root)
             print(f"keel init wizard — detected stack: {stack} (Enter accepts each default)")
             text = scaffold.wizard(stack, _ask, repo=repo)
         else:
+            stack = scaffold.detect_stack(root)
             text = scaffold.default_config(stack, repo=repo)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
@@ -5396,6 +5406,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_init.add_argument("--root", default=".", help="repo root to scaffold into")
     p_init.add_argument("--force", action="store_true", help="overwrite an existing config")
     p_init.add_argument("--wizard", action="store_true", help="prompt for values interactively")
+    p_init.add_argument(
+        "--auto", action="store_true", help="smart auto-detect stack and gates without prompts"
+    )
     p_init.set_defaults(func=_cmd_init)
 
     p_setup = sub.add_parser(

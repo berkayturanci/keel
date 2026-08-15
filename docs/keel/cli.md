@@ -1355,10 +1355,11 @@ The JSON result records the configured workflow map, latest-run context shape, a
 transport, supported diagnostic classifications, one-fix policy, and next-command
 recommendations.
 
-## `keel init [--root DIR] [--force]`
+## `keel init [--root DIR] [--force] [--wizard] [--auto]`
 
 Scaffold a default `.keel/project.yaml` for the repo. keel detects the stack from marker
-files (`pubspec.yaml`→Flutter, `pyproject.toml`/`setup.py`→Python, `package.json`→Node,
+files (`Cargo.toml`→Rust, `go.mod`→Go, `pom.xml`→Java, `pubspec.yaml`→Flutter,
+`pyproject.toml`/`setup.py`/`requirements.txt`→Python, `package.json`→Node,
 `build.gradle*`→Android, else generic) and writes a config that already passes
 `keel validate`. Refuses to overwrite an existing config unless `--force`.
 
@@ -1367,9 +1368,14 @@ Use it only when intentionally regenerating project config.
 
 ```bash
 keel init                 # scaffold .keel/project.yaml for the detected stack
+keel init --auto          # smart auto-detect stack, base branch, and test/lint gates without prompts
 keel init --root ../app   # scaffold elsewhere
 keel init --wizard        # prompt for base branch, merge-window hours, timezone, commands
 ```
+
+With `--auto`, keel inspects project marker files, detects the primary base branch from git
+(`main`, `develop`, `master`, `trunk`), selects recommended test and lint commands, and prints a
+structured summary report.
 
 With `--wizard`, keel prompts for each value (base branch, timezone, **merge window
 `HH:MM-HH:MM`**, build/lint commands); press Enter to accept the stack default, or leave a

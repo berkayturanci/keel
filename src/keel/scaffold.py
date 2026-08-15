@@ -19,8 +19,13 @@ _MARKERS: tuple[tuple[str, str], ...] = (
     ("pubspec.yaml", "flutter"),
     ("build.gradle", "android"),
     ("build.gradle.kts", "android"),
+    ("pom.xml", "java"),
+    ("Cargo.toml", "rust"),
+    ("go.mod", "go"),
     ("pyproject.toml", "python"),
     ("setup.py", "python"),
+    ("requirements.txt", "python"),
+    ("Pipfile", "python"),
     ("package.json", "node"),
 )
 
@@ -34,6 +39,12 @@ _TEMPLATES: dict[str, dict] = {
              "globs": ("src/**/*.ts", "src/**/*.js")},
     "android": {"platform": "android", "build": "./gradlew test", "lint": "./gradlew lint",
                 "globs": ("app/src/**",)},
+    "rust": {"platform": "rust", "build": "cargo test", "lint": "cargo clippy",
+             "globs": ("src/**/*.rs",)},
+    "go": {"platform": "go", "build": "go test ./...", "lint": "golangci-lint run",
+           "globs": ("**/*.go",)},
+    "java": {"platform": "java", "build": "mvn test", "lint": "mvn checkstyle:check",
+             "globs": ("src/main/**",)},
     "generic": {"platform": "generic", "build": "make test", "lint": None, "globs": ()},
 }
 
@@ -45,6 +56,52 @@ def detect_stack(root: str | Path) -> str:
         if (root / marker).exists():
             return stack
     return "generic"
+
+
+def detect_base_branch(root: str | Path) -> str:
+    """Detect the repository's default base branch (defaults to ``main``)."""
+    root = Path(root)
+    head_file = root / ".git" / "HEAD"
+    if head_file.exists():
+        try:
+            content = head_file.read_text(encoding="utf-8").strip()
+            if content.startswith("ref: refs/heads/"):
+                ref_name = content[len("ref: refs/heads/"):].strip()
+                if ref_name in ("main", "master", "develop", "trunk"):
+                    return ref_name
+        except OSError:
+            pass
+    return "main"
+
+
+def auto_detect_config(
+    root: str | Path,
+    *,
+    repo: str = "my-repo",
+) -> tuple[str, dict]:
+    """Inspect the repository stack and base branch, returning (yaml_text, metadata)."""
+    root = Path(root)
+    stack = detect_stack(root)
+    base_branch = detect_base_branch(root)
+    t = _TEMPLATES.get(stack, _TEMPLATES["generic"])
+    meta = {
+        "stack": stack,
+        "platform": t["platform"],
+        "base_branch": base_branch,
+        "build_cmd": t["build"],
+        "lint_cmd": t["lint"],
+        "tier3_globs": t["globs"],
+    }
+    text = render_config(
+        repo=repo,
+        base_branch=base_branch,
+        platform=t["platform"],
+        build_cmd=t["build"],
+        lint_cmd=t["lint"],
+        tier3_globs=t["globs"],
+        generator="keel init --auto",
+    )
+    return text, meta
 
 
 def render_config(

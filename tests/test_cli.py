@@ -6987,6 +6987,22 @@ class TestInit(unittest.TestCase):
             self.assertIn("unknown consent mode", err)
             self.assertFalse((Path(d) / ".keel" / "project.yaml").exists())
 
+    def test_auto_mode(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "Cargo.toml").write_text("[package]\nname = 'demo'\n")
+            git_dir = Path(d) / ".git"
+            git_dir.mkdir()
+            (git_dir / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+            rc, out, err = run(["init", "--root", d, "--auto"])
+            self.assertEqual(rc, 0, err)
+            self.assertIn("keel init --auto", out)
+            self.assertIn("stack        : rust (rust)", out)
+            self.assertIn("build gate   : cargo test", out)
+            self.assertIn("lint gate    : cargo clippy", out)
+            vrc, _, _ = run(["validate", str(Path(d) / ".keel" / "project.yaml")])
+            self.assertEqual(vrc, 0)
+
 
 class TestSetup(unittest.TestCase):
     def test_scaffolds_installs_validates_and_plans(self):

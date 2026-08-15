@@ -34,19 +34,94 @@ class TestDetectStack(unittest.TestCase):
     def test_python_setup(self):
         self.assertEqual(scaffold.detect_stack(_root_with("setup.py")), "python")
 
+    def test_python_requirements(self):
+        self.assertEqual(scaffold.detect_stack(_root_with("requirements.txt")), "python")
+
+    def test_python_pipfile(self):
+        self.assertEqual(scaffold.detect_stack(_root_with("Pipfile")), "python")
+
     def test_node(self):
         self.assertEqual(scaffold.detect_stack(_root_with("package.json")), "node")
 
     def test_android(self):
         self.assertEqual(scaffold.detect_stack(_root_with("build.gradle.kts")), "android")
 
+    def test_android_groovy(self):
+        self.assertEqual(scaffold.detect_stack(_root_with("build.gradle")), "android")
+
+    def test_rust(self):
+        self.assertEqual(scaffold.detect_stack(_root_with("Cargo.toml")), "rust")
+
+    def test_go(self):
+        self.assertEqual(scaffold.detect_stack(_root_with("go.mod")), "go")
+
+    def test_java_maven(self):
+        self.assertEqual(scaffold.detect_stack(_root_with("pom.xml")), "java")
+
     def test_generic_when_no_marker(self):
         self.assertEqual(scaffold.detect_stack(_root_with()), "generic")
 
 
+class TestDetectBaseBranch(unittest.TestCase):
+    def test_detects_develop_from_head(self):
+        root = Path(_root_with())
+        git_dir = root / ".git"
+        git_dir.mkdir()
+        (git_dir / "HEAD").write_text("ref: refs/heads/develop\n", encoding="utf-8")
+        self.assertEqual(scaffold.detect_base_branch(root), "develop")
+
+    def test_detects_master_from_head(self):
+        root = Path(_root_with())
+        git_dir = root / ".git"
+        git_dir.mkdir()
+        (git_dir / "HEAD").write_text("ref: refs/heads/master\n", encoding="utf-8")
+        self.assertEqual(scaffold.detect_base_branch(root), "master")
+
+    def test_detects_trunk_from_head(self):
+        root = Path(_root_with())
+        git_dir = root / ".git"
+        git_dir.mkdir()
+        (git_dir / "HEAD").write_text("ref: refs/heads/trunk\n", encoding="utf-8")
+        self.assertEqual(scaffold.detect_base_branch(root), "trunk")
+
+    def test_defaults_to_main_when_no_git(self):
+        self.assertEqual(scaffold.detect_base_branch(_root_with()), "main")
+
+    def test_defaults_to_main_when_detached_or_feature_branch(self):
+        root = Path(_root_with())
+        git_dir = root / ".git"
+        git_dir.mkdir()
+        (git_dir / "HEAD").write_text("ref: refs/heads/feat/my-feature\n", encoding="utf-8")
+        self.assertEqual(scaffold.detect_base_branch(root), "main")
+
+
+class TestAutoDetectConfig(unittest.TestCase):
+    def test_auto_detect_rust(self):
+        root = Path(_root_with("Cargo.toml"))
+        git_dir = root / ".git"
+        git_dir.mkdir()
+        (git_dir / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+        text, meta = scaffold.auto_detect_config(root, repo="rust-app")
+        self.assertEqual(meta["stack"], "rust")
+        self.assertEqual(meta["platform"], "rust")
+        self.assertEqual(meta["base_branch"], "main")
+        self.assertEqual(meta["build_cmd"], "cargo test")
+        self.assertEqual(meta["lint_cmd"], "cargo clippy")
+        self.assertIn("cargo test", text)
+        self.assertIn("cargo clippy", text)
+
+    def test_auto_detect_go(self):
+        root = Path(_root_with("go.mod"))
+        text, meta = scaffold.auto_detect_config(root, repo="go-service")
+        self.assertEqual(meta["stack"], "go")
+        self.assertEqual(meta["platform"], "go")
+        self.assertEqual(meta["build_cmd"], "go test ./...")
+        self.assertEqual(meta["lint_cmd"], "golangci-lint run")
+
+
 class TestDefaultConfig(unittest.TestCase):
     def test_every_stack_validates(self):
-        for stack in ("flutter", "python", "node", "android", "generic"):
+        for stack in ("flutter", "python", "node", "android", "rust", "go", "java", "generic"):
             text = scaffold.default_config(stack, repo="demo")
             import yaml
             data = yaml.safe_load(text)
