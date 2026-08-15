@@ -126,6 +126,7 @@
         <button class="sb-item" data-view="what"><span class="ic"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l9 5-9 5-9-5z"/><path d="M3 12l9 5 9-5"/><path d="M3 17l9 5 9-5"/></svg></span> What it is</button>
         <button class="sb-item" data-view="backbone"><span class="ic"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/><path d="M7 12h3M14 12h3"/></svg></span> The backbone</button>
         <button class="sb-item" data-view="compare"><span class="ic"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v18M5 8l-3 6h6zM19 8l-3 6h6zM5 8V6M19 8V6M5 6h14"/></svg></span> How it compares</button>
+        <button class="sb-item" data-view="integrations"><span class="ic"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 16v1a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v1"/><path d="M18 8h4a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-4"/><circle cx="8" cy="12" r="2"/></svg></span> Integrations <span class="badge">32+</span></button>
         <button class="sb-item" data-view="visual"><span class="ic"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h3l2-6 4 14 3-9 2 3h4"/></svg></span> Visual</button>
         <button class="sb-item" data-view="swarm"><span class="ic"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg></span> Swarm</button>
 
@@ -311,6 +312,36 @@
           </div>
         </section>
 
+        <!-- Integrations & Ecosystem -->
+        <section class="view" id="view-integrations" data-view="integrations">
+          <div class="view-head">
+            <p class="view-kicker green">Ecosystem &amp; Compatibility</p>
+            <h1>Installs into the tools you already use.</h1>
+            <p>One project-neutral workflow core registers everywhere: <strong>12 AI assistants · 8 LLM backends · 6 engineering skill libraries · GitHub Actions &amp; MCP</strong>. Zero runtime lock-in, on-device, Apache-2.0.</p>
+          </div>
+
+          <!-- Controls: Category Filter Tabs + Search -->
+          <div class="integ-toolbar">
+            <div class="integ-pills" role="radiogroup" aria-label="Filter integrations by category">
+              <button type="button" class="integ-pill active" data-cat="all" role="radio" aria-checked="true">All <span class="integ-count-badge">32</span></button>
+              <button type="button" class="integ-pill" data-cat="assistants" role="radio" aria-checked="false">AI Assistants <span class="integ-count-badge">12</span></button>
+              <button type="button" class="integ-pill" data-cat="backends" role="radio" aria-checked="false">LLM Backends <span class="integ-count-badge">8</span></button>
+              <button type="button" class="integ-pill" data-cat="skills" role="radio" aria-checked="false">Skill Packs &amp; Tools <span class="integ-count-badge">6</span></button>
+              <button type="button" class="integ-pill" data-cat="platforms" role="radio" aria-checked="false">Platforms &amp; CI <span class="integ-count-badge">6</span></button>
+            </div>
+            <div class="integ-search-wrap">
+              <input type="search" id="integrations-search" class="integ-search" placeholder="Search 32+ integrations (e.g. Cursor, Claude, Ollama, Addy Osmani)..." aria-label="Search integrations">
+            </div>
+          </div>
+
+          <div class="integ-status-bar">
+            <span id="integrations-count" class="integ-status-text">Showing 32 integrations</span>
+          </div>
+
+          <!-- Interactive Grid Container -->
+          <div class="integ-grid" id="integrations-grid" aria-live="polite"></div>
+        </section>
+
         <!-- Commands -->
         <section class="view" id="view-commands" data-view="commands">
           <div class="view-head"><p class="view-kicker brass">17 workflows · /keel:&lt;command&gt;</p><h1>Pick a command, watch it run</h1><p>These are the agentic flows — every one is <strong>project-neutral</strong>: behaviour comes only from that repo's <code style="font-family:var(--font-mono);color:var(--accent-2)">.keel/project.yaml</code>. Select any of the 17 — its scene plays a scripted run, with its arguments and flags below.</p></div>
@@ -428,6 +459,7 @@ keel ship     &lt;cfg&gt; --root .  <span class="cm"># dry assessment → decisi
 <script src="scenes.js"></script>
 <script src="workspace.js"></script>
 <script src="swarm-simulator.js"></script>
+<script src="integrations.js"></script>
 
 <!-- Cloudflare Web Analytics (cookieless, no consent banner required) -->
 <script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "f9a978b9ccc64ff49460fbcee8f722ef"}'></script>
