@@ -62,7 +62,7 @@ body { padding-top: 0; overflow: hidden; }
 .sb-disp { position: relative; margin-top: .4rem; }
 
 /* ---- main pane: stacked views, scroll between them ------------------- */
-.main { position: relative; overflow-y: auto; overflow-x: clip; scroll-behavior: smooth;
+.main { position: relative; overflow-y: auto; overflow-x: hidden; scroll-behavior: smooth; min-width: 0; max-width: 100%;
   background-color: color-mix(in srgb, var(--accent) 4%, var(--bg));
   background-image:
     radial-gradient(color-mix(in srgb, var(--accent) 9%, transparent) 1.1px, transparent 1.2px),
@@ -72,36 +72,37 @@ body { padding-top: 0; overflow: hidden; }
   background-position: 0 0, 0 0, 0 0;
   background-repeat: repeat, no-repeat, no-repeat; }
 @media (prefers-reduced-motion: reduce) { .main { scroll-behavior: auto; } }
-.view { display: block; padding: clamp(1.6rem, 3.4vw, 3rem) clamp(1.3rem, 3vw, 2.6rem); max-width: 1480px; scroll-margin-top: 8px; }
+.view { display: block; padding: clamp(1.4rem, 3.4vw, 3rem) clamp(1rem, 3vw, 2.6rem); max-width: 1480px; scroll-margin-top: 8px; min-width: 0; box-sizing: border-box; }
 .view + .view { border-top: 1px solid var(--border-soft); }
 .view.pre { opacity: 0; transform: translateY(24px); }
 .view.seen { opacity: 1; transform: none; transition: opacity .7s cubic-bezier(.2,.7,.2,1), transform .7s cubic-bezier(.2,.7,.2,1); }
 @media (prefers-reduced-motion: reduce) { .view.pre { opacity: 1; transform: none; } .view.seen { transition: none; } }
-.view-head { margin-bottom: 1.6rem; }
+.view-head { margin-bottom: 1.6rem; min-width: 0; }
 .view-kicker { font-family: var(--font-mono); font-size: .72rem; letter-spacing: .05em; text-transform: uppercase; color: var(--accent-2); margin: 0 0 .5rem; }
 .view-kicker.brass { color: var(--brass-2); }
-.view-head h1 { font-size: clamp(1.5rem, 3vw, 2.1rem); font-weight: 700; margin: 0 0 .5rem; letter-spacing: -0.02em; }
-.view-head p { font-size: 1.02rem; color: var(--muted); max-width: 70ch; margin: 0; }
+.view-head h1 { font-size: clamp(1.5rem, 3vw, 2.1rem); font-weight: 700; margin: 0 0 .5rem; letter-spacing: -0.02em; overflow-wrap: anywhere; word-break: break-word; }
+.view-head p { font-size: 1.02rem; color: var(--muted); max-width: 70ch; margin: 0; overflow-wrap: anywhere; word-break: break-word; }
 .view-head p strong { color: var(--text); }
 
 /* ---- mobile: sidebar → top tab strip --------------------------------- */
 .sb-burger { display: none; }
 @media (max-width: 760px) {
-  .app-body { grid-template-columns: 1fr; grid-template-rows: auto minmax(0,1fr); }
+  .app-body { grid-template-columns: 100%; grid-template-rows: auto minmax(0,1fr); min-width: 0; }
   .app-body.nav-moved { grid-template-rows: minmax(0,1fr); }
   .tb-dots { display: none; }
-  .titlebar { gap: .55rem; }
+  .titlebar { gap: .55rem; padding: .45rem .65rem; }
   .titlebar .sidebar { flex: 1; min-width: 0; border-bottom: none; background: transparent; padding: 0 .2rem; }
-  .sidebar { flex-direction: row; align-items: center; gap: .4rem; overflow-x: auto; overflow-y: hidden; border-right: none; border-bottom: 1px solid var(--border); padding: .55rem .7rem; scrollbar-width: none; }
+  .sidebar { flex-direction: row; align-items: center; gap: .4rem; overflow-x: auto; overflow-y: hidden; border-right: none; border-bottom: 1px solid var(--border); padding: .5rem .6rem; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
   .sidebar::-webkit-scrollbar { display: none; }
   .sb-brand, .sb-lab, .sb-spacer, .sb-disp { display: none; }
-  .sb-item { flex: 0 0 auto; width: auto; padding: .45rem .7rem; }
+  .sb-item { flex: 0 0 auto; width: auto; padding: .45rem .65rem; font-size: .85rem; }
   .sb-item .ext, .sb-item .badge { display: none; }
+  .view { padding: 1.25rem .85rem; }
 }
 
 /* small KPI row used on overview */
-.kpis { display: flex; flex-wrap: wrap; gap: .6rem; margin: 1.1rem 0 0; }
-.kpi { flex: 1 1 130px; padding: .8rem 1rem; background: var(--surface); border: 1px solid var(--border); border-radius: 11px; }
+.kpis { display: flex; flex-wrap: wrap; gap: .6rem; margin: 1.1rem 0 0; width: 100%; }
+.kpi { flex: 1 1 130px; padding: .8rem 1rem; background: var(--surface); border: 1px solid var(--border); border-radius: 11px; min-width: 0; box-sizing: border-box; }
 .kpi b { display: block; font-family: var(--font-display); font-weight: 700; font-size: 1.5rem; color: var(--text); }
 .kpi b .u { font-size: .9rem; color: var(--accent-2); margin-left: .22em; }
 .kpi span { font-size: .8rem; color: var(--muted); font-family: var(--font-mono); }

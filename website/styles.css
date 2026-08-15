@@ -121,10 +121,12 @@ a:hover { color: var(--accent-3); }
 h1, h2, h3, h4 { font-family: var(--font-display); letter-spacing: -0.02em; line-height: 1.1; font-weight: 600; }
 h2 { font-size: clamp(1.65rem, 3vw, 2.35rem); margin: 0 0 0.5rem; }
 h3 { font-size: 1.12rem; margin: 0 0 0.4rem; }
-p { color: var(--muted); }
+p { color: var(--muted); overflow-wrap: anywhere; }
 code, pre, kbd { font-family: var(--font-mono); }
+code { overflow-wrap: anywhere; word-break: break-word; }
+pre code { overflow-wrap: normal; word-break: normal; }
 
-.wrap { max-width: var(--max); margin: 0 auto; padding: 0 1.5rem; }
+.wrap { max-width: var(--max); margin: 0 auto; padding: 0 1.5rem; box-sizing: border-box; }
 .muted { color: var(--muted); }
 .center { text-align: center; }
 .mono { font-family: var(--font-mono); }
