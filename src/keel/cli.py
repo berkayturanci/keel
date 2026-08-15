@@ -4425,6 +4425,49 @@ def _cmd_swarm_land(args: argparse.Namespace) -> int:
     return 0 if result.status == "success" else (1 if result.status == "failed" else 0)
 
 
+def _cmd_canary(args: argparse.Namespace) -> int:
+    try:
+        cfg.load_config(args.path)
+    except (cfg.ConfigError, OSError) as exc:
+        print(f"keel canary: {exc}", file=sys.stderr)
+        return 1
+
+    from . import canary
+
+    result = canary.run_canary_guard(
+        args.path,
+        pr_number=args.pr,
+        commit_sha=args.commit,
+        root=args.root,
+        duration_m=args.duration,
+        health_cmd=args.health_cmd,
+        auto_revert=args.auto_revert,
+    )
+
+    if args.json:
+        print(json.dumps(result.to_dict(), indent=2))
+    else:
+        print(canary.render_canary_result(result))
+
+    return 0 if result.passed else 1
+
+
+def _cmd_rollback(args: argparse.Namespace) -> int:
+    from . import canary
+
+    result = canary.execute_rollback(
+        args.commit,
+        root=args.root,
+    )
+
+    if args.json:
+        print(json.dumps(result.to_dict(), indent=2))
+    else:
+        print(canary.render_rollback_result(result))
+
+    return 0 if result.success else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="keel", description="keel — workflow core")
     parser.add_argument("--version", action="version", version=f"keel {__version__}")
@@ -5567,6 +5610,33 @@ def build_parser() -> argparse.ArgumentParser:
     p_sl.add_argument("--live", action="store_true", help="run live mutating git landing")
     p_sl.add_argument("--json", action="store_true", help="emit structured JSON")
     p_sl.set_defaults(func=_cmd_swarm_land)
+
+    p_canary = sub.add_parser(
+        "canary",
+        help="monitor post-merge health signals and guard against regressions",
+    )
+    p_canary.add_argument("path", help="path to project.yaml")
+    p_canary.add_argument("--root", default=".", help="repo root for git and gates")
+    p_canary.add_argument("--pr", type=int, default=None, help="PR number being monitored")
+    p_canary.add_argument("--commit", default=None, help="target merge commit SHA")
+    p_canary.add_argument(
+        "--duration", type=_positive_int, default=1, help="monitoring duration in minutes"
+    )
+    p_canary.add_argument("--health-cmd", default=None, help="custom health probe command")
+    p_canary.add_argument(
+        "--auto-revert", action="store_true", help="automatically revert merge commit on failure"
+    )
+    p_canary.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_canary.set_defaults(func=_cmd_canary)
+
+    p_rb = sub.add_parser(
+        "rollback",
+        help="atomically revert a merge commit",
+    )
+    p_rb.add_argument("commit", help="merge commit SHA to revert")
+    p_rb.add_argument("--root", default=".", help="repo root")
+    p_rb.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_rb.set_defaults(func=_cmd_rollback)
 
     return parser
 
