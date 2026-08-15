@@ -14,9 +14,9 @@ chardet==5.2.0 \
 cyclonedx-bom==7.3.1 \
     --hash=sha256:8c5adccefd593e89c0500463649c232625cee8e38dae1a433e057dfa495eff08 \
     --hash=sha256:ebd99dc2cf62a7067e327bef2b2ffada99d57ed3fda2db6c4c8f3004e5bfd3cf
-cyclonedx-python-lib==11.11.0 \
-    --hash=sha256:3049fc83e06a059b5c5907a527625a8ed5073caab10607ed4c9e5503b590fd44 \
-    --hash=sha256:4b3194db72b613717f2912447e67ab618c75ff7dcac6c4af3c0e9e1ac617c102
+cyclonedx-python-lib==11.11.2 \
+    --hash=sha256:1995edc423a813dde2bb839eea48ec1c8e1ad0861a2e11601ee249762cd135bd \
+    --hash=sha256:da00c77410566db3197e64a0e7f22065341277a5b91a41b984256c8a6f58ac8c
 defusedxml==0.7.1 \
     --hash=sha256:a352e7e428770286cc899e2542b6cdaedb2b4953ff269a210103ec58f6198a61
 fqdn==1.5.1 \
