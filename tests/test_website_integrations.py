@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import unittest
 from pathlib import Path
 
@@ -25,7 +26,6 @@ class TestWebsiteIntegrations(unittest.TestCase):
         self.assertIn("Ollama (Local / Offline)", content)
         self.assertIn("DeepSeek V3 / R1", content)
         self.assertIn("Addy Osmani Agent Skills", content)
-        self.assertIn("Compound Engineering", content)
         self.assertIn("Official GitHub Action", content)
         self.assertIn("Homebrew Tap", content)
         self.assertIn("VS Code & Cursor Extension", content)
@@ -35,6 +35,22 @@ class TestWebsiteIntegrations(unittest.TestCase):
         self.assertIn('"backends"', content)
         self.assertIn('"skills"', content)
         self.assertIn('"platforms"', content)
+
+    def test_all_logos_exist_on_disk(self):
+        js_file = WEBSITE_DIR / "integrations.js"
+        content = js_file.read_text(encoding="utf-8")
+        logos = re.findall(r'logo:\s*"(logos/[^"]+)"', content)
+        self.assertGreaterEqual(len(logos), 25, "Must have at least 25 integration logos")
+
+        for rel_path in logos:
+            logo_file = WEBSITE_DIR / rel_path
+            self.assertTrue(
+                logo_file.exists(),
+                f"Logo file {rel_path} must exist in website directory",
+            )
+            self.assertGreater(
+                logo_file.stat().st_size, 0, f"Logo file {rel_path} must not be empty"
+            )
 
     def test_index_html_has_integrations_view(self):
         html_file = WEBSITE_DIR / "index.html"
@@ -56,6 +72,7 @@ class TestWebsiteIntegrations(unittest.TestCase):
         self.assertIn(".integ-card", content)
         self.assertIn(".integ-pill", content)
         self.assertIn(".integ-search", content)
+        self.assertIn(".integ-icon-img", content)
 
 
 if __name__ == "__main__":

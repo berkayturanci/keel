@@ -426,7 +426,8 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .integ-card:hover { transform: translateY(-2px); border-color: var(--accent-line); box-shadow: 0 4px 16px -4px rgba(0,0,0,0.08); }
 
 .integ-card-top { display: flex; align-items: center; gap: .75rem; }
-.integ-avatar { width: 38px; height: 38px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-family: var(--font-mono); font-weight: 700; font-size: .85rem; background: var(--surface-2); border: 1px solid var(--border-soft); flex-shrink: 0; }
+.integ-avatar { width: 38px; height: 38px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-family: var(--font-mono); font-weight: 700; font-size: .85rem; background: var(--surface-2); border: 1px solid var(--border-soft); flex-shrink: 0; overflow: hidden; }
+.integ-icon-img { width: 22px; height: 22px; object-fit: contain; display: block; }
 .integ-avatar.tag-assistants { color: #818cf8; background: rgba(99,102,241,0.08); border-color: rgba(99,102,241,0.25); }
 .integ-avatar.tag-backends { color: #34d399; background: rgba(16,185,129,0.08); border-color: rgba(16,185,129,0.25); }
 .integ-avatar.tag-skills { color: #f5a524; background: rgba(245,165,36,0.08); border-color: rgba(245,165,36,0.25); }
