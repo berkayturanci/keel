@@ -9,10 +9,18 @@ commands; project policy and extensions remain project-owned.
 
 - Python 3.11 or newer.
 - A clean git worktree created from the project's normal base branch.
-- The `keel` CLI installed from PyPI, TestPyPI, or a pinned git tag.
+- The `keel` CLI installed via Homebrew, standalone curl installer, or PyPI:
 
 ```bash
-pip install keel-workflow
+# Option A: Homebrew (macOS & Linux)
+brew tap berkayturanci/keel && brew install keel
+
+# Option B: PyPI / pipx
+pipx install keel-workflow
+
+# Option C: Standalone curl installer
+curl -fsSL https://raw.githubusercontent.com/berkayturanci/keel/main/scripts/install.sh | sh
+
 keel version
 ```
 
