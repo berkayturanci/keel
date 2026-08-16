@@ -1,7 +1,7 @@
 /* ============================================================
    keel — Ecosystem & Integrations Catalog
-   Interactive catalog of 30+ AI agents, LLM backends,
-   skill packs, and developer platforms supported out-of-the-box.
+   Interactive catalog of 32 AI coding agents, LLM backends,
+   agent skills, and developer platforms supported out-of-the-box.
    Uses authentic brand logo assets from official sources.
    Zero external dependencies — pure client-side vanilla JS.
    ============================================================ */
@@ -10,7 +10,7 @@
   "use strict";
 
   var INTEGRATIONS = [
-    // --- AI Assistants / Coding Agents ---
+    // --- 1. AI Agents & Coding Assistants (12) ---
     {
       id: "claude-code",
       name: "Claude Code",
@@ -120,13 +120,13 @@
       logo: "logos/hermes.png"
     },
 
-    // --- LLM Backends / Providers ---
+    // --- 2. Supported LLM Models & Backends (8) ---
     {
       id: "anthropic-claude",
       name: "Anthropic Claude",
       category: "backends",
       badge: "LLM Backend",
-      desc: "Claude 3.7 Sonnet, 3.5 Sonnet, Haiku, and 3 Opus supported with native tool calls and pricing tracking.",
+      desc: "Claude 3.7 Sonnet, 3.5 Sonnet, Haiku, and 3 Opus supported with native tool calls and cost tracking.",
       cmd: "knobs.implementer_agents.core: claude-3-7-sonnet",
       logo: "logos/anthropic.svg"
     },
@@ -194,7 +194,7 @@
       logo: "logos/openrouter.svg"
     },
 
-    // --- Engineering Skill Packs & Tooling ---
+    // --- 3. Agent Skills & Multi-Agent Architecture (6) ---
     {
       id: "addyosmani-skills",
       name: "Addy Osmani Agent Skills",
@@ -214,61 +214,43 @@
       logo: "logos/mcp.svg"
     },
     {
+      id: "compound-engineering",
+      name: "Compound Engineering",
+      category: "skills",
+      badge: "Engineering System",
+      desc: "Senior engineering reflexes and anti-rationalization patterns hooked into s4 implement and s7 review.",
+      cmd: "knobs.skills: ['compound:strict-verification']",
+      logo: "logos/compound.svg"
+    },
+    {
+      id: "ai-jury",
+      name: "Multi-Vendor AI Jury",
+      category: "skills",
+      badge: "Consensus Engine",
+      desc: "Independent 3-vendor jury panel (Anthropic + OpenAI + Google) ensuring unanimous pre-merge verdicts.",
+      cmd: "keel evidence-verify .keel/project.yaml --phase pre-merge",
+      logo: "logos/jury.svg"
+    },
+    {
       id: "git-worktrees",
-      name: "Isolated Git Worktrees",
+      name: "Swarm Worktrees",
       category: "skills",
       badge: "Concurrency Engine",
       desc: "Zero dirty-checkout collisions: every parallel Swarm worker runs in an isolated directory sandboxed by git.",
       cmd: "keel swarm-plan .keel/project.yaml --issues 101,102",
-      logo: "logos/git.svg"
+      logo: "logos/swarm.svg"
     },
     {
-      id: "neo4j-graph",
-      name: "Neo4j Knowledge Graph",
+      id: "pre-commit",
+      name: "Pre-Commit Quality Gates",
       category: "skills",
-      badge: "Graph Database",
-      desc: "Export codebase AST call-graphs, dependency trees, and architecture flows directly into Neo4j.",
-      cmd: "keel export --format neo4j",
-      logo: "logos/neo4j.svg"
-    },
-    {
-      id: "obsidian-vault",
-      name: "Obsidian Canvas & Notes",
-      category: "skills",
-      badge: "Knowledge Base",
-      desc: "Two-way documentation and architecture decision record sync directly into Obsidian vaults.",
-      cmd: "keel export --format obsidian",
-      logo: "logos/obsidian.svg"
-    },
-    {
-      id: "mermaid-diagrams",
-      name: "Mermaid Flowcharts",
-      category: "skills",
-      badge: "Visual Spec",
-      desc: "Render deterministic step machine execution plans and Swarm DAG dependency graphs.",
-      cmd: "keel plan .keel/project.yaml --mermaid",
-      logo: "logos/mermaid.svg"
-    },
-    {
-      id: "postgresql-data",
-      name: "PostgreSQL Verification",
-      category: "skills",
-      badge: "Database Gate",
-      desc: "Execute automated database migration tests and schema verification inside Keel test gates.",
-      cmd: "keel run-gates .keel/project.yaml --gate postgres",
-      logo: "logos/postgresql.svg"
-    },
-    {
-      id: "terraform-iac",
-      name: "Terraform / HCL Guard",
-      category: "skills",
-      badge: "Infra as Code",
-      desc: "Infrastructure plan validation, security scanning, and policy enforcement before merge.",
-      cmd: "keel run-gates .keel/project.yaml --gate terraform",
-      logo: "logos/terraform.svg"
+      badge: "Quality Gate",
+      desc: "Deterministic local gates ensuring code formatting, security, and schema validation before any commit.",
+      cmd: "keel run-gates .keel/project.yaml",
+      logo: "logos/precommit.svg"
     },
 
-    // --- Platforms & CI/CD ---
+    // --- 4. Platforms & Environments (6) ---
     {
       id: "github-actions",
       name: "Official GitHub Action",
