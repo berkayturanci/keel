@@ -132,8 +132,13 @@ are suppressed by stable fingerprints so routine merges do not flood the learnin
 
 ### Homebrew (macOS & Linux)
 ```bash
-brew tap berkayturanci/keel https://github.com/berkayturanci/keel
+brew tap berkayturanci/keel
 brew install keel
+```
+
+Or install in a single command:
+```bash
+brew install berkayturanci/keel/keel
 ```
 
 ### Standalone Curl Installer (macOS, Linux, WSL)
