@@ -120,6 +120,47 @@ class TestReleaseDocs(unittest.TestCase):
         self.assertIn(f'license "{declared.group(1)}"', formula,
                       "formula licence must match pyproject")
 
+    def test_homebrew_formula_vendors_every_runtime_dependency(self):
+        """The formula installed a keel that could not start (#787).
+
+        `test_homebrew_formula_matches_the_project` above compares the formula's
+        *identity* to the project — tag, checksum, licence — and all three agreed
+        while `brew install` produced a virtualenv that died on `import yaml`
+        before printing anything.
+
+        Homebrew's `std_pip_args` is `--no-deps --no-binary=:all:`, not
+        negotiable, so pip never resolves dependencies from PyPI: each one has to
+        be vendored as a `resource` stanza. That is the invariant here, and it is
+        checkable offline — no network, no `brew` binary.
+        """
+        formula = (REPO_ROOT / "Formula" / "keel.rb").read_text(encoding="utf-8")
+        project = tomllib.loads(
+            (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        )
+
+        # Homebrew runs on macOS and Linux only, so a Windows-marked dependency
+        # (tzdata) is correctly absent. Anything unconditional must be vendored.
+        required = {
+            re.match(r"[A-Za-z0-9._-]+", spec).group(0).lower()
+            for spec in project["project"]["dependencies"]
+            if "sys_platform" not in spec
+        }
+        self.assertTrue(required, "no unconditional runtime dependency found to check")
+
+        vendored = {name.lower() for name in re.findall(r'resource "([^"]+)"', formula)}
+        self.assertEqual(
+            set(),
+            required - vendored,
+            "every runtime dependency must be a resource; brew installs with --no-deps",
+        )
+
+        # A resource without a pinned sdist is as broken as a missing one: brew
+        # builds with --no-binary=:all:, so a wheel url would fail the build.
+        for block in re.findall(r'resource "[^"]+" do(.*?)\n  end', formula, re.S):
+            with self.subTest(block=block.strip()[:60]):
+                self.assertRegex(block, r'url "https://\S+\.tar\.gz"')
+                self.assertRegex(block, r'sha256 "[0-9a-f]{64}"')
+
     def test_publish_workflow_uses_hash_locked_release_tools(self):
         workflow = (REPO_ROOT / ".github/workflows/publish.yml").read_text(encoding="utf-8")
         lockfile = (
