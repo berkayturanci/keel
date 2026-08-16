@@ -97,6 +97,29 @@ class TestReleaseDocs(unittest.TestCase):
         self.assertIn('keel ship "${ARGS[@]}" | tee ship.txt', text)
         self.assertNotIn("keel ship $ARGS", text)
 
+    def test_homebrew_formula_matches_the_project(self):
+        """The formula drifted seven releases and misstated the licence (#774).
+
+        None of it was caught, because nothing compared the formula to the project
+        it installs. A placeholder checksum only fails for whoever runs
+        `brew install`; a wrong licence never fails at all.
+        """
+        formula = (REPO_ROOT / "Formula" / "keel.rb").read_text(encoding="utf-8")
+
+        self.assertIn(f"/tags/v{__version__}.tar.gz", formula,
+                      "formula url must point at the current release tag")
+        digest = re.search(r'sha256 "([0-9a-f]{64})"', formula)
+        self.assertIsNotNone(digest, "formula must carry a sha256")
+        self.assertNotEqual(digest.group(1), "0" * 64,
+                            "formula sha256 is still the placeholder; brew would refuse it")
+        # Read the licence from the project rather than hard-coding it here, so the
+        # test cannot drift into asserting the wrong thing either.
+        declared = re.search(r'license = "([^"]+)"',
+                             (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        self.assertIsNotNone(declared)
+        self.assertIn(f'license "{declared.group(1)}"', formula,
+                      "formula licence must match pyproject")
+
     def test_publish_workflow_uses_hash_locked_release_tools(self):
         workflow = (REPO_ROOT / ".github/workflows/publish.yml").read_text(encoding="utf-8")
         lockfile = (
