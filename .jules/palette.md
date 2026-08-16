@@ -56,11 +56,3 @@
 ## 2026-08-15 - Faint Text Color Contrast
 **Learning:** FAQ body text and supplementary notes were using the `--faint` color token, which fell below the WCAG AA 4.5:1 contrast ratio requirement for both light and dark themes, making long-form text hard to read.
 **Action:** Ensure semantic text elements do not use decorative faint color tokens, or ensure the lowest-contrast text token still passes 4.5:1.
-
-## 2024-10-19 - Avoid ARIA Live on focusable elements
-**Learning:** Applying `aria-live` directly to interactive or focusable elements (like buttons) is an accessibility anti-pattern. Instead, communicate dynamic status changes by explicitly updating the element's `aria-label` attribute or by using a shared, off-screen container with `aria-live="polite"`.
-**Action:** When a button's visual text changes dynamically (e.g., from "Copy" to "Copied"), ensure its `aria-label` is synchronously updated via JavaScript to provide context to screen reader users.
-
-## 2024-10-20 - Descriptive ARIA Labels for Generic Action Buttons
-**Learning:** Action buttons with generic visual text (e.g., "Copy") must include descriptive `aria-label` attributes to provide sufficient context for screen reader users.
-**Action:** Always add context-rich `aria-label`s (e.g., `aria-label="Copy CLI command"`) to buttons that lack specific descriptive text.

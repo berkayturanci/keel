@@ -1,33 +1,26 @@
-# keel — Multi-Agent Workflow Core & Merge Coordinator
+# keel
 
-> keel turns AI coding agents into accountable work owners. It is an open-source,
-> project-neutral multi-agent workflow core and merge coordinator that drives a
-> GitHub issue from intake to done: select → branch → implement → CI → review →
-> test → merge → close → capture. Projects set their values in `project.yaml` and
-> snap their own logic into named extension slots. Stdlib-first Python CLI, single
-> runtime dependency, 100% test coverage, 17 `/keel` commands, and high-concurrency
-> multi-agent Swarm DAG orchestration.
+> keel turns coding agents into work owners. It is a project-neutral, multi-agent
+> workflow backbone that drives a GitHub issue from intake to done: select →
+> branch → implement → CI → review → test → merge → close → capture. Projects set
+> their values in `project.yaml` and snap their own logic into named extension
+> slots. Stdlib-first Python CLI, single runtime dependency, 100% test coverage,
+> 16 `/keel` commands. Works across Claude Code, Codex, Antigravity, Gemini, and any OpenAI-compatible API or CLI.
 
-## Documentation & Ecosystem
+## Docs
 
-- [Home & Integrations Catalog](https://berkayturanci.github.io/keel/): overview, 32+ agent integrations (Claude, Cursor, Gemini, Codex, Devin, Ollama, DeepSeek)
-- [Documentation](https://berkayturanci.github.io/keel/docs.html): commands, configuration, extension slots, Swarm DAG orchestration, and the fixed backbone
-- [Test Coverage Report](https://berkayturanci.github.io/keel/coverage.html): live test-coverage dashboard (100% line + branch)
+- [Home](https://berkayturanci.github.io/keel/): overview, positioning, and quick start
+- [Documentation](https://berkayturanci.github.io/keel/docs.html): commands, config, extension slots, and the fixed backbone
+- [Coverage report](https://berkayturanci.github.io/keel/coverage.html): live test-coverage dashboard
 
-## Source & Distribution
+## Source
 
-- [GitHub Repository](https://github.com/berkayturanci/keel): source code, issues, releases, and discussions
-- [Official GitHub Action](https://github.com/berkayturanci/keel-action): 1-click CI/CD action (`uses: berkayturanci/keel-action@v1`)
-- [Homebrew Tap](https://github.com/berkayturanci/homebrew-keel): `brew install keel`
-- [PyPI Package](https://pypi.org/project/keel-workflow/): `pipx install keel`
+- [GitHub repository](https://github.com/berkayturanci/keel): source, issues, and releases
 
-## Key Architecture & Features
+## Key concepts
 
-- **Fixed Backbone (`s0`–`s12`)**: Invariant step sequence driving every issue from backlog to merge.
-- **Project-Neutral Core**: All repo-specific configurations live in `.keel/project.yaml`.
-- **High-Concurrency Swarm DAG**: Static scope disjointness analysis, parallel worktrees, and conflict self-healing rebase.
-- **Single-Writer Merge Lock**: Safe, serial atomic PR landings without dirty checkouts.
-- **Multi-Vendor AI Jury**: Independent 3-vendor review panel (Anthropic + OpenAI + Google) for unanimous pre-merge consensus.
-- **Token Analytics & USD Cost Estimation**: Built-in pricing ledger via `keel cost-report`.
-- **Post-Merge Canary Guard & Automated Rollback**: `keel canary` and `keel rollback` for zero-downtime safety.
-- **Zero-Dependency Core**: Stdlib-first Python implementation with a strict 100% line & branch coverage bar.
+- Fixed backbone: the invariant step sequence every issue flows through
+- Project-neutral core: all project specifics live in `project.yaml`, read via the `keel` CLI
+- Extension slots: named hooks where a project snaps in its own implementers/reviewers
+- Auditable evidence chain: commit-SHA-bound review provenance, model attribution, and audited deferrals
+- Pure-core / thin-I/O split with a strict 100% coverage bar
