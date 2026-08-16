@@ -6,6 +6,8 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.15.0] - 2026-08-16
+
 ### Added
 - **Keel Swarm High-Concurrency Multi-Agent Orchestration** (#714, #715, #716, #717, #718, #719, #720, #721):
   - **Deterministic Static Dependency Analysis & Clustering Engine** (#715): Static scope prediction, disjointness matrix calculation, and topological wave tier partitioning via `keel swarm-plan`.
@@ -15,6 +17,17 @@ All notable changes to keel are documented here. The format follows
   - **Interactive 2D DAG Partition Graphs & 3D Multi-Wave Spatial Topology** (#721): Comprehensive visualizer additions in `keel-visual swarm` with interactive SVG DAG connectors and 3D WebGL/Canvas wave layer projection.
   - **Cross-Agent Swarm Command & Skill Adapters** (#718): Generated `/keel:swarm` command adapter for Claude Code and `keel-swarm` shared skill for Codex, Gemini, and Antigravity.
   - **Comprehensive Swarm Guide & Competitive Analysis** (#714, #719): Detailed architecture guide in `docs/keel/swarm.md`, competitive benchmark matrix in `docs/keel/comparison.md`, and proposal in `docs/proposals/keel-swarm.md`.
+- **Multi-Agent Integrations & Ecosystem Catalog** (#763, #764): Interactive in-browser catalog highlighting 32+ out-of-the-box integrations across AI coding assistants (Claude Code, Cursor, Gemini CLI, Antigravity, Devin, Codex), LLM backends (Anthropic, OpenAI, Gemini, DeepSeek, Ollama local), skill libraries (Addy Osmani Skills, Compound, MCP), and platforms.
+- **VS Code and Cursor Extension** (#747, #760): Native status bar merge window indicator and command palette shortcuts for VS Code and Cursor.
+- **Interactive In-Browser Swarm DAG Simulator** (#746, #755): Real-time interactive canvas simulator modeling parallel multi-model worker waves, 3-vendor jury consensus, and merge lock funnel landings.
+- **Token Analytics & USD Cost Estimation** (#744, #754): Pricing model ledger and CLI reporting via `keel cost-report`.
+- **Canary Health Guard & Automated Rollback** (#743, #753): Post-merge regression canary monitoring and atomic git rollback guard (`keel canary` and `keel rollback`).
+- **Conflict Self-Healing Rebase for Swarm Funnel Landings** (#745, #752): Declarative and AST conflict resolution for landed branches.
+- **Official 1-Click GitHub Action** (#739, #751): `berkayturanci/keel-action@v1` for automated issue shipping and scheduled swarm runs.
+- **Homebrew Tap Formula & Standalone POSIX Installer** (#741, #750): In-repo Homebrew tap (`brew install keel`) and curl installer script (`scripts/install.sh`).
+- **`keel init --auto` Stack Auto-Detection** (#740, #749): Zero-prompt stack and gate scaffolding for Rust, Go, Python, Node, Flutter, Android, and Java projects.
+- **PR Closure Viral Watermark & Dynamic SVG Badges** (#742, #748): Dynamic status badges and PR closure watermark attribution.
+- **Comprehensive SEO & Structured Data** (#764): Full OpenGraph, Twitter Cards, FAQPage schema, and crawler-friendly metadata.
 
 ## [1.14.2] - 2026-08-14
 
