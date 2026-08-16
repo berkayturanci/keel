@@ -55,8 +55,8 @@ jobs:
     name: external promises
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install runtime deps
@@ -77,8 +77,8 @@ jobs:
     name: release lockfiles resolve
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           # Must match publish.yml's Python: the files are locked to one ABI, and
           # resolving them under a different one proves nothing about the release.
