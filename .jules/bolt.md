@@ -54,3 +54,7 @@
 ## 2024-05-24 - Unroll any() and all() for performance in hot paths
 **Learning:** Using `any()` or `all()` with a generator expression introduces setup overhead that can be bypassed by unrolling them into explicit `for` loops. This can provide a significant performance boost in hot paths.
 **Action:** When a check involves small sets or requires fast short-circuiting in performance-critical code, explicitly unroll the generator into a loop.
+
+## 2024-08-16 - Unroll any() generator to avoid generator overhead
+**Learning:** In Python hot paths, combining list comprehensions with `any()` checks forces full iteration and predicate evaluation to build an intermediate list before short-circuiting can occur. Unrolling these completely into a single explicit `for` loop with early returns maximizes short-circuiting efficiency and avoids overhead.
+**Action:** Replace `any()` with an explicit `for` loop with early returns for simple iterable scans.

@@ -119,10 +119,11 @@ def _gate_decision(
 
 
 def _has_trusted_ship_assessment(items: list[dict[str, Any]]) -> bool:
-    return any(
-        _is_ship_assessment_source(item) and _is_ship_assessment(_body(item))
-        for item in items
-    )
+    # ⚡ Bolt Optimization: Unroll any() generator to avoid generator overhead
+    for item in items:
+        if _is_ship_assessment_source(item) and _is_ship_assessment(_body(item)):
+            return True
+    return False
 
 
 def _is_ship_assessment_source(item: dict[str, Any]) -> bool:
@@ -923,10 +924,11 @@ def _is_review_verdict_body(body: str) -> bool:
 
 
 def _has_trusted_review_marker(items: list[dict[str, Any]]) -> bool:
-    return any(
-        _is_trusted_source(item, enforced=True) and REVIEW_VERDICT_MARKER in _body(item)
-        for item in items
-    )
+    # ⚡ Bolt Optimization: Unroll any() generator to avoid generator overhead
+    for item in items:
+        if _is_trusted_source(item, enforced=True) and REVIEW_VERDICT_MARKER in _body(item):
+            return True
+    return False
 
 
 def jury_participating_vendors(
