@@ -2,7 +2,7 @@
    keel — Ecosystem & Integrations Catalog
    Interactive catalog of 32 AI coding agents, LLM backends,
    agent skills, and developer platforms supported out-of-the-box.
-   Uses authentic brand logo assets from official sources.
+   Uses authentic brand logo assets and 100% real Keel CLI commands.
    Zero external dependencies — pure client-side vanilla JS.
    ============================================================ */
 
@@ -16,8 +16,8 @@
       name: "Claude Code",
       category: "assistants",
       badge: "AI Assistant",
-      desc: "Full slash-command adapter and marketplace plugin (/keel:ship, /keel:swarm, /keel:wrap).",
-      cmd: "keel ship --delegate claude",
+      desc: "Native slash-command adapter and marketplace plugin (/keel:ship, /keel:swarm, /keel:wrap).",
+      cmd: "/keel:ship 101",
       logo: "logos/claude.svg"
     },
     {
@@ -25,8 +25,8 @@
       name: "Cursor",
       category: "assistants",
       badge: "AI Code Editor",
-      desc: "Native status bar merge window indicator, background task sync, and command palette integration.",
-      cmd: "cursor --install-extension berkayturanci.keel-vscode",
+      desc: "Integrated via knobs.delegate_profiles, background task sync, and AGENTS.md rules.",
+      cmd: "keel ship .keel/project.yaml --delegate cursor",
       logo: "logos/cursor.svg"
     },
     {
@@ -34,8 +34,8 @@
       name: "Gemini CLI",
       category: "assistants",
       badge: "AI Assistant",
-      desc: "Shared skill commands in .agents/skills/keel-* with native Gemini 2.5 multimodal integration.",
-      cmd: "keel ship --delegate gemini",
+      desc: "Shared skill commands in .agents/skills/keel-* with native Gemini multimodal & code reasoning.",
+      cmd: "keel ship .keel/project.yaml --host-agent gemini",
       logo: "logos/gemini-cli.svg"
     },
     {
@@ -44,7 +44,7 @@
       category: "assistants",
       badge: "AI Assistant",
       desc: "First-class Antigravity paired programming skills, reactive message wakeups, and AGENTS.md rules.",
-      cmd: "keel ship --delegate agy",
+      cmd: "keel ship .keel/project.yaml --host-agent agy",
       logo: "logos/google-antigravity.png"
     },
     {
@@ -52,17 +52,17 @@
       name: "OpenAI Codex",
       category: "assistants",
       badge: "AI Assistant",
-      desc: "Native ChatGPT/Codex plugins and skill adapters with structured reasoning evidence output.",
-      cmd: "keel ship --delegate codex",
+      desc: "Dedicated .codex-plugin/ package, Codex CLI delegates, and structured evidence contracts.",
+      cmd: "keel ship .keel/project.yaml --host-agent codex",
       logo: "logos/openai.svg"
     },
     {
       id: "devin",
-      name: "Devin",
+      name: "Devin / External Agents",
       category: "assistants",
       badge: "Autonomous Agent",
-      desc: "Autonomous software engineer webhook triggers with Keel merge lock and multi-vendor jury landing.",
-      cmd: "POST https://api.keel.dev/v1/ship",
+      desc: "Autonomous coding agent runs gated by Keel merge lock, review cycles, and 3-vendor jury.",
+      cmd: "keel ship .keel/project.yaml --issue 101 --live",
       logo: "logos/devin.png"
     },
     {
@@ -70,8 +70,8 @@
       name: "Aider",
       category: "assistants",
       badge: "Terminal Agent",
-      desc: "Interactive terminal pair programmer mapped to Keel's s4 implement and s8 test gates.",
-      cmd: "keel ship --delegate aider",
+      desc: "Interactive terminal pair programmer mapped to Keel's s4 implement via generic CLI delegates.",
+      cmd: "keel ship .keel/project.yaml --delegate aider",
       logo: "logos/aider.svg"
     },
     {
@@ -80,7 +80,7 @@
       category: "assistants",
       badge: "Open Assistant",
       desc: "Open-source coding assistant integrated via standard POSIX CLI delegate profiles.",
-      cmd: "keel ship --delegate opencode",
+      cmd: "keel ship .keel/project.yaml --delegate opencode",
       logo: "logos/opencode.svg"
     },
     {
@@ -88,8 +88,8 @@
       name: "Trae",
       category: "assistants",
       badge: "AI Code Editor",
-      desc: "Adaptive AI editor companion supported via VS Code extension manifest and Keel CLI.",
-      cmd: "keel run-gates .keel/project.yaml",
+      desc: "Adaptive AI editor companion configured via delegate profiles and Keel deterministic gates.",
+      cmd: "keel ship .keel/project.yaml --delegate trae",
       logo: "logos/trae.jpg"
     },
     {
@@ -97,8 +97,8 @@
       name: "GitHub Copilot",
       category: "assistants",
       badge: "AI Assistant",
-      desc: "Copilot workspace and CLI actions bound to deterministic Keel pre-merge evidence gates.",
-      cmd: "keel evidence-verify .keel/project.yaml",
+      desc: "Copilot workspace and coding actions verified against deterministic Keel pre-merge evidence gates.",
+      cmd: "keel evidence-verify .keel/project.yaml --phase pre-merge",
       logo: "logos/githubcopilot.svg"
     },
     {
@@ -107,7 +107,7 @@
       category: "assistants",
       badge: "AI Assistant",
       desc: "Moonshot Kimi coding assistant integration for large-context codebase analysis and implementation.",
-      cmd: "keel ship --delegate kimi",
+      cmd: "keel ship .keel/project.yaml --delegate kimi",
       logo: "logos/kimi-cli.png"
     },
     {
@@ -115,7 +115,7 @@
       name: "Hermes Agent",
       category: "assistants",
       badge: "Autonomous Agent",
-      desc: "Lightweight autonomous agent runner dispatched in isolated Swarm worktrees.",
+      desc: "Lightweight autonomous agent runner dispatched across parallel Swarm isolated worktrees.",
       cmd: "keel swarm-run .keel/project.yaml",
       logo: "logos/hermes.png"
     },
@@ -126,8 +126,8 @@
       name: "Anthropic Claude",
       category: "backends",
       badge: "LLM Backend",
-      desc: "Claude 3.7 Sonnet, 3.5 Sonnet, Haiku, and 3 Opus supported with native tool calls and cost tracking.",
-      cmd: "knobs.implementer_agents.core: claude-3-7-sonnet",
+      desc: "Claude 3.7 Sonnet, 3.5 Sonnet, Haiku, and Opus supported for implementer and reviewer roles.",
+      cmd: "keel ship .keel/project.yaml --implementer claude-3-7-sonnet",
       logo: "logos/anthropic.svg"
     },
     {
@@ -135,8 +135,8 @@
       name: "Google Gemini",
       category: "backends",
       badge: "LLM Backend",
-      desc: "Gemini 2.5 Flash and Pro with high-speed multi-token context analysis and $0.15/M tier pricing.",
-      cmd: "knobs.implementer_agents.core: gemini-2.5-flash",
+      desc: "Gemini 2.5 Flash and Pro with fast multi-token reasoning and low token cost tracking.",
+      cmd: "keel ship .keel/project.yaml --implementer gemini-2.5-flash",
       logo: "logos/googlegemini.svg"
     },
     {
@@ -145,7 +145,7 @@
       category: "backends",
       badge: "LLM Backend",
       desc: "GPT-4o, o1, o3-mini, and GPT-4o-mini supported across single-issue ships and jury panels.",
-      cmd: "knobs.implementer_agents.core: gpt-4o",
+      cmd: "keel ship .keel/project.yaml --implementer gpt-4o",
       logo: "logos/openai.svg"
     },
     {
@@ -154,7 +154,7 @@
       category: "backends",
       badge: "LLM Backend",
       desc: "High-reasoning, low-cost DeepSeek chat and reasoner models with exact token expenditure ledger.",
-      cmd: "knobs.implementer_agents.core: deepseek-reasoner",
+      cmd: "keel ship .keel/project.yaml --implementer deepseek-reasoner",
       logo: "logos/deepseek.svg"
     },
     {
@@ -163,7 +163,7 @@
       category: "backends",
       badge: "Local Backend",
       desc: "100% on-device, offline model execution with zero API cost and private repository isolation.",
-      cmd: "knobs.implementer_agents.core: ollama:deepseek-r1",
+      cmd: "keel ship .keel/project.yaml --delegate ollama:deepseek-r1",
       logo: "logos/ollama.svg"
     },
     {
@@ -189,8 +189,8 @@
       name: "OpenRouter",
       category: "backends",
       badge: "Unified Routing",
-      desc: "Dynamic multi-model fallback and lowest-latency routing across 100+ open and proprietary models.",
-      cmd: "keel cost-report --json",
+      desc: "Dynamic multi-model fallback and lowest-latency routing with token cost analytics.",
+      cmd: "keel cost-report .keel/project.yaml --json",
       logo: "logos/openrouter.svg"
     },
 
@@ -201,7 +201,7 @@
       category: "skills",
       badge: "Skill Library",
       desc: "Production-grade engineering workflows: TDD, spec-driven design, security audits & progressive disclosure.",
-      cmd: "keel skill add github:addyosmani/agent-skills/skills/tdd-workflow",
+      cmd: "knobs.skills: ['addyosmani:tdd-workflow']",
       logo: "logos/addyosmani.png"
     },
     {
@@ -209,8 +209,8 @@
       name: "Model Context Protocol",
       category: "skills",
       badge: "Open Standard",
-      desc: "Expose Keel's deterministic backbone tools as native MCP endpoints for Cursor, Claude, and IDEs.",
-      cmd: "keel mcp --port 8484",
+      desc: "Expose Keel's deterministic backbone tools and GitHub transport via native MCP protocol.",
+      cmd: "keel ship .keel/project.yaml --transport mcp",
       logo: "logos/mcp.svg"
     },
     {
@@ -219,7 +219,7 @@
       category: "skills",
       badge: "Engineering System",
       desc: "Senior engineering reflexes and anti-rationalization patterns hooked into s4 implement and s7 review.",
-      cmd: "knobs.skills: ['compound:strict-verification']",
+      cmd: "keel ship .keel/project.yaml --compound",
       logo: "logos/compound.svg"
     },
     {
@@ -228,7 +228,7 @@
       category: "skills",
       badge: "Consensus Engine",
       desc: "Independent 3-vendor jury panel (Anthropic + OpenAI + Google) ensuring unanimous pre-merge verdicts.",
-      cmd: "keel evidence-verify .keel/project.yaml --phase pre-merge",
+      cmd: "keel ship .keel/project.yaml --jury",
       logo: "logos/jury.svg"
     },
     {
@@ -236,7 +236,7 @@
       name: "Swarm Worktrees",
       category: "skills",
       badge: "Concurrency Engine",
-      desc: "Zero dirty-checkout collisions: every parallel Swarm worker runs in an isolated directory sandboxed by git.",
+      desc: "Zero dirty-checkout collisions: parallel multi-agent workers run in isolated git worktrees.",
       cmd: "keel swarm-plan .keel/project.yaml --issues 101,102",
       logo: "logos/swarm.svg"
     },
