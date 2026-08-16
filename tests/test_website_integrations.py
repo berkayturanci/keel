@@ -30,11 +30,13 @@ class TestWebsiteIntegrations(unittest.TestCase):
         self.assertIn("Homebrew Tap", content)
         self.assertIn("VS Code & Cursor Extension", content)
 
-        # Check categories present
+        # Check categories and SVG icons
         self.assertIn('"assistants"', content)
         self.assertIn('"backends"', content)
         self.assertIn('"skills"', content)
         self.assertIn('"platforms"', content)
+        self.assertIn("iconSvg", content)
+        self.assertIn("<svg", content)
 
     def test_index_html_has_integrations_view(self):
         html_file = WEBSITE_DIR / "index.html"
@@ -47,7 +49,11 @@ class TestWebsiteIntegrations(unittest.TestCase):
         self.assertIn('id="integrations-search"', content)
         self.assertIn('src="integrations.js"', content)
 
-    def test_styles_css_has_integration_classes(self):
+        # SEO meta verification
+        self.assertIn("Multi-Agent Workflow Core", content)
+        self.assertIn("FAQPage", content)
+
+    def test_styles_css_has_integration_classes_and_mobile_rules(self):
         css_file = WEBSITE_DIR / "styles.css"
         self.assertTrue(css_file.exists(), "website/styles.css must exist")
         content = css_file.read_text(encoding="utf-8")
@@ -56,6 +62,7 @@ class TestWebsiteIntegrations(unittest.TestCase):
         self.assertIn(".integ-card", content)
         self.assertIn(".integ-pill", content)
         self.assertIn(".integ-search", content)
+        self.assertIn("@media (max-width: 760px)", content)
 
 
 if __name__ == "__main__":

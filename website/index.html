@@ -18,13 +18,13 @@
     } catch (e) {}
   })();
 </script>
-<title>keel — turn coding agents into work owners</title>
-<meta name="description" content="keel turns coding agents into work owners. A project-neutral, multi-agent workflow backbone drives a GitHub issue from intake to done — projects set values in project.yaml and snap their own Lego into named extension slots. 17 /keel commands, stdlib-first, 100% covered.">
-<meta name="keywords" content="keel, workflow core, multi-agent, GitHub automation, CI, merge queue, code review, ship, backbone, project-neutral, Claude Code, Codex, Gemini, Python CLI">
+<title>keel — Multi-Agent Workflow Core & Merge Coordinator for AI Coding Agents</title>
+<meta name="description" content="Keel is the open-source, project-neutral multi-agent workflow core and merge coordinator for AI coding assistants (Claude Code, Cursor, Gemini CLI, Codex, Antigravity, Devin). Drive issues from backlog to done with deterministic merge locks, 3-vendor AI jury consensus, and parallel Swarm DAG execution. 100% test coverage, stdlib-first, Apache-2.0.">
+<meta name="keywords" content="keel, multi-agent workflow, AI coding agents, autonomous coding, swarm orchestration, merge queue, Claude Code plugin, Cursor extension, Gemini CLI, OpenAI Codex, Devin, Addy Osmani skills, MCP server, code review automation, software engineering agents, DAG scheduler, 100% test coverage, Python CLI">
 <meta name="author" content="Berkay Turancı">
 <meta name="theme-color" content="#6366f1">
 <link rel="canonical" href="https://berkayturanci.github.io/keel/">
-<meta name="robots" content="index, follow">
+<meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1">
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -39,14 +39,14 @@
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="keel">
 <meta property="og:url" content="https://berkayturanci.github.io/keel/">
-<meta property="og:title" content="keel — turn coding agents into work owners">
-<meta property="og:description" content="keel turns coding agents into work owners: one fixed backbone drives a GitHub issue from intake to done. Projects set values and snap in their own Lego.">
+<meta property="og:title" content="keel — Multi-Agent Workflow Core & Merge Coordinator for AI Coding Agents">
+<meta property="og:description" content="Turn coding agents into work owners: a fixed backbone drives a GitHub issue from intake to done with merge locks, multi-vendor AI jury consensus, and parallel DAG waves.">
 <meta property="og:image" content="https://berkayturanci.github.io/keel/assets/og-banner.png">
 <meta property="og:image:alt" content="keel — drive every issue to merged on one fixed backbone: 13 steps, 28 extension slots, 17 /keel commands, 100% covered.">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="keel — turn coding agents into work owners">
+<meta name="twitter:title" content="keel — Multi-Agent Workflow Core & Merge Coordinator for AI Coding Agents">
 <meta name="twitter:description" content="A project-neutral, multi-agent workflow backbone — drives an issue from intake to done. Stdlib-first, 100% covered, 17 /keel commands.">
 <meta name="twitter:image" content="https://berkayturanci.github.io/keel/assets/og-banner.png">
 <meta name="twitter:image:alt" content="keel — drive every issue to merged on one fixed backbone: 13 steps, 28 extension slots, 17 /keel commands, 100% covered.">
@@ -71,10 +71,46 @@
 
 <script type="application/ld+json">
 {
-  "@context": "https://schema.org", "@type": "WebSite", "name": "keel", "url": "https://berkayturanci.github.io/keel/",
+  "@context": "https://schema.org",
+  "@type": "WebSite",
+  "name": "keel",
+  "url": "https://berkayturanci.github.io/keel/",
   "subjectOf": [
     { "@type": "TechArticle", "name": "Documentation", "url": "https://berkayturanci.github.io/keel/docs.html" },
     { "@type": "WebPage", "name": "Test coverage", "url": "https://berkayturanci.github.io/keel/coverage.html" }
+  ]
+}
+</script>
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "What is Keel?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Keel is a project-neutral, multi-agent workflow backbone and merge coordinator. It turns AI coding assistants into accountable work owners by driving GitHub issues through an invariant step machine (s0 to s12) with merge locks, night window enforcement, and multi-vendor review consensus."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Which AI models and coding agents does Keel support?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Keel works with Claude Code, Cursor, Google Antigravity, Gemini CLI, OpenAI Codex, Devin, Aider, OpenCode, Ollama, DeepSeek, and any agent supporting standard CLI or MCP protocols."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "How does Keel Swarm handle high-concurrency parallel tasks?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Keel Swarm computes static scope disjointness matrices, partitions backlog issues into independent DAG execution waves, runs parallel workers in isolated git worktrees, and safely lands batches using single-writer merge locks and conflict self-healing."
+      }
+    }
   ]
 }
 </script>
@@ -117,7 +153,7 @@
     <div class="app-body">
       <!-- ───── sidebar ───── -->
       <nav class="sidebar" id="sidebar" aria-label="Workspace">
-        <div class="sb-brand"><img src="favicon.svg" alt=""><span class="nm">keel</span><span class="ver" data-version>v1.14.2</span></div>
+        <div class="sb-brand"><img src="favicon.svg" alt=""><span class="nm">keel</span><span class="ver" data-version>v1.15.0</span></div>
 
         <div class="sb-lab">Workspace</div>
         <button class="sb-item on" data-view="overview" aria-current="page"><span class="ic"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span> Overview</button>
@@ -165,7 +201,7 @@
                 <span class="ov-install"><span class="p">&gt;</span><code id="plugin-cmd">/plugin install keel</code><button class="hi-copy" type="button" data-copy="/plugin install keel" aria-label="Copy plugin install command"><span>copy</span></button></span>
               </p>
               <p class="ov-plugin">Or pin a release:
-                <span class="ov-install"><span class="p">$</span><code id="pin-cmd">pip install "git+https://github.com/berkayturanci/keel@v1.14.2"</code><button class="hi-copy" type="button" data-copy="" data-copy-target="#pin-cmd" aria-label="Copy pinned install command"><span>copy</span></button></span>
+                <span class="ov-install"><span class="p">$</span><code id="pin-cmd">pip install "git+https://github.com/berkayturanci/keel@v1.15.0"</code><button class="hi-copy" type="button" data-copy="" data-copy-target="#pin-cmd" aria-label="Copy pinned install command"><span>copy</span></button></span>
               </p>
               <p class="ov-badges">
                 <a href="https://github.com/berkayturanci/keel/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/berkayturanci/keel/ci.yml?branch=main&amp;label=CI&amp;logo=githubactions&amp;logoColor=white" alt="CI" loading="lazy"></a>
