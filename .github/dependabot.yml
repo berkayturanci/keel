@@ -43,6 +43,16 @@ updates:
       prefix: "build"
     labels:
       - "dependencies"
+    ignore:
+      # cyclonedx-bom — the SBOM generator publish.yml runs — requires chardet<6.0,
+      # so a major bump here is unsatisfiable, not merely risky: #757 proposed 7.5.1
+      # and pip refused the whole install. Dependabot cannot infer the bound, because
+      # this is a flat pin file carrying no dependency graph; it bumps the line it can
+      # read. Minor and patch updates still come through. Drop this rule when
+      # cyclonedx-bom relaxes the bound — the `release lockfiles resolve` CI job is
+      # what will tell you whether it has.
+      - dependency-name: "chardet"
+        update-types: ["version-update:semver-major"]
 
   # Keep local pre-commit hook pins current.
   - package-ecosystem: "pre-commit"

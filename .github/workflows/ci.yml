@@ -67,6 +67,32 @@ jobs:
           KEEL_CHECK_EXTERNAL: "1"
         run: python -m unittest tests.test_external_promises -v
 
+  release-lockfiles:
+    # publish.yml runs only on a `v*` tag, so its hash-locked tooling is otherwise
+    # first executed by the release itself. The unit test next to it checks the
+    # file's *shape* — pinned with `==`, carries a sha256 — which both of the
+    # broken Dependabot bumps in #779 satisfied while being unresolvable. Only an
+    # actual resolution can tell a good pin from a bad one, so this runs the real
+    # thing: same OS, same Python, same flags as publish.yml, minus the install.
+    name: release lockfiles resolve
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          # Must match publish.yml's Python: the files are locked to one ABI, and
+          # resolving them under a different one proves nothing about the release.
+          python-version: "3.13"
+      - name: Resolve the hash-locked release tooling
+        run: |
+          for f in .github/requirements/publish-tools.txt \
+                   .github/requirements/publish-visual-tools.txt; do
+            echo "::group::$f"
+            python -m pip install --dry-run --require-hashes --only-binary=:all: \
+              --target "$(mktemp -d)" -r "$f"
+            echo "::endgroup::"
+          done
+
   test-visual:
     name: test-visual (py${{ matrix.python }} / ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
