@@ -36,7 +36,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install keel plus dev tools (ruff, coverage)
-        run: python -m pip install --upgrade pip && pip install -e ".[dev]"
+        run: python -m pip install "PyYAML==6.0.3"
       - name: Make base branch available locally
         env:
           BASE: ${{ github.base_ref || 'main' }}
@@ -46,13 +46,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number || github.event.inputs.pr }}
+          PYTHONPATH: src
         run: |
           set +e
           ARGS=(.keel/project.yaml --root .)
           if [ -n "$PR" ]; then
             ARGS+=(--pr "$PR")
           fi
-          keel ship "${ARGS[@]}" | tee ship.txt
+          python -m keel ship "${ARGS[@]}" | tee ship.txt
           echo "code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
           { echo '### 🚢 keel ship'; echo '```'; cat ship.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - name: Comment assessment on the PR
@@ -85,15 +86,16 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install keel
-        run: python -m pip install --upgrade pip && pip install -e .
+        run: python -m pip install "PyYAML==6.0.3"
       - name: Verify posted ship evidence
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number || github.event.inputs.pr }}
           DEFERRAL: ${{ github.event.inputs.deferral }}
+          PYTHONPATH: src
         run: |
           ARGS=(.keel/project.yaml --root . --pr "$PR")
           if [ -n "$DEFERRAL" ]; then
             ARGS+=(--deferral "$DEFERRAL")
           fi
-          keel evidence-verify "${ARGS[@]}"
+          python -m keel evidence-verify "${ARGS[@]}"

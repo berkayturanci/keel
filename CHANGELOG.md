@@ -6,6 +6,10 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- Show the OpenSSF Scorecard badge in the README and tighten Scorecard-related
+  workflow signals for permissions, provenance, and pinned CI install commands.
+
 ## [1.8.0] — 2026-07-03
 
 ### Added

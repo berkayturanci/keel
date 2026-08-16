@@ -22,6 +22,9 @@ jobs:
     permissions:
       # Needed to publish results to the OpenSSF REST API (OIDC).
       id-token: write
+      # Job-level permissions replace workflow defaults, so keep repository read
+      # access explicit for checkout and Scorecard's GitHub API calls.
+      contents: read
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:

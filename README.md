@@ -9,6 +9,7 @@
 [![CI](https://github.com/berkayturanci/keel/actions/workflows/ci.yml/badge.svg)](https://github.com/berkayturanci/keel/actions/workflows/ci.yml)
 [![coverage](https://img.shields.io/endpoint?url=https://berkayturanci.github.io/keel/coverage-badge.json)](https://berkayturanci.github.io/keel/coverage/)
 [![CodeQL](https://github.com/berkayturanci/keel/actions/workflows/codeql.yml/badge.svg)](https://github.com/berkayturanci/keel/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/berkayturanci/keel/badge)](https://securityscorecards.dev/viewer/?uri=github.com/berkayturanci/keel)
 [![PyPI](https://img.shields.io/pypi/v/keel-workflow)](https://pypi.org/project/keel-workflow/)
 [![Python](https://img.shields.io/pypi/pyversions/keel-workflow)](https://pypi.org/project/keel-workflow/)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
