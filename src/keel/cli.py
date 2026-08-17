@@ -948,6 +948,11 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     # classifies as TIER-2 and would silently drop a reviewer and the gating jury.
     changed_unreadable = changed_read is None
     changed = changed_read or []
+    # Same source as `changed`, so the tier is decided from one view of the change:
+    # an unreadable diff yields {} and every path keeps the tier it already had.
+    artifacts_patches = classify.split_unified_diff(
+        git.diff(config.base_branch, "HEAD", cwd=args.root)
+    )
     tier = (
         classify.UNKNOWN_TIER
         if changed_unreadable
@@ -956,6 +961,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
             tier3_globs=config.knobs.tier3_globs,
             docs_globs=config.knobs.docs_gate_paths,
             allowlist_globs=config.knobs.docs_only_allowlist,
+            patches=artifacts_patches,
         )
     )
     review_contract = ship.resolve_review_contract(
@@ -1968,12 +1974,15 @@ def _cmd_review(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
     changed_files = artifacts_ctx["changed_files"]
+    # Absent from a hand-built artifacts mapping = no evidence, so the path decides.
+    artifacts_patches = artifacts_ctx.get("patches")
     tier = (
         classify.tier_for_files(
             changed_files,
             tier3_globs=config.knobs.tier3_globs,
             docs_globs=config.knobs.docs_gate_paths,
             allowlist_globs=config.knobs.docs_only_allowlist,
+            patches=artifacts_patches,
         )
         if changed_files else None
     )
@@ -2310,12 +2319,14 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
     changed_files = artifacts["changed_files"]
+    artifacts_patches = artifacts.get("patches")
     tier = (
         classify.tier_for_files(
             changed_files,
             tier3_globs=config.knobs.tier3_globs,
             docs_globs=config.knobs.docs_gate_paths,
             allowlist_globs=config.knobs.docs_only_allowlist,
+            patches=artifacts_patches,
         )
         if changed_files else None
     )
@@ -3224,12 +3235,14 @@ def _verify_merge_evidence(
     )
     artifacts = _load_evidence_artifacts(evidence_args, config)
     changed_files = artifacts["changed_files"]
+    artifacts_patches = artifacts.get("patches")
     tier = (
         classify.tier_for_files(
             changed_files,
             tier3_globs=config.knobs.tier3_globs,
             docs_globs=config.knobs.docs_gate_paths,
             allowlist_globs=config.knobs.docs_only_allowlist,
+            patches=artifacts_patches,
         )
         if changed_files else None
     )
@@ -3320,6 +3333,9 @@ def _load_evidence_artifacts(
     issue_comments = _read_optional_json_list(args.issue_comments_json)
     pr_reviews = _read_optional_json_list(args.pr_reviews_json)
     changed_files = list(getattr(args, "changed_file", ()) or ())
+    # No diffs from fixtures or --changed-file: the classifier then falls back to
+    # the path, which is the behaviour that existed before #794.
+    patches: dict[str, str] = {}
     head_sha = args.head_sha
     head_ref = getattr(args, "head_ref", None)
     issue_number = args.issue
@@ -3343,6 +3359,7 @@ def _load_evidence_artifacts(
             "head_sha": head_sha,
             "head_ref": head_ref,
             "changed_files": changed_files,
+            "patches": {},
             "pr_labels": _dedupe_preserve(injected_labels),
         }
     if not using_fixtures:
@@ -3354,6 +3371,7 @@ def _load_evidence_artifacts(
         head_ref = head.get("ref") if isinstance(head.get("ref"), str) else None
         pr_labels = _label_names(pr.get("labels"))
         changed_files = _pr_changed_files(owner_repo, args.pr, cwd=args.root)
+        patches = _pr_patches(owner_repo, args.pr, cwd=args.root)
         pr_comments = _gh_json_list(
             ["repos", owner_repo, "issues", str(args.pr), "comments"], cwd=args.root
         )
@@ -3377,6 +3395,7 @@ def _load_evidence_artifacts(
         "head_sha": head_sha,
         "head_ref": head_ref,
         "changed_files": changed_files,
+        "patches": patches,
         "pr_labels": _dedupe_preserve([*pr_labels, *injected_labels]),
     }
 
@@ -3650,6 +3669,25 @@ def _gh_json_list(args: list[str], *, cwd: str) -> list[dict[str, object]]:
 def _pr_changed_files(owner_repo: str, pr: int, *, cwd: str) -> list[str]:
     files = _gh_json_list(["repos", owner_repo, "pulls", str(pr), "files"], cwd=cwd)
     return [item["filename"] for item in files if isinstance(item.get("filename"), str)]
+
+
+def _pr_patches(owner_repo: str, pr: int, *, cwd: str) -> dict[str, str]:
+    """Per-file diff hunks, keyed by path — the evidence :mod:`keel.classify` needs
+    to tell "added a CI job" from "changed what the workflow can reach" (#794).
+
+    Read from the response ``_pr_changed_files`` already fetches: ``pulls/{n}/files``
+    carries ``patch`` alongside ``filename``, so this costs no extra API call.
+
+    A file GitHub omits a patch for — binaries, anything past its per-file size cap
+    — is simply absent, which lands it in the classifier's no-evidence case and
+    leaves the path deciding its tier, exactly as before this existed.
+    """
+    files = _gh_json_list(["repos", owner_repo, "pulls", str(pr), "files"], cwd=cwd)
+    return {
+        item["filename"]: item["patch"]
+        for item in files
+        if isinstance(item.get("filename"), str) and isinstance(item.get("patch"), str)
+    }
 
 
 def _linked_issue_from_body(body: str) -> int | None:
