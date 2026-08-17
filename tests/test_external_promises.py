@@ -211,7 +211,13 @@ class TestHomebrewPromise(unittest.TestCase):
             published_v = [int(p) for p in published_version_match.group(1).split(".")]
             current_v = [int(p) for p in __version__.split(".")]
             if current_v > published_v:
-                # Pending release bump staged for publish; tap is synced by publish.yml on tag push.
+                # A release bump staged here but not yet on the tap. The tap
+                # pulls on a schedule rather than being pushed to (#774), so a
+                # short window where it is behind is expected — and a tap serving
+                # an installable older formula is a lag, not a defect. Failing on
+                # it would make every release briefly red for nothing anyone
+                # should act on. A tap *claiming this version* with different
+                # content still falls through to the assertion below.
                 return
 
         self.assertEqual(
