@@ -1334,9 +1334,8 @@ def session_contract_as_dict(
                 "day_key": "session",
                 "night_path": reports.get("overnight") or reports.get("morning"),
                 "day_path": reports.get("session"),
-                # ⚡ Bolt Optimization: Use chained 'or' to avoid any() generator overhead
-                "status": "configured" if (
-                    reports.get("overnight") or reports.get("morning") or reports.get("session")
+                "status": "configured" if any(
+                    reports.get(key) for key in ("overnight", "morning", "session")
                 ) else "unconfigured",
             },
             "stop_conditions": [

@@ -89,7 +89,3 @@ line is hot — a tight loop over thousands of items, called repeatedly. Do not 
 code that runs a handful of times per command, and especially not in
 `src/keel/evidence.py`, which decides whether a PR may merge: churn there needs to buy
 something. keel#789 proposed exactly that and was closed. See keel#791.
-
-## 2024-08-18 - Avoid any() with generator expressions for small static sets of dictionary keys
-**Learning:** When checking if any of a small, static set of keys are present and truthy in a dictionary (e.g., `any(d.get(k) for k in ('a', 'b'))`), the generator setup overhead makes it much slower than chained `or` conditions.
-**Action:** Replace `any()` with generator expressions with explicit chained `or` conditions (e.g., `d.get('a') or d.get('b')`) in Python hot paths to bypass generator overhead and significantly improve performance by properly short-circuiting.
