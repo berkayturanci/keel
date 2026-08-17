@@ -153,13 +153,16 @@
 
   /* ---- Copy buttons ------------------------------------------------ */
   function flashCopy(btn) {
+    if (btn.classList.contains("done")) return;
     var label = btn.querySelector("span");
     var prev = label ? label.textContent : "";
+    var prevAria = btn.getAttribute("aria-label");
     btn.classList.add("done");
     if (label) label.textContent = "copied";
+    btn.setAttribute("aria-label", "copied");
     var sr = document.getElementById("sr-live-region");
     if (sr) { sr.textContent = "Copied to clipboard"; setTimeout(function() { sr.textContent = ""; }, 3000); }
-    setTimeout(function () { btn.classList.remove("done"); if (label) label.textContent = prev; }, 1400);
+    setTimeout(function () { btn.classList.remove("done"); if (label) label.textContent = prev; if (prevAria) btn.setAttribute("aria-label", prevAria); else btn.removeAttribute("aria-label"); }, 1400);
   }
   document.querySelectorAll("[data-copy]").forEach(function (btn) {
     btn.addEventListener("click", function () {
