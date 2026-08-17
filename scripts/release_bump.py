@@ -113,6 +113,7 @@ def _edits(old: str, new: str) -> list[tuple[str, str, str]]:
         (".codex-plugin/plugin.json", f'"version": "{old}"', f'"version": "{new}"'),
         ("README.md", f"keel@v{old}", f"keel@v{new}"),
         (".github/workflows/keel-ship.yml", f"keel@v{old}", f"keel@v{new}"),
+        ("docs/keel/cutover.md", f"keel@v{old}", f"keel@v{new}"),
     ]
 
 
@@ -155,6 +156,8 @@ def bump(root: Path, new: str) -> tuple[str, list[str]]:
     if old != new:
         for rel, find, replace in _edits(old, new):
             path = root / rel
+            if not path.exists():
+                continue
             text = path.read_text(encoding="utf-8")
             if find not in text:
                 continue

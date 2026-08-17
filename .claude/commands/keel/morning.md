@@ -135,4 +135,4 @@ On the **first run** (no prior brief at the reports path), offer to schedule the
 brief on a recurring cadence at the configured `timezone` — the exact scheduler
 mechanism is project-specific.
 
-<!-- keel-generated: surface=claude command=morning keel_version=1.15.0 source_sha256=5bcd4d2e1d791805237934d8333fa14283bf5bac184020b71fdfdcd80fd25b65 generated_sha256=5bcd4d2e1d791805237934d8333fa14283bf5bac184020b71fdfdcd80fd25b65 -->
+<!-- keel-generated: surface=claude command=morning keel_version=1.16.0 source_sha256=5bcd4d2e1d791805237934d8333fa14283bf5bac184020b71fdfdcd80fd25b65 generated_sha256=5bcd4d2e1d791805237934d8333fa14283bf5bac184020b71fdfdcd80fd25b65 -->
