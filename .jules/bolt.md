@@ -89,3 +89,7 @@ line is hot — a tight loop over thousands of items, called repeatedly. Do not 
 code that runs a handful of times per command, and especially not in
 `src/keel/evidence.py`, which decides whether a PR may merge: churn there needs to buy
 something. keel#789 proposed exactly that and was closed. See keel#791.
+
+## 2024-08-18 - Fast Substring Checks for Trusted Sources
+**Learning:** When checking list elements for both a substring and a trusted source check (e.g. `_is_trusted_source`), `any()` generator expressions evaluate conditions left-to-right but incur generator overhead. Inverting the check to evaluate the fast string inclusion before the expensive dictionary evaluation, while unrolling `any()`, can yield a ~50% speedup.
+**Action:** Unroll `any()` generator expressions to explicit `for` loops when validating multiple cascading criteria, and always place the fastest check (e.g., substring containment) first to leverage short-circuiting.

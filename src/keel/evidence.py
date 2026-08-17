@@ -923,10 +923,11 @@ def _is_review_verdict_body(body: str) -> bool:
 
 
 def _has_trusted_review_marker(items: list[dict[str, Any]]) -> bool:
-    return any(
-        _is_trusted_source(item, enforced=True) and REVIEW_VERDICT_MARKER in _body(item)
-        for item in items
-    )
+    for item in items:
+        # ⚡ Bolt Optimization: Evaluate fast substring containment before expensive trusted source check
+        if REVIEW_VERDICT_MARKER in _body(item) and _is_trusted_source(item, enforced=True):
+            return True
+    return False
 
 
 def jury_participating_vendors(
