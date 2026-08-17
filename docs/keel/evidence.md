@@ -62,13 +62,13 @@ Rather than offering an unmonitored backdoor, Keel makes exceptions **first-clas
 
 ---
 
-## Offline Verification: `keel verify-evidence`
+## Offline Verification: `keel evidence-verify`
 
 Compliance auditors and CI pipelines can independently verify the evidence chain offline without network calls:
 
 ```bash
 # Verify a PR's evidence chain against the repository policy
-keel verify-evidence .keel/project.yaml --root . --pr 554 --head-sha cfe06ca8...
+keel evidence-verify .keel/project.yaml --root . --pr 554 --head-sha cfe06ca8...
 ```
 
 The verifier confirms:

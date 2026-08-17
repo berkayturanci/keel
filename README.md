@@ -290,7 +290,7 @@ runs in CI.
 [`keel-visual`](https://pypi.org/project/keel-visual/) is an **optional, separately
 installable** animated run visualizer (`pipx install keel-visual`). It *renders* a
 keel run from the ledger/checkpoint keel already writes — it never drives one — for
-**any of the 16 command flows** (`ship` is the s0–s12 backbone; every other command
+**any of the 17 command flows** (`ship` is the s0–s12 backbone; every other command
 renders its own phases).
 
 Four surfaces:

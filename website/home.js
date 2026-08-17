@@ -1,6 +1,6 @@
 /* ============================================================
    keel — landing page data rendering (from window.KEEL)
-   Renders: layers, backbone table, invariants, all 16 commands,
+   Renders: layers, backbone table, invariants, all 17 commands,
    CLI, config keys, comparison, FAQ. Add to content.js → here.
    ============================================================ */
 (function () {
@@ -158,7 +158,7 @@
     });
   }
 
-  /* all 16 commands grouped */
+  /* all 17 commands grouped */
   var groupsHost = mount("cmd-groups");
   if (groupsHost) {
     var order = ["Flagship", "Per-step", "Review & triage", "Daily rhythm", "Audits"];
