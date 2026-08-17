@@ -52,6 +52,54 @@ def current_version(root: Path) -> str:
     return match.group(1)
 
 
+#: keel-visual is a second distribution in this repo on its own version line and
+#: its own tag namespace, so it cannot ride core's bump. Its runbook said "edit
+#: keel-visual/pyproject.toml" and nothing else, which left ``__version__`` at
+#: 0.6.0 through the 0.7.0 and 0.8.0 releases (#796). Both files are listed here
+#: so the pair moves together; the test in test_release_docs.py is what makes a
+#: future omission fail rather than ship.
+#: ``(path, regex)`` — the regex captures the version and nothing else, so the
+#: rewrite cannot touch prose that happens to contain the same digits.
+VISUAL_EDITS = (
+    ("keel-visual/pyproject.toml", re.compile(r'(?m)^(version = ")([^"]+)(")')),
+    (
+        "keel-visual/src/keel_visual/__init__.py",
+        re.compile(r'(?m)^(__version__ = ")([^"]+)(")'),
+    ),
+)
+VISUAL_PYPROJECT = VISUAL_EDITS[0][0]
+
+
+def visual_version(root: Path) -> str:
+    """Read keel-visual's declared version from its own ``pyproject.toml``."""
+    text = (root / VISUAL_PYPROJECT).read_text(encoding="utf-8")
+    match = VISUAL_EDITS[0][1].search(text)
+    if not match:
+        raise ValueError(f'could not find `version = "..."` in {VISUAL_PYPROJECT}')
+    return match.group(2)
+
+
+def bump_visual(root: Path, new: str) -> tuple[str, list[str]]:
+    """Rewrite keel-visual's version to ``new``. Returns ``(old, changed)``.
+
+    Re-running at the current version is a supported repair, not a no-op — the
+    same property ``bump`` has, and the one that matters here: when only one of
+    the two files has drifted, re-running at the declared version fixes the other.
+    """
+    if not SEMVER.match(new):
+        raise ValueError(f"version must be X.Y.Z, got {new!r}")
+    old = visual_version(root)
+    changed: list[str] = []
+    for rel, pattern in VISUAL_EDITS:
+        path = root / rel
+        text = path.read_text(encoding="utf-8")
+        rewritten = pattern.sub(rf"\g<1>{new}\g<3>", text)
+        if rewritten != text:
+            path.write_text(rewritten, encoding="utf-8")
+            changed.append(rel)
+    return old, changed
+
+
 def _edits(old: str, new: str) -> list[tuple[str, str, str]]:
     """Return ``(relative_path, find, replace)`` rewrites for ``old`` → ``new``.
 
@@ -132,11 +180,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("version", help="new version, X.Y.Z")
     parser.add_argument("--root", default=str(DEFAULT_ROOT),
                         help="repo root (defaults to the keel checkout)")
+    parser.add_argument(
+        "--package",
+        choices=("core", "keel-visual"),
+        default="core",
+        help="which distribution to bump; keel-visual is on its own version line",
+    )
     args = parser.parse_args(argv)
 
     root = Path(args.root)
     try:
-        old, changed = bump(root, args.version)
+        if args.package == "keel-visual":
+            old, changed = bump_visual(root, args.version)
+        else:
+            old, changed = bump(root, args.version)
     except (ValueError, OSError) as exc:
         print(f"release-bump failed: {exc}", file=sys.stderr)
         return 1
@@ -151,8 +208,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"release-bump: {old} -> {args.version}")
     for rel in changed:
         print(f"  updated {rel}")
-    print("Next: `make plugin && make adapters` (regenerate keel_version markers), "
-          "add a CHANGELOG.md entry, then follow docs/keel/release.md to tag.")
+    if args.package == "keel-visual":
+        # Core's next steps do not apply: keel-visual has no generated adapter
+        # surfaces, its own CHANGELOG, and its own tag namespace. Printing core's
+        # runbook here would be a wrong instruction, which is how #796 started.
+        print("Next: add a keel-visual/CHANGELOG.md entry, then follow "
+              "keel-visual/RELEASING.md to tag `keel-visual-vX.Y.Z`.")
+    else:
+        print("Next: `make plugin && make adapters` (regenerate keel_version markers), "
+              "add a CHANGELOG.md entry, then follow docs/keel/release.md to tag.")
     return 0
 
 

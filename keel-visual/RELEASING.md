@@ -51,9 +51,22 @@ is configured).
 
 ### 1. Bump the version
 
-Edit `keel-visual/pyproject.toml` → `[project] version`. Update this repo's
-`CHANGELOG.md` companion note if the surface changed. Commit on a branch and
-merge through the normal flow.
+```
+python scripts/release_bump.py X.Y.Z --package keel-visual
+```
+
+Do not edit `pyproject.toml` by hand. keel-visual carries the version in **two**
+files — `keel-visual/pyproject.toml` and `keel-visual/src/keel_visual/__init__.py`
+— and this step used to name only the first. `__version__` was left at `0.6.0`
+through the 0.7.0 and 0.8.0 releases as a result (#796); `keel_visual.__version__`
+is public API, so it is what a bug report quotes.
+
+`test_keel_visual_version_markers_agree` now fails if the two disagree, and
+re-running the command above at the current version repairs whichever file has
+drifted rather than reporting nothing to do.
+
+Update `keel-visual/CHANGELOG.md`, and this repo's `CHANGELOG.md` companion note
+if the surface changed. Commit on a branch and merge through the normal flow.
 
 ### 2. Build the distributions
 

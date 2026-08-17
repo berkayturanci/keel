@@ -120,6 +120,37 @@ class TestReleaseDocs(unittest.TestCase):
         self.assertIn(f'license "{declared.group(1)}"', formula,
                       "formula licence must match pyproject")
 
+    def test_keel_visual_version_markers_agree(self):
+        """keel-visual shipped `__version__ = "0.6.0"` as 0.8.0 (#796).
+
+        Core has never drifted because `metadata["project"]["version"] ==
+        __version__` is asserted above and `release_bump.py` rewrites both. This
+        file had neither, so the second package fell two releases behind on a
+        value that is public API — `keel_visual.__version__` is importable, and
+        it is what a bug report would quote.
+
+        Read from the files rather than imported, so the assertion holds whether
+        or not keel-visual is installed in the environment running the suite.
+        """
+        declared = re.search(
+            r'(?m)^version = "([^"]+)"',
+            (REPO_ROOT / "keel-visual" / "pyproject.toml").read_text(encoding="utf-8"),
+        )
+        self.assertIsNotNone(declared, "keel-visual/pyproject.toml has no version")
+        marker = re.search(
+            r'(?m)^__version__ = "([^"]+)"',
+            (REPO_ROOT / "keel-visual" / "src" / "keel_visual" / "__init__.py").read_text(
+                encoding="utf-8"
+            ),
+        )
+        self.assertIsNotNone(marker, "keel_visual/__init__.py has no __version__")
+        self.assertEqual(
+            declared.group(1),
+            marker.group(1),
+            "keel-visual's __version__ must match its pyproject version; "
+            "`python scripts/release_bump.py <version> --package keel-visual` repairs it",
+        )
+
     def test_homebrew_formula_vendors_every_runtime_dependency(self):
         """The formula installed a keel that could not start (#787).
 
