@@ -13,11 +13,42 @@ knobs:
     core: backend-developer
   build_gate_cmd: "make test"
   lint_cmd: "make lint"
+  # Tier-3 is for changes that can reach past CI — publish, deploy, write to the
+  # repo, or land on a user's machine. `.github/workflows/**` used to be here
+  # wholesale, which tiered up four PRs in one session that could not reach a
+  # user (a workflow comment, two added CI jobs, and a change that pinned four
+  # action refs *more tightly*) while leaving the formula `brew install` actually
+  # runs at tier-2. Split by what a change can reach; see #786.
+  #
+  # The line is drawn on write permissions and non-default secrets, not on the
+  # directory. Read off the workflows themselves rather than assumed:
+  #   publish*.yml      attestations, contents, id-token: write
+  #   pages.yml         pages, id-token: write
+  #   keel-ship.yml     issues, pull-requests: write
+  #   codeql.yml        security-events: write
+  #   scorecard.yml     id-token: write + SCORECARD_TOKEN
+  #   ci.yml            no write anywhere, GITHUB_TOKEN only   -> tier-2
+  #   pr-lint.yml       no write anywhere, no secrets          -> tier-2
+  # test_tier_policy.py enforces that criterion, so a new privileged workflow
+  # fails rather than quietly landing at tier-2 because nobody updated this list.
+  #
+  # This is a static list and it will drift as workflows are added. That drift is
+  # at least visible in a diff, unlike the waivers it replaces. Keying the tier on
+  # the diff instead of the path is the real fix and is tracked separately.
   tier3_globs:
     - "src/keel/orchestrator.py"
     - "src/keel/config.py"
     - "src/keel/extensions.py"
-    - ".github/workflows/**"
+    - ".github/workflows/publish*.yml"
+    - ".github/workflows/pages.yml"
+    - ".github/workflows/keel-ship.yml"
+    - ".github/workflows/codeql.yml"
+    - ".github/workflows/scorecard.yml"
+    # Not workflows, but they reach further than most code here does: this is the
+    # formula `brew install` runs, and the hash-locked tooling that publishes to
+    # PyPI. Both were tier-2 while every CI edit was tier-3 (#787, #779).
+    - "Formula/keel.rb"
+    - ".github/requirements/**"
   ci_workflows:
     "CI": "**"
   docs_gate_paths: ["docs/**", "*.md", "README.md"]
