@@ -37,5 +37,49 @@ class TestWebsiteSwarmSimulator(unittest.TestCase):
         self.assertIn(".sim-metrics-bar", styles_css)
 
 
+class TestCopyButtonFlash(unittest.TestCase):
+    """`flashCopy` swaps a button's label to "copied" and restores it after 1400ms.
+
+    It has to be re-entrant. Without the guard, a second click inside that window
+    captures the *transient* label as the value to restore, and the later timer
+    puts "copied" back permanently — leaving a button that no longer says what it
+    copies. The visible text recovers on the next click because the next capture
+    re-reads it; the aria-label does not, so a screen-reader user is left with a
+    button announcing "copied" forever.
+    """
+
+    def _flash_copy(self) -> str:
+        source = (REPO_ROOT / "website" / "app.js").read_text(encoding="utf-8")
+        start = source.index("function flashCopy(")
+        end = source.index("\n  }", start)
+        return source[start:end]
+
+    def test_flash_copy_returns_early_while_already_flashing(self):
+        body = self._flash_copy()
+        guard = 'if (btn.classList.contains("done")) return;'
+        self.assertIn(guard, body)
+        # The guard is only a guard if nothing is captured before it. `done` is
+        # added and removed on exactly the flash window, so reading either label
+        # above this line reads the transient value.
+        self.assertLess(
+            body.index(guard),
+            body.index("getAttribute"),
+            "the early return must come before the label is captured",
+        )
+
+    def test_flash_copy_restores_both_labels(self):
+        body = self._flash_copy()
+        self.assertIn('btn.setAttribute("aria-label"', body)
+        self.assertIn("removeAttribute", body)  # no aria-label before: remove, not set ""
+        self.assertIn("textContent = prev", body)
+
+    def test_the_two_labels_do_not_disagree(self):
+        # Sighted and screen-reader users never compare them, but a mismatch
+        # reads as an oversight to the next person editing this.
+        body = self._flash_copy()
+        self.assertIn('textContent = "copied"', body)
+        self.assertIn('setAttribute("aria-label", "copied")', body)
+
+
 if __name__ == "__main__":
     unittest.main()
