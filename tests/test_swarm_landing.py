@@ -57,9 +57,26 @@ footer line
         self.assertIn("import os", hunks[0]["ours"])
         self.assertIn("import json", hunks[0]["theirs"])
 
-    def test_resolve_adjacent_conflict_empty(self):
-        self.assertEqual(resolve_adjacent_conflict("", "theirs\n"), "theirs\n")
-        self.assertEqual(resolve_adjacent_conflict("ours\n", ""), "ours\n")
+    def test_resolve_adjacent_conflict_empty_keeps_a_declarative_side(self):
+        # One branch added an import, the other added nothing there. Safe, and
+        # the case the empty-side path exists for.
+        self.assertEqual(resolve_adjacent_conflict("", "import sys\n"), "import sys\n")
+        self.assertEqual(resolve_adjacent_conflict("import os\n", ""), "import os\n")
+
+    def test_an_empty_side_does_not_wave_arbitrary_code_through(self):
+        """A delete-versus-modify conflict prints an empty side (#798).
+
+        This used to return the non-empty side untouched, so `swarm-land` would
+        write a deleted function back and stage it — the caller acts on the
+        result without review, so refusing is the only way a human sees it.
+
+        The previous test passed `"theirs\\n"` and `"ours\\n"`: single bare words
+        that happen to be safe declarative content, so the assertion held while
+        the branch waved anything through.
+        """
+        body = "def critical_auth_check(user):\n    return user.is_admin\n"
+        self.assertIsNone(resolve_adjacent_conflict("", body))
+        self.assertIsNone(resolve_adjacent_conflict(body, ""))
 
     def test_resolve_adjacent_conflict_disjoint_and_overlap(self):
         ours = "import os\n"

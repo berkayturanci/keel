@@ -73,22 +73,31 @@ def is_safe_declarative_chunk(lines: list[str]) -> bool:
 
 
 def resolve_adjacent_conflict(ours: str, theirs: str) -> str | None:
-    """Smart resolution for adjacent non-conflicting additions (e.g. imports or lists)."""
-    ours_stripped = ours.strip()
-    theirs_stripped = theirs.strip()
-    if not ours_stripped:
-        return theirs
-    if not theirs_stripped:
-        return ours
+    """Smart resolution for adjacent non-conflicting additions (e.g. imports or lists).
+
+    Returns ``None`` when the hunk is not safe to resolve without a human. The
+    caller writes whatever this returns and stages it, so refusing is the only
+    way a person gets to look.
+
+    An empty side does **not** mean "take the other one". It is what git prints
+    for a delete-versus-modify conflict, so accepting the non-empty side there
+    silently restores something the other branch deleted (#798). Both sides go
+    through the same declarative gate, empty or not.
+    """
     ours_lines = [line for line in ours.splitlines() if line.strip()]
     theirs_lines = [line for line in theirs.splitlines() if line.strip()]
-    if is_safe_declarative_chunk(ours_lines) and is_safe_declarative_chunk(theirs_lines):
-        if set(ours_lines).isdisjoint(set(theirs_lines)):
-            combined = []
-            combined.extend(ours.splitlines())
-            combined.extend(theirs.splitlines())
-            trailing = "\n" if (ours.endswith("\n") or theirs.endswith("\n")) else ""
-            return "\n".join(combined) + trailing
+    if not is_safe_declarative_chunk(ours_lines) or not is_safe_declarative_chunk(
+        theirs_lines
+    ):
+        return None
+    if not ours_lines:
+        return theirs
+    if not theirs_lines:
+        return ours
+    if set(ours_lines).isdisjoint(set(theirs_lines)):
+        combined = [*ours.splitlines(), *theirs.splitlines()]
+        trailing = "\n" if (ours.endswith("\n") or theirs.endswith("\n")) else ""
+        return "\n".join(combined) + trailing
     return None
 
 
