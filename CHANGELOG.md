@@ -6,6 +6,27 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.16.0] - 2026-08-17
+
+### Added
+- **Diff-Based Risk Classifier & Policy Decoupling** (#786, #793, #801):
+  - Added semantic diff-level risk classification (`src/keel/classify.py`) detecting sensitive changes (`permissions:`, `secrets.`, `uses:`) independently of directory globs.
+  - Decoupled `tier3_globs` so routine test workflows run at Tier-2 while sensitive publishing/release workflows remain guarded at Tier-3.
+- **Official Homebrew Tap Repository & Automation** (#762, #774, #776, #781, #788, #795):
+  - Created and published official [`berkayturanci/homebrew-keel`](https://github.com/berkayturanci/homebrew-keel) tap with verified Apache-2.0 license, tag, and sha256 checksums.
+  - Vendored PyYAML 6.0.2 resource into `Formula/keel.rb` ensuring zero-dependency `brew install keel` out of the box.
+  - Added automated tap publishing to `.github/workflows/publish.yml` with cross-repo drift verification in `tests/test_distribution.py`.
+- **Curated Multi-Agent Ecosystem & Authentic Brand Vectors** (#762, #768, #769, #770, #771):
+  - Curated 32 pure Keel ecosystem integrations spanning 12 AI Coding Agents, 8 LLM Backends, 6 Protocols, and 6 Platforms.
+  - Bundled 30+ official brand SVGs/PNGs under `website/logos/` with disk validation tests.
+  - Audited and replaced all placeholder commands with 100% genuine, offline Keel CLI commands.
+
+### Fixed
+- **Swarm Conflict Resolution Empty-Block Safety** (#799): Stopped automatic resolution when one side of a conflict chunk is empty, preventing accidental code deletion and routing safely to manual/operator review.
+- **Re-entrant Copy Buttons & Accessibility** (#792): Preserved original `aria-label` across repeated button interactions with automated regression tests.
+- **Keel-Visual Version Drift Guard** (#797): Synchronized and guarded `keel-visual` package version markers.
+- **Action Pinning & Supply Chain Verification** (#785): Pinned all remaining GitHub Actions to verified commit SHAs with automated upstream tag resolution.
+
 ## [1.15.0] - 2026-08-16
 
 ### Added
