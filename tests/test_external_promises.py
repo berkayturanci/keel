@@ -21,6 +21,7 @@ not a network is available.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -135,6 +136,40 @@ class TestHomebrewPromise(unittest.TestCase):
             f"docs promise a tap install but {HOMEBREW_TAP} does not exist",
         )
 
+    def test_the_formula_checksum_matches_the_tarball_it_points_at(self):
+        """`brew install` refuses on a checksum mismatch, so a wrong one is fatal.
+
+        1.16.0 shipped with 1.15.0's digest (#805). The url is bumped before the
+        tag exists, so the checksum cannot be correct at that moment — it can only
+        be computed from the tarball GitHub builds *from* the tag, and nothing
+        closed the gap. `test_homebrew_formula_matches_the_project` compares the
+        formula to the project and passed throughout: a real-looking 64-hex string
+        satisfies it, whatever it is a digest of.
+        """
+        if not ONLINE:
+            self.skipTest("set KEEL_CHECK_EXTERNAL=1 to fetch the tarball")
+        formula = (REPO_ROOT / "Formula" / "keel.rb").read_text(encoding="utf-8")
+        url = re.search(r"https://github\.com/\S+?\.tar\.gz", formula)
+        self.assertIsNotNone(url, "formula has no source tarball url")
+        declared = re.search(r'(?m)^  sha256 "([0-9a-f]{64})"', formula)
+        self.assertIsNotNone(declared, "formula has no top-level sha256")
+        try:
+            with urllib.request.urlopen(url.group(0), timeout=60) as response:
+                payload = response.read()
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                self.fail(f"the formula points at {url.group(0)}, which does not exist")
+            raise self.skipTest(f"cannot fetch the tarball: {exc}") from exc
+        except (urllib.error.URLError, OSError) as exc:
+            # Being unable to look is not evidence the checksum is wrong.
+            raise self.skipTest(f"cannot fetch the tarball: {exc}") from exc
+        self.assertEqual(
+            hashlib.sha256(payload).hexdigest(),
+            declared.group(1),
+            "the formula's sha256 is not the digest of the tarball it points at; "
+            "brew install would refuse",
+        )
+
     def test_the_tap_serves_the_formula_in_this_repo(self):
         """The guarded copy must be the copy `brew install` runs.
 
@@ -146,11 +181,19 @@ class TestHomebrewPromise(unittest.TestCase):
         """
         if not ONLINE:
             self.skipTest("set KEEL_CHECK_EXTERNAL=1 to compare against the tap")
-        url = (
-            f"https://raw.githubusercontent.com/{HOMEBREW_TAP}"
-            "/HEAD/Formula/keel.rb"
+        # The contents API, not raw.githubusercontent.com. `raw` is CDN-cached for
+        # minutes, so right after a sync it serves the previous formula and this
+        # test fails on a tap that is already correct — observed while fixing #805.
+        # `brew tap` clones the repository, so the API is also the view that
+        # matches what a user actually installs.
+        url = f"https://api.github.com/repos/{HOMEBREW_TAP}/contents/Formula/keel.rb"
+        request = urllib.request.Request(
+            url,
+            headers={"Accept": "application/vnd.github.raw", "User-Agent": "keel-tests"},
         )
-        request = urllib.request.Request(url, headers={"User-Agent": "keel-tests"})
+        token = os.environ.get("GITHUB_TOKEN")
+        if token:
+            request.add_header("Authorization", f"Bearer {token}")
         try:
             with urllib.request.urlopen(request, timeout=20) as response:
                 published = response.read().decode("utf-8")

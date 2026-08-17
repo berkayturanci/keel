@@ -117,6 +117,30 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Check the formula's checksum against the tag it points at
+        # The url is bumped before the tag exists, so the sha256 cannot be right
+        # at that moment — it can only be computed from the tarball GitHub builds
+        # from the tag. Nothing closed that gap, and 1.16.0 shipped carrying
+        # 1.15.0's checksum: `brew install` downloaded the new tarball, compared
+        # it to the old digest and refused (#805).
+        #
+        # Fail here rather than publish. A tap holding a formula that cannot
+        # install is worse than a tap one release behind — the stale one still
+        # works.
+        run: |
+          set -euo pipefail
+          url=$(grep -m1 -oE 'https://github.com/[^"]+\.tar\.gz' Formula/keel.rb)
+          want=$(grep -m1 -oE '^  sha256 "[0-9a-f]{64}"' Formula/keel.rb | grep -oE '[0-9a-f]{64}')
+          curl -fsSL "$url" -o /tmp/formula-src.tar.gz
+          got=$(sha256sum /tmp/formula-src.tar.gz | cut -d' ' -f1)
+          echo "url:  $url"
+          echo "want: $want"
+          echo "got:  $got"
+          if [ "$want" != "$got" ]; then
+            echo "::error::Formula/keel.rb sha256 does not match the tarball it points at; brew install would refuse."
+            exit 1
+          fi
+
       - name: Push Formula/keel.rb to the tap
         # GITHUB_TOKEN cannot write to another repository, so this needs a PAT
         # with `contents: write` on the tap, stored as HOMEBREW_TAP_TOKEN. Without
