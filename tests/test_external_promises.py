@@ -36,6 +36,12 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 PUBLIC = ("README.md", "docs", "website")
 ONLINE = os.environ.get("KEEL_CHECK_EXTERNAL") == "1"
 
+#: The tap `brew install` resolves from. This repo is the source of truth for
+#: Formula/keel.rb and the release publishes it here (#774), so the name is
+#: declared rather than read from the environment — an env-gated check is a check
+#: nobody sets.
+HOMEBREW_TAP = "berkayturanci/homebrew-keel"
+
 _ACTION_REF = re.compile(r"uses:\s*([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)@([A-Za-z0-9_.-]+)")
 _BREW = re.compile(r"brew install ([A-Za-z0-9/_-]+)")
 
@@ -118,18 +124,49 @@ class TestHomebrewPromise(unittest.TestCase):
     def test_a_bare_formula_name_needs_a_tap(self):
         """`brew install keel` only works from a tap; the formula alone is a template.
 
-        Recorded rather than enforced: whether to publish `homebrew-keel` is an
-        owner decision (#774). This fails only once a tap is declared and missing,
-        so it cannot block while the question is open.
+        No longer inert: #774 decided this repo is the source of truth and the tap
+        is published from it, so `HOMEBREW_TAP` is declared here rather than read
+        from the environment.
         """
-        tap = os.environ.get("KEEL_HOMEBREW_TAP")
-        if not tap:
-            self.skipTest("no tap declared; see #774 for the open decision")
         if not ONLINE:
             self.skipTest("set KEEL_CHECK_EXTERNAL=1 to check reachability")
         self.assertTrue(
-            _reachable(f"https://github.com/{tap}"),
-            f"KEEL_HOMEBREW_TAP={tap} is declared but the tap repository does not exist",
+            _reachable(f"https://github.com/{HOMEBREW_TAP}"),
+            f"docs promise a tap install but {HOMEBREW_TAP} does not exist",
+        )
+
+    def test_the_tap_serves_the_formula_in_this_repo(self):
+        """The guarded copy must be the copy `brew install` runs.
+
+        This is the assertion that was missing when #787 shipped. The formula here
+        was fixed and every check went green while the tap still served a version
+        that installed a keel unable to start — because nothing compared the two.
+        Release automation now syncs them; this fails if that automation is broken,
+        skipped, or someone edits one copy by hand.
+        """
+        if not ONLINE:
+            self.skipTest("set KEEL_CHECK_EXTERNAL=1 to compare against the tap")
+        url = (
+            f"https://raw.githubusercontent.com/{HOMEBREW_TAP}"
+            "/HEAD/Formula/keel.rb"
+        )
+        request = urllib.request.Request(url, headers={"User-Agent": "keel-tests"})
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                published = response.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                self.fail(f"{HOMEBREW_TAP} has no Formula/keel.rb; brew install would fail")
+            raise self.skipTest(f"cannot reach the tap: {exc}") from exc
+        except (urllib.error.URLError, OSError) as exc:
+            # Being unable to look is not evidence the copies disagree.
+            raise self.skipTest(f"cannot reach the tap: {exc}") from exc
+
+        local = (REPO_ROOT / "Formula" / "keel.rb").read_text(encoding="utf-8")
+        self.assertEqual(
+            local,
+            published,
+            "the tap's formula differs from this repo's; the tap is what users install",
         )
 
 

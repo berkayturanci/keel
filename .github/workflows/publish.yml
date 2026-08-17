@@ -99,3 +99,49 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-formula:
+    # This repo is the source of truth for Formula/keel.rb (#774). The tap holds
+    # the copy `brew install` actually runs, and until now the two were kept equal
+    # by hand — which is how #787 shipped: the formula was fixed here, the guard
+    # checked the copy here, and users kept installing the broken one from the tap
+    # until it was synced manually.
+    #
+    # Copy, not construct. Everything interesting about this file is already
+    # asserted on every push by test_release_docs.py; a release step that built
+    # the formula would move those checks into the one phase that runs once per
+    # tag, which is the phase where mistakes are least observed (#779).
+    name: Sync the formula to the Homebrew tap
+    needs: build-n-publish
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Push Formula/keel.rb to the tap
+        # GITHUB_TOKEN cannot write to another repository, so this needs a PAT
+        # with `contents: write` on the tap, stored as HOMEBREW_TAP_TOKEN. Without
+        # it the step fails loudly rather than skipping: a release that silently
+        # leaves the tap behind is the failure this job exists to prevent.
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          TAP: berkayturanci/homebrew-keel
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "::error::HOMEBREW_TAP_TOKEN is not set; the tap would be left at the previous release."
+            exit 1
+          fi
+          gh api "repos/${TAP}/contents/Formula/keel.rb" --jq .sha > .tap-sha || echo "" > .tap-sha
+          gh api -X PUT "repos/${TAP}/contents/Formula/keel.rb" \
+            -f message="chore: sync formula for ${GITHUB_REF_NAME} (from ${GITHUB_REPOSITORY}@${GITHUB_SHA})" \
+            -f content="$(base64 -w0 Formula/keel.rb)" \
+            $( [ -s .tap-sha ] && echo -f sha="$(cat .tap-sha)" )
+      - name: Verify the tap now matches this repo
+        # The push reporting success is not proof the tap serves the new bytes.
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          TAP: berkayturanci/homebrew-keel
+        run: |
+          set -euo pipefail
+          gh api "repos/${TAP}/contents/Formula/keel.rb" --jq .content | base64 -d > tap-keel.rb
+          diff Formula/keel.rb tap-keel.rb
