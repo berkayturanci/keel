@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en" data-theme="dark" data-motion="balanced">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https://img.shields.io https://berkayturanci.github.io; connect-src 'self' https://cloudflareinsights.com;">
+<script>
+  (function () { try { var r=document.documentElement, ls=localStorage, mq=matchMedia("(prefers-color-scheme: dark)");
+    r.setAttribute("data-theme", ls.getItem("theme") || (mq.matches ? "dark" : "light"));
+    r.setAttribute("data-motion", ls.getItem("motion") || "balanced"); } catch (e) {} })();
+</script>
+<title>A squash merge silently reverted our release — and CI stayed green</title>
+<meta name="description" content="A stale branch squash-merged over a published release and every test still passed. Why, and the check that catches it.">
+<meta name="keywords" content="squash merge revert, git squash merge problem, stale branch overwrite, silent revert, github squash merge lost changes, detect reverted commit, release reverted">
+<meta name="author" content="Berkay Turancı">
+<meta name="theme-color" content="#6366f1">
+<link rel="canonical" href="https://berkayturanci.github.io/keel/silent-revert.html">
+<meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large">
+<meta property="og:type" content="article">
+<meta property="og:title" content="A squash merge silently reverted our release — and CI stayed green">
+<meta property="og:description" content="A stale branch overwrote a published release. Every gate passed, because the reverted state was internally consistent.">
+<meta property="og:url" content="https://berkayturanci.github.io/keel/silent-revert.html">
+<meta property="og:image" content="https://berkayturanci.github.io/keel/assets/og-banner.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="A squash merge silently reverted our release — and CI stayed green">
+<meta name="twitter:description" content="A stale branch overwrote a published release. Every gate passed, because the reverted state was internally consistent.">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&amp;family=JetBrains+Mono:wght@400;500;600;700&amp;display=swap">
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="ui.css">
+<link rel="stylesheet" href="docs.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "A squash merge silently reverted our release — and CI stayed green",
+  "description": "A stale branch squash-merged over a published release. Every test passed, because the reverted state was internally consistent.",
+  "datePublished": "2026-08-17",
+  "author": { "@type": "Person", "name": "Berkay Turancı" },
+  "mainEntityOfPage": "https://berkayturanci.github.io/keel/silent-revert.html",
+  "about": ["git", "continuous integration", "code review", "release engineering"]
+}
+</script>
+<style>
+  .art-wrap { max-width: 72ch; margin: 0 auto; padding: 3rem 1.25rem 5rem; }
+  .art-wrap h1 { font-size: clamp(1.7rem, 4vw, 2.4rem); line-height: 1.2; margin: 0 0 .75rem; }
+  .art-wrap h2 { font-size: clamp(1.2rem, 2.4vw, 1.5rem); margin: 2.5rem 0 .75rem; }
+  .art-wrap p, .art-wrap li { line-height: 1.7; }
+  .art-wrap pre { overflow-x: auto; padding: 1rem; border-radius: 8px;
+                  background: var(--bg-soft, #12141c); border: 1px solid var(--border-soft, #2a2f3d); }
+  .art-wrap code { font-family: var(--font-mono, ui-monospace, monospace); font-size: .92em; }
+  .art-meta { color: var(--muted); font-size: .9rem; margin-bottom: 2rem; }
+  .art-callout { border-left: 3px solid var(--accent); padding: .75rem 1rem; margin: 1.5rem 0;
+                 background: color-mix(in srgb, var(--accent) 8%, transparent); border-radius: 0 8px 8px 0; }
+  .art-back { display: inline-block; margin-bottom: 2rem; color: var(--muted); text-decoration: none; }
+  .art-back:hover { color: var(--accent); }
+</style>
+</head>
+<body>
+<main class="art-wrap">
+  <a class="art-back" href="./">← keel</a>
+
+  <h1>A squash merge silently reverted our release — and CI stayed green</h1>
+  <p class="art-meta">17 August 2026 · a real incident, with the detection that eventually caught it</p>
+
+  <p>We published version 1.15.0. A day later it was gone from <code>main</code> — not reverted by anyone, not rolled back, just quietly absent. The git tag still pointed at 1.15.0. PyPI still served 1.15.0. Every test passed the entire time.</p>
+
+  <p>This is a write-up of what happened, why the usual detection does not work, and the check that does.</p>
+
+  <h2>What actually happened</h2>
+
+  <p>An accessibility pull request — adding ARIA labels to copy buttons — was branched before the release and merged after it. It touched sixty-odd files, because the tooling that generated its surfaces regenerated everything, including the version markers.</p>
+
+  <p>When it squash-merged, it wrote its whole view of those files onto <code>main</code>. Its view predated the release. So:</p>
+
+  <pre><code>pyproject.toml       1.15.0 → 1.14.2
+src/keel/__init__.py 1.15.0 → 1.14.2
+CHANGELOG.md         the 1.15.0 section, deleted
+git tag v1.15.0      unchanged
+PyPI                 unchanged</code></pre>
+
+  <p>The repository now disagreed with the artifact it had published, and nothing said so.</p>
+
+  <h2>Why every check passed</h2>
+
+  <p>This is the part worth internalising. We had a guard for exactly this: a test asserting that the version strings across the site and the code agree.</p>
+
+  <p>It passed — because the revert moved <em>both</em> sides together. The reverted state was <strong>internally consistent</strong>. A consistency check compares two things inside the repository, and a wholesale overwrite keeps them consistent with each other while making both wrong.</p>
+
+  <div class="art-callout">
+    <p><strong>The general form:</strong> a check that compares your repository to itself cannot see a change that moved the whole repository. To catch that, something has to be compared against a fact outside it — a published artifact, a git tag, a registry.</p>
+  </div>
+
+  <h2>Why <code>git branch --merged</code> does not help</h2>
+
+  <p>The obvious instinct is to ask git which branches contain which commits. With squash merges, that question has no useful answer.</p>
+
+  <p>A squash merge creates a <em>new</em> commit whose content is the branch's tree. The branch's own commits never become ancestors of <code>main</code>. So <code>git branch --merged</code> reports the branch as unmerged, ancestry queries find nothing, and the tooling that relies on them is blind by construction.</p>
+
+  <h2>The check that also does not work</h2>
+
+  <p>Our first attempt compared the pull request's file list against the merge commit's file list, looking for files the merge touched that the PR did not claim.</p>
+
+  <p>It reported the real incident as clean.</p>
+
+  <p>The reason is subtle and worth knowing if you build this yourself: when you press <em>Update branch</em>, GitHub merges <code>main</code> into the branch <em>before</em> computing the diff you review. The reverting content is therefore <em>inside</em> the diff a reviewer reads and inside the PR's declared file list. The two lists agree. Nothing looks wrong.</p>
+
+  <h2>What does work: compare the timing, not the content</h2>
+
+  <p>The question that has a reliable answer is about ordering:</p>
+
+  <div class="art-callout">
+    <p>Did this merge write to a file that another pull request changed <strong>after this one branched</strong>?</p>
+  </div>
+
+  <p>That is the only shape a stale squash can take, and it is answerable from metadata alone — no ancestry, no diff heuristics:</p>
+
+  <pre><code>for each merged PR A:
+    for each merged PR B:
+        if A.created &lt; B.merged &lt; A.merged and files(A) ∩ files(B):
+            A may have overwritten B's work in those files</code></pre>
+
+  <p>We ran this over 118 merged pull requests across two repositories. It produced six candidates. Five were benign on inspection — Dependabot rebases its branches, so its work survived — and the sixth was the incident, found by name.</p>
+
+  <p>Six candidates from 118 is a signal you can actually act on. A check that flags everything gets switched off.</p>
+
+  <h2>The cheaper check that would have caught it first</h2>
+
+  <p>The timing sweep is the general answer. There is a narrower one that costs almost nothing and would have caught this specific case on the very next push:</p>
+
+  <pre><code>assert current_version &gt;= highest_published_version</code></pre>
+
+  <p>Compare the version in the repository against the highest release tag, or against what the package registry already serves. Being <em>ahead</em> of the last release is the normal state between releases; being <em>behind</em> one is never normal.</p>
+
+  <p>It is one comparison, it needs no history walking, and it anchors against something outside the repository — which is the property that makes it work.</p>
+
+  <div class="art-callout">
+    <p><strong>One trap when you implement it.</strong> <code>actions/checkout</code> defaults to <code>fetch-depth: 1</code> and <code>fetch-tags: false</code>, so <code>git tag -l</code> returns nothing on a runner. We shipped this check and it silently did nothing for every CI run — while printing a success line claiming it had compared against the latest tag. Set <code>fetch-depth: 0</code>, and make "no tags found" a failure rather than a pass. <em>Cannot check</em> and <em>checked and fine</em> must never print the same thing.</p>
+  </div>
+
+  <h2>Takeaways</h2>
+
+  <ul>
+    <li>Squash merges break ancestry. Any detection built on <code>--merged</code> or <code>merge-base</code> is blind to this class of problem.</li>
+    <li>An internally consistent repository can still be wrong. Anchor at least one check against something outside it.</li>
+    <li>Compare timing, not content: <em>did this merge overwrite a file someone changed after it branched?</em></li>
+    <li>Make "I could not check" fail. A guard that cannot distinguish that from "I checked and it is fine" is not a guard.</li>
+  </ul>
+
+  <h2>Running it yourself</h2>
+
+  <p><a href="https://github.com/berkayturanci/keel">keel</a> ships this as <code>keel verify-merge</code>, which runs after a merge and reports drift by name:</p>
+
+  <pre><code>pipx install keel-workflow
+keel verify-merge .keel/project.yaml --root . --pr 780</code></pre>
+
+  <p>It is open source and the detection logic is a few dozen lines of pure comparison — worth reading and reimplementing if you would rather not add a dependency. The point is the question it asks, not the tool that asks it.</p>
+
+  <p><a class="art-back" href="./">← back to keel</a></p>
+</main>
+</body>
+</html>
