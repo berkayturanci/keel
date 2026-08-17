@@ -6,14 +6,14 @@
 **Learning:** Focusable scrollable code blocks need a specific accessible name; generic labels such as "Code snippet" make repeated regions hard to distinguish in screen-reader navigation.
 **Action:** Pair each focusable `<pre>` region with `role="region"` and a distinct `aria-label` that names the content or task. Hide decorative link glyphs with `aria-hidden="true"`, but keep semantic arrows exposed when they convey workflow order.
 
-## 2024-06-21 - Syncing aria-current with active classes
+## 2026-06-21 - Syncing aria-current with active classes
 **Learning:** When building single-page/client-side navigation that toggles an `on` or `active` visual class via JavaScript, relying solely on CSS classes means screen readers miss the update.
 **Action:** Always sync the `aria-current="page"` attribute synchronously with the active class changes in JS to ensure robust accessibility for navigation items.
-## 2024-06-22 - Sync aria-current with single-page navigation active view state
+## 2026-06-23 - Sync aria-current with single-page navigation active view state
 **Learning:** In custom single-page applications, updating visual `.active` or `.on` classes for navigation links is insufficient for screen readers. The `aria-current="page"` attribute must be added or removed dynamically alongside visual cues for navigation links managed by JavaScript (e.g. IntersectionObserver or click handlers).
 **Action:** When updating active view states dynamically in JavaScript, always add or remove the `aria-current="page"` attribute in sync with the visual class change to maintain full screen reader accessibility.
 
-## 2024-06-25 - Syncing ARIA attributes for dynamic toggle states
+## 2026-07-03 - Syncing ARIA attributes for dynamic toggle states
 **Learning:** For dynamic toggle UI elements (like segmented controls), visually toggling an `.on` state is not enough; the corresponding ARIA attribute must be updated. For toggle buttons, this should be `aria-pressed="true"`.
 **Action:** When adding `.on` or `.active` dynamically to a UI toggle button via JavaScript (e.g. `classList.toggle("on", isActive)`), always set `aria-pressed="true"` when `isActive` is true, and remove it (or set to "false") when false to correctly convey state to screen reader users.
 
@@ -49,7 +49,7 @@
 **Learning:** A disclosure button that opens a popover must report its state via `aria-expanded` and point at the panel with `aria-controls`, otherwise a screen-reader user cannot tell the popover exists or whether it is open. Closing with `Escape` without moving focus is equally broken: focus is left inside a now-hidden container.
 **Action:** Toggle `aria-expanded` in the same place the open class is toggled (one helper, never two code paths), and on `Escape` return focus to the trigger that opened the popover.
 
-## 2024-10-18 - Dynamically Syncing ARIA Labels on Status Buttons
+## 2026-08-10 - Dynamically Syncing ARIA Labels on Status Buttons
 **Learning:** For dynamic UI buttons that only display an icon or generic text like a speed multiplier, screen readers may not detect visual updates to the text content alone.
 **Action:** When updating the textContent of a dynamic indicator button via JavaScript, always explicitly update its aria-label attribute in the same event handler to ensure screen reader users receive context-rich updates.
 
