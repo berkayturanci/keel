@@ -56,3 +56,7 @@
 ## 2026-08-15 - Faint Text Color Contrast
 **Learning:** FAQ body text and supplementary notes were using the `--faint` color token, which fell below the WCAG AA 4.5:1 contrast ratio requirement for both light and dark themes, making long-form text hard to read.
 **Action:** Ensure semantic text elements do not use decorative faint color tokens, or ensure the lowest-contrast text token still passes 4.5:1.
+
+## 2026-08-18 - ARIA Labels on Buttons with Generic Text
+**Learning:** Action buttons with generic visual text (like "Copy") lack necessary context for screen reader users when navigating interactively.
+**Action:** Always add descriptive `aria-label` attributes (e.g. `aria-label="Copy CLI command"`) to buttons that rely solely on generic text strings, and ensure they are dynamically updated during state changes (e.g. to "Copied to clipboard").

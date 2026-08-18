@@ -273,7 +273,7 @@
       '    <div class="sim-cli-cta">',
       '      <span class="cta-label">Run in your repo:</span>',
       '      <code>keel swarm-plan .keel/project.yaml --issues ' + issueList.map(function (i) { return i.id; }).join(',') + ' && keel swarm-run .keel/project.yaml</code>',
-      '      <button type="button" class="sim-copy-btn" id="sim-copy-cli" title="Copy CLI Command">Copy</button>',
+      '      <button type="button" class="sim-copy-btn" id="sim-copy-cli" title="Copy CLI Command" aria-label="Copy CLI command">Copy</button>',
       '    </div>',
       '  </div>',
       '</div>'
@@ -359,8 +359,13 @@
         var cmd = "keel swarm-plan .keel/project.yaml --issues " + preset.issues.map(function (i) { return i.id; }).join(',') + " && keel swarm-run .keel/project.yaml";
         if (navigator.clipboard && navigator.clipboard.writeText) {
           navigator.clipboard.writeText(cmd).then(function () {
+            var origLabel = copyBtn.getAttribute("aria-label") || "Copy CLI command";
             copyBtn.textContent = "Copied! ✓";
-            setTimeout(function () { copyBtn.textContent = "Copy"; }, 2000);
+            copyBtn.setAttribute("aria-label", "Copied to clipboard");
+            setTimeout(function () {
+              copyBtn.textContent = "Copy";
+              copyBtn.setAttribute("aria-label", origLabel);
+            }, 2000);
           });
         }
       };
