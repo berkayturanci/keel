@@ -21,6 +21,7 @@ venv/
 # Claude Code — track the committed adapters under .claude/commands/, ignore harness-local state
 .claude/worktrees/
 .claude/settings.local.json
+.claude/launch.json
 .keel/state/
 
 # Editors — Obsidian vault config (local markdown app, not part of the repo)
