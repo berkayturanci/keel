@@ -354,17 +354,27 @@
 
     var copyBtn = document.getElementById("sim-copy-cli");
     if (copyBtn) {
+      // Both labels restore to the constants the markup ships with. Reading the
+      // live aria-label here instead would capture the transient "Copied to
+      // clipboard" whenever a click lands inside the flash window, and the later
+      // timer would restore *that* — leaving the visible text on "Copy" while the
+      // accessible name stayed "Copied to clipboard" until the next re-render.
+      // The timer is also cleared per click so an earlier one cannot cut a later
+      // flash short. Mirrors flashCopy() in app.js.
+      var COPY_TEXT = "Copy";
+      var COPY_ARIA = "Copy CLI command";
+      var copyResetTimer = null;
       copyBtn.onclick = function () {
         var preset = getActivePreset();
         var cmd = "keel swarm-plan .keel/project.yaml --issues " + preset.issues.map(function (i) { return i.id; }).join(',') + " && keel swarm-run .keel/project.yaml";
         if (navigator.clipboard && navigator.clipboard.writeText) {
           navigator.clipboard.writeText(cmd).then(function () {
-            var origLabel = copyBtn.getAttribute("aria-label") || "Copy CLI command";
             copyBtn.textContent = "Copied! ✓";
             copyBtn.setAttribute("aria-label", "Copied to clipboard");
-            setTimeout(function () {
-              copyBtn.textContent = "Copy";
-              copyBtn.setAttribute("aria-label", origLabel);
+            clearTimeout(copyResetTimer);
+            copyResetTimer = setTimeout(function () {
+              copyBtn.textContent = COPY_TEXT;
+              copyBtn.setAttribute("aria-label", COPY_ARIA);
             }, 2000);
           });
         }

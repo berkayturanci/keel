@@ -57,6 +57,6 @@
 **Learning:** FAQ body text and supplementary notes were using the `--faint` color token, which fell below the WCAG AA 4.5:1 contrast ratio requirement for both light and dark themes, making long-form text hard to read.
 **Action:** Ensure semantic text elements do not use decorative faint color tokens, or ensure the lowest-contrast text token still passes 4.5:1.
 
-## 2026-08-18 - ARIA Labels on Buttons with Generic Text
-**Learning:** Action buttons with generic visual text (like "Copy") lack necessary context for screen reader users when navigating interactively.
-**Action:** Always add descriptive `aria-label` attributes (e.g. `aria-label="Copy CLI command"`) to buttons that rely solely on generic text strings, and ensure they are dynamically updated during state changes (e.g. to "Copied to clipboard").
+## 2026-08-18 - Restore a flashed label to a constant, never to a captured one
+**Learning:** Adding the `aria-label` (2026-06-15) and updating it on state change (2026-08-10) still leaves the third step wrong. A handler that captures the label to restore by reading the element's *current* value reads whatever is there at that moment — so a second click inside the flash window captures the transient "Copied to clipboard" and its timer restores that. The visible text recovers, because the next click re-reads it; the accessible name does not, so it announces "copied" until a re-render. A `|| "Copy…"` fallback cannot help: `getAttribute` returns the mutated string, not null.
+**Action:** Restore both the text and the `aria-label` to constants the markup ships with, not to values read at flash time, and clear any pending restore timer before arming a new one. If a capture is genuinely needed, take it once at bind time or guard re-entry before reading anything.

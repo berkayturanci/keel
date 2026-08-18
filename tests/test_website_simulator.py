@@ -81,5 +81,57 @@ class TestCopyButtonFlash(unittest.TestCase):
         self.assertIn('setAttribute("aria-label", "copied")', body)
 
 
+class TestSimulatorCopyButtonLabels(unittest.TestCase):
+    """The simulator's copy button restores both labels to shipped constants.
+
+    Re-reading the live ``aria-label`` inside the clipboard callback captures
+    whatever is there *now*. A click landing inside the 2s flash window captures
+    the transient "Copied to clipboard" and the later timer restores that, so the
+    visible text returns to "Copy" while the accessible name stays "Copied to
+    clipboard" until a re-render rebuilds the DOM. Sighted users see nothing
+    wrong; a screen-reader user gets a button that lies about what it does.
+    """
+
+    def _handler(self) -> str:
+        source = (REPO_ROOT / "website" / "swarm-simulator.js").read_text(encoding="utf-8")
+        start = source.index('var copyBtn = document.getElementById("sim-copy-cli");')
+        return source[start:source.index("\n    }", start)]
+
+    def test_handler_does_not_re_read_the_live_aria_label(self):
+        # The root cause. Any capture of the live label is the bug returning.
+        self.assertNotIn('getAttribute("aria-label")', self._handler())
+
+    def test_both_labels_restore_to_constants(self):
+        handler = self._handler()
+        self.assertIn("COPY_TEXT", handler)
+        self.assertIn("COPY_ARIA", handler)
+        self.assertIn('copyBtn.textContent = COPY_TEXT;', handler)
+        self.assertIn('copyBtn.setAttribute("aria-label", COPY_ARIA);', handler)
+
+    def test_pending_timer_is_cleared_per_click(self):
+        # Otherwise an earlier timer fires mid-flash and cuts the later one short.
+        handler = self._handler()
+        self.assertIn("clearTimeout(copyResetTimer)", handler)
+        self.assertLess(
+            handler.index("clearTimeout(copyResetTimer)"),
+            handler.index("copyResetTimer = setTimeout"),
+            "the pending timer must be cleared before the next one is armed",
+        )
+
+    def test_constants_match_the_rendered_button(self):
+        # The constants are only correct while they equal what the button renders
+        # with. The button is emitted by this same file's template, so a reworded
+        # label would otherwise silently disagree with what the timer restores.
+        source = (REPO_ROOT / "website" / "swarm-simulator.js").read_text(encoding="utf-8")
+        start = source.index('id="sim-copy-cli"')
+        button = source[source.rindex("<button", 0, start):
+                        source.index("</button>", start)]
+        self.assertIn('aria-label="Copy CLI command"', button)
+        self.assertTrue(button.endswith(">Copy"), f"unexpected button text: {button!r}")
+        handler = self._handler()
+        self.assertIn('var COPY_ARIA = "Copy CLI command";', handler)
+        self.assertIn('var COPY_TEXT = "Copy";', handler)
+
+
 if __name__ == "__main__":
     unittest.main()

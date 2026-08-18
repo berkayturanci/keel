@@ -117,5 +117,37 @@ class TestCommandCountClaims(unittest.TestCase):
         )
 
 
+class TestAgentMemoryFilesDoNotAccreteDuplicates(unittest.TestCase):
+    """A memory file that restates a lesson it already holds stops preventing it.
+
+    `.jules/palette.md` is a learning log: each entry exists so the same defect is
+    not re-learned. Issue #815 found the 2026-08-18 entry restating 2026-06-15
+    verbatim in substance, with a clause already covered by 2026-08-10 — while the
+    bug being filed was a *third* variant none of them covered. Re-stating a lesson
+    reads as coverage and crowds out the increment, so the file grows while its
+    value falls.
+
+    Titles are the cheap, mechanical signal: two entries sharing one is either a
+    duplicate to merge or an entry that needs a title saying what is new.
+    """
+
+    def test_palette_entry_titles_are_unique(self):
+        palette = REPO_ROOT / ".jules" / "palette.md"
+        titles: dict[str, list[str]] = {}
+        for line in palette.read_text(encoding="utf-8").splitlines():
+            if not line.startswith("## "):
+                continue
+            heading = line[3:].strip()
+            # Entries are "<date> - <title>"; compare the title only.
+            title = heading.split(" - ", 1)[1] if " - " in heading else heading
+            titles.setdefault(title.casefold(), []).append(heading)
+        repeated = {t: h for t, h in titles.items() if len(h) > 1}
+        self.assertEqual(
+            repeated, {},
+            "duplicate palette entry titles — merge them, or retitle the newer one "
+            f"to say what it adds: {repeated}",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
