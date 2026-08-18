@@ -61,6 +61,18 @@ def _public_text() -> dict[str, str]:
     return out
 
 
+def _declared_version() -> str | None:
+    """The version this tree declares, read off disk.
+
+    This module deliberately reads files rather than importing keel — it checks
+    what the repository *promises*, not what the package computes — so the
+    version is parsed from pyproject.toml in the same spirit.
+    """
+    match = re.search(r'(?m)^version = "([^"]+)"',
+                      (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    return match.group(1) if match else None
+
+
 def _reachable(url: str) -> bool:
     request = urllib.request.Request(url, method="HEAD")
     try:
@@ -158,6 +170,17 @@ class TestHomebrewPromise(unittest.TestCase):
                 payload = response.read()
         except urllib.error.HTTPError as exc:
             if exc.code == 404:
+                # A release PR bumps the declared version and, because
+                # test_homebrew_formula_matches_the_project pins the url to it,
+                # the formula points at a tag that is created *from the commit
+                # this PR produces*. It cannot exist yet, and no value of the
+                # formula satisfies both tests at once (#839). Only that window
+                # is exempt: a url naming any other version must still resolve.
+                if _declared_version() and f"/tags/v{_declared_version()}." in url.group(0):
+                    self.skipTest(
+                        f"v{_declared_version()} is not tagged yet; the checksum "
+                        "cannot be verified until the release is tagged"
+                    )
                 self.fail(f"the formula points at {url.group(0)}, which does not exist")
             raise self.skipTest(f"cannot fetch the tarball: {exc}") from exc
         except (urllib.error.URLError, OSError) as exc:
