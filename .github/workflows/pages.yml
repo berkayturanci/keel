@@ -85,11 +85,13 @@ jobs:
       # Cloudflare's Crawler Hints cannot do this here — the apex is DNS-only so
       # GitHub can issue the certificate, and Cloudflare never sees the traffic.
       # The deploy job has no checkout, so the sitemap is read from the live
-      # site — which also guarantees we announce exactly what was published.
+      # site — announcing what the live site serves. (A briefly stale CDN copy
+      # right after deploy is possible and benign: stale-list URLs are still
+      # live pages, and announcing a just-deleted URL is spec-legal.)
       - name: Notify IndexNow
         continue-on-error: true
         run: |
-          python - <<'PY'
+          python3 - <<'PY'
           import json, urllib.request, xml.etree.ElementTree as ET
 
           KEY = "9d98afd3150f289ca4806a2a775bdae6fc35fc3972cd90dba2ed949180eed533"
