@@ -138,6 +138,10 @@
           "type": "boolean",
           "description": "When true, evidence-verify additionally requires that each required review verdict carries vendor provenance and that no two share a vendor. Off by default (back-compatible: count + head-pin only). Jury-agnostic — works with any reviewer carrying vendor provenance."
         },
+        "swarm_review_evidence": {
+          "type": "boolean",
+          "description": "Swarm landings enforce the same per-PR review-evidence contract as ship s10 (#828). On by default. Setting this false is the explicit, logged opt-out: clusters land on CI alone and swarm-land prints that choice loudly."
+        },
         "gate_timeout_s": {
           "type": "integer",
           "minimum": 1,

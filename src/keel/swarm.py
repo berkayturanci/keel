@@ -212,6 +212,10 @@ class SwarmLandingResult:
     healed_clusters: tuple[str, ...]
     failed_clusters: tuple[str, ...]
     status: str  # "success", "partial_failure", "failed"
+    #: Clusters refused for landing because their review evidence did not
+    #: verify — (cluster_id, reason) pairs. Held is not failed: the code is
+    #: intact, the independent-review contract is simply not yet satisfied.
+    held_clusters: tuple[tuple[str, str], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -221,6 +225,7 @@ class SwarmLandingResult:
             "landed_clusters": list(self.landed_clusters),
             "healed_clusters": list(self.healed_clusters),
             "failed_clusters": list(self.failed_clusters),
+            "held_clusters": [list(pair) for pair in self.held_clusters],
             "status": self.status,
         }
 
@@ -771,6 +776,10 @@ def render_swarm_landing_result(result: SwarmLandingResult) -> str:
         f"  healed  : {', '.join(result.healed_clusters) if result.healed_clusters else 'none'}",
         f"  failed  : {', '.join(result.failed_clusters) if result.failed_clusters else 'none'}",
     ]
+    if result.held_clusters:
+        lines.append("  held    : review evidence missing — not landed")
+        for cluster_id, reason in result.held_clusters:
+            lines.append(f"    {cluster_id}: {reason}")
     return "\n".join(lines)
 
 

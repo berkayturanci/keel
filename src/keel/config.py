@@ -153,6 +153,11 @@ class Knobs:
     optional_capabilities: tuple[str, ...] = ()
     evidence_gate_label: str = "keel:ship"
     evidence_require_distinct_vendors: bool = False
+    #: Swarm landings enforce the same per-PR review-evidence contract as ship
+    #: s10. Turning this off is the explicit, logged opt-out #828 requires: the
+    #: exception lives in config where a reviewer can see it, never in a
+    #: driver's judgement call under time pressure.
+    swarm_review_evidence: bool = True
     #: Wall-clock seconds a command gate may run before it is killed. Raise this on a
     #: slow host; a single slower gate can override it with ``timeout:`` frontmatter.
     gate_timeout_s: int = DEFAULT_GATE_TIMEOUT_S
@@ -232,6 +237,7 @@ def _build(data: dict) -> ProjectConfig:
         optional_capabilities=tuple(k.get("optional_capabilities", [])),
         evidence_gate_label=k.get("evidence_gate_label", "keel:ship"),
         evidence_require_distinct_vendors=bool(k.get("evidence_require_distinct_vendors", False)),
+        swarm_review_evidence=bool(k.get("swarm_review_evidence", True)),
         gate_timeout_s=int(k.get("gate_timeout_s", DEFAULT_GATE_TIMEOUT_S)),
         jury_timeout_s=int(k.get("jury_timeout_s", DEFAULT_JURY_TIMEOUT_S)),
     )
@@ -552,6 +558,7 @@ def _canonical(config: ProjectConfig) -> dict:
             "optional_capabilities": list(config.knobs.optional_capabilities),
             "evidence_gate_label": config.knobs.evidence_gate_label,
             "evidence_require_distinct_vendors": config.knobs.evidence_require_distinct_vendors,
+            "swarm_review_evidence": config.knobs.swarm_review_evidence,
             "gate_timeout_s": config.knobs.gate_timeout_s,
             "jury_timeout_s": config.knobs.jury_timeout_s,
         },

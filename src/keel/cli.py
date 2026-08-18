@@ -14,6 +14,7 @@ import json
 import os
 import re
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 from . import (
@@ -4395,6 +4396,56 @@ def _cmd_swarm_run(args: argparse.Namespace) -> int:
     return 0 if result.status == "success" else (1 if result.status == "failed" else 0)
 
 
+def _swarm_land_evidence_checker(
+    args: argparse.Namespace, config: cfg.ProjectConfig
+) -> Callable[[str], tuple[bool, str]]:
+    """The per-branch review-evidence check swarm-land applies before landing.
+
+    Resolves the cluster branch's open PR, then runs the same pre-merge
+    evidence verification ``keel merge`` enforces — tier-derived reviewer
+    count, verdicts pinned to the PR head, armed gate label. Fail closed at
+    every step: no PR, a transport error, an unarmed gate and a failed
+    verification all *hold* the cluster rather than land it (#828).
+    """
+
+    def check(branch_name: str) -> tuple[bool, str]:
+        lookup = run_argv(
+            ["gh", "pr", "list", "--head", branch_name, "--state", "open",
+             "--json", "number"],
+            cwd=args.root,
+        )
+        if not lookup.ok:
+            return False, f"PR lookup failed: {lookup.output.strip()[:120]}"
+        try:
+            prs = json.loads(lookup.stdout or "[]")
+        except json.JSONDecodeError:
+            return False, "PR lookup returned invalid JSON"
+        number = prs[0].get("number") if prs and isinstance(prs[0], dict) else None
+        if not isinstance(number, int):
+            return False, (
+                "no open PR for the cluster branch — open one, arm the gate "
+                "label and post review verdicts before landing"
+            )
+        evidence_ns = argparse.Namespace(
+            pr=number, issue=None, reviewers=None, review_comments=None,
+            jury=False, no_jury=False, jury_advisory=False,
+            gate_label=None, root=args.root,
+        )
+        try:
+            payload = _verify_merge_evidence(evidence_ns, config)
+        except Exception as exc:  # noqa: BLE001 - one bad cluster must hold, not crash the wave
+            return False, f"evidence verification errored: {exc}"[:160]
+        if not payload.get("enforced"):
+            return False, f"PR #{number}: evidence gate is not armed"
+        verification = payload.get("verification") or {}
+        if verification.get("status") != "pass":
+            missing = ", ".join(verification.get("missing") or ()) or "unknown"
+            return False, f"PR #{number}: missing evidence: {missing}"
+        return True, f"PR #{number}: evidence verified"
+
+    return check
+
+
 def _cmd_swarm_land(args: argparse.Namespace) -> int:
     try:
         config = cfg.load_config(args.path)
@@ -4464,12 +4515,26 @@ def _cmd_swarm_land(args: argparse.Namespace) -> int:
 
     from . import swarm_landing
 
+    evidence_checker = None
+    if args.live:
+        if config.knobs.swarm_review_evidence:
+            evidence_checker = _swarm_land_evidence_checker(args, config)
+        else:
+            # The opt-out must be impossible to miss in the transcript: the
+            # whole point of #828 is that skipping review is a visible,
+            # configured exception, never a silent default.
+            print(
+                "swarm review evidence: OFF by config "
+                "(knobs.swarm_review_evidence: false) — clusters land on CI alone"
+            )
+
     result = swarm_landing.land_wave_clusters(
         plan,
         wave_index=args.wave,
         project_yaml=args.path,
         root=args.root,
         dry_run=not args.live,
+        evidence_checker=evidence_checker,
     )
 
     if args.json:

@@ -21,6 +21,7 @@ from keel.swarm import (
     SwarmWorkerStatus,
     build_swarm_plan,
     evaluate_wave_landing_mode,
+    load_swarm_state,
     render_swarm_landing_result,
     save_swarm_state,
 )
@@ -204,6 +205,21 @@ class TestSwarmLandingPureLogic(unittest.TestCase):
         self.assertIn("status  : success ✓", out_ok)
         self.assertIn("landed  : c1, c2", out_ok)
         self.assertIn("healed  : none", out_ok)
+        self.assertNotIn("held", out_ok)
+
+        res_held = SwarmLandingResult(
+            swarm_id="swarm-held",
+            wave_index=1,
+            mode="direct_batch",
+            landed_clusters=("c1",),
+            healed_clusters=(),
+            failed_clusters=(),
+            status="partial_failure",
+            held_clusters=(("c2", "PR #10: missing evidence: review-verdict-1"),),
+        )
+        out_held = render_swarm_landing_result(res_held)
+        self.assertIn("held    : review evidence missing — not landed", out_held)
+        self.assertIn("c2: PR #10: missing evidence: review-verdict-1", out_held)
 
         res_partial = SwarmLandingResult(
             swarm_id="swarm-partial",
@@ -414,6 +430,103 @@ class TestSwarmLandingThinIO(unittest.TestCase):
             self.assertIn("cluster-1-101", res.landed_clusters)
             self.assertIn("cluster-1-102", res.failed_clusters)
 
+    def test_land_wave_clusters_holds_clusters_without_review_evidence(self):
+        """#828: a cluster whose evidence does not verify is held, never merged.
+
+        Held is not failed — the code is intact, the independent-review
+        contract is simply unsatisfied — but it degrades the wave status the
+        same way, because "success" must mean "everything landed"."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            s1 = IssueScope(issue=101, title="A", predicted_files=("src/a.py",))
+            s2 = IssueScope(issue=102, title="B", predicted_files=("src/b.py",))
+            plan = build_swarm_plan([s1, s2], swarm_id="swarm-evid")
+
+            w1 = SwarmWorkerStatus(
+                cluster_id="cluster-1-101", issue=101, role="core", status="passed"
+            )
+            w2 = SwarmWorkerStatus(
+                cluster_id="cluster-1-102", issue=102, role="core", status="passed"
+            )
+            st = SwarmRunState(swarm_id="swarm-evid", total_workers=2, workers=(w1, w2))
+            save_swarm_state(st, root=tmpdir)
+
+            merged_branches: list[str] = []
+
+            def mock_runner(cmd: list[str], cwd: Path) -> CommandResult:
+                if "merge" in cmd:
+                    merged_branches.append(cmd[-2])
+                return CommandResult(ok=True, code=0, output="ok")
+
+            def checker(branch: str) -> tuple[bool, str]:
+                if "cluster-1-101" in branch:
+                    return True, "PR #9: evidence verified"
+                return False, "PR #10: missing evidence: review-verdict-1"
+
+            res = land_wave_clusters(
+                plan,
+                wave_index=1,
+                project_yaml=".keel/project.yaml",
+                root=tmpdir,
+                dry_run=False,
+                runner=mock_runner,
+                evidence_checker=checker,
+            )
+            self.assertIn("cluster-1-101", res.landed_clusters)
+            self.assertEqual(
+                res.held_clusters,
+                (("cluster-1-102", "PR #10: missing evidence: review-verdict-1"),),
+            )
+            self.assertNotIn("cluster-1-102", res.failed_clusters)
+            # the held cluster's branch must never have reached git merge
+            self.assertFalse(any("cluster-1-102" in b for b in merged_branches))
+            self.assertEqual(res.status, "partial_failure")
+            # the worker state records the hold with its reason
+            reloaded = load_swarm_state("swarm-evid", root=tmpdir)
+            held_worker = next(
+                w for w in reloaded.workers if w.cluster_id == "cluster-1-102"
+            )
+            self.assertEqual(held_worker.status, "held")
+            self.assertIn("review evidence", held_worker.details)
+            # serialization carries the held pair
+            self.assertEqual(
+                res.to_dict()["held_clusters"],
+                [["cluster-1-102", "PR #10: missing evidence: review-verdict-1"]],
+            )
+
+    def test_land_wave_clusters_all_held_is_failed_and_none_checker_skips(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            s1 = IssueScope(issue=101, title="A", predicted_files=("src/a.py",))
+            plan = build_swarm_plan([s1], swarm_id="swarm-evid2")
+
+            def mock_ok_runner(cmd: list[str], cwd: Path) -> CommandResult:
+                return CommandResult(ok=True, code=0, output="ok")
+
+            # every cluster held -> the wave cannot claim any success
+            res = land_wave_clusters(
+                plan,
+                wave_index=1,
+                project_yaml=".keel/project.yaml",
+                root=tmpdir,
+                dry_run=False,
+                runner=mock_ok_runner,
+                evidence_checker=lambda _b: (False, "no open PR for the cluster branch"),
+            )
+            self.assertEqual(res.status, "failed")
+            self.assertEqual(res.landed_clusters, ())
+
+            # checker=None preserves the legacy behavior byte for byte
+            res2 = land_wave_clusters(
+                plan,
+                wave_index=1,
+                project_yaml=".keel/project.yaml",
+                root=tmpdir,
+                dry_run=False,
+                runner=mock_ok_runner,
+                evidence_checker=None,
+            )
+            self.assertIn("cluster-1-101", res2.landed_clusters)
+            self.assertEqual(res2.held_clusters, ())
+
     def test_land_wave_clusters_live_without_state(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             s1 = IssueScope(issue=101, title="A", predicted_files=("src/a.py",))
@@ -579,6 +692,161 @@ class TestSwarmLandCLI(unittest.TestCase):
         finally:
             if os.path.exists(path):
                 os.unlink(path)
+
+    def test_swarm_land_cli_review_knob_off_logs_and_skips(self):
+        """#828: skipping review must be a visible, configured exception."""
+        import unittest.mock as mock
+
+        from keel import cli as cli_mod
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            w1 = SwarmWorkerStatus(
+                cluster_id="cluster-1-714", issue=714, role="docs", status="passed"
+            )
+            st = SwarmRunState(swarm_id="swarm-knob", total_workers=1, workers=(w1,))
+            save_swarm_state(st, root=tmpdir)
+
+            captured: dict[str, object] = {}
+
+            def fake_land(plan, **kwargs):
+                captured.update(kwargs)
+                from keel.swarm import SwarmLandingResult
+
+                return SwarmLandingResult(
+                    swarm_id=plan.swarm_id, wave_index=1, mode="direct_batch",
+                    landed_clusters=(), healed_clusters=(), failed_clusters=(),
+                    status="failed",
+                )
+
+            import keel.swarm_landing as landing_mod
+
+            with mock.patch.object(
+                landing_mod, "land_wave_clusters", side_effect=fake_land
+            ), mock.patch.object(
+                cli_mod.cfg, "load_config"
+            ) as load_cfg:
+                config = cli_mod.cfg.ProjectConfig(
+                    extends="keel", core_version="^0.7", base_branch="main",
+                    knobs=cli_mod.cfg.Knobs(
+                        build_gate_cmd="true", swarm_review_evidence=False
+                    ),
+                )
+                load_cfg.return_value = config
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    main([
+                        "swarm-land", ".keel/project.yaml", "--root", tmpdir,
+                        "--issue", "714", "--swarm-id", "swarm-knob", "--live",
+                    ])
+            self.assertIsNone(captured["evidence_checker"])
+            self.assertIn("swarm review evidence: OFF by config", buf.getvalue())
+
+            # knob on (default) -> a callable checker is passed
+            with mock.patch.object(
+                landing_mod, "land_wave_clusters", side_effect=fake_land
+            ), mock.patch.object(cli_mod.cfg, "load_config") as load_cfg:
+                config_on = cli_mod.cfg.ProjectConfig(
+                    extends="keel", core_version="^0.7", base_branch="main",
+                    knobs=cli_mod.cfg.Knobs(build_gate_cmd="true"),
+                )
+                load_cfg.return_value = config_on
+                with redirect_stdout(io.StringIO()):
+                    main([
+                        "swarm-land", ".keel/project.yaml", "--root", tmpdir,
+                        "--issue", "714", "--swarm-id", "swarm-knob", "--live",
+                    ])
+            self.assertTrue(callable(captured["evidence_checker"]))
+
+            # dry run -> no checker regardless of the knob
+            with mock.patch.object(
+                landing_mod, "land_wave_clusters", side_effect=fake_land
+            ), mock.patch.object(cli_mod.cfg, "load_config") as load_cfg:
+                load_cfg.return_value = config_on
+                with redirect_stdout(io.StringIO()):
+                    main([
+                        "swarm-land", ".keel/project.yaml", "--root", tmpdir,
+                        "--issue", "714", "--swarm-id", "swarm-knob",
+                    ])
+            self.assertIsNone(captured["evidence_checker"])
+
+    def test_swarm_land_evidence_checker_paths(self):
+        """Every fail-closed arm of the default checker, plus the pass."""
+        import argparse
+        import unittest.mock as mock
+
+        from keel import cli as cli_mod
+        from keel.runner import CommandResult as RunResult
+
+        args = argparse.Namespace(root=".", path=".keel/project.yaml")
+        config = cli_mod.cfg.ProjectConfig(
+            extends="keel", core_version="^0.7", base_branch="main",
+            knobs=cli_mod.cfg.Knobs(build_gate_cmd="true"),
+        )
+        check = cli_mod._swarm_land_evidence_checker(args, config)
+
+        def lookup(stdout: str, ok: bool = True):
+            return mock.patch.object(
+                cli_mod, "run_argv",
+                return_value=RunResult(ok=ok, code=0 if ok else 1,
+                                       output=stdout, stdout=stdout),
+            )
+
+        # transport failure
+        with lookup("boom", ok=False):
+            ok, reason = check("swarm/x/c1")
+        self.assertFalse(ok)
+        self.assertIn("PR lookup failed", reason)
+
+        # invalid JSON
+        with lookup("not json"):
+            ok, reason = check("swarm/x/c1")
+        self.assertFalse(ok)
+        self.assertIn("invalid JSON", reason)
+
+        # no open PR
+        with lookup("[]"):
+            ok, reason = check("swarm/x/c1")
+        self.assertFalse(ok)
+        self.assertIn("no open PR", reason)
+
+        # verification raises -> held, never crash
+        with lookup('[{"number": 7}]'), mock.patch.object(
+            cli_mod, "_verify_merge_evidence", side_effect=RuntimeError("nope")
+        ):
+            ok, reason = check("swarm/x/c1")
+        self.assertFalse(ok)
+        self.assertIn("errored", reason)
+
+        # gate not armed
+        with lookup('[{"number": 7}]'), mock.patch.object(
+            cli_mod, "_verify_merge_evidence",
+            return_value={"enforced": False, "verification": {"status": "pass"}},
+        ):
+            ok, reason = check("swarm/x/c1")
+        self.assertFalse(ok)
+        self.assertIn("not armed", reason)
+
+        # verdicts missing
+        with lookup('[{"number": 7}]'), mock.patch.object(
+            cli_mod, "_verify_merge_evidence",
+            return_value={
+                "enforced": True,
+                "verification": {"status": "fail",
+                                 "missing": ["review-verdict-1"]},
+            },
+        ):
+            ok, reason = check("swarm/x/c1")
+        self.assertFalse(ok)
+        self.assertIn("missing evidence: review-verdict-1", reason)
+
+        # pass
+        with lookup('[{"number": 7}]'), mock.patch.object(
+            cli_mod, "_verify_merge_evidence",
+            return_value={"enforced": True, "verification": {"status": "pass"}},
+        ):
+            ok, reason = check("swarm/x/c1")
+        self.assertTrue(ok)
+        self.assertEqual(reason, "PR #7: evidence verified")
 
     def test_swarm_land_cli_dry_run_and_json(self):
         with tempfile.TemporaryDirectory() as tmpdir:

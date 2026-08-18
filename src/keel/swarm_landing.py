@@ -222,8 +222,18 @@ def land_wave_clusters(
     pr_diff_map: dict[str, list[str] | tuple[str, ...]] | None = None,
     runner: SubprocessRunner | None = None,
     resolver: Callable[[str], str | None] | None = None,
+    evidence_checker: Callable[[str], tuple[bool, str]] | None = None,
 ) -> SwarmLandingResult:
-    """Execute orthogonal batch landing or adaptive sequential funneling for a wave."""
+    """Execute orthogonal batch landing or adaptive sequential funneling for a wave.
+
+    ``evidence_checker`` receives a cluster branch name and answers whether the
+    ship review-evidence contract holds for that branch's PR (ok, reason). When
+    supplied, a cluster whose evidence does not verify is **held** — reported,
+    never merged — so the independent-review layer is structural in swarm
+    exactly as it is in ship s10 (#828). ``None`` skips the check: pure
+    planning callers and the config opt-out (``knobs.swarm_review_evidence:
+    false``, logged by the CLI) both pass ``None``.
+    """
     root_path = Path(root).resolve()
     target_wave: SwarmWave | None = None
     for w in plan.waves:
@@ -249,6 +259,7 @@ def land_wave_clusters(
     landed: list[str] = []
     healed: list[str] = []
     failed: list[str] = []
+    held: list[tuple[str, str]] = []
 
     state = load_swarm_state(plan.swarm_id, root=root_path)
 
@@ -271,6 +282,19 @@ def land_wave_clusters(
     with merge_lock(lock_path):
         for c in target_wave.clusters:
             branch_name = f"swarm/{plan.swarm_id}/{c.cluster_id}"
+            if evidence_checker is not None:
+                evidence_ok, reason = evidence_checker(branch_name)
+                if not evidence_ok:
+                    held.append((c.cluster_id, reason))
+                    if state:
+                        state = update_worker_state(
+                            state,
+                            c.cluster_id,
+                            step="s10",
+                            status="held",
+                            details=f"review evidence: {reason}",
+                        )
+                    continue
             if decision.mode == "direct_batch":
                 ok = merge_cluster_branch(root_path, branch_name, runner=runner)
                 if ok:
@@ -323,9 +347,13 @@ def land_wave_clusters(
     if state:
         save_swarm_state(state, root=root_path)
 
+    # A held cluster is not landed, so it can never leave the wave "success";
+    # it is also not a failure of the code itself, so it degrades the status
+    # exactly like a failed cluster without being reported as one.
+    not_landed = len(failed) + len(held)
     overall_status = (
         "success"
-        if len(failed) == 0 and len(landed) > 0
+        if not_landed == 0 and len(landed) > 0
         else ("partial_failure" if len(landed) > 0 else "failed")
     )
 
@@ -337,4 +365,5 @@ def land_wave_clusters(
         healed_clusters=tuple(healed),
         failed_clusters=tuple(failed),
         status=overall_status,
+        held_clusters=tuple(held),
     )

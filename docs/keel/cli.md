@@ -1589,6 +1589,14 @@ keel swarm-land .keel/project.yaml --root . --mode auto
 
 - **Direct Batch Mode**: Orthogonal disjoint diff trees land concurrently.
 - **Adaptive Funnel Mode**: Overlapping trees land sequentially with automatic fail-soft rebase healing.
+- **Review evidence (#828)**: before a live landing, every cluster branch's open PR must pass
+  the same pre-merge review-evidence verification `keel merge` enforces — armed gate label,
+  tier-derived verdict count, verdicts pinned to the PR head. A cluster that does not verify is
+  **held** (reported with its reason, never merged); held clusters degrade the wave status like
+  failures without being counted as one. Fail-closed at every step: no open PR, a transport
+  error and an unarmed gate all hold. The explicit opt-out is `knobs.swarm_review_evidence:
+  false`, which `swarm-land` announces loudly — the exception lives in config, never in a
+  driver's judgement call.
 
 ## `keel-visual swarm <project.yaml> [--root DIR] [--swarm-id ID] [--out FILE] [--serve] [--port PORT] [--json]`
 
