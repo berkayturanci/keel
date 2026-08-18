@@ -434,7 +434,12 @@ class TestAnalyticsDocMatchesReality(unittest.TestCase):
         with_beacon = self._pages_with_beacon()
         words = "zero one two three four five six seven eight nine".split()
         self.assertLess(len(all_pages), len(words), "extend the words list for the count pin")
-        expected = f"{words[len(with_beacon)].capitalize()} of the {words[len(all_pages)]} pages"
+        if with_beacon == all_pages:
+            expected = f"All {words[len(all_pages)]} pages"
+        else:
+            expected = (
+                f"{words[len(with_beacon)].capitalize()} of the {words[len(all_pages)]} pages"
+            )
         self.assertIn(
             expected,
             self._analytics_section(),
