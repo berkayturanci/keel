@@ -9,9 +9,9 @@
 
 ## Docs
 
-- [Home](https://berkayturanci.github.io/keel/): overview, positioning, and quick start
-- [Documentation](https://berkayturanci.github.io/keel/docs.html): commands, config, extension slots, and the fixed backbone
-- [Coverage report](https://berkayturanci.github.io/keel/coverage.html): live test-coverage dashboard
+- [Home](https://keel-ship.dev/): overview, positioning, and quick start
+- [Documentation](https://keel-ship.dev/docs.html): commands, config, extension slots, and the fixed backbone
+- [Coverage report](https://keel-ship.dev/coverage.html): live test-coverage dashboard
 
 ## Source
 

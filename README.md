@@ -7,7 +7,7 @@
 # keel ⚓
 
 [![CI](https://github.com/berkayturanci/keel/actions/workflows/ci.yml/badge.svg)](https://github.com/berkayturanci/keel/actions/workflows/ci.yml)
-[![coverage](https://img.shields.io/endpoint?url=https://berkayturanci.github.io/keel/coverage-badge.json)](https://berkayturanci.github.io/keel/coverage/)
+[![coverage](https://img.shields.io/endpoint?url=https://keel-ship.dev/coverage-badge.json)](https://keel-ship.dev/coverage/)
 [![CodeQL](https://github.com/berkayturanci/keel/actions/workflows/codeql.yml/badge.svg)](https://github.com/berkayturanci/keel/actions/workflows/codeql.yml)
 [![PyPI](https://img.shields.io/pypi/v/keel-workflow)](https://pypi.org/project/keel-workflow/)
 [![Python](https://img.shields.io/pypi/pyversions/keel-workflow)](https://pypi.org/project/keel-workflow/)
@@ -241,8 +241,8 @@ If a step's gate fails, keel blocks its own merge — the same backbone every co
 
 ## Docs
 
-- 🌐 **[Website + live coverage report](https://berkayturanci.github.io/keel/)** — the
-  published site is live at <https://berkayturanci.github.io/keel/> (deployed via the
+- 🌐 **[Website + live coverage report](https://keel-ship.dev/)** — the
+  published site is live at <https://keel-ship.dev/> (deployed via the
   `pages.yml` workflow). Locally, `make site` builds the coverage HTML into
   `website/coverage/` and serves it at <http://localhost:8000>.
 - [`docs/keel/configuration.md`](docs/keel/configuration.md) — `project.yaml` reference

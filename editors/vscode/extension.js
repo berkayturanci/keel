@@ -162,7 +162,7 @@ function activate(context) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand("keel.visual", () => {
-      vscode.env.openExternal(vscode.Uri.parse("https://berkayturanci.github.io/keel/#swarm"));
+      vscode.env.openExternal(vscode.Uri.parse("https://keel-ship.dev/#swarm"));
     })
   );
 

@@ -1,7 +1,7 @@
 # keel website — handoff notes
 
 Static site for [keel](https://github.com/berkayturanci/keel), deployed to GitHub Pages at
-<https://berkayturanci.github.io/keel/>. Drop this folder in as the repo's `website/`
+<https://keel-ship.dev/>. Drop this folder in as the repo's `website/`
 directory (replacing the existing one) — the existing `pages.yml` workflow / `make site`
 flow keeps working.
 
@@ -49,13 +49,13 @@ by CI.
   Use in the repo README with:
   ```html
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://berkayturanci.github.io/keel/assets/hero-dark.svg">
-    <img alt="keel — drive every issue to merged" src="https://berkayturanci.github.io/keel/assets/hero-light.svg">
+    <source media="(prefers-color-scheme: dark)" srcset="https://keel-ship.dev/assets/hero-dark.svg">
+    <img alt="keel — drive every issue to merged" src="https://keel-ship.dev/assets/hero-light.svg">
   </picture>
   ```
 - `index.html` carries JSON-LD (`SoftwareApplication`) structured data
 - `sitemap.xml`, `robots.txt`, `site.webmanifest` — URLs point at
-  `https://berkayturanci.github.io/keel/`; update if the site moves
+  `https://keel-ship.dev/`; update if the site moves
 - Each page has full meta description / OG / Twitter tags + canonical
 
 ## Google Analytics

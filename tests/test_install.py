@@ -599,7 +599,7 @@ class TestClaudeCodePlugin(unittest.TestCase):
         self.assertEqual(manifest["name"], "keel")
         self.assertEqual(manifest["license"], "Apache-2.0")
         self.assertEqual(manifest["author"]["name"], "Berkay Turancı")
-        self.assertEqual(manifest["homepage"], "https://berkayturanci.github.io/keel/")
+        self.assertEqual(manifest["homepage"], "https://keel-ship.dev/")
         self.assertTrue(manifest["description"])
 
     def test_codex_plugin_manifest_version_matches_keel_version(self):
@@ -611,7 +611,7 @@ class TestClaudeCodePlugin(unittest.TestCase):
         self.assertEqual(manifest["name"], "keel")
         self.assertEqual(manifest["license"], "Apache-2.0")
         self.assertEqual(manifest["author"]["name"], "Berkay Turancı")
-        self.assertEqual(manifest["homepage"], "https://berkayturanci.github.io/keel/")
+        self.assertEqual(manifest["homepage"], "https://keel-ship.dev/")
         self.assertEqual(manifest["skills"], "./skill")
         self.assertTrue(manifest["description"])
 

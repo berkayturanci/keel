@@ -1,4 +1,4 @@
-# keel — https://berkayturanci.github.io/keel/
+# keel — https://keel-ship.dev/
 # Project-neutral, multi-agent workflow backbone (stdlib-first Python CLI).
 
 User-agent: *
@@ -46,5 +46,5 @@ Allow: /
 User-agent: CCBot
 Allow: /
 
-Sitemap: https://berkayturanci.github.io/keel/sitemap.xml
-# LLM-friendly summary: https://berkayturanci.github.io/keel/llms.txt
+Sitemap: https://keel-ship.dev/sitemap.xml
+# LLM-friendly summary: https://keel-ship.dev/llms.txt

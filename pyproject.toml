@@ -36,7 +36,7 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://berkayturanci.github.io/keel/"
+Homepage = "https://keel-ship.dev/"
 Repository = "https://github.com/berkayturanci/keel"
 Issues = "https://github.com/berkayturanci/keel/issues"
 Changelog = "https://github.com/berkayturanci/keel/blob/main/CHANGELOG.md"

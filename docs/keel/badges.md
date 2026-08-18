@@ -26,7 +26,7 @@ Highlights that parallel backlog waves are clustered and landed via Keel Swarm D
 Reflects live branch and line test coverage dynamically updated on every push via GitHub Pages.
 
 ```markdown
-[![coverage](https://img.shields.io/endpoint?url=https://berkayturanci.github.io/keel/coverage-badge.json)](https://berkayturanci.github.io/keel/coverage/)
+[![coverage](https://img.shields.io/endpoint?url=https://keel-ship.dev/coverage-badge.json)](https://keel-ship.dev/coverage/)
 ```
 
 ---

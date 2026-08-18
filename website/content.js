@@ -20,7 +20,7 @@ window.KEEL = {
     pluginInstall: "/plugin install keel",
     repo: "https://github.com/berkayturanci/keel",
     pypi: "https://pypi.org/project/keel-workflow/",
-    coverageBadge: "https://berkayturanci.github.io/keel/coverage-badge.json",
+    coverageBadge: "https://keel-ship.dev/coverage-badge.json",
     python: "Python ≥ 3.11",
     deps: "stdlib-first · 1 runtime dep (PyYAML)",
     license: "Apache-2.0",
