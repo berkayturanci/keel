@@ -425,5 +425,56 @@ class TestNotRunPropagation(unittest.TestCase):
         self.assertTrue(outcomes[2].ok)
 
 
+class TestScanPresetExclusions(unittest.TestCase):
+    """The bandit preset must not walk trees that produce only false findings.
+
+    `bandit -r .` walks everything below the working directory, including trees
+    git is told to ignore. Before #834 that meant a local `.venv` (875 high
+    findings from installed dependencies), nested checkouts under
+    `.claude/worktrees/`, and `tests/` — where hardcoded temp paths, `urlopen`,
+    and subprocesses are normal rather than defects. All 23 findings were in test
+    code and none in `src/`, so the gate was permanently red and read as noise.
+    """
+
+    def _bandit_cmd(self) -> str:
+        return gates.POLICY_PACK_PRESETS["bandit"][3]
+
+    def test_bandit_excludes_the_noise_directories(self):
+        cmd = self._bandit_cmd()
+        self.assertIn("-x", cmd)
+        for name in ("tests", ".venv", "venv", "node_modules", "site-packages"):
+            self.assertIn(name, cmd, f"{name} is not excluded from the bandit scan")
+
+    def test_exclusions_are_globs_not_anchored_paths(self):
+        # A fixed `./tests` does not match `./.claude/worktrees/<name>/tests`, so
+        # nested checkouts leak back in. Same prefix-anchoring trap as #820.
+        for pattern in self._parsed_exclusions():
+            self.assertTrue(
+                pattern.startswith("*/"),
+                f"exclusion {pattern!r} is prefix-anchored; use a */glob/* form",
+            )
+
+    def test_exclusions_match_a_nested_path(self):
+        # The property that actually matters, asserted rather than assumed.
+        import fnmatch
+        nested = "./.claude/worktrees/some-branch/tests/test_cli.py"
+        self.assertTrue(
+            any(fnmatch.fnmatch(nested, p) for p in self._parsed_exclusions()),
+            "a nested worktree's tests/ would still be scanned",
+        )
+
+    def test_bandit_stays_advisory(self):
+        # Excluding directories is about signal quality, not about weakening the
+        # gate's standing: it must remain a `suggest`, never silently become
+        # blocking or non-reporting.
+        gate_id, phase, on_fail, _cmd = gates.POLICY_PACK_PRESETS["bandit"]
+        self.assertEqual((gate_id, phase, on_fail), ("bandit", "test", "suggest"))
+
+    def _parsed_exclusions(self) -> list[str]:
+        cmd = self._bandit_cmd()
+        raw = cmd.split("-x", 1)[1].strip().strip("'\"")
+        return [part for part in raw.split(",") if part]
+
+
 if __name__ == "__main__":
     unittest.main()

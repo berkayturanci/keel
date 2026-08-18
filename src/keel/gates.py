@@ -23,12 +23,28 @@ if TYPE_CHECKING:  # pragma: no cover
 #: Built-in gate names accepted in ``project.yaml``'s ``gates:`` list.
 BUILTIN_GATES: tuple[str, ...] = ("build", "lint", "jury")
 
+#: Directories a source scanner must not walk, as **prefix-independent globs**.
+#:
+#: ``bandit -r .`` walks everything under the working directory, including trees
+#: version control is told to ignore: an installed ``.venv`` (its dependencies
+#: alone produce hundreds of findings) and nested checkouts under a harness's
+#: worktree directory. Test code is excluded on purpose — bandit's heuristics
+#: target application code, and tests legitimately use temp paths, ``urlopen``,
+#: and subprocesses, so their findings are false by construction and crowd out
+#: real ones.
+#:
+#: The patterns are globs rather than fixed paths because a fixed ``./tests``
+#: does not match ``./.claude/worktrees/<name>/tests`` — the same prefix-anchoring
+#: mistake as the coverage ``omit`` pattern in #820.
+_SCAN_EXCLUDE_GLOBS = "*/tests/*,*/.venv/*,*/venv/*,*/node_modules/*,*/site-packages/*"
+
 #: Declarative security & SAST presets supported in ``policy_pack.presets``.
 POLICY_PACK_PRESETS: dict[str, tuple[str, str, str, str]] = {
     # preset: (gate_id, phase, on_fail, run_cmd)
     "gitleaks": ("gitleaks", "guard", "block", "gitleaks detect --no-git -v"),
     "semgrep": ("semgrep", "test", "suggest", "semgrep scan"),
-    "bandit": ("bandit", "test", "suggest", "bandit -r . -ll"),
+    "bandit": ("bandit", "test", "suggest",
+               f"bandit -r . -ll -x '{_SCAN_EXCLUDE_GLOBS}'"),
     "trivy": ("trivy", "test", "warn", "trivy fs ."),
 }
 
