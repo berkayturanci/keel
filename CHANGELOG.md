@@ -6,6 +6,61 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.17.0] - 2026-08-18
+
+This release is mostly about keel's own signals telling the truth. Three gates and one
+instruction were quietly wrong in ways that only showed up locally, and a check that is
+always red is a check people stop reading.
+
+### Added
+- **`keel doctor` now reports whether the importable keel is the checkout you are in** (#825, #826):
+  New `checkout_binding` check, reported first because it contextualises every check below it.
+  `pip install -e .` registers one source tree for the whole interpreter, so installing from a
+  second checkout silently repoints every other one — imports, the test suite, and coverage all
+  follow the other tree while the working directory suggests otherwise. Every previous check was
+  *about* the installed package; none asked whether that package was the checkout at hand. A
+  mismatch names both paths and the remedy, and is a `warn` rather than a `fail`: running against
+  a deliberately installed release is legitimate, so exit codes are unchanged.
+- **Site moved to [keel-ship.dev](https://keel-ship.dev)** (#813, #814), with deploys announced via
+  IndexNow (#816, #817), search-language targeting, and a long-tail article — both pinned by tests
+  (#808, #809), and the article page added to analytics coverage (#818, #819).
+
+### Changed
+- **The `bandit` preset no longer scans tests, virtualenvs, or nested checkouts** (#834, #837):
+  `bandit -r . -ll` walked everything below the working directory, including trees git is told to
+  ignore. All 23 findings it reported were in test code — hardcoded `/tmp`, `urlopen`, XML parsing,
+  all normal in tests — while `src/` had zero findings and there was no high severity at all. A
+  local `.venv` took it to 875 high by walking installed dependencies. The preset now excludes
+  those trees as prefix-independent globs. **This affects every project using `presets: ["bandit"]`**,
+  and is the reason this is a minor rather than a patch release. The gate remains `suggest`, pinned
+  by a test so signal-quality work cannot quietly make it blocking.
+
+### Fixed
+- **The coverage gate's `omit` pattern was prefix-bound** (#820, #821): it resolved to one absolute
+  path anchored at `pyproject.toml`, while `source = ["keel"]` resolves the *importable* package,
+  whose location depends on the environment. When those disagreed, an unexecuted `__main__.py` from
+  another checkout was counted and the local 100% gate failed at 99% — on CI it passed, so only local
+  runs looked broken, which is the corrosive kind.
+- **`AGENTS.md` documented a CLI invocation that could not run your working tree** (#831, #832):
+  the line above set `PYTHONPATH=src` for the tests; the CLI line did not. Bare `python3 -m keel`
+  fails from a fresh checkout, and silently runs another checkout when a global editable install is
+  registered. Now documented with the prefix, with the installed `keel` script called out as running
+  the *released* version, and a guard so it cannot drift back.
+- **The swarm simulator's copy button left its accessible name stuck** (#815, #827): the clipboard
+  callback captured the `aria-label` it was about to overwrite, so a second click inside the 2s flash
+  window captured the transient "Copied to clipboard" and restored *that*. Visible text recovered;
+  the accessible name did not. Both labels now restore to the constants the markup ships with, and
+  the pending timer is cleared per click. Follows #792/#810, which added the label and then synced it.
+- **`keel-visual` rendered abandoned runs as still running** (#824).
+- **Homebrew formula checksums are verified before the tap is updated** (#805, #806): 1.16.0 shipped
+  carrying 1.15.0's checksum, so `brew install` downloaded the new tarball, compared it to the old
+  digest and refused. The publish workflow now fails rather than syncing a formula that cannot
+  install — a tap one release behind still works. The tap also pulls directly, dropping a cross-repo
+  token (#807).
+- **PyPI version check no longer follows redirects unguarded** (#811).
+- **Documentation commands are checked against the real CLI surface** (#803, #804), and
+  `.claude/launch.json` — harness-local state — is no longer left untracked (#835, #836).
+
 ## [1.16.0] - 2026-08-17
 
 ### Added

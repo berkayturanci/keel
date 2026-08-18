@@ -101,4 +101,4 @@ Route by the Step 2 classification — never merge here:
 - **Deterministic** for identical CI state.
 - **Fail-soft** — a missing CLI degrades to the Step 0 clean-exit note, not a crash.
 
-<!-- keel-generated: surface=skills command=ci-check keel_version=1.16.0 source_sha256=fb3c23e6e7427ca862f10aa6cdfa7bb625b0f4d2a94bac11d9653d2a8f163e50 generated_sha256=b2123020b76c041375617a25c249ea81cc423675bb426b4e7900a41c7ffdfcc0 -->
+<!-- keel-generated: surface=skills command=ci-check keel_version=1.17.0 source_sha256=fb3c23e6e7427ca862f10aa6cdfa7bb625b0f4d2a94bac11d9653d2a8f163e50 generated_sha256=b2123020b76c041375617a25c249ea81cc423675bb426b4e7900a41c7ffdfcc0 -->
