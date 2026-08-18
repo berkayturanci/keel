@@ -60,7 +60,7 @@ keel = ["schema/*.json", "adapters/commands/*.md"]
 [tool.coverage.run]
 branch = true
 source = ["keel"]
-omit = ["src/keel/__main__.py"]
+omit = ["*/keel/__main__.py"]
 
 [tool.coverage.report]
 # keel keeps a high bar — the pure core stays fully covered (line + branch).
