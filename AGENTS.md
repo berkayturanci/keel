@@ -58,7 +58,11 @@ make site       # build the coverage report into website/ and serve at :8000
 ```
 
 Run a single module's tests: `PYTHONPATH=src python3 -m unittest tests.test_<module> -v`.
-The CLI entry point is `python3 -m keel …` (or the installed `keel` script) — **not**
+Run the CLI the same way: `PYTHONPATH=src python3 -m keel …`. That prefix is what makes it
+*your* working tree; without it the command either fails outright or, when a global editable
+install happens to be registered, silently runs whichever checkout installed it (#825 — this
+is what `keel doctor`'s `checkout_binding` check now warns about). The installed `keel` script
+is the other option, but it runs the released version, not your changes. Neither form is
 `python3 -m keel.cli`, which has no `__main__` guard and silently no-ops. `ruff` lives in
 the `dev` extra (`pip install -e ".[dev]"`).
 

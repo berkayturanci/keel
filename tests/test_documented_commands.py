@@ -149,5 +149,41 @@ class TestAgentMemoryFilesDoNotAccreteDuplicates(unittest.TestCase):
         )
 
 
+class TestModuleInvocationsCarryThePathPrefix(unittest.TestCase):
+    """`python3 -m keel` without `PYTHONPATH=src` does not run this checkout (issue #831).
+
+    `-m` resolves the package in the *invoking* interpreter. From a fresh checkout
+    that is nothing, so the command fails; and if a global editable install happens
+    to be registered it silently runs whichever checkout installed that — the #825
+    failure mode. A pipx-installed `keel` is not a substitute: it has its own
+    interpreter, so `-m` never reaches it, and it runs the released version anyway.
+
+    `AGENTS.md:60` had the prefix for tests while the next line omitted it for the
+    CLI. That was harmless only while a global install papered over it. The sweep in
+    :class:`TestDocumentedCommandsExist` reads shell-tagged fences only, and this
+    instruction lives in prose with inline backticks, so nothing else covers it.
+
+    `python3 -m keel.cli` is exempt: it appears only as a named counter-example.
+    """
+
+    #: `python -m keel` / `python3 -m keel` not followed by a dotted submodule.
+    _INVOCATION = re.compile(r"python3? -m keel(?![.\w])")
+
+    def test_agents_md_prefixes_every_module_invocation(self):
+        text = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+        unprefixed = []
+        for match in self._INVOCATION.finditer(text):
+            before = text[:match.start()]
+            if not before.endswith("PYTHONPATH=src "):
+                line = text.count("\n", 0, match.start()) + 1
+                unprefixed.append(f"AGENTS.md:{line}")
+        self.assertEqual(
+            unprefixed, [],
+            "`python3 -m keel` documented without the `PYTHONPATH=src` prefix — it "
+            "would run the released package or another checkout, not this one: "
+            f"{unprefixed}",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
