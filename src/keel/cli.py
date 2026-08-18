@@ -4410,8 +4410,9 @@ def _swarm_land_evidence_checker(
 
     def check(branch_name: str) -> tuple[bool, str]:
         lookup = run_argv(
-            ["gh", "pr", "list", "--head", branch_name, "--state", "open",
-             "--json", "number"],
+            ["gh", "pr", "list", "--head", branch_name,
+             "--base", config.base_branch, "--state", "all",
+             "--json", "number,state"],
             cwd=args.root,
         )
         if not lookup.ok:
@@ -4420,28 +4421,75 @@ def _swarm_land_evidence_checker(
             prs = json.loads(lookup.stdout or "[]")
         except json.JSONDecodeError:
             return False, "PR lookup returned invalid JSON"
-        number = prs[0].get("number") if prs and isinstance(prs[0], dict) else None
-        if not isinstance(number, int):
+        if not isinstance(prs, list):
+            prs = []
+        open_prs = [
+            p for p in prs
+            if isinstance(p, dict) and p.get("state") == "OPEN"
+            and isinstance(p.get("number"), int)
+        ]
+        if len(open_prs) > 1:
+            numbers = ", ".join(f"#{p['number']}" for p in open_prs)
+            return False, (
+                f"ambiguous: {len(open_prs)} open PRs for the cluster branch "
+                f"({numbers}) — close the strays before landing"
+            )
+        if not open_prs:
+            merged = [
+                p for p in prs
+                if isinstance(p, dict) and p.get("state") == "MERGED"
+                and isinstance(p.get("number"), int)
+            ]
+            if merged:
+                return False, (
+                    f"PR #{merged[0]['number']} is already merged — this "
+                    "cluster likely landed in an earlier run"
+                )
             return False, (
                 "no open PR for the cluster branch — open one, arm the gate "
                 "label and post review verdicts before landing"
             )
+        number = open_prs[0]["number"]
+        # Field-for-field parity with `keel merge`'s own argparse defaults:
+        # `review_comments` in particular is validated against the posting
+        # modes and must never be None (the inert-feature blocker PYLON-9
+        # demonstrated — every cluster held on a ValueError).
         evidence_ns = argparse.Namespace(
-            pr=number, issue=None, reviewers=None, review_comments=None,
+            pr=number, issue=None, reviewers=None, review_comments="inline",
             jury=False, no_jury=False, jury_advisory=False,
             gate_label=None, root=args.root,
         )
         try:
             payload = _verify_merge_evidence(evidence_ns, config)
         except Exception as exc:  # noqa: BLE001 - one bad cluster must hold, not crash the wave
-            return False, f"evidence verification errored: {exc}"[:160]
+            return False, (
+                f"evidence verification errored: {type(exc).__name__}: {exc}"
+            )[:160]
         if not payload.get("enforced"):
             return False, f"PR #{number}: evidence gate is not armed"
         verification = payload.get("verification") or {}
         if verification.get("status") != "pass":
             missing = ", ".join(verification.get("missing") or ()) or "unknown"
             return False, f"PR #{number}: missing evidence: {missing}"
-        return True, f"PR #{number}: evidence verified"
+        # Head pin (CULVERT-4): the verdicts are pinned to the *remote* PR
+        # head, but the landing merges the *local* branch ref. Unless the two
+        # are the same commit, "evidence verified" would bless bytes nobody
+        # reviewed — the exact bypass class #828 closes.
+        reviewed_sha = payload.get("head_sha")
+        local = run_argv(["git", "rev-parse", branch_name], cwd=args.root)
+        local_sha = (local.stdout or local.output or "").strip()
+        if not local.ok or not local_sha:
+            return False, (
+                f"PR #{number}: cannot resolve the local branch tip to pin "
+                "against the reviewed head"
+            )
+        if not isinstance(reviewed_sha, str) or local_sha != reviewed_sha:
+            return False, (
+                f"PR #{number}: local branch tip {local_sha[:12]} is not the "
+                f"reviewed PR head {str(reviewed_sha)[:12]} — push or re-review "
+                "before landing"
+            )
+        return True, f"PR #{number}: evidence verified at {local_sha[:12]}"
 
     return check
 
@@ -4525,7 +4573,8 @@ def _cmd_swarm_land(args: argparse.Namespace) -> int:
             # configured exception, never a silent default.
             print(
                 "swarm review evidence: OFF by config "
-                "(knobs.swarm_review_evidence: false) — clusters land on CI alone"
+                "(knobs.swarm_review_evidence: false) — clusters land on CI alone",
+                file=sys.stderr,
             )
 
     result = swarm_landing.land_wave_clusters(

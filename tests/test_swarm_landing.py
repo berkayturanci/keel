@@ -92,7 +92,7 @@ footer line
 
     def test_declarative_chunks_bullets_quotes_and_comments(self):
         ours = "- feature A\n* feature B\n// comment\n/* block */\n\n\"entry1\",\n'entry2',\n"
-        theirs = "- feature C\n\"entry3\",\n"
+        theirs = '- feature C\n"entry3",\n'
         res = resolve_adjacent_conflict(ours, theirs)
         self.assertIsNotNone(res)
         self.assertIn("feature A", res)
@@ -108,13 +108,7 @@ footer line
         self.assertEqual(resolve_conflict_content(clean), clean)
 
         conflict_resolvable = (
-            "header\n"
-            "<<<<<<< HEAD\n"
-            "import os\n"
-            "=======\n"
-            "import sys\n"
-            ">>>>>>> branch\n"
-            "footer\n"
+            "header\n<<<<<<< HEAD\nimport os\n=======\nimport sys\n>>>>>>> branch\nfooter\n"
         )
         resolved = resolve_conflict_content(conflict_resolvable)
         self.assertIsNotNone(resolved)
@@ -122,22 +116,13 @@ footer line
         self.assertIn("import sys", resolved)
         self.assertNotIn("<<<<<<<", resolved)
 
-        conflict_unresolvable = (
-            "header\n"
-            "<<<<<<< HEAD\n"
-            "val = 1\n"
-            "=======\n"
-            "val = 2\n"
-            ">>>>>>> branch\n"
-        )
+        conflict_unresolvable = "header\n<<<<<<< HEAD\nval = 1\n=======\nval = 2\n>>>>>>> branch\n"
         self.assertIsNone(resolve_conflict_content(conflict_unresolvable))
 
 
 class TestSwarmLandingPureLogic(unittest.TestCase):
     def test_evaluate_wave_landing_mode_single_and_disjoint(self):
-        c1 = SwarmCluster(
-            cluster_id="c1", issues=(101,), role="core", combined_scope=("src/a.py",)
-        )
+        c1 = SwarmCluster(cluster_id="c1", issues=(101,), role="core", combined_scope=("src/a.py",))
         w_single = SwarmWave(
             wave_index=1,
             mode="orthogonal_parallel",
@@ -161,9 +146,7 @@ class TestSwarmLandingPureLogic(unittest.TestCase):
             eligible_direct_landing=True,
             clusters=(c1, c2),
         )
-        dec_multi = evaluate_wave_landing_mode(
-            w_multi, {"c1": ["src/a.py"], "c2": ["docs/a.md"]}
-        )
+        dec_multi = evaluate_wave_landing_mode(w_multi, {"c1": ["src/a.py"], "c2": ["docs/a.md"]})
         self.assertTrue(dec_multi.eligible)
         self.assertEqual(dec_multi.mode, "direct_batch")
         self.assertEqual(dec_multi.reason, "orthogonal_diff_trees")
@@ -482,9 +465,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
             self.assertEqual(res.status, "partial_failure")
             # the worker state records the hold with its reason
             reloaded = load_swarm_state("swarm-evid", root=tmpdir)
-            held_worker = next(
-                w for w in reloaded.workers if w.cluster_id == "cluster-1-102"
-            )
+            held_worker = next(w for w in reloaded.workers if w.cluster_id == "cluster-1-102")
             self.assertEqual(held_worker.status, "held")
             self.assertIn("review evidence", held_worker.details)
             # serialization carries the held pair
@@ -713,60 +694,96 @@ class TestSwarmLandCLI(unittest.TestCase):
                 from keel.swarm import SwarmLandingResult
 
                 return SwarmLandingResult(
-                    swarm_id=plan.swarm_id, wave_index=1, mode="direct_batch",
-                    landed_clusters=(), healed_clusters=(), failed_clusters=(),
+                    swarm_id=plan.swarm_id,
+                    wave_index=1,
+                    mode="direct_batch",
+                    landed_clusters=(),
+                    healed_clusters=(),
+                    failed_clusters=(),
                     status="failed",
                 )
 
             import keel.swarm_landing as landing_mod
 
-            with mock.patch.object(
-                landing_mod, "land_wave_clusters", side_effect=fake_land
-            ), mock.patch.object(
-                cli_mod.cfg, "load_config"
-            ) as load_cfg:
+            with (
+                mock.patch.object(landing_mod, "land_wave_clusters", side_effect=fake_land),
+                mock.patch.object(cli_mod.cfg, "load_config") as load_cfg,
+            ):
                 config = cli_mod.cfg.ProjectConfig(
-                    extends="keel", core_version="^0.7", base_branch="main",
-                    knobs=cli_mod.cfg.Knobs(
-                        build_gate_cmd="true", swarm_review_evidence=False
-                    ),
+                    extends="keel",
+                    core_version="^0.7",
+                    base_branch="main",
+                    knobs=cli_mod.cfg.Knobs(build_gate_cmd="true", swarm_review_evidence=False),
                 )
                 load_cfg.return_value = config
-                buf = io.StringIO()
-                with redirect_stdout(buf):
-                    main([
-                        "swarm-land", ".keel/project.yaml", "--root", tmpdir,
-                        "--issue", "714", "--swarm-id", "swarm-knob", "--live",
-                    ])
+                buf_out, buf_err = io.StringIO(), io.StringIO()
+                with redirect_stdout(buf_out), redirect_stderr(buf_err):
+                    main(
+                        [
+                            "swarm-land",
+                            ".keel/project.yaml",
+                            "--root",
+                            tmpdir,
+                            "--issue",
+                            "714",
+                            "--swarm-id",
+                            "swarm-knob",
+                            "--live",
+                            "--json",
+                        ]
+                    )
             self.assertIsNone(captured["evidence_checker"])
-            self.assertIn("swarm review evidence: OFF by config", buf.getvalue())
+            # the opt-out is loud on stderr and must never corrupt --json stdout
+            self.assertIn("swarm review evidence: OFF by config", buf_err.getvalue())
+            json.loads(buf_out.getvalue())
 
             # knob on (default) -> a callable checker is passed
-            with mock.patch.object(
-                landing_mod, "land_wave_clusters", side_effect=fake_land
-            ), mock.patch.object(cli_mod.cfg, "load_config") as load_cfg:
+            with (
+                mock.patch.object(landing_mod, "land_wave_clusters", side_effect=fake_land),
+                mock.patch.object(cli_mod.cfg, "load_config") as load_cfg,
+            ):
                 config_on = cli_mod.cfg.ProjectConfig(
-                    extends="keel", core_version="^0.7", base_branch="main",
+                    extends="keel",
+                    core_version="^0.7",
+                    base_branch="main",
                     knobs=cli_mod.cfg.Knobs(build_gate_cmd="true"),
                 )
                 load_cfg.return_value = config_on
                 with redirect_stdout(io.StringIO()):
-                    main([
-                        "swarm-land", ".keel/project.yaml", "--root", tmpdir,
-                        "--issue", "714", "--swarm-id", "swarm-knob", "--live",
-                    ])
+                    main(
+                        [
+                            "swarm-land",
+                            ".keel/project.yaml",
+                            "--root",
+                            tmpdir,
+                            "--issue",
+                            "714",
+                            "--swarm-id",
+                            "swarm-knob",
+                            "--live",
+                        ]
+                    )
             self.assertTrue(callable(captured["evidence_checker"]))
 
             # dry run -> no checker regardless of the knob
-            with mock.patch.object(
-                landing_mod, "land_wave_clusters", side_effect=fake_land
-            ), mock.patch.object(cli_mod.cfg, "load_config") as load_cfg:
+            with (
+                mock.patch.object(landing_mod, "land_wave_clusters", side_effect=fake_land),
+                mock.patch.object(cli_mod.cfg, "load_config") as load_cfg,
+            ):
                 load_cfg.return_value = config_on
                 with redirect_stdout(io.StringIO()):
-                    main([
-                        "swarm-land", ".keel/project.yaml", "--root", tmpdir,
-                        "--issue", "714", "--swarm-id", "swarm-knob",
-                    ])
+                    main(
+                        [
+                            "swarm-land",
+                            ".keel/project.yaml",
+                            "--root",
+                            tmpdir,
+                            "--issue",
+                            "714",
+                            "--swarm-id",
+                            "swarm-knob",
+                        ]
+                    )
             self.assertIsNone(captured["evidence_checker"])
 
     def test_swarm_land_evidence_checker_paths(self):
@@ -779,23 +796,31 @@ class TestSwarmLandCLI(unittest.TestCase):
 
         args = argparse.Namespace(root=".", path=".keel/project.yaml")
         config = cli_mod.cfg.ProjectConfig(
-            extends="keel", core_version="^0.7", base_branch="main",
+            extends="keel",
+            core_version="^0.7",
+            base_branch="main",
             knobs=cli_mod.cfg.Knobs(build_gate_cmd="true"),
         )
         check = cli_mod._swarm_land_evidence_checker(args, config)
 
+        captured_cmd: list[list[str]] = []
+
         def lookup(stdout: str, ok: bool = True):
-            return mock.patch.object(
-                cli_mod, "run_argv",
-                return_value=RunResult(ok=ok, code=0 if ok else 1,
-                                       output=stdout, stdout=stdout),
-            )
+            def _run(cmd, **kwargs):
+                captured_cmd.append(list(cmd))
+                return RunResult(ok=ok, code=0 if ok else 1, output=stdout, stdout=stdout)
+
+            return mock.patch.object(cli_mod, "run_argv", side_effect=_run)
 
         # transport failure
         with lookup("boom", ok=False):
             ok, reason = check("swarm/x/c1")
         self.assertFalse(ok)
         self.assertIn("PR lookup failed", reason)
+        # the lookup is base-filtered so a retargeted PR can never verify a
+        # diff the wave will not land
+        self.assertIn("--base", captured_cmd[0])
+        self.assertIn("main", captured_cmd[0])
 
         # invalid JSON
         with lookup("not json"):
@@ -803,50 +828,155 @@ class TestSwarmLandCLI(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("invalid JSON", reason)
 
-        # no open PR
+        # JSON but not a list -> treated as no PR, held
+        with lookup('{"number": 7}'):
+            ok, reason = check("swarm/x/c1")
+        self.assertFalse(ok)
+        self.assertIn("no open PR", reason)
+
+        # no PR at all
         with lookup("[]"):
             ok, reason = check("swarm/x/c1")
         self.assertFalse(ok)
         self.assertIn("no open PR", reason)
 
-        # verification raises -> held, never crash
-        with lookup('[{"number": 7}]'), mock.patch.object(
-            cli_mod, "_verify_merge_evidence", side_effect=RuntimeError("nope")
+        # already merged -> honest retry reason, still held
+        with lookup('[{"number": 7, "state": "MERGED"}]'):
+            ok, reason = check("swarm/x/c1")
+        self.assertFalse(ok)
+        self.assertIn("already merged", reason)
+
+        # ambiguous: two open PRs for one branch
+        with lookup('[{"number": 7, "state": "OPEN"}, {"number": 8, "state": "OPEN"}]'):
+            ok, reason = check("swarm/x/c1")
+        self.assertFalse(ok)
+        self.assertIn("ambiguous: 2 open PRs", reason)
+
+        # verification raises -> held with the exception type, never a crash
+        with (
+            lookup('[{"number": 7, "state": "OPEN"}]'),
+            mock.patch.object(cli_mod, "_verify_merge_evidence", side_effect=KeyError("boom")),
         ):
             ok, reason = check("swarm/x/c1")
         self.assertFalse(ok)
-        self.assertIn("errored", reason)
+        self.assertIn("errored: KeyError", reason)
 
         # gate not armed
-        with lookup('[{"number": 7}]'), mock.patch.object(
-            cli_mod, "_verify_merge_evidence",
-            return_value={"enforced": False, "verification": {"status": "pass"}},
+        with (
+            lookup('[{"number": 7, "state": "OPEN"}]'),
+            mock.patch.object(
+                cli_mod,
+                "_verify_merge_evidence",
+                return_value={"enforced": False, "verification": {"status": "pass"}},
+            ),
         ):
             ok, reason = check("swarm/x/c1")
         self.assertFalse(ok)
         self.assertIn("not armed", reason)
 
         # verdicts missing
-        with lookup('[{"number": 7}]'), mock.patch.object(
-            cli_mod, "_verify_merge_evidence",
-            return_value={
-                "enforced": True,
-                "verification": {"status": "fail",
-                                 "missing": ["review-verdict-1"]},
-            },
+        with (
+            lookup('[{"number": 7, "state": "OPEN"}]'),
+            mock.patch.object(
+                cli_mod,
+                "_verify_merge_evidence",
+                return_value={
+                    "enforced": True,
+                    "verification": {"status": "fail", "missing": ["review-verdict-1"]},
+                },
+            ),
         ):
             ok, reason = check("swarm/x/c1")
         self.assertFalse(ok)
         self.assertIn("missing evidence: review-verdict-1", reason)
 
-        # pass
-        with lookup('[{"number": 7}]'), mock.patch.object(
-            cli_mod, "_verify_merge_evidence",
-            return_value={"enforced": True, "verification": {"status": "pass"}},
+        SHA = "a" * 40
+
+        def lookup_and_rev(pr_json: str, rev_stdout: str, rev_ok: bool = True):
+            def _run(cmd, **kwargs):
+                if cmd[:2] == ["git", "rev-parse"]:
+                    return RunResult(
+                        ok=rev_ok, code=0 if rev_ok else 1, output=rev_stdout, stdout=rev_stdout
+                    )
+                return RunResult(ok=True, code=0, output=pr_json, stdout=pr_json)
+
+            return mock.patch.object(cli_mod, "run_argv", side_effect=_run)
+
+        verified = {
+            "enforced": True,
+            "verification": {"status": "pass"},
+            "head_sha": SHA,
+        }
+
+        # local tip drifted from the reviewed head -> held
+        with (
+            lookup_and_rev('[{"number": 7, "state": "OPEN"}]', "b" * 40),
+            mock.patch.object(cli_mod, "_verify_merge_evidence", return_value=verified),
+        ):
+            ok, reason = check("swarm/x/c1")
+        self.assertFalse(ok)
+        self.assertIn("is not the reviewed PR head", reason)
+
+        # local tip unresolvable -> held
+        with (
+            lookup_and_rev('[{"number": 7, "state": "OPEN"}]', "", rev_ok=False),
+            mock.patch.object(cli_mod, "_verify_merge_evidence", return_value=verified),
+        ):
+            ok, reason = check("swarm/x/c1")
+        self.assertFalse(ok)
+        self.assertIn("cannot resolve the local branch tip", reason)
+
+        # pass: verification green AND local tip == reviewed head
+        with (
+            lookup_and_rev('[{"number": 7, "state": "OPEN"}]', SHA + "\n"),
+            mock.patch.object(cli_mod, "_verify_merge_evidence", return_value=verified),
         ):
             ok, reason = check("swarm/x/c1")
         self.assertTrue(ok)
-        self.assertEqual(reason, "PR #7: evidence verified")
+        self.assertEqual(reason, f"PR #7: evidence verified at {'a' * 12}")
+
+    def test_swarm_land_evidence_checker_real_verification_contract(self):
+        """PYLON-9's blocker: mocking _verify_merge_evidence in every arm hid a
+        namespace that made it raise on every real call, holding every cluster
+        forever. This arm runs the REAL verification with only the gh transport
+        mocked: the outcome must be an evidence verdict, never an "errored"
+        hold — that is the seam contract."""
+        import argparse
+        import unittest.mock as mock
+
+        from keel import cli as cli_mod
+        from keel.runner import CommandResult as RunResult
+
+        args = argparse.Namespace(root=".", path=".keel/project.yaml")
+        config = cli_mod.cfg.ProjectConfig(
+            extends="keel",
+            core_version="^0.7",
+            base_branch="main",
+            owner="acme",
+            repo="widgets",
+            knobs=cli_mod.cfg.Knobs(build_gate_cmd="true"),
+        )
+        check = cli_mod._swarm_land_evidence_checker(args, config)
+
+        def fake_run(cmd, **kwargs):
+            joined = " ".join(cmd)
+            if "pr list" in joined:
+                out = '[{"number": 7, "state": "OPEN"}]'
+            else:
+                # every downstream gh fetch sees an empty-but-valid answer
+                out = "[]" if "--paginate" in joined or "list" in joined else "{}"
+            return RunResult(ok=True, code=0, output=out, stdout=out)
+
+        with mock.patch.object(cli_mod, "run_argv", side_effect=fake_run):
+            ok, reason = check("swarm/x/c1")
+        self.assertFalse(ok)  # empty artifacts can never satisfy the contract
+        self.assertNotIn(
+            "errored",
+            reason,
+            "the real verification path raised instead of returning a verdict "
+            "— the constructed namespace has drifted from keel merge's own "
+            f"defaults (reason: {reason})",
+        )
 
     def test_swarm_land_cli_dry_run_and_json(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -859,33 +989,37 @@ class TestSwarmLandCLI(unittest.TestCase):
             # Auto-discovery & text output
             buf_text = io.StringIO()
             with redirect_stdout(buf_text):
-                code = main([
-                    "swarm-land",
-                    ".keel/project.yaml",
-                    "--root",
-                    tmpdir,
-                    "--issues",
-                    "#714,bad,714",
-                    "--issue",
-                    "714",
-                ])
+                code = main(
+                    [
+                        "swarm-land",
+                        ".keel/project.yaml",
+                        "--root",
+                        tmpdir,
+                        "--issues",
+                        "#714,bad,714",
+                        "--issue",
+                        "714",
+                    ]
+                )
             self.assertEqual(code, 0)
             self.assertIn("keel swarm land — swarm-land-cli", buf_text.getvalue())
 
             # JSON mode with explicit swarm-id and flags
             buf_json = io.StringIO()
             with redirect_stdout(buf_json):
-                code_json = main([
-                    "swarm-land",
-                    ".keel/project.yaml",
-                    "--root",
-                    tmpdir,
-                    "--swarm-id",
-                    "swarm-land-cli",
-                    "--issue-title",
-                    "Docs update",
-                    "--json",
-                ])
+                code_json = main(
+                    [
+                        "swarm-land",
+                        ".keel/project.yaml",
+                        "--root",
+                        tmpdir,
+                        "--swarm-id",
+                        "swarm-land-cli",
+                        "--issue-title",
+                        "Docs update",
+                        "--json",
+                    ]
+                )
             self.assertEqual(code_json, 0)
             data = json.loads(buf_json.getvalue())
             self.assertEqual(data["status"], "success")
@@ -897,23 +1031,27 @@ class TestSwarmLandCLI(unittest.TestCase):
 
             buf_empty = io.StringIO()
             with redirect_stdout(buf_empty):
-                code_empty = main([
-                    "swarm-land",
-                    ".keel/project.yaml",
-                    "--root",
-                    tmpdir,
-                ])
+                code_empty = main(
+                    [
+                        "swarm-land",
+                        ".keel/project.yaml",
+                        "--root",
+                        tmpdir,
+                    ]
+                )
             self.assertEqual(code_empty, 1)
 
             with tempfile.TemporaryDirectory() as tmp_fresh:
                 buf_no_state = io.StringIO()
                 with redirect_stdout(buf_no_state):
-                    code_no_state = main([
-                        "swarm-land",
-                        ".keel/project.yaml",
-                        "--root",
-                        tmp_fresh,
-                    ])
+                    code_no_state = main(
+                        [
+                            "swarm-land",
+                            ".keel/project.yaml",
+                            "--root",
+                            tmp_fresh,
+                        ]
+                    )
                 self.assertEqual(code_no_state, 1)
 
 

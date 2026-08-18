@@ -119,7 +119,7 @@ class SwarmWorkerStatus:
     agent: str = "claude"
     model: str = "default"
     step: str = "s0"
-    status: str = "queued"  # queued, running, passed, failed, merged
+    status: str = "queued"  # queued, running, passed, failed, merged, held
     updated_at: str = ""
     details: str = ""
 
