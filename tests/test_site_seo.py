@@ -270,6 +270,12 @@ class TestAdvertisedUrlsResolve(unittest.TestCase):
         another — ``website/coverage-badge.json`` contains ``website/coverage``,
         so deleting the command that builds the report left the guard green. The
         match therefore has to end at a path boundary.
+
+        Known limit, accepted: a step that merely *names* the path (``ls``,
+        ``echo``) satisfies this. Pinning the exact producing command shape is
+        the verbatim-text brittleness this test just escaped; the boundary drawn
+        here is "a step still references the path and the whole publish chain is
+        unconditional".
         """
         workflow = yaml.safe_load(
             (REPO_ROOT / ".github/workflows/pages.yml").read_text(encoding="utf-8")
@@ -279,7 +285,7 @@ class TestAdvertisedUrlsResolve(unittest.TestCase):
                 (job_name, job, step)
                 for job_name, job in workflow["jobs"].items()
                 for step in job.get("steps", [])
-                if "run" in step and re.search(rf"{re.escape(path)}(?![\w./-])", step["run"])
+                if "run" in step and re.search(rf"{re.escape(path)}(?![\w.-])", step["run"])
             ]
             for suffix, path in self.BUILD_TIME.items()
         }
@@ -288,22 +294,39 @@ class TestAdvertisedUrlsResolve(unittest.TestCase):
                 owners = owners_of[suffix]
                 self.assertTrue(
                     owners,
-                    f"{BASE}{suffix} is advertised but no pages.yml step writes "
+                    f"{BASE}{suffix} is advertised but no pages.yml step names "
                     f"{path} any more, so the link would 404",
                 )
                 for job_name, job, step in owners:
                     for holder, label in ((step, "step"), (job, f"job {job_name!r}")):
-                        self.assertNotIn(
-                            "if",
-                            holder,
-                            f"the {label} producing {path} is conditional, so "
-                            f"{BASE}{suffix} can silently stop being published",
-                        )
+                        for key in ("if", "continue-on-error"):
+                            self.assertNotIn(
+                                key,
+                                holder,
+                                f"the {label} producing {path} carries {key!r}, "
+                                f"so {BASE}{suffix} can silently stop being "
+                                "published",
+                            )
+
+        # Producing the file is one link of three: build -> upload -> deploy.
+        # `if: false` on the deploy job publishes nothing while every producing
+        # step stays green, so the whole chain must be unconditional.
+        publish_markers = ("upload-pages-artifact", "deploy-pages")
+        chain = [
+            (job_name, job, step)
+            for job_name, job in workflow["jobs"].items()
+            for step in job.get("steps", [])
+            if any(m in str(step.get("uses", "")) for m in publish_markers)
+        ]
+        self.assertTrue(chain, "pages.yml no longer uploads or deploys the site")
+        for job_name, job, step in chain:
+            for holder, label in ((step, "step"), (job, f"job {job_name!r}")):
+                for key in ("if", "continue-on-error"):
                     self.assertNotIn(
-                        "continue-on-error",
-                        step,
-                        f"the step producing {path} may fail without failing the "
-                        f"run, so {BASE}{suffix} can silently stop being published",
+                        key,
+                        holder,
+                        f"the publish-chain {label} ({step.get('uses')}) carries "
+                        f"{key!r}, so the site can silently stop being published",
                     )
 
     def test_the_cname_pins_the_custom_domain(self):
@@ -366,19 +389,41 @@ class TestAnalyticsDocMatchesReality(unittest.TestCase):
                         "on this site; add it back to the docs if that changed",
                     )
 
-    def test_the_readme_names_the_pages_without_a_beacon(self):
+    def _analytics_section(self) -> str:
+        """Only the ``## Analytics`` section — the whole README also contains a
+        file-inventory table naming every page, which would satisfy a whole-file
+        search for reasons that have nothing to do with analytics (the same
+        substring-satisfaction defect this suite has now grown twice)."""
+        readme = (SITE / "README.md").read_text(encoding="utf-8")
+        start = readme.index("## Analytics")
+        end = readme.find("\n## ", start + 1)
+        return readme[start:end] if end != -1 else readme[start:]
+
+    def test_the_analytics_section_names_the_pages_without_a_beacon(self):
         all_pages = {f.name for f in sorted(SITE.glob("*.html"))}
         without = all_pages - self._pages_with_beacon()
-        readme = (SITE / "README.md").read_text(encoding="utf-8")
+        section = self._analytics_section()
         for page in sorted(without):
             with self.subTest(page=page):
                 self.assertIn(
                     page,
-                    readme,
-                    f"{page} carries no analytics beacon but website/README.md "
-                    "does not say so — the published Analytics section would be "
-                    "claiming coverage the site does not have",
+                    section,
+                    f"{page} carries no analytics beacon but the published "
+                    "Analytics section does not say so — it would be claiming "
+                    "coverage the site does not have",
                 )
+
+    def test_the_analytics_section_counts_match_the_files(self):
+        """Pin "Four of the five" to the files so the prose cannot go stale."""
+        all_pages = {f.name for f in sorted(SITE.glob("*.html"))}
+        with_beacon = self._pages_with_beacon()
+        words = "zero one two three four five six seven eight nine".split()
+        expected = f"{words[len(with_beacon)].capitalize()} of the {words[len(all_pages)]} pages"
+        self.assertIn(
+            expected,
+            self._analytics_section(),
+            "the Analytics section's page count no longer matches the files",
+        )
 
 
 if __name__ == "__main__":
