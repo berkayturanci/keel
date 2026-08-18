@@ -1594,7 +1594,10 @@ keel swarm-land .keel/project.yaml --root . --mode auto
   tier-derived verdict count, verdicts pinned to the PR head. A cluster that does not verify is
   **held** (reported with its reason, never merged); held clusters degrade the wave status like
   failures without being counted as one. Fail-closed at every step: no open PR, a transport
-  error and an unarmed gate all hold. The explicit opt-out is `knobs.swarm_review_evidence:
+  error, an unarmed gate, an ambiguous branch (more than one open PR), and a
+  local branch tip that does not match the reviewed PR head all hold; a
+  cluster whose PR is already merged holds with an "already landed in an
+  earlier run" reason instead of a misleading one. The explicit opt-out is `knobs.swarm_review_evidence:
   false`, which `swarm-land` announces loudly — the exception lives in config, never in a
   driver's judgement call.
 
