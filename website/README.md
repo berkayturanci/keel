@@ -12,6 +12,7 @@ flow keeps working.
 | `index.html` | Landing page, workspace-style: Overview, What it is, The backbone, How it compares, Workflow commands (16, each with an animated scene + args/flags), CLI, Configuration, Dogfooding, FAQ |
 | `docs.html` | Documentation — generated entirely from `content.js` (`KEEL.docs[]`) |
 | `coverage.html` | Animated coverage report with a per-module table |
+| `silent-revert.html` | Article: a squash merge silently reverted a release |
 | `404.html` | Not-found page |
 
 ## How content updates work (important)

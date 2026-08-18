@@ -12,6 +12,11 @@ And a page that nothing links to and no sitemap lists is a page search engines
 have no reason to fetch. The article added alongside this is exactly that risk.
 
 Offline and cheap — these are facts about the files, not about Google.
+
+Since the keel-ship.dev move this module also pins URL resolution (everything
+advertised in prose must be published), the publish chain in pages.yml, the
+CNAME consistency anchor, and the accuracy of the publicly-served analytics
+prose in website/README.md.
 """
 
 from __future__ import annotations
@@ -318,7 +323,11 @@ class TestAdvertisedUrlsResolve(unittest.TestCase):
             for step in job.get("steps", [])
             if any(m in str(step.get("uses", "")) for m in publish_markers)
         ]
-        self.assertTrue(chain, "pages.yml no longer uploads or deploys the site")
+        for marker in publish_markers:
+            self.assertTrue(
+                any(marker in str(step.get("uses", "")) for _, _, step in chain),
+                f"pages.yml no longer has a {marker} step, so the site cannot be published at all",
+            )
         for job_name, job, step in chain:
             for holder, label in ((step, "step"), (job, f"job {job_name!r}")):
                 for key in ("if", "continue-on-error"):
@@ -330,16 +339,22 @@ class TestAdvertisedUrlsResolve(unittest.TestCase):
                     )
 
     def test_the_cname_pins_the_custom_domain(self):
-        """Without this file GitHub serves the old address and drops the domain.
+        """The consistency anchor every other URL in the repo derives from.
 
-        Necessary, not sufficient: the repo's Pages custom-domain setting and the
-        DNS records are equally load-bearing and live outside the repo.
+        Under this repo's Actions-based Pages publishing GitHub *ignores* the
+        CNAME file — the real switch is the Pages custom-domain setting
+        (`gh api -X PUT repos/<owner>/<repo>/pages -f cname=...`), which lives
+        outside the repo, alongside the DNS records. The file still earns its
+        pin: BASE, the manifests and test_install's expected homepage all
+        derive from it, and under a future move to branch publishing it would
+        become load-bearing for real.
         """
         path = SITE / "CNAME"
         self.assertTrue(
             path.is_file(),
-            "website/CNAME is missing, so GitHub Pages would stop serving "
-            f"{BASE} and fall back to the github.io address",
+            "website/CNAME is missing — it is the consistency anchor the "
+            f"tests derive {BASE} from (and load-bearing under branch "
+            "publishing)",
         )
         self.assertEqual(
             path.read_text(encoding="utf-8").strip(),
@@ -418,6 +433,7 @@ class TestAnalyticsDocMatchesReality(unittest.TestCase):
         all_pages = {f.name for f in sorted(SITE.glob("*.html"))}
         with_beacon = self._pages_with_beacon()
         words = "zero one two three four five six seven eight nine".split()
+        self.assertLess(len(all_pages), len(words), "extend the words list for the count pin")
         expected = f"{words[len(with_beacon)].capitalize()} of the {words[len(all_pages)]} pages"
         self.assertIn(
             expected,

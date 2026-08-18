@@ -24,11 +24,13 @@ CONSUMER_SPECIFIC_TERMS = (
 
 
 def _site_base() -> str:
-    """The published site origin, read from the file that actually decides it.
+    """The published site origin, derived from the repo's consistency anchor.
 
-    website/CNAME is what GitHub Pages serves the site from, so deriving the
-    expected homepage from it means a domain move cannot leave these manifests
-    asserting an address the site no longer has.
+    Under Actions-based Pages publishing GitHub ignores the CNAME *file* (the
+    Pages custom-domain setting is the real switch), but the file is still the
+    single in-repo statement of the site's origin — deriving the expected
+    homepage from it means a domain move cannot leave these manifests asserting
+    an address the rest of the repo has abandoned.
     """
     host = (
         (Path(__file__).resolve().parents[1] / "website" / "CNAME")
