@@ -16,10 +16,15 @@ Offline and cheap — these are facts about the files, not about Google.
 
 from __future__ import annotations
 
+import pathlib
 import re
+import shutil
+import subprocess
 import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
+
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SITE = REPO_ROOT / "website"
@@ -138,67 +143,142 @@ class TestAdvertisedUrlsResolve(unittest.TestCase):
     that: the URL is advertised in *prose*, not in the site.
 
     The move to keel-ship.dev is exactly when such a link rots, so pin it now.
+
+    Both scans below walk the **same** tracked-file set. An earlier revision
+    hand-listed the files and missed three that the migration itself had to
+    edit — including ``docs/keel/badges.md``, the copy-paste source for the
+    coverage badge — so a revert there would have shipped green. A guard that
+    covers a hand-picked subset of the blast radius is not a guard.
     """
 
-    #: Paths the Pages workflow generates into website/ at build time, each
-    #: mapped to the workflow text that must still produce it. Committed files
-    #: are checked on disk; these cannot be, so pin their build step instead.
+    #: Paths the Pages workflow generates into website/ at build time, mapped to
+    #: the step name that must still produce them. Keys are matched on their
+    #: first path segment, so /coverage, /coverage/ and /coverage/index.html all
+    #: resolve to the same entry.
     BUILD_TIME = {
-        "coverage/": "coverage html -d website/coverage",
-        "coverage-badge.json": 'open("website/coverage-badge.json", "w")',
+        "coverage": "website/coverage",
+        "coverage-badge.json": "website/coverage-badge.json",
     }
 
-    #: The retired Pages address. GitHub keeps 301-ing it once website/CNAME is
-    #: set, so nothing breaks immediately — which is precisely why a leftover
-    #: would go unnoticed.
-    RETIRED = "berkayturanci.github.io/keel"
+    #: The retired Pages *host*, deliberately without the ``/keel`` path. GitHub
+    #: keeps 301-ing the old URL once website/CNAME is set, so nothing visibly
+    #: breaks — which is precisely why a leftover goes unnoticed. Matching the
+    #: bare host also catches references that never carried the path, such as the
+    #: CSP ``img-src`` entries that were dead the moment ``'self'`` changed.
+    RETIRED = "berkayturanci.github.io"
+
+    #: This file necessarily contains both BASE and RETIRED as literals.
+    SELF = "tests/test_site_seo.py"
+
+    #: History, not live copy: it is supposed to record the old address.
+    HISTORICAL = {"CHANGELOG.md"}
+
+    TEXT_SUFFIXES = {".md", ".html", ".txt", ".xml", ".js", ".json", ".toml", ".yml", ".yaml"}
+
+    @classmethod
+    def _tracked_text_files(cls) -> list[pathlib.Path]:
+        """Every tracked text file — `git ls-files`, so build output cannot leak in.
+
+        Deriving the set instead of listing it is the whole point: the previous
+        literal list is exactly what let three edited files go unguarded.
+        """
+        git = shutil.which("git")
+        if git is None:  # pragma: no cover - env guard
+            return []
+        proc = subprocess.run(
+            [git, "-C", str(REPO_ROOT), "ls-files", "-z"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            stdin=subprocess.DEVNULL,
+        )
+        if proc.returncode != 0:  # pragma: no cover - env guard
+            return []
+        out = []
+        for rel in proc.stdout.split("\0"):
+            if not rel or rel == cls.SELF or rel in cls.HISTORICAL:
+                continue
+            if pathlib.PurePosixPath(rel).suffix not in cls.TEXT_SUFFIXES:
+                continue
+            path = REPO_ROOT / rel
+            if path.is_file():
+                out.append(path)
+        return out
+
+    def _require_git(self) -> list[pathlib.Path]:
+        files = self._tracked_text_files()
+        if not files:  # pragma: no cover - env guard
+            self.skipTest("git is unavailable or this is not a checkout")
+        return files
 
     def _advertised(self) -> set[str]:
-        sources = [REPO_ROOT / "README.md"]
-        sources += sorted((REPO_ROOT / "docs").rglob("*.md"))
-        sources += sorted(SITE.glob("*.html"))
-        sources += [SITE / "llms.txt", SITE / "robots.txt", SITE / "sitemap.xml"]
         urls: set[str] = set()
-        for path in sources:
-            if not path.is_file():
-                continue
+        for path in self._require_git():
             urls.update(
                 re.findall(
                     re.escape(BASE) + r"([A-Za-z0-9._/-]*)",
-                    path.read_text(encoding="utf-8"),
+                    path.read_text(encoding="utf-8", errors="ignore"),
                 )
             )
-        return urls
+        # A URL at the end of an English sentence swallows the full stop, and
+        # `.` has to stay in the class above for "docs.html" to match at all.
+        return {re.sub(r"[.,;:!?]+$", "", u) for u in urls}
 
     def test_every_advertised_url_is_published(self):
         advertised = self._advertised()
         self.assertTrue(advertised, "no site URLs found — the scan is broken")
         for suffix in sorted(advertised):
+            if suffix == "":  # the homepage
+                self.assertTrue((SITE / "index.html").is_file())
+                continue
+            if suffix.split("/")[0] in self.BUILD_TIME:
+                continue  # covered by the build-step test below
             with self.subTest(url=BASE + suffix):
-                if suffix == "":
-                    self.assertTrue((SITE / "index.html").is_file())
-                elif suffix in self.BUILD_TIME:
-                    continue  # covered by the build-step test below
-                else:
-                    self.assertTrue(
-                        (SITE / suffix).is_file(),
-                        f"{BASE}{suffix} is advertised but website/{suffix} does "
-                        "not exist and no build step creates it, so the link 404s",
-                    )
-
-    def test_build_time_paths_are_still_produced_by_the_workflow(self):
-        workflow = (REPO_ROOT / ".github/workflows/pages.yml").read_text(encoding="utf-8")
-        for suffix, step in self.BUILD_TIME.items():
-            with self.subTest(url=BASE + suffix):
-                self.assertIn(
-                    step,
-                    workflow,
-                    f"{BASE}{suffix} is advertised but pages.yml no longer "
-                    f"produces it ({step!r} is gone), so the link would 404",
+                self.assertTrue(
+                    (SITE / suffix).is_file(),
+                    f"{BASE}{suffix} is advertised but website/{suffix} does "
+                    "not exist and no build step creates it, so the link 404s",
                 )
 
+    def test_build_time_paths_are_still_produced_by_the_workflow(self):
+        """Pin that the step *runs* and names the path, not how it is spelled.
+
+        Matching the command text verbatim failed on an equivalent rewrite while
+        still passing when the step was disabled with ``if: false`` — brittle and
+        loose at once.
+        """
+        workflow = yaml.safe_load(
+            (REPO_ROOT / ".github/workflows/pages.yml").read_text(encoding="utf-8")
+        )
+        steps = [
+            step
+            for job in workflow["jobs"].values()
+            for step in job.get("steps", [])
+            if "run" in step
+        ]
+        self.assertTrue(steps, "pages.yml has no run steps")
+        for suffix, produced_path in self.BUILD_TIME.items():
+            with self.subTest(url=f"{BASE}{suffix}"):
+                owners = [s for s in steps if produced_path in s["run"]]
+                self.assertTrue(
+                    owners,
+                    f"{BASE}{suffix} is advertised but no pages.yml step writes "
+                    f"{produced_path} any more, so the link would 404",
+                )
+                for step in owners:
+                    self.assertNotIn(
+                        "if",
+                        step,
+                        f"the step producing {produced_path} is conditional, so "
+                        f"{BASE}{suffix} can silently stop being published",
+                    )
+
     def test_the_cname_pins_the_custom_domain(self):
-        """Without this file GitHub serves the old address and drops the domain."""
+        """Without this file GitHub serves the old address and drops the domain.
+
+        Necessary, not sufficient: the repo's Pages custom-domain setting and the
+        DNS records are equally load-bearing and live outside the repo.
+        """
         path = SITE / "CNAME"
         self.assertTrue(
             path.is_file(),
@@ -211,18 +291,14 @@ class TestAdvertisedUrlsResolve(unittest.TestCase):
         )
 
     def test_nothing_still_points_at_the_retired_pages_url(self):
-        for path in [
-            REPO_ROOT / "README.md",
-            REPO_ROOT / "pyproject.toml",
-            REPO_ROOT / ".claude-plugin/plugin.json",
-            REPO_ROOT / ".codex-plugin/plugin.json",
-            REPO_ROOT / "editors/vscode/extension.js",
-            *sorted(SITE.glob("*.html")),
-            *sorted(SITE.glob("*.txt")),
-            SITE / "sitemap.xml",
-        ]:
+        for path in self._require_git():
             with self.subTest(path=path.relative_to(REPO_ROOT)):
-                self.assertNotIn(self.RETIRED, path.read_text(encoding="utf-8"))
+                self.assertNotIn(
+                    self.RETIRED,
+                    path.read_text(encoding="utf-8", errors="ignore"),
+                    "the retired address survives here; GitHub still 301s it, so "
+                    "nothing visibly breaks and it would go unnoticed",
+                )
 
 
 if __name__ == "__main__":

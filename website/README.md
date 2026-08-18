@@ -58,17 +58,16 @@ by CI.
   `https://keel-ship.dev/`; update if the site moves
 - Each page has full meta description / OG / Twitter tags + canonical
 
-## Google Analytics
+## Analytics
 
-Every page has a GA4 snippet guarded to run **only on `berkayturanci.github.io`**
-(previews/forks send nothing). It uses **Consent Mode with `analytics_storage:
-"denied"`** — GA receives cookieless pings only, sets **no cookies**, so **no
-consent banner is required** (counts are modeled/approximate; you still get
-pageviews, country, and referrer source). To activate: create a GA4 property
-(analytics.google.com → Admin → Data streams → Web), then replace both
-`G-XXXXXXXXXX` occurrences in each HTML file with your Measurement ID.
-If you ever want precise per-user analytics, flip `analytics_storage` to
-`"granted"` — but then EU visitors need a consent banner.
+Every page loads Cloudflare Web Analytics (`static.cloudflareinsights.com/beacon.min.js`),
+which is cookieless and needs no consent banner. There is no hostname guard, so a
+fork or a local preview also reports — filter by hostname in the Cloudflare
+dashboard rather than trusting the raw total.
+
+There is no Google Analytics on this site. An earlier revision of this file
+described a GA4 setup with Consent Mode; no page has ever carried a `gtag`
+snippet, so that section was fiction and has been removed.
 
 ## Theming
 
