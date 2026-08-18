@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -36,29 +37,31 @@ _CLEAR = "\x1b[2J\x1b[H"
 
 def load_template() -> str:
     """Load the packaged visualizer HTML template text."""
-    return resources.files("keel_visual.templates").joinpath("runviz.html").read_text(
-        encoding="utf-8"
+    return (
+        resources.files("keel_visual.templates").joinpath("runviz.html").read_text(encoding="utf-8")
     )
 
 
 def load_board_template() -> str:
     """Load the packaged multi-project board HTML template text."""
-    return resources.files("keel_visual.templates").joinpath("board.html").read_text(
-        encoding="utf-8"
+    return (
+        resources.files("keel_visual.templates").joinpath("board.html").read_text(encoding="utf-8")
     )
 
 
 def load_dashboard_template() -> str:
     """Load the packaged live-dashboard HTML template (polls ``/board.json``)."""
-    return resources.files("keel_visual.templates").joinpath("dashboard.html").read_text(
-        encoding="utf-8"
+    return (
+        resources.files("keel_visual.templates")
+        .joinpath("dashboard.html")
+        .read_text(encoding="utf-8")
     )
 
 
 def load_swarm_template() -> str:
     """Load the packaged swarm visualizer HTML template text."""
-    return resources.files("keel_visual.templates").joinpath("swarm.html").read_text(
-        encoding="utf-8"
+    return (
+        resources.files("keel_visual.templates").joinpath("swarm.html").read_text(encoding="utf-8")
     )
 
 
@@ -76,7 +79,8 @@ def _resolve_record(args: argparse.Namespace, config: cfg.ProjectConfig) -> dict
 
 
 def _resolve_checkpoint(
-    args: argparse.Namespace, config: cfg.ProjectConfig,
+    args: argparse.Namespace,
+    config: cfg.ProjectConfig,
 ) -> tuple[str | None, dict, str | None]:
     """Resolve ``(current_step, live_state, run_id)`` from the run's checkpoint.
 
@@ -96,9 +100,11 @@ def _resolve_checkpoint(
         # CheckpointError = bad content; OSError = bad path (dir/symlink/perms).
         return None, {}, None
     run_id = record.get("run_id") if isinstance(record, dict) else None
-    return (runstate.current_step_from_checkpoint(record),
-            runstate.live_state_from_checkpoint(record),
-            run_id if isinstance(run_id, str) else None)
+    return (
+        runstate.current_step_from_checkpoint(record),
+        runstate.live_state_from_checkpoint(record),
+        run_id if isinstance(run_id, str) else None,
+    )
 
 
 # Upper bound on a jury-outcome read — mirrors ai-jury's own replay/cache
@@ -171,7 +177,10 @@ def cmd_render(args: argparse.Namespace) -> int:
 
     cp_step, cp_state, run_id = _resolve_checkpoint(args, config)
     state = runstate.build_run_state(
-        record, checkpoint_step=cp_step, checkpoint_state=cp_state, command=args.command,
+        record,
+        checkpoint_step=cp_step,
+        checkpoint_state=cp_state,
+        command=args.command,
         jury_verdict=_load_jury_verdict(args.root, run_id),
     )
     title = f"{args.command} · issue #{state['issue']}" if state["issue"] else args.command
@@ -200,7 +209,10 @@ def _state_from_config(args: argparse.Namespace, config: cfg.ProjectConfig) -> d
     record = _resolve_record(args, config)
     cp_step, cp_state, run_id = _resolve_checkpoint(args, config)
     return runstate.build_run_state(
-        record, checkpoint_step=cp_step, checkpoint_state=cp_state, command=args.command,
+        record,
+        checkpoint_step=cp_step,
+        checkpoint_state=cp_state,
+        command=args.command,
         jury_verdict=_load_jury_verdict(args.root, run_id),
     )
 
@@ -223,7 +235,11 @@ def _resolve_color(args: argparse.Namespace, out) -> bool:
 
 
 def cmd_play(
-    args: argparse.Namespace, *, sleep=time.sleep, out=sys.stdout, max_cycles: int | None = None,
+    args: argparse.Namespace,
+    *,
+    sleep=time.sleep,
+    out=sys.stdout,
+    max_cycles: int | None = None,
 ) -> int:
     """Render the run in the terminal.
 
@@ -250,8 +266,15 @@ def cmd_play(
     cycle = 0
     try:
         while max_cycles is None or cycle < max_cycles:
-            _render_pass(args, state, order, color=color, out=out, sleep=sleep,
-                         clear_first=cycle > 0 or not args.once)
+            _render_pass(
+                args,
+                state,
+                order,
+                color=color,
+                out=out,
+                sleep=sleep,
+                clear_first=cycle > 0 or not args.once,
+            )
             cycle += 1
             if not args.loop:
                 break
@@ -334,8 +357,15 @@ def _review_index(state: dict) -> int | None:
     return None
 
 
-def _play_follow(args, *, sleep, out, max_cycles: int | None,
-                 theater_run=_run_theater, theater_available=_theater_available) -> int:
+def _play_follow(
+    args,
+    *,
+    sleep,
+    out,
+    max_cycles: int | None,
+    theater_run=_run_theater,
+    theater_available=_theater_available,
+) -> int:
     """Live mode: re-resolve the run-state each interval and redraw the current step.
 
     Fail-soft against *transient* read errors: a live run appends to the ledger
@@ -373,8 +403,7 @@ def _play_follow(args, *, sleep, out, max_cycles: int | None,
                 rvi = _review_index(state)
                 if rvi is not None and state.get("active_index", 0) < rvi:
                     theater_done = False
-                if _theater_due(state, enabled=theater, done=theater_done,
-                                interactive=interactive):
+                if _theater_due(state, enabled=theater, done=theater_done, interactive=interactive):
                     # PR identity from the same live source that triggered the
                     # handoff (checkpoint), else the ledger/--pr fallback.
                     pr = _live_pr(args, config) or state.get("pr") or getattr(args, "pr", None)
@@ -408,7 +437,8 @@ def _run_records_in_repo(root: str, config: cfg.ProjectConfig) -> list[tuple[dic
     checkpoint_run_ids: set[str] = set()
     for worktree in paths:
         try:
-            record = checkpoint.read_checkpoint(checkpoint.resolve_path(worktree, config))
+            checkpoint_path = checkpoint.resolve_path(worktree, config)
+            record = checkpoint.read_checkpoint(checkpoint_path)
         except (checkpoint.CheckpointError, OSError):
             # One malformed worktree (bad content or bad path) must never blank
             # the whole board — skip it.
@@ -419,7 +449,7 @@ def _run_records_in_repo(root: str, config: cfg.ProjectConfig) -> list[tuple[dic
         if isinstance(run_id, str) and run_id:
             checkpoint_run_ids.add(run_id)
         identity = dash.identity_from_checkpoint(record)
-        checkpoint_age = _record_age_seconds(checkpoint.resolve_path(worktree, config))
+        checkpoint_age = _record_age_seconds(checkpoint_path)
         ship_record = _latest_ship_record(worktree, config, identity.get("pr"))
         run_state = runstate.build_run_state(
             ship_record,
@@ -484,17 +514,12 @@ def _activity_records_in_repo(root: str, config: cfg.ProjectConfig) -> list[tupl
             # done. Mark it finished (fades/filters like a completed run) without
             # claiming a merge it can't prove.
             run_state["done"] = True
-        run_id = rec.get("run_id")
-        if isinstance(run_id, str) and run_id:
-            from pathlib import Path as _Path
-            run_state["record_age_seconds"] = _record_age_seconds(
-                _Path(activity_dir) / f"{run_id}.json"
-            )
+        run_state["record_age_seconds"] = _activity_record_age(activity_dir, rec.get("run_id"))
         identity = {
             "issue": rec.get("issue"),
             "pr": rec.get("pr"),
             "command": rec.get("command"),
-            "run_id": run_id,
+            "run_id": rec.get("run_id"),
         }
         pairs.append((run_state, identity))
     return pairs
@@ -566,14 +591,26 @@ _TITLE_CACHE: dict[tuple[str, int], str | None] = {}
 STALE_AFTER_SECONDS = 6 * 3600
 
 
+def _activity_record_age(activity_dir, run_id) -> float | None:
+    """Age of an activity record, located the way the writer stored it.
+
+    The writer saves every record under ``run_id_slug(run_id) + ".json"`` while
+    the record *content* keeps the raw id — reading the raw name silently
+    reintroduced the #823 misread for any id that is not already a valid slug.
+    """
+    try:
+        name = activity.run_id_slug(run_id) + ".json"
+    except activity.ActivityError:  # pragma: no cover - validate upstream
+        return None
+    return _record_age_seconds(Path(activity_dir) / name)
+
+
 def _record_age_seconds(path) -> float | None:
     """Age of a record file in seconds, ``None`` when unreadable. The records
     themselves carry no timestamp field; the file's mtime is the honest
     last-seen signal — every stamp rewrites the file."""
     try:
-        import os as _os
-        import time as _time
-        return max(0.0, _time.time() - _os.path.getmtime(path))
+        return max(0.0, time.time() - os.path.getmtime(path))
     except OSError:
         return None
 
@@ -591,8 +628,8 @@ def _fetch_title(kind: str, number: int, *, root: str, _run=subprocess.run) -> s
     if key in _TITLE_CACHE:
         return _TITLE_CACHE[key]
     result = runner.run_argv(
-        ["gh", kind, "view", str(number), "--json", "title", "--jq", ".title"],
-        cwd=root, _run=_run)
+        ["gh", kind, "view", str(number), "--json", "title", "--jq", ".title"], cwd=root, _run=_run
+    )
     title = result.output.strip() if result.ok else ""
     _TITLE_CACHE[key] = title or None
     return _TITLE_CACHE[key]
@@ -650,15 +687,13 @@ def _board_entry(run_state: dict, identity: dict, project: str) -> dict:
         "window_open": run_state.get("window_open"),
         "bypassed_window": run_state.get("bypassed_window"),
         "merge_reason": (
-            dash._safe_label(run_state["merge_reason"])
-            if run_state.get("merge_reason") else None
+            dash._safe_label(run_state["merge_reason"]) if run_state.get("merge_reason") else None
         ),
         "file_count": run_state.get("file_count"),
         "reviewers": [dash._safe_label(r) for r in (run_state.get("reviewers") or [])],
         "tester": dash._safe_label(run_state["tester"]) if run_state.get("tester") else None,
         "host_agent": (
-            dash._safe_label(run_state["host_agent"])
-            if run_state.get("host_agent") else None
+            dash._safe_label(run_state["host_agent"]) if run_state.get("host_agent") else None
         ),
         "gates": [
             {
@@ -671,8 +706,7 @@ def _board_entry(run_state: dict, identity: dict, project: str) -> dict:
             for g in (run_state.get("gates") or [])
         ],
         "steps": [
-            {"id": s.get("id"), "name": s.get("name"), "kind": s.get("kind"),
-             "gate": s.get("gate")}
+            {"id": s.get("id"), "name": s.get("name"), "kind": s.get("kind"), "gate": s.get("gate")}
             for s in (run_state.get("steps") or [])
         ],
     }
@@ -713,6 +747,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
     """Serve the **live** dashboard: the page polls ``/board.json``, which re-reads
     the records on every request. Localhost-only."""
     if getattr(args, "all", False):
+
         def provider() -> list[dict]:
             return _aggregate_board(args.root, _run=subprocess.run)
     else:
@@ -764,7 +799,11 @@ def _dash_all(args, *, sleep, out, color: bool, max_cycles: int | None) -> int:
 
 
 def cmd_dash(
-    args: argparse.Namespace, *, sleep=time.sleep, out=sys.stdout, max_cycles: int | None = None,
+    args: argparse.Namespace,
+    *,
+    sleep=time.sleep,
+    out=sys.stdout,
+    max_cycles: int | None = None,
 ) -> int:
     """Live board of every active run across the project's worktrees.
 
@@ -802,17 +841,28 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="keel-visual", description="visualize a keel run")
     sub = parser.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("render", help="render a ship_run as an animated HTML page")
-    p.add_argument("path", nargs="?", default=None,
-                   help="path to project.yaml (single run; omit when using --all)")
-    p.add_argument("--all", action="store_true",
-                   help="render one web board across every keel project under --root "
-                        "(a subdir with both .git and .keel/project.yaml)")
+    p.add_argument(
+        "path",
+        nargs="?",
+        default=None,
+        help="path to project.yaml (single run; omit when using --all)",
+    )
+    p.add_argument(
+        "--all",
+        action="store_true",
+        help="render one web board across every keel project under --root "
+        "(a subdir with both .git and .keel/project.yaml)",
+    )
     p.add_argument("--root", default=".", help="repo root (or parent folder, with --all)")
     p.add_argument("--pr", type=int, default=None, help="PR number (default: latest ship_run)")
     p.add_argument("--ledger-jsonl", default=None, help="offline run-ledger JSONL fixture")
     p.add_argument("--checkpoint-step", default=None, help="current step id (e.g. s8)")
-    p.add_argument("--command", default="ship", choices=flows.command_names(),
-                   help="which command's steps to highlight")
+    p.add_argument(
+        "--command",
+        default="ship",
+        choices=flows.command_names(),
+        help="which command's steps to highlight",
+    )
     p.add_argument("--out", default="keel-run.html", help="output HTML path")
     p.set_defaults(func=cmd_render)
 
@@ -822,44 +872,76 @@ def build_parser() -> argparse.ArgumentParser:
     pl.add_argument("--pr", type=int, default=None, help="PR number (default: latest ship_run)")
     pl.add_argument("--ledger-jsonl", default=None, help="offline run-ledger JSONL fixture")
     pl.add_argument("--checkpoint-step", default=None, help="current step id (e.g. s8)")
-    pl.add_argument("--command", default="ship", choices=flows.command_names(),
-                    help="which command's steps to play")
+    pl.add_argument(
+        "--command",
+        default="ship",
+        choices=flows.command_names(),
+        help="which command's steps to play",
+    )
     pl.add_argument("--style", default="flow", choices=("flow", "wave"), help="render style")
     pl.add_argument("--fps", type=int, default=2, help="frames per second during playback")
     pl.add_argument("--step", type=int, default=None, help="render a single step frame and exit")
     pl.add_argument("--once", action="store_true", help="render current frame once (no animation)")
     pl.add_argument("--loop", action="store_true", help="replay continuously (Ctrl-C to stop)")
-    pl.add_argument("--follow", action="store_true",
-                    help="live: re-read ledger + checkpoint each interval, show where the run is")
+    pl.add_argument(
+        "--follow",
+        action="store_true",
+        help="live: re-read ledger + checkpoint each interval, show where the run is",
+    )
     pl.add_argument("--interval", type=float, default=1.0, help="--follow poll interval in seconds")
-    pl.add_argument("--theater", action="store_true",
-                    help="with --follow on a tty: hand off to ai-jury's `jury --theater` "
-                         "at the review step when the jury is active, then resume "
-                         "(silently skipped if the jury CLI is absent)")
+    pl.add_argument(
+        "--theater",
+        action="store_true",
+        help="with --follow on a tty: hand off to ai-jury's `jury --theater` "
+        "at the review step when the jury is active, then resume "
+        "(silently skipped if the jury CLI is absent)",
+    )
     pl.add_argument("--no-clear", action="store_true", help="keep frames (no screen clear)")
-    pl.add_argument("--color", default="auto", choices=("auto", "always", "never"),
-                    help="ANSI colour (auto = only on a tty)")
+    pl.add_argument(
+        "--color",
+        default="auto",
+        choices=("auto", "always", "never"),
+        help="ANSI colour (auto = only on a tty)",
+    )
     pl.set_defaults(func=cmd_play)
 
     pd = sub.add_parser("dash", help="live board of all active runs across the project's worktrees")
-    pd.add_argument("path", nargs="?", default=None,
-                    help="path to project.yaml (single repo; omit when using --all)")
-    pd.add_argument("--all", action="store_true",
-                    help="aggregate every keel project under --root into one board "
-                         "(a subdir with both .git and .keel/project.yaml)")
+    pd.add_argument(
+        "path",
+        nargs="?",
+        default=None,
+        help="path to project.yaml (single repo; omit when using --all)",
+    )
+    pd.add_argument(
+        "--all",
+        action="store_true",
+        help="aggregate every keel project under --root into one board "
+        "(a subdir with both .git and .keel/project.yaml)",
+    )
     pd.add_argument("--root", default=".", help="repo root (or parent folder, with --all)")
     pd.add_argument("--interval", type=float, default=2.0, help="refresh interval in seconds")
     pd.add_argument("--once", action="store_true", help="render the board once and exit")
     pd.add_argument("--no-clear", action="store_true", help="keep frames (no screen clear)")
-    pd.add_argument("--color", default="auto", choices=("auto", "always", "never"),
-                    help="ANSI colour (auto = only on a tty)")
+    pd.add_argument(
+        "--color",
+        default="auto",
+        choices=("auto", "always", "never"),
+        help="ANSI colour (auto = only on a tty)",
+    )
     pd.set_defaults(func=cmd_dash)
 
     ps = sub.add_parser("serve", help="serve the live web dashboard (auto-refreshing, localhost)")
-    ps.add_argument("path", nargs="?", default=None,
-                    help="path to project.yaml (single repo; omit when using --all)")
-    ps.add_argument("--all", action="store_true",
-                    help="aggregate every keel project under --root into one board")
+    ps.add_argument(
+        "path",
+        nargs="?",
+        default=None,
+        help="path to project.yaml (single repo; omit when using --all)",
+    )
+    ps.add_argument(
+        "--all",
+        action="store_true",
+        help="aggregate every keel project under --root into one board",
+    )
     ps.add_argument("--root", default=".", help="repo root (or parent folder, with --all)")
     ps.add_argument("--host", default="127.0.0.1", help="bind host (localhost-only by default)")
     ps.add_argument("--port", type=int, default=8765, help="bind port")
@@ -871,9 +953,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_swarm.add_argument("path", nargs="?", default=None, help="path to project.yaml")
     p_swarm.add_argument("--root", default=".", help="repo root for state directory")
     p_swarm.add_argument("--swarm-id", default=None, help="swarm execution ID (default: latest)")
-    p_swarm.add_argument(
-        "--swarm-json", default=None, help="offline swarm run state JSON fixture"
-    )
+    p_swarm.add_argument("--swarm-json", default=None, help="offline swarm run state JSON fixture")
     p_swarm.add_argument("--out", default="keel-swarm.html", help="output HTML path")
     p_swarm.add_argument(
         "--serve", action="store_true", help="serve the swarm visualizer on localhost"
@@ -968,6 +1048,7 @@ def cmd_swarm(args: argparse.Namespace) -> int:
     print(f"keel-visual — wrote {out_path.resolve()}  ({swarm_data.get('swarm_id')})")
 
     if getattr(args, "serve", False):
+
         def provider() -> dict[str, Any]:
             return _resolve_swarm_data(args)
 

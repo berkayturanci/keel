@@ -60,6 +60,16 @@ test('dashboard: a stale run renders grey with its age, never as running (#823)'
   assert.equal(findAll(h.byId('grid'), 'card').length, 3, 'cards persist; CSS hides stale in active view');
 });
 
+test('dashboard: the template carries the CSS that hides stale in the active view', async () => {
+  // The vm harness does not apply CSS, so the hiding rule is pinned by text —
+  // removing it would otherwise survive every behavioral test here.
+  const { readFileSync } = await import('node:fs');
+  const { fileURLToPath } = await import('node:url');
+  const tpl = readFileSync(new URL('../../src/keel_visual/templates/dashboard.html', import.meta.url), 'utf8');
+  assert.ok(tpl.includes('body.active-only .card.stale{display:none}'),
+    'the active-view stale-hiding CSS rule is gone');
+});
+
 test('dashboard: a finished run is done, not stale, whatever its age', async () => {
   const h = await bootDash([
     makeRun({ label: '#5', merged: true, status: 'merged', stale: false, age_hours: 2000 }),

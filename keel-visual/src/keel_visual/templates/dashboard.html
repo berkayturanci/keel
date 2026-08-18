@@ -173,8 +173,11 @@
   // A record nothing has stamped for hours is an abandoned session, not a live
   // run — its own state, excluded from the active view exactly like done.
   const isStale = r => !!r.stale && !isDone(r);
-  const staleLabel = r => 'stale · last seen ' +
-    (r.age_hours==null ? '?' : r.age_hours < 48 ? Math.round(r.age_hours)+'h' : Math.round(r.age_hours/24)+'d') + ' ago';
+  const staleLabel = r => {
+    if(r.age_hours==null) return 'stale \u00b7 last seen ? ago';
+    const h = Math.round(r.age_hours);  // round first, then pick the unit: 47.9h must never print '48h'
+    return 'stale \u00b7 last seen ' + (h < 48 ? h+'h' : Math.round(h/24)+'d') + ' ago';
+  };
   const keyOf = r => (r.project||'')+'|'+(r.label||'')+'|'+(r.command||'');
   const ordered = () => BOARD.map(r=>r).sort((a,b)=>((isDone(a)||isStale(a))?1:0)-((isDone(b)||isStale(b))?1:0));
   // ship ids (s4) differ from their name (implement) → "s4 · implement"; custom flows
@@ -608,7 +611,13 @@
       livetxt.textContent='live';
       renderGrid();
       if(openKey) renderDrawer();
-    }catch(err){ livetxt.textContent='reconnecting…'; }
+    }catch(err){
+      livetxt.textContent='reconnecting\u2026';
+      // A dead or non-JSON server must not leave the first-paint 'loading
+      // runs\u2026' up forever: that claims progress that is not happening.
+      if(!BOARD.length){ LOADED=false; grid.textContent='';
+        const e=el('div','loading'); e.textContent='can\u2019t reach the server \u2014 retrying\u2026'; grid.appendChild(e); }
+    }
   }
   // First paint before the first fetch resolves: on a slow board build the page
   // otherwise sits blank with no hint, which reads as broken (#823).
