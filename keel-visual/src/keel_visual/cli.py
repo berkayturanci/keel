@@ -419,6 +419,7 @@ def _run_records_in_repo(root: str, config: cfg.ProjectConfig) -> list[tuple[dic
         if isinstance(run_id, str) and run_id:
             checkpoint_run_ids.add(run_id)
         identity = dash.identity_from_checkpoint(record)
+        checkpoint_age = _record_age_seconds(checkpoint.resolve_path(worktree, config))
         ship_record = _latest_ship_record(worktree, config, identity.get("pr"))
         run_state = runstate.build_run_state(
             ship_record,
@@ -429,6 +430,7 @@ def _run_records_in_repo(root: str, config: cfg.ProjectConfig) -> list[tuple[dic
             # the same place its checkpoint lives.
             jury_verdict=_load_jury_verdict(worktree, record.get("run_id")),
         )
+        run_state["record_age_seconds"] = checkpoint_age
         pairs.append((run_state, identity))
     # Activity records live per worktree too — an agent runs a command in its own
     # worktree and stamps .keel/activity/ there, not in the main checkout — so read
@@ -456,7 +458,8 @@ def _activity_records_in_repo(root: str, config: cfg.ProjectConfig) -> list[tupl
     if activity is None:
         return []
     try:
-        records = activity.read_all_activity(activity.resolve_dir(root, config))
+        activity_dir = activity.resolve_dir(root, config)
+        records = activity.read_all_activity(activity_dir)
     except activity.ActivityError:
         return []
     pairs: list[tuple[dict, dict]] = []
@@ -481,11 +484,17 @@ def _activity_records_in_repo(root: str, config: cfg.ProjectConfig) -> list[tupl
             # done. Mark it finished (fades/filters like a completed run) without
             # claiming a merge it can't prove.
             run_state["done"] = True
+        run_id = rec.get("run_id")
+        if isinstance(run_id, str) and run_id:
+            from pathlib import Path as _Path
+            run_state["record_age_seconds"] = _record_age_seconds(
+                _Path(activity_dir) / f"{run_id}.json"
+            )
         identity = {
             "issue": rec.get("issue"),
             "pr": rec.get("pr"),
             "command": rec.get("command"),
-            "run_id": rec.get("run_id"),
+            "run_id": run_id,
         }
         pairs.append((run_state, identity))
     return pairs
@@ -550,6 +559,25 @@ def _aggregate_runs(parent: str) -> list[dict]:
 _TITLE_CACHE: dict[tuple[str, int], str | None] = {}
 
 
+#: A not-done record untouched for longer than this renders as **stale**, never
+#: as "running". Sessions stamp their record every phase, so hours of silence
+#: means the session is gone, not thinking. Chosen well above the longest
+#: observed legitimate phase gap; the misread it prevents ran to 63 days.
+STALE_AFTER_SECONDS = 6 * 3600
+
+
+def _record_age_seconds(path) -> float | None:
+    """Age of a record file in seconds, ``None`` when unreadable. The records
+    themselves carry no timestamp field; the file's mtime is the honest
+    last-seen signal — every stamp rewrites the file."""
+    try:
+        import os as _os
+        import time as _time
+        return max(0.0, _time.time() - _os.path.getmtime(path))
+    except OSError:
+        return None
+
+
 def _fetch_title(kind: str, number: int, *, root: str, _run=subprocess.run) -> str | None:
     """Best-effort GitHub title for an issue/PR via ``gh``, cached for the process.
 
@@ -599,6 +627,19 @@ def _board_entry(run_state: dict, identity: dict, project: str) -> dict:
         "command": run_state.get("command", "ship"),
         "merged": bool(run_state.get("merged")),
         "done": bool(run_state.get("done")),
+        # A finished run can be as old as it likes; only an unfinished record
+        # that stopped being stamped goes stale.
+        "stale": (
+            not run_state.get("done")
+            and not run_state.get("merged")
+            and run_state.get("record_age_seconds") is not None
+            and run_state["record_age_seconds"] > STALE_AFTER_SECONDS
+        ),
+        "age_hours": (
+            round(run_state["record_age_seconds"] / 3600, 1)
+            if run_state.get("record_age_seconds") is not None
+            else None
+        ),
         "jury": run_state.get("jury") or {"mode": None, "active": False},
         # Verdict summary from the run's saved ai-jury outcome (#576). Already
         # validated by runstate._jury_verdict_block — literals + int counts only.

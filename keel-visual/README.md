@@ -375,3 +375,13 @@ the s7 jury), `3d-s10-merge.png` (the `line` style, merged and all-green),
 `2d-s12-merged.png` (a merged, all-green 2D run), `board.png` (the
 `render --all` multi-project web board, 2D grid), and `board-3d.png` (the same
 board's 3D scene — one lane per run).
+
+## Operating a long-lived `serve`
+
+A `keel-visual serve` process keeps serving **the code it started with**. After
+upgrading keel-visual, restart the server — a 10-day-old process on this shape
+of board was measured paying 8–13s per `/board.json` request because it
+predated the title cache. The board itself marks any unfinished run whose
+record has not been stamped for over 6 hours as **stale** (grey, "last seen …")
+rather than running; a session that dies without `keel activity --done` shows
+up exactly that way.

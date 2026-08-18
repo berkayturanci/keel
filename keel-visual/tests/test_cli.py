@@ -875,6 +875,79 @@ class TestDash(unittest.TestCase):
     def test_load_board_template(self):
         self.assertIn("__KEEL_BOARD__", cli.load_board_template())
 
+    def test_board_entry_stale_only_when_old_and_unfinished(self):
+        """The exact misread #823 documents: an abandoned record must not render
+        as running, while a finished record may be arbitrarily old."""
+        from keel_visual import runstate as rs
+
+        def entry(age_seconds, *, done=False, merged=False):
+            run_state = rs.build_run_state(
+                {"command": "ship", "pull_request": {"number": 9}},
+                checkpoint_step="s8",
+            )
+            if done:
+                run_state["done"] = True
+            if merged:
+                run_state["merged"] = True
+            run_state["record_age_seconds"] = age_seconds
+            return cli._board_entry(run_state, {"pr": 9}, "myproj")
+
+        fresh = entry(60.0)
+        self.assertFalse(fresh["stale"])
+        self.assertEqual(fresh["age_hours"], 0.0)
+
+        abandoned = entry(cli.STALE_AFTER_SECONDS + 1)
+        self.assertTrue(abandoned["stale"])
+
+        # A finished run can be as old as it likes — done is done, not stale.
+        old_done = entry(63 * 24 * 3600, done=True)
+        self.assertFalse(old_done["stale"])
+        old_merged = entry(63 * 24 * 3600, merged=True)
+        self.assertFalse(old_merged["stale"])
+
+        # No age signal (unreadable file) must not invent staleness.
+        unknown = entry(None)
+        self.assertFalse(unknown["stale"])
+        self.assertIsNone(unknown["age_hours"])
+
+    def test_activity_records_carry_their_file_age(self):
+        """The record has no timestamp field; the file mtime is the signal."""
+        import json
+        import os
+        import tempfile
+
+        from keel import config as cfg_mod
+
+        with tempfile.TemporaryDirectory() as root:
+            adir = os.path.join(root, ".keel", "activity")
+            os.makedirs(adir)
+            rec = {
+                "schema_version": "keel.activity.v1",
+                "record_type": "command_activity",
+                "run_id": "ship-1",
+                "command": "ship",
+                "phase": "s4",
+                "status": "running",
+            }
+            path = os.path.join(adir, "ship-1.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(rec, f)
+            two_days = 48 * 3600
+            old = os.path.getmtime(path) - two_days
+            os.utime(path, (old, old))
+
+            config = cfg_mod.ProjectConfig(
+                extends="keel", core_version="^0.7", base_branch="main",
+                knobs=cfg_mod.Knobs(build_gate_cmd="true"),
+            )
+            pairs = cli._activity_records_in_repo(root, config)
+            self.assertEqual(len(pairs), 1)
+            run_state, identity = pairs[0]
+            self.assertEqual(identity["run_id"], "ship-1")
+            age = run_state.get("record_age_seconds")
+            self.assertIsNotNone(age)
+            self.assertGreater(age, cli.STALE_AFTER_SECONDS)
+
     def test_board_entry_is_slim(self):
         from keel_visual import runstate as rs
         run_state = rs.build_run_state({"command": "ship", "pull_request": {"number": 9}},

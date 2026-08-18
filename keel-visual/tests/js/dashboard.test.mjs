@@ -37,6 +37,50 @@ test('dashboard: polls board.json and renders cards, count and the live badge', 
   assert.equal(findOne(cards[0], 'step').textContent, 's4 · implement', 'idn label in the card foot');
 });
 
+test('dashboard: a stale run renders grey with its age, never as running (#823)', async () => {
+  const h = await bootDash([
+    makeRun(),
+    makeRun({ label: '#63', stale: true, age_hours: 1513.9 }),
+    makeRun({ label: '#9', stale: true, age_hours: 7.2 }),
+  ]);
+  const cards = findAll(h.byId('grid'), 'card');
+  assert.equal(cards.length, 3);
+  // stale cards order after live ones and carry the stale class
+  assert.ok(!cards[0].classList.contains('stale'));
+  assert.ok(cards[1].classList.contains('stale'));
+  assert.ok(cards[2].classList.contains('stale'));
+  const badges = cards.map((c) => findOne(c, 'badge').textContent);
+  assert.equal(badges[0], 'running');
+  // >=48h reads in days, below that in hours
+  assert.ok(badges.includes('stale · last seen 63d ago'), badges.join(' | '));
+  assert.ok(badges.includes('stale · last seen 7h ago'), badges.join(' | '));
+  // the active view hides stale exactly like done
+  h.fire(h.byId('segf'), 'click', h.btnEvent({ f: 'active' }));
+  assert.equal(h.byId('count').textContent, '1 run across 1 project');
+  assert.equal(findAll(h.byId('grid'), 'card').length, 3, 'cards persist; CSS hides stale in active view');
+});
+
+test('dashboard: a finished run is done, not stale, whatever its age', async () => {
+  const h = await bootDash([
+    makeRun({ label: '#5', merged: true, status: 'merged', stale: false, age_hours: 2000 }),
+  ]);
+  const card = findAll(h.byId('grid'), 'card')[0];
+  assert.ok(card.classList.contains('done'));
+  assert.ok(!card.classList.contains('stale'));
+  assert.equal(findOne(card, 'badge').textContent, 'merged');
+});
+
+test('dashboard: before the first board.json arrives the grid says loading, not empty', async () => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const h = boot('dashboard.html', { fetchJson: () => gate.then(() => []) });
+  // fetch is in flight: the grid must not claim "no active runs found"
+  assert.match(h.byId('grid').textContent, /loading/i);
+  release();
+  await h.flush();
+  assert.match(h.byId('grid').textContent, /no active runs found/);
+});
+
 test('dashboard: non-array payload and fetch failure degrade gracefully', async () => {
   const h1 = await bootDash({ not: 'an array' });
   assert.equal(findOne(h1.byId('grid'), 'empty').textContent, 'no active runs found');
