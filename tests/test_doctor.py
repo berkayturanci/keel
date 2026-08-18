@@ -323,8 +323,8 @@ class TestDoctorCli(unittest.TestCase):
         names = {c["name"] for c in report["checks"]}
         self.assertEqual(
             names,
-            {"cli_version", "adapter_version", "orphan_adapters",
-             "core_version", "state_paths"},
+            {"checkout_binding", "cli_version", "adapter_version",
+             "orphan_adapters", "core_version", "state_paths"},
         )
         # --offline => latest unknown.
         cli_check = next(c for c in report["checks"] if c["name"] == "cli_version")
@@ -428,6 +428,82 @@ class TestDoctorStatePaths(unittest.TestCase):
             ledger.resolve_path = orig
         ledger_entry = next(e for e in entries if e["label"] == "ledger")
         self.assertEqual(ledger_entry["status"], "invalid")
+
+
+class TestCheckoutBinding(unittest.TestCase):
+    """The importable ``keel`` vs the checkout the command is pointed at."""
+
+    def test_skipped_when_root_is_not_a_checkout(self):
+        # Nothing to compare against, so this must not manufacture a warning.
+        check = _check(_doctor(module_path="/anywhere/src/keel", checkout_root=None),
+                       "checkout_binding")
+        self.assertEqual(check["status"], "ok")
+        self.assertIn("not run against a keel checkout", check["summary"])
+        self.assertIsNone(check["detail"]["checkout_root"])
+
+    def test_defaults_skip_the_check(self):
+        # Callers predating the check omit both paths and keep their behaviour.
+        self.assertEqual(_check(_doctor(), "checkout_binding")["status"], "ok")
+
+    def test_unlocatable_module_warns(self):
+        check = _check(_doctor(module_path=None, checkout_root="/repo"),
+                       "checkout_binding")
+        self.assertEqual(check["status"], "warn")
+        self.assertIn("could not be located", check["summary"])
+
+    def test_module_inside_the_checkout_is_ok(self):
+        check = _check(_doctor(module_path="/repo/src/keel", checkout_root="/repo"),
+                       "checkout_binding")
+        self.assertEqual(check["status"], "ok")
+        self.assertIn("inside this checkout", check["summary"])
+
+    def test_module_outside_the_checkout_warns_and_names_both_paths(self):
+        check = _check(
+            _doctor(module_path="/elsewhere/src/keel", checkout_root="/repo"),
+            "checkout_binding",
+        )
+        self.assertEqual(check["status"], "warn")
+        self.assertIn("/elsewhere/src/keel", check["summary"])
+        self.assertIn("pip install -e .", check["summary"])
+        self.assertEqual(check["detail"]["checkout_root"], "/repo")
+
+    def test_sibling_prefix_is_not_treated_as_nested(self):
+        # "/repo-two" starts with "/repo" as a string but is a different tree;
+        # comparing path *parts* rather than characters is what catches this.
+        check = _check(_doctor(module_path="/repo-two/src/keel", checkout_root="/repo"),
+                       "checkout_binding")
+        self.assertEqual(check["status"], "warn")
+
+    def test_mismatch_rolls_up_into_the_report_status(self):
+        report = _doctor(module_path="/elsewhere/src/keel", checkout_root="/repo")
+        self.assertEqual(report["status"], "warn")
+
+    def test_mismatch_never_escalates_to_fail(self):
+        # Running against a deliberately installed keel is legitimate; a warn
+        # must not change anyone's exit code.
+        report = _doctor(module_path="/elsewhere/src/keel", checkout_root="/repo")
+        self.assertEqual(report["counts"]["fail"], 0)
+
+
+class TestDoctorCheckoutRoot(unittest.TestCase):
+    """Thin I/O: does ``root`` even look like a keel source checkout?"""
+
+    def test_returns_resolved_root_for_a_checkout(self):
+        with tempfile.TemporaryDirectory() as d:
+            pkg = Path(d) / "src" / "keel"
+            pkg.mkdir(parents=True)
+            (pkg / "__init__.py").write_text("", encoding="utf-8")
+            self.assertEqual(cli._doctor_checkout_root(d), str(Path(d).resolve()))
+
+    def test_returns_none_for_a_plain_directory(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertIsNone(cli._doctor_checkout_root(d))
+
+    def test_returns_none_when_the_package_marker_is_a_directory(self):
+        # src/keel/__init__.py present but not a file => not a usable checkout.
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "src" / "keel" / "__init__.py").mkdir(parents=True)
+            self.assertIsNone(cli._doctor_checkout_root(d))
 
 
 if __name__ == "__main__":

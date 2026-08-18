@@ -3958,6 +3958,18 @@ def _doctor_state_paths(root: str, config: cfg.ProjectConfig) -> list[dict[str, 
     return entries
 
 
+def _doctor_checkout_root(root: str) -> str | None:
+    """Resolve ``root`` to a keel checkout root, or ``None`` when it is not one.
+
+    Thin I/O for the ``checkout_binding`` check: the pure classifier only compares
+    paths, so deciding whether ``root`` even *is* a keel source checkout (rather
+    than an arbitrary directory keel was pointed at) belongs here.
+    """
+    candidate = Path(root).resolve()
+    marker = candidate / "src" / "keel" / "__init__.py"
+    return str(candidate) if marker.is_file() else None
+
+
 def _cmd_doctor(args: argparse.Namespace) -> int:
     config = None
     core_version = None
@@ -3982,6 +3994,8 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         orphans=[o.as_dict() for o in _scan_orphans(args.root, include_unmanaged=False)],
         core_version=core_version,
         state_paths=state_paths,
+        module_path=str(Path(__file__).resolve().parent),
+        checkout_root=_doctor_checkout_root(args.root),
     )
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))

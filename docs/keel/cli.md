@@ -1158,6 +1158,13 @@ keel doctor .keel/project.yaml --offline --strict
 
 The checks are:
 
+- **`checkout_binding`** — whether the importable `keel` is the checkout you pointed
+  `--root` at. `pip install -e .` registers one source tree for the whole interpreter, so
+  installing from a second checkout silently repoints every other one: imports, the test
+  suite, and coverage all follow the other tree while your working directory suggests
+  otherwise. A mismatch names both paths and is a `warn`, never a `fail` — running against
+  a deliberately installed keel (a release, a pinned build) is legitimate. Skipped when
+  `--root` is not a keel source checkout.
 - **`cli_version`** — installed `keel` version vs the latest published on PyPI
   (`keel-workflow`). This is the headline check: an installed version *behind* the latest
   is a `fail` (it catches a silent downgrade). The PyPI lookup is fail-soft with a short

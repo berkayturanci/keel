@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from pathlib import PurePath
 
 SCHEMA_VERSION = "keel.doctor.v1"
 
@@ -238,6 +239,48 @@ def _check_state_paths(state_paths: list[dict[str, object]]) -> CheckResult:
     )
 
 
+def _within(child: str, parent: str) -> bool:
+    """Is ``child`` ``parent`` itself, or nested inside it? Pure path-part comparison."""
+    parent_parts = PurePath(parent).parts
+    return PurePath(child).parts[:len(parent_parts)] == parent_parts
+
+
+def _check_checkout_binding(module_path: str | None, checkout_root: str | None) -> CheckResult:
+    """Is the importable ``keel`` the checkout this command is pointed at?
+
+    ``pip install -e .`` writes a single source tree into site-packages for the
+    whole interpreter, so installing from a second checkout silently repoints
+    every other one: imports, the test suite, and coverage all follow the other
+    tree while the working directory suggests otherwise.
+
+    A mismatch is a ``warn``, never a ``fail`` — running against a deliberately
+    installed keel (a release, a pinned build) is legitimate, so this informs
+    without changing anyone's exit code.
+    """
+    if not checkout_root:
+        return CheckResult(
+            "checkout_binding", _OK,
+            "not run against a keel checkout; binding not checked",
+            {"module_path": module_path, "checkout_root": None},
+        )
+    detail: dict[str, object] = {"module_path": module_path, "checkout_root": checkout_root}
+    if not module_path:
+        return CheckResult(
+            "checkout_binding", _WARN,
+            "the importable keel could not be located", detail,
+        )
+    if _within(module_path, checkout_root):
+        return CheckResult(
+            "checkout_binding", _OK,
+            "importable keel resolves inside this checkout", detail,
+        )
+    return CheckResult(
+        "checkout_binding", _WARN,
+        f"importable keel resolves outside this checkout ({module_path}) — local runs "
+        "exercise that tree; reinstall with `pip install -e .` from here", detail,
+    )
+
+
 def run_doctor(
     *,
     installed_version: str,
@@ -246,6 +289,8 @@ def run_doctor(
     orphans: list[dict[str, object]],
     core_version: str | None,
     state_paths: list[dict[str, object]],
+    module_path: str | None = None,
+    checkout_root: str | None = None,
 ) -> dict[str, object]:
     """Run all diagnostic checks over already-gathered facts (pure, deterministic).
 
@@ -255,6 +300,7 @@ def run_doctor(
     ``fail`` roll-up into a non-zero exit).
     """
     checks = [
+        _check_checkout_binding(module_path, checkout_root),
         _check_cli_version(installed_version, latest_version),
         _check_adapter_version(installed_version, adapter_markers),
         _check_orphan_adapters(orphans),
