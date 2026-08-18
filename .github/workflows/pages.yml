@@ -74,3 +74,46 @@ jobs:
     steps:
       - id: deploy
         uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128  # v5.0.0
+      # Tell IndexNow-participating engines (Bing — and through Bing, ChatGPT and
+      # Copilot search — plus Yandex, Seznam, Naver) that the site changed,
+      # instead of waiting to be crawled. Runs *after* the deploy so a URL is
+      # never announced before it is live, and continue-on-error so a
+      # search-engine ping can never fail a deploy that already succeeded.
+      #
+      # The key is public by design: the engine fetches it from keyLocation to
+      # prove we control the host, so it is committed rather than a secret.
+      # Cloudflare's Crawler Hints cannot do this here — the apex is DNS-only so
+      # GitHub can issue the certificate, and Cloudflare never sees the traffic.
+      # The deploy job has no checkout, so the sitemap is read from the live
+      # site — which also guarantees we announce exactly what was published.
+      - name: Notify IndexNow
+        continue-on-error: true
+        run: |
+          python - <<'PY'
+          import json, urllib.request, xml.etree.ElementTree as ET
+
+          KEY = "9d98afd3150f289ca4806a2a775bdae6fc35fc3972cd90dba2ed949180eed533"
+          HOST = "keel-ship.dev"
+          NS = "{http://www.sitemaps.org/schemas/sitemap/0.9}"
+
+          with urllib.request.urlopen(f"https://{HOST}/sitemap.xml", timeout=30) as r:
+              root = ET.fromstring(r.read())
+          urls = [e.text.strip() for e in root.iter(NS + "loc") if e.text]
+          if not urls:
+              raise SystemExit("live sitemap listed no URLs - nothing to submit")
+
+          body = json.dumps({
+              "host": HOST,
+              "key": KEY,
+              "keyLocation": f"https://{HOST}/{KEY}.txt",
+              "urlList": urls,
+          }).encode()
+          req = urllib.request.Request(
+              "https://api.indexnow.org/indexnow",
+              data=body,
+              headers={"Content-Type": "application/json; charset=utf-8"},
+          )
+          with urllib.request.urlopen(req, timeout=30) as r:
+              print(f"IndexNow: HTTP {r.status} for {len(urls)} URL(s)")
+          PY
+

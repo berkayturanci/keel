@@ -442,5 +442,85 @@ class TestAnalyticsDocMatchesReality(unittest.TestCase):
         )
 
 
+class TestIndexNow(unittest.TestCase):
+    """The IndexNow key must agree in three places or submissions bounce.
+
+    IndexNow proves host ownership by fetching the key back from ``keyLocation``
+    and comparing it to the key in the payload — so the filename, the file's
+    contents and the key the workflow sends all have to match. And because the
+    ping step is ``continue-on-error`` by design (a search-engine ping must
+    never fail a deploy that already succeeded), every failure here is silent:
+    rotate one copy of the key and forget another, and submissions are rejected
+    forever with nothing going red. The sibling repo's setup is identical and
+    live-verified; these pins are what keep the mirror honest.
+
+    The key is public on purpose — it is served at the site root. It is not a
+    secret and must not move into repository secrets.
+    """
+
+    WORKFLOW = REPO_ROOT / ".github/workflows/pages.yml"
+
+    def _key_files(self) -> list[Path]:
+        return [f for f in sorted(SITE.glob("*.txt")) if f.name not in {"llms.txt", "robots.txt"}]
+
+    def test_exactly_one_key_file_is_published(self):
+        keys = [f.name for f in self._key_files()]
+        self.assertEqual(
+            len(keys),
+            1,
+            "IndexNow needs exactly one published key; a stale second file "
+            f"makes host ownership ambiguous. Found: {keys}",
+        )
+
+    def test_the_key_file_contains_its_own_name(self):
+        key_file = self._key_files()[0]
+        self.assertEqual(
+            key_file.read_text(encoding="utf-8").strip(),
+            key_file.stem,
+            "IndexNow fetches this file and compares it to the filename",
+        )
+
+    def test_the_key_is_well_formed(self):
+        # IndexNow: 8-128 chars, [a-zA-Z0-9-] only.
+        self.assertRegex(self._key_files()[0].stem, r"^[A-Za-z0-9-]{8,128}$")
+
+    def test_the_workflow_sends_the_published_key(self):
+        workflow = self.WORKFLOW.read_text(encoding="utf-8")
+        stem = self._key_files()[0].stem
+        self.assertIn(
+            f'KEY = "{stem}"',
+            workflow,
+            "pages.yml would submit a key that is not the one published at the "
+            "site root, so every IndexNow submission would be rejected",
+        )
+
+    def test_the_ping_runs_after_the_deploy_step(self):
+        """Announcing a URL before it is live invites a crawl of the old page."""
+        workflow = yaml.safe_load(self.WORKFLOW.read_text(encoding="utf-8"))
+        steps = workflow["jobs"]["deploy"]["steps"]
+        names = [str(s.get("name", s.get("uses", ""))) for s in steps]
+        deploy_idx = next(
+            (i for i, s in enumerate(steps) if "deploy-pages" in str(s.get("uses", ""))),
+            None,
+        )
+        ping_idx = next(
+            (i for i, s in enumerate(steps) if s.get("name") == "Notify IndexNow"), None
+        )
+        self.assertIsNotNone(deploy_idx, f"deploy-pages step is gone: {names}")
+        self.assertIsNotNone(ping_idx, f"Notify IndexNow step is gone: {names}")
+        self.assertLess(deploy_idx, ping_idx, "IndexNow is pinged before the deploy publishes")
+
+    def test_a_failed_ping_cannot_fail_the_deploy(self):
+        workflow = yaml.safe_load(self.WORKFLOW.read_text(encoding="utf-8"))
+        ping = next(
+            s for s in workflow["jobs"]["deploy"]["steps"] if s.get("name") == "Notify IndexNow"
+        )
+        self.assertTrue(
+            ping.get("continue-on-error"),
+            "without continue-on-error a search-engine ping can fail a deploy "
+            "that already succeeded",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
