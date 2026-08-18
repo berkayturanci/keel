@@ -1,6 +1,5 @@
 """Unit tests for `keel install-adapter` (packaged command adapters → two surfaces)."""
 
-import pathlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -24,6 +23,7 @@ CONSUMER_SPECIFIC_TERMS = (
 )
 
 
+
 def _site_base() -> str:
     """The published site origin, read from the file that actually decides it.
 
@@ -31,11 +31,9 @@ def _site_base() -> str:
     expected homepage from it means a domain move cannot leave these manifests
     asserting an address the site no longer has.
     """
-    host = (
-        (pathlib.Path(__file__).resolve().parents[1] / "website" / "CNAME")
-        .read_text(encoding="utf-8")
-        .strip()
-    )
+    host = (Path(__file__).resolve().parents[1] / "website" / "CNAME").read_text(
+        encoding="utf-8"
+    ).strip()
     return f"https://{host}/"
 
 
@@ -218,17 +216,16 @@ class TestLegacyWrappers(unittest.TestCase):
             self.assertTrue((root / ".claude/commands/ship.md").exists())
             self.assertTrue((root / ".agents/skills/source-command-ship/SKILL.md").exists())
 
-            (root / ".claude/commands/ship.md").write_text("local legacy body\n", encoding="utf-8")
+            (root / ".claude/commands/ship.md").write_text("local legacy body\n",
+                                                            encoding="utf-8")
             skipped = install.install_all_legacy_wrappers(
                 root,
                 mappings={"ship": "ship"},
                 ready_commands={"ship"},
             )
             self.assertEqual(skipped["claude"], ([], ["ship.md"]))
-            self.assertEqual(
-                (root / ".claude/commands/ship.md").read_text(encoding="utf-8"),
-                "local legacy body\n",
-            )
+            self.assertEqual((root / ".claude/commands/ship.md").read_text(encoding="utf-8"),
+                             "local legacy body\n")
 
             forced = install.install_all_legacy_wrappers(
                 root,
@@ -237,9 +234,8 @@ class TestLegacyWrappers(unittest.TestCase):
                 force=True,
             )
             self.assertEqual(forced["claude"], (["ship.md"], []))
-            self.assertIn(
-                "`/keel:ship`", (root / ".claude/commands/ship.md").read_text(encoding="utf-8")
-            )
+            self.assertIn("`/keel:ship`",
+                          (root / ".claude/commands/ship.md").read_text(encoding="utf-8"))
 
     def test_legacy_wrappers_remain_consumer_neutral(self):
         with tempfile.TemporaryDirectory() as d:
@@ -251,7 +247,8 @@ class TestLegacyWrappers(unittest.TestCase):
             )
             offenders: list[str] = []
             for path in sorted(
-                list((root / ".claude").rglob("*.md")) + list((root / ".agents").rglob("SKILL.md"))
+                list((root / ".claude").rglob("*.md"))
+                + list((root / ".agents").rglob("SKILL.md"))
             ):
                 body, _metadata = install._split_marker(path.read_text(encoding="utf-8"))
                 text = body.lower()
@@ -387,7 +384,8 @@ class TestInstallAll(unittest.TestCase):
             install.install_all(root)
             offenders: list[str] = []
             for path in sorted(
-                list((root / ".claude").rglob("*.md")) + list((root / ".agents").rglob("SKILL.md"))
+                list((root / ".claude").rglob("*.md"))
+                + list((root / ".agents").rglob("SKILL.md"))
             ):
                 body, _metadata = install._split_marker(path.read_text(encoding="utf-8"))
                 text = body.lower()
@@ -403,9 +401,8 @@ class TestInstallAll(unittest.TestCase):
             install.install_all(root)
             install.install_all_legacy_wrappers(root)
             current = install.adapter_status("all", root)
-            self.assertTrue(
-                all(row.status == "current" for rows in current.values() for row in rows)
-            )
+            self.assertTrue(all(row.status == "current"
+                                for rows in current.values() for row in rows))
             self.assertIn("legacy-claude", current)
 
             (root / install.CLAUDE_DIR / "ship.md").unlink()
@@ -413,12 +410,9 @@ class TestInstallAll(unittest.TestCase):
                 "hand-written local wrapper\n", encoding="utf-8"
             )
             triage = root / install.CLAUDE_DIR / "triage.md"
-            triage.write_text(
-                triage.read_text(encoding="utf-8").replace(
-                    "# /keel:triage", "# locally edited /keel:triage"
-                ),
-                encoding="utf-8",
-            )
+            triage.write_text(triage.read_text(encoding="utf-8").replace(
+                "# /keel:triage", "# locally edited /keel:triage"
+            ), encoding="utf-8")
 
             rows = install.adapter_status("all", root)
             by_key = {(row.surface, row.name): row for rs in rows.values() for row in rs}
@@ -442,25 +436,21 @@ class TestInstallAll(unittest.TestCase):
 
             self.assertIn("legacy-claude", rows)
             self.assertEqual(rows["legacy-claude"], [])
-            self.assertFalse(any(row.status == "missing" for rs in rows.values() for row in rs))
+            self.assertFalse(any(row.status == "missing"
+                                 for rs in rows.values() for row in rs))
             # guard the "all current" assertion against a vacuously-empty surface
             self.assertTrue(rows["claude"] and rows["skills"])
-            self.assertTrue(
-                all(
-                    row.status == "current"
-                    for surface in ("claude", "skills")
-                    for row in rows[surface]
-                )
-            )
+            self.assertTrue(all(row.status == "current"
+                                for surface in ("claude", "skills")
+                                for row in rows[surface]))
 
     def test_update_adapter_dry_run_and_write_preserve_local_files(self):
         with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as src_dir:
             root = Path(d)
             src = Path(src_dir)
             for source in install.ADAPTERS.glob("*.md"):
-                src.joinpath(source.name).write_text(
-                    source.read_text(encoding="utf-8"), encoding="utf-8"
-                )
+                src.joinpath(source.name).write_text(source.read_text(encoding="utf-8"),
+                                                    encoding="utf-8")
             install.install_all(root, _src=src)
 
             ship_source = src / "ship.md"
@@ -482,19 +472,15 @@ class TestInstallAll(unittest.TestCase):
             dry = install.update_adapters("all", root, dry_run=True, _src=src)
             by_key = {(row.surface, row.name): row for rows in dry.values() for row in rows}
             self.assertEqual(by_key[("claude", "ship.md")].status, "would-update")
-            self.assertNotIn(
-                "Extra packaged line.",
-                (root / install.CLAUDE_DIR / "ship.md").read_text(encoding="utf-8"),
-            )
+            self.assertNotIn("Extra packaged line.",
+                             (root / install.CLAUDE_DIR / "ship.md").read_text(encoding="utf-8"))
 
             updated = install.update_adapters("all", root, _src=src)
             by_key = {(row.surface, row.name): row for rows in updated.values() for row in rows}
             self.assertEqual(by_key[("claude", "ship.md")].status, "updated")
             self.assertEqual(by_key[("skills", "keel-ship")].status, "updated")
-            self.assertIn(
-                "Extra packaged line.",
-                (root / install.CLAUDE_DIR / "ship.md").read_text(encoding="utf-8"),
-            )
+            self.assertIn("Extra packaged line.",
+                          (root / install.CLAUDE_DIR / "ship.md").read_text(encoding="utf-8"))
             self.assertEqual(project_yaml.read_text(encoding="utf-8"), "project config\n")
             self.assertEqual(extension.read_text(encoding="utf-8"), "project extension\n")
             self.assertEqual(wrapper.read_text(encoding="utf-8"), "local wrapper\n")
@@ -504,33 +490,26 @@ class TestInstallAll(unittest.TestCase):
             root = Path(d)
             src = Path(src_dir)
             for source in install.ADAPTERS.glob("*.md"):
-                src.joinpath(source.name).write_text(
-                    source.read_text(encoding="utf-8"), encoding="utf-8"
-                )
+                src.joinpath(source.name).write_text(source.read_text(encoding="utf-8"),
+                                                    encoding="utf-8")
             install.install_all(root, _src=src)
             (root / install.CLAUDE_DIR / "ship.md").write_text(
                 "local command without marker\n", encoding="utf-8"
             )
             skill = root / install.SKILLS_DIR / "keel-ship" / "SKILL.md"
-            skill.write_text(
-                skill.read_text(encoding="utf-8").replace(
-                    "# keel-ship", "# locally edited keel-ship"
-                ),
-                encoding="utf-8",
-            )
+            skill.write_text(skill.read_text(encoding="utf-8").replace(
+                "# keel-ship", "# locally edited keel-ship"
+            ), encoding="utf-8")
 
             ship_source = src / "ship.md"
-            ship_source.write_text(
-                ship_source.read_text(encoding="utf-8") + "\nUpdated.\n", encoding="utf-8"
-            )
+            ship_source.write_text(ship_source.read_text(encoding="utf-8") + "\nUpdated.\n",
+                                   encoding="utf-8")
             rows = install.update_adapters("all", root, _src=src)
             by_key = {(row.surface, row.name): row for rs in rows.values() for row in rs}
             self.assertEqual(by_key[("claude", "ship.md")].status, "unknown")
             self.assertEqual(by_key[("skills", "keel-ship")].status, "locally-modified")
-            self.assertEqual(
-                (root / install.CLAUDE_DIR / "ship.md").read_text(encoding="utf-8"),
-                "local command without marker\n",
-            )
+            self.assertEqual((root / install.CLAUDE_DIR / "ship.md").read_text(encoding="utf-8"),
+                             "local command without marker\n")
             self.assertIn("# locally edited keel-ship", skill.read_text(encoding="utf-8"))
 
 
@@ -542,17 +521,14 @@ class TestClaudeCodePlugin(unittest.TestCase):
 
     def _read_manifest(self) -> dict:
         import json
-
         return json.loads((REPO_ROOT / install.PLUGIN_MANIFEST).read_text(encoding="utf-8"))
 
     def _read_marketplace(self) -> dict:
         import json
-
         return json.loads((REPO_ROOT / install.PLUGIN_MARKETPLACE).read_text(encoding="utf-8"))
 
     def _read_codex_manifest(self) -> dict:
         import json
-
         return json.loads((REPO_ROOT / install.CODEX_PLUGIN_MANIFEST).read_text(encoding="utf-8"))
 
     def test_plugin_files_render_from_adapter_bodies(self):
@@ -630,7 +606,6 @@ class TestClaudeCodePlugin(unittest.TestCase):
 
     def test_plugin_manifest_version_matches_keel_version(self):
         from keel import __version__
-
         self.assertEqual(self._read_manifest()["version"], __version__)
 
     def test_plugin_manifest_has_required_fields(self):
@@ -643,7 +618,6 @@ class TestClaudeCodePlugin(unittest.TestCase):
 
     def test_codex_plugin_manifest_version_matches_keel_version(self):
         from keel import __version__
-
         self.assertEqual(self._read_codex_manifest()["version"], __version__)
 
     def test_codex_plugin_manifest_has_required_fields(self):
@@ -699,8 +673,7 @@ class TestScanSurfaceOrphans(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root = self._seed(d)
             orphans = install.scan_surface_orphans(
-                root,
-                known_commands=install.default_known_commands(),
+                root, known_commands=install.default_known_commands(),
                 include_unmanaged=True,
             )
             self.assertEqual(orphans, [])
@@ -709,8 +682,7 @@ class TestScanSurfaceOrphans(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             # nothing installed at all — every managed surface dir is absent.
             orphans = install.scan_surface_orphans(
-                Path(d),
-                known_commands=install.default_known_commands(),
+                Path(d), known_commands=install.default_known_commands(),
                 include_unmanaged=True,
             )
             self.assertEqual(orphans, [])
@@ -722,8 +694,7 @@ class TestScanSurfaceOrphans(unittest.TestCase):
             stale.mkdir(parents=True)
             (stale / "SKILL.md").write_text(self._ship_marker("ship-v2"), encoding="utf-8")
             orphans = install.scan_surface_orphans(
-                root,
-                known_commands=install.default_known_commands(),
+                root, known_commands=install.default_known_commands(),
             )
             self.assertEqual(len(orphans), 1)
             row = orphans[0]
@@ -745,8 +716,7 @@ class TestScanSurfaceOrphans(unittest.TestCase):
                 encoding="utf-8",
             )
             orphans = install.scan_surface_orphans(
-                root,
-                known_commands=install.default_known_commands(),
+                root, known_commands=install.default_known_commands(),
             )
             self.assertEqual(len(orphans), 1)
             self.assertEqual(orphans[0].category, install.ORPHAN_STALE_MARKER)
@@ -761,15 +731,13 @@ class TestScanSurfaceOrphans(unittest.TestCase):
             # default: not reported.
             self.assertEqual(
                 install.scan_surface_orphans(
-                    root,
-                    known_commands=install.default_known_commands(),
+                    root, known_commands=install.default_known_commands(),
                 ),
                 [],
             )
             # opt-in: reported as unmanaged.
             orphans = install.scan_surface_orphans(
-                root,
-                known_commands=install.default_known_commands(),
+                root, known_commands=install.default_known_commands(),
                 include_unmanaged=True,
             )
             self.assertEqual(len(orphans), 1)
@@ -783,8 +751,7 @@ class TestScanSurfaceOrphans(unittest.TestCase):
             (root / "commands").mkdir(exist_ok=True)
             (root / "commands" / "house-rules.md").write_text("# house\n", encoding="utf-8")
             orphans = install.scan_surface_orphans(
-                root,
-                known_commands=install.default_known_commands(),
+                root, known_commands=install.default_known_commands(),
                 project_only={"house-rules"},
                 include_unmanaged=True,
             )
@@ -798,8 +765,7 @@ class TestScanSurfaceOrphans(unittest.TestCase):
             wrapper.mkdir(parents=True)
             (wrapper / "SKILL.md").write_text("# deploy\n", encoding="utf-8")
             orphans = install.scan_surface_orphans(
-                root,
-                known_commands=install.default_known_commands(),
+                root, known_commands=install.default_known_commands(),
                 include_unmanaged=True,
             )
             self.assertEqual(len(orphans), 1)
@@ -813,8 +779,7 @@ class TestScanSurfaceOrphans(unittest.TestCase):
             wrapper.mkdir(parents=True)
             (wrapper / "SKILL.md").write_text("# freeform\n", encoding="utf-8")
             orphans = install.scan_surface_orphans(
-                root,
-                known_commands=install.default_known_commands(),
+                root, known_commands=install.default_known_commands(),
                 include_unmanaged=True,
             )
             self.assertEqual(len(orphans), 1)
@@ -826,8 +791,7 @@ class TestScanSurfaceOrphans(unittest.TestCase):
             # a directory named like a match under the plugin commands dir.
             (root / "commands" / "weird.md").mkdir(parents=True)
             orphans = install.scan_surface_orphans(
-                root,
-                known_commands=install.default_known_commands(),
+                root, known_commands=install.default_known_commands(),
                 include_unmanaged=True,
             )
             self.assertEqual(orphans, [])

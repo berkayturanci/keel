@@ -60,9 +60,11 @@ by CI.
 
 ## Analytics
 
-Every page loads Cloudflare Web Analytics (`static.cloudflareinsights.com/beacon.min.js`),
-which is cookieless and needs no consent banner. There is no hostname guard, so a
-fork or a local preview also reports — filter by hostname in the Cloudflare
+Four of the five pages load Cloudflare Web Analytics
+(`static.cloudflareinsights.com/beacon.min.js`), which is cookieless and needs no
+consent banner. `silent-revert.html` is the exception — it carries no beacon, so
+that article's traffic is not counted. There is no hostname guard on the four that
+do, so a fork or a local preview also reports; filter by hostname in the Cloudflare
 dashboard rather than trusting the raw total.
 
 There is no Google Analytics on this site. An earlier revision of this file

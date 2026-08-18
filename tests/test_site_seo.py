@@ -167,13 +167,34 @@ class TestAdvertisedUrlsResolve(unittest.TestCase):
     #: CSP ``img-src`` entries that were dead the moment ``'self'`` changed.
     RETIRED = "berkayturanci.github.io"
 
-    #: This file necessarily contains both BASE and RETIRED as literals.
+    #: This file necessarily contains both BASE and RETIRED as literals. It only
+    #: needs excluding because ``.py`` is scanned — a URL can rot in a docstring
+    #: or a default just as easily as in prose.
     SELF = "tests/test_site_seo.py"
 
-    #: History, not live copy: it is supposed to record the old address.
+    #: A changelog is *supposed* to record the address the project used to have,
+    #: so it is exempt from the retired-host scan only. It is still scanned for
+    #: advertised URLs, because a dead link is dead wherever it is written.
     HISTORICAL = {"CHANGELOG.md"}
 
-    TEXT_SUFFIXES = {".md", ".html", ".txt", ".xml", ".js", ".json", ".toml", ".yml", ".yaml"}
+    #: Everything served or shipped that can carry a URL. ``.css`` (``url(...)``),
+    #: ``.svg`` and ``.webmanifest`` are all inside the Pages artifact; ``.py``
+    #: ships in the package.
+    TEXT_SUFFIXES = {
+        ".css",
+        ".html",
+        ".js",
+        ".json",
+        ".md",
+        ".py",
+        ".svg",
+        ".toml",
+        ".txt",
+        ".webmanifest",
+        ".xml",
+        ".yaml",
+        ".yml",
+    }
 
     @classmethod
     def _tracked_text_files(cls) -> list[pathlib.Path]:
@@ -196,7 +217,7 @@ class TestAdvertisedUrlsResolve(unittest.TestCase):
             return []
         out = []
         for rel in proc.stdout.split("\0"):
-            if not rel or rel == cls.SELF or rel in cls.HISTORICAL:
+            if not rel or rel == cls.SELF:
                 continue
             if pathlib.PurePosixPath(rel).suffix not in cls.TEXT_SUFFIXES:
                 continue
@@ -241,36 +262,48 @@ class TestAdvertisedUrlsResolve(unittest.TestCase):
                 )
 
     def test_build_time_paths_are_still_produced_by_the_workflow(self):
-        """Pin that the step *runs* and names the path, not how it is spelled.
+        """Pin that the step *runs* and writes the path, not how it is spelled.
 
-        Matching the command text verbatim failed on an equivalent rewrite while
-        still passing when the step was disabled with ``if: false`` — brittle and
-        loose at once.
+        Matching the command text verbatim was brittle and loose at once: an
+        equivalent rewrite failed it, while ``if: false`` on the step kept it
+        green. Matching the path as a bare substring then swapped one hole for
+        another — ``website/coverage-badge.json`` contains ``website/coverage``,
+        so deleting the command that builds the report left the guard green. The
+        match therefore has to end at a path boundary.
         """
         workflow = yaml.safe_load(
             (REPO_ROOT / ".github/workflows/pages.yml").read_text(encoding="utf-8")
         )
-        steps = [
-            step
-            for job in workflow["jobs"].values()
-            for step in job.get("steps", [])
-            if "run" in step
-        ]
-        self.assertTrue(steps, "pages.yml has no run steps")
-        for suffix, produced_path in self.BUILD_TIME.items():
+        owners_of = {
+            suffix: [
+                (job_name, job, step)
+                for job_name, job in workflow["jobs"].items()
+                for step in job.get("steps", [])
+                if "run" in step and re.search(rf"{re.escape(path)}(?![\w./-])", step["run"])
+            ]
+            for suffix, path in self.BUILD_TIME.items()
+        }
+        for suffix, path in self.BUILD_TIME.items():
             with self.subTest(url=f"{BASE}{suffix}"):
-                owners = [s for s in steps if produced_path in s["run"]]
+                owners = owners_of[suffix]
                 self.assertTrue(
                     owners,
                     f"{BASE}{suffix} is advertised but no pages.yml step writes "
-                    f"{produced_path} any more, so the link would 404",
+                    f"{path} any more, so the link would 404",
                 )
-                for step in owners:
+                for job_name, job, step in owners:
+                    for holder, label in ((step, "step"), (job, f"job {job_name!r}")):
+                        self.assertNotIn(
+                            "if",
+                            holder,
+                            f"the {label} producing {path} is conditional, so "
+                            f"{BASE}{suffix} can silently stop being published",
+                        )
                     self.assertNotIn(
-                        "if",
+                        "continue-on-error",
                         step,
-                        f"the step producing {produced_path} is conditional, so "
-                        f"{BASE}{suffix} can silently stop being published",
+                        f"the step producing {path} may fail without failing the "
+                        f"run, so {BASE}{suffix} can silently stop being published",
                     )
 
     def test_the_cname_pins_the_custom_domain(self):
@@ -292,12 +325,59 @@ class TestAdvertisedUrlsResolve(unittest.TestCase):
 
     def test_nothing_still_points_at_the_retired_pages_url(self):
         for path in self._require_git():
+            if path.relative_to(REPO_ROOT).as_posix() in self.HISTORICAL:
+                continue
             with self.subTest(path=path.relative_to(REPO_ROOT)):
                 self.assertNotIn(
                     self.RETIRED,
                     path.read_text(encoding="utf-8", errors="ignore"),
                     "the retired address survives here; GitHub still 301s it, so "
                     "nothing visibly breaks and it would go unnoticed",
+                )
+
+
+class TestAnalyticsDocMatchesReality(unittest.TestCase):
+    """website/README.md is inside the Pages artifact, so it is served publicly.
+
+    It already carried one publicly-served fiction — a GA4 + Consent Mode setup
+    no page has ever had. The replacement then claimed *every* page loads the
+    Cloudflare beacon, which was also untrue. Documentation nobody can check
+    drifts; pin it to the files instead.
+    """
+
+    BEACON = "beacon.min.js"
+
+    def _pages_with_beacon(self) -> set[str]:
+        return {
+            f.name
+            for f in sorted(SITE.glob("*.html"))
+            if self.BEACON in f.read_text(encoding="utf-8")
+        }
+
+    def test_no_page_carries_google_analytics(self):
+        for f in sorted(SITE.glob("*.html")):
+            with self.subTest(page=f.name):
+                text = f.read_text(encoding="utf-8")
+                for marker in ("gtag(", "googletagmanager"):
+                    self.assertNotIn(
+                        marker,
+                        text,
+                        "website/README.md states there is no Google Analytics "
+                        "on this site; add it back to the docs if that changed",
+                    )
+
+    def test_the_readme_names_the_pages_without_a_beacon(self):
+        all_pages = {f.name for f in sorted(SITE.glob("*.html"))}
+        without = all_pages - self._pages_with_beacon()
+        readme = (SITE / "README.md").read_text(encoding="utf-8")
+        for page in sorted(without):
+            with self.subTest(page=page):
+                self.assertIn(
+                    page,
+                    readme,
+                    f"{page} carries no analytics beacon but website/README.md "
+                    "does not say so — the published Analytics section would be "
+                    "claiming coverage the site does not have",
                 )
 
 
