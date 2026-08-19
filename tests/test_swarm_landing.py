@@ -1654,6 +1654,39 @@ class TestSwarmLandCLI(unittest.TestCase):
                     )
                 self.assertEqual(code_no_state, 1)
 
+    def test_swarm_land_cli_partial_failure_returns_exit_code_1(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            from keel.swarm import SwarmLandingResult
+            partial_res = SwarmLandingResult(
+                swarm_id="swarm-part",
+                wave_index=1,
+                mode="direct",
+                landed_clusters=("cluster-1",),
+                healed_clusters=(),
+                failed_clusters=("cluster-2",),
+                status="partial_failure",
+            )
+            w1 = SwarmWorkerStatus(
+                cluster_id="cluster-1-714", issue=714, role="docs", status="passed"
+            )
+            st = SwarmRunState(swarm_id="swarm-part", total_workers=1, workers=(w1,))
+            save_swarm_state(st, root=tmpdir)
+
+            with unittest.mock.patch(
+                "keel.swarm_landing.land_wave_clusters", return_value=partial_res
+            ):
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    code = main([
+                        "swarm-land",
+                        ".keel/project.yaml",
+                        "--root", tmpdir,
+                        "--swarm-id", "swarm-part",
+                        "--live",
+                    ])
+                self.assertEqual(code, 1)
+                self.assertIn("partial_failure", buf.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

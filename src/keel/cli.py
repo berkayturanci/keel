@@ -4406,7 +4406,7 @@ def _cmd_swarm_run(args: argparse.Namespace) -> int:
     else:
         print(swarm.render_swarm_run_result(result))
 
-    return 0 if result.status == "success" else (1 if result.status == "failed" else 0)
+    return 0 if result.status == "success" else 1
 
 
 def _swarm_land_evidence_checker(
@@ -4616,14 +4616,13 @@ def _cmd_swarm_land(args: argparse.Namespace) -> int:
     else:
         print(swarm.render_swarm_landing_result(result))
 
-    # A *live* wave that refused to land unreviewed code must not read as
-    # success to the automation above it (overnight/swarm drivers key on the
-    # exit code). A dry run that predicts holds succeeded at predicting: its
-    # job is to answer "what would happen", so it reports and exits 0.
-    if args.live and result.held_clusters:
+    if args.live:
+        return 0 if result.status == "success" and not result.held_clusters else 1
+
+    if result.failed_clusters or (result.status == "failed" and not result.held_clusters):
         return 1
 
-    return 0 if result.status == "success" else (1 if result.status == "failed" else 0)
+    return 0 if (result.status == "success" or result.held_clusters) else 1
 
 
 def _cmd_canary(args: argparse.Namespace) -> int:

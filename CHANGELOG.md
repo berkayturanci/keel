@@ -29,6 +29,9 @@ All notable changes to keel are documented here. The format follows
   - Prevented untrusted repository configurations from exfiltrating system credentials via remote LLM endpoints.
 
 ### Fixed
+- **Swarm CLI Partial Failure Exit Code** (#871):
+  - Returned non-zero exit code (1) on `partial_failure` status in `swarm-run` and `swarm-land` CLI commands.
+  - Ensured automation pipelines detect partial worker failures correctly.
 - **Atomic Checkpoint and Activity Writing** (#869):
   - Used atomic temporary file replacement (`tempfile.mkstemp` + `os.replace`) when saving checkpoint and activity state in `checkpoint.py` and `activity.py`.
   - Prevented corrupted or partial state files if a process is terminated during a write operation.

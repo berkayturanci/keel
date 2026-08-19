@@ -352,6 +352,26 @@ class TestSwarmRunCLI(unittest.TestCase):
                 self.assertEqual(code, 1)
                 self.assertIn("status        : failed", buf.getvalue())
 
+    def test_swarm_run_cli_partial_failure_returns_exit_code_1(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            def mock_worker(*args, **kwargs):
+                issue = kwargs.get("issue")
+                if issue == 101:
+                    return {"ok": True, "issue": 101, "role": "core", "code": 0, "output": "ok"}
+                return {"ok": False, "issue": 102, "role": "core", "code": 1, "output": "fail"}
+
+            with patch("keel.swarm_runtime.execute_cluster_worker", side_effect=mock_worker):
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    code = main([
+                        "swarm-run",
+                        ".keel/project.yaml",
+                        "--root", tmpdir,
+                        "--issues", "101,102",
+                    ])
+                self.assertEqual(code, 1)
+                self.assertIn("status        : partial_failure", buf.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()
