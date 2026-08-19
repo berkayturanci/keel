@@ -396,7 +396,8 @@ def gates_pass_for_head(
 
 def capture_health_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
     """Summarize capture visibility for morning, wrap, status, and ledger readers."""
-    items = [_capture_health_item(record) for record in records]
+    merged_records = [r for r in records if _is_merged_ship_run(r)]
+    items = [_capture_health_item(record) for record in merged_records]
     counts = {
         "applied": 0,
         "marker_only": 0,
@@ -433,7 +434,7 @@ def capture_health_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "schema_version": CAPTURE_HEALTH_SCHEMA_VERSION,
         "status": "needs-reconcile" if counts["needs_reconcile"] else "clean",
-        "record_count": len(records),
+        "record_count": len(merged_records),
         "counts": counts,
         "skipped_by_reason": dict(sorted(skipped_by_reason.items())),
         "items": items,
@@ -446,6 +447,26 @@ def capture_health_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
             "ledger, GitHub, or capture destinations.",
         },
     }
+
+
+def _is_merged_ship_run(record: Any) -> bool:
+    if not isinstance(record, dict):
+        return False
+    if record.get("record_type") != RECORD_TYPE_SHIP_RUN:
+        return False
+    assessment = record.get("assessment")
+    if isinstance(assessment, dict):
+        merge = assessment.get("merge")
+        if isinstance(merge, dict) and merge.get("action") == "merge":
+            return True
+    capture_block = record.get("capture")
+    if isinstance(capture_block, dict) and capture_block.get("status") in (
+        "applied",
+        "deferred",
+        "skipped",
+    ):
+        return True
+    return False
 
 
 def _capture_marker(record: dict[str, Any]) -> str | None:

@@ -29,6 +29,9 @@ All notable changes to keel are documented here. The format follows
   - Prevented untrusted repository configurations from exfiltrating system credentials via remote LLM endpoints.
 
 ### Fixed
+- **Ledger Capture Health Merged Runs Filter** (#881):
+  - Filtered `capture_health_summary` in `ledger.py` to evaluate only merged PR ship runs and valid capture records.
+  - Prevented incomplete, held, or unmerged pipeline runs from triggering false `missing-marker` reconcile alerts.
 - **Checkpoint Identifier and Record Type Guards** (#880):
   - Guarded against non-dict `identifiers` and ledger records in `checkpoint.py` `_known_references`.
   - Prevented orphan scanning from crashing when processing malformed or partial checkpoint/ledger states.

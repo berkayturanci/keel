@@ -331,6 +331,35 @@ class TestLedgerRecords(unittest.TestCase):
         self.assertEqual(summary["reconcile_actions"][0]["pr"], None)
         self.assertNotIn("--merged-pr", summary["reconcile_actions"][0]["command"])
 
+    def test_capture_health_ignores_unmerged_ship_runs_and_non_ship_records(self):
+        unmerged_record = _record()
+        unmerged_record["assessment"]["merge"] = {"action": "hold", "reason": "window closed"}
+        unmerged_record["capture"] = None
+
+        non_dict_assessment = {
+            "record_type": "ship_run",
+            "assessment": "not-a-dict",
+            "capture": {"status": "applied", "marker": "compound-learning: pr=1 status=applied"},
+        }
+        non_dict_merge = {
+            "record_type": "ship_run",
+            "assessment": {"merge": "not-a-dict"},
+            "capture": {"status": "applied", "marker": "compound-learning: pr=2 status=applied"},
+        }
+
+        summary = ledger.capture_health_summary([
+            unmerged_record,
+            "not-a-dict",
+            {"record_type": "other"},
+            non_dict_assessment,
+            non_dict_merge,
+        ])
+
+        self.assertEqual(summary["record_count"], 2)
+        self.assertEqual(summary["status"], "clean")
+        self.assertEqual(summary["counts"]["applied"], 2)
+        self.assertEqual(summary["counts"]["missing_marker"], 0)
+
     def test_sanitize_record_redacts_default_secret_patterns(self):
         record = _record()
         record["capture"]["reason"] = (
