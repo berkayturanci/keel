@@ -212,6 +212,19 @@ def merge_cluster_branch(
     return res.ok
 
 
+class _Unset:
+    """Sentinel: ``evidence_checker`` was not supplied at all.
+
+    Defaulting to ``None`` made skipping review an *omission* — the same
+    "exception lives in a driver's judgement call" failure the config knob
+    exists to prevent, relocated from config to a call site. Every caller now
+    states its choice, and ``None`` is a typed opt-out rather than a default.
+    """
+
+
+_UNSET = _Unset()
+
+
 def land_wave_clusters(
     plan: SwarmPlan,
     wave_index: int,
@@ -222,7 +235,7 @@ def land_wave_clusters(
     pr_diff_map: dict[str, list[str] | tuple[str, ...]] | None = None,
     runner: SubprocessRunner | None = None,
     resolver: Callable[[str], str | None] | None = None,
-    evidence_checker: Callable[[str], tuple[bool, str]] | None = None,
+    evidence_checker: Callable[[str], tuple[bool, str]] | None | _Unset = _UNSET,
 ) -> SwarmLandingResult:
     """Execute orthogonal batch landing or adaptive sequential funneling for a wave.
 
@@ -230,10 +243,16 @@ def land_wave_clusters(
     ship review-evidence contract holds for that branch's PR (ok, reason). When
     supplied, a cluster whose evidence does not verify is **held** — reported,
     never merged — so the independent-review layer is structural in swarm
-    exactly as it is in ship s10 (#828). ``None`` skips the check: pure
-    planning callers and the config opt-out (``knobs.swarm_review_evidence:
-    false``, logged by the CLI) both pass ``None``.
+    exactly as it is in ship s10 (#828). Passing ``None`` skips the check — a
+    typed opt-out for pure planning callers and the config opt-out
+    (``knobs.swarm_review_evidence: false``, logged by the CLI). Omitting the
+    argument raises: review must never be skipped by oversight.
     """
+    if isinstance(evidence_checker, _Unset):
+        raise TypeError(
+            "land_wave_clusters requires an explicit evidence_checker; pass "
+            "None to opt out of the #828 review-evidence gate deliberately"
+        )
     root_path = Path(root).resolve()
     target_wave: SwarmWave | None = None
     for w in plan.waves:
@@ -279,22 +298,33 @@ def land_wave_clusters(
 
     # Live landing protected by atomic merge lock
     lock_path = root_path / ".keel" / "state" / "merge.lock"
-    with merge_lock(lock_path):
+    # Evidence checks are read-only (gh + rev-parse) but network-bound, so they
+    # run *before* the lock: holding the global merge lock for N clusters x API
+    # latency would block every concurrent `keel merge` for no reason.
+    if evidence_checker is not None:
+        cleared = []
         for c in target_wave.clusters:
+            evidence_ok, reason = evidence_checker(
+                f"swarm/{plan.swarm_id}/{c.cluster_id}"
+            )
+            if evidence_ok:
+                cleared.append(c)
+            else:
+                held.append((c.cluster_id, reason))
+                if state:
+                    state = update_worker_state(
+                        state,
+                        c.cluster_id,
+                        step="s10",
+                        status="held",
+                        details=f"review evidence: {reason}",
+                    )
+    else:
+        cleared = list(target_wave.clusters)
+
+    with merge_lock(lock_path):
+        for c in cleared:
             branch_name = f"swarm/{plan.swarm_id}/{c.cluster_id}"
-            if evidence_checker is not None:
-                evidence_ok, reason = evidence_checker(branch_name)
-                if not evidence_ok:
-                    held.append((c.cluster_id, reason))
-                    if state:
-                        state = update_worker_state(
-                            state,
-                            c.cluster_id,
-                            step="s10",
-                            status="held",
-                            details=f"review evidence: {reason}",
-                        )
-                    continue
             if decision.mode == "direct_batch":
                 ok = merge_cluster_branch(root_path, branch_name, runner=runner)
                 if ok:
@@ -315,6 +345,26 @@ def land_wave_clusters(
                     root_path, branch_name, runner=runner, resolver=resolver
                 )
                 if rebase_ok:
+                    # The heal rewrote the branch: new SHAs, and on the
+                    # self-healed path new *content* the resolver authored.
+                    # The pin taken before the rebase is void, so re-check
+                    # against the new tip — landing here would otherwise bless
+                    # bytes nobody reviewed, the exact bypass #828 closes on
+                    # the direct-batch path.
+                    if evidence_checker is not None:
+                        post_ok, post_reason = evidence_checker(branch_name)
+                        if not post_ok:
+                            held.append((
+                                c.cluster_id,
+                                f"rebased for landing ({reason}), so the "
+                                f"reviewed head no longer applies: {post_reason}",
+                            ))
+                            if state:
+                                state = update_worker_state(
+                                    state, c.cluster_id, step="s10", status="held",
+                                    details=f"post-rebase evidence: {post_reason}",
+                                )
+                            continue
                     healed.append(c.cluster_id)
                     merge_ok = merge_cluster_branch(root_path, branch_name, runner=runner)
                     if merge_ok:

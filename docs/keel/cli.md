@@ -1597,7 +1597,13 @@ keel swarm-land .keel/project.yaml --root . --mode auto
   error, an unarmed gate, an ambiguous branch (more than one open PR), and a
   local branch tip that does not match the reviewed PR head all hold; a
   cluster whose PR is already merged holds with an "already landed in an
-  earlier run" reason instead of a misleading one. The explicit opt-out is `knobs.swarm_review_evidence:
+  earlier run" reason instead of a misleading one. In funnel mode the check
+  runs **again after** the rebase-and-heal rewrites the branch — the pin taken
+  before it is void, and the self-healed path introduces content the resolver
+  authored — so a rebased cluster holds until its PR is re-reviewed at the new
+  head. Checks run before the merge lock is taken (they are read-only), and a
+  wave with any held cluster exits non-zero so automation cannot read "refused
+  to land unreviewed code" as success. The explicit opt-out is `knobs.swarm_review_evidence:
   false`, which `swarm-land` announces loudly — the exception lives in config, never in a
   driver's judgement call.
 

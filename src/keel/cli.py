@@ -4591,6 +4591,12 @@ def _cmd_swarm_land(args: argparse.Namespace) -> int:
     else:
         print(swarm.render_swarm_landing_result(result))
 
+    # A wave that refused to land unreviewed code must not read as success to
+    # the automation above it (overnight/swarm drivers key on the exit code);
+    # the held list is otherwise only visible in stdout.
+    if result.held_clusters:
+        return 1
+
     return 0 if result.status == "success" else (1 if result.status == "failed" else 0)
 
 
