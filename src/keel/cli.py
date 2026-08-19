@@ -2436,10 +2436,22 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
         if report["missing"]:
             print(f"  missing       : {', '.join(report['missing'])}")
         for result in report["results"]:
-            state = "ok" if result["ok"] else "FAIL"
+            if result["ok"]:
+                state = "ok"
+            elif report["status"] == "waiting":
+                state = "WAIT"
+            else:
+                state = "FAIL"
             suffix = " (deferred)" if result["deferred"] else ""
             print(f"  {state:>4}  {result['id']}{suffix}")
-    return 0 if report["status"] == "pass" else 1
+        for finding in report.get("findings", []):
+            severity = "FAIL" if finding.get("severity") == "major" else "WARN"
+            print(f"  {severity:>4}  {finding['id']}: {finding['message']}")
+    if report["status"] == "pass":
+        return 0
+    if report["status"] == "waiting":
+        return 2
+    return 1
 
 
 def _overtaking_prs(args: argparse.Namespace, timing: dict) -> dict:

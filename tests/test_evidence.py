@@ -124,7 +124,7 @@ class TestEvidenceVerify(unittest.TestCase):
             issue_comments=[],
         )
 
-        self.assertEqual(report["status"], "fail")
+        self.assertEqual(report["status"], "waiting")
         self.assertEqual(report["missing"], ["closure-comment-pr", "closure-comment-issue"])
 
     def test_missing_review_blocks(self):
@@ -137,7 +137,7 @@ class TestEvidenceVerify(unittest.TestCase):
             issue_comments=[_comment(closure.COMMENT_MARKER)],
         )
 
-        self.assertEqual(report["status"], "fail")
+        self.assertEqual(report["status"], "waiting")
         self.assertEqual(report["missing"], ["review-verdict-2"])
 
     def test_missing_jury_blocks_when_gating(self):
@@ -150,7 +150,7 @@ class TestEvidenceVerify(unittest.TestCase):
             issue_comments=[_comment(closure.COMMENT_MARKER)],
         )
 
-        self.assertEqual(report["status"], "fail")
+        self.assertEqual(report["status"], "waiting")
         self.assertEqual(report["missing"], ["jury-verdict"])
 
     def test_deferral_allows_missing_item(self):
@@ -188,7 +188,7 @@ class TestEvidenceVerify(unittest.TestCase):
             pr_reviews=[],
         )
 
-        self.assertEqual(report["status"], "fail")
+        self.assertEqual(report["status"], "waiting")
         self.assertEqual(report["counts"]["closure_pr"], 0)
         self.assertEqual(report["counts"]["review_verdict"], 0)
 
@@ -216,7 +216,7 @@ class TestEvidenceVerify(unittest.TestCase):
             issue_comments=[_comment(closure.COMMENT_MARKER)],
         )
 
-        self.assertEqual(report["status"], "fail")
+        self.assertEqual(report["status"], "waiting")
         self.assertEqual(report["counts"]["review_verdict"], 0)
         self.assertEqual(report["counts"]["jury_verdict"], 0)
 
@@ -289,7 +289,7 @@ class TestEvidenceVerify(unittest.TestCase):
             head_sha="abc123",
         )
 
-        self.assertEqual(report["status"], "fail")
+        self.assertEqual(report["status"], "waiting")
         self.assertEqual(report["counts"]["review_verdict"], 0)
         self.assertEqual(report["counts"]["jury_verdict"], 0)
         self.assertEqual(report["missing"], ["review-verdict-1", "jury-verdict"])
@@ -306,7 +306,7 @@ class TestEvidenceVerify(unittest.TestCase):
             head_sha="abc123",
         )
 
-        self.assertEqual(report["status"], "fail")
+        self.assertEqual(report["status"], "waiting")
         self.assertEqual(report["counts"]["closure_pr"], 0)
         self.assertEqual(report["counts"]["closure_issue"], 0)
         self.assertEqual(report["counts"]["review_verdict"], 0)
@@ -416,7 +416,7 @@ class TestEvidenceVerify(unittest.TestCase):
             head_sha="abc123",
         )
 
-        self.assertEqual(report["status"], "fail")
+        self.assertEqual(report["status"], "waiting")
         self.assertEqual(report["counts"]["review_verdict"], 0)
         self.assertEqual(report["missing"], ["review-verdict-1"])
 
@@ -432,7 +432,7 @@ class TestEvidenceVerify(unittest.TestCase):
             head_sha="abc123",
         )
 
-        self.assertEqual(report["status"], "fail")
+        self.assertEqual(report["status"], "waiting")
         self.assertEqual(report["counts"]["review_verdict"], 0)
         self.assertEqual(report["missing"], ["review-verdict-1"])
 
@@ -600,7 +600,7 @@ class TestEvidenceEnforcement(unittest.TestCase):
             issue_comments=[],
         )
 
-        self.assertEqual(report["status"], "fail")
+        self.assertEqual(report["status"], "waiting")
         self.assertTrue(report["enforced"])
         self.assertEqual(report["missing"], ["closure-comment-pr", "closure-comment-issue"])
 
@@ -1378,6 +1378,69 @@ class TestJuryParticipatingVendors(unittest.TestCase):
             contract, phase=evidence.PHASE_PRE_MERGE)]
         self.assertNotIn("jury-verdict", ids)
         self.assertEqual(contract["jury"]["mode"], "advisory")
+
+
+class TestEvidenceThreeWayStatus(unittest.TestCase):
+    def test_waiting_status_when_evidence_absent_without_findings(self):
+        report = evidence.verify(
+            _review_contract(reviewers=2, jury=True),
+            pr_comments=[],
+            issue_comments=[],
+            pr_reviews=[],
+            head_sha="abc1234",
+            pr_labels=["agent:codex"],
+        )
+        self.assertEqual(report["status"], evidence.STATUS_WAITING)
+        self.assertEqual(report["missing"], [
+            "closure-comment-pr",
+            "closure-comment-issue",
+            "review-verdict-1",
+            "review-verdict-2",
+            "jury-verdict",
+        ])
+        self.assertEqual(report["findings"], [])
+
+    def test_pass_status_when_all_evidence_present(self):
+        report = evidence.verify(
+            _review_contract(reviewers=1, jury=False),
+            pr_comments=[
+                _trusted_comment(closure.COMMENT_MARKER),
+                _trusted_comment("keel.review-verdict.v1\nreviewer: alpha\nLGTM"),
+            ],
+            issue_comments=[_trusted_comment(closure.COMMENT_MARKER)],
+            pr_labels=["agent:codex"],
+        )
+        self.assertEqual(report["status"], evidence.STATUS_PASS)
+        self.assertEqual(report["missing"], [])
+        self.assertEqual(report["findings"], [])
+
+    def test_fail_status_when_blocking_finding_present(self):
+        report = evidence.verify(
+            _review_contract(reviewers=1, jury=False),
+            pr_comments=[
+                _trusted_comment(closure.COMMENT_MARKER),
+                _trusted_comment("keel.review-verdict.v1\nreviewer: alpha\nLGTM"),
+            ],
+            issue_comments=[_trusted_comment(closure.COMMENT_MARKER)],
+            pr_labels=[],  # Missing agent attribution label triggers blocking finding
+        )
+        self.assertEqual(report["status"], evidence.STATUS_FAIL)
+        self.assertTrue(any(f["id"] == "attribution-label" for f in report["findings"]))
+
+    def test_fail_status_when_closure_mismatches_ledger(self):
+        record = _ship_run_record()
+        tampered_body = f"{closure.COMMENT_MARKER}\nTampered content without matching record"
+        report = evidence.verify(
+            _review_contract(reviewers=1, jury=False),
+            pr_comments=[
+                _trusted_comment(tampered_body),
+                _trusted_comment("keel.review-verdict.v1\nreviewer: alpha\nLGTM"),
+            ],
+            issue_comments=[_trusted_comment(tampered_body)],
+            pr_labels=["agent:codex"],
+            ledger_record=record,
+        )
+        self.assertEqual(report["status"], evidence.STATUS_FAIL)
 
 
 if __name__ == "__main__":

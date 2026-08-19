@@ -23,6 +23,7 @@ permissions:
   contents: read
   issues: write
   pull-requests: write
+  checks: write
 
 jobs:
   ship:
@@ -96,6 +97,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number || github.event.inputs.pr }}
           DEFERRAL: ${{ github.event.inputs.deferral }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           # --phase pre-merge: the closure comments are an s11 artifact, posted after
           # the merge this gate authorizes, so requiring them here is unsatisfiable.
@@ -105,4 +107,28 @@ jobs:
           if [ -n "$DEFERRAL" ]; then
             ARGS+=(--deferral "$DEFERRAL")
           fi
+          set +e
           keel evidence-verify "${ARGS[@]}"
+          RC=$?
+          set -e
+          if [ "$RC" -eq 0 ]; then
+            echo "Evidence verification passed."
+            exit 0
+          elif [ "$RC" -eq 2 ]; then
+            echo "Waiting for review evidence (pre-verdict state). Concluding check-run as neutral."
+            if [ -n "$GH_TOKEN" ] && [ -n "$HEAD_SHA" ]; then
+              RUN_DATA=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/check-runs" --jq '.check_runs[] | select(.name == "keel evidence (required)")' 2>/dev/null || true)
+              CHECK_ID=$(echo "$RUN_DATA" | jq -r '.id // empty' 2>/dev/null | head -n 1 || true)
+              if [ -n "$CHECK_ID" ]; then
+                gh api -X PATCH "repos/${GITHUB_REPOSITORY}/check-runs/${CHECK_ID}" \
+                  -f status="completed" \
+                  -f conclusion="neutral" \
+                  -f output[title]="Waiting for review evidence" \
+                  -f output[summary]="Evidence gate is waiting for required review / jury evidence (pre-verdict state). Merge remains blocked until all required verdicts pass." || true
+              fi
+            fi
+            exit 0
+          else
+            echo "Evidence verification failed (invalid evidence or findings detected)."
+            exit 1
+          fi

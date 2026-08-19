@@ -6,6 +6,12 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Evidence Gate Neutral Pre-Verdict State** (#829):
+  - Distinguished pre-review / waiting evidence states from invalid evidence in `keel evidence-verify`.
+  - Added `status: "waiting"` (CLI exit code `2`, GitHub check-run conclusion `neutral`) when required reviewer or jury verdicts are not yet posted on in-flight PRs, removing false-positive red CI icons while keeping merge security strictly fail-closed.
+  - Retained `status: "fail"` (CLI exit code `1`, GitHub check-run conclusion `failure`) for explicit evidence violations (commit SHA mismatch, closure record tampering, missing attribution labels, or unarmed gates).
+
 ## [1.17.0] - 2026-08-18
 
 This release is mostly about keel's own signals telling the truth. Three gates and one

@@ -2175,6 +2175,54 @@ class TestShip(unittest.TestCase):
         self.assertIn("keel evidence-verify", out)
         self.assertIn("required      : 0", out)
 
+    def test_evidence_verify_waiting_human_output_has_wait_markers(self):
+        rc, out, _ = run([
+            "evidence-verify", str(PROJECTS / "example-android.yaml"),
+            "--root", str(REPO_ROOT),
+            "--pr", "300",
+            "--pr-label", "keel:ship",
+            "--pr-label", "agent:codex",
+            "--reviewers", "2",
+            "--phase", "pre-merge",
+            "--pr-comments-json", _write_raw("[]"),
+            "--issue-comments-json", _write_raw("[]"),
+            "--pr-reviews-json", _write_raw("[]"),
+        ])
+
+        self.assertEqual(rc, 2)
+        self.assertIn("keel evidence-verify — waiting  PR #300", out)
+        self.assertIn("WAIT  review-verdict-1", out)
+        self.assertIn("WAIT  review-verdict-2", out)
+
+    def test_evidence_verify_fail_human_output_has_fail_markers(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            pr_comments = root / "pr-comments.json"
+            issue_comments = root / "issue-comments.json"
+            reviews = root / "reviews.json"
+            _write_json_fixture(pr_comments, [
+                _trusted_comment("<!-- keel.closure-comment.v1 -->"),
+                _trusted_comment("keel.review-verdict.v1\nreviewer: a\nLGTM"),
+            ])
+            _write_json_fixture(issue_comments, [
+                _trusted_comment("<!-- keel.closure-comment.v1 -->"),
+            ])
+            reviews.write_text("[]", encoding="utf-8")
+            rc, out, _ = run([
+                "evidence-verify", str(PROJECTS / "example-android.yaml"),
+                "--root", str(REPO_ROOT),
+                "--pr", "300",
+                "--pr-label", "keel:ship",  # Missing agent attribution label
+                "--reviewers", "1",
+                "--pr-comments-json", str(pr_comments),
+                "--issue-comments-json", str(issue_comments),
+                "--pr-reviews-json", str(reviews),
+            ])
+
+        self.assertEqual(rc, 1)
+        self.assertIn("keel evidence-verify — fail  PR #300", out)
+        self.assertIn("FAIL", out)
+
     def test_evidence_verify_enforces_from_ship_branch_without_label(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)

@@ -31,6 +31,11 @@ _FIELD_RE = re.compile(
 )
 _SHIP_BRANCH_RE = re.compile(r"^(feature|fix|chore|docs|test)/issue-\d+(?:-|$)")
 
+STATUS_PASS = "pass"
+STATUS_WAITING = "waiting"
+STATUS_FAIL = "fail"
+STATUSES = (STATUS_PASS, STATUS_WAITING, STATUS_FAIL)
+
 # Evidence phases. An artifact is required in the phase that produces it, mirroring
 # the step mapping stepverifier already applies (review -> s7, jury -> s8, closure ->
 # s12). The merge gate at s10 asks for PHASE_PRE_MERGE, because the closure comment
@@ -344,9 +349,16 @@ def verify(
     if unarmed is not None:
         findings = [*findings, unarmed]
     blocking_findings = [finding for finding in findings if finding["severity"] == "major"]
+    has_mismatch = bool(mismatch)
+    if not missing and not blocking_findings:
+        status = STATUS_PASS
+    elif blocking_findings or has_mismatch:
+        status = STATUS_FAIL
+    else:
+        status = STATUS_WAITING
     return {
         "schema_version": SCHEMA_VERSION,
-        "status": "pass" if not missing and not blocking_findings else "fail",
+        "status": status,
         "dry_run": dry_run,
         "enforced": enforced,
         "phase": phase,

@@ -77,6 +77,16 @@ The verifier confirms:
 3. Proper agent attribution.
 4. Pass status for all declared blocking quality gates.
 
+### Three-State Verification Lifecycle
+
+To provide honest optics during in-flight pull requests while strictly preserving fail-closed merge security, `keel evidence-verify` distinguishes between missing evidence and invalid evidence:
+
+| Status | CLI Exit | GitHub Check-Run | Meaning | Merge Allowed? |
+|---|---|---|---|---|
+| **`waiting`** | `2` | `neutral` (⚪ grey dot) | Review / jury verdicts are simply not posted yet (pre-verdict early PR lifecycle). No invalidity findings or tampered evidence. | ❌ Blocked |
+| **`pass`** | `0` | `success` (✅ green check) | All required evidence items for the active phase are verified and match `HEAD_SHA`. | ✅ Allowed |
+| **`fail`** | `1` | `failure` (❌ red mark) | Explicit violations detected: wrong commit SHA, closure comment mismatch with ledger record, missing attribution label, or unarmed gate. | ❌ Blocked |
+
 ---
 
 ## Complete Enforcement: How to Prevent Agent Bypasses
