@@ -236,20 +236,29 @@ def run_swarm_orchestration(
 
             if create_worktrees and not dry_run:
                 branch_name = f"swarm/{plan.swarm_id}/{c_id}"
-                create_swarm_worktree(root_path, wt_path, branch_name, runner=runner)
+                ok = create_swarm_worktree(root_path, wt_path, branch_name, runner=runner)
+                if not ok or not wt_path.exists():
+                    return c_id, {
+                        "issue": issue_n,
+                        "role": cluster.role,
+                        "ok": False,
+                        "code": 1,
+                        "output": f"failed to create isolated worktree at {wt_path}",
+                    }
 
-            res = execute_cluster_worker(
-                project_yaml=project_yaml,
-                issue=issue_n,
-                root=root_path,
-                worktree_dir=wt_path,
-                dry_run=dry_run,
-                role=cluster.role,
-                runner=runner,
-            )
-
-            if create_worktrees and not dry_run:
-                remove_swarm_worktree(root_path, wt_path, runner=runner)
+            try:
+                res = execute_cluster_worker(
+                    project_yaml=project_yaml,
+                    issue=issue_n,
+                    root=root_path,
+                    worktree_dir=wt_path,
+                    dry_run=dry_run,
+                    role=cluster.role,
+                    runner=runner,
+                )
+            finally:
+                if create_worktrees and not dry_run:
+                    remove_swarm_worktree(root_path, wt_path, runner=runner)
 
             return c_id, res
 

@@ -12,6 +12,9 @@ All notable changes to keel are documented here. The format follows
   - Allowed recording phase completion verdicts through the CLI.
 
 ### Security
+- **Swarm Worktree Isolation Failure Protection** (#867):
+  - Verified worktree creation success in `swarm_runtime.py` `_worker_fn` and failed the cluster execution immediately on failure.
+  - Prevented multiple concurrent worker threads from falling back to running `keel ship` simultaneously in the repository root upon worktree errors.
 - **Cloud Metadata SSRF Protection** (#866):
   - Blocked cloud metadata hosts (`169.254.169.254`, `metadata.google.internal`, `instance-data`) and link-local IP addresses in `endpoint_issues` unconditionally, even when `KEEL_ALLOW_REMOTE_ENDPOINT` is enabled.
   - Protected cloud instances against SSRF credential extraction via delegate endpoint configurations.

@@ -174,7 +174,7 @@ class TestSwarmOrchestration(unittest.TestCase):
 
             def mock_runner(cmd: list[str], cwd: Path) -> CommandResult:
                 if "worktree" in cmd and "add" in cmd:
-                    wt_dir = Path(cmd[4])
+                    wt_dir = Path(cmd[5])
                     wt_dir.mkdir(parents=True, exist_ok=True)
                 return CommandResult(ok=True, code=0, output="passed")
 
@@ -191,6 +191,33 @@ class TestSwarmOrchestration(unittest.TestCase):
             self.assertEqual(result.status, "success")
             self.assertEqual(result.passed_count, 1)
             self.assertEqual(result.failed_count, 0)
+
+    def test_orchestration_fails_when_worktree_creation_fails(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            s1 = IssueScope(issue=301, title="Task Worktree Fail", predicted_files=("src/fail.py",))
+            plan = build_swarm_plan([s1], swarm_id="swarm-fail-wt")
+
+            def mock_runner(cmd: list[str], cwd: Path) -> CommandResult:
+                if "worktree" in cmd:
+                    return CommandResult(ok=False, code=1, output="git worktree add failed")
+                return CommandResult(ok=True, code=0, output="passed")
+
+            result = run_swarm_orchestration(
+                plan,
+                ".keel/project.yaml",
+                root=tmpdir,
+                dry_run=False,
+                max_workers=1,
+                runner=mock_runner,
+                create_worktrees=True,
+            )
+
+            self.assertEqual(result.status, "failed")
+            self.assertEqual(result.failed_count, 1)
+            cluster_res = result.wave_results[0]["cluster_results"]
+            first_val = list(cluster_res.values())[0]
+            self.assertFalse(first_val["ok"])
+            self.assertIn("failed to create isolated worktree", first_val["output"])
 
     def test_orchestration_empty_plan_and_empty_wave(self):
         with tempfile.TemporaryDirectory() as tmpdir:
