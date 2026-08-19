@@ -214,16 +214,16 @@ def _repeated_identical_action(
     streak = 0
     previous: tuple[str, str, str, str] | None = None
     for event in events:
+        if not event["action"] and not event["output_fingerprint"]:
+            previous = None
+            streak = 0
+            continue
         current = (
             event["step_id"],
             event["slot"],
             event["action"],
             event["output_fingerprint"],
         )
-        if not any(current):
-            previous = None
-            streak = 0
-            continue
         streak = streak + 1 if current == previous else 1
         previous = current
         if streak >= threshold:

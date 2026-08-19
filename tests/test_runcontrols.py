@@ -115,6 +115,17 @@ class TestRunControlEvaluation(unittest.TestCase):
 
         self.assertEqual(report["status"], "pass")
 
+        # Step/slot present but action and output_fingerprint empty should not trigger oscillation
+        report_with_steps = runcontrols.evaluate_run_controls(
+            [
+                {"step_id": "s4", "slot": "guard", "action": "", "output_fingerprint": ""},
+                {"step_id": "s4", "slot": "guard", "action": "", "output_fingerprint": ""},
+                {"step_id": "s4", "slot": "guard", "action": "", "output_fingerprint": ""},
+            ],
+            step_caps={"guard": 10},
+        )
+        self.assertEqual(report_with_steps["status"], "pass")
+
     def test_alternating_diff_detects_non_convergence(self):
         report = runcontrols.evaluate_run_controls(
             [

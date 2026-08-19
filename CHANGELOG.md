@@ -29,6 +29,9 @@ All notable changes to keel are documented here. The format follows
   - Prevented untrusted repository configurations from exfiltrating system credentials via remote LLM endpoints.
 
 ### Fixed
+- **Oscillation Action and Fingerprint Check** (#882):
+  - Checked that events carry non-empty `action` or `output_fingerprint` before counting towards repeated action oscillation in `runcontrols.py`.
+  - Prevented false-positive oscillation halts during standard multi-event step progressions.
 - **Ledger Capture Health Merged Runs Filter** (#881):
   - Filtered `capture_health_summary` in `ledger.py` to evaluate only merged PR ship runs and valid capture records.
   - Prevented incomplete, held, or unmerged pipeline runs from triggering false `missing-marker` reconcile alerts.
