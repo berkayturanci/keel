@@ -29,6 +29,9 @@ All notable changes to keel are documented here. The format follows
   - Prevented untrusted repository configurations from exfiltrating system credentials via remote LLM endpoints.
 
 ### Fixed
+- **JSON Schema Non-String Key Validation** (#883):
+  - Rejected non-string object property keys in `jsonschema_min.py` `_validate_object`.
+  - Prevented schema consumers and sort operations from crashing when validating YAML mappings with non-string keys.
 - **Oscillation Action and Fingerprint Check** (#882):
   - Checked that events carry non-empty `action` or `output_fingerprint` before counting towards repeated action oscillation in `runcontrols.py`.
   - Prevented false-positive oscillation halts during standard multi-event step progressions.

@@ -109,6 +109,10 @@ def _validate_array(instance: list, schema: dict, path: str, errors: list[str]) 
 
 
 def _validate_object(instance: dict, schema: dict, path: str, errors: list[str]) -> None:
+    for key in instance:
+        if not isinstance(key, str):
+            errors.append(f"{path}: property key must be a string (got {key!r})")
+
     for key in schema.get("required", []):
         if key not in instance:
             errors.append(f"{path}: missing required property {key!r}")

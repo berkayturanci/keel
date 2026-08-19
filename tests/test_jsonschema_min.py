@@ -116,6 +116,13 @@ class TestObject(unittest.TestCase):
         errs = js.validate({"k": {"v": 1}}, schema)
         self.assertIn("$.k.v", errs[0])
 
+    def test_non_string_property_keys_rejected(self):
+        schema = {"type": "object"}
+        errs = js.validate({123: "val", True: "val2"}, schema)
+        self.assertEqual(len(errs), 2)
+        self.assertIn("property key must be a string (got 123)", errs[0])
+        self.assertIn("property key must be a string (got True)", errs[1])
+
 
 class TestKind(unittest.TestCase):
     """The 'got <kind>' rendering used in type-mismatch messages."""
