@@ -6,11 +6,31 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.18.0] - 2026-08-19
+
+This release brings a 3-way evidence status to the evidence gate so that in-flight PRs
+never report false-positive failures, brings swarm cluster landings to full review parity
+with the ship backbone, and improves release automation and accessibility.
+
 ### Added
 - **Evidence Gate Neutral Pre-Verdict State** (#829):
   - Distinguished pre-review / waiting evidence states from invalid evidence in `keel evidence-verify`.
   - Added `status: "waiting"` (CLI exit code `2`, GitHub check-run conclusion `neutral`) when required reviewer or jury verdicts are not yet posted on in-flight PRs, removing false-positive red CI icons while keeping merge security strictly fail-closed.
   - Retained `status: "fail"` (CLI exit code `1`, GitHub check-run conclusion `failure`) for explicit evidence violations (commit SHA mismatch, closure record tampering, missing attribution labels, or unarmed gates).
+- **Swarm Cluster Review Parity at Landing** (#830):
+  - Held unreviewed clusters at the landing stage, bringing swarm wave landing into strict review parity with the single-issue ship backbone.
+- **Semantic Versioning (SemVer) Calculation Runbook** (#850):
+  - Documented standard SemVer 2.0.0 calculation rules and decision matrix in `docs/keel/release.md`.
+
+### Fixed
+- **Diff-Based Risk Tier Assessment** (#846):
+  - Classified the ship assessment's risk tier directly from the git diff rather than metadata heuristics, matching gate behavior.
+- **Release Pipeline Digest Verification** (#843):
+  - Stopped release publish jobs from failing over unbuilt package digests during multi-phase builds.
+- **Integrations Search Accessibility** (#848):
+  - Added an explicit `sr-only` accessibility label for the site's integrations search box.
+- **Homebrew Formula Checksum Sync** (#841):
+  - Ensured Homebrew formula releases resolve matching release archive checksums.
 
 ## [1.17.0] - 2026-08-18
 

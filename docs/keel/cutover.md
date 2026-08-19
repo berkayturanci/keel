@@ -19,7 +19,7 @@ the installed keel — never copied, so the drift/overwrite class of bug is gone
 ## Step 1 — install + pin keel
 
 ```bash
-pipx install "git+https://github.com/berkayturanci/keel@v1.17.0"   # or pin an existing release tag
+pipx install "git+https://github.com/berkayturanci/keel@v1.18.0"   # or pin an existing release tag
 keel --version
 keel setup --root .                  # → config + both adapter surfaces + validate + plan
 #   config → .keel/project.yaml
