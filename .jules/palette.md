@@ -60,7 +60,3 @@
 ## 2026-08-18 - Restore a flashed label to a constant, never to a captured one
 **Learning:** Adding the `aria-label` (2026-06-15) and updating it on state change (2026-08-10) still leaves the third step wrong. A handler that captures the label to restore by reading the element's *current* value reads whatever is there at that moment — so a second click inside the flash window captures the transient "Copied to clipboard" and its timer restores that. The visible text recovers, because the next click re-reads it; the accessible name does not, so it announces "copied" until a re-render. A `|| "Copy…"` fallback cannot help: `getAttribute` returns the mutated string, not null.
 **Action:** Restore both the text and the `aria-label` to constants the markup ships with, not to values read at flash time, and clear any pending restore timer before arming a new one. If a capture is genuinely needed, take it once at bind time or guard re-entry before reading anything.
-
-## 2026-08-19 - Explicit sr-only Labels
-**Learning:** Using `aria-label` directly on a form input is technically accessible, but creating a visually hidden `<label class="sr-only">` explicitly associated with the input (`for="id"`) is the gold standard for screen readers and improves backwards compatibility. This is especially true for global elements like site search.
-**Action:** Always prefer `<label for="...">` with `.sr-only` class over `aria-label` for standalone form inputs like search bars to ensure robust screen reader support.
