@@ -155,8 +155,12 @@
   function flashCopy(btn) {
     if (btn.classList.contains("done")) return;
     var label = btn.querySelector("span");
-    var prev = label ? label.textContent : "";
-    var prevAria = btn.getAttribute("aria-label");
+    var prev = "copy";
+    var prevAria = btn.dataset.origAria;
+    if (prevAria == null) {
+      prevAria = btn.getAttribute("aria-label");
+      btn.dataset.origAria = prevAria || "";
+    }
     btn.classList.add("done");
     if (label) label.textContent = "copied";
     btn.setAttribute("aria-label", "copied");

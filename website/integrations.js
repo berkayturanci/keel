@@ -367,13 +367,20 @@
   function wireCopyButtons() {
     document.querySelectorAll(".integ-copy-btn").forEach(function (btn) {
       btn.onclick = function () {
+        if (btn.classList.contains("done")) return;
         var text = btn.getAttribute("data-copy");
-        var origLabel = btn.getAttribute("aria-label") || "Copy command";
+        var origLabel = btn.dataset.origAria;
+        if (origLabel == null) {
+          origLabel = btn.getAttribute("aria-label") || "Copy command";
+          btn.dataset.origAria = origLabel;
+        }
         if (navigator.clipboard && navigator.clipboard.writeText) {
+          btn.classList.add("done");
           navigator.clipboard.writeText(text).then(function () {
             btn.textContent = "Copied! ✓";
             btn.setAttribute("aria-label", "Copied to clipboard");
             setTimeout(function () {
+              btn.classList.remove("done");
               btn.textContent = "Copy";
               btn.setAttribute("aria-label", origLabel);
             }, 2000);

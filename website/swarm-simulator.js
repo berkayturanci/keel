@@ -365,14 +365,17 @@
       var COPY_ARIA = "Copy CLI command";
       var copyResetTimer = null;
       copyBtn.onclick = function () {
+        if (copyBtn.classList.contains("done")) return;
         var preset = getActivePreset();
         var cmd = "keel swarm-plan .keel/project.yaml --issues " + preset.issues.map(function (i) { return i.id; }).join(',') + " && keel swarm-run .keel/project.yaml";
         if (navigator.clipboard && navigator.clipboard.writeText) {
+          copyBtn.classList.add("done");
           navigator.clipboard.writeText(cmd).then(function () {
             copyBtn.textContent = "Copied! ✓";
             copyBtn.setAttribute("aria-label", "Copied to clipboard");
             clearTimeout(copyResetTimer);
             copyResetTimer = setTimeout(function () {
+              copyBtn.classList.remove("done");
               copyBtn.textContent = COPY_TEXT;
               copyBtn.setAttribute("aria-label", COPY_ARIA);
             }, 2000);
