@@ -12,6 +12,9 @@ All notable changes to keel are documented here. The format follows
   - Allowed recording phase completion verdicts through the CLI.
 
 ### Security
+- **Evidence Header Field Injection Protection** (#868):
+  - Anchored header parsing in `evidence.py` `_fields` strictly to the top header block of review and jury comments.
+  - Prevented field injection in comment bodies from overriding authentic reviewer, head, vendor, model, and jury panel metadata.
 - **Swarm Worktree Isolation Failure Protection** (#867):
   - Verified worktree creation success in `swarm_runtime.py` `_worker_fn` and failed the cluster execution immediately on failure.
   - Prevented multiple concurrent worker threads from falling back to running `keel ship` simultaneously in the repository root upon worktree errors.

@@ -27,8 +27,9 @@ TRUSTED_SHIP_ASSESSMENT_BOTS = frozenset({"github-actions", "github-actions[bot]
 
 _FIELD_RE = re.compile(
     r"^\s*(?P<key>reviewer|head|vendor|model|vendors)\s*:\s*(?P<value>\S+)\s*$",
-    re.IGNORECASE | re.MULTILINE,
+    re.IGNORECASE,
 )
+_HEADER_LINE_RE = re.compile(r"^[A-Za-z0-9_-]+\s*:")
 _SHIP_BRANCH_RE = re.compile(r"^(feature|fix|chore|docs|test)/issue-\d+(?:-|$)")
 
 STATUS_PASS = "pass"
@@ -922,8 +923,35 @@ def _matches_head(item: dict[str, Any], body: str, head_sha: str | None) -> bool
 
 
 def _fields(body: str) -> dict[str, str]:
-    return {match.group("key").lower(): match.group("value")
-            for match in _FIELD_RE.finditer(body)}
+    fields: dict[str, str] = {}
+    lines = (body or "").splitlines()
+    in_header = False
+
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line:
+            if in_header:
+                break
+            continue
+        if (
+            (line.startswith("<!--") and line.endswith("-->"))
+            or REVIEW_VERDICT_MARKER in line
+            or JURY_VERDICT_MARKER in line
+        ):
+            in_header = True
+            continue
+        match = _FIELD_RE.match(line)
+        if match:
+            in_header = True
+            key = match.group("key").lower()
+            if key not in fields:
+                fields[key] = match.group("value")
+        elif _HEADER_LINE_RE.match(line):
+            in_header = True
+        else:
+            if in_header:
+                break
+    return fields
 
 
 def _is_review_verdict_body(body: str) -> bool:

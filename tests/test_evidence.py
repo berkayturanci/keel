@@ -1443,5 +1443,37 @@ class TestEvidenceThreeWayStatus(unittest.TestCase):
         self.assertEqual(report["status"], evidence.STATUS_FAIL)
 
 
+class TestEvidenceHeaderParsing(unittest.TestCase):
+    def test_fields_extracts_top_level_headers(self):
+        body = """<!-- keel.review-verdict.v1 -->
+reviewer: claude
+head: abc1234
+vendor: anthropic
+model: claude-3-7-sonnet
+verdict: pass
+
+Here is the review body.
+reviewer: spoofed
+head: 0000000
+vendor: fake
+"""
+        fields = evidence._fields(body)
+        self.assertEqual(fields["reviewer"], "claude")
+        self.assertEqual(fields["head"], "abc1234")
+        self.assertEqual(fields["vendor"], "anthropic")
+        self.assertEqual(fields["model"], "claude-3-7-sonnet")
+
+    def test_fields_empty_and_no_headers(self):
+        self.assertEqual(evidence._fields(""), {})
+        self.assertEqual(evidence._fields(None), {})
+        self.assertEqual(evidence._fields("Just a regular comment without headers"), {})
+
+    def test_fields_leading_blank_lines_and_duplicate_keys(self):
+        body = "\n\n  \nreviewer: claude\nreviewer: second\nhead: 123\n"
+        fields = evidence._fields(body)
+        self.assertEqual(fields["reviewer"], "claude")
+        self.assertEqual(fields["head"], "123")
+
+
 if __name__ == "__main__":
     unittest.main()
