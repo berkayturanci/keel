@@ -221,6 +221,14 @@ class TestIO(unittest.TestCase):
             activity.write_activity(p, _record())
             self.assertEqual(activity.read_activity(p)["phase"], "classify")
 
+    def test_write_activity_cleanup_on_replace_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "r.json"
+            with unittest.mock.patch("os.replace", side_effect=OSError("disk failure")):
+                with self.assertRaises(OSError):
+                    activity.write_activity(p, _record())
+            self.assertEqual(list(Path(d).glob(".*")), [])
+
     def test_remove(self):
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "r.json"

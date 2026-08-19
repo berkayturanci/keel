@@ -107,6 +107,14 @@ class TestCheckpointRecords(unittest.TestCase):
             self.assertEqual(checkpoint.parse_checkpoint(checkpoint.encode_checkpoint(record)),
                              record)
 
+    def test_write_checkpoint_cleanup_on_replace_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "cp.json"
+            with unittest.mock.patch("os.replace", side_effect=OSError("disk failure")):
+                with self.assertRaises(OSError):
+                    checkpoint.write_checkpoint(path, _record())
+            self.assertEqual(list(Path(directory).glob(".*")), [])
+
     def test_jury_mode_recorded_in_state(self):
         self.assertIsNone(_record()["state"]["jury_mode"])
         record = _record(jury_mode="gating", current_step="s8")

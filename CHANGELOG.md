@@ -26,6 +26,9 @@ All notable changes to keel are documented here. The format follows
   - Prevented untrusted repository configurations from exfiltrating system credentials via remote LLM endpoints.
 
 ### Fixed
+- **Atomic Checkpoint and Activity Writing** (#869):
+  - Used atomic temporary file replacement (`tempfile.mkstemp` + `os.replace`) when saving checkpoint and activity state in `checkpoint.py` and `activity.py`.
+  - Prevented corrupted or partial state files if a process is terminated during a write operation.
 - **Legacy Claude Wrapper Plan Arguments Forward** (#863):
   - Removed `"$@"` arguments forwarding to `keel plan` in `src/keel/install.py` `render_legacy_claude_wrapper()`.
   - Prevented unrecognized arguments error when preflighting legacy slash commands with targets/flags.

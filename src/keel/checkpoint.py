@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -188,11 +191,24 @@ def read_checkpoint(path: str | Path) -> dict[str, Any] | None:
 
 
 def write_checkpoint(path: str | Path, record: dict[str, Any]) -> None:
-    """Write one validated checkpoint, replacing the previous resume point."""
+    """Write one validated checkpoint, replacing the previous resume point atomically."""
     checkpoint_path = Path(path)
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
     workspace.ensure_runtime_gitignore_for(checkpoint_path)
-    checkpoint_path.write_text(encode_checkpoint(record), encoding="utf-8")
+    content = encode_checkpoint(record)
+    fd, temp_file = tempfile.mkstemp(
+        prefix=f".{checkpoint_path.name}.",
+        dir=checkpoint_path.parent,
+        text=True,
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+        os.replace(temp_file, checkpoint_path)
+    except Exception:
+        with contextlib.suppress(OSError):
+            os.unlink(temp_file)
+        raise
 
 
 def resume_plan_as_dict(
