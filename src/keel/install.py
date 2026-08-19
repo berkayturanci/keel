@@ -195,7 +195,7 @@ def render_legacy_claude_wrapper(legacy_command: str, keel_command: str) -> str:
         f"This legacy command is now a thin compatibility wrapper for `/keel:{keel_command}`.\n\n"
         "Before doing any mutating work, run:\n\n"
         "```bash\n"
-        f"keel plan .keel/project.yaml --root . --command {keel_command} --live --json \"$@\"\n"
+        f"keel plan .keel/project.yaml --root . --command {keel_command} --live --json\n"
         "```\n\n"
         f"Then execute `/keel:{keel_command}` with the user's original arguments and flags "
         "unchanged. Preserve dry-run, jury/no-jury, review-comment mode, merge behavior, "

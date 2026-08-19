@@ -12,6 +12,9 @@ All notable changes to keel are documented here. The format follows
   - Allowed recording phase completion verdicts through the CLI.
 
 ### Fixed
+- **Legacy Claude Wrapper Plan Arguments Forward** (#863):
+  - Removed `"$@"` arguments forwarding to `keel plan` in `src/keel/install.py` `render_legacy_claude_wrapper()`.
+  - Prevented unrecognized arguments error when preflighting legacy slash commands with targets/flags.
 - **Merge Auto-Stamping Run ID Fallback** (#859):
   - Passed `gates_run_id` to `_autostamp` in `src/keel/cli.py` `_cmd_merge` when `--run-id` is omitted from CLI arguments.
   - Ensured merged status is stamped to activity records on the board when landing merges.
