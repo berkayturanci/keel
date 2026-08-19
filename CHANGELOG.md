@@ -29,6 +29,9 @@ All notable changes to keel are documented here. The format follows
   - Prevented untrusted repository configurations from exfiltrating system credentials via remote LLM endpoints.
 
 ### Fixed
+- **GitHub Comment Raw Field Posting** (#872):
+  - Used `-F` raw-field parameter in `gh api` calls in `github.py` when posting and editing issue comments.
+  - Prevented unexpected file read expansion when comment bodies start with `@` (such as reviewer mentions).
 - **Swarm CLI Partial Failure Exit Code** (#871):
   - Returned non-zero exit code (1) on `partial_failure` status in `swarm-run` and `swarm-land` CLI commands.
   - Ensured automation pipelines detect partial worker failures correctly.

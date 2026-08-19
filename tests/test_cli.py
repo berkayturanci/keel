@@ -7945,7 +7945,7 @@ class TestPostComment(unittest.TestCase):
             if argv[:4] == ["gh", "api", "--paginate", "--slurp"]:
                 return _proc("[]")
             if argv[:3] == ["gh", "api", "repos/berkayturanci/keel/issues/247/comments"]:
-                self.assertIn("-f", argv)
+                self.assertIn("-F", argv)
                 body_arg = next(item for item in argv if item.startswith("body="))
                 self.assertIn("keel.issue-update.v1", body_arg)
                 self.assertNotIn("--body", argv)
