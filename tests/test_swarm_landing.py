@@ -27,6 +27,7 @@ from keel.swarm import (
 )
 from keel.swarm_landing import (
     EvidenceCheck,
+    _restore_pin,
     is_safe_declarative_chunk,
     land_wave_clusters,
     merge_cluster_branch,
@@ -584,8 +585,6 @@ class TestSwarmLandingThinIO(unittest.TestCase):
 
     def test_restore_pin_reports_every_outcome_honestly(self):
         """The operator must learn the branch was touched, whatever happened."""
-        from keel.swarm_landing import _restore_pin
-
         calls: list[list[str]] = []
 
         def ok_runner(cmd: list[str], cwd: Path) -> CommandResult:
@@ -708,7 +707,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                 return CommandResult(ok=True, code=0, output="ok")
 
             for answer, expected in (
-                (("ok" == "ok", "verified"), "unusable answer"),
+                ((True, "verified"), "unusable answer"),
                 (True, "unusable answer"),
                 (None, "unusable answer"),
                 ((True, "verified", "a" * 40, "extra"), "unusable answer"),
@@ -1192,10 +1191,8 @@ class TestSwarmLandCLI(unittest.TestCase):
                     status="failed",
                 )
 
-            import keel.swarm_landing as landing_mod
-
             with (
-                mock.patch.object(landing_mod, "land_wave_clusters", side_effect=fake_land),
+                mock.patch("keel.swarm_landing.land_wave_clusters", side_effect=fake_land),
                 mock.patch.object(cli_mod.cfg, "load_config") as load_cfg,
             ):
                 config = cli_mod.cfg.ProjectConfig(
@@ -1228,7 +1225,7 @@ class TestSwarmLandCLI(unittest.TestCase):
 
             # knob on (default) -> a callable checker is passed
             with (
-                mock.patch.object(landing_mod, "land_wave_clusters", side_effect=fake_land),
+                mock.patch("keel.swarm_landing.land_wave_clusters", side_effect=fake_land),
                 mock.patch.object(cli_mod.cfg, "load_config") as load_cfg,
             ):
                 config_on = cli_mod.cfg.ProjectConfig(
@@ -1257,7 +1254,7 @@ class TestSwarmLandCLI(unittest.TestCase):
             # knob off + dry run -> no checker, and no banner either (the
             # opt-out is announced when it actually applies to a landing)
             with (
-                mock.patch.object(landing_mod, "land_wave_clusters", side_effect=fake_land),
+                mock.patch("keel.swarm_landing.land_wave_clusters", side_effect=fake_land),
                 mock.patch.object(cli_mod.cfg, "load_config") as load_cfg,
             ):
                 load_cfg.return_value = config
@@ -1281,7 +1278,7 @@ class TestSwarmLandCLI(unittest.TestCase):
             # dry run with the knob on -> the checker IS built, so the
             # preview can report what a live run would hold (read-only)
             with (
-                mock.patch.object(landing_mod, "land_wave_clusters", side_effect=fake_land),
+                mock.patch("keel.swarm_landing.land_wave_clusters", side_effect=fake_land),
                 mock.patch.object(cli_mod.cfg, "load_config") as load_cfg,
             ):
                 load_cfg.return_value = config_on
@@ -1305,7 +1302,6 @@ class TestSwarmLandCLI(unittest.TestCase):
         must not read as success."""
         import unittest.mock as mock
 
-        import keel.swarm_landing as landing_mod
         from keel.swarm import SwarmLandingResult
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1329,7 +1325,7 @@ class TestSwarmLandCLI(unittest.TestCase):
                     held_clusters=(("cluster-1-999", "missing evidence"),),
                 )
 
-            with mock.patch.object(landing_mod, "land_wave_clusters", side_effect=fake_land):
+            with mock.patch("keel.swarm_landing.land_wave_clusters", side_effect=fake_land):
                 with redirect_stdout(io.StringIO()):
                     code = main(
                         [
