@@ -29,6 +29,9 @@ All notable changes to keel are documented here. The format follows
   - Prevented untrusted repository configurations from exfiltrating system credentials via remote LLM endpoints.
 
 ### Fixed
+- **Model Normalization Prefix and Key Matching** (#878):
+  - Sorted model pricing keys by length descending during normalization to prevent shorter model prefixes (e.g. `gpt-4o`) from shadowing longer models (`gpt-4o-mini`).
+  - Preserved `ollama:` and `local:` prefixes before vendor stripping so local inference is accurately assigned zero cost.
 - **Install Module Target Set Cleanup** (#877):
   - Removed redundant `_STATUS_TARGETS_SET` and `_TARGETS_SET` constants in `install.py`.
   - Simplified membership checking in `adapter_status` and `update_adapters`.

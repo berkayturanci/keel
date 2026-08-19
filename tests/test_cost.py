@@ -24,8 +24,11 @@ class TestCostPureLogic(unittest.TestCase):
     def test_normalize_model_name(self):
         self.assertEqual(normalize_model_name("google:gemini-2.5-pro"), "gemini-2.5-pro")
         self.assertEqual(normalize_model_name("openai:gpt-4o"), "gpt-4o")
+        self.assertEqual(normalize_model_name("openai:gpt-4o-mini"), "gpt-4o-mini")
         self.assertEqual(normalize_model_name("anthropic:claude-3-7-sonnet"), "claude-3-7-sonnet")
-        self.assertEqual(normalize_model_name("ollama:deepseek-r1"), "deepseek")
+        self.assertEqual(normalize_model_name("ollama:deepseek-r1"), "ollama")
+        self.assertEqual(normalize_model_name("ollama:llama3"), "ollama")
+        self.assertEqual(normalize_model_name("local:qwen"), "local")
         self.assertEqual(normalize_model_name("custom-unknown-model"), "custom-unknown-model")
         self.assertEqual(normalize_model_name(""), "default")
 

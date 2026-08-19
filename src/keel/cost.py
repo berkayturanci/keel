@@ -48,10 +48,12 @@ FRONTIER_BENCHMARK_PRICE = (15.00, 75.00)  # Used for computing savings vs Claud
 def normalize_model_name(model: str) -> str:
     """Normalize vendor:model strings to model pricing keys."""
     raw = model.lower().strip()
+    if raw.startswith("ollama:") or raw.startswith("local:"):
+        return raw.split(":", 1)[0]
     if ":" in raw:
         raw = raw.split(":", 1)[1]
     raw = raw.replace("/", "-")
-    for key in MODEL_PRICING:
+    for key in sorted(MODEL_PRICING, key=len, reverse=True):
         if key in raw:
             return key
     return raw or "default"
