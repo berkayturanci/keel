@@ -10,7 +10,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import NamedTuple
 
-from .lock import merge_lock
+from .lock import merge_lock, resource_path
 from .swarm import (
     SwarmLandingResult,
     SwarmPlan,
@@ -387,7 +387,7 @@ def land_wave_clusters(
         )
 
     # Live landing protected by atomic merge lock
-    lock_path = root_path / ".keel" / "state" / "merge.lock"
+    lock_path = resource_path(root_path / ".keel" / "state" / "locks", "merge")
     # Evidence checks are read-only (gh + rev-parse) but network-bound, so they
     # run *before* the lock: holding the global merge lock for N clusters x API
     # latency would block every concurrent `keel merge` for no reason.

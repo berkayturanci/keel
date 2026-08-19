@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import io
 import json
 import os
@@ -9,6 +10,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 from keel.cli import main
 from keel.runner import CommandResult
@@ -1032,6 +1034,42 @@ class TestSwarmLandingThinIO(unittest.TestCase):
             )
             self.assertEqual(res_fail.status, "failed")
 
+    def test_land_wave_clusters_uses_unified_merge_lock_path(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            from keel import lock
+            s1 = IssueScope(issue=101, title="A", predicted_files=("src/a.py",))
+            plan = build_swarm_plan([s1], swarm_id="swarm-lock-test")
+            expected_lock_path = lock.resource_path(
+                Path(tmpdir).resolve() / ".keel" / "state" / "locks", "merge"
+            )
+
+            lock_paths_seen = []
+            orig_merge_lock = lock.merge_lock
+
+            @contextlib.contextmanager
+            def recording_merge_lock(path):
+                lock_paths_seen.append(path)
+                with orig_merge_lock(path) as p:
+                    yield p
+
+            def mock_ok_runner(cmd: list[str], cwd: Path) -> CommandResult:
+                return CommandResult(ok=True, code=0, output="ok")
+
+            with patch(
+                "keel.swarm_landing.merge_lock", side_effect=recording_merge_lock
+            ):
+                land_wave_clusters(
+                    plan,
+                    wave_index=1,
+                    project_yaml=".keel/project.yaml",
+                    root=tmpdir,
+                    dry_run=False,
+                    runner=mock_ok_runner,
+                    evidence_checker=None,
+                    base_branch="main",
+                )
+            self.assertEqual(lock_paths_seen, [expected_lock_path])
+
     def test_land_wave_clusters_live_sequential_funnel_healing_and_failure(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             c1 = SwarmCluster(
@@ -1674,7 +1712,7 @@ class TestSwarmLandCLI(unittest.TestCase):
             st = SwarmRunState(swarm_id="swarm-part", total_workers=1, workers=(w1,))
             save_swarm_state(st, root=tmpdir)
 
-            with unittest.mock.patch(
+            with patch(
                 "keel.swarm_landing.land_wave_clusters", return_value=partial_res
             ):
                 buf = io.StringIO()
