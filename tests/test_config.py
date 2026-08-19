@@ -468,11 +468,15 @@ class TestOpenAICompatibleEndpointGuard(unittest.TestCase):
                 self.assertIn("cloud-metadata or link-local address", issues[0])
 
     def test_the_opt_in_lives_in_the_environment_not_in_config(self):
-        endpoint = "https://openrouter.ai/api/v1/chat/completions"
-        self.assertNotEqual(self._issues(endpoint), [])
-        self.assertEqual(
-            self._issues(endpoint, {cfg.ALLOW_REMOTE_ENDPOINT_ENV: "1"}), []
-        )
+        for endpoint in (
+            "https://openrouter.ai/api/v1/chat/completions",
+            "http://8.8.8.8/v1/chat/completions",
+        ):
+            with self.subTest(endpoint=endpoint):
+                self.assertNotEqual(self._issues(endpoint), [])
+                self.assertEqual(
+                    self._issues(endpoint, {cfg.ALLOW_REMOTE_ENDPOINT_ENV: "1"}), []
+                )
 
     def test_non_http_schemes_are_refused(self):
         for endpoint in ("file:///etc/passwd", "ftp://host/x", "gopher://host/",
