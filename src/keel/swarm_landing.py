@@ -418,19 +418,18 @@ def land_wave_clusters(
                     # "self_healed_rebase" when the resolver authored bytes
                     # nobody reviewed. Only the latter breaks the guarantee.
                     if evidence_checker is not None and reason != "clean_rebase":
-                        if True:
-                            held.append((
-                                c.cluster_id,
-                                f"landing rebase resolved conflicts ({reason}), "
-                                "so content nobody reviewed would land — push "
-                                "the rebase and re-review",
-                            ))
-                            if state:
-                                state = update_worker_state(
-                                    state, c.cluster_id, step="s10", status="held",
-                                    details=f"post-rebase content: {reason}",
-                                )
-                            continue
+                        held.append((
+                            c.cluster_id,
+                            f"landing rebase resolved conflicts ({reason}), "
+                            "so content nobody reviewed would land — push "
+                            "the rebase and re-review",
+                        ))
+                        if state:
+                            state = update_worker_state(
+                                state, c.cluster_id, step="s10", status="held",
+                                details=f"post-rebase content: {reason}",
+                            )
+                        continue
                     healed.append(c.cluster_id)
                     merge_ok = merge_cluster_branch(
                         root_path, branch_name, base_branch=base_branch, runner=runner
