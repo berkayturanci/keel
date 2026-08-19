@@ -446,14 +446,16 @@ class TestSwarmLandingThinIO(unittest.TestCase):
             merged_branches: list[str] = []
 
             def mock_runner(cmd: list[str], cwd: Path) -> CommandResult:
+                if cmd[:2] == ["git", "rev-parse"]:
+                    return CommandResult(ok=True, code=0, output="a" * 40)
                 if "merge" in cmd:
                     merged_branches.append(cmd[-2])
                 return CommandResult(ok=True, code=0, output="ok")
 
             def checker(branch: str) -> tuple[bool, str]:
                 if "cluster-1-101" in branch:
-                    return True, "PR #9: evidence verified"
-                return False, "PR #10: missing evidence: review-verdict-1"
+                    return EvidenceCheck(True, "PR #9: evidence verified", "a" * 40)
+                return EvidenceCheck(False, "PR #10: missing evidence: review-verdict-1")
 
             res = land_wave_clusters(
                 plan,
@@ -598,7 +600,8 @@ class TestSwarmLandingThinIO(unittest.TestCase):
             "restored to the reviewed commit",
             _restore_pin(Path("/tmp"), "swarm/x/c1", sha, ok_runner),
         )
-        self.assertEqual(calls[0][:3], ["git", "reset", "--hard"])
+        self.assertEqual(calls[0][:2], ["git", "update-ref"])
+        self.assertIn("refs/heads/swarm/x/c1", calls[0])
         self.assertIn(
             "could not be reset",
             _restore_pin(Path("/tmp"), "swarm/x/c1", sha, failing_runner),
@@ -646,31 +649,88 @@ class TestSwarmLandingThinIO(unittest.TestCase):
             self.assertTrue(res.landed_clusters, "a clean rebase must land")
             self.assertTrue(merged)
 
-    def test_a_bare_pair_from_a_checker_still_pins(self):
-        """A checker answering with a plain tuple must not silently disable the
-        lock-time re-read."""
+    def test_dry_run_predicts_holds_instead_of_promising_a_landing(self):
+        """A preview that ignores the gate over-promises: it is what a driver
+        reads to decide whether to attempt the wave."""
         with tempfile.TemporaryDirectory() as tmpdir:
             s1 = IssueScope(issue=101, title="A", predicted_files=("src/a.py",))
-            plan = build_swarm_plan([s1], swarm_id="swarm-bare-pair")
+            s2 = IssueScope(issue=102, title="B", predicted_files=("src/b.py",))
+            plan = build_swarm_plan([s1, s2], swarm_id="swarm-dry-predict")
 
-            def runner(cmd: list[str], cwd: Path) -> CommandResult:
-                if cmd[:2] == ["git", "rev-parse"]:
-                    return CommandResult(ok=True, code=0, output="e" * 40)
-                return CommandResult(ok=True, code=0, output="ok")
+            def checker(branch: str):
+                if "101" in branch:
+                    return EvidenceCheck(True, "verified", "a" * 40)
+                return EvidenceCheck(False, "missing evidence: review-verdict-1")
 
             res = land_wave_clusters(
                 plan,
                 wave_index=1,
                 project_yaml=".keel/project.yaml",
                 root=tmpdir,
-                dry_run=False,
-                runner=runner,
-                evidence_checker=lambda b: ("yes" == "yes", "verified"),
+                dry_run=True,
+                evidence_checker=checker,
                 base_branch="main",
             )
-            # no pinned sha -> nothing to re-confirm, but the wave still runs
-            self.assertEqual(res.held_clusters, ())
-            self.assertTrue(res.landed_clusters)
+            self.assertIn("cluster-1-101", res.landed_clusters)
+            self.assertEqual(len(res.held_clusters), 1)
+            self.assertIn("would hold:", res.held_clusters[0][1])
+            self.assertIn("review-verdict-1", res.held_clusters[0][1])
+            self.assertEqual(res.status, "partial_failure")
+
+            # an unusable answer is predicted as a hold too, never as landable
+            res_bad = land_wave_clusters(
+                plan,
+                wave_index=1,
+                project_yaml=".keel/project.yaml",
+                root=tmpdir,
+                dry_run=True,
+                evidence_checker=lambda _b: None,
+                base_branch="main",
+            )
+            self.assertEqual(res_bad.landed_clusters, ())
+            self.assertIn("unusable answer", res_bad.held_clusters[0][1])
+
+    def test_an_answer_without_a_pinned_commit_is_refused(self):
+        """A pass the merge cannot re-confirm is not a usable answer.
+
+        The previous version of this test was named for a guarantee and then
+        asserted its absence: a bare pair yielded head_sha=None, _pin_drifted
+        returned early, and the drift window silently reopened while the suite
+        stayed green. Fail closed instead."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            s1 = IssueScope(issue=101, title="A", predicted_files=("src/a.py",))
+            plan = build_swarm_plan([s1], swarm_id="swarm-bare-pair")
+            merged: list[str] = []
+
+            def runner(cmd: list[str], cwd: Path) -> CommandResult:
+                if "merge" in cmd:
+                    merged.append(cmd[-2])
+                return CommandResult(ok=True, code=0, output="ok")
+
+            for answer, expected in (
+                (("ok" == "ok", "verified"), "unusable answer"),
+                (True, "unusable answer"),
+                (None, "unusable answer"),
+                ((True, "verified", "a" * 40, "extra"), "unusable answer"),
+                # a plain 3-tuple is accepted and coerced, but a pass with no
+                # pinned commit is still refused
+                (EvidenceCheck(True, "verified", None), "without a pinned commit"),
+                ((True, "verified", ""), "without a pinned commit"),
+            ):
+                with self.subTest(answer=type(answer).__name__):
+                    res = land_wave_clusters(
+                        plan,
+                        wave_index=1,
+                        project_yaml=".keel/project.yaml",
+                        root=tmpdir,
+                        dry_run=False,
+                        runner=runner,
+                        evidence_checker=lambda _b, a=answer: a,
+                        base_branch="main",
+                    )
+                    self.assertTrue(res.held_clusters, res)
+                    self.assertIn(expected, res.held_clusters[0][1])
+            self.assertEqual(merged, [], "nothing may land on an unusable answer")
 
     def test_base_branch_must_be_stated(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1194,7 +1254,32 @@ class TestSwarmLandCLI(unittest.TestCase):
                     )
             self.assertTrue(callable(captured["evidence_checker"]))
 
-            # dry run -> no checker regardless of the knob
+            # knob off + dry run -> no checker, and no banner either (the
+            # opt-out is announced when it actually applies to a landing)
+            with (
+                mock.patch.object(landing_mod, "land_wave_clusters", side_effect=fake_land),
+                mock.patch.object(cli_mod.cfg, "load_config") as load_cfg,
+            ):
+                load_cfg.return_value = config
+                buf_err_dry = io.StringIO()
+                with redirect_stdout(io.StringIO()), redirect_stderr(buf_err_dry):
+                    main(
+                        [
+                            "swarm-land",
+                            ".keel/project.yaml",
+                            "--root",
+                            tmpdir,
+                            "--issue",
+                            "714",
+                            "--swarm-id",
+                            "swarm-knob",
+                        ]
+                    )
+            self.assertIsNone(captured["evidence_checker"])
+            self.assertEqual(buf_err_dry.getvalue(), "")
+
+            # dry run with the knob on -> the checker IS built, so the
+            # preview can report what a live run would hold (read-only)
             with (
                 mock.patch.object(landing_mod, "land_wave_clusters", side_effect=fake_land),
                 mock.patch.object(cli_mod.cfg, "load_config") as load_cfg,
@@ -1213,7 +1298,7 @@ class TestSwarmLandCLI(unittest.TestCase):
                             "swarm-knob",
                         ]
                     )
-            self.assertIsNone(captured["evidence_checker"])
+            self.assertTrue(callable(captured["evidence_checker"]))
 
     def test_swarm_land_cli_exits_nonzero_when_clusters_are_held(self):
         """Automation keys on the exit code: refusing to land unreviewed code
@@ -1288,6 +1373,31 @@ class TestSwarmLandCLI(unittest.TestCase):
                 return RunResult(ok=ok, code=0 if ok else 1, output=stdout, stdout=stdout)
 
             return mock.patch.object(cli_mod, "run_argv", side_effect=_run)
+
+        # The jury's major: a CommandResult that carries the payload in
+        # `output` with `stdout` empty must not degrade to "no open PR" — that
+        # would hold every cluster forever behind a misleading reason, and the
+        # fail-closed design makes the breakage look like correct behaviour.
+        def output_only(cmd, **kwargs):
+            payload = '[{"number": 7, "state": "OPEN"}]'
+            return RunResult(ok=True, code=0, output=payload, stdout="")
+
+        with (
+            mock.patch.object(cli_mod, "run_argv", side_effect=output_only),
+            mock.patch.object(
+                cli_mod,
+                "_verify_merge_evidence",
+                return_value={"enforced": False, "verification": {"status": "pass"}},
+            ),
+        ):
+            ok, reason = check("swarm/x/c1")[:2]
+        self.assertFalse(ok)
+        self.assertIn(
+            "gate is not armed",
+            reason,
+            "the lookup must read `output` when `stdout` is empty, not fall "
+            f"through to 'no open PR' (got: {reason})",
+        )
 
         # transport failure
         with lookup("boom", ok=False):
@@ -1499,7 +1609,9 @@ class TestSwarmLandCLI(unittest.TestCase):
                 )
             self.assertEqual(code_json, 0)
             data = json.loads(buf_json.getvalue())
-            self.assertEqual(data["status"], "success")
+            # the gate is on, so a dry run in a repo with no cluster PRs
+            # predicts holds — the preview doing its job, not a failure
+            self.assertIn(data["status"], ("success", "partial_failure"))
 
             # Empty issues branch & state dir without json files
             state_dir = Path(tmpdir) / ".keel" / "state" / "swarm"

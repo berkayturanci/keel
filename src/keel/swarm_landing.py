@@ -281,7 +281,12 @@ def _restore_pin(
     if pinned_sha is None:
         return "the branch was left rewritten (no pinned commit to restore)"
     run = runner or default_runner
-    res = run(["git", "reset", "--hard", pinned_sha], repo_root)
+    # update-ref, not `reset --hard`: a hard reset acts on whatever is checked
+    # out, and one call earlier in this loop leaves HEAD on the base branch.
+    # Naming the ref makes rewinding the wrong branch impossible.
+    res = run(
+        ["git", "update-ref", f"refs/heads/{branch_name}", pinned_sha], repo_root
+    )
     if getattr(res, "ok", False):
         return f"the branch was restored to the reviewed commit {pinned_sha[:12]}"
     return (
@@ -355,8 +360,17 @@ def land_wave_clusters(
     state = load_swarm_state(plan.swarm_id, root=root_path)
 
     if dry_run:
-        # Dry run simulation
+        # A preview that ignores the gate systematically over-promises: it is
+        # what a driver reads to decide whether to attempt the wave. The checks
+        # are read-only, so run them here too and report what *would* hold.
         for c in target_wave.clusters:
+            if evidence_checker is not None:
+                raw = evidence_checker(f"swarm/{plan.swarm_id}/{c.cluster_id}")
+                ok = bool(raw[0]) if isinstance(raw, tuple) and raw else False
+                if not ok:
+                    why = raw[1] if isinstance(raw, tuple) and len(raw) > 1 else "unusable answer"
+                    held.append((c.cluster_id, f"would hold: {why}"))
+                    continue
             landed.append(c.cluster_id)
         return SwarmLandingResult(
             swarm_id=plan.swarm_id,
@@ -365,7 +379,8 @@ def land_wave_clusters(
             landed_clusters=tuple(landed),
             healed_clusters=(),
             failed_clusters=(),
-            status="success",
+            status="success" if not held else "partial_failure",
+            held_clusters=tuple(held),
         )
 
     # Live landing protected by atomic merge lock
@@ -377,11 +392,29 @@ def land_wave_clusters(
     if evidence_checker is not None:
         cleared = []
         for c in target_wave.clusters:
-            answer = evidence_checker(f"swarm/{plan.swarm_id}/{c.cluster_id}")
-            # Coerce: a checker that answers with a bare pair would otherwise
-            # silently disable the lock-time pin re-read.
-            answer = EvidenceCheck(*answer) if not isinstance(answer, EvidenceCheck) else answer
+            raw = evidence_checker(f"swarm/{plan.swarm_id}/{c.cluster_id}")
+            # A pass without a pinned sha cannot be re-confirmed at merge time,
+            # so it is not a usable answer — accepting it would silently drop
+            # the drift window the lock-time re-read exists to close. Anything
+            # that is not a three-field answer holds, like every other
+            # unexpected state on this path.
+            if isinstance(raw, EvidenceCheck):
+                answer = raw
+            elif isinstance(raw, tuple) and len(raw) == 3:
+                answer = EvidenceCheck(*raw)
+            else:
+                answer = EvidenceCheck(
+                    False,
+                    "evidence checker returned an unusable answer "
+                    f"({type(raw).__name__}); it must report (ok, reason, head_sha)",
+                )
             evidence_ok, reason = answer.ok, answer.reason
+            if evidence_ok and not answer.head_sha:
+                evidence_ok = False
+                reason = (
+                    "evidence checker passed without a pinned commit, so the "
+                    "merge could not re-confirm what it verified"
+                )
             if evidence_ok:
                 pinned[c.cluster_id] = answer.head_sha
                 cleared.append(c)

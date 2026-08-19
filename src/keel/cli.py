@@ -4423,7 +4423,7 @@ def _swarm_land_evidence_checker(
         if not lookup.ok:
             return hold(f"PR lookup failed: {lookup.output.strip()[:120]}")
         try:
-            prs = json.loads(lookup.stdout or "[]")
+            prs = json.loads(lookup.stdout or lookup.output or "[]")
         except json.JSONDecodeError:
             return hold("PR lookup returned invalid JSON")
         if not isinstance(prs, list):
@@ -4465,7 +4465,10 @@ def _swarm_land_evidence_checker(
         )
         try:
             payload = _verify_merge_evidence(evidence_ns, config)
-        except Exception as exc:  # noqa: BLE001 - one bad cluster holds, never crashes the wave
+        # SystemExit too: the namespace is hand-built, and argparse-style
+        # validation raises it — that would abort the whole wave mid-flight
+        # instead of holding one cluster.
+        except (Exception, SystemExit) as exc:  # noqa: BLE001 - one cluster holds, wave survives
             return hold(
                 f"evidence verification errored: {type(exc).__name__}: {exc}"[:160]
             )
@@ -4569,10 +4572,12 @@ def _cmd_swarm_land(args: argparse.Namespace) -> int:
     from . import swarm_landing
 
     evidence_checker = None
-    if args.live:
-        if config.knobs.swarm_review_evidence:
-            evidence_checker = _swarm_land_evidence_checker(args, config)
-        else:
+    if config.knobs.swarm_review_evidence:
+        # Built for dry runs too: the checks are read-only, and a preview that
+        # cannot see the gate tells the operator a wave will land when it
+        # would be held entirely.
+        evidence_checker = _swarm_land_evidence_checker(args, config)
+    elif args.live:
             # The opt-out must be impossible to miss in the transcript: the
             # whole point of #828 is that skipping review is a visible,
             # configured exception, never a silent default.
@@ -4598,10 +4603,11 @@ def _cmd_swarm_land(args: argparse.Namespace) -> int:
     else:
         print(swarm.render_swarm_landing_result(result))
 
-    # A wave that refused to land unreviewed code must not read as success to
-    # the automation above it (overnight/swarm drivers key on the exit code);
-    # the held list is otherwise only visible in stdout.
-    if result.held_clusters:
+    # A *live* wave that refused to land unreviewed code must not read as
+    # success to the automation above it (overnight/swarm drivers key on the
+    # exit code). A dry run that predicts holds succeeded at predicting: its
+    # job is to answer "what would happen", so it reports and exits 0.
+    if args.live and result.held_clusters:
         return 1
 
     return 0 if result.status == "success" else (1 if result.status == "failed" else 0)

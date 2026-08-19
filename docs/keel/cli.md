@@ -1608,9 +1608,12 @@ keel swarm-land .keel/project.yaml --root . --mode auto
   lock is taken. A funnel hold rewinds the branch to the reviewed commit so a
   rejected cluster is not left rewritten and un-landable. Everything
   targets `base_branch` from the project config — the PR lookup, the merge and
-  the rebase — so the diff verified is the diff that lands. A wave with any
+  the rebase — so the diff verified is the diff that lands. A *live* wave with any
   held cluster exits non-zero, so automation cannot read "refused to land
-  unreviewed code" as success. The explicit opt-out is `knobs.swarm_review_evidence:
+  unreviewed code" as success. The gate also runs in **dry runs** — the checks
+  are read-only — so a preview reports `would hold: <reason>` per cluster
+  instead of promising a landing that a live run would refuse; a dry run still
+  exits 0, because predicting correctly is not a failure. The explicit opt-out is `knobs.swarm_review_evidence:
   false`, which `swarm-land` announces loudly — the exception lives in config, never in a
   driver's judgement call.
 
