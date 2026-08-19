@@ -40,6 +40,28 @@ The PyPI wheel and source-distribution SHA256 digests must match the GitHub Rele
 digests. TestPyPI does not currently contain `keel-workflow`; use the rehearsal flow below
 before the next production publish if TestPyPI trusted publishing has been configured.
 
+## Semantic Versioning (SemVer) Calculation
+
+Keel strictly follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html) (`MAJOR.MINOR.PATCH`). To determine the version number for the next release, inspect all commits on `main` since the latest git tag:
+
+```bash
+# List all unreleased commits since the last release tag
+git log $(git describe --tags --abbrev=0)..HEAD --oneline
+```
+
+Evaluate the commits against the SemVer decision matrix:
+
+| Version Component | Increment Rule | Example Changes |
+|---|---|---|
+| **MAJOR** (`X.0.0`) | **Breaking Changes** | Incompatible core contract modifications, removing/reordering backbone steps (`s0`–`s12`), or breaking schema changes in `project.yaml`. |
+| **MINOR** (`1.Y.0`) | **New Features (Backward-Compatible)** | Commits with `feat:` / `feat(...)`: new CLI commands, new extension slots, new verification states (e.g. #829 neutral evidence gate), new integrations. |
+| **PATCH** (`1.Y.Z`) | **Bug Fixes (Backward-Compatible)** | Commits with `fix:`, `refactor:`, `docs:`, `test:`, `build:`, `ci:`: bug fixes, performance improvements, documentation polish, dependency bumps. |
+
+> [!NOTE]
+> If a release includes both `feat:` and `fix:` commits, the **MINOR** increment takes precedence (resetting the PATCH component to `0`).
+
+---
+
 ## Preflight Checklist
 
 Before tagging a release:
