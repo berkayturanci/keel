@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+from typing import NamedTuple
 
 from .lock import merge_lock
 from .swarm import (
@@ -212,6 +213,19 @@ def merge_cluster_branch(
     return res.ok
 
 
+class EvidenceCheck(NamedTuple):
+    """One cluster's review-evidence answer.
+
+    ``head_sha`` is the commit the verdicts were pinned to, carried out of the
+    check so the merge can re-confirm it locally inside the lock instead of
+    trusting a pin taken minutes and several API calls earlier.
+    """
+
+    ok: bool
+    reason: str
+    head_sha: str | None = None
+
+
 class _Unset:
     """Sentinel: ``evidence_checker`` was not supplied at all.
 
@@ -225,6 +239,34 @@ class _Unset:
 _UNSET = _Unset()
 
 
+def _pin_drifted(
+    repo_root: Path,
+    branch_name: str,
+    pinned_sha: str | None,
+    runner: SubprocessRunner | None,
+) -> str | None:
+    """Re-confirm the branch tip inside the lock; a reason string when it moved.
+
+    The evidence check runs before the lock (it is network-bound), so minutes
+    and several API calls can pass before the merge. This local re-read costs
+    nothing and closes that window. ``None`` pinned sha means the caller opted
+    out of the gate, so there is nothing to confirm.
+    """
+    if pinned_sha is None:
+        return None
+    run = runner or default_runner
+    res = run(["git", "rev-parse", branch_name], repo_root)
+    tip = str(getattr(res, "stdout", "") or getattr(res, "output", "")).strip()
+    if not res.ok or not tip:
+        return "cannot re-read the branch tip before merging"
+    if tip != pinned_sha:
+        return (
+            f"branch tip moved to {tip[:12]} after the review check pinned "
+            f"{pinned_sha[:12]}"
+        )
+    return None
+
+
 def land_wave_clusters(
     plan: SwarmPlan,
     wave_index: int,
@@ -235,7 +277,8 @@ def land_wave_clusters(
     pr_diff_map: dict[str, list[str] | tuple[str, ...]] | None = None,
     runner: SubprocessRunner | None = None,
     resolver: Callable[[str], str | None] | None = None,
-    evidence_checker: Callable[[str], tuple[bool, str]] | None | _Unset = _UNSET,
+    evidence_checker: Callable[[str], tuple] | None | _Unset = _UNSET,
+    base_branch: str = "main",
 ) -> SwarmLandingResult:
     """Execute orthogonal batch landing or adaptive sequential funneling for a wave.
 
@@ -301,13 +344,14 @@ def land_wave_clusters(
     # Evidence checks are read-only (gh + rev-parse) but network-bound, so they
     # run *before* the lock: holding the global merge lock for N clusters x API
     # latency would block every concurrent `keel merge` for no reason.
+    pinned: dict[str, str | None] = {}
     if evidence_checker is not None:
         cleared = []
         for c in target_wave.clusters:
-            evidence_ok, reason = evidence_checker(
-                f"swarm/{plan.swarm_id}/{c.cluster_id}"
-            )
+            result = evidence_checker(f"swarm/{plan.swarm_id}/{c.cluster_id}")
+            evidence_ok, reason = result[0], result[1]
             if evidence_ok:
+                pinned[c.cluster_id] = result[2] if len(result) > 2 else None
                 cleared.append(c)
             else:
                 held.append((c.cluster_id, reason))
@@ -326,7 +370,20 @@ def land_wave_clusters(
         for c in cleared:
             branch_name = f"swarm/{plan.swarm_id}/{c.cluster_id}"
             if decision.mode == "direct_batch":
-                ok = merge_cluster_branch(root_path, branch_name, runner=runner)
+                drift = _pin_drifted(
+                    root_path, branch_name, pinned.get(c.cluster_id), runner
+                )
+                if drift is not None:
+                    held.append((c.cluster_id, drift))
+                    if state:
+                        state = update_worker_state(
+                            state, c.cluster_id, step="s10", status="held",
+                            details=f"pin drift: {drift}",
+                        )
+                    continue
+                ok = merge_cluster_branch(
+                    root_path, branch_name, base_branch=base_branch, runner=runner
+                )
                 if ok:
                     landed.append(c.cluster_id)
                     if state:
@@ -342,7 +399,8 @@ def land_wave_clusters(
             else:
                 # Sequential funnel with rebase & heal
                 rebase_ok, reason = rebase_and_heal_cluster_branch(
-                    root_path, branch_name, runner=runner, resolver=resolver
+                    root_path, branch_name, base_branch=base_branch,
+                    runner=runner, resolver=resolver
                 )
                 if rebase_ok:
                     # The heal rewrote the branch: new SHAs, and on the
@@ -351,22 +409,32 @@ def land_wave_clusters(
                     # against the new tip — landing here would otherwise bless
                     # bytes nobody reviewed, the exact bypass #828 closes on
                     # the direct-batch path.
-                    if evidence_checker is not None:
-                        post_ok, post_reason = evidence_checker(branch_name)
-                        if not post_ok:
+                    # A rebase always rewrites SHAs, so re-pinning to the old
+                    # head can never pass — that would make funnel mode, which
+                    # exists precisely because the base moved, a permanent
+                    # no-op. What matters is whether any *content* decision was
+                    # made: git reports "clean_rebase" when it replayed the
+                    # reviewed commits with no conflict, and
+                    # "self_healed_rebase" when the resolver authored bytes
+                    # nobody reviewed. Only the latter breaks the guarantee.
+                    if evidence_checker is not None and reason != "clean_rebase":
+                        if True:
                             held.append((
                                 c.cluster_id,
-                                f"rebased for landing ({reason}), so the "
-                                f"reviewed head no longer applies: {post_reason}",
+                                f"landing rebase resolved conflicts ({reason}), "
+                                "so content nobody reviewed would land — push "
+                                "the rebase and re-review",
                             ))
                             if state:
                                 state = update_worker_state(
                                     state, c.cluster_id, step="s10", status="held",
-                                    details=f"post-rebase evidence: {post_reason}",
+                                    details=f"post-rebase content: {reason}",
                                 )
                             continue
                     healed.append(c.cluster_id)
-                    merge_ok = merge_cluster_branch(root_path, branch_name, runner=runner)
+                    merge_ok = merge_cluster_branch(
+                        root_path, branch_name, base_branch=base_branch, runner=runner
+                    )
                     if merge_ok:
                         landed.append(c.cluster_id)
                         if state:
