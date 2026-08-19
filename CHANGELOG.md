@@ -29,6 +29,9 @@ All notable changes to keel are documented here. The format follows
   - Prevented untrusted repository configurations from exfiltrating system credentials via remote LLM endpoints.
 
 ### Fixed
+- **Install Module Target Set Cleanup** (#877):
+  - Removed redundant `_STATUS_TARGETS_SET` and `_TARGETS_SET` constants in `install.py`.
+  - Simplified membership checking in `adapter_status` and `update_adapters`.
 - **GateRunner Type Alias 4-Tuple Variant** (#876):
   - Added 4-tuple return variant `(ok, findings, timed_out, not_run)` to `GateRunner` type alias in `runner.py`.
   - Harmonized gate runner type annotations between `runner.py` and `gates.py`.

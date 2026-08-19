@@ -44,9 +44,7 @@ CODEX_PLUGIN_MANIFEST = ".codex-plugin/plugin.json"
 
 #: the logical install surfaces (``all`` fans over these).
 TARGETS: tuple[str, ...] = ("claude", "skills")
-_TARGETS_SET = frozenset(TARGETS)
 STATUS_TARGETS: tuple[str, ...] = ("claude", "skills", "legacy-claude")
-_STATUS_TARGETS_SET = frozenset(STATUS_TARGETS)
 LEGACY_TARGETS: tuple[str, ...] = ("claude", "skills")
 LEGACY_CLAUDE_DIR = ".claude/commands"
 LEGACY_SKILL_PREFIX = "source-command-"
@@ -470,9 +468,9 @@ def adapter_status(
     agent: str, root: str | Path, *, _src: Path | None = None
 ) -> dict[str, list[AdapterFileStatus]]:
     """Report installed adapter freshness for one surface or ``all`` surfaces."""
-    targets = STATUS_TARGETS if agent == "all" else (agent,)
-    if not _STATUS_TARGETS_SET.issuperset(targets):
+    if agent != "all" and agent not in STATUS_TARGETS:
         raise KeyError(agent)
+    targets = STATUS_TARGETS if agent == "all" else (agent,)
     root_path = Path(root)
     expected = _expected_files(_src)
     out: dict[str, list[AdapterFileStatus]] = {}
@@ -661,9 +659,9 @@ def update_adapters(
 
     Locally-modified or unknown files are reported and left untouched.
     """
-    targets = TARGETS if agent == "all" else (agent,)
-    if not _TARGETS_SET.issuperset(targets):
+    if agent != "all" and agent not in TARGETS:
         raise KeyError(agent)
+    targets = TARGETS if agent == "all" else (agent,)
     root_path = Path(root)
     expected = _expected_files(_src)
     before = adapter_status(agent, root, _src=_src)
