@@ -6,6 +6,11 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Activity Verdict CLI Flag** (#861):
+  - Added `--verdict` flag (`choices: pass, blocked`) to `keel activity --write`.
+  - Allowed recording phase completion verdicts through the CLI.
+
 ### Fixed
 - **Merge Auto-Stamping Run ID Fallback** (#859):
   - Passed `gates_run_id` to `_autostamp` in `src/keel/cli.py` `_cmd_merge` when `--run-id` is omitted from CLI arguments.

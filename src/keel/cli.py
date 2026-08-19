@@ -2871,6 +2871,7 @@ def _cmd_activity(args: argparse.Namespace) -> int:
                 run_id=args.run_id,
                 phase=args.phase,
                 status=args.status,
+                verdict=args.verdict,
                 issue=args.issue,
                 pr=args.pull_request,
                 note=args.note,
@@ -5362,6 +5363,8 @@ def build_parser() -> argparse.ArgumentParser:
                             help="current flow phase id for the command (--write)")
     p_activity.add_argument("--status", choices=activity.STATUSES, default="running",
                             help="activity status for --write")
+    p_activity.add_argument("--verdict", choices=activity.VERDICTS, default=None,
+                            help="verdict status for phase outcome (--write)")
     p_activity.add_argument("--issue", type=_positive_int, default=None,
                             help="issue number to record")
     p_activity.add_argument("--pull-request", type=_positive_int, default=None,

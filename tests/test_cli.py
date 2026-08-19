@@ -8355,6 +8355,19 @@ class TestActivityCli(unittest.TestCase):
             self.assertEqual(len(payload["activity"]), 1)
             self.assertFalse(payload["contract"]["touches_checkpoint"])
 
+    def test_write_with_verdict(self):
+        import json as _json
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            cfg_path = self._cfg()
+            rc, _, _ = run(["activity", cfg_path, "--root", d, "--write", "--command",
+                            "ship", "--run-id", "s-1", "--phase", "s8", "--verdict", "pass"])
+            self.assertEqual(rc, 0)
+            rc, out, _ = run(["activity", cfg_path, "--root", d, "--json"])
+            self.assertEqual(rc, 0)
+            payload = _json.loads(out)
+            self.assertEqual(payload["activity"][0]["verdict"], "pass")
+
     def test_done_missing_record(self):
         import tempfile
         with tempfile.TemporaryDirectory() as d:
