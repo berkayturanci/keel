@@ -267,6 +267,29 @@ def _pin_drifted(
     return None
 
 
+def _restore_pin(
+    repo_root: Path,
+    branch_name: str,
+    pinned_sha: str | None,
+    runner: SubprocessRunner | None,
+) -> str:
+    """Rewind a branch the landing rebase rewrote back to its reviewed commit.
+
+    Returns a phrase describing what happened, for the hold reason — the
+    operator must know the branch was touched either way.
+    """
+    if pinned_sha is None:
+        return "the branch was left rewritten (no pinned commit to restore)"
+    run = runner or default_runner
+    res = run(["git", "reset", "--hard", pinned_sha], repo_root)
+    if getattr(res, "ok", False):
+        return f"the branch was restored to the reviewed commit {pinned_sha[:12]}"
+    return (
+        f"the branch is still rewritten and could not be reset to "
+        f"{pinned_sha[:12]} — reset it by hand"
+    )
+
+
 def land_wave_clusters(
     plan: SwarmPlan,
     wave_index: int,
@@ -277,8 +300,8 @@ def land_wave_clusters(
     pr_diff_map: dict[str, list[str] | tuple[str, ...]] | None = None,
     runner: SubprocessRunner | None = None,
     resolver: Callable[[str], str | None] | None = None,
-    evidence_checker: Callable[[str], tuple] | None | _Unset = _UNSET,
-    base_branch: str = "main",
+    evidence_checker: Callable[[str], EvidenceCheck] | None | _Unset = _UNSET,
+    base_branch: str | _Unset = _UNSET,
 ) -> SwarmLandingResult:
     """Execute orthogonal batch landing or adaptive sequential funneling for a wave.
 
@@ -295,6 +318,12 @@ def land_wave_clusters(
         raise TypeError(
             "land_wave_clusters requires an explicit evidence_checker; pass "
             "None to opt out of the #828 review-evidence gate deliberately"
+        )
+    if isinstance(base_branch, _Unset):
+        raise TypeError(
+            "land_wave_clusters requires an explicit base_branch: verifying "
+            "against the configured base while merging into a different one "
+            "is the mismatch this parameter exists to prevent"
         )
     root_path = Path(root).resolve()
     target_wave: SwarmWave | None = None
@@ -348,10 +377,13 @@ def land_wave_clusters(
     if evidence_checker is not None:
         cleared = []
         for c in target_wave.clusters:
-            result = evidence_checker(f"swarm/{plan.swarm_id}/{c.cluster_id}")
-            evidence_ok, reason = result[0], result[1]
+            answer = evidence_checker(f"swarm/{plan.swarm_id}/{c.cluster_id}")
+            # Coerce: a checker that answers with a bare pair would otherwise
+            # silently disable the lock-time pin re-read.
+            answer = EvidenceCheck(*answer) if not isinstance(answer, EvidenceCheck) else answer
+            evidence_ok, reason = answer.ok, answer.reason
             if evidence_ok:
-                pinned[c.cluster_id] = result[2] if len(result) > 2 else None
+                pinned[c.cluster_id] = answer.head_sha
                 cleared.append(c)
             else:
                 held.append((c.cluster_id, reason))
@@ -366,21 +398,30 @@ def land_wave_clusters(
     else:
         cleared = list(target_wave.clusters)
 
+    # Persist the pre-lock holds before contending for the lock: if acquiring
+    # it raises (a concurrent keel merge is the expected case), the operator
+    # still gets the reasons, which were the whole point.
+    if state and held:
+        save_swarm_state(state, root=root_path)
+
     with merge_lock(lock_path):
         for c in cleared:
             branch_name = f"swarm/{plan.swarm_id}/{c.cluster_id}"
+            # Applies to both arms: the evidence check ran outside the lock,
+            # and on the funnel path the rebase itself voids the pin, so the
+            # re-read has to happen before either one touches the branch.
+            drift = _pin_drifted(
+                root_path, branch_name, pinned.get(c.cluster_id), runner
+            )
+            if drift is not None:
+                held.append((c.cluster_id, drift))
+                if state:
+                    state = update_worker_state(
+                        state, c.cluster_id, step="s10", status="held",
+                        details=f"pin drift: {drift}",
+                    )
+                continue
             if decision.mode == "direct_batch":
-                drift = _pin_drifted(
-                    root_path, branch_name, pinned.get(c.cluster_id), runner
-                )
-                if drift is not None:
-                    held.append((c.cluster_id, drift))
-                    if state:
-                        state = update_worker_state(
-                            state, c.cluster_id, step="s10", status="held",
-                            details=f"pin drift: {drift}",
-                        )
-                    continue
                 ok = merge_cluster_branch(
                     root_path, branch_name, base_branch=base_branch, runner=runner
                 )
@@ -418,11 +459,20 @@ def land_wave_clusters(
                     # "self_healed_rebase" when the resolver authored bytes
                     # nobody reviewed. Only the latter breaks the guarantee.
                     if evidence_checker is not None and reason != "clean_rebase":
+                        # The rebase already rewrote the branch before we could
+                        # judge it. Leaving it rewritten would strand the
+                        # cluster: every later run would compare the new tip
+                        # against the unchanged reviewed head and hold forever.
+                        # Restore the pinned commit so the next run starts from
+                        # the reviewed state, and say so in the reason.
+                        restored = _restore_pin(
+                            root_path, branch_name, pinned.get(c.cluster_id), runner
+                        )
                         held.append((
                             c.cluster_id,
-                            f"landing rebase resolved conflicts ({reason}), "
-                            "so content nobody reviewed would land — push "
-                            "the rebase and re-review",
+                            f"landing rebase resolved conflicts ({reason}), so "
+                            f"content nobody reviewed would land; {restored} — "
+                            "rebase and re-review the PR before landing",
                         ))
                         if state:
                             state = update_worker_state(

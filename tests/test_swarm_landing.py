@@ -369,6 +369,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                 project_yaml=".keel/project.yaml",
                 root=tmpdir,
                 evidence_checker=None,
+                base_branch="main",
             )
             self.assertEqual(res_none.status, "failed")
 
@@ -380,6 +381,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                 root=tmpdir,
                 dry_run=True,
                 evidence_checker=None,
+                base_branch="main",
             )
             self.assertEqual(res_dry.status, "success")
             self.assertEqual(len(res_dry.landed_clusters), 1)
@@ -415,6 +417,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                 dry_run=False,
                 runner=mock_runner,
                 evidence_checker=None,
+                base_branch="main",
             )
             self.assertEqual(res.status, "partial_failure")
             self.assertIn("cluster-1-101", res.landed_clusters)
@@ -460,6 +463,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                 dry_run=False,
                 runner=mock_runner,
                 evidence_checker=checker,
+                base_branch="main",
             )
             self.assertIn("cluster-1-101", res.landed_clusters)
             self.assertEqual(
@@ -501,6 +505,8 @@ class TestSwarmLandingThinIO(unittest.TestCase):
 
             def healing_runner(cmd: list[str], cwd: Path) -> CommandResult:
                 joined = " ".join(cmd)
+                if cmd[:2] == ["git", "rev-parse"]:
+                    return CommandResult(ok=True, code=0, output="a" * 40)
                 if cmd[:2] == ["git", "rebase"] and "--continue" not in joined:
                     return CommandResult(ok=False, code=1, output="CONFLICT")
                 if "status" in joined:
@@ -526,14 +532,160 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                 runner=healing_runner,
                 resolver=lambda _text: "resolved\n",
                 evidence_checker=lambda b: EvidenceCheck(True, "verified", "a" * 40),
+                base_branch="main",
             )
             self.assertTrue(res.held_clusters, res)
             reason = res.held_clusters[0][1]
             self.assertIn("resolved conflicts", reason)
-            self.assertIn("push the rebase and re-review", reason)
+            self.assertIn("rebase and re-review the PR", reason)
+            self.assertIn("restored to the reviewed commit", reason)
             self.assertEqual(merged, [])
             reloaded = load_swarm_state("swarm-funnel-heal", root=tmpdir)
             self.assertTrue(any(w.status == "held" for w in reloaded.workers))
+
+    def test_funnel_reconfirms_the_pin_before_the_rebase_touches_the_branch(self):
+        """The jury's second major: the pre-lock check is network-bound, and on
+        the funnel path the rebase itself voids the pin — so the re-read must
+        happen before the rebase, on this arm too, not only on direct-batch."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            s1 = IssueScope(issue=101, title="A", predicted_files=("src/a.py",))
+            s2 = IssueScope(issue=102, title="B", predicted_files=("src/b.py",))
+            plan = build_swarm_plan([s1, s2], swarm_id="swarm-funnel-drift")
+            touched: list[str] = []
+
+            def drifted_runner(cmd: list[str], cwd: Path) -> CommandResult:
+                if cmd[:2] == ["git", "rev-parse"]:
+                    # a commit landed on the branch after the evidence check
+                    return CommandResult(ok=True, code=0, output="9" * 40)
+                if cmd[:2] == ["git", "rebase"] or "merge" in cmd:
+                    touched.append(" ".join(cmd))
+                return CommandResult(ok=True, code=0, output="ok")
+
+            res = land_wave_clusters(
+                plan,
+                wave_index=1,
+                project_yaml=".keel/project.yaml",
+                root=tmpdir,
+                dry_run=False,
+                pr_diff_map={
+                    "cluster-1-101": ["src/shared.py"],
+                    "cluster-1-102": ["src/shared.py"],
+                },
+                runner=drifted_runner,
+                evidence_checker=lambda b: EvidenceCheck(True, "verified", "a" * 40),
+                base_branch="main",
+            )
+            self.assertEqual(res.mode, "sequential_funnel")
+            self.assertTrue(res.held_clusters)
+            self.assertIn("branch tip moved", res.held_clusters[0][1])
+            self.assertEqual(touched, [], "the rebase must not run on a drifted branch")
+
+    def test_restore_pin_reports_every_outcome_honestly(self):
+        """The operator must learn the branch was touched, whatever happened."""
+        from keel.swarm_landing import _restore_pin
+
+        calls: list[list[str]] = []
+
+        def ok_runner(cmd: list[str], cwd: Path) -> CommandResult:
+            calls.append(cmd)
+            return CommandResult(ok=True, code=0, output="")
+
+        def failing_runner(cmd: list[str], cwd: Path) -> CommandResult:
+            return CommandResult(ok=False, code=1, output="denied")
+
+        sha = "f" * 40
+        self.assertIn(
+            "restored to the reviewed commit",
+            _restore_pin(Path("/tmp"), "swarm/x/c1", sha, ok_runner),
+        )
+        self.assertEqual(calls[0][:3], ["git", "reset", "--hard"])
+        self.assertIn(
+            "could not be reset",
+            _restore_pin(Path("/tmp"), "swarm/x/c1", sha, failing_runner),
+        )
+        self.assertIn(
+            "no pinned commit to restore",
+            _restore_pin(Path("/tmp"), "swarm/x/c1", None, ok_runner),
+        )
+
+    def test_funnel_clean_rebase_lands_with_the_gate_on(self):
+        """The design's load-bearing positive case: a clean replay of the
+        reviewed commits must land. If `clean_rebase` is ever renamed, funnel
+        mode silently becomes a permanent no-op — this is what catches that."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            s1 = IssueScope(issue=101, title="A", predicted_files=("src/a.py",))
+            s2 = IssueScope(issue=102, title="B", predicted_files=("src/b.py",))
+            plan = build_swarm_plan([s1, s2], swarm_id="swarm-clean-rebase")
+            sha = "d" * 40
+            merged: list[str] = []
+
+            def clean_runner(cmd: list[str], cwd: Path) -> CommandResult:
+                if cmd[:2] == ["git", "rev-parse"]:
+                    return CommandResult(ok=True, code=0, output=sha)
+                if "merge" in cmd:
+                    merged.append(cmd[-2])
+                # `git rebase` succeeds -> rebase_and_heal returns "clean_rebase"
+                return CommandResult(ok=True, code=0, output="ok")
+
+            res = land_wave_clusters(
+                plan,
+                wave_index=1,
+                project_yaml=".keel/project.yaml",
+                root=tmpdir,
+                dry_run=False,
+                pr_diff_map={
+                    "cluster-1-101": ["src/shared.py"],
+                    "cluster-1-102": ["src/shared.py"],
+                },
+                runner=clean_runner,
+                evidence_checker=lambda b: EvidenceCheck(True, "verified", sha),
+                base_branch="main",
+            )
+            self.assertEqual(res.mode, "sequential_funnel")
+            self.assertEqual(res.held_clusters, ())
+            self.assertTrue(res.landed_clusters, "a clean rebase must land")
+            self.assertTrue(merged)
+
+    def test_a_bare_pair_from_a_checker_still_pins(self):
+        """A checker answering with a plain tuple must not silently disable the
+        lock-time re-read."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            s1 = IssueScope(issue=101, title="A", predicted_files=("src/a.py",))
+            plan = build_swarm_plan([s1], swarm_id="swarm-bare-pair")
+
+            def runner(cmd: list[str], cwd: Path) -> CommandResult:
+                if cmd[:2] == ["git", "rev-parse"]:
+                    return CommandResult(ok=True, code=0, output="e" * 40)
+                return CommandResult(ok=True, code=0, output="ok")
+
+            res = land_wave_clusters(
+                plan,
+                wave_index=1,
+                project_yaml=".keel/project.yaml",
+                root=tmpdir,
+                dry_run=False,
+                runner=runner,
+                evidence_checker=lambda b: ("yes" == "yes", "verified"),
+                base_branch="main",
+            )
+            # no pinned sha -> nothing to re-confirm, but the wave still runs
+            self.assertEqual(res.held_clusters, ())
+            self.assertTrue(res.landed_clusters)
+
+    def test_base_branch_must_be_stated(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            s1 = IssueScope(issue=101, title="A", predicted_files=("src/a.py",))
+            plan = build_swarm_plan([s1], swarm_id="swarm-nobase")
+            with self.assertRaises(TypeError) as ctx:
+                land_wave_clusters(
+                    plan,
+                    wave_index=1,
+                    project_yaml=".keel/project.yaml",
+                    root=tmpdir,
+                    dry_run=True,
+                    evidence_checker=None,
+                )
+            self.assertIn("explicit base_branch", str(ctx.exception))
 
     def test_direct_batch_reconfirms_the_pin_inside_the_lock(self):
         """The pre-lock check is network-bound; the tip can move before the
@@ -558,6 +710,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                 dry_run=False,
                 runner=moving_runner,
                 evidence_checker=lambda b: EvidenceCheck(True, "verified", "a" * 40),
+                base_branch="main",
             )
             self.assertTrue(res.held_clusters)
             self.assertIn("branch tip moved", res.held_clusters[0][1])
@@ -590,6 +743,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                 dry_run=False,
                 runner=blind_runner,
                 evidence_checker=lambda b: EvidenceCheck(True, "verified", "a" * 40),
+                base_branch="main",
             )
             self.assertIn("cannot re-read the branch tip", res.held_clusters[0][1])
             reloaded = load_swarm_state("swarm-pin-unreadable", root=tmpdir)
@@ -615,6 +769,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                 dry_run=False,
                 runner=steady_runner,
                 evidence_checker=lambda b: EvidenceCheck(True, "verified", sha),
+                base_branch="main",
             )
             self.assertEqual(res.held_clusters, ())
             self.assertIn("cluster-1-101", res.landed_clusters)
@@ -627,6 +782,8 @@ class TestSwarmLandingThinIO(unittest.TestCase):
 
             def healing_runner(cmd: list[str], cwd: Path) -> CommandResult:
                 joined = " ".join(cmd)
+                if cmd[:2] == ["git", "rev-parse"]:
+                    return CommandResult(ok=True, code=0, output="a" * 40)
                 if cmd[:2] == ["git", "rebase"] and "--continue" not in joined:
                     return CommandResult(ok=False, code=1, output="CONFLICT")
                 if "status" in joined:
@@ -650,6 +807,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                 runner=healing_runner,
                 resolver=lambda _t: "resolved\n",
                 evidence_checker=lambda b: EvidenceCheck(True, "verified", "a" * 40),
+                base_branch="main",
             )
             self.assertTrue(res.held_clusters)
             self.assertIn("resolved conflicts", res.held_clusters[0][1])
@@ -695,6 +853,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                     project_yaml=".keel/project.yaml",
                     root=tmpdir,
                     dry_run=True,
+                    base_branch="main",
                 )
             self.assertIn("explicit evidence_checker", str(ctx.exception))
 
@@ -721,6 +880,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                 dry_run=False,
                 runner=mock_runner,
                 evidence_checker=checker,
+                base_branch="main",
             )
             # held before any git work happened at all
             self.assertEqual(order, ["check"])
@@ -742,6 +902,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                 dry_run=False,
                 runner=mock_ok_runner,
                 evidence_checker=lambda _b: (False, "no open PR for the cluster branch"),
+                base_branch="main",
             )
             self.assertEqual(res.status, "failed")
             self.assertEqual(res.landed_clusters, ())
@@ -755,6 +916,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                 dry_run=False,
                 runner=mock_ok_runner,
                 evidence_checker=None,
+                base_branch="main",
             )
             self.assertIn("cluster-1-101", res2.landed_clusters)
             self.assertEqual(res2.held_clusters, ())
@@ -775,6 +937,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                 dry_run=False,
                 runner=mock_ok_runner,
                 evidence_checker=None,
+                base_branch="main",
             )
             self.assertEqual(res.status, "success")
 
@@ -789,6 +952,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                 dry_run=False,
                 runner=mock_fail_runner,
                 evidence_checker=None,
+                base_branch="main",
             )
             self.assertEqual(res_fail.status, "failed")
 
@@ -833,6 +997,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                 pr_diff_map=diff_map,
                 runner=mock_heal_runner,
                 evidence_checker=None,
+                base_branch="main",
             )
             self.assertEqual(res_heal.status, "success")
             self.assertEqual(len(res_heal.healed_clusters), 2)
@@ -852,6 +1017,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                 pr_diff_map=diff_map,
                 runner=mock_conflict_runner,
                 evidence_checker=None,
+                base_branch="main",
             )
             self.assertEqual(res_conf.status, "failed")
 
@@ -870,6 +1036,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                 pr_diff_map=diff_map,
                 runner=mock_merge_fail_runner,
                 evidence_checker=None,
+                base_branch="main",
             )
             self.assertEqual(res_mf.status, "failed")
 
@@ -884,6 +1051,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                     pr_diff_map=diff_map,
                     runner=mock_heal_runner,
                     evidence_checker=None,
+                    base_branch="main",
                 )
                 self.assertEqual(res_nostate_ok.status, "success")
 
@@ -896,6 +1064,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                     pr_diff_map=diff_map,
                     runner=mock_conflict_runner,
                     evidence_checker=None,
+                    base_branch="main",
                 )
                 self.assertEqual(res_nostate_fail.status, "failed")
 
@@ -908,6 +1077,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                     pr_diff_map=diff_map,
                     runner=mock_merge_fail_runner,
                     evidence_checker=None,
+                    base_branch="main",
                 )
                 self.assertEqual(res_nostate_mf.status, "failed")
 

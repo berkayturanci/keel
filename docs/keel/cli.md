@@ -1602,8 +1602,11 @@ keel swarm-land .keel/project.yaml --root . --mode auto
   no-op; what matters is whether a *content* decision was made. A clean replay
   of the reviewed commits lands; a rebase whose conflicts the resolver
   auto-resolved holds, because those bytes were never reviewed. The merge
-  re-reads the branch tip locally inside the lock and holds if it moved since
-  the (network-bound) check, which runs before the lock is taken. Everything
+  re-reads the branch tip locally inside the lock — on both paths, and on the
+  funnel path *before* the rebase, since the rebase itself voids the pin — and
+  holds if it moved since the (network-bound) check, which runs before the
+  lock is taken. A funnel hold rewinds the branch to the reviewed commit so a
+  rejected cluster is not left rewritten and un-landable. Everything
   targets `base_branch` from the project config — the PR lookup, the merge and
   the rebase — so the diff verified is the diff that lands. A wave with any
   held cluster exits non-zero, so automation cannot read "refused to land
