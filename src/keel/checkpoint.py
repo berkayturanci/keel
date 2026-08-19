@@ -458,8 +458,9 @@ def _known_references(
 ) -> tuple[set[str], set[int]]:
     branches: set[str] = set()
     prs: set[int] = set()
-    if checkpoint_record is not None:
-        identifiers = checkpoint_record.get("identifiers", {})
+    if isinstance(checkpoint_record, dict):
+        raw_identifiers = checkpoint_record.get("identifiers")
+        identifiers = raw_identifiers if isinstance(raw_identifiers, dict) else {}
         branch = identifiers.get("branch")
         if isinstance(branch, str) and branch:
             branches.add(branch)
@@ -467,6 +468,8 @@ def _known_references(
         if isinstance(pull_request, int):
             prs.add(pull_request)
     for record in ledger_records or []:
+        if not isinstance(record, dict):
+            continue
         git = record.get("git") if isinstance(record.get("git"), dict) else {}
         branch = git.get("branch")
         if isinstance(branch, str) and branch:

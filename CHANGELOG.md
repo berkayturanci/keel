@@ -29,6 +29,9 @@ All notable changes to keel are documented here. The format follows
   - Prevented untrusted repository configurations from exfiltrating system credentials via remote LLM endpoints.
 
 ### Fixed
+- **Checkpoint Identifier and Record Type Guards** (#880):
+  - Guarded against non-dict `identifiers` and ledger records in `checkpoint.py` `_known_references`.
+  - Prevented orphan scanning from crashing when processing malformed or partial checkpoint/ledger states.
 - **Subprocess Runner Devnull Stdin** (#879):
   - Passed `stdin=subprocess.DEVNULL` to `subprocess.run` across command, argv, and swarm runner executions in `runner.py` and `swarm_runtime.py`.
   - Prevented background tasks from hanging indefinitely on interactive prompts (e.g. `sudo`, `npm login`, or git authentication prompts).

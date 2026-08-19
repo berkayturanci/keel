@@ -419,6 +419,17 @@ class TestFindOrphans(unittest.TestCase):
         self.assertEqual(result["known_branches"], [])
         self.assertEqual(result["known_pull_requests"], [])
 
+    def test_non_dict_identifiers_and_records_handled_safely(self):
+        result = checkpoint.find_orphans(
+            live_branches=["feat/orphan"],
+            live_pull_requests=[999],
+            checkpoint_record={"identifiers": None},
+            ledger_records=["not-a-dict", {"git": "not-a-dict"}],
+        )
+        self.assertEqual(result["branches"], ["feat/orphan"])
+        self.assertEqual(result["pull_requests"], [999])
+        self.assertEqual(result["orphan_count"], 2)
+
 
 class TestResumeObservesReality(unittest.TestCase):
     """#635: core was *told* the live state and never looked."""
