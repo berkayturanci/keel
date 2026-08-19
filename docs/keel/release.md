@@ -206,6 +206,44 @@ gh release view "v<version>" --json assets
 Confirm the PyPI wheel and source-distribution SHA256 digests match the GitHub Release asset
 digests before announcing the release.
 
+## Complete The Homebrew Formula
+
+**This step is required on every release, and it can only be done after the tag exists.**
+
+`Formula/keel.rb`'s url is bumped in the release commit — `test_release_docs` pins it to the
+declared version — but its `sha256` describes the tarball GitHub builds *from the tag*, which
+is created from the commit that release PR produces. So the digest in the release commit is
+stale by construction, every time. The `publish-formula` job reports the correct value as a
+notice rather than failing the run (#842); take it from there, or compute it yourself:
+
+```bash
+curl -fsSL https://github.com/berkayturanci/keel/archive/refs/tags/v<version>.tar.gz \
+  -o /tmp/keel-src.tar.gz
+shasum -a 256 /tmp/keel-src.tar.gz
+```
+
+Set that as the `sha256` in `Formula/keel.rb` and merge it to the default branch. Nothing else
+in the formula changes.
+
+The tap pulls from the default branch every 30 minutes and re-hashes the artifact before
+committing, so it publishes only once the pair is consistent — and refuses in the meantime,
+continuing to serve the previous release, which still installs. To publish without waiting:
+
+```bash
+gh workflow run sync-formula.yml --repo berkayturanci/homebrew-keel
+```
+
+Confirm what users will actually get:
+
+```bash
+gh api repos/berkayturanci/homebrew-keel/contents/Formula/keel.rb --jq '.content' \
+  | base64 -d | grep -E '^  (url|sha256)'
+```
+
+Until this lands, PyPI is on the new release and Homebrew is one behind. That is the intended
+degraded state, not a failure: a tap one release behind installs, and one carrying a digest
+that does not match its url does not (#805).
+
 ## Known Pitfall: Squash-Merging A Branch Updated Via The GitHub API
 
 Updating a PR branch via `PUT /repos/{owner}/{repo}/pulls/{pr}/update-branch` (or the

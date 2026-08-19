@@ -2,7 +2,7 @@
 
 import unittest
 
-from keel import evidence, ship
+from keel import classify, evidence, ship
 from keel.findings import Finding, summarize
 
 CLEAN = summarize([])
@@ -518,6 +518,52 @@ class TestJuryPanelDowngrade(unittest.TestCase):
 
         self.assertNotIn("jury-verdict", [item.id for item in short])
         self.assertIn("jury-verdict", [item.id for item in full])
+
+
+class TestAssessTierReadsTheDiff(unittest.TestCase):
+    """`assess` must classify from the same evidence the evidence gate uses (#845).
+
+    `keel ship` resolves the tier twice: once for the review contract, with the
+    diff, and once inside `assess`, which had no way to see it. So a workflow
+    change touching nothing privileged was TIER-2 to the gate and TIER-3 to the
+    assessment comment a human reads — the number shown was not the number
+    enforced, and it sent maintainers to arrange a third reviewer and a paid
+    gating jury that nothing would check.
+    """
+
+    WORKFLOW = ".github/workflows/publish.yml"
+    GLOBS = (".github/workflows/**",)
+
+    def _tier(self, patches):
+        return ship.assess(
+            changed_files=[self.WORKFLOW],
+            gate_verdict=summarize(()),
+            tier3_globs=self.GLOBS,
+            patches=patches,
+        ).tier
+
+    def test_non_privileged_workflow_diff_downgrades(self):
+        patch = "@@\n-          exit 1\n+          echo notice\n"
+        self.assertEqual(self._tier({self.WORKFLOW: patch}), 2)
+
+    def test_privileged_workflow_diff_stays_tier3(self):
+        patch = "@@\n+permissions:\n+  contents: write\n"
+        self.assertEqual(self._tier({self.WORKFLOW: patch}), 3)
+
+    def test_no_patches_keeps_the_path_deciding(self):
+        # No diff is no evidence; the path decides, exactly as before #845. This is
+        # what every caller that cannot read a diff still relies on.
+        self.assertEqual(self._tier(None), 3)
+
+    def test_agrees_with_the_gate_on_the_same_inputs(self):
+        # The property that actually failed: both sides given the same diff must
+        # reach the same tier. Asserting equality rather than two literals means a
+        # future change to the classifier cannot split them again unnoticed.
+        patch = "@@\n-          exit 1\n+          echo notice\n"
+        patches = {self.WORKFLOW: patch}
+        gate_tier = classify.tier_for_files(
+            [self.WORKFLOW], tier3_globs=self.GLOBS, patches=patches)
+        self.assertEqual(self._tier(patches), gate_tier)
 
 
 if __name__ == "__main__":
