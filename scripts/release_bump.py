@@ -114,6 +114,7 @@ def _edits(old: str, new: str) -> list[tuple[str, str, str]]:
         ("README.md", f"keel@v{old}", f"keel@v{new}"),
         (".github/workflows/keel-ship.yml", f"keel@v{old}", f"keel@v{new}"),
         ("docs/keel/cutover.md", f"keel@v{old}", f"keel@v{new}"),
+        ("Formula/keel.rb", f"/tags/v{old}.tar.gz", f"/tags/v{new}.tar.gz"),
     ]
 
 
