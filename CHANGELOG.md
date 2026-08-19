@@ -7,6 +7,9 @@ All notable changes to keel are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **Swarm Landing Merge Failure Abort** (#857):
+  - Added `git merge --abort` on merge failure in `src/keel/swarm_landing.py` `merge_cluster_branch()`.
+  - Prevented leaving repositories in an uncommitted/conflicted `MERGE_HEAD` state upon merge conflicts.
 - **Config YAML Error Formatting** (#855):
   - Wrapped `yaml.YAMLError` in `ConfigError` inside `src/keel/config.py` `load_config()`.
   - Prevented raw tracebacks on syntax errors in `project.yaml` files across all CLI subcommands.

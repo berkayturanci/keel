@@ -358,6 +358,21 @@ class TestSwarmLandingThinIO(unittest.TestCase):
             ok = merge_cluster_branch(p_root, "branch-1", runner=mock_runner)
             self.assertTrue(ok)
 
+            # Failure triggers git merge --abort
+            calls: list[list[str]] = []
+
+            def mock_fail_runner(cmd: list[str], cwd: Path) -> CommandResult:
+                calls.append(cmd)
+                if cmd[:2] == ["git", "merge"]:
+                    if cmd[2] == "--abort":
+                        return CommandResult(ok=True, code=0, output="aborted")
+                    return CommandResult(ok=False, code=1, output="conflict")
+                return CommandResult(ok=True, code=0, output="")
+
+            ok_fail = merge_cluster_branch(p_root, "branch-conflict", runner=mock_fail_runner)
+            self.assertFalse(ok_fail)
+            self.assertIn(["git", "merge", "--abort"], calls)
+
     def test_land_wave_clusters_dry_run_and_nonexistent_wave(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             s1 = IssueScope(issue=101, title="A", predicted_files=("src/a.py",))

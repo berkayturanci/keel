@@ -210,7 +210,10 @@ def merge_cluster_branch(
     run(["git", "checkout", base_branch], repo_root)
     cmd = ["git", "merge", "--no-ff", branch_name, "-m", f"Merge branch {branch_name}"]
     res = run(cmd, repo_root)
-    return res.ok
+    if not res.ok:
+        run(["git", "merge", "--abort"], repo_root)
+        return False
+    return True
 
 
 class EvidenceCheck(NamedTuple):
