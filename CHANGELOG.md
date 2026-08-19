@@ -29,6 +29,9 @@ All notable changes to keel are documented here. The format follows
   - Prevented untrusted repository configurations from exfiltrating system credentials via remote LLM endpoints.
 
 ### Fixed
+- **Subprocess Runner Devnull Stdin** (#879):
+  - Passed `stdin=subprocess.DEVNULL` to `subprocess.run` across command, argv, and swarm runner executions in `runner.py` and `swarm_runtime.py`.
+  - Prevented background tasks from hanging indefinitely on interactive prompts (e.g. `sudo`, `npm login`, or git authentication prompts).
 - **Model Normalization Prefix and Key Matching** (#878):
   - Sorted model pricing keys by length descending during normalization to prevent shorter model prefixes (e.g. `gpt-4o`) from shadowing longer models (`gpt-4o-mini`).
   - Preserved `ollama:` and `local:` prefixes before vendor stripping so local inference is accurately assigned zero cost.

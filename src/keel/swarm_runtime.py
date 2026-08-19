@@ -36,6 +36,7 @@ def default_runner(cmd: list[str], cwd: Path) -> CommandResult:
         proc = subprocess.run(  # nosec B603
             cmd,
             cwd=cwd,
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,

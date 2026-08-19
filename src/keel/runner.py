@@ -80,7 +80,15 @@ def run_command(
     try:
         # Intentional shell boundary: cmd must come only from operator-controlled
         # project config or extension YAML, never from PR content or agent output.
-        proc = _run(cmd, shell=True, cwd=cwd, capture_output=True, text=True, timeout=timeout)  # nosec B604
+        proc = _run(
+            cmd,
+            shell=True,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            stdin=subprocess.DEVNULL,
+        )  # nosec B604
     except subprocess.TimeoutExpired:
         return CommandResult(False, 124, f"timed out after {timeout}s", timed_out=True)
     except OSError as exc:
@@ -93,7 +101,14 @@ def run_argv(
 ) -> CommandResult:
     """Run an argv list (no shell). Fail-soft on timeout/OS error. Used by git/gh wrappers."""
     try:
-        proc = _run(argv, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+        proc = _run(
+            argv,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            stdin=subprocess.DEVNULL,
+        )
     except subprocess.TimeoutExpired:
         return CommandResult(False, 124, f"timed out after {timeout}s", timed_out=True)
     except OSError as exc:

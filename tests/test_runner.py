@@ -56,11 +56,32 @@ class TestRunCommand(unittest.TestCase):
         self.assertIn("no such binary", r.output)
 
 
+    def test_stdin_is_devnull(self):
+        passed_kwargs = {}
+
+        def _recording_run(*a, **k):
+            passed_kwargs.update(k)
+            return _Proc(0, "ok")
+
+        runner.run_command("echo test", _run=_recording_run)
+        self.assertEqual(passed_kwargs.get("stdin"), subprocess.DEVNULL)
+
+
 class TestRunArgv(unittest.TestCase):
     def test_ok(self):
         r = runner.run_argv(["git", "status"], _run=_ok)
         self.assertTrue(r.ok)
         self.assertIn("all good", r.output)
+
+    def test_stdin_is_devnull(self):
+        passed_kwargs = {}
+
+        def _recording_run(*a, **k):
+            passed_kwargs.update(k)
+            return _Proc(0, "ok")
+
+        runner.run_argv(["git", "status"], _run=_recording_run)
+        self.assertEqual(passed_kwargs.get("stdin"), subprocess.DEVNULL)
 
     def test_timeout_failsoft(self):
         r = runner.run_argv(["git", "status"], _run=_timeout)
