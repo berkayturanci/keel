@@ -9,6 +9,7 @@ trivially unit-testable.
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import os
 from dataclasses import dataclass, field
@@ -341,6 +342,26 @@ def _is_env_var_name(value: str) -> bool:
     )
 
 
+BLOCKED_METADATA_HOSTS = frozenset({
+    "169.254.169.254",
+    "metadata.google.internal",
+    "instance-data",
+    "metadata",
+})
+
+
+def _is_cloud_metadata_or_link_local(host: str) -> bool:
+    if host in BLOCKED_METADATA_HOSTS:
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+        if ip.is_link_local:
+            return True
+    except ValueError:
+        pass
+    return False
+
+
 def endpoint_issues(endpoint: Any, *, where: str, env=None) -> list[str]:
     """Validate an ``openai-compatible`` endpoint URL. Empty list == acceptable.
 
@@ -378,6 +399,11 @@ def endpoint_issues(endpoint: Any, *, where: str, env=None) -> list[str]:
         ]
     if host in LOOPBACK_HOSTS:
         return []
+    if _is_cloud_metadata_or_link_local(host):
+        return [
+            f"{where}: endpoint host {host or '(none)'!r} is a cloud-metadata or link-local "
+            "address and is refused for security"
+        ]
     if not env.get(ALLOW_REMOTE_ENDPOINT_ENV):
         return [
             f"{where}: endpoint host {host or '(none)'!r} is not loopback; a remote "

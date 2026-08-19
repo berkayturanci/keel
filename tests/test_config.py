@@ -450,11 +450,22 @@ class TestOpenAICompatibleEndpointGuard(unittest.TestCase):
         self.assertIn("is not loopback", issues[0])
         self.assertIn(cfg.ALLOW_REMOTE_ENDPOINT_ENV, issues[0])
 
-    def test_cloud_metadata_is_refused_like_any_other_remote_host(self):
-        # The address this guard exists for.
-        issues = self._issues("http://169.254.169.254/latest/meta-data/")
-        self.assertEqual(len(issues), 1)
-        self.assertIn("169.254.169.254", issues[0])
+    def test_cloud_metadata_is_refused_even_with_remote_opt_in(self):
+        # Cloud metadata and link-local addresses are refused unconditionally for SSRF protection.
+        for host in (
+            "169.254.169.254",
+            "169.254.0.1",
+            "metadata.google.internal",
+            "instance-data",
+            "metadata",
+        ):
+            with self.subTest(host=host):
+                issues = self._issues(
+                    f"http://{host}/latest/meta-data/",
+                    {cfg.ALLOW_REMOTE_ENDPOINT_ENV: "1"},
+                )
+                self.assertEqual(len(issues), 1)
+                self.assertIn("cloud-metadata or link-local address", issues[0])
 
     def test_the_opt_in_lives_in_the_environment_not_in_config(self):
         endpoint = "https://openrouter.ai/api/v1/chat/completions"

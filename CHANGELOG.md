@@ -12,6 +12,9 @@ All notable changes to keel are documented here. The format follows
   - Allowed recording phase completion verdicts through the CLI.
 
 ### Security
+- **Cloud Metadata SSRF Protection** (#866):
+  - Blocked cloud metadata hosts (`169.254.169.254`, `metadata.google.internal`, `instance-data`) and link-local IP addresses in `endpoint_issues` unconditionally, even when `KEEL_ALLOW_REMOTE_ENDPOINT` is enabled.
+  - Protected cloud instances against SSRF credential extraction via delegate endpoint configurations.
 - **Delegate Profile Credential Exfiltration Protection** (#865):
   - Explicitly blocked high-privilege system credential names (`GITHUB_TOKEN`, `AWS_*`, `NPM_*`, `PYPI_*`, `SSH_*`) from being declared in `knobs.delegate_profiles.<name>.api_key_env`.
   - Prevented untrusted repository configurations from exfiltrating system credentials via remote LLM endpoints.
