@@ -30,6 +30,7 @@ from . import capture, ledger
 RECONCILE_SCHEMA_VERSION = "keel.capture-verify-reconcile.v1"
 
 FINDING_MISSING_MARKER = "missing-marker"
+FINDING_INVALID_MARKER = "invalid-marker"
 FINDING_APPLIED_WITHOUT_ARTIFACT = "applied-without-artifact"
 FINDING_REVIEWER_COUNT_MISMATCH = "reviewer-count-mismatch"
 
@@ -56,6 +57,7 @@ def reconcile(
     findings = [finding for result in results for finding in result["findings"]]
     by_type = {
         FINDING_MISSING_MARKER: 0,
+        FINDING_INVALID_MARKER: 0,
         FINDING_APPLIED_WITHOUT_ARTIFACT: 0,
         FINDING_REVIEWER_COUNT_MISMATCH: 0,
     }
@@ -84,14 +86,25 @@ def _reconcile_pr(
     record = ledger.latest_ship_run_for_pr(records, pr_number)
     findings: list[dict[str, Any]] = []
 
-    if not verification["ok"] and verification["status"] == "missing":
-        findings.append(
-            _finding(
-                FINDING_MISSING_MARKER,
-                pr_number,
-                "merged PR has no capture marker in the ledger",
+    if not verification["ok"]:
+        if verification["status"] == "missing":
+            findings.append(
+                _finding(
+                    FINDING_MISSING_MARKER,
+                    pr_number,
+                    "merged PR has no capture marker in the ledger",
+                )
             )
-        )
+        else:
+            reason = verification.get("reason") or "invalid capture marker in the ledger"
+            findings.append(
+                _finding(
+                    FINDING_INVALID_MARKER,
+                    pr_number,
+                    f"merged PR has an invalid capture marker: {reason}",
+                    invalid_reason=reason,
+                )
+            )
 
     artifact = _capture_artifact(record)
     if verification.get("status") == "applied" and not artifact:

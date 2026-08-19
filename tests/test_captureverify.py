@@ -183,6 +183,40 @@ class TestReconcile(unittest.TestCase):
         self.assertTrue(report["ok"])
         self.assertEqual(report["results"][0]["recorded_reviewers"], 0)
 
+    def test_invalid_marker_is_a_finding(self):
+        records = [_record(6, marker="invalid-marker-content")]
+
+        report = captureverify.reconcile(records, [6])
+
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["summary"][captureverify.FINDING_INVALID_MARKER], 1)
+        finding = report["findings"][0]
+        self.assertEqual(finding["type"], captureverify.FINDING_INVALID_MARKER)
+        self.assertEqual(finding["pr"], 6)
+        self.assertIn("invalid capture marker", finding["reason"])
+
+    def test_invalid_marker_with_mismatched_pr_is_a_finding(self):
+        # Marker claims PR 999 while record is for PR 6
+        records = [_record(6, marker=_marker(999, "applied"), artifact="artifacts/6.md")]
+
+        report = captureverify.reconcile(records, [6])
+
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["summary"][captureverify.FINDING_INVALID_MARKER], 1)
+        finding = report["findings"][0]
+        self.assertEqual(finding["type"], captureverify.FINDING_INVALID_MARKER)
+        self.assertEqual(finding["pr"], 6)
+
+
+    def test_invalid_marker_fallback_reason(self):
+        from unittest.mock import patch
+        ret = {"ok": False, "status": "invalid", "reason": None}
+        with patch("keel.capture._verify_pr", return_value=ret):
+            report = captureverify.reconcile([], [6])
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["summary"][captureverify.FINDING_INVALID_MARKER], 1)
+        self.assertIn("invalid capture marker in the ledger", report["findings"][0]["reason"])
+
 
 if __name__ == "__main__":
     unittest.main()

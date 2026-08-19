@@ -6,6 +6,11 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **Capture Reconciliation Invalid Marker Accounting** (#853):
+  - Added `invalid-marker` finding detection in `src/keel/captureverify.py` during ledger reconciliation.
+  - Ensured corrupted, duplicate, or malformed capture markers produce explicit audit findings rather than silently passing reconciliation with `ok: true`.
+
 ## [1.18.0] - 2026-08-19
 
 This release brings a 3-way evidence status to the evidence gate so that in-flight PRs
