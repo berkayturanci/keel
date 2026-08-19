@@ -233,10 +233,12 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                 return CommandResult(ok=True, code=0, output="rebased")
 
             ok, reason = rebase_and_heal_cluster_branch(
-                p_root, "branch-1", runner=mock_clean_runner
+                p_root, "branch-1", runner=mock_clean_runner, base_branch="develop"
             )
             self.assertTrue(ok)
             self.assertEqual(reason, "clean_rebase")
+            self.assertIn(["git", "rebase", "develop"], calls)
+            self.assertNotIn(["git", "rebase", "origin/develop"], calls)
 
             # Conflicting rebase without resolvable files
             def mock_conflict_runner(cmd: list[str], cwd: Path) -> CommandResult:

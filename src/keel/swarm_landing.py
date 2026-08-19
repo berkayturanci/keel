@@ -153,7 +153,7 @@ def rebase_and_heal_cluster_branch(
     # Checkout branch
     run(["git", "checkout", branch_name], repo_root)
     # Attempt rebase
-    res = run(["git", "rebase", f"origin/{base_branch}"], repo_root)
+    res = run(["git", "rebase", base_branch], repo_root)
     if res.ok:
         return True, "clean_rebase"
 

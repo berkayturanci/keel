@@ -29,6 +29,9 @@ All notable changes to keel are documented here. The format follows
   - Prevented untrusted repository configurations from exfiltrating system credentials via remote LLM endpoints.
 
 ### Fixed
+- **Swarm Landing Local Base Branch Rebase** (#874):
+  - Rebased cluster branches onto the local `base_branch` instead of `origin/{base_branch}` in `swarm_landing.py` `rebase_and_heal_cluster_branch`.
+  - Ensured offline, local, and sequential funnel merges correctly incorporate locally landed base branch commits.
 - **Swarm Runtime Dynamic Rebalance Iteration** (#873):
   - Updated wave iteration loop in `swarm_runtime.py` to index into the dynamically rebalanced `current_plan.waves`.
   - Ensured failed worker issues properly prune dependent clusters and waves during orchestration.
