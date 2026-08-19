@@ -21,7 +21,9 @@ if TYPE_CHECKING:  # pragma: no cover
     from .gates import GateSpec
 
 GateRunner = Callable[
-    ["GateSpec"], "tuple[bool, list[Finding]] | tuple[bool, list[Finding], bool]"
+    ["GateSpec"],
+    "tuple[bool, list[Finding]] | tuple[bool, list[Finding], bool] "
+    "| tuple[bool, list[Finding], bool, bool]",
 ]
 
 _ON_FAIL_SEVERITY = {"block": "major", "suggest": "minor", "warn": "nit"}

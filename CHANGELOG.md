@@ -29,6 +29,9 @@ All notable changes to keel are documented here. The format follows
   - Prevented untrusted repository configurations from exfiltrating system credentials via remote LLM endpoints.
 
 ### Fixed
+- **GateRunner Type Alias 4-Tuple Variant** (#876):
+  - Added 4-tuple return variant `(ok, findings, timed_out, not_run)` to `GateRunner` type alias in `runner.py`.
+  - Harmonized gate runner type annotations between `runner.py` and `gates.py`.
 - **Swarm Landing Unified Merge Lock Path** (#875):
   - Unified the merge lock directory path in `swarm_landing.py` with CLI lock root (`.keel/state/locks/merge-<digest>.lock` via `resource_path`).
   - Ensured swarm landing and `keel merge` CLI commands synchronize on the exact same atomic lock path.
