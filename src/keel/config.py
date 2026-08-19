@@ -43,6 +43,30 @@ _ENDPOINT_VENDORS = ("openai-compatible",)
 #: Hosts an ``openai-compatible`` endpoint may use without an explicit opt-in.
 LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "::1", "[::1]")
 
+#: High-privilege system credentials that delegate profiles may not target as API keys.
+BLOCKED_ENV_KEY_NAMES = frozenset({
+    "GITHUB_TOKEN",
+    "GH_TOKEN",
+    "GITHUB_PAT",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SESSION_TOKEN",
+    "SSH_AUTH_SOCK",
+    "NPM_TOKEN",
+    "PYPI_TOKEN",
+    "SLACK_TOKEN",
+    "DISCORD_TOKEN",
+})
+
+BLOCKED_ENV_PREFIXES = (
+    "GITHUB_",
+    "GH_",
+    "AWS_",
+    "NPM_",
+    "PYPI_",
+    "SSH_",
+)
+
 #: Environment opt-in for a **non-loopback** endpoint. It lives in the environment and
 #: deliberately **not** in ``project.yaml``: the threat model here is an
 #: attacker-influenced config, so the switch that permits reaching a remote host must
@@ -452,6 +476,14 @@ def _validate_delegate_profiles(profiles: Any, *, source: str) -> list[str]:
                     f"{where}: api_key_env {key_env!r} is not a valid environment "
                     "variable name (letters, digits, underscore; not starting with a "
                     "digit) — this field takes a name, not a key"
+                )
+            elif (
+                key_env.upper() in BLOCKED_ENV_KEY_NAMES
+                or any(key_env.upper().startswith(p) for p in BLOCKED_ENV_PREFIXES)
+            ):
+                errors.append(
+                    f"{where}: api_key_env {key_env!r} refers to a sensitive system "
+                    "credential and is refused for security"
                 )
         # A field that does not apply to this vendor is a config error, not a
         # silently-ignored key: an operator who sets `endpoint` on a `cli` profile has

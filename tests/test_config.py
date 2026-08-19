@@ -525,6 +525,22 @@ class TestOpenAICompatibleKeyEnv(unittest.TestCase):
             with self.subTest(name=name):
                 cfg.parse_config(self._profile(api_key_env=name))
 
+    def test_sensitive_credentials_rejected(self):
+        for sensitive in (
+            "GITHUB_TOKEN",
+            "GH_TOKEN",
+            "github_token",
+            "AWS_SECRET_ACCESS_KEY",
+            "NPM_TOKEN",
+            "PYPI_TOKEN",
+            "SSH_AUTH_SOCK",
+            "SLACK_TOKEN",
+        ):
+            with self.subTest(value=sensitive):
+                with self.assertRaises(cfg.ConfigError) as ctx:
+                    cfg.parse_config(self._profile(api_key_env=sensitive))
+                self.assertIn("refers to a sensitive system credential", str(ctx.exception))
+
     def test_the_key_name_is_published_but_a_key_would_be_too(self):
         # The contract carries api_key_env verbatim, which is exactly why it must
         # be a name: this dict is emitted publicly and hashed into config_hash.

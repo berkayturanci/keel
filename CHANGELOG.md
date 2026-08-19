@@ -11,6 +11,11 @@ All notable changes to keel are documented here. The format follows
   - Added `--verdict` flag (`choices: pass, blocked`) to `keel activity --write`.
   - Allowed recording phase completion verdicts through the CLI.
 
+### Security
+- **Delegate Profile Credential Exfiltration Protection** (#865):
+  - Explicitly blocked high-privilege system credential names (`GITHUB_TOKEN`, `AWS_*`, `NPM_*`, `PYPI_*`, `SSH_*`) from being declared in `knobs.delegate_profiles.<name>.api_key_env`.
+  - Prevented untrusted repository configurations from exfiltrating system credentials via remote LLM endpoints.
+
 ### Fixed
 - **Legacy Claude Wrapper Plan Arguments Forward** (#863):
   - Removed `"$@"` arguments forwarding to `keel plan` in `src/keel/install.py` `render_legacy_claude_wrapper()`.
