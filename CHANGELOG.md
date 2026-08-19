@@ -29,6 +29,9 @@ All notable changes to keel are documented here. The format follows
   - Prevented untrusted repository configurations from exfiltrating system credentials via remote LLM endpoints.
 
 ### Fixed
+- **Swarm Runtime Dynamic Rebalance Iteration** (#873):
+  - Updated wave iteration loop in `swarm_runtime.py` to index into the dynamically rebalanced `current_plan.waves`.
+  - Ensured failed worker issues properly prune dependent clusters and waves during orchestration.
 - **GitHub Comment Raw Field Posting** (#872):
   - Used `-F` raw-field parameter in `gh api` calls in `github.py` when posting and editing issue comments.
   - Prevented unexpected file read expansion when comment bodies start with `@` (such as reviewer mentions).

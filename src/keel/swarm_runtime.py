@@ -202,7 +202,9 @@ def run_swarm_orchestration(
     wave_results: list[dict[str, Any]] = []
     current_plan = plan
 
-    for wave in current_plan.waves:
+    wave_idx = 0
+    while wave_idx < len(current_plan.waves):
+        wave = current_plan.waves[wave_idx]
         state = SwarmRunState(
             swarm_id=state.swarm_id,
             total_workers=state.total_workers,
@@ -213,6 +215,7 @@ def run_swarm_orchestration(
 
         cluster_tasks = list(wave.clusters)
         if not cluster_tasks:
+            wave_idx += 1
             continue
 
         wave_record: dict[str, Any] = {
@@ -293,6 +296,7 @@ def run_swarm_orchestration(
                 save_swarm_state(state, root=root_path)
 
         wave_results.append(wave_record)
+        wave_idx += 1
 
     # Finalize state
     overall_status = (

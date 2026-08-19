@@ -243,6 +243,42 @@ class TestSwarmOrchestration(unittest.TestCase):
             self.assertEqual(result.status, "success")
             self.assertEqual(result.total_workers, 0)
 
+    def test_orchestration_rebalance_drops_subsequent_wave_on_failure(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            from keel.swarm import SwarmCluster, SwarmWave
+            c1 = SwarmCluster(cluster_id="c1", issues=(101,), role="core", combined_scope=("a.py",))
+            c2 = SwarmCluster(cluster_id="c2", issues=(101,), role="core", combined_scope=("a.py",))
+            w1 = SwarmWave(
+                wave_index=1,
+                mode="orthogonal_parallel",
+                eligible_direct_landing=True,
+                clusters=(c1,),
+            )
+            w2 = SwarmWave(
+                wave_index=2,
+                mode="orthogonal_parallel",
+                eligible_direct_landing=True,
+                clusters=(c2,),
+            )
+            plan = SwarmPlan(
+                swarm_id="swarm-rebalance",
+                total_issues=2,
+                waves=(w1, w2),
+            )
+
+            mock_fail = {"ok": False, "issue": 101, "role": "core", "code": 1, "output": "fail"}
+            with patch("keel.swarm_runtime.execute_cluster_worker", return_value=mock_fail):
+                result = run_swarm_orchestration(
+                    plan,
+                    ".keel/project.yaml",
+                    root=tmpdir,
+                    dry_run=True,
+                )
+            self.assertEqual(result.status, "failed")
+            self.assertEqual(result.failed_count, 1)
+            # Second wave had only c2 (issue 101), which was pruned by rebalance, so only 1 wave ran
+            self.assertEqual(len(result.wave_results), 1)
+
 
 class TestSwarmPureStateHelpers(unittest.TestCase):
     def test_rebalance_and_update_worker_state(self):
