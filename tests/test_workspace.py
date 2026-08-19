@@ -227,7 +227,8 @@ class TestCleanScratch(unittest.TestCase):
             self.assertEqual(workspace.scratch_entries(tmp), ["pr-1.diff", "sub"])
             removed = workspace.clean_scratch(tmp)
             self.assertEqual(removed, ["pr-1.diff", "sub"])
-            self.assertFalse((Path(tmp) / ".keel" / "scratch").exists())
+            self.assertTrue((Path(tmp) / ".keel" / "scratch").is_dir())
+            self.assertEqual(workspace.scratch_entries(tmp), [])
 
     def test_clean_missing_scratch_is_noop(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -332,7 +333,8 @@ class TestGcCommand(unittest.TestCase):
             self.assertEqual(rc, 0)
             self.assertIn("removed 1 entry", out)          # singular scratch entry
             self.assertIn("removed 2 record(s)", out)
-            self.assertFalse((Path(tmp) / ".keel" / "scratch").exists())
+            self.assertEqual(workspace.scratch_entries(tmp), [])
+            self.assertTrue((Path(tmp) / ".keel" / "scratch").is_dir())
             self.assertEqual(
                 [p.name for p in (Path(tmp) / ".keel" / "activity").iterdir()],
                 ["c.json"])

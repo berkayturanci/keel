@@ -29,6 +29,9 @@ All notable changes to keel are documented here. The format follows
   - Prevented untrusted repository configurations from exfiltrating system credentials via remote LLM endpoints.
 
 ### Fixed
+- **Workspace Scratch Content Cleanup** (#884):
+  - Cleaned contents of `.keel/scratch` without deleting the top-level directory node in `workspace.py` `clean_scratch`.
+  - Avoided directory recreation races and preserved directory watcher references during workspace garbage collection.
 - **JSON Schema Non-String Key Validation** (#883):
   - Rejected non-string object property keys in `jsonschema_min.py` `_validate_object`.
   - Prevented schema consumers and sort operations from crashing when validating YAML mappings with non-string keys.

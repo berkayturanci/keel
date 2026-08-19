@@ -126,16 +126,19 @@ def scratch_entries(root: str | Path = ".") -> list[str]:
 
 
 def clean_scratch(root: str | Path = ".") -> list[str]:
-    """Reclaim ``.keel/scratch`` entirely; return the entries that were removed.
+    """Empty ``.keel/scratch`` contents; return the entries that were removed.
 
-    Scratch is transient by definition, so this empties it wholesale. The
-    directory is recreated on the next :func:`scratch_dir` call. A no-op (``[]``)
-    when scratch does not exist.
+    Scratch is transient by definition, so this empties its contents while
+    keeping the directory node intact. A no-op (``[]``) when scratch does not exist.
     """
     entries = scratch_entries(root)
     scratch = keel_dir(root) / SCRATCH_DIRNAME
     if scratch.is_dir():
-        shutil.rmtree(scratch)
+        for child in scratch.iterdir():
+            if child.is_dir():
+                shutil.rmtree(child)
+            else:
+                child.unlink(missing_ok=True)
     return entries
 
 
