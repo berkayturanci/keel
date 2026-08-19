@@ -382,6 +382,7 @@ def assess(
     tier3_globs: tuple[str, ...] = (),
     docs_globs: tuple[str, ...] = (),
     allowlist_globs: tuple[str, ...] = (),
+    patches: dict[str, str] | None = None,
     timezone: str | None = None,
     merge_window: str | None = None,
     merge_window_mode: str = "freeze",
@@ -407,6 +408,12 @@ def assess(
     (default) only blocks the merge. ``is_blocker`` (a hotfix) bypasses the window —
     but never the findings or a failing CI.
 
+    ``patches`` is the per-file diff, keyed by path. Without it this classified
+    from filenames alone and so could not apply the diff-based TIER-3 downgrade,
+    which made the assessment a human reads disagree with the evidence gate that
+    enforces it (#845). ``None`` keeps the old behaviour — no diff is no evidence,
+    and the path decides.
+
     ``changed_files`` is ``None`` when git could not be read (as
     :func:`keel.git.changed_files` reports it), which is deliberately *not* the same
     as ``[]``. An empty list classifies as the default tier; an unreadable one
@@ -417,7 +424,8 @@ def assess(
         if changed_files is None
         else classify.tier_for_files(changed_files, tier3_globs=tier3_globs,
                                      docs_globs=docs_globs,
-                                     allowlist_globs=allowlist_globs)
+                                     allowlist_globs=allowlist_globs,
+                                     patches=patches)
     )
     reviewers = reviewer_override if reviewer_override is not None else reviewer_count(tier)
     window_open = (

@@ -905,7 +905,12 @@ class TestShip(unittest.TestCase):
             _run_git(root, "checkout", "-b", "feature")
             workflow = root / ".github" / "workflows" / "ci.yml"
             workflow.parent.mkdir(parents=True)
-            workflow.write_text("name: ci\n", encoding="utf-8")
+            # Privileged on purpose. Since #845 the tier is read from the diff, so a
+            # workflow whose change touches nothing privileged downgrades to TIER-2 —
+            # which would leave this test asserting tier-3 against a tier-2 change and
+            # quietly stop exercising the gating-jury path it exists for.
+            workflow.write_text(
+                "name: ci\npermissions:\n  contents: write\n", encoding="utf-8")
             _run_git(root, "add", ".github/workflows/ci.yml")
             _run_git(root, "commit", "-m", "change workflow")
 

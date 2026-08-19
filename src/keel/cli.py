@@ -1018,6 +1018,9 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         tier3_globs=config.knobs.tier3_globs,
         docs_globs=config.knobs.docs_gate_paths,
         allowlist_globs=config.knobs.docs_only_allowlist,
+        # The same patches the review contract was resolved from, so the tier the
+        # assessment prints is the tier the evidence gate enforces (#845).
+        patches=artifacts_patches,
         timezone=config.timezone,
         merge_window=config.merge_window,
         merge_window_mode=config.merge_window_mode,
