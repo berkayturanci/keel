@@ -7,6 +7,9 @@ All notable changes to keel are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **Config YAML Error Formatting** (#855):
+  - Wrapped `yaml.YAMLError` in `ConfigError` inside `src/keel/config.py` `load_config()`.
+  - Prevented raw tracebacks on syntax errors in `project.yaml` files across all CLI subcommands.
 - **Capture Reconciliation Invalid Marker Accounting** (#853):
   - Added `invalid-marker` finding detection in `src/keel/captureverify.py` during ledger reconciliation.
   - Ensured corrupted, duplicate, or malformed capture markers produce explicit audit findings rather than silently passing reconciliation with `ok: true`.

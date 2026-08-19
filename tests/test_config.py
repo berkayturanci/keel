@@ -983,5 +983,21 @@ class TestSwarmReviewEvidenceKnob(unittest.TestCase):
 
             os.unlink(path)
 
+    def test_load_config_malformed_yaml_raises_config_error(self):
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tf:
+            tf.write("extends: [unclosed list\n")
+            path = tf.name
+        try:
+            with self.assertRaises(cfg.ConfigError) as ctx:
+                cfg.load_config(path)
+            self.assertIn("YAML syntax error", ctx.exception.errors[0])
+            self.assertEqual(ctx.exception.source, path)
+        finally:
+            import os
+
+            os.unlink(path)
+
+
 if __name__ == "__main__":
     unittest.main()

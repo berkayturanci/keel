@@ -20,3 +20,6 @@ def load(stream: str | bytes) -> Any:
 def dump(data: Any, **kwargs: Any) -> str:
     """Serialize a YAML document using the C-extension if available."""
     return yaml.dump(data, Dumper=_SafeDumper, **kwargs)
+
+YAMLError = yaml.YAMLError
+

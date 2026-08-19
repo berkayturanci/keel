@@ -297,7 +297,10 @@ def parse_config(data: Any, *, source: str = "<dict>", schema: dict | None = Non
 def load_config(path: str | Path) -> ProjectConfig:
     """Read + validate a ``project.yaml`` from disk."""
     path = Path(path)
-    data = yaml.load(path.read_text(encoding="utf-8"))
+    try:
+        data = yaml.load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise ConfigError(str(path), [f"YAML syntax error: {exc}"]) from exc
     return parse_config(data, source=str(path))
 
 
