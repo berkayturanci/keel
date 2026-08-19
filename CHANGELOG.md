@@ -7,6 +7,9 @@ All notable changes to keel are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **Merge Auto-Stamping Run ID Fallback** (#859):
+  - Passed `gates_run_id` to `_autostamp` in `src/keel/cli.py` `_cmd_merge` when `--run-id` is omitted from CLI arguments.
+  - Ensured merged status is stamped to activity records on the board when landing merges.
 - **Swarm Landing Merge Failure Abort** (#857):
   - Added `git merge --abort` on merge failure in `src/keel/swarm_landing.py` `merge_cluster_branch()`.
   - Prevented leaving repositories in an uncommitted/conflicted `MERGE_HEAD` state upon merge conflicts.

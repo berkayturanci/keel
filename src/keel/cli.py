@@ -831,7 +831,7 @@ def _cmd_merge(args: argparse.Namespace) -> int:
         payload["merge_output"] = merged.output
         if not merged.ok:
             return _finish_merge(args, payload, "gh merge failed", code=1)
-        _autostamp(config, args.root, "ship", getattr(args, "run_id", None), "s10",
+        _autostamp(config, args.root, "ship", getattr(args, "run_id", None) or gates_run_id, "s10",
                    status="merged",   # real merge landed → green "merged", not soft "done"
                    issue=getattr(args, "issue", None), pr=args.pr)
         return _finish_merge(args, payload, "merged", code=0)

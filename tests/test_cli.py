@@ -6279,6 +6279,19 @@ class TestMergeCheckpointGate(unittest.TestCase):
         self.assertTrue(gate["bypassed"])
         self.assertEqual(gate["operator"], "tester")
 
+    def test_merge_without_run_id_autostamps_gates_run_id(self):
+        config = _write_config_with_checkpoint("'true'")
+        with tempfile.TemporaryDirectory() as d:
+            self._write_checkpoint(d, config, run_id="RUN-FALLBACK", step="s10")
+            with patch("keel.cli._autostamp") as mock_stamp:
+                rc, out, _ = self._run_merge(config=config, root=d, run_id="RUN-FALLBACK")
+            self.assertEqual(rc, 0)
+            mock_stamp.assert_called_once()
+            args, kwargs = mock_stamp.call_args
+            # Positional arguments: (config, root, command, run_id, phase)
+            self.assertEqual(args[3], "RUN-FALLBACK")
+            self.assertEqual(kwargs.get("status"), "merged")
+
     def test_no_checkpoint_gate_bypass_requires_named_operator(self):
         config = _write_config_with_checkpoint("'true'")
         fake_report = _merge_capability_report()
