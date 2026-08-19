@@ -204,6 +204,10 @@ class TestLegacyWrappers(unittest.TestCase):
                 install.install_legacy_wrappers("codex", d, mappings={"ship": "ship"})
             with self.assertRaisesRegex(ValueError, "non-empty"):
                 install.install_legacy_wrappers("claude", d, mappings={"": "ship"})
+            with self.assertRaisesRegex(ValueError, "invalid legacy wrapper command name"):
+                install.install_legacy_wrappers("claude", d, mappings={"../../evil": "ship"})
+            with self.assertRaisesRegex(ValueError, "invalid legacy wrapper command name"):
+                install.install_legacy_wrappers("claude", d, mappings={"foo/bar": "ship"})
             with self.assertRaisesRegex(ValueError, "unknown keel command"):
                 install.install_legacy_wrappers("claude", d, mappings={"ship": "missing"})
 

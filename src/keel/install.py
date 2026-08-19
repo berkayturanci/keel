@@ -282,6 +282,9 @@ def default_legacy_mappings(*, _src: Path | None = None) -> dict[str, str]:
     return {Path(name).stem: Path(name).stem for name in adapter_names(_src=_src)}
 
 
+_LEGACY_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
 def _validate_legacy_mappings(
     mappings: dict[str, str],
     *,
@@ -292,6 +295,8 @@ def _validate_legacy_mappings(
     for legacy, command in mappings.items():
         if not legacy or not command:
             raise ValueError("legacy wrapper mappings must use non-empty command names")
+        if not _LEGACY_NAME_RE.match(legacy):
+            raise ValueError(f"invalid legacy wrapper command name: {legacy!r}")
         if command not in packaged:
             raise ValueError(f"unknown keel command for legacy wrapper: {command}")
         if ready_commands is not None and command not in ready_commands:

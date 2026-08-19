@@ -12,6 +12,9 @@ All notable changes to keel are documented here. The format follows
   - Allowed recording phase completion verdicts through the CLI.
 
 ### Security
+- **Legacy Wrapper Directory Traversal Protection** (#870):
+  - Validated legacy command names against safe identifier characters (`^[A-Za-z0-9_-]+$`) in `install.py` `_validate_legacy_mappings`.
+  - Prevented path traversal when generating legacy wrapper files for Claude and skills surfaces.
 - **Evidence Header Field Injection Protection** (#868):
   - Anchored header parsing in `evidence.py` `_fields` strictly to the top header block of review and jury comments.
   - Prevented field injection in comment bodies from overriding authentic reviewer, head, vendor, model, and jury panel metadata.
