@@ -6,6 +6,11 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **CodeQL Empty Except Handlers** (#912):
+  - Replaced empty `except ...: pass` blocks in `config.py` `_is_cloud_metadata_or_link_local` and `scaffold.py` `detect_base_branch` with explicit return statements.
+  - Resolved static analysis alerts while preserving deterministic fail-soft fallback behavior.
+
 ## [1.19.0] - 2026-08-20
 
 ### Added

@@ -355,11 +355,9 @@ def _is_cloud_metadata_or_link_local(host: str) -> bool:
         return True
     try:
         ip = ipaddress.ip_address(host)
-        if ip.is_link_local:
-            return True
+        return bool(ip.is_link_local)
     except ValueError:
-        pass
-    return False
+        return False
 
 
 def endpoint_issues(endpoint: Any, *, where: str, env=None) -> list[str]:

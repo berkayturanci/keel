@@ -70,7 +70,7 @@ def detect_base_branch(root: str | Path) -> str:
                 if ref_name in ("main", "master", "develop", "trunk"):
                     return ref_name
         except OSError:
-            pass
+            return "main"
     return "main"
 
 
