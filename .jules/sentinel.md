@@ -24,7 +24,3 @@
 ## 2026-07-20 - [Bandit False Positive on Intentionally Safe Subprocess Import]
 **Learning:** `import subprocess` (B404) in `src/keel/runner.py` is flagged by Bandit as a low-severity risk, but the module is specifically intended for a fail-soft command runner boundary where execution commands are strictly operator-controlled and injected via configuration. Automated static analysis flags the module itself even without unsafe invocations.
 **Action:** When a known false positive is verified as a deliberate and secure architecture choice, correctly suppress the Bandit warning at the source (e.g., `# nosec B404` on the import line) rather than removing functionality.
-## 2024-05-18 - Prevent SSRF by disabling urllib HTTP redirects
-**Vulnerability:** urllib.request.urlopen follows HTTP redirects by default, enabling SSRF risks.
-**Learning:** A malicious server can redirect a safe request to an internal IP or service.
-**Prevention:** Construct a custom urllib.request.OpenerDirector (using HTTPHandler and HTTPSHandler) that omits HTTPRedirectHandler.

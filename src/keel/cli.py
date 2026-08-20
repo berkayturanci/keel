@@ -3942,20 +3942,16 @@ def _fetch_latest_pypi_version(
         return None  # restrict to http(s): no file://, ftp://, or custom schemes
 
     if _open is None:  # pragma: no cover - live network boundary
-        from urllib.request import (
-            HTTPDefaultErrorHandler,
-            HTTPErrorProcessor,
-            HTTPHandler,
-            HTTPSHandler,
-            OpenerDirector,
-        )
+        import urllib.request
+
+        class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                return None
+
         def _safe_open(u: str, t: float):
-            opener = OpenerDirector()
-            opener.add_handler(HTTPHandler())
-            opener.add_handler(HTTPSHandler())
-            opener.add_handler(HTTPErrorProcessor())
-            opener.add_handler(HTTPDefaultErrorHandler())
+            opener = urllib.request.build_opener(NoRedirectHandler())
             return opener.open(u, timeout=t)
+
         _open = _safe_open  # noqa: E731
     try:
         with _open(url, timeout) as response:
