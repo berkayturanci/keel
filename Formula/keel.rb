@@ -4,7 +4,7 @@ class Keel < Formula
   desc "Project-neutral, multi-agent workflow core and autonomous issue shipping backbone"
   homepage "https://github.com/berkayturanci/keel"
   url "https://github.com/berkayturanci/keel/archive/refs/tags/v1.19.0.tar.gz"
-  sha256 "24105d4a59a7d3960bb5dd56460370701cac4d167f7b3b7da0b71e764a15bc1e"
+  sha256 "b5a81cc74d8271f78f85483fc448f676f12309d0b8521d69d36b668f7d5723ac"
   license "Apache-2.0"
   head "https://github.com/berkayturanci/keel.git", branch: "main"
 
