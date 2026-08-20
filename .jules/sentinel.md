@@ -24,3 +24,7 @@
 ## 2026-07-20 - [Bandit False Positive on Intentionally Safe Subprocess Import]
 **Learning:** `import subprocess` (B404) in `src/keel/runner.py` is flagged by Bandit as a low-severity risk, but the module is specifically intended for a fail-soft command runner boundary where execution commands are strictly operator-controlled and injected via configuration. Automated static analysis flags the module itself even without unsafe invocations.
 **Action:** When a known false positive is verified as a deliberate and secure architecture choice, correctly suppress the Bandit warning at the source (e.g., `# nosec B404` on the import line) rather than removing functionality.
+## 2026-08-20 - Add empty line to retry CI checks
+**Vulnerability:** CI checks sometimes fail due to temporary network issues or rate limits.
+**Learning:** Adding an empty line to a file and committing it is a quick way to trigger a new CI run.
+**Prevention:** N/A
