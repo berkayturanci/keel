@@ -3942,8 +3942,21 @@ def _fetch_latest_pypi_version(
         return None  # restrict to http(s): no file://, ftp://, or custom schemes
 
     if _open is None:  # pragma: no cover - live network boundary
-        from urllib.request import urlopen
-        _open = lambda u, t: urlopen(u, timeout=t)  # noqa: E731 # nosec B310
+        from urllib.request import (
+            HTTPDefaultErrorHandler,
+            HTTPErrorProcessor,
+            HTTPHandler,
+            HTTPSHandler,
+            OpenerDirector,
+        )
+        def _safe_open(u: str, t: float):
+            opener = OpenerDirector()
+            opener.add_handler(HTTPHandler())
+            opener.add_handler(HTTPSHandler())
+            opener.add_handler(HTTPErrorProcessor())
+            opener.add_handler(HTTPDefaultErrorHandler())
+            return opener.open(u, timeout=t)
+        _open = _safe_open  # noqa: E731
     try:
         with _open(url, timeout) as response:
             payload = json.loads(response.read(50 * 1024 * 1024).decode("utf-8"))
