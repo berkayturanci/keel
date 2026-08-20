@@ -366,14 +366,16 @@
 
   function wireCopyButtons() {
     document.querySelectorAll(".integ-copy-btn").forEach(function (btn) {
+      var origLabel = btn.getAttribute("aria-label") || "Copy command";
+      var copyTimer = null;
       btn.onclick = function () {
         var text = btn.getAttribute("data-copy");
-        var origLabel = btn.getAttribute("aria-label") || "Copy command";
         if (navigator.clipboard && navigator.clipboard.writeText) {
           navigator.clipboard.writeText(text).then(function () {
             btn.textContent = "Copied! ✓";
             btn.setAttribute("aria-label", "Copied to clipboard");
-            setTimeout(function () {
+            clearTimeout(copyTimer);
+            copyTimer = setTimeout(function () {
               btn.textContent = "Copy";
               btn.setAttribute("aria-label", origLabel);
             }, 2000);
