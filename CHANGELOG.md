@@ -29,6 +29,9 @@ All notable changes to keel are documented here. The format follows
   - Prevented untrusted repository configurations from exfiltrating system credentials via remote LLM endpoints.
 
 ### Fixed
+- **Session Contract Report Status Optimization** (#907):
+  - Replaced generator expression in `contracts.py` `session_contract_as_dict` with explicit chained `or` condition.
+  - Avoided generator allocation overhead during contract status resolution.
 - **Workspace Scratch Content Cleanup** (#884):
   - Cleaned contents of `.keel/scratch` without deleting the top-level directory node in `workspace.py` `clean_scratch`.
   - Avoided directory recreation races and preserved directory watcher references during workspace garbage collection.
