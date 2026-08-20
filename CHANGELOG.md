@@ -6,6 +6,8 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.19.0] - 2026-08-20
+
 ### Added
 - **Activity Verdict CLI Flag** (#861):
   - Added `--verdict` flag (`choices: pass, blocked`) to `keel activity --write`.
