@@ -962,6 +962,71 @@ keel status .keel/project.yaml --root .
 keel status .keel/project.yaml --root . --json
 ```
 
+## `keel activity`
+
+Read or stamp the additive command-activity channel under `.keel/activity/<run-id>.json`.
+
+```
+keel activity <project.yaml> [--root DIR] [--write|--done|--clear]
+             [--command CMD] [--run-id ID] [--phase PHASE]
+             [--status running|done] [--verdict pass|blocked]
+             [--issue N] [--pull-request N] [--note TEXT] [--json]
+```
+
+| Flag | Type / values | Default | Effect |
+| --- | --- | --- | --- |
+| `path` | file path | required | Project config. |
+| `--root DIR` | path | `.` | Repo root under which `.keel/activity/` lives. |
+| `--write` | flag | off | Write/update an activity record for `--run-id`. |
+| `--done` | flag | off | Mark `--run-id`'s activity record finished (`done`). |
+| `--clear` | flag | off | Remove `--run-id`'s activity record. |
+| `--command CMD` | command name | `ship` | Workflow command the activity belongs to (e.g. `triage`, `morning`, `ship`). |
+| `--run-id ID` | string | `run` | Run ID keying the record (`.keel/activity/<run-id>.json`). |
+| `--phase PHASE` | phase id | `None` | Current flow phase ID for the command (`--write`). |
+| `--status running\|done` | `running` \| `done` | `running` | Activity status for `--write`. |
+| `--verdict pass\|blocked` | `pass` \| `blocked` | `None` | Verdict status for phase outcome (`--write`). |
+| `--issue N` | positive int | `None` | Issue number to record. |
+| `--pull-request N` | positive int | `None` | Pull request number to record. |
+| `--note TEXT` | string | `None` | Optional free-text note. |
+| `--json` | flag | off | Emit structured JSON. |
+
+### Examples
+
+```bash
+keel activity .keel/project.yaml --root . --command triage --run-id triage-2260 --phase classify --issue 2260
+keel activity .keel/project.yaml --root . --command ship --run-id ship-861 --phase test --verdict pass
+keel activity .keel/project.yaml --root . --run-id triage-2260 --done
+keel activity .keel/project.yaml --root . --clear --run-id triage-2260
+keel activity .keel/project.yaml --root . --json
+```
+
+## `keel gc`
+
+Reclaim disposable runtime artifacts (empty scratch, prune old activity records).
+
+```
+keel gc <project.yaml> [--root DIR] [--keep-activity N]
+        [--no-scratch] [--no-activity] [--dry-run] [--json]
+```
+
+| Flag | Type / values | Default | Effect |
+| --- | --- | --- | --- |
+| `path` | file path | required | Project config. |
+| `--root DIR` | path | `.` | Repo root under which `.keel` runtime artifacts live. |
+| `--keep-activity N` | non-negative int | `200` | Number of newest activity records to retain. |
+| `--no-scratch` | flag | off | Skip emptying `.keel/scratch`. |
+| `--no-activity` | flag | off | Skip pruning `.keel/activity`. |
+| `--dry-run` | flag | off | Report what would be reclaimed without removing anything. |
+| `--json` | flag | off | Emit structured JSON report. |
+
+### Examples
+
+```bash
+keel gc .keel/project.yaml --root .
+keel gc .keel/project.yaml --root . --keep-activity 50
+keel gc .keel/project.yaml --root . --dry-run --json
+```
+
 ## `keel morning`
 
 Render the standalone daily-brief preflight contract.

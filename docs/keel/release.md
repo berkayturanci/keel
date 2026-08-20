@@ -15,7 +15,7 @@ project intentionally publishes as `keel-workflow`.
 
 ## Current Release State
 
-The last release recorded here was `keel-workflow==1.10.0`, owned by `berkayturanci`.
+The last release recorded here was `keel-workflow==1.19.0`, owned by `berkayturanci`.
 **This line goes stale by construction** — it names the *previous* release and nothing
 enforces it, which is why it sat at `1.8.2` for three releases. Treat it as a hint, not a
 fact, and read the real state before every release with:
