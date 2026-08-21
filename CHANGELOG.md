@@ -7,6 +7,9 @@ All notable changes to keel are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **Integration Copy Button Accessible Label Recapture** (#916):
+  - Captured `origLabel` at bind time in `website/integrations.js` and cleared pending reset timers on rapid clicks.
+  - Prevented transient "Copied to clipboard" state from permanently overwriting the accessible name.
 - **CodeQL Empty Except Handlers** (#912):
   - Replaced empty `except ...: pass` blocks in `config.py` `_is_cloud_metadata_or_link_local` and `scaffold.py` `detect_base_branch` with explicit return statements.
   - Resolved static analysis alerts while preserving deterministic fail-soft fallback behavior.
