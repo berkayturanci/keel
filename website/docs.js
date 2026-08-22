@@ -95,6 +95,8 @@
 
   /* share buttons: copy a deep link to the section */
   document.querySelectorAll(".doc-share").forEach(function (btn) {
+    var origLabel = btn.getAttribute("aria-label");
+    var copyTimer = null;
     btn.addEventListener("click", function () {
       var slug = btn.dataset.slug;
       var url = location.origin + location.pathname + "#" + slug;
@@ -105,9 +107,15 @@
       });
       function ok() {
         btn.classList.add("done");
+        btn.setAttribute("aria-label", "copied");
         var sr = document.getElementById("sr-live-region");
         if (sr) { sr.textContent = "Copied to clipboard"; setTimeout(function() { sr.textContent = ""; }, 3000); }
-        setTimeout(function () { btn.classList.remove("done"); }, 1400);
+        clearTimeout(copyTimer);
+        copyTimer = setTimeout(function () {
+          btn.classList.remove("done");
+          if (origLabel) btn.setAttribute("aria-label", origLabel);
+          else btn.removeAttribute("aria-label");
+        }, 1400);
       }
     });
   });
