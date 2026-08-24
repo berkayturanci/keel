@@ -1456,6 +1456,20 @@ class TestShip(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("contradicts", json.loads(out)["error"])
 
+    def test_not_run_refuses_a_capture_artifact_human_output(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, _, err = run(["ship", _write_config_with_ledger("'true'"),
+                              "--root", d, "--live", "--append-ledger",
+                              "--pull-request", "940",
+                              "--capture-status", cli.CAPTURE_STATUS_NOT_RUN,
+                              "--capture-artifact", "artifacts/940.md",
+                              "--approve-scope", "filesystem,git,github",
+                              "--operator", "tester"])
+
+        self.assertEqual(rc, 1)
+        self.assertIn("contradicts", err)
+
     def test_a_rebase_re_record_reports_no_capture_gap(self):
         # The defect this flag was added for: the re-record read as a merged PR whose
         # marker had gone missing, so `keel ledger` reported a capture gap for a PR
