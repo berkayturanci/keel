@@ -7,9 +7,11 @@ All notable changes to keel are documented here. The format follows
 ## [Unreleased]
 
 ### Performance
+- **Tuple Startswith for Blocked Env Prefixes** (#924):
+  - Used native tuple overload in `config.py` `_validate_delegate_profiles` (`startswith(BLOCKED_ENV_PREFIXES)`) instead of generator allocation.
 - **Pricing Table Sorted Once, Not Per Call** (#930):
   - Hoisted `sorted(MODEL_PRICING, key=len, reverse=True)` out of `normalize_model_name`'s match loop into `_PRICING_KEYS_BY_LENGTH`. The order is a property of the table, not of the string being matched.
-  - **Honest sizing:** 1.14 → 0.46 µs per call, but `keel cost-report` on this repo's real ledger (10 records) goes from 0.032 ms to 0.018 ms inside a command whose wall clock is ~200 ms. That is 0.006% — a rounding error. It is worth merging as a loop-invariant cleanup, not as a throughput fix, and nobody should plan around the µs figure. The break-even against one Python interpreter start is roughly 300,000 ledger records.
+  - **Honest sizing:** 1.14 → 0.46 µs per call, but `keel cost-report` on this repo's real ledger (10 records; it normalizes twice per record, not once) goes from 0.032 ms to 0.018 ms inside a command whose wall clock is ~200 ms. That is 0.006% — a rounding error. It is worth merging as a loop-invariant cleanup, not as a throughput fix, and nobody should plan around the µs figure. The break-even against one Python interpreter start is roughly 300,000 ledger records.
   - The order is load-bearing rather than cosmetic: eleven keys contain a shorter one, so matching shortest-first would price `gpt-4o-mini` as `gpt-4o` — a cheap model billed at the expensive rate. The guard is derived from the table, so a new nested key is covered the day it lands.
   - The regression guard is behavioural, not textual. Its first version walked the AST for a call named `sorted`, which three ways of re-sorting per call slipped past — a helper, `list.sort`, and `builtins.sorted`, one of them measured at 3.2× the hoisted cost with the test still green.
 

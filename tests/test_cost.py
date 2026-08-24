@@ -57,10 +57,16 @@ class TestPricingKeyOrderIsComputedOnce(unittest.TestCase):
                 self.assertEqual(normalize_model_name(f"vendor:{long}"), long)
                 self.assertEqual(normalize_model_name(f"vendor:{short}"), short)
 
-    def test_the_precomputed_order_matches_a_fresh_sort(self):
-        self.assertEqual(
-            list(_PRICING_KEYS_BY_LENGTH), sorted(MODEL_PRICING, key=len, reverse=True)
-        )
+    def test_the_precomputed_order_is_longest_first(self):
+        """Asserts the property, not the expression that currently produces it.
+
+        Pinning ``sorted(MODEL_PRICING, key=len, reverse=True)`` verbatim would
+        fail a behaviour-identical refactor — adding an alphabetical tie-break,
+        say — while the three behavioural guards around it stayed green. The
+        property that matters is only that no key precedes a longer one.
+        """
+        lengths = [len(key) for key in _PRICING_KEYS_BY_LENGTH]
+        self.assertEqual(lengths, sorted(lengths, reverse=True))
 
     def test_a_new_pricing_key_cannot_be_left_out_of_the_order(self):
         self.assertEqual(set(_PRICING_KEYS_BY_LENGTH), set(MODEL_PRICING))
@@ -78,10 +84,14 @@ class TestPricingKeyOrderIsComputedOnce(unittest.TestCase):
         implementation that re-derives the order inside the call ignores the
         patch and returns the right answer anyway, which fails here.
         """
+        # A dated identifier, deliberately *not* itself a pricing key: an exact-key
+        # fast path (`if raw in MODEL_PRICING: return raw`) is a legitimate future
+        # improvement that does no re-sorting, and picking a bare key as the input
+        # would make this guard fail on it and report the wrong reason.
         shortest_first = tuple(sorted(MODEL_PRICING, key=len))
         with unittest.mock.patch.object(cost, "_PRICING_KEYS_BY_LENGTH", shortest_first):
             self.assertEqual(
-                cost.normalize_model_name("anthropic:claude-3-5-sonnet"),
+                cost.normalize_model_name("anthropic:claude-3-5-sonnet-20241022"),
                 "claude",
                 "the loop re-derived the key order instead of reading the module constant",
             )
