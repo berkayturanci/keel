@@ -247,6 +247,32 @@ class TestTheGateCannotReportSilently(unittest.TestCase):
         self.assertIn("gh pr view", run, "no fallback resolves the PR's real head")
         self.assertIn("headRefOid", run)
 
+    def test_the_gate_is_armed_and_scoped_to_the_pre_merge_phase(self):
+        """Two flags carry the gate's whole meaning, and neither was pinned.
+
+        `--require-armed`: without it an unarmed gate derives no requirements
+        and *passes*, having verified nothing — indistinguishable from a real
+        pass, which is this issue's defect in its purest form.
+
+        `--phase pre-merge`: the closure comments are an s11 artifact posted
+        after the merge this gate authorizes, so requiring them here is
+        unsatisfiable and the gate could never go green.
+
+        Both predate this change and were equally untested on main; removing
+        either left the suite green.
+
+        Asserted against the ``ARGS=(...)`` assignment, not the step body. Each
+        flag is also named in the comment that explains it, so a plain ``in``
+        check finds the comment and passes with the flag stripped from the
+        command — the third time that trap has caught a test in this file.
+        """
+        args = re.search(r"^\s*ARGS=\((.*?)\)\s*$", _evidence_run(), re.MULTILINE)
+        self.assertIsNotNone(args, "the evidence-verify invocation is gone")
+        self.assertIn("--require-armed", args.group(1), "an unarmed gate would report success")
+        self.assertIn(
+            "--phase pre-merge", args.group(1), "the gate would demand post-merge artifacts"
+        )
+
     def test_the_workflow_holds_the_permission_it_needs(self):
         self.assertEqual(_workflow()["permissions"].get("checks"), "write")
 
@@ -295,6 +321,36 @@ class TestTheDocsDescribeWhatShips(unittest.TestCase):
             r"[Dd]o \*\*not\*\* add `keel evidence \(verify\)`",
             "the adoption page does not warn against requiring the job",
         )
+
+    def test_the_docs_permissions_snippet_grants_what_the_gate_needs(self):
+        """An adopter copies that block; without `checks: write` they get a 403.
+
+        The workflow's own permissions are pinned above, and the doc's copy
+        drifted from them — invisible to CI, and the failure it produces is a
+        required check that simply never appears.
+        """
+        page = (REPO / "docs/keel/github-actions.md").read_text(encoding="utf-8")
+        snippet = page[page.index("permissions:") :][:400]
+        self.assertIn("checks: write", snippet)
+
+    def test_the_fork_recovery_path_is_the_one_that_works(self):
+        """"Re-run all jobs" replays the same read-only token and fails identically.
+
+        All three places that tell a maintainer how to unstick a fork PR — both
+        docs and the runtime warning — said to re-run. The path that actually
+        works is `workflow_dispatch` from the base repository.
+        """
+        sources = {
+            "github-actions.md": (REPO / "docs/keel/github-actions.md").read_text(
+                encoding="utf-8"
+            ),
+            "evidence.md": (REPO / "docs/keel/evidence.md").read_text(encoding="utf-8"),
+            "workflow": _evidence_run(),
+        }
+        for name, text in sources.items():
+            with self.subTest(source=name):
+                self.assertIn("workflow_dispatch", text, "the working path is not named")
+                self.assertIn("Re-run all jobs", text, "the path that fails is not ruled out")
 
     def test_the_docs_state_the_fail_closed_rule(self):
         text = DOC.read_text(encoding="utf-8")

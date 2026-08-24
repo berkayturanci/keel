@@ -124,10 +124,17 @@ Two consequences of how GitHub's check-runs API works, both load-bearing:
   `permissions:` declares. Failing the step unconditionally there would leave
   every fork contribution red with no route forward, including one whose
   evidence verified — so on a fork the job's own exit code carries the verdict
-  instead: green only for a real pass, red while waiting or on a violation. A
-  maintainer re-running the workflow from the base repository publishes the
-  check. If you accept fork contributions, do not make this check *required*
-  until you have that path in place.
+  instead: green only for a real pass, red while waiting or on a violation.
+
+  Recovery is **Run workflow** (`workflow_dispatch`) from the base repository
+  with the pull request's number — not "Re-run all jobs", which replays the same
+  read-only token. Expect it to come back red once: a fork branch does not match
+  the ship-branch pattern and there is no assessment comment or ledger, so the
+  gate is unarmed and refuses to report success for a check that verified
+  nothing. Generate real provenance by running the ship adapter against the pull
+  request, or apply the operator waiver label. See
+  [github-actions.md](github-actions.md) for the full path, and do not make this
+  check *required* until you have it.
 
 The workflow re-runs on `issue_comment` as well as on pushes, because that is
 what a verdict *is*: `keel post-comment` calls `POST /issues/{n}/comments`.

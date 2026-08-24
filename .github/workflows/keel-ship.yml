@@ -251,7 +251,7 @@ jobs:
           fi
 
           if [ "$IS_FORK" = "true" ]; then
-            echo "::warning title=Evidence check-run unavailable::A pull request from a fork gets a read-only token, so \"$CHECK_NAME\" cannot be published. This job's exit code carries the verdict instead; a maintainer re-running this workflow from the base repository will publish the check."
+            echo "::warning title=Evidence check-run unavailable::A pull request from a fork gets a read-only token, so \"$CHECK_NAME\" cannot be published. This job's exit code carries the verdict instead; to publish it, use Run workflow (workflow_dispatch) from the base repository with this PR number — Re-run all jobs replays the same read-only token. See docs/keel/github-actions.md, the fork section."
             exit "$FALLBACK_EXIT"
           fi
           echo "::error title=Could not publish the evidence check-run::Reporting the verdict to GitHub failed, so this step fails rather than leaving the gate unreported."
