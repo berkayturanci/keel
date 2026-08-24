@@ -333,6 +333,24 @@ class TestTheDocsDescribeWhatShips(unittest.TestCase):
         snippet = page[page.index("permissions:") :][:400]
         self.assertIn("checks: write", snippet)
 
+    #: Where each source talks about unsticking a fork PR. The assertion has to
+    #: be scoped to this text: every one of these files mentions
+    #: `workflow_dispatch` elsewhere for unrelated reasons — a trigger list, a
+    #: YAML snippet, a comment — so a file-wide `assertIn` passes with the
+    #: recovery paragraph gutted. That is the fourth time in this file a test has
+    #: found its subject in surrounding prose instead of in the thing under test.
+    FORK_RECOVERY = (
+        ("github-actions.md", "docs/keel/github-actions.md", "Recovery is **not**", "\n\n##"),
+        ("evidence.md", "docs/keel/evidence.md", "Recovery is **Run workflow**", "\n\n"),
+    )
+
+    def _fork_paragraph(self, path: str, start: str, end: str) -> str:
+        text = (REPO / path).read_text(encoding="utf-8")
+        self.assertIn(start, text, f"{path} no longer explains fork recovery")
+        tail = text[text.index(start) :]
+        cut = tail.find(end)
+        return tail if cut == -1 else tail[:cut]
+
     def test_the_fork_recovery_path_is_the_one_that_works(self):
         """"Re-run all jobs" replays the same read-only token and fails identically.
 
@@ -340,17 +358,24 @@ class TestTheDocsDescribeWhatShips(unittest.TestCase):
         docs and the runtime warning — said to re-run. The path that actually
         works is `workflow_dispatch` from the base repository.
         """
-        sources = {
-            "github-actions.md": (REPO / "docs/keel/github-actions.md").read_text(
-                encoding="utf-8"
-            ),
-            "evidence.md": (REPO / "docs/keel/evidence.md").read_text(encoding="utf-8"),
-            "workflow": _evidence_run(),
-        }
-        for name, text in sources.items():
+        for name, path, start, end in self.FORK_RECOVERY:
             with self.subTest(source=name):
-                self.assertIn("workflow_dispatch", text, "the working path is not named")
-                self.assertIn("Re-run all jobs", text, "the path that fails is not ruled out")
+                para = self._fork_paragraph(path, start, end)
+                self.assertIn("workflow_dispatch", para, "the working path is not named")
+                self.assertIn("Re-run all jobs", para, "the path that fails is not ruled out")
+
+        # The runtime warning is one line; slice it rather than the whole step.
+        warning = next(
+            line for line in _evidence_run().splitlines() if "check-run unavailable" in line
+        )
+        self.assertIn("workflow_dispatch", warning)
+        self.assertIn("Re-run all jobs", warning)
+
+    def test_the_fork_recovery_says_the_dispatch_comes_back_red_once(self):
+        """A maintainer who is not told this reads the red as the fix failing."""
+        para = self._fork_paragraph(*self.FORK_RECOVERY[0][1:])
+        self.assertIn("unarmed", para)
+        self.assertIn("keel:evidence-waived", para, "no auditable way out is offered")
 
     def test_the_docs_state_the_fail_closed_rule(self):
         text = DOC.read_text(encoding="utf-8")
