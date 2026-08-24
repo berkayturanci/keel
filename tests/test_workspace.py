@@ -206,16 +206,28 @@ class TestGitActuallyIgnoresWhatKeelWrites(unittest.TestCase):
         r'"\.keel"\s*/\s*"([a-z_]+)"',
         r'KEEL_DIRNAME\s*/\s*"([a-z_]+)"',
         r'keel_dir\([^)]*\)\s*/\s*"([a-z_]+)"',
+        # `scratch` is built as `keel_dir(root) / SCRATCH_DIRNAME`, so a quoted
+        # literal is not the only spelling. Resolve `<NAME>_DIRNAME = "value"`
+        # constants too, or the next subtree written that way is invisible here
+        # exactly as `worktrees/` was invisible to the tuple.
+        r'keel_dir\([^)]*\)\s*/\s*([A-Z_]+DIRNAME)',
+        r'KEEL_DIRNAME\s*/\s*([A-Z_]+DIRNAME)',
     )
 
     def _subtrees_in_source(self) -> dict[str, set[str]]:
         src = Path(workspace.__file__).resolve().parent
         found: dict[str, set[str]] = {}
+        constants: dict[str, str] = {}
+        texts = {}
         for path in sorted(src.rglob("*.py")):
-            text = path.read_text(encoding="utf-8")
+            texts[path] = path.read_text(encoding="utf-8")
+            for match in re.finditer(r'^([A-Z_]+DIRNAME)\s*=\s*"([a-z_]+)"', texts[path], re.M):
+                constants[match.group(1)] = match.group(2)
+        for path, text in texts.items():
             for pattern in self._SUBTREE_PATTERNS:
                 for match in re.finditer(pattern, text):
-                    found.setdefault(match.group(1), set()).add(path.name)
+                    name = constants.get(match.group(1), match.group(1))
+                    found.setdefault(name, set()).add(path.name)
         return found
 
     def test_every_keel_subtree_in_the_source_is_classified(self):
@@ -241,6 +253,30 @@ class TestGitActuallyIgnoresWhatKeelWrites(unittest.TestCase):
             "a .keel subtree is written by the source but is neither ignored at "
             f"runtime nor declared committed: {unclassified}",
         )
+
+    def test_the_committed_set_cannot_be_widened_to_silence_the_sweep(self):
+        """Otherwise the cheapest way to fix a sweep failure is to disable it.
+
+        `COMMITTED_SUBTREES` is an escape hatch, and an escape hatch with no
+        minimality check is just an off switch: adding the failing name is less
+        work than classifying it. Every member must be a subtree that is really
+        committed — i.e. one git does *not* ignore.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._repo(tmp)
+            for name in sorted(self.COMMITTED_SUBTREES):
+                path = root / ".keel" / name / "f.yaml"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("x: 1\n", encoding="utf-8")
+            visible = set(self._untracked(root))
+            for name in sorted(self.COMMITTED_SUBTREES):
+                with self.subTest(subtree=name):
+                    self.assertIn(
+                        f".keel/{name}/f.yaml", visible,
+                        f"{name} is declared committed but keel ignores it — either "
+                        "it belongs in RUNTIME_IGNORE_ENTRIES, or the declaration is "
+                        "hiding an unclassified subtree",
+                    )
 
     def test_every_runtime_directory_keel_creates_is_ignored(self):
         """One live case per ignored entry, asked of git rather than the tuple."""
@@ -343,6 +379,44 @@ class TestGitActuallyIgnoresWhatKeelWrites(unittest.TestCase):
                     )
 
 
+class TestKeelsOwnGitignoreMatchesWhatItGenerates(unittest.TestCase):
+    """keel commits its own ``.keel/.gitignore``, so it is also a consumer.
+
+    The top-up is append-only and dedupes on the exact string, so the first time
+    an entry's *spelling* changed — ``worktrees/`` to ``/worktrees/`` — this repo
+    ended up with both, and gitignore's looser pattern won. The fix was inert in
+    the one install that mattered, and nothing failed.
+    """
+
+    COMMITTED = Path(__file__).resolve().parent.parent / ".keel" / ".gitignore"
+
+    def test_the_committed_file_is_the_generated_body(self):
+        self.assertEqual(
+            self.COMMITTED.read_text(encoding="utf-8"),
+            workspace.runtime_gitignore_body(),
+            "keel's own .keel/.gitignore has drifted from runtime_gitignore_body(); "
+            "a superseded entry left behind by the append-only top-up still applies",
+        )
+
+    def test_no_superseded_spelling_of_an_entry_survives(self):
+        """The general form: an entry and a re-spelling of it must not coexist.
+
+        Anchoring or un-anchoring an entry does not remove the old line, and the
+        looser of the two wins — so the union is always weaker than either.
+        """
+        lines = [
+            line.strip()
+            for line in self.COMMITTED.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.startswith("#")
+        ]
+        bare = [line.strip("/") for line in lines]
+        duplicates = sorted({name for name in bare if bare.count(name) > 1})
+        self.assertEqual(
+            [], duplicates,
+            f"two spellings of the same entry are both present: {duplicates}",
+        )
+
+
 class TestTheDocsPrintTheFileKeelActuallyWrites(unittest.TestCase):
     """`artifacts.md` reproduces the generated gitignore verbatim.
 
@@ -377,9 +451,18 @@ class TestTheDocsPrintTheFileKeelActuallyWrites(unittest.TestCase):
             if name.startswith("*"):
                 continue  # a glob, not a directory the table can name
             with self.subTest(entry=entry):
+                row = next(
+                    (line for line in text.splitlines() if line.startswith(f"| `.keel/{name}/")),
+                    None,
+                )
+                self.assertIsNotNone(
+                    row, f".keel/{name}/ is ignored but the artifacts table never mentions it"
+                )
+                # The status cell, not just the name: the table could otherwise
+                # say a runtime subtree is committed and still pass.
                 self.assertIn(
-                    f"`.keel/{name}/", text,
-                    f".keel/{name}/ is ignored but the artifacts table never mentions it",
+                    "| ignored |", row,
+                    f"the table lists .keel/{name}/ as something other than ignored",
                 )
 
 
