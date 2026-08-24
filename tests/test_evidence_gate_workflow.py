@@ -296,5 +296,97 @@ class TestTheDocsDescribeWhatShips(unittest.TestCase):
         )
 
 
+class TestTheGateRunsWhenAVerdictArrives(unittest.TestCase):
+    """The trigger and the job gate — both were unreachable-by-test before.
+
+    A published incomplete check is only honest if something ever completes it.
+    Nothing did: the workflow listened for pushes only, and the job's own `if:`
+    silently evaluated false on every other event. Neither had a test, which is
+    how both shipped.
+    """
+
+    def _on(self) -> dict:
+        workflow = _workflow()
+        # PyYAML resolves the bare key `on:` to the boolean True.
+        return workflow.get("on") or workflow.get(True)
+
+    def test_the_workflow_listens_for_the_event_a_verdict_actually_is(self):
+        """`keel post-comment` calls POST /issues/{n}/comments — an issue comment.
+
+        Subscribing to `pull_request_review*` instead reads tidier and fires
+        never: measured over twelve merged PRs, all verdict markers were issue
+        comments and none were reviews.
+        """
+        self.assertIn(
+            "issue_comment",
+            self._on(),
+            "no trigger fires when a verdict is posted, so the check stays incomplete",
+        )
+        types = (self._on()["issue_comment"] or {}).get("types", [])
+        self.assertIn("created", types)
+
+    def test_the_evidence_job_runs_on_that_event(self):
+        """`github.event.inputs` is null off `workflow_dispatch`, and GitHub
+
+        coerces both null and '' to 0 — so `github.event.inputs.pr != ''` is
+        false everywhere else and skipped the job silently. The condition has to
+        name the events.
+        """
+        condition = _workflow()["jobs"]["evidence"]["if"]
+        self.assertIn("issue_comment", condition, "the gate cannot run on a verdict")
+        self.assertIn("github.event.issue.pull_request", condition,
+                      "the gate would run for comments on plain issues too")
+        self.assertRegex(
+            condition,
+            r"github\.event_name == 'workflow_dispatch' && github\.event\.inputs\.pr",
+            "the dispatch clause is not guarded by its event name, so it reads as false",
+        )
+
+    def test_the_pr_number_resolves_on_a_comment_event(self):
+        env = next(
+            s for s in _workflow()["jobs"]["evidence"]["steps"]
+            if s.get("name") == "Verify posted ship evidence"
+        )["env"]
+        self.assertIn("github.event.issue.number", env["PR"])
+
+    def test_the_assessment_job_does_not_rerun_for_a_comment(self):
+        """A comment does not change the diff the assessment reads."""
+        self.assertIn("issue_comment", _workflow()["jobs"]["ship"]["if"])
+
+    def test_overlapping_runs_cannot_overwrite_each_other(self):
+        """Two runs on one head both GET-then-PATCH; the slower one would win.
+
+        Rare on pushes, routine once a comment can trigger a run.
+        """
+        workflow = _workflow()
+        self.assertIn("concurrency", workflow, "no concurrency group")
+        self.assertIn("cancel-in-progress", workflow["concurrency"])
+
+    def test_a_fork_is_detected_by_where_the_head_lives(self):
+        """`head.repo.fork` means "the head repo is itself a fork of something".
+
+        True for every same-repo PR in a downstream fork of this template, which
+        would hand those repos the fork fallback by accident.
+        """
+        env = next(
+            s for s in _workflow()["jobs"]["evidence"]["steps"]
+            if s.get("name") == "Verify posted ship evidence"
+        )["env"]
+        self.assertIn("full_name != github.repository", env["IS_FORK"])
+        self.assertNotRegex(env["IS_FORK"], r"head\.repo\.fork\s*}}")
+
+    def test_every_violation_fails_the_job_not_only_exit_one(self):
+        """`evidence-verify` can exit 3+; only 0 and 2 are non-violations."""
+        run = _evidence_run()
+        self.assertRegex(run, r'\[ "\$RC" -ne 0 \] && \[ "\$RC" -ne 2 \]')
+
+    def test_the_lookup_cannot_be_neutered_into_a_blind_post(self):
+        """`--jq 'empty'` would always miss, silently restoring the stacking."""
+        body = re.search(
+            r"publish_check\(\)\s*\{(.*?)\n\}", _evidence_run(), re.DOTALL
+        ).group(1)
+        self.assertIn(".check_runs[0].id // empty", body)
+
+
 if __name__ == "__main__":  # pragma: no cover - manual entry point
     unittest.main()

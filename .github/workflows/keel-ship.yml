@@ -10,15 +10,23 @@ name: keel-ship
 
 on:
   pull_request:
-  # A verdict is the event this gate is waiting for, so it has to re-evaluate when
-  # one arrives. Without these the published check stays incomplete forever: posting
-  # a verdict fires nothing, and the only self-service retrigger — a new commit —
-  # changes the head SHA and invalidates the very verdicts that would let it pass.
-  # Scoped to review events rather than `issue_comment`, which fires for every
-  # comment on every issue in the repository.
-  pull_request_review:
-    types: [submitted, edited]
-  pull_request_review_comment:
+  # A verdict is the event this gate waits for, so it must re-evaluate when one
+  # arrives. Without this the published check stays incomplete forever: the only
+  # other retrigger is a new commit, which changes the head SHA and invalidates
+  # the very verdicts that would let it pass.
+  #
+  # `issue_comment` specifically, because that is what keel posts:
+  # `keel post-comment` calls POST /issues/{n}/comments (github.py
+  # `post_issue_comment`). Measured over the last twelve merged pull requests —
+  # 33 review-verdict markers, every one an issue comment, zero formal reviews
+  # and zero inline review comments. Subscribing to `pull_request_review*`
+  # instead, which reads like the tidier choice, fires exactly never.
+  #
+  # It does fire for comments on plain issues too; the jobs below filter for a
+  # pull request. `issue_comment` also always runs the workflow from the default
+  # branch and checks out that branch rather than the PR head, so no
+  # contributor-authored code executes on this path.
+  issue_comment:
     types: [created, edited]
   workflow_dispatch:
     inputs:
@@ -29,6 +37,13 @@ on:
         description: "Optional evidence deferral id, kind, or all"
         required: false
 
+# One evaluation per pull request at a time. Two overlapping runs would both
+# GET-then-PATCH the same check-run, and the slower one would overwrite the
+# newer verdict — routine once a comment can trigger a run.
+concurrency:
+  group: keel-ship-${{ github.event.pull_request.number || github.event.issue.number || github.event.inputs.pr || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   issues: write
@@ -38,6 +53,9 @@ permissions:
 jobs:
   ship:
     name: keel ship (assessment)
+    # Not on a comment: this job assesses the diff, and a comment does not change
+    # it. Only the evidence gate needs to re-read the PR when a verdict lands.
+    if: ${{ github.event_name != 'issue_comment' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -97,7 +115,16 @@ jobs:
     # written by the `ship` job — running the two in parallel let this gate read the
     # PR before the comment existed and pass having checked nothing.
     needs: ship
-    if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event.inputs.pr != '') }}
+    # Written on the event name, not on `github.event.inputs.pr`. On any event
+    # without a `workflow_dispatch` payload that expression is `null`, and
+    # GitHub coerces both `null` and `''` to 0 — so `null != ''` is **false**
+    # and this job was silently skipped on every event but `pull_request`.
+    if: >-
+      ${{ !cancelled() && (
+        github.event_name == 'pull_request' ||
+        (github.event_name == 'issue_comment' && github.event.issue.pull_request) ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.pr != '')
+      ) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -110,10 +137,13 @@ jobs:
       - name: Verify posted ship evidence
         env:
           GH_TOKEN: ${{ github.token }}
-          PR: ${{ github.event.pull_request.number || github.event.inputs.pr }}
+          PR: ${{ github.event.pull_request.number || github.event.issue.number || github.event.inputs.pr }}
           DEFERRAL: ${{ github.event.inputs.deferral }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          IS_FORK: ${{ github.event.pull_request.head.repo.fork }}
+          # Not `head.repo.fork`, which means "the head repo is itself a fork of
+          # something" — true for every same-repo PR in a downstream fork of this
+          # template. What matters is whether the head lives somewhere else.
+          IS_FORK: ${{ github.event.pull_request.head.repo.full_name != '' && github.event.pull_request.head.repo.full_name != github.repository }}
           CHECK_NAME: keel evidence (required)
         run: |
           # --phase pre-merge: the closure comments are an s11 artifact, posted after
@@ -214,7 +244,7 @@ jobs:
             # the verification ran — 0 while the gate is waiting, because the
             # incomplete check is what blocks. A hard evidence violation still
             # fails the job: that is not a state anything is waiting on.
-            if [ "$RC" -eq 1 ]; then
+            if [ "$RC" -ne 0 ] && [ "$RC" -ne 2 ]; then
               exit 1
             fi
             exit 0

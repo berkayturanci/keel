@@ -108,9 +108,9 @@ Two decisions are worth stating outright, because both are easy to get wrong:
   yellow dot rather than a red X, which is the signal actually wanted. It
   completes to `success` or `failure` once the evidence resolves.
 * **Being unable to report is not a pass.** If the check-run cannot be
-  published, the step fails rather than exiting 0 — in every state, including
-  the passing one. A gate that could not deliver its verdict has not delivered
-  a pass.
+  published the step fails rather than exiting 0, in every state including the
+  passing one — with one deliberate exception, below, for pull requests from a
+  fork, where publishing is impossible rather than broken.
 
 Two consequences of how GitHub's check-runs API works, both load-bearing:
 
@@ -129,11 +129,14 @@ Two consequences of how GitHub's check-runs API works, both load-bearing:
   check. If you accept fork contributions, do not make this check *required*
   until you have that path in place.
 
-The workflow re-runs on `pull_request_review` and `pull_request_review_comment`
-as well as on pushes. Without those, posting a verdict fires no event, so the
-incomplete check on that SHA would never be revisited — and the only
-self-service retrigger, a new commit, changes the head SHA and invalidates the
-very verdicts that would have let it pass.
+The workflow re-runs on `issue_comment` as well as on pushes, because that is
+what a verdict *is*: `keel post-comment` calls `POST /issues/{n}/comments`.
+Without it, posting a verdict fires no event, so the incomplete check on that
+SHA would never be revisited — and the only self-service retrigger, a new
+commit, changes the head SHA and invalidates the very verdicts that would have
+let it pass. Subscribing to `pull_request_review` instead reads tidier and fires
+never: across the last twelve merged pull requests here, all 33 verdict markers
+were issue comments and none were reviews.
 
 ---
 
