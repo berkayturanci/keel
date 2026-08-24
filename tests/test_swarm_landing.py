@@ -1639,7 +1639,11 @@ class TestSwarmLandCLI(unittest.TestCase):
                         "714",
                     ]
                 )
-            self.assertEqual(code, 0)
+            # 1, not 0: the gate is on and the fixture is not a git repo, so the
+            # wave is predicted held — and since #931 a preview that says a wave
+            # would be held is not a pass. Under the old contract this asserted 0
+            # while the wave was held, so it could not tell the two apart.
+            self.assertEqual(code, 1)
             self.assertIn("keel swarm land — swarm-land-cli", buf_text.getvalue())
 
             # JSON mode with explicit swarm-id and flags
@@ -1658,11 +1662,11 @@ class TestSwarmLandCLI(unittest.TestCase):
                         "--json",
                     ]
                 )
-            self.assertEqual(code_json, 0)
             data = json.loads(buf_json.getvalue())
-            # the gate is on, so a dry run in a repo with no cluster PRs
-            # predicts holds — the preview doing its job, not a failure
+            # The preview doing its job — and the exit code now says so, matching
+            # what `--live` would report for the same wave (#931).
             self.assertIn(data["status"], ("success", "partial_failure"))
+            self.assertEqual(code_json, 0 if data["status"] == "success" else 1)
 
             # Empty issues branch & state dir without json files
             state_dir = Path(tmpdir) / ".keel" / "state" / "swarm"

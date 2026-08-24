@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import re
 import subprocess  # nosec B404
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -20,11 +19,16 @@ from .model import DEFAULT_GATE_TIMEOUT_S
 if TYPE_CHECKING:  # pragma: no cover
     from .gates import GateSpec
 
-GateRunner = Callable[
-    ["GateSpec"],
-    "tuple[bool, list[Finding]] | tuple[bool, list[Finding], bool] "
-    "| tuple[bool, list[Finding], bool, bool]",
-]
+# Re-exported, not re-declared. #876 asked for the two aliases to agree and #896
+# achieved that by copying the definition here byte for byte — which reverting
+# left the whole suite green, because nothing compared them (#931). One
+# definition cannot drift from itself.
+#
+# `gates` is the lower-level module: it owns `GateSpec`, and it imports nothing
+# from here, so this edge is one-way and creates no cycle.
+from .gates import GateRunner  # noqa: E402  (after TYPE_CHECKING by design)
+
+__all__ = ["GateRunner", "CommandResult", "run_argv", "command_gate_runner"]
 
 _ON_FAIL_SEVERITY = {"block": "major", "suggest": "minor", "warn": "nit"}
 

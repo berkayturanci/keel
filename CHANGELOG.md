@@ -11,6 +11,13 @@ All notable changes to keel are documented here. The format follows
   - Used native tuple overload in `config.py` `_validate_delegate_profiles` (`startswith(BLOCKED_ENV_PREFIXES)`) instead of generator allocation.
 
 ### Fixed
+- **Four Fixes Shipped With Nothing To Notice Their Removal** (#931):
+  - From a mutation audit of the 2026-08-19..24 batch: each landed fix was reverted in a scratch copy and the relevant tests re-run. These four survived, which means they would leave silently — not hypothetical, since #934 documents exactly that happening to #811.
+  - **`swarm_runtime.default_runner` stdin** (#879 → #899): pinned directly, and as a rule over the whole package — every place keel starts a subprocess must pass an explicit `stdin`, in either form it is written (`subprocess.run(...)` or the injected `_run` seam). Matching only the first form covers exactly one site, which the vacuity guard caught on the first attempt.
+  - **`GateRunner` alias** (#876 → #896): the duplication is removed rather than pinned. `runner` now re-exports the definition `gates` owns, so there is nothing left to drift; a second assertion reads the source and refuses a re-declaration outright.
+  - **Copy-button aria-label** (#916 → #917): pinned by the mechanism that makes it work — the label is restored from a captured original, and the pending timer is cleared *before* the next is scheduled. These assertions are **source-level, not behavioural**: there is no DOM harness and no JS runtime among this project's dependencies, so the docstring says so rather than letting a green tick imply otherwise. #917's body claimed "100% test coverage" for a `.js` file the Python coverage run does not measure at all.
+  - **`swarm-land` dry-run exit contract** (#871 → #891): decided rather than documented around. The dry-run arm hardcodes `failed_clusters=()`, so a held cluster is the only route to `partial_failure` there — and it returned 0 while `--live` returned 1 for the same wave. Both modes now share one rule: 0 only when the wave would land clean. A preview exists so a caller can gate on it, and "this wave would be held" is not a pass.
+  - The CHANGELOG line that claimed non-zero for `swarm-land` is corrected in place rather than left beside the fix, and a test asserts the old wording is gone.
 - **Evidence Gate Reported Green While Waiting** (#928):
   - `keel-ship.yml` now publishes the gate's verdict as a `keel evidence (required)` check-run against the PR head, instead of leaning on the job's exit code — a job that exits 0 concludes green, which is how a check named for the evidence chain reported success with zero verdicts posted.
   - The waiting state is published as an **incomplete** run, not as a conclusion. #829 specified `neutral` on the belief that it still blocks; GitHub's branch protection accepts `successful`, `skipped` *and* `neutral` as satisfying a required check, so neutral would have reproduced the same defect. An incomplete run blocks the merge and still renders yellow rather than red.
@@ -140,7 +147,7 @@ All notable changes to keel are documented here. The format follows
   - Used `-F` raw-field parameter in `gh api` calls in `github.py` when posting and editing issue comments.
   - Prevented unexpected file read expansion when comment bodies start with `@` (such as reviewer mentions).
 - **Swarm CLI Partial Failure Exit Code** (#871):
-  - Returned non-zero exit code (1) on `partial_failure` status in `swarm-run` and `swarm-land` CLI commands.
+  - Returned non-zero exit code (1) on `partial_failure` status in the `swarm-run` CLI command, and in `swarm-land --live`. *(Corrected in #931: as shipped this did not hold for `swarm-land` without `--live`, where the only route to `partial_failure` is a held cluster and the command returned 0. The dry run now shares the live contract.)*
   - Ensured automation pipelines detect partial worker failures correctly.
 - **Atomic Checkpoint and Activity Writing** (#869):
   - Used atomic temporary file replacement (`tempfile.mkstemp` + `os.replace`) when saving checkpoint and activity state in `checkpoint.py` and `activity.py`.

@@ -4789,13 +4789,19 @@ def _cmd_swarm_land(args: argparse.Namespace) -> int:
     else:
         print(swarm.render_swarm_landing_result(result))
 
-    if args.live:
-        return 0 if result.status == "success" and not result.held_clusters else 1
-
-    if result.failed_clusters or (result.status == "failed" and not result.held_clusters):
-        return 1
-
-    return 0 if (result.status == "success" or result.held_clusters) else 1
+    # One exit contract for both modes: 0 only when the wave would land clean.
+    #
+    # The dry run used to exit 0 whenever anything was held, so
+    # `partial_failure` — the only status a preview can reach, since the dry-run
+    # arm hardcodes `failed_clusters=()` — always returned success. The CHANGELOG
+    # claimed non-zero for `swarm-land` as well as `swarm-run`; measured, it was
+    # true of `--live` only (#931).
+    #
+    # Resolved toward the preview being useful rather than the claim being
+    # softened. A preview exists so a caller can gate on it, and "this wave would
+    # be held" is not a pass — reporting one is the same fail-open shape as a gate
+    # that green-lights a check it never performed (#933).
+    return 0 if result.status == "success" and not result.held_clusters else 1
 
 
 def _cmd_canary(args: argparse.Namespace) -> int:
