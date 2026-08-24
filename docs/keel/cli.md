@@ -383,7 +383,11 @@ keel ship .keel/project.yaml --root . --live --append-ledger \
 "look up this PR's CI status" and therefore requires a GitHub transport that supports
 check runs. Dry-run output includes the same would-be record but never writes the file.
 `--capture-status` is required for live appends so offline capture verification never has
-to infer status from closure comments.
+to infer status from closure comments. A run that never reached capture says so with
+`--capture-status not-run`: the flag stays required, but the record carries no capture
+marker and claims no outcome. Use it to re-record gates for a **rebased** PR — gates are
+pinned to the head SHA, so a new head needs its own record, and a second record carrying a
+marker would be refused (one capture marker per PR).
 
 `--host-agent` and `--transport` (`gh`|`mcp`) record the s0 preflight **run context** on
 the `ship_run` record so it becomes durable PR evidence. `--transport` defaults to the

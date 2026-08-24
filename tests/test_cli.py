@@ -14,7 +14,7 @@ from argparse import Namespace
 from pathlib import Path
 from unittest.mock import patch
 
-from keel import cli, install, ledger, model, runtime, ship, stepverifier
+from keel import capture, cli, install, ledger, model, runtime, ship, stepverifier
 from keel.runner import CommandResult
 
 # Module-level scratch directory backing the path-returning helpers below.
@@ -1362,6 +1362,75 @@ class TestShip(unittest.TestCase):
                 "--capture-status",
                 "skipped:not-allowed",
             ])
+
+    def test_rebased_pr_can_record_gates_for_its_new_head(self):
+        # The #945 regression. Gates are keyed on (pr, head_sha) so a rebase needs a
+        # second record, but the capture-marker guard is keyed on the PR alone and
+        # refused every one — leaving a rebased PR permanently unmergeable. Ship the
+        # same PR twice at two heads and assert the second head is authorized.
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger("'true'")
+            first, second = "a" * 40, "b" * 40
+            rc_first, _, _ = run(["ship", config, "--root", d, "--live", "--append-ledger",
+                                  "--run-id", "RUN-945-A",
+                                  "--pull-request", "940", "--head-sha", first,
+                                  "--capture-status", "deferred",
+                                  "--approve-scope", "filesystem,git,github",
+                                  "--operator", "tester"])
+            rc_second, out_second, _ = run(["ship", config, "--root", d, "--live",
+                                            "--append-ledger", "--json",
+                                            "--run-id", "RUN-945-B",
+                                            "--pull-request", "940", "--head-sha", second,
+                                            "--capture-status", cli.CAPTURE_STATUS_NOT_RUN,
+                                            "--approve-scope", "filesystem,git,github",
+                                            "--operator", "tester"])
+            appended = json.loads(out_second)["result"]["run_ledger"]
+            records = ledger.read_records(appended["path"])
+
+        self.assertEqual(rc_first, 0)
+        self.assertEqual(rc_second, 0)
+        self.assertTrue(appended["appended"])
+        self.assertNotIn("skipped", appended)
+        # The point of the append: keel merge can now authorize the rebased head.
+        self.assertTrue(ledger.gates_pass_for_head(records, 940, second)[0])
+
+    def test_capture_status_not_run_records_no_capture_claim(self):
+        # The record must assert nothing about capture: no marker to clash with the
+        # PR's real one, and no status for a capture reader to mistake for an outcome.
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger("'true'")
+            rc, out, _ = run(["ship", config, "--root", d, "--live", "--append-ledger",
+                              "--json", "--pull-request", "940", "--head-sha", "c" * 40,
+                              "--capture-status", cli.CAPTURE_STATUS_NOT_RUN,
+                              "--approve-scope", "filesystem,git,github",
+                              "--operator", "tester"])
+            records = ledger.read_records(
+                json.loads(out)["result"]["run_ledger"]["path"]
+            )
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(records), 1)
+        self.assertIsNone(records[0]["capture"]["marker"])
+        self.assertIsNone(records[0]["capture"]["status"])
+        # Only the capture-status branch of the merged-run check is narrowed. This
+        # record still reads as merged through its assessment, which recommends a
+        # merge because the gates passed — that branch is untouched here.
+        stripped = {**records[0], "assessment": None}
+        self.assertFalse(ledger._is_merged_ship_run(stripped))
+        self.assertTrue(ledger._is_merged_ship_run(records[0]))
+
+    def test_capture_status_not_run_is_not_a_capture_outcome(self):
+        # It means "no capture happened", so it must never round-trip as a marker
+        # asserting one. Keeping it out of capture.STATUSES is what guarantees that.
+        self.assertNotIn(cli.CAPTURE_STATUS_NOT_RUN, capture.STATUSES)
+        with self.assertRaises(capture.CaptureError):
+            capture.normalize_status(cli.CAPTURE_STATUS_NOT_RUN)
+        with self.assertRaises(capture.CaptureError):
+            capture.parse_marker(
+                f"compound-learning: pr=940 status={cli.CAPTURE_STATUS_NOT_RUN}"
+            )
 
     def test_ledger_reads_missing_file_as_empty(self):
         import tempfile
