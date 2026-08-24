@@ -243,6 +243,20 @@ class TestGitActuallyIgnoresWhatKeelWrites(unittest.TestCase):
         ignored = {entry.strip("/") for entry in workspace.RUNTIME_IGNORE_ENTRIES}
         found = self._subtrees_in_source()
         self.assertTrue(found, "the scan found nothing; the patterns have gone stale")
+        # And it must still reach the subtrees we already know it writes. Without
+        # this the patterns can rot back to missing one — reverting the constant
+        # resolution drops `scratch` and nothing else notices, which is the exact
+        # blind spot this sweep exists to close.
+        directories = {
+            entry.strip("/")
+            for entry in workspace.RUNTIME_IGNORE_ENTRIES
+            if not entry.startswith("*")
+        }
+        self.assertLessEqual(
+            directories, set(found),
+            "the patterns no longer reach a subtree keel is known to write: "
+            f"{sorted(directories - set(found))}",
+        )
         unclassified = {
             name: sorted(files)
             for name, files in found.items()
