@@ -10,6 +10,16 @@ name: keel-ship
 
 on:
   pull_request:
+  # A verdict is the event this gate is waiting for, so it has to re-evaluate when
+  # one arrives. Without these the published check stays incomplete forever: posting
+  # a verdict fires nothing, and the only self-service retrigger — a new commit —
+  # changes the head SHA and invalidates the very verdicts that would let it pass.
+  # Scoped to review events rather than `issue_comment`, which fires for every
+  # comment on every issue in the repository.
+  pull_request_review:
+    types: [submitted, edited]
+  pull_request_review_comment:
+    types: [created, edited]
   workflow_dispatch:
     inputs:
       pr:
@@ -103,6 +113,7 @@ jobs:
           PR: ${{ github.event.pull_request.number || github.event.inputs.pr }}
           DEFERRAL: ${{ github.event.inputs.deferral }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          IS_FORK: ${{ github.event.pull_request.head.repo.fork }}
           CHECK_NAME: keel evidence (required)
         run: |
           # --phase pre-merge: the closure comments are an s11 artifact, posted after
@@ -128,54 +139,60 @@ jobs:
           RC=$?
           set -e
 
-          # Publish the verdict as its own check-run instead of leaning on this job's
-          # exit code. A job that exits 0 concludes green, which is how a gate named
-          # for the evidence chain reported success with zero verdicts posted (#928).
-          #
-          # The waiting state is published as an *incomplete* run, not as a
-          # conclusion. #829 specified `neutral` on the belief that it still blocks;
-          # GitHub's branch protection documentation says the opposite -- "Required
-          # status checks must have a `successful`, `skipped`, or `neutral` status
-          # before collaborators can make changes to a protected branch" -- so
-          # neutral would have satisfied the required check while no evidence
-          # existed, reproducing #928 by another route. An incomplete run blocks the
-          # merge and renders as a yellow dot, which is the not-red signal #829 was
-          # actually after. It completes once the evidence resolves.
+          # Upsert, never blind POST. The check-runs API has no upsert on
+          # (name, head_sha): every run would stack another check under the gating
+          # name, at least one of them permanently incomplete. Branch protection
+          # matches by name, so which of several same-named checks it reads is
+          # exactly the ambiguity the job rename above exists to avoid — reproducing
+          # it against ourselves would be no better.
           publish_check() {
             local status="$1" conclusion="$2" title="$3" summary="$4"
-            local args=(-X POST "repos/${GITHUB_REPOSITORY}/check-runs"
-                        -f "name=${CHECK_NAME}"
-                        -f "head_sha=${HEAD_SHA}"
-                        -f "status=${status}"
+            local body=(-f "status=${status}"
                         -f "output[title]=${title}"
                         -f "output[summary]=${summary}")
             if [ -n "$conclusion" ]; then
-              args+=(-f "conclusion=${conclusion}")
+              body+=(-f "conclusion=${conclusion}")
             fi
-            gh api "${args[@]}" >/dev/null
+            local existing
+            # --method GET is required: `-f` alone switches gh to POST, which
+            # 404s on this endpoint and would make every upsert look like "no
+            # existing run" — quietly restoring the stacking this replaces.
+            existing=$(gh api --method GET \
+              "repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/check-runs" \
+              -f "check_name=${CHECK_NAME}" \
+              --jq '.check_runs[0].id // empty' 2>/dev/null) || existing=""
+            if [ -n "$existing" ]; then
+              gh api -X PATCH "repos/${GITHUB_REPOSITORY}/check-runs/${existing}" \
+                "${body[@]}" >/dev/null
+            else
+              gh api -X POST "repos/${GITHUB_REPOSITORY}/check-runs" \
+                -f "name=${CHECK_NAME}" -f "head_sha=${HEAD_SHA}" "${body[@]}" >/dev/null
+            fi
           }
 
-          # Fail-closed, and applied to every arm rather than only to the waiting
-          # one: a fork PR's token is read-only whatever `permissions:` says, so the
-          # API call can fail in any state. A gate that could not deliver its verdict
-          # has not delivered a pass, and that is as true of the passing arm as of
-          # the waiting one.
-          publish_or_fail() {
-            if publish_check "$@"; then
-              return 0
-            fi
-            echo "::error title=Could not publish the evidence check-run::Reporting the verdict to GitHub failed, so this step fails rather than leaving the gate unreported. On a pull request from a fork the token is read-only and cannot create check runs."
-            exit 1
-          }
-
+          # One verdict, three shapes. Kept as assignments rather than three copies of
+          # the publish call so the reporting path is single and the arms differ only
+          # in what they report.
+          #
+          # FALLBACK_EXIT is what this job exits with when the check-run could not be
+          # published at all. On a pull request from a fork the token is read-only
+          # whatever `permissions:` declares, so the gating check cannot be created —
+          # and exiting 1 unconditionally there would leave every fork contribution
+          # red with no route forward, including one whose evidence passed. The job's
+          # own exit code becomes the fallback channel instead: green when the
+          # evidence verified, red otherwise. Never green-while-unverified, which is
+          # the defect this whole change is about (#928).
           case "$RC" in
             0)
+              STATUS=completed; CONCLUSION=success; FALLBACK_EXIT=0
+              TITLE="Evidence verified"
+              SUMMARY="All required evidence for the pre-merge phase is present and pinned to \`$HEAD_SHA\`."
               echo "Evidence verification passed."
-              publish_or_fail completed success "Evidence verified" \
-                "All required evidence for the pre-merge phase is present and pinned to \`$HEAD_SHA\`."
-              exit 0
               ;;
             2)
+              STATUS=in_progress; CONCLUSION=""; FALLBACK_EXIT=1
+              TITLE="Waiting for review evidence"
+              SUMMARY="Pre-verdict state: required reviewer and jury verdicts are not posted yet. This check stays incomplete, which blocks a merge, until the evidence resolves."
               echo "::notice title=Waiting for review evidence::Evidence gate is in pre-verdict state (waiting for review evidence). Merge remains blocked until all required verdicts pass."
               {
                 echo "### ⏳ keel evidence (waiting)"
@@ -183,15 +200,29 @@ jobs:
                 echo "Evidence gate is in pre-verdict state — waiting for required reviewer and jury verdicts."
                 echo "_Merge remains blocked until required evidence is posted and verified._"
               } >> "$GITHUB_STEP_SUMMARY"
-              publish_or_fail in_progress "" "Waiting for review evidence" \
-                "Pre-verdict state: required reviewer and jury verdicts are not posted yet. This check stays incomplete, which blocks a merge, until the evidence resolves."
-              exit 0
               ;;
             *)
+              STATUS=completed; CONCLUSION=failure; FALLBACK_EXIT=1
+              TITLE="Evidence verification failed"
+              SUMMARY="Explicit evidence violation: a closure comment that does not match the ledger record, a missing attribution label, or an unarmed gate. Run \`keel evidence-verify\` locally for the itemised report."
               echo "::error title=Evidence verification failed::Explicit evidence violation or finding detected."
-              echo "Evidence verification failed (invalid evidence or findings detected)."
-              publish_or_fail completed failure "Evidence verification failed" \
-                "Explicit evidence violation: a closure comment that does not match the ledger record, a missing attribution label, or an unarmed gate. Run \`keel evidence-verify\` locally for the itemised report."
-              exit 1
               ;;
           esac
+
+          if publish_check "$STATUS" "$CONCLUSION" "$TITLE" "$SUMMARY"; then
+            # The named check carries the verdict, so this job reports only that
+            # the verification ran — 0 while the gate is waiting, because the
+            # incomplete check is what blocks. A hard evidence violation still
+            # fails the job: that is not a state anything is waiting on.
+            if [ "$RC" -eq 1 ]; then
+              exit 1
+            fi
+            exit 0
+          fi
+
+          if [ "$IS_FORK" = "true" ]; then
+            echo "::warning title=Evidence check-run unavailable::A pull request from a fork gets a read-only token, so \"$CHECK_NAME\" cannot be published. This job's exit code carries the verdict instead; a maintainer re-running this workflow from the base repository will publish the check."
+            exit "$FALLBACK_EXIT"
+          fi
+          echo "::error title=Could not publish the evidence check-run::Reporting the verdict to GitHub failed, so this step fails rather than leaving the gate unreported."
+          exit 1

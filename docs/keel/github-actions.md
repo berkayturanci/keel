@@ -114,12 +114,28 @@ Add `.github/workflows/keel-ship.yml` with `uses: berkayturanci/keel-action@v1` 
 
 ## Branch protection
 
-To make evidence mandatory, add the workflow job **`keel evidence (required)`** to the
-protected branch's required status checks. The check is intentionally fail-closed: a fresh
-PR can be red until the ship adapter posts the public evidence artifacts. Rerun the workflow
-after the reviewer, jury, and closure comments are present. If an operator intentionally
-defers evidence, record that deferral in the PR/issue conversation and rerun the command with
-the matching `--deferral <id|kind|all>` flag in the project workflow.
+To make evidence mandatory, add **`keel evidence (required)`** to the protected branch's
+required status checks. That is a check-run the workflow publishes, not a job — the job
+that runs the verification is called `keel evidence (verify)`, because a job's own check is
+driven by its exit code and can only ever report that the job ran. Two same-named checks on
+one commit would be indistinguishable to branch protection, which matches by name.
+
+The check is fail-closed. While required evidence is missing it stays **incomplete** (a
+yellow dot), which blocks a merge without painting a fresh PR red; a `neutral` conclusion
+would *not* block, since branch protection accepts `successful`, `skipped` and `neutral`
+alike. It completes to green or red once the evidence resolves. Posting a reviewer or jury
+verdict re-runs the workflow on its own, so the check updates in place rather than needing a
+manual rerun.
+
+If an operator intentionally defers evidence, record that deferral in the PR/issue
+conversation and rerun the command with the matching `--deferral <id|kind|all>` flag in the
+project workflow.
+
+**Fork pull requests.** A fork's token is read-only whatever `permissions:` declares, so the
+workflow cannot publish this check for one — the verdict rides on the `keel evidence (verify)`
+job's exit code instead, and a maintainer re-running the workflow from the base repository
+publishes the check. If you accept fork contributions, have that path in place before you make
+this check required, or fork PRs will be unmergeable.
 
 ## Boundary
 

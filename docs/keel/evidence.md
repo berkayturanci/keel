@@ -108,10 +108,32 @@ Two decisions are worth stating outright, because both are easy to get wrong:
   yellow dot rather than a red X, which is the signal actually wanted. It
   completes to `success` or `failure` once the evidence resolves.
 * **Being unable to report is not a pass.** If the check-run cannot be
-  published — on a pull request from a fork the token is read-only whatever the
-  workflow's `permissions:` block says — the step fails rather than exiting 0,
-  in every state including the passing one. A gate that could not deliver its
-  verdict has not delivered a pass.
+  published, the step fails rather than exiting 0 — in every state, including
+  the passing one. A gate that could not deliver its verdict has not delivered
+  a pass.
+
+Two consequences of how GitHub's check-runs API works, both load-bearing:
+
+* **The check is upserted, not re-created.** `POST /check-runs` has no upsert on
+  (name, head SHA), so publishing blindly would leave one check per run stacked
+  under the gating name — at least one of them permanently incomplete. Branch
+  protection matches by name, which is the same ambiguity the separate job name
+  avoids. The workflow looks the check up first (`--method GET`; `-f` alone
+  switches `gh` to POST, which 404s) and `PATCH`es it when it exists.
+* **A fork PR cannot publish at all.** Its token is read-only whatever
+  `permissions:` declares. Failing the step unconditionally there would leave
+  every fork contribution red with no route forward, including one whose
+  evidence verified — so on a fork the job's own exit code carries the verdict
+  instead: green only for a real pass, red while waiting or on a violation. A
+  maintainer re-running the workflow from the base repository publishes the
+  check. If you accept fork contributions, do not make this check *required*
+  until you have that path in place.
+
+The workflow re-runs on `pull_request_review` and `pull_request_review_comment`
+as well as on pushes. Without those, posting a verdict fires no event, so the
+incomplete check on that SHA would never be revisited — and the only
+self-service retrigger, a new commit, changes the head SHA and invalidates the
+very verdicts that would have let it pass.
 
 ---
 
