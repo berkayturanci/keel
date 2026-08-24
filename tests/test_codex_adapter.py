@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import stat
 import subprocess
 import sys
 import tomllib
@@ -35,8 +34,18 @@ class TestCodexAdapter(unittest.TestCase):
             for hook in block["hooks"]
         ]
         self.assertIn("./.codex/hooks/deny-dangerous-shell.sh", commands)
-        mode = HOOK.stat().st_mode
-        self.assertTrue(mode & stat.S_IXUSR)
+        # Asked of git, not of the working tree. Windows does not model the
+        # executable bit, so `stat().st_mode & S_IXUSR` was False there and the
+        # assertion failed for a reason that has nothing to do with the hook
+        # (#953). What actually matters is the mode git records and clones —
+        # `100755` — which is the same answer on every platform.
+        entry = subprocess.run(
+            ["git", "ls-files", "-s", "--", ".codex/hooks/deny-dangerous-shell.sh"],
+            cwd=HOOK.parents[2], capture_output=True, text=True, check=True,
+        ).stdout.split()
+
+        self.assertTrue(entry, "the hook is not tracked, so no mode is recorded")
+        self.assertEqual("100755", entry[0], "the hook is not executable in the index")
 
     def test_readme_maps_every_packaged_adapter_to_a_skill(self):
         readme = (CODEX_DIR / "README.md").read_text(encoding="utf-8")

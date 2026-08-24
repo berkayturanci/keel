@@ -30,6 +30,14 @@ jobs:
       - name: Lint (ruff)
         run: ruff check .
       - name: Test + coverage gate
+        # bash on every runner. The Windows default is PowerShell, whose script
+        # exit status is that of its *last* statement — so a failing
+        # `coverage run` was masked by a succeeding `coverage report` and the job
+        # reported success with six failures and one error. It had been doing
+        # that long enough for seven real failures to accumulate behind it
+        # (#953). bash here runs with `-e`, so the first command's failure is
+        # the step's failure, the same as on Linux and macOS.
+        shell: bash
         run: |
           coverage run -m unittest discover -s tests
           coverage report
@@ -43,6 +51,7 @@ jobs:
         # not available on the Windows runner; the unit suite already exercises the
         # gate-running core on every OS.
         if: runner.os != 'Windows'
+        shell: bash
         run: |
           python -m keel plan .keel/project.yaml --root .
           python -m keel run-gates .keel/project.yaml --root .
@@ -118,6 +127,7 @@ jobs:
         # Install the local core first so keel-visual resolves keel-workflow from the
         # repo, then keel-visual itself with --no-deps (no PyPI fetch). coverage/ruff
         # come from the core dev extra.
+        shell: bash
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
@@ -127,6 +137,10 @@ jobs:
       - name: Test + coverage gate (keel-visual)
         # keel-visual carries its own coverage config (source = keel_visual,
         # fail_under = 100) in keel-visual/pyproject.toml.
+        # bash for the same reason as the core gate above: on PowerShell only the
+        # last command's exit code reaches the step, so a failing `coverage run`
+        # would be masked by a succeeding `coverage report` (#953).
+        shell: bash
         run: |
           coverage run --rcfile=keel-visual/pyproject.toml -m unittest discover -s keel-visual/tests
           coverage report --rcfile=keel-visual/pyproject.toml

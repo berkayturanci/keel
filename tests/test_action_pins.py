@@ -92,7 +92,11 @@ def _files():
 
 
 def _label(path: Path) -> str:
-    return str(path.relative_to(REPO))
+    # POSIX separators: this label is reported to a human and compared against
+    # workflow paths, which are written with `/` on every platform. `str()` of a
+    # Windows relative path yields `\`, so the same file was labelled two ways
+    # depending on the runner (#953).
+    return path.relative_to(REPO).as_posix()
 
 
 def _pins():

@@ -38,6 +38,25 @@ def run(argv):
     return rc, out.getvalue(), err.getvalue()
 
 
+#: Variables a process still needs after the environment is cleared. On Linux and
+#: macOS an empty environment is survivable; on Windows, losing `SYSTEMROOT` and
+#: `PATH` breaks subprocess creation and temp-file resolution, so a `--live` test
+#: failed there for a reason unrelated to consent (#953).
+_PLATFORM_ESSENTIALS = ("PATH", "SYSTEMROOT", "COMSPEC", "TEMP", "TMP", "PATHEXT")
+
+
+def _isolated_env(**overrides: str) -> dict[str, str]:
+    """Every ``KEEL_*`` removed and the given ones set, platform essentials kept.
+
+    `clear=True` with only the overrides is what the surrounding tests do, and it
+    is right about the intent — no ambient `KEEL_*` may leak in. It is wrong
+    about the blast radius on Windows.
+    """
+    env = {name: os.environ[name] for name in _PLATFORM_ESSENTIALS if name in os.environ}
+    env.update(overrides)
+    return env
+
+
 def _write_raw(text):
     path = Path(_TMP.name) / f"cfg-{next(_TMP_COUNTER)}.yaml"
     path.write_text(text)
@@ -338,7 +357,9 @@ class TestCliPlanConsent(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as d, patch.dict(
             os.environ,
-            {"KEEL_APPROVE_SCOPE": "filesystem,git,github", "KEEL_OPERATOR": "automation:cron"},
+            _isolated_env(
+                KEEL_APPROVE_SCOPE="filesystem,git,github", KEEL_OPERATOR="automation:cron"
+            ),
             clear=True,
         ):
             rc, out, err = run([

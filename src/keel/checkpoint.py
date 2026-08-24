@@ -82,7 +82,7 @@ def resolve_path(root: str | Path, config: cfg.ProjectConfig) -> Path:
     """Resolve the checkpoint path under ``root`` and reject escapes."""
     raw, _ = configured_checkpoint_path(config)
     path = Path(raw)
-    if path.is_absolute():
+    if workspace.is_root_anchored(raw):
         raise CheckpointError("checkpoint path must be relative to the project root")
     root_path = Path(root).resolve()
     resolved = (root_path / path).resolve()

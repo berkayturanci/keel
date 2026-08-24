@@ -34,7 +34,7 @@ import contextlib
 import os
 import shutil
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 KEEL_DIRNAME = ".keel"
 GITIGNORE_NAME = ".gitignore"
@@ -70,6 +70,23 @@ _GITIGNORE_HEADER = (
     "# locks, agent scratch); keeping them ignored stops keel from polluting",
     "# your checkout. Delete an entry only if you deliberately track that path.",
 )
+
+
+def is_root_anchored(raw: str) -> bool:
+    """Whether a configured path escapes ``root`` by being anchored, on any platform.
+
+    ``Path("/tmp/x").is_absolute()`` is **False** on Windows — there is no drive
+    letter — so a leading slash slipped past every "must be relative to the
+    project root" check there. The path was still caught, one step later, by the
+    escape check, but with a different message and for a different reason: the
+    config was wrong in the same way on every platform, and only one platform
+    said so (#953).
+
+    A keel config is the same text wherever it is read, so the question is asked
+    of both flavours: ``/tmp/x``, ``C:\\tmp\\x`` and ``\\\\server\\share`` are all
+    anchored no matter which runner reads them.
+    """
+    return PurePosixPath(raw).is_absolute() or PureWindowsPath(raw).is_absolute()
 
 
 def keel_dir(root: str | Path = ".") -> Path:

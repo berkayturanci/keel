@@ -562,7 +562,10 @@ class TestRunGates(unittest.TestCase):
         p = _write_raw("extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: x\n"
                        "gates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
                        "extensions:\n  tester: [ghost.md]\nextensions_dir: .keel/extensions\n")
-        rc, out, err = run(["run-gates", p, "--root", "/tmp"])
+        # A real temp directory, not "/tmp": Windows has no such path, so the
+        # command failed there for a reason unrelated to extension loading (#953).
+        with tempfile.TemporaryDirectory() as root:
+            rc, out, err = run(["run-gates", p, "--root", root])
         self.assertEqual(rc, 0)
         self.assertIn("extension not loaded", err)
 

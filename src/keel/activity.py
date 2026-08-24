@@ -77,7 +77,7 @@ def resolve_dir(root: str | Path, config: cfg.ProjectConfig) -> Path:
     """Resolve the activity directory under ``root`` and reject escapes."""
     raw, _ = configured_activity_dir(config)
     path = Path(raw)
-    if path.is_absolute():
+    if workspace.is_root_anchored(raw):
         raise ActivityError("activity dir must be relative to the project root")
     root_path = Path(root).resolve()
     resolved = (root_path / path).resolve()

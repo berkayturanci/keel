@@ -2,6 +2,7 @@
 
 import tempfile
 import unittest
+import unittest.mock  # submodule, not implied by `import unittest`
 from pathlib import Path
 
 from keel import activity

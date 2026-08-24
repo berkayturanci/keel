@@ -36,8 +36,12 @@ class TestStandaloneInstaller(unittest.TestCase):
             "KEEL_INSTALL_DIR": "/tmp/custom-keel",
             "KEEL_BIN_DIR": "/tmp/custom-bin",
         }
+        # Invoked through bash rather than executed directly: Windows cannot run
+        # a `.sh` as a program (`WinError 193`), and the runner ships Git Bash.
+        # Skipping instead would leave the installer untested on the one platform
+        # where its shebang means nothing (#953).
         proc = subprocess.run(
-            [str(script_path)],
+            ["bash", str(script_path)],
             capture_output=True,
             text=True,
             env=env,

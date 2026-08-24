@@ -69,7 +69,7 @@ def resolve_path(root: str | Path, config: cfg.ProjectConfig) -> Path:
     """Resolve the configured ledger path under ``root`` and reject escapes."""
     raw, _ = configured_ledger_path(config)
     path = Path(raw)
-    if path.is_absolute():
+    if workspace.is_root_anchored(raw):
         raise LedgerError("run ledger path must be relative to the project root")
     root_path = Path(root).resolve()
     resolved = (root_path / path).resolve()
