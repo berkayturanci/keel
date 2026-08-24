@@ -1439,6 +1439,23 @@ class TestShip(unittest.TestCase):
         health = ledger.capture_health_summary([undeclared])
         self.assertEqual(1, health["counts"]["missing_marker"])
 
+    def test_not_run_refuses_a_capture_artifact(self):
+        # The pair states both "no capture happened" and "here is what it produced".
+        # The ledger is evidence; a self-contradicting record is worse than a quieter
+        # one, and capture-reconcile would have to guess which half to believe.
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["ship", _write_config_with_ledger("'true'"),
+                              "--root", d, "--live", "--append-ledger", "--json",
+                              "--pull-request", "940",
+                              "--capture-status", cli.CAPTURE_STATUS_NOT_RUN,
+                              "--capture-artifact", "artifacts/940.md",
+                              "--approve-scope", "filesystem,git,github",
+                              "--operator", "tester"])
+
+        self.assertEqual(rc, 1)
+        self.assertIn("contradicts", json.loads(out)["error"])
+
     def test_a_rebase_re_record_reports_no_capture_gap(self):
         # The defect this flag was added for: the re-record read as a merged PR whose
         # marker had gone missing, so `keel ledger` reported a capture gap for a PR

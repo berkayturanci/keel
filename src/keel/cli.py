@@ -968,6 +968,21 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         else:
             print(message, file=sys.stderr)
         return 1
+    if args.capture_status == CAPTURE_STATUS_NOT_RUN and args.capture_artifact:
+        # An artifact is the proof an `applied` capture produced something, so the
+        # pair states both that no capture happened and that here is its output.
+        # The ledger is evidence; a record contradicting itself is worse than a
+        # record that says less, and reconcile would have to pick a side.
+        message = (
+            f"--capture-artifact contradicts --capture-status {CAPTURE_STATUS_NOT_RUN}: "
+            "a run that never reached capture produced no artifact"
+        )
+        if args.json:
+            print(json.dumps({"contract": contract, "error": message}, indent=2,
+                             sort_keys=True))
+        else:
+            print(message, file=sys.stderr)
+        return 1
     run_context_warnings = _run_context_warnings(args)
     if args.live and args.append_ledger and args.strict_run_context and run_context_warnings:
         message = "; ".join(run_context_warnings)
