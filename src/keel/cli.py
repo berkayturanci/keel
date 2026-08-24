@@ -2454,21 +2454,31 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
     return 1
 
 
-def _overtaking_prs(args: argparse.Namespace, timing: dict) -> dict:
+def _overtaking_prs(args: argparse.Namespace, timing: dict) -> dict | None:
     """Map each path to a PR that changed it after ``args.pr`` branched (#561).
 
     The window is (branch point, this merge). A pull request merged inside it landed
     work the branch does not contain, so a squash of that branch can undo it — which
     is precisely how #543 reverted #550 while every gate stayed green.
+
+    Returns ``None`` when GitHub could not be read, so the caller reports ``unknown``
+    instead of an empty overtaking set. ``or []`` here meant a rate-limited ``gh``
+    produced "no overtaking pull requests", which reads downstream as ``clean`` —
+    the check announcing a pass for a question it never got to ask (#933).
     """
     others = github.prs_merged_between(
         timing["base"], timing["branched_at"], timing["merged_at"], cwd=args.root
-    ) or []
+    )
+    if others is None:
+        return None
     overtaken: dict = {}
     for number in others:
         if number == args.pr:
             continue
-        for path in github.pr_files(number, cwd=args.root) or []:
+        files = github.pr_files(number, cwd=args.root)
+        if files is None:
+            return None
+        for path in files:
             overtaken.setdefault(path, number)
     return overtaken
 
@@ -2499,21 +2509,48 @@ def _cmd_verify_merge(args: argparse.Namespace) -> int:
             f"pull request #{args.pr} has no merge commit yet, or gh could not be asked"
         )
     else:
-        report = mergeverify.verify_merge(
-            github.commit_files(merge_sha, cwd=args.root),
-            overtaken=_overtaking_prs(args, timing),
-            intended=github.pr_files(args.pr, cwd=args.root),
-        )
+        # Every read this check depends on, gathered before any of them is judged.
+        # A single unreadable one makes the whole verdict unknown: the drift signal
+        # needs the overtaking set, and the out-of-scope signal needs the PR's own
+        # file list, so a missing input silently downgrades a real check into a
+        # weaker one that still prints `clean` (#933).
+        landed = github.commit_files(merge_sha, cwd=args.root)
+        overtaken = _overtaking_prs(args, timing)
+        intended = github.pr_files(args.pr, cwd=args.root)
+        unreadable = [
+            name
+            for name, value in (
+                ("the merge commit's file list", landed),
+                ("the pull requests merged alongside this one", overtaken),
+                ("this pull request's own file list", intended),
+            )
+            if value is None
+        ]
+        if unreadable:
+            report = mergeverify.verify_merge(None)
+            report["reason"] = (
+                f"could not read {', '.join(unreadable)} from GitHub, so no conclusion "
+                "about drift is possible"
+            )
+        else:
+            report = mergeverify.verify_merge(
+                landed, overtaken=overtaken, intended=intended
+            )
     report["pull_request"] = args.pr
     report["merge_commit"] = merge_sha
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))
     else:
         print(mergeverify.render(report))
-    # Loud on drift, quiet otherwise. `incomplete` is usually an identical change
-    # already on the base, and `unknown` is a fact about the runner — neither is
-    # evidence that something was reverted, so neither fails the command.
-    return 1 if mergeverify.is_drift(report) else 0
+    # Three exit codes, mirroring `keel evidence-verify`: 1 is the loud drift case,
+    # 2 is "could not look". `unknown` used to exit 0 on the reasoning that not
+    # looking is not evidence of a revert — true of the *verdict*, but a caller
+    # wiring this in after s10 reads the exit code, and 0 there is a pass this
+    # command never earned. `out-of-scope` keeps exiting 0: it is a real answer to
+    # the question asked, and usually an identical change already on the base.
+    if mergeverify.is_drift(report):
+        return 1
+    return 2 if report.get("status") == "unknown" else 0
 
 
 def _cmd_scope_verify(args: argparse.Namespace) -> int:

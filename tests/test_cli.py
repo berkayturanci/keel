@@ -6114,7 +6114,7 @@ class TestVerifyMergeCommand(unittest.TestCase):
 
     def test_an_unmerged_pr_is_unknown_not_clean(self):
         rc, out, _ = self._run(window=None)
-        self.assertEqual(rc, 0)
+        self.assertEqual(rc, 2, "not looking is not a pass")
         self.assertIn("unknown", out)
         self.assertIn("no merge commit", out)
 
@@ -6140,9 +6140,70 @@ class TestVerifyMergeCommand(unittest.TestCase):
         self.assertIn("clean", out)
 
     def test_an_unreadable_overtaking_list_does_not_claim_clean_falsely(self):
-        # gh failing yields no overtaking data; the scope check still applies.
+        """The inputs are otherwise a textbook `clean`, so only the guard can save it.
+
+        The previous version of this test passed for the wrong reason: it also
+        supplied mismatched file lists, so the report landed in `out-of-scope`
+        and would have read the same with the guard deleted. Here the landed and
+        intended lists are identical and there is nothing overtaking — every
+        other signal says `clean` — so `unknown` can only come from noticing
+        that the overtaking list could not be read.
+        """
         rc, out, _ = self._run(
             others=None,
+            files_by_pr={543: ["a.py"]},
+            commit_files=["a.py"],
+        )
+        self.assertEqual(rc, 2, "an unreadable input must not exit 0")
+        self.assertIn("unknown", out)
+        self.assertNotIn("clean", out)
+        self.assertIn("merged alongside", out, "the report must name what it could not read")
+
+    def test_an_unreadable_file_list_for_an_overtaking_pr_is_also_unknown(self):
+        """The second `or []`: the inner per-PR lookup could fail on its own."""
+        rc, out, _ = self._run(
+            others=[550],
+            files_by_pr={543: ["a.py"]},  # 550 resolves to None
+            commit_files=["a.py"],
+        )
+        self.assertEqual(rc, 2)
+        self.assertIn("unknown", out)
+        self.assertNotIn("clean", out)
+
+    def test_an_unreadable_merge_commit_is_unknown(self):
+        rc, out, _ = self._run(
+            others=[],
+            files_by_pr={543: ["a.py"]},
+            commit_files=None,
+        )
+        self.assertEqual(rc, 2)
+        self.assertIn("merge commit", out)
+
+    def test_an_unreadable_intended_list_is_unknown_not_clean(self):
+        """Losing the PR's own file list silently downgrades the check.
+
+        With `intended` missing, `verify_merge` skips the out-of-scope signal
+        entirely and still prints `clean` — a weaker check reporting the same
+        word as the full one.
+        """
+        rc, out, _ = self._run(
+            others=[],
+            files_by_pr={},  # 543 itself resolves to None
+            commit_files=["a.py"],
+        )
+        self.assertEqual(rc, 2)
+        self.assertIn("unknown", out)
+        self.assertNotIn("clean", out)
+
+    def test_out_of_scope_still_exits_zero(self):
+        """The counterweight: a real answer must not be swept up as "could not look".
+
+        `out-of-scope` is usually an identical change already on the base. If it
+        started failing, every such merge would go red and the exit code would
+        stop meaning "drift".
+        """
+        rc, out, _ = self._run(
+            others=[],
             files_by_pr={543: ["a.py"]},
             commit_files=["a.py", "b.py"],
         )

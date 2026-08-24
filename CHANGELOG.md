@@ -11,6 +11,11 @@ All notable changes to keel are documented here. The format follows
   - Used native tuple overload in `config.py` `_validate_delegate_profiles` (`startswith(BLOCKED_ENV_PREFIXES)`) instead of generator allocation.
 
 ### Fixed
+- **Gates That Reported a Pass Without Performing Their Check** (#933):
+  - `keel verify-merge` no longer reports `clean` when GitHub is unreadable. `_overtaking_prs` turned a failed lookup into an empty overtaking set via `or []`, so a rate-limited `gh` produced "nothing overtook this merge" — the check announcing a pass for a question it never asked. Every input it depends on is now gathered before any is judged, and a single unreadable one makes the verdict `unknown` naming what could not be read.
+  - `unknown` now exits **2** instead of 0, mirroring `keel evidence-verify`. The status line always said "not a pass"; the exit code, which is what a caller wiring this in after s10 reads, said otherwise. `out-of-scope` keeps exiting 0 — it is a real answer to the question asked.
+  - The action-pin guard now covers `action.yml` at the repo root, not only `.github/workflows/*.yml`. That file is the composite action published to the Marketplace and runs inside consumers' workflows, and it was the one place carrying an unpinned `actions/setup-python@v7` — precisely because the guard's glob could not see it. Now pinned to `5fda3b95…` (`v7.0.0`), the same SHA the workflows already use.
+  - An unreachable GitHub no longer makes the online pin check `skipTest`. A skipped test does not fail CI, so a wrong pin could merge during any API blip. Unreachable repositories are collected and reported, and the comparison moved into a pure `judge_pins` so that branch is exercised by the default hermetic suite.
 - **Integration Copy Button Accessible Label Recapture** (#916):
   - Captured `origLabel` at bind time in `website/integrations.js` and cleared pending reset timers on rapid clicks.
   - Prevented transient "Copied to clipboard" state from permanently overwriting the accessible name.

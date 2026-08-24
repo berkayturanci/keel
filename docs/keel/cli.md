@@ -832,10 +832,18 @@ keel verify-merge .keel/project.yaml --root . --pr 543 --json
 | `drift` | wrote to files another PR changed after this one branched — read the diff | 1 |
 | `out-of-scope` | changed files the PR's own diff did not list | 0 |
 | `clean` | neither | 0 |
-| `unknown` | not merged yet, or `gh` unreadable — **not** a pass | 0 |
+| `unknown` | not merged yet, or `gh` unreadable — **not** a pass | 2 |
 
 `drift` is a *stop and look* signal, not proof: two PRs editing one file in sequence
 is ordinary. The report names the colliding PR for each file so a human can judge.
+
+`unknown` exits **2**, not 0. The status line has always said "not a pass", but the
+exit code said otherwise, and the exit code is what a caller wiring this in after
+s10 actually reads. Every input the check depends on — the merge commit's file
+list, the pull requests merged alongside it, and this PR's own file list — is
+gathered before any of them is judged, and a single unreadable one makes the whole
+verdict `unknown` rather than quietly downgrading the check to a weaker one that
+still prints `clean` (#933).
 
 ## `keel resume <project.yaml> [--root DIR] [--live-pr-state STATE] [--live-worktree-state STATE] [--no-observe] [--json]`
 
