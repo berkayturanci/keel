@@ -6202,8 +6202,8 @@ class TestVerifyMergeCommand(unittest.TestCase):
         self.assertIn("merge commit", out)
         # `verify_merge(None)` emits its own "could not read the merge commit's
         # file list" reason, so asserting that phrase alone cannot tell whether
-        # this input was accounted for. The combined-reason tail can.
-        self.assertIn("no conclusion about drift is possible", out)
+        # this input was accounted for. The tail naming the open questions can.
+        self.assertIn("nothing could be checked", out)
 
     def test_the_reason_names_every_input_that_could_not_be_read(self):
         """One line per unreadable input, so a human knows what to retry."""
@@ -6236,6 +6236,44 @@ class TestVerifyMergeCommand(unittest.TestCase):
         self.assertEqual(rc, 2)
         self.assertIn("unknown", out)
         self.assertNotIn("clean", out)
+
+    def test_an_out_of_scope_finding_survives_an_unreadable_sibling(self):
+        """The same rule as drift: a finding is an answer.
+
+        `b.py` landed and the PR never listed it — that is a complete answer to
+        the scope question, using only inputs that were read. Replacing the
+        report because the *overtaking* lookup failed resets `unexpected` and
+        `landed_count` to empty, deleting the evidence for a question that was
+        answered.
+        """
+        rc, out, _ = self._run(
+            others=None,  # unreadable, and unrelated to the scope question
+            files_by_pr={543: ["a.py"]},
+            commit_files=["a.py", "b.py"],
+            argv_extra=("--json",),
+        )
+        report = json.loads(out)
+        self.assertEqual(report["status"], "out-of-scope")
+        self.assertEqual(report["unexpected"], ["b.py"], "the finding was erased")
+        self.assertEqual(report["landed_count"], 2, "the counts were reset")
+        self.assertTrue(report["incomplete"], "incompleteness is not recorded")
+        self.assertIn("could not read", report["reason"])
+        self.assertEqual(rc, 0)
+
+    def test_the_reason_names_only_the_questions_it_could_not_answer(self):
+        """Claiming drift was unanswerable when it was answered is a false report.
+
+        Only the PR's own file list is missing here. The merge commit was read
+        and the overtaking set was complete, so drift *was* checked.
+        """
+        rc, out, _ = self._run(
+            others=[],
+            files_by_pr={},  # 543 itself unreadable
+            commit_files=["a.py"],
+        )
+        self.assertEqual(rc, 2)
+        self.assertIn("scope could not be checked", out)
+        self.assertNotIn("drift could not be checked", out)
 
     def test_out_of_scope_still_exits_zero(self):
         """The counterweight: a real answer must not be swept up as "could not look".

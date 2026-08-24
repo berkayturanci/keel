@@ -2526,30 +2526,50 @@ def _cmd_verify_merge(args: argparse.Namespace) -> int:
         landed = github.commit_files(merge_sha, cwd=args.root)
         overtaken, overtaken_complete = _overtaking_prs(args, timing)
         intended = github.pr_files(args.pr, cwd=args.root)
+        # Each input answers a specific question, so an unreadable one leaves that
+        # question open rather than the whole report meaningless. Saying "no
+        # conclusion about drift is possible" when only the PR's own file list was
+        # missing is simply false — drift was checked, and found nothing.
         unreadable = [
-            name
-            for name, ok in (
-                ("the merge commit's file list", landed is not None),
-                ("the pull requests merged alongside this one", overtaken_complete),
-                ("this pull request's own file list", intended is not None),
+            (name, question)
+            for name, question, ok in (
+                ("the merge commit's file list", None, landed is not None),
+                (
+                    "the pull requests merged alongside this one",
+                    "drift",
+                    overtaken_complete,
+                ),
+                ("this pull request's own file list", "scope", intended is not None),
             )
             if not ok
         ]
-        # Judge first, then decide whether incompleteness matters. `drift` is a
-        # positive finding: a collision that was seen stays seen no matter what else
-        # could not be read, and burying it in `unknown` would silence the one signal
-        # this command exists to raise.
-        report = (
-            mergeverify.verify_merge(landed, overtaken=overtaken, intended=intended)
-            if landed is not None
-            else mergeverify.verify_merge(None)
-        )
-        if unreadable and not mergeverify.is_drift(report):
-            report = mergeverify.verify_merge(None)
-            report["reason"] = (
-                f"could not read {', '.join(unreadable)} from GitHub, so no conclusion "
-                "about drift is possible"
-            )
+        report = mergeverify.verify_merge(landed, overtaken=overtaken, intended=intended)
+        if unreadable:
+            note = "could not read " + ", ".join(name for name, _ in unreadable)
+            if report["status"] in ("drift", "out-of-scope"):
+                # A finding is an answer, and incompleteness cannot unmake it.
+                # Replacing the report here would reset `unexpected` and
+                # `landed_count` to empty — deleting the evidence the operator
+                # needs — because some *other* read failed. Same rule the drift
+                # arm gets, and the same rule `judge_pins` applies to unreachable
+                # repositories: keep what was found, say what was missed.
+                report["reason"] = f"{report['reason']} — {note}, so other checks are incomplete"
+                report["incomplete"] = True
+            else:
+                questions = [q for _, q in unreadable if q]
+                # A missing merge-commit file list takes every question with it,
+                # so it is recorded as `None` rather than as one more open item.
+                unanswered = (
+                    " and ".join(dict.fromkeys(questions))
+                    if len(questions) == len(unreadable)
+                    else "nothing"
+                )
+                report = mergeverify.verify_merge(None)
+                report["reason"] = (
+                    f"{note} from GitHub, so "
+                    + (f"{unanswered} could not be checked" if unanswered != "nothing"
+                       else "nothing could be checked")
+                )
     report["pull_request"] = args.pr
     report["merge_commit"] = merge_sha
     if args.json:
