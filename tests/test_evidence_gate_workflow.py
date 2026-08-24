@@ -283,6 +283,19 @@ class TestTheDocsDescribeWhatShips(unittest.TestCase):
             "the docs claim a neutral conclusion blocks a merge; it does not",
         )
 
+    def test_the_docs_warn_against_requiring_the_wrong_check(self):
+        """Requiring the *job* would reinstate #928 — it exits 0 while waiting.
+
+        The workflow comment explains the split, but the page an adopter reads
+        while configuring branch protection is the one that has to say it.
+        """
+        page = (REPO / "docs/keel/github-actions.md").read_text(encoding="utf-8")
+        self.assertRegex(
+            page,
+            r"[Dd]o \*\*not\*\* add `keel evidence \(verify\)`",
+            "the adoption page does not warn against requiring the job",
+        )
+
     def test_the_docs_state_the_fail_closed_rule(self):
         text = DOC.read_text(encoding="utf-8")
         bullet = next(

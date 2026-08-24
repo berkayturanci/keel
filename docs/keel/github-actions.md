@@ -120,6 +120,10 @@ that runs the verification is called `keel evidence (verify)`, because a job's o
 driven by its exit code and can only ever report that the job ran. Two same-named checks on
 one commit would be indistinguishable to branch protection, which matches by name.
 
+Do **not** add `keel evidence (verify)` — the job — to required checks instead. It exits 0
+while the gate is waiting, on purpose, because the published check is what blocks; requiring
+the job would reinstate exactly the green-with-no-evidence signal this design removes.
+
 The check is fail-closed. While required evidence is missing it stays **incomplete** (a
 yellow dot), which blocks a merge without painting a fresh PR red; a `neutral` conclusion
 would *not* block, since branch protection accepts `successful`, `skipped` and `neutral`
