@@ -13,7 +13,6 @@ from pathlib import Path
 from keel import cost
 from keel.cli import main
 from keel.cost import (
-    _PRICING_KEYS_BY_LENGTH,
     MODEL_PRICING,
     calculate_cost_report,
     estimate_benchmark_cost,
@@ -57,44 +56,29 @@ class TestPricingKeyOrderIsComputedOnce(unittest.TestCase):
                 self.assertEqual(normalize_model_name(f"vendor:{long}"), long)
                 self.assertEqual(normalize_model_name(f"vendor:{short}"), short)
 
-    def test_the_precomputed_order_is_longest_first(self):
-        """Asserts the property, not the expression that currently produces it.
+    def test_a_shorter_key_cannot_capture_a_longer_model_id(self):
+        """The property #930 protected, asserted on the outcome.
 
-        Pinning ``sorted(MODEL_PRICING, key=len, reverse=True)`` verbatim would
-        fail a behaviour-identical refactor — adding an alphabetical tie-break,
-        say — while the three behavioural guards around it stayed green. The
-        property that matters is only that no key precedes a longer one.
+        #930 kept `gpt-4o-mini` from being priced as `gpt-4o` by ordering the
+        substring scan longest-first. #943 replaced substring matching with exact
+        resolution, so the property now holds by construction rather than by
+        ordering — and asserting the ordering would pin a mechanism that no
+        longer exists while saying nothing about the price.
         """
-        lengths = [len(key) for key in _PRICING_KEYS_BY_LENGTH]
-        self.assertEqual(lengths, sorted(lengths, reverse=True))
+        self.assertEqual("gpt-4o-mini", cost.normalize_model_name("gpt-4o-mini"))
+        self.assertNotEqual(
+            cost.estimate_token_cost(1_000_000, 0, "gpt-4o-mini"),
+            cost.estimate_token_cost(1_000_000, 0, "gpt-4o"),
+        )
 
-    def test_a_new_pricing_key_cannot_be_left_out_of_the_order(self):
-        self.assertEqual(set(_PRICING_KEYS_BY_LENGTH), set(MODEL_PRICING))
+    def test_a_key_that_is_a_prefix_token_cannot_capture_another_model(self):
+        """#943: `o1-mini` resolved to `o1` — a 13.6x overcharge on a real model.
 
-    def test_the_loop_reads_the_precomputed_order_and_nothing_else(self):
-        """Behavioural, because an AST check only ever catches one spelling.
-
-        The first version of this guard walked the AST for a call to the *name*
-        ``sorted``. Three ways of re-sorting per call slipped past it: a helper
-        that sorts, ``list.sort`` (an attribute call, not a name), and
-        ``builtins.sorted``. One of them was measured at 3.2x the hoisted cost
-        with the guard still green — a smoke alarm wired to the word "fire".
-
-        Patching the precomputed tuple to the *wrong* order settles it: any
-        implementation that re-derives the order inside the call ignores the
-        patch and returns the right answer anyway, which fails here.
+        Longest-first could not fix this: `o1` is not a substring collision with
+        another *key*, it is a key colliding with a model string that is not one.
         """
-        # A dated identifier, deliberately *not* itself a pricing key: an exact-key
-        # fast path (`if raw in MODEL_PRICING: return raw`) is a legitimate future
-        # improvement that does no re-sorting, and picking a bare key as the input
-        # would make this guard fail on it and report the wrong reason.
-        shortest_first = tuple(sorted(MODEL_PRICING, key=len))
-        with unittest.mock.patch.object(cost, "_PRICING_KEYS_BY_LENGTH", shortest_first):
-            self.assertEqual(
-                cost.normalize_model_name("anthropic:claude-3-5-sonnet-20241022"),
-                "claude",
-                "the loop re-derived the key order instead of reading the module constant",
-            )
+        self.assertEqual("default", cost.normalize_model_name("o1-mini"))
+        self.assertEqual("o1", cost.normalize_model_name("o1"))
 
 
 class TestCostPureLogic(unittest.TestCase):
@@ -106,7 +90,10 @@ class TestCostPureLogic(unittest.TestCase):
         self.assertEqual(normalize_model_name("ollama:deepseek-r1"), "ollama")
         self.assertEqual(normalize_model_name("ollama:llama3"), "ollama")
         self.assertEqual(normalize_model_name("local:qwen"), "local")
-        self.assertEqual(normalize_model_name("custom-unknown-model"), "custom-unknown-model")
+        # "default", not the raw string: an unpriced model must read as unpriced.
+        # Echoing the id made it a breakdown key of its own, so the report showed a
+        # confident-looking row for a model whose price was the fallback guess (#944).
+        self.assertEqual(normalize_model_name("custom-unknown-model"), "default")
         self.assertEqual(normalize_model_name(""), "default")
 
     def test_estimate_token_cost_and_benchmark(self):
