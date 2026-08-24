@@ -161,7 +161,13 @@ class TestNotLookingIsNotAPass(unittest.TestCase):
                 except unittest.SkipTest:  # pragma: no cover - the regression
                     self.fail("the guard skips instead of failing")
                 except AssertionError:
-                    pass
+                    # The expected outcome. Written as an explicit `except`
+                    # rather than `assertRaises`, because a `SkipTest` escaping
+                    # that context manager would *skip* this test instead of
+                    # failing it — which is precisely the regression under
+                    # guard, so the guard would hide it.
+                    continue
+                self.fail("the guard raised nothing at all")
 
 
 class TestActionReferences(unittest.TestCase):
