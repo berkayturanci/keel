@@ -6,9 +6,11 @@ import io
 import json
 import tempfile
 import unittest
+import unittest.mock
 from contextlib import redirect_stdout
 from pathlib import Path
 
+from keel import cost
 from keel.cli import main
 from keel.cost import (
     _PRICING_KEYS_BY_LENGTH,
@@ -63,25 +65,26 @@ class TestPricingKeyOrderIsComputedOnce(unittest.TestCase):
     def test_a_new_pricing_key_cannot_be_left_out_of_the_order(self):
         self.assertEqual(set(_PRICING_KEYS_BY_LENGTH), set(MODEL_PRICING))
 
-    def test_the_match_loop_does_not_sort(self):
-        """Read from the AST, not the source text.
+    def test_the_loop_reads_the_precomputed_order_and_nothing_else(self):
+        """Behavioural, because an AST check only ever catches one spelling.
 
-        A substring check would find ``sorted`` in the comment that explains why
-        the sort was hoisted — the shape of trap that has already defeated four
-        assertions elsewhere in this repo.
+        The first version of this guard walked the AST for a call to the *name*
+        ``sorted``. Three ways of re-sorting per call slipped past it: a helper
+        that sorts, ``list.sort`` (an attribute call, not a name), and
+        ``builtins.sorted``. One of them was measured at 3.2x the hoisted cost
+        with the guard still green — a smoke alarm wired to the word "fire".
+
+        Patching the precomputed tuple to the *wrong* order settles it: any
+        implementation that re-derives the order inside the call ignores the
+        patch and returns the right answer anyway, which fails here.
         """
-        import ast
-        import inspect
-
-        tree = ast.parse(inspect.getsource(normalize_model_name))
-        called = {
-            node.func.id
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-        }
-        self.assertNotIn(
-            "sorted", called, "the pricing table is sorted on every call again"
-        )
+        shortest_first = tuple(sorted(MODEL_PRICING, key=len))
+        with unittest.mock.patch.object(cost, "_PRICING_KEYS_BY_LENGTH", shortest_first):
+            self.assertEqual(
+                cost.normalize_model_name("anthropic:claude-3-5-sonnet"),
+                "claude",
+                "the loop re-derived the key order instead of reading the module constant",
+            )
 
 
 class TestCostPureLogic(unittest.TestCase):
