@@ -349,6 +349,12 @@ def verify(
     )
     if unarmed is not None:
         findings = [*findings, unarmed]
+    forged = _forged_verdict_finding(
+        [*(pr_comments or []), *(pr_reviews or []), *(issue_comments or [])],
+        enforced=enforced,
+    )
+    if forged is not None:
+        findings = [*findings, forged]
     blocking_findings = [finding for finding in findings if finding["severity"] == "major"]
     has_mismatch = bool(mismatch)
     if not missing and not blocking_findings:
@@ -858,6 +864,58 @@ def _unarmed_finding(
             "Evidence gate is not armed, so no requirements were checked. Arm it via ship "
             "provenance (ship branch, posted review verdict, ship-run ledger, or the gate "
             "label), or disarm deliberately with the operator waiver label."
+        ),
+    }
+
+
+def _forged_verdict_finding(
+    items: list[dict[str, Any]],
+    *,
+    enforced: bool,
+) -> dict[str, Any] | None:
+    """Return a blocking finding when an untrusted author posted a verdict marker.
+
+    ``_review_evidence_keys`` and ``_is_jury_verdict`` drop an untrusted marker
+    with a bare ``continue``, so a forged verdict and an absent one both land in
+    ``missing`` and route to ``waiting``. #829 assigned tampering to ``fail``
+    — *"verdicts present but invalid … conclude failure, loudly"* — because a
+    forged marker is an active claim that evidence exists, and answering it with
+    the same grey dot as a fresh PR hides the forgery inside the normal
+    pre-verdict state.
+
+    Scoped to *trust* failures, not to head drift. A verdict pinned to an older
+    commit is the ordinary lifecycle — push after review — and this report reads
+    comment payloads, not git, so it cannot tell a stale ancestor from a
+    fabricated SHA. Failing on drift would turn every post-review push red;
+    those stay ``waiting`` and the head pin still refuses to count them.
+
+    Skipped when not ``enforced``: offline fixtures carry no
+    ``author_association``, and there ``_is_trusted_source`` admits everything,
+    so there is no untrusted case to report.
+    """
+    if not enforced:
+        return None
+    culprits = sorted({
+        str(item.get("user", {}).get("login") or item.get("author_association") or "unknown")
+        for item in items
+        if not _is_trusted_source(item, enforced=True)
+        and (
+            _is_review_verdict_body(_body(item))
+            or JURY_VERDICT_MARKER in _body(item)
+        )
+    })
+    if not culprits:
+        return None
+    return {
+        "id": "verdict-untrusted-author",
+        "severity": "major",
+        "kind": "tampering",
+        "message": (
+            "A keel verdict marker was posted by an author GitHub does not mark as "
+            f"trusted ({', '.join(culprits)}). The marker is not counted as evidence, "
+            "and a forged verdict is reported as a failure rather than as a quiet "
+            "pre-verdict wait. Delete the comment, or post the verdict from a "
+            "collaborator account."
         ),
     }
 

@@ -277,7 +277,15 @@ class TestEvidenceVerify(unittest.TestCase):
         self.assertEqual(report["counts"]["review_verdict"], 2)
         self.assertEqual(report["counts"]["jury_verdict"], 1)
 
-    def test_review_verdicts_without_matching_head_are_ignored_when_head_known(self):
+    def test_review_verdicts_without_matching_head_stay_waiting_not_failed(self):
+        """Head drift is the ordinary lifecycle, so it must not read as tampering.
+
+        A trusted reviewer verdict pinned to an earlier commit is what every
+        push-after-review produces. It still does not *count* — the head pin
+        refuses it, so the requirement stays missing — but reporting it as a
+        failure would turn the gate red on normal work. Only trust failures are
+        loud; see ``test_a_forged_verdict_marker_fails_instead_of_waiting``.
+        """
         report = evidence.verify(
             _review_contract(reviewers=1, jury=True),
             pr_comments=[
@@ -293,6 +301,11 @@ class TestEvidenceVerify(unittest.TestCase):
         self.assertEqual(report["counts"]["review_verdict"], 0)
         self.assertEqual(report["counts"]["jury_verdict"], 0)
         self.assertEqual(report["missing"], ["review-verdict-1", "jury-verdict"])
+        self.assertEqual(
+            [f["id"] for f in report["findings"] if f["id"] == "verdict-untrusted-author"],
+            [],
+            "stale-but-trusted evidence must not be reported as tampering",
+        )
 
     def test_untrusted_comment_markers_are_not_evidence(self):
         report = evidence.verify(
@@ -306,7 +319,10 @@ class TestEvidenceVerify(unittest.TestCase):
             head_sha="abc123",
         )
 
-        self.assertEqual(report["status"], "waiting")
+        # #829: "verdicts present but invalid (… tampered evidence): conclude
+        # failure, loudly". A forged marker is a claim that evidence exists, so
+        # it must not share the grey dot with a PR that simply has none yet.
+        self.assertEqual(report["status"], "fail")
         self.assertEqual(report["counts"]["closure_pr"], 0)
         self.assertEqual(report["counts"]["closure_issue"], 0)
         self.assertEqual(report["counts"]["review_verdict"], 0)
@@ -416,7 +432,8 @@ class TestEvidenceVerify(unittest.TestCase):
             head_sha="abc123",
         )
 
-        self.assertEqual(report["status"], "waiting")
+        # An explicit NONE association is a refusal by GitHub, not an absence.
+        self.assertEqual(report["status"], "fail")
         self.assertEqual(report["counts"]["review_verdict"], 0)
         self.assertEqual(report["missing"], ["review-verdict-1"])
 
@@ -432,9 +449,77 @@ class TestEvidenceVerify(unittest.TestCase):
             head_sha="abc123",
         )
 
-        self.assertEqual(report["status"], "waiting")
+        # "Fails closed" has to mean the loud kind: a live payload without an
+        # association is a marker whose trust cannot be established, which is
+        # the tampering case, not the not-posted-yet case.
+        self.assertEqual(report["status"], "fail")
         self.assertEqual(report["counts"]["review_verdict"], 0)
         self.assertEqual(report["missing"], ["review-verdict-1"])
+
+    def test_a_forged_verdict_marker_fails_instead_of_waiting(self):
+        """The finding — not just the status — has to name the tampering.
+
+        Asserting only ``status == "fail"`` would keep passing if some unrelated
+        blocking finding appeared, so this pins the specific finding id and that
+        it is blocking. Without ``_forged_verdict_finding`` there is no finding
+        at all and the report is ``waiting``.
+        """
+        forged = {
+            "body": "keel.review-verdict.v1\nreviewer: alpha\nhead: abc123\nLGTM",
+            "author_association": "NONE",
+            "user": {"login": "drive-by"},
+        }
+        report = evidence.verify(
+            _review_contract(reviewers=1),
+            pr_comments=[_trusted_comment(closure.COMMENT_MARKER), forged],
+            issue_comments=[_trusted_comment(closure.COMMENT_MARKER)],
+            head_sha="abc123",
+        )
+
+        finding = next(
+            (f for f in report["findings"] if f["id"] == "verdict-untrusted-author"), None
+        )
+        self.assertIsNotNone(finding, "a forged verdict marker produced no finding")
+        self.assertEqual(finding["severity"], "major")
+        self.assertIn("drive-by", finding["message"])
+        self.assertEqual(report["status"], "fail")
+
+    def test_an_absent_verdict_is_still_only_waiting(self):
+        """The counterweight: silence must stay grey, or the fix over-reaches.
+
+        If ``_forged_verdict_finding`` ever fires on the ordinary empty case,
+        every fresh PR turns red and the neutral state this issue exists to
+        create is gone again.
+        """
+        report = evidence.verify(
+            _review_contract(reviewers=1),
+            pr_comments=[_trusted_comment(closure.COMMENT_MARKER)],
+            issue_comments=[_trusted_comment(closure.COMMENT_MARKER)],
+            head_sha="abc123",
+        )
+
+        self.assertEqual(report["status"], "waiting")
+        self.assertEqual(
+            [f["id"] for f in report["findings"] if f["id"] == "verdict-untrusted-author"], []
+        )
+
+    def test_untrusted_chatter_without_a_marker_is_not_tampering(self):
+        """A stranger commenting on a PR is not a forged verdict."""
+        report = evidence.verify(
+            _review_contract(reviewers=1),
+            pr_comments=[
+                _trusted_comment(closure.COMMENT_MARKER),
+                {
+                    "body": "drive-by: looks good to me, ship it",
+                    "author_association": "NONE",
+                    "user": {"login": "stranger"},
+                },
+            ],
+            issue_comments=[_trusted_comment(closure.COMMENT_MARKER)],
+            head_sha="abc123",
+        )
+
+        self.assertEqual(report["status"], "waiting")
 
     def test_missing_author_association_is_accepted_only_when_not_enforced(self):
         report = evidence.verify(

@@ -11,6 +11,11 @@ All notable changes to keel are documented here. The format follows
   - Used native tuple overload in `config.py` `_validate_delegate_profiles` (`startswith(BLOCKED_ENV_PREFIXES)`) instead of generator allocation.
 
 ### Fixed
+- **Evidence Gate Reported Green While Waiting** (#928):
+  - `keel-ship.yml` now publishes a `keel evidence (required)` check-run per verdict — `success`, `neutral`, or `failure` — instead of leaning on the job's exit code, which concluded green for the pre-verdict state that #829 specified as neutral.
+  - A neutral check-run that cannot be published (read-only fork token) now fails the step rather than exiting 0: a gate that could not report its verdict has not reported a pass.
+  - A verdict marker from an author GitHub does not mark as trusted is reported as `fail` via a new blocking `verdict-untrusted-author` finding, restoring the "tampered evidence is loud" half of #829. Head drift on a *trusted* verdict stays `waiting`, since a push after review is the ordinary lifecycle and this report reads comment payloads, not git.
+  - `docs/keel/evidence.md` now describes the shipped behaviour, and `tests/test_evidence_gate_workflow.py` pins the workflow's reporting contract so the exit-code regression cannot return silently.
 - **Swarm Worktrees Left Untracked** (#877):
   - Added `worktrees/` to `RUNTIME_IGNORE_ENTRIES`. `keel swarm` checks out one isolated tree per cluster under `.keel/worktrees/` (`swarm_runtime.build_worktree_path`), so a parallel run turned `git status` into hundreds of untracked files — and an operator's habit of trusting a clean status is what notices a genuinely stray file.
   - keel's own committed `.keel/.gitignore` is regenerated, not topped up. The top-up is append-only and dedupes on the exact string, so the first time an entry's *spelling* changed this repo ended up carrying both `worktrees/` and `/worktrees/` — and gitignore's looser pattern wins, leaving the fix inert in the one install that mattered. A test now pins the committed file to `runtime_gitignore_body()` and forbids two spellings of one entry coexisting.

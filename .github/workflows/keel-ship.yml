@@ -111,20 +111,57 @@ jobs:
           keel evidence-verify "${ARGS[@]}"
           RC=$?
           set -e
-          if [ "$RC" -eq 0 ]; then
-            echo "Evidence verification passed."
-            exit 0
-          elif [ "$RC" -eq 2 ]; then
-            echo "::notice title=Waiting for review evidence::Evidence gate is in pre-verdict state (waiting for review evidence). Merge remains blocked until all required verdicts pass."
-            {
-              echo "### ⏳ keel evidence (waiting)"
-              echo
-              echo "Evidence gate is in pre-verdict state — waiting for required reviewer and jury verdicts."
-              echo "_Merge remains blocked until required evidence is posted and verified._"
-            } >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          else
-            echo "::error title=Evidence verification failed::Explicit evidence violation or finding detected."
-            echo "Evidence verification failed (invalid evidence or findings detected)."
-            exit 1
-          fi
+
+          # Publish the verdict as its own check-run rather than leaning on this
+          # job's exit code. This job is named "keel ship (assessment)" and its
+          # check means "the assessment ran"; the gating signal has to be a
+          # separate, honestly-named check so it can go into branch protection.
+          # Exiting 0 on the waiting state used to conclude the whole job green
+          # while zero verdicts existed (#928) — worse than the red it replaced,
+          # because red at least said "not yet".
+          #
+          # A neutral conclusion does not satisfy a required check, so merge stays
+          # blocked in the waiting state exactly as it does today (#829).
+          publish_check() {
+            gh api -X POST "repos/${GITHUB_REPOSITORY}/check-runs" \
+              -f name="keel evidence (required)" \
+              -f head_sha="$HEAD_SHA" \
+              -f status="completed" \
+              -f conclusion="$1" \
+              -f output[title]="$2" \
+              -f output[summary]="$3" >/dev/null
+          }
+
+          case "$RC" in
+            0)
+              echo "Evidence verification passed."
+              publish_check success "Evidence verified" \
+                "All required evidence for the pre-merge phase is present and pinned to \`$HEAD_SHA\`."
+              exit 0
+              ;;
+            2)
+              echo "::notice title=Waiting for review evidence::Evidence gate is in pre-verdict state (waiting for review evidence). Merge remains blocked until all required verdicts pass."
+              {
+                echo "### ⏳ keel evidence (waiting)"
+                echo
+                echo "Evidence gate is in pre-verdict state — waiting for required reviewer and jury verdicts."
+                echo "_Merge remains blocked until required evidence is posted and verified._"
+              } >> "$GITHUB_STEP_SUMMARY"
+              # Fail-closed: if the neutral check cannot be published (a fork PR
+              # gets a read-only token), an honest red beats a silent green — a
+              # gate that could not report its verdict has not reported a pass.
+              if ! publish_check neutral "Waiting for review evidence" \
+                   "Pre-verdict state: required reviewer and jury verdicts are not posted yet. Merge remains blocked."; then
+                echo "::error title=Could not publish the evidence check-run::Reporting the neutral verdict failed, so this step fails rather than concluding green."
+                exit 1
+              fi
+              exit 0
+              ;;
+            *)
+              echo "::error title=Evidence verification failed::Explicit evidence violation or finding detected."
+              echo "Evidence verification failed (invalid evidence or findings detected)."
+              publish_check failure "Evidence verification failed" \
+                "Explicit evidence violation: wrong commit SHA, forged or untrusted verdict marker, closure/ledger mismatch, or an unarmed gate." || true
+              exit 1
+              ;;
+          esac

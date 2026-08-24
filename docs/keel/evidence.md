@@ -83,9 +83,27 @@ To provide honest optics during in-flight pull requests while strictly preservin
 
 | Status | CLI Exit | GitHub Check-Run | Meaning | Merge Allowed? |
 |---|---|---|---|---|
-| **`waiting`** | `2` | `neutral` (⚪ grey dot) | Review / jury verdicts are simply not posted yet (pre-verdict early PR lifecycle). No invalidity findings or tampered evidence. | ❌ Blocked |
+| **`waiting`** | `2` | `neutral` (⚪ grey dot) | Review / jury verdicts are simply not posted yet, or a trusted verdict is pinned to an earlier commit (the ordinary push-after-review case). No forged or untrusted evidence. | ❌ Blocked |
 | **`pass`** | `0` | `success` (✅ green check) | All required evidence items for the active phase are verified and match `HEAD_SHA`. | ✅ Allowed |
-| **`fail`** | `1` | `failure` (❌ red mark) | Explicit violations detected: wrong commit SHA, closure comment mismatch with ledger record, missing attribution label, or unarmed gate. | ❌ Blocked |
+| **`fail`** | `1` | `failure` (❌ red mark) | Explicit violations detected: a forged or untrusted verdict marker, closure comment mismatch with ledger record, missing attribution label, or unarmed gate. | ❌ Blocked |
+
+The conclusions in that column are real check-runs. The `keel-ship` workflow
+publishes a check named **`keel evidence (required)`** against the PR head on
+every run, and that — not the workflow job's own exit code — is the check to put
+in branch protection. The job is named for the assessment it runs, so its green
+tick means "the assessment ran", never "the evidence passed".
+
+Two distinctions are deliberate:
+
+* **Head drift is quiet, tampering is loud.** A trusted reviewer's verdict left
+  behind by a new push does not count as evidence — the head pin refuses it —
+  but it reports `waiting`, because otherwise every post-review push turns the
+  gate red. A verdict marker from an author GitHub does not mark as trusted
+  reports `fail`: it is a claim that evidence exists, and it must not share the
+  grey dot with a PR that simply has none yet.
+* **Being unable to report is not a pass.** If the neutral check-run cannot be
+  published — a fork PR's token is read-only — the step fails rather than
+  exiting 0. A gate that could not deliver its verdict has not delivered a pass.
 
 ---
 
