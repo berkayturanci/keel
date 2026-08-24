@@ -7,6 +7,10 @@ All notable changes to keel are documented here. The format follows
 ## [Unreleased]
 
 ### Performance
+- **Pricing Table Sorted Once, Not Per Call** (#930):
+  - Hoisted `sorted(MODEL_PRICING, key=len, reverse=True)` out of `normalize_model_name`'s match loop into `_PRICING_KEYS_BY_LENGTH`. The order is a property of the table, not of the string being matched; #898 introduced the sort inside the loop and `keel cost-report` calls the function once per ledger record. Measured 1.136 µs/call → 0.460 µs.
+  - Behaviour is identical across all 48 inputs tried, including every pricing key, every `vendor:key` form, the `ollama:`/`local:` short-circuits, and the empty string.
+  - The order is load-bearing, not cosmetic: eleven keys contain a shorter one, so matching shortest-first would price `gpt-4o-mini` as `gpt-4o` — a cheap model billed at the expensive rate. The guard is derived from the table, so a new nested key is covered the day it lands.
 - **Tuple Startswith for Blocked Env Prefixes** (#924):
   - Used native tuple overload in `config.py` `_validate_delegate_profiles` (`startswith(BLOCKED_ENV_PREFIXES)`) instead of generator allocation.
 

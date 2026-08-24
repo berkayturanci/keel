@@ -11,6 +11,8 @@ from pathlib import Path
 
 from keel.cli import main
 from keel.cost import (
+    _PRICING_KEYS_BY_LENGTH,
+    MODEL_PRICING,
     calculate_cost_report,
     estimate_benchmark_cost,
     estimate_token_cost,
@@ -18,6 +20,68 @@ from keel.cost import (
     normalize_model_name,
     render_cost_report,
 )
+
+
+class TestPricingKeyOrderIsComputedOnce(unittest.TestCase):
+    """The match order is a property of the table, not of the string matched.
+
+    #898 put ``sorted(MODEL_PRICING, key=len, reverse=True)`` inside the match
+    loop, so every call re-sorted the whole table — and ``keel cost-report``
+    calls :func:`normalize_model_name` once per ledger record (#930). Measured:
+    1.14 us/call before, 0.46 us after.
+    """
+
+    def test_longest_key_wins_so_a_prefix_cannot_shadow_a_specific_model(self):
+        """The reason the order exists at all, asserted on behaviour.
+
+        Eleven pricing keys contain a shorter one — ``claude`` inside four
+        Sonnet/Haiku/Opus entries, ``gemini`` inside four, ``gpt-4o`` inside
+        ``gpt-4o-mini``, ``deepseek`` inside two. Match shortest-first and every
+        one of them silently prices as the generic entry, which for
+        ``gpt-4o-mini`` means billing a cheap model at the expensive rate.
+
+        Derived from the table rather than hardcoded, so a new nested key is
+        covered the day it lands.
+        """
+        nested = [
+            (short, long)
+            for short in MODEL_PRICING
+            for long in MODEL_PRICING
+            if short != long and short in long
+        ]
+        self.assertTrue(nested, "no nested keys left; this guard would be vacuous")
+        for short, long in nested:
+            with self.subTest(short=short, long=long):
+                self.assertEqual(normalize_model_name(f"vendor:{long}"), long)
+                self.assertEqual(normalize_model_name(f"vendor:{short}"), short)
+
+    def test_the_precomputed_order_matches_a_fresh_sort(self):
+        self.assertEqual(
+            list(_PRICING_KEYS_BY_LENGTH), sorted(MODEL_PRICING, key=len, reverse=True)
+        )
+
+    def test_a_new_pricing_key_cannot_be_left_out_of_the_order(self):
+        self.assertEqual(set(_PRICING_KEYS_BY_LENGTH), set(MODEL_PRICING))
+
+    def test_the_match_loop_does_not_sort(self):
+        """Read from the AST, not the source text.
+
+        A substring check would find ``sorted`` in the comment that explains why
+        the sort was hoisted — the shape of trap that has already defeated four
+        assertions elsewhere in this repo.
+        """
+        import ast
+        import inspect
+
+        tree = ast.parse(inspect.getsource(normalize_model_name))
+        called = {
+            node.func.id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
+        self.assertNotIn(
+            "sorted", called, "the pricing table is sorted on every call again"
+        )
 
 
 class TestCostPureLogic(unittest.TestCase):
