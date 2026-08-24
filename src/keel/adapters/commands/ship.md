@@ -739,12 +739,22 @@ behaviour — so every gate stayed green. Both were found only by reading the da
 against a pre-session baseline.
 
 The check asks whether this merge wrote to files that another pull request changed **after
-this one branched**, which is the only way that revert can happen. `drift` exits non-zero
-and names each file with the pull request it collided with. Treat it as *stop and read the
-diff*, not as an automatic failure — two PRs editing one file in sequence is ordinary — and
-**never proceed to s11/s12 on a drift finding without a human confirming the merge is
-sound**. Silence is the failure mode being fixed here, so surface the report in the closure
-comment rather than only in the run log.
+this one branched**, which is the only way that revert can happen. Three exit codes:
+
+| exit | status | what to do |
+| --- | --- | --- |
+| `0` | `clean` or `out-of-scope` | proceed |
+| `1` | `drift` | **stop and read the diff** |
+| `2` | `unknown` | the check could not run — retry, and do not read it as a pass |
+
+`drift` names each file with the pull request it collided with. Treat it as *stop and read
+the diff*, not as an automatic failure — two PRs editing one file in sequence is ordinary —
+and **never proceed to s11/s12 on a drift finding without a human confirming the merge is
+sound**. `2` means GitHub could not be read (or the merge commit is not visible yet, which
+is a real race immediately after merging): retry it, and if it stays `2`, say so in the
+closure comment rather than recording a clean verdict the check never reached. Silence is
+the failure mode being fixed here, so surface the report in the closure comment rather than
+only in the run log.
 
 ### s11 capture
 Record the run for `/keel:wrap`: the **effective** implementer + reviewer vendors/models,

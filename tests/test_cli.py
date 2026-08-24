@@ -6170,6 +6170,26 @@ class TestVerifyMergeCommand(unittest.TestCase):
         self.assertIn("unknown", out)
         self.assertNotIn("clean", out)
 
+    def test_a_collision_already_found_survives_an_unreadable_sibling(self):
+        """Incompleteness must not bury a positive finding.
+
+        #999 is unreadable, but #550 was read and genuinely collides on `a.py`.
+        Aborting the scan at #999 — or letting "something was unreadable" override
+        the verdict — downgrades a named `drift` to an anonymous `unknown` because
+        an *unrelated* pull request was rate-limited, silencing the one signal this
+        command exists to raise. This is the same rule `judge_pins` applies to
+        unreachable repositories: collect, keep judging, report what you found.
+        """
+        rc, out, _ = self._run(
+            others=[550, 999],
+            files_by_pr={543: ["a.py"], 550: ["a.py"]},  # 999 resolves to None
+            commit_files=["a.py"],
+        )
+        self.assertEqual(rc, 1, "a collision that was seen must stay loud")
+        self.assertIn("drift", out)
+        self.assertIn("a.py", out)
+        self.assertIn("#550", out)
+
     def test_an_unreadable_merge_commit_is_unknown(self):
         rc, out, _ = self._run(
             others=[],
@@ -6177,7 +6197,29 @@ class TestVerifyMergeCommand(unittest.TestCase):
             commit_files=None,
         )
         self.assertEqual(rc, 2)
+        self.assertIn("unknown", out)
+        self.assertNotIn("clean", out)
         self.assertIn("merge commit", out)
+        # `verify_merge(None)` emits its own "could not read the merge commit's
+        # file list" reason, so asserting that phrase alone cannot tell whether
+        # this input was accounted for. The combined-reason tail can.
+        self.assertIn("no conclusion about drift is possible", out)
+
+    def test_the_reason_names_every_input_that_could_not_be_read(self):
+        """One line per unreadable input, so a human knows what to retry."""
+        rc, out, _ = self._run(
+            others=None,
+            files_by_pr={},
+            commit_files=None,
+        )
+        self.assertEqual(rc, 2)
+        for phrase in (
+            "the merge commit's file list",
+            "the pull requests merged alongside this one",
+            "this pull request's own file list",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, out)
 
     def test_an_unreadable_intended_list_is_unknown_not_clean(self):
         """Losing the PR's own file list silently downgrades the check.

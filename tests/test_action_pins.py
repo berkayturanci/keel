@@ -36,23 +36,32 @@ _PIN = re.compile(
 _UNPINNED = re.compile(r"uses:\s*([\w.-]+/[\w.-]+(?:/[\w.-]+)*)@(?![0-9a-f]{40})(\S+)")
 
 
-def _files():
-    """Every file in this repo that can pin an action.
+#: Trees whose YAML is not something this repo runs. ``docs/`` ships copy-paste
+#: workflow snippets for consumers, deliberately written with readable ``@v4``
+#: refs; pinning those would be pinning someone else's supply chain for them.
+_NOT_OURS = ("docs/", ".venv", "node_modules", ".claude/worktrees/", "build/", "dist/")
 
-    Not just ``.github/workflows/*.yml``. The composite action published to the
-    Marketplace lives at the repo root, runs in *consumers'* workflows, and was
-    the one place carrying an unpinned ``actions/setup-python@v7`` — precisely
-    because this check's glob could not see it (#933). ``.yaml`` is included so a
-    file added under the other spelling is not silently out of scope.
+
+def _files():
+    """Every YAML file in this repo that pins an action — discovered, not listed.
+
+    Enumerating known locations is exactly how this guard came to report "every
+    pin verified" while the composite action at the repo root carried the only
+    unpinned ``uses:`` in the tree (#933). A hardcoded list covers the misses
+    already found and nothing else, so this walks instead: a composite action
+    added at ``.github/actions/<name>/action.yml`` — the ordinary layout — or a
+    reusable workflow outside ``.github/workflows/`` is in scope the day it lands,
+    under either spelling.
     """
-    seen = []
-    for path in sorted(WORKFLOWS.glob("*.yml")) + sorted(WORKFLOWS.glob("*.yaml")):
-        seen.append(path)
-    for name in ("action.yml", "action.yaml"):
-        candidate = REPO / name
-        if candidate.is_file():
-            seen.append(candidate)
-    return seen
+    found = []
+    for pattern in ("*.yml", "*.yaml"):
+        for path in REPO.rglob(pattern):
+            rel = path.relative_to(REPO).as_posix()
+            if any(part in rel for part in _NOT_OURS) or not path.is_file():
+                continue
+            if "uses:" in path.read_text(encoding="utf-8", errors="ignore"):
+                found.append(path)
+    return sorted(found)
 
 
 def _label(path: Path) -> str:
@@ -112,6 +121,20 @@ def judge_pins(pins, resolve):
     return wrong, unreachable
 
 
+def assert_pins_ok(case, pins, resolve):
+    """Assert every pin resolved, and that every repo could be reached.
+
+    The online test is a one-line call to this so the *wiring* is testable
+    offline. With the unreachable assertion written inline in a class gated on
+    ``KEEL_CHECK_EXTERNAL=1``, deleting it left the default suite green — the one
+    line enforcing this issue's rule for this gate was the one line nothing
+    enforced.
+    """
+    wrong, unreachable = judge_pins(pins, resolve)
+    case.assertEqual([], wrong)
+    case.assertEqual([], unreachable, UNREACHABLE_MESSAGE)
+
+
 class TestActionPinShape(unittest.TestCase):
     """Offline: the pins are shaped so the online check can say something."""
 
@@ -134,6 +157,37 @@ class TestActionPinShape(unittest.TestCase):
         if not published.is_file():  # pragma: no cover - repo layout guard
             self.skipTest("this repo publishes no composite action")
         self.assertIn(published, _files())
+
+    def test_scope_is_discovered_rather_than_listed(self):
+        """A hardcoded list only covers the misses already found.
+
+        `.github/actions/<name>/action.yml` is the ordinary composite-action
+        layout and does not exist here yet. Naming it in an exclusion list would
+        be the same enumeration mistake one level up, so instead assert the
+        walk's *shape*: it reaches outside `.github/workflows/`, and it filters
+        on content rather than on a location whitelist.
+        """
+        self.assertTrue(
+            any("workflows" not in _label(path) for path in _files()),
+            "the walk never leaves .github/workflows/, so it is still a whitelist",
+        )
+        for path in _files():
+            with self.subTest(path=_label(path)):
+                self.assertIn("uses:", path.read_text(encoding="utf-8"))
+        self.assertFalse(
+            any(part.startswith(".github/actions") for part in _NOT_OURS),
+            "the ordinary composite-action layout is excluded from discovery",
+        )
+
+    def test_consumer_facing_docs_snippets_are_out_of_scope(self):
+        """Docs ship readable `@v4` examples on purpose.
+
+        Pinning those would be pinning a reader's supply chain for them, and the
+        guard failing on documentation would train people to widen its exclusions
+        rather than fix a real pin.
+        """
+        self.assertIn("docs/", _NOT_OURS)
+        self.assertEqual([], [p for p in _files() if _label(p).startswith("docs/")])
 
     def test_every_pin_carries_an_exact_version_comment(self):
         # A bare major ("# v4") is not enough: major tags move, so the comment
@@ -169,9 +223,7 @@ class TestActionPinsMatchUpstream(unittest.TestCase):
     """Online: the version comment is the version the SHA actually is."""
 
     def test_each_pin_resolves_to_the_release_it_claims(self):
-        wrong, unreachable = judge_pins(_pins(), _tags_for)
-        self.assertEqual([], wrong)
-        self.assertEqual([], unreachable, UNREACHABLE_MESSAGE)
+        assert_pins_ok(self, _pins(), _tags_for)
 
 
 class TestUnreachableIsAFailureNotASkip(unittest.TestCase):
@@ -209,6 +261,47 @@ class TestUnreachableIsAFailureNotASkip(unittest.TestCase):
     def test_a_matching_pin_reports_nothing(self):
         wrong, unreachable = judge_pins(self.PINS, lambda repo, sha: {"v7.0.1", "v7"})
         self.assertEqual(([], []), (wrong, unreachable))
+
+    def test_the_online_check_fails_on_an_unreachable_repo(self):
+        """The assertion itself, not just the function it calls.
+
+        `judge_pins` reporting an unreachable repo is worth nothing if the caller
+        ignores the second return value. This exercises the exact wiring the
+        online test uses.
+        """
+        with self.assertRaises(AssertionError) as caught:
+            assert_pins_ok(self, self.PINS, lambda repo, sha: None)
+        self.assertIn("reads as a pass", str(caught.exception))
+
+    def test_the_online_check_fails_on_a_wrong_pin(self):
+        with self.assertRaises(AssertionError):
+            assert_pins_ok(self, self.PINS, lambda repo, sha: {"v4.0.0"})
+
+    def test_the_online_check_passes_when_everything_resolves(self):
+        assert_pins_ok(self, self.PINS, lambda repo, sha: {"v7.0.1"})
+
+
+class TestTheGuardsScope(unittest.TestCase):
+    """What the guard looks at is the thing that failed before (#933)."""
+
+    def test_paths_are_reported_relative_to_the_repo(self):
+        """A bare filename cannot tell `action.yml` from `.github/…/action.yml`."""
+        labels = [_label(path) for path in _files()]
+        self.assertIn("action.yml", labels)
+        self.assertIn(".github/workflows/ci.yml", labels)
+
+    def test_both_yaml_spellings_are_in_scope(self):
+        """A file added under the other spelling must not be silently skipped.
+
+        There is no `.yaml` in the tree today, so this asserts the walk's
+        patterns rather than its output — the alternative is a fixture file
+        added purely to be discovered, which is worse.
+        """
+        import inspect
+
+        source = inspect.getsource(_files)
+        self.assertIn('"*.yml"', source)
+        self.assertIn('"*.yaml"', source)
 
 
 if __name__ == "__main__":
