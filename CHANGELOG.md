@@ -11,6 +11,9 @@ All notable changes to keel are documented here. The format follows
   - Used native tuple overload in `config.py` `_validate_delegate_profiles` (`startswith(BLOCKED_ENV_PREFIXES)`) instead of generator allocation.
 
 ### Fixed
+- **Swarm Worktrees Left Untracked** (#877):
+  - Added `worktrees/` to `RUNTIME_IGNORE_ENTRIES`. `keel swarm` checks out one isolated tree per cluster under `.keel/worktrees/` (`swarm_runtime.build_worktree_path`), so a parallel run turned `git status` into hundreds of untracked files — and an operator's habit of trusting a clean status is what notices a genuinely stray file.
+  - The existing assertions iterated `RUNTIME_IGNORE_ENTRIES` and checked each member was in the generated file, which is true for whatever the tuple happens to contain and therefore blind to a runtime directory missing from it. The new tests derive the path from the writer and put the question to `git status` itself, with a counterweight pinning that `.keel/project.yaml` and a stray root file stay visible.
 - **Gates That Reported a Pass Without Performing Their Check** (#933):
   - `keel verify-merge` no longer reports `clean` when GitHub is unreadable. `_overtaking_prs` turned a failed lookup into an empty overtaking set via `or []`, so a rate-limited `gh` produced "nothing overtook this merge" — the check announcing a pass for a question it never asked. Every input it depends on is now gathered before any is judged, and a single unreadable one makes the verdict `unknown` naming what could not be read.
   - `unknown` now exits **2** instead of 0, mirroring `keel evidence-verify`. The status line always said "not a pass"; the exit code, which is what a caller wiring this in after s10 reads, said otherwise. `out-of-scope` keeps exiting 0 — it is a real answer to the question asked.

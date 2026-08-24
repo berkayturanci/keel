@@ -11,12 +11,13 @@ import contextlib
 import io
 import json
 import os
+import subprocess
 import tempfile
 import unittest
 import unittest.mock as mock
 from pathlib import Path
 
-from keel import activity, checkpoint, cli, lock, workspace
+from keel import activity, checkpoint, cli, lock, swarm_runtime, workspace
 
 
 class TestKeelDir(unittest.TestCase):
@@ -148,6 +149,82 @@ class TestScratchDirCommand(unittest.TestCase):
             self.assertEqual(rc, 0)
             self.assertEqual(out.strip(), str(Path(tmp) / ".keel" / "scratch"))
             self.assertFalse((Path(tmp) / ".keel").exists())
+
+
+class TestGitActuallyIgnoresWhatKeelWrites(unittest.TestCase):
+    """Ask git, and ask it about the paths the code really writes.
+
+    The assertions elsewhere in this file iterate ``RUNTIME_IGNORE_ENTRIES`` and
+    check each member is in the file — true for whatever the tuple happens to
+    contain, and therefore blind to a runtime directory missing from it. That is
+    how ``worktrees/`` went unignored while a swarm run left one full working
+    copy per worker in ``git status`` (#877).
+
+    These derive the path from the writer (``swarm_runtime.build_worktree_path``) and
+    put the question to git itself.
+    """
+
+    def _repo(self, tmp: str) -> Path:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        (root / ".keel").mkdir()
+        workspace.ensure_runtime_gitignore(root / ".keel")
+        return root
+
+    def _untracked(self, root: Path) -> list[str]:
+        proc = subprocess.run(
+            ["git", "-C", str(root), "status", "--porcelain", "--untracked-files=all"],
+            capture_output=True, text=True, check=True,
+        )
+        return [
+            line[3:] for line in proc.stdout.splitlines()
+            if line.startswith("??") and not line[3:].startswith(".keel/.gitignore")
+        ]
+
+    def test_git_ignores_a_swarm_worktree_at_the_path_swarm_writes_to(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._repo(tmp)
+            # Not a literal: the path comes from the function swarm calls.
+            path = swarm_runtime.build_worktree_path("swarm-1", "cluster-1-42", root=root)
+            path.mkdir(parents=True)
+            (path / "src.py").write_text("x = 1\n", encoding="utf-8")
+
+            self.assertEqual([], self._untracked(root))
+
+    def test_every_runtime_directory_keel_creates_is_ignored(self):
+        """One case per writer, so a new runtime subtree cannot be forgotten."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._repo(tmp)
+            written = {
+                "state": root / ".keel" / "state" / "checkpoint.json",
+                "activity": root / ".keel" / "activity" / "r1.json",
+                "scratch": root / ".keel" / "scratch" / "pr-1.diff",
+                "worktrees": swarm_runtime.build_worktree_path("s1", "c1", root=root) / "f.py",
+            }
+            for path in written.values():
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("{}", encoding="utf-8")
+
+            self.assertEqual(
+                [], self._untracked(root),
+                "a runtime path keel writes to is not covered by .keel/.gitignore",
+            )
+
+    def test_a_stray_file_outside_those_subtrees_is_still_visible(self):
+        """The counterweight: over-broad ignores would hide a real stray file.
+
+        `.keel/` must not be blanket-ignored — `project.yaml` and `extensions/`
+        are committed config, and an operator noticing an unexpected file there
+        is the point.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._repo(tmp)
+            (root / ".keel" / "project.yaml").write_text("extends: keel\n", encoding="utf-8")
+            (root / "plan.json").write_text("{}", encoding="utf-8")
+
+            self.assertEqual(
+                sorted(self._untracked(root)), [".keel/project.yaml", "plan.json"]
+            )
 
 
 class TestRuntimeWritersStayUnderKeel(unittest.TestCase):
