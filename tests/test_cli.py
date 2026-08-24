@@ -1414,12 +1414,54 @@ class TestShip(unittest.TestCase):
         self.assertEqual(len(records), 1)
         self.assertIsNone(records[0]["capture"]["marker"])
         self.assertIsNone(records[0]["capture"]["status"])
-        # Only the capture-status branch of the merged-run check is narrowed. This
-        # record still reads as merged through its assessment, which recommends a
-        # merge because the gates passed — that branch is untouched here.
-        stripped = {**records[0], "assessment": None}
-        self.assertFalse(ledger._is_merged_ship_run(stripped))
-        self.assertTrue(ledger._is_merged_ship_run(records[0]))
+        self.assertIs(records[0]["capture"]["not_run"], True)
+        self.assertFalse(ledger._is_merged_ship_run(records[0]))
+
+    def test_a_missing_marker_is_still_reported_without_the_declaration(self):
+        # The counterweight to the test above. `not_run` must earn its exemption by
+        # being declared: inferring "never attempted" from a null marker would
+        # reclassify every genuinely lost marker as fine, which is the fail-open the
+        # flag exists to avoid. Same record, declaration removed, still merged.
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger("'true'")
+            _, out, _ = run(["ship", config, "--root", d, "--live", "--append-ledger",
+                             "--json", "--pull-request", "940", "--head-sha", "d" * 40,
+                             "--capture-status", cli.CAPTURE_STATUS_NOT_RUN,
+                             "--approve-scope", "filesystem,git,github",
+                             "--operator", "tester"])
+            record = ledger.read_records(
+                json.loads(out)["result"]["run_ledger"]["path"]
+            )[0]
+
+        undeclared = {**record, "capture": {**record["capture"], "not_run": False}}
+        self.assertTrue(ledger._is_merged_ship_run(undeclared))
+        health = ledger.capture_health_summary([undeclared])
+        self.assertEqual(1, health["counts"]["missing_marker"])
+
+    def test_a_rebase_re_record_reports_no_capture_gap(self):
+        # The defect this flag was added for: the re-record read as a merged PR whose
+        # marker had gone missing, so `keel ledger` reported a capture gap for a PR
+        # that had not merged and whose real marker was sitting in the first record.
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger("'true'")
+            for run_id, sha, status in (("RUN-A", "a" * 40, "deferred"),
+                                        ("RUN-B", "b" * 40, cli.CAPTURE_STATUS_NOT_RUN)):
+                _, out, _ = run(["ship", config, "--root", d, "--live", "--append-ledger",
+                                 "--json", "--run-id", run_id,
+                                 "--pull-request", "940", "--head-sha", sha,
+                                 "--capture-status", status,
+                                 "--approve-scope", "filesystem,git,github",
+                                 "--operator", "tester"])
+            records = ledger.read_records(
+                json.loads(out)["result"]["run_ledger"]["path"]
+            )
+
+        counts = ledger.capture_health_summary(records)["counts"]
+        self.assertEqual(0, counts["missing_marker"])
+        # The PR's one real marker is still seen; the exemption is not a blindfold.
+        self.assertEqual(1, counts["deferred"])
 
     def test_capture_status_not_run_is_not_a_capture_outcome(self):
         # It means "no capture happened", so it must never round-trip as a marker

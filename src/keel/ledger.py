@@ -99,6 +99,7 @@ def build_ship_run_record(
     capture_status: str | None = None,
     capture_reason: str | None = None,
     capture_artifact: str | None = None,
+    capture_not_run: bool = False,
     issue_title: str | None = None,
     issue_labels: list[str] | tuple[str, ...] = (),
     existing_records: list[dict[str, Any]] | None = None,
@@ -197,6 +198,7 @@ def build_ship_run_record(
             changed_files=changed_files,
             existing_records=existing_records or [],
             config=config,
+            not_run=capture_not_run,
         ),
     }
 
@@ -454,12 +456,22 @@ def _is_merged_ship_run(record: Any) -> bool:
         return False
     if record.get("record_type") != RECORD_TYPE_SHIP_RUN:
         return False
+    capture_block = record.get("capture")
+    # The operator declared this run never reached capture, which settles the
+    # question before the assessment is consulted: that block records what ship
+    # *recommended*, and a recommendation to merge is read here as proof the PR
+    # merged. For a run re-recording gates after a rebase both are true at once —
+    # gates green, nothing merged — and the record would otherwise be counted as a
+    # merged PR whose marker went missing, a capture gap that is not there (#945).
+    # Only an explicit declaration does this; a plain ``status: None`` still falls
+    # through, so a marker that genuinely went missing is still reported.
+    if isinstance(capture_block, dict) and capture_block.get("not_run") is True:
+        return False
     assessment = record.get("assessment")
     if isinstance(assessment, dict):
         merge = assessment.get("merge")
         if isinstance(merge, dict) and merge.get("action") == "merge":
             return True
-    capture_block = record.get("capture")
     if isinstance(capture_block, dict) and capture_block.get("status") in (
         "applied",
         "deferred",

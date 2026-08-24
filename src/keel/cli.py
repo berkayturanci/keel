@@ -562,9 +562,13 @@ CHECKPOINT_MERGE_STEP = "s10"
 #: an outcome. The flag itself stays **required**, so the operator still states
 #: explicitly that this run did not capture rather than silently omitting it.
 #:
-#: This narrows the capture-status branch of ``_is_merged_ship_run`` only. The
-#: other branch — an assessment recommending ``merge`` — is independent and
-#: unchanged, so a ship run whose gates passed still reads as merged through it.
+#: The record also carries ``capture.not_run: True``, which
+#: :func:`keel.ledger._is_merged_ship_run` reads as settling the question before
+#: the assessment is consulted. Without it the assessment branch — which treats a
+#: recommendation to merge as proof the PR merged — counted a rebase re-record as
+#: a merged PR whose marker had gone missing, reporting a capture gap that is not
+#: there. Only the explicit declaration does this; a bare ``status: None`` still
+#: falls through, so a marker that genuinely went missing is still reported.
 CAPTURE_STATUS_NOT_RUN = "not-run"
 
 
@@ -1110,6 +1114,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         branch=args.branch,
         head_sha=args.head_sha,
         capture_status=_resolved_capture_status(args.capture_status),
+        capture_not_run=args.capture_status == CAPTURE_STATUS_NOT_RUN,
         capture_reason=args.capture_reason,
         capture_artifact=args.capture_artifact,
         issue_title=args.issue_title,

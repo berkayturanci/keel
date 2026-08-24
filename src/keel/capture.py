@@ -201,6 +201,7 @@ def record_marker(
     changed_files: list[str] | tuple[str, ...] = (),
     existing_records: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
     config: cfg.ProjectConfig | None = None,
+    not_run: bool = False,
 ) -> dict[str, Any]:
     """Build the capture block stored in a ship run ledger record.
 
@@ -208,6 +209,14 @@ def record_marker(
     capture artifact. It is the proof that an ``applied`` capture actually
     produced something; capture reconcile treats ``applied`` with no artifact as
     a finding. ``deferred``/``skipped`` need no artifact.
+
+    ``not_run`` marks a record whose run never reached capture, so a reader can
+    tell it apart from one that reached capture and lost its marker. Both carry
+    ``marker: None``, and without the flag a capture-health reader can only
+    assume the second and report a gap that is not there (#945). It is a
+    *declaration* by the operator, deliberately: inferring it from the null would
+    reclassify every genuinely missing marker as "never attempted", which is the
+    fail-open this field exists to avoid.
     """
     clean_artifact = artifact.strip() if isinstance(artifact, str) and artifact.strip() else None
     if status is None:
@@ -217,6 +226,7 @@ def record_marker(
             "reason": reason,
             "marker_reason": None,
             "marker": None,
+            "not_run": not_run,
             "artifact": clean_artifact,
             "fail_soft": True,
             "learning": learning_decision(
