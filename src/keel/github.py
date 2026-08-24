@@ -7,6 +7,7 @@ unit-tested offline; live behaviour is opt-in.
 
 from __future__ import annotations
 
+import json
 import random
 import time
 from collections.abc import Sequence
@@ -291,8 +292,8 @@ def _lines(argv: list[str], *, cwd: str | None, _run, _sleep=None) -> list[str] 
 
     Routed through :func:`run_argv_retry` rather than :func:`run_argv`: the retry
     was written, tested, and called by nothing (#938). These are the reads it was
-    written for — ``pr_files``, ``commit_files`` and, via :func:`_ints`,
-    ``prs_merged_between`` — and one ``keel verify-merge`` run makes ``4 + N`` of
+    written for — ``pr_files`` and ``commit_files`` — and one
+    ``keel verify-merge`` run makes ``4 + N`` of
     them, N being the pull requests merged in the window (5–25 in this repo). Since
     #936 made an unreadable input exit 2 instead of quietly passing, a single blip
     on the busiest day produces a loud wrong answer, and a gate that cries wolf is
@@ -308,35 +309,77 @@ def _lines(argv: list[str], *, cwd: str | None, _run, _sleep=None) -> list[str] 
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
 
+#: How far back one `gh pr list` page reaches. A window older than this many
+#: merges is reported as unreadable rather than empty — see #937 in the docstring
+#: below. Named so the ceiling is one place to read and one place to change.
+MERGED_PAGE_LIMIT = 100
+
+
 def prs_merged_between(
     base: str, since: str, until: str, *, cwd: str | None = None, _run=None,
-    _sleep=None,
+    _sleep=None, limit: int = MERGED_PAGE_LIMIT,
 ) -> list[int] | None:
     """Pull request numbers merged into ``base`` in the half-open window (#561).
 
     ``since``/``until`` are ISO-8601 timestamps. This is the window in which another
     merge can land work that a branch created before ``since`` will not contain — the
     precondition for an update-branch squash reverting it.
+
+    ``None`` when the answer could not be read — including when the page came back
+    **truncated**, which is #933's rule reached by a different mechanism (#937).
+    ``gh pr list`` returns the *newest* N merges, and the window filter used to run
+    inside ``--jq``, after that cut. On a repository where more than ``limit``
+    pull requests merged since the window closed, the window's merges are not in
+    the page at all, the filter matches nothing, and an empty list reads as
+    "nothing overtook this merge" — a successful read that saw none of the answer.
+
+    Live here, not latent: this repo has ~500 merged pull requests and
+    ``docs/keel/cli.md`` documents a retrospective ``verify-merge --pr 543`` on a
+    pull request from a previous month, which is exactly the shape that trips it.
+
+    Truncation is detectable because the page is newest-first: if it came back
+    **full** and its oldest entry still merged at or after ``since``, the page
+    never reached back far enough to contain the window. Paginating would also
+    work, but on a repo this size a retrospective check would walk hundreds of
+    pull requests to answer one question; saying "I could not see that far" is
+    honest and cheap. Raising ``limit`` is a separate tuning decision.
+
+    The filter therefore runs in Python rather than ``--jq``: the truncation
+    check needs the raw ``mergedAt`` values, which ``--jq`` had already discarded.
     """
-    return _ints(
-        ["gh", "pr", "list", "--base", base, "--state", "merged", "--limit", "100",
-         "--json", "number,mergedAt",
-         "--jq", f'.[] | select(.mergedAt > "{since}" and .mergedAt < "{until}") | .number'],
+    rows = _json_rows(
+        ["gh", "pr", "list", "--base", base, "--state", "merged",
+         "--limit", str(limit), "--json", "number,mergedAt"],
         cwd=cwd, _run=_run, _sleep=_sleep,
     )
-
-
-def _ints(argv: list[str], *, cwd: str | None, _run, _sleep=None) -> list[int] | None:
-    lines = _lines(argv, cwd=cwd, _run=_run, _sleep=_sleep)
-    if lines is None:
+    if rows is None:
         return None
-    out = []
-    for line in lines:
-        try:
-            out.append(int(line))
-        except ValueError:
-            continue
-    return out
+    merged_at = [str(row.get("mergedAt") or "") for row in rows]
+    if len(rows) >= limit and merged_at and min(merged_at) >= since:
+        # Full page whose oldest entry is still inside/after the window: the read
+        # succeeded and saw only part of the answer, which must not read as clean.
+        return None
+    return [
+        int(row["number"])
+        for row in rows
+        if isinstance(row.get("number"), int)
+        and since < str(row.get("mergedAt") or "") < until
+    ]
+
+
+def _json_rows(
+    argv: list[str], *, cwd: str | None, _run, _sleep=None
+) -> list[dict] | None:
+    """Parse ``gh --json`` output into rows, or ``None`` when it could not be read."""
+    result = run_argv_retry(argv, cwd=cwd, _run=_run, _sleep=_sleep)
+    if not result.ok:
+        return None
+    try:
+        data = json.loads(result.stdout or "[]")
+    except ValueError:
+        return None
+    return data if isinstance(data, list) else None
+
 
 
 def _merge_window_fields(result: CommandResult) -> list[str]:

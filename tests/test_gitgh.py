@@ -1,5 +1,6 @@
 """Unit tests for the thin git/gh wrappers (argv construction + fail-soft)."""
 
+import json
 import unittest
 
 from keel import git, github
@@ -230,19 +231,85 @@ class TestGitHub(unittest.TestCase):
         self.assertIsNone(github.pr_merge_window(543, _run=_Recorder(code=1)))
         self.assertIsNone(github.pr_merge_window(543, _run=_Recorder(out="garbage\n")))
 
-    def test_prs_merged_between_parses_numbers(self):
-        rec = _Recorder(out="550\n546\n")
-        self.assertEqual(
-            github.prs_merged_between("main", "A", "B", _run=rec), [550, 546])
+    @staticmethod
+    def _merged_page(*rows):
+        """`gh pr list --json number,mergedAt` output, newest first."""
+        return _Recorder(out=json.dumps(
+            [{"number": n, "mergedAt": at} for n, at in rows]
+        ))
 
-    def test_prs_merged_between_skips_non_numeric_lines(self):
+    def test_prs_merged_between_keeps_only_the_window(self):
+        # The window filter moved from --jq into Python (#937): the truncation
+        # check below needs the raw timestamps, which --jq had discarded.
+        page = self._merged_page((550, "B0"), (546, "A5"), (540, "9x"))
+
         self.assertEqual(
-            github.prs_merged_between("main", "A", "B", _run=_Recorder(out="550\nnope\n")),
-            [550])
+            [546], github.prs_merged_between("main", "A", "B", _run=page),
+            "entries outside the half-open window must be dropped",
+        )
+
+    def test_prs_merged_between_skips_malformed_rows(self):
+        page = _Recorder(out=json.dumps(
+            [{"number": 546, "mergedAt": "A5"}, {"number": "nope", "mergedAt": "A6"}]
+        ))
+
+        self.assertEqual([546], github.prs_merged_between("main", "A", "B", _run=page))
 
     def test_prs_merged_between_failsoft(self):
         self.assertIsNone(
             github.prs_merged_between("main", "A", "B", _run=_Recorder(code=1)))
+
+    def test_a_truncated_page_reads_as_unreadable_not_as_empty(self):
+        """#937, the same rule as #933 through a read that *succeeded*.
+
+        `gh pr list` returns the newest N merges and the window filter runs after
+        that cut. On a repo where more than N merged since the window closed,
+        none of the window's merges are in the page, the filter matches nothing,
+        and an empty list reads as "nothing overtook this merge".
+        """
+        # A full page whose oldest entry still merged after the window opened:
+        # the read never reached back far enough to see the window.
+        full_page = self._merged_page(*[(900 + i, f"Z{i:03d}") for i in range(5)])
+
+        self.assertIsNone(
+            github.prs_merged_between("main", "A", "B", _run=full_page, limit=5),
+            "a page that could not reach the window must not report it empty",
+        )
+
+    def test_a_full_page_that_does_reach_the_window_is_trusted(self):
+        """The counterweight: `full` alone is not truncation.
+
+        If the oldest entry predates the window, the page spans it, and an empty
+        result is a real answer.
+        """
+        page = self._merged_page(
+            (905, "C0"), (904, "B5"), (903, "A5"), (902, "A1"), (901, "09"),
+        )
+
+        self.assertEqual(
+            # Only A5 and A1 fall inside the half-open (A, B) window: B5 sorts
+            # after B, C0 after that.
+            [903, 902], github.prs_merged_between("main", "A", "B", _run=page, limit=5),
+        )
+
+    def test_a_short_page_is_never_treated_as_truncated(self):
+        page = self._merged_page((550, "Z9"))
+
+        self.assertEqual(
+            [], github.prs_merged_between("main", "A", "B", _run=page, limit=5),
+            "a page shorter than the limit saw everything there was",
+        )
+
+    def test_an_empty_page_is_an_answer(self):
+        self.assertEqual(
+            [], github.prs_merged_between("main", "A", "B", _run=_Recorder(out="[]")),
+        )
+
+    def test_prs_merged_between_rejects_output_that_is_not_a_json_list(self):
+        self.assertIsNone(
+            github.prs_merged_between("main", "A", "B", _run=_Recorder(out="garbage")))
+        self.assertIsNone(
+            github.prs_merged_between("main", "A", "B", _run=_Recorder(out='{"a": 1}')))
 
     def test_merge_pr_method(self):
         rec = _Recorder()
@@ -514,7 +581,11 @@ class TheRetryIsActuallyWiredToTheReads(unittest.TestCase):
         )
 
     def test_prs_merged_between_recovers_from_a_transient_failure(self):
-        run = self._flaky("connection reset by peer", "810\n811\n")
+        run = self._flaky(
+            "connection reset by peer",
+            json.dumps([{"number": 810, "mergedAt": "T1a"},
+                        {"number": 811, "mergedAt": "T1b"}]),
+        )
 
         self.assertEqual(
             [810, 811],
