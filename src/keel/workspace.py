@@ -159,12 +159,29 @@ def write_text_atomic(path: str | Path, content: str, *, encoding: str = "utf-8"
         with contextlib.suppress(OSError):
             os.unlink(temp_file)
         raise
-    with contextlib.suppress(OSError, AttributeError):
-        dir_fd = os.open(target.parent, os.O_RDONLY)
-        try:
-            os.fsync(dir_fd)
-        finally:
-            os.close(dir_fd)
+    _fsync_directory(target.parent)
+
+
+def _fsync_directory(directory: Path) -> bool:
+    """Flush a directory entry so a completed rename survives a power loss.
+
+    Best-effort, and its own function so the success path is reachable by a test
+    on every platform: Windows cannot ``os.open`` a directory, so leaving this
+    inline left three lines uncovered there and dropped the Windows coverage run
+    below the 100% bar — a real failure hidden behind #953's masked job.
+
+    Returns whether the sync happened, so a caller (today only a test) can tell
+    "flushed" from "this platform would not let us ask".
+    """
+    try:
+        dir_fd = os.open(directory, os.O_RDONLY)
+    except OSError:
+        return False
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
+    return True
 
 
 def scratch_dir(root: str | Path = ".", *, create: bool = True) -> Path:

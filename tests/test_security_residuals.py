@@ -171,6 +171,31 @@ class RuntimeWritesAreAtomicAndDurable(unittest.TestCase):
                 "a temp file was left behind",
             )
 
+    def test_the_directory_entry_is_synced_after_the_rename(self):
+        """Covers the success path on every platform, including Windows.
+
+        Windows cannot `os.open` a directory, so a test that relies on the real
+        call leaves these lines unexecuted there — which dropped the Windows
+        coverage run under the 100% bar while #953's masked job hid the failure.
+        Faking the handle keeps the assertion about *ordering and cleanup*, which
+        is the part that is platform-independent.
+        """
+        synced, closed = [], []
+        with (
+            patch("os.open", return_value=4242),
+            patch("os.fsync", synced.append),
+            patch("os.close", closed.append),
+        ):
+            flushed = workspace._fsync_directory(Path("."))
+
+        self.assertTrue(flushed)
+        self.assertIn(4242, synced)
+        self.assertEqual([4242], closed, "the directory handle must be closed")
+
+    def test_a_directory_that_cannot_be_opened_is_not_an_error(self):
+        with patch("os.open", side_effect=OSError("Windows says no")):
+            self.assertFalse(workspace._fsync_directory(Path(".")))
+
     def test_a_directory_fsync_failure_does_not_fail_the_write(self):
         # Windows cannot open a directory with os.open. Failing the write over a
         # durability hint we cannot request there would trade a real guarantee on
