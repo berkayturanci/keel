@@ -255,8 +255,8 @@ def build_consent_contract(
         "delegated_agent_scope": {
             "approved_mutation_scopes": list(effective_approved_scope if approved_live else ()),
             "scope_expansion_policy": "block-or-escalate",
-            "secret_values_permitted_in_prompt": False,  # nosec B105
-            "secret_access_requires_explicit_scope": "secrets",  # nosec B105
+            "secret_values_permitted_in_prompt": False,
+            "secret_access_requires_explicit_scope": "secrets",
         },
         "consent_record": (
             _record(command, target, effective_approved_scope, operator, dry_run, now)
@@ -324,7 +324,7 @@ def _record(
         "target": target,
         "scopes_approved": list(approved_scope),
         "dry_run": dry_run,
-        "secret_values_recorded": False,  # nosec B105
+        "secret_values_recorded": False,
     }
 
 

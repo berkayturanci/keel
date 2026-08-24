@@ -1107,7 +1107,7 @@ def scan_contract_as_dict(
         },
         "dedupe": {
             "source": "policy_pack.scan.dedupe + canonical defaults",
-            "path_token_boundary": True,  # nosec B105
+            "path_token_boundary": True,
             "type_must_match": True,
             "near_text_similarity": _near_text_similarity(config),
             "open_duplicate": "skip",

@@ -46,6 +46,12 @@ Documentation = "https://github.com/berkayturanci/keel/tree/main/docs/keel"
 dev = [
     "ruff",
     "coverage",
+    # Required by the `bandit` policy-pack preset this project enables in
+    # `.keel/project.yaml`. Absent, the gate reported `bandit failed (exit 127):
+    # bandit: command not found` on all 41 PRs merged in one week — a security
+    # gate that is red because nothing scanned, worn as though something did
+    # (#927). `tests/test_gate_tools_are_installable.py` keeps the two in step.
+    "bandit",
 ]
 
 [project.scripts]
