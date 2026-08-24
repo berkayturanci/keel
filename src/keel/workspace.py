@@ -41,16 +41,23 @@ SCRATCH_DIRNAME = "scratch"
 # patterns relative to the ``.keel/.gitignore`` that lists them. ``project.yaml``
 # and ``extensions/`` are intentionally absent: they are committed config.
 #
-# ``worktrees/`` is where ``keel swarm`` checks out one isolated tree per cluster
-# (``swarm_runtime.worktree_path``). A parallel run leaves a full working copy per
-# worker there, so without this entry a swarm turns ``git status`` into hundreds of
-# untracked files — and the operator's habit of trusting a clean status is the
-# thing that notices a real stray file (#877).
+# ``/worktrees/`` is where ``keel swarm`` checks out one isolated tree per cluster
+# (``swarm_runtime.build_worktree_path``). A parallel run leaves a full working
+# copy per worker there, so without this entry a swarm turns ``git status`` into
+# hundreds of untracked files — and the operator's habit of trusting a clean
+# status is the thing that notices a real stray file (#877).
+#
+# Anchored with a leading slash, unlike its neighbours. An unanchored
+# ``worktrees/`` matches at any depth, including
+# ``.keel/extensions/<ext>/worktrees/`` — and ``extensions/`` is committed config,
+# deliberately absent from this list. A third-party extension is far likelier to
+# contain a directory called ``worktrees`` than one called ``scratch``, so the
+# looseness that is theoretical for the others is not for this one.
 RUNTIME_IGNORE_ENTRIES: tuple[str, ...] = (
     "state/",
     "activity/",
     "scratch/",
-    "worktrees/",
+    "/worktrees/",
     "*.tmp",
 )
 

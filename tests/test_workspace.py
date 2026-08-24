@@ -11,6 +11,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import subprocess
 import tempfile
 import unittest
@@ -191,8 +192,58 @@ class TestGitActuallyIgnoresWhatKeelWrites(unittest.TestCase):
 
             self.assertEqual([], self._untracked(root))
 
+    #: Subtrees of ``.keel`` that are committed on purpose, so the sweep below
+    #: does not demand they be ignored. Anything found in the source that is in
+    #: neither this set nor ``RUNTIME_IGNORE_ENTRIES`` is unclassified, and the
+    #: test says so rather than guessing.
+    COMMITTED_SUBTREES = frozenset({"extensions"})
+
+    #: How the source spells a ``.keel`` subtree. Kept as patterns rather than a
+    #: list of names, because a hand-maintained list of names is the same thing
+    #: the tuple already is — and the reason #877 went unnoticed.
+    _SUBTREE_PATTERNS = (
+        r'"\.keel/([a-z_]+)',
+        r'"\.keel"\s*/\s*"([a-z_]+)"',
+        r'KEEL_DIRNAME\s*/\s*"([a-z_]+)"',
+        r'keel_dir\([^)]*\)\s*/\s*"([a-z_]+)"',
+    )
+
+    def _subtrees_in_source(self) -> dict[str, set[str]]:
+        src = Path(workspace.__file__).resolve().parent
+        found: dict[str, set[str]] = {}
+        for path in sorted(src.rglob("*.py")):
+            text = path.read_text(encoding="utf-8")
+            for pattern in self._SUBTREE_PATTERNS:
+                for match in re.finditer(pattern, text):
+                    found.setdefault(match.group(1), set()).add(path.name)
+        return found
+
+    def test_every_keel_subtree_in_the_source_is_classified(self):
+        """Derived from the source, so the next one cannot be forgotten.
+
+        An earlier version of this test listed four paths by hand — which is the
+        same hand-maintained list as the tuple it was meant to police, and would
+        have missed #877 exactly as the tuple did. This scans the package for
+        every ``.keel/<name>`` construction and requires each to be either
+        ignored at runtime or declared committed. A new subtree in neither is a
+        failure, not a silent omission.
+        """
+        ignored = {entry.strip("/") for entry in workspace.RUNTIME_IGNORE_ENTRIES}
+        found = self._subtrees_in_source()
+        self.assertTrue(found, "the scan found nothing; the patterns have gone stale")
+        unclassified = {
+            name: sorted(files)
+            for name, files in found.items()
+            if name not in ignored and name not in self.COMMITTED_SUBTREES
+        }
+        self.assertEqual(
+            {}, unclassified,
+            "a .keel subtree is written by the source but is neither ignored at "
+            f"runtime nor declared committed: {unclassified}",
+        )
+
     def test_every_runtime_directory_keel_creates_is_ignored(self):
-        """One case per writer, so a new runtime subtree cannot be forgotten."""
+        """One live case per ignored entry, asked of git rather than the tuple."""
         with tempfile.TemporaryDirectory() as tmp:
             root = self._repo(tmp)
             written = {
@@ -200,6 +251,10 @@ class TestGitActuallyIgnoresWhatKeelWrites(unittest.TestCase):
                 "activity": root / ".keel" / "activity" / "r1.json",
                 "scratch": root / ".keel" / "scratch" / "pr-1.diff",
                 "worktrees": swarm_runtime.build_worktree_path("s1", "c1", root=root) / "f.py",
+                # The one entry with no writer to derive from. Without a case it
+                # is the next `worktrees/` — an unverified member of a tuple
+                # whose other members are all covered.
+                "*.tmp": root / ".keel" / "half-written.tmp",
             }
             for path in written.values():
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -220,11 +275,112 @@ class TestGitActuallyIgnoresWhatKeelWrites(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = self._repo(tmp)
             (root / ".keel" / "project.yaml").write_text("extends: keel\n", encoding="utf-8")
+            (root / ".keel" / "extensions").mkdir()
+            (root / ".keel" / "extensions" / "e.yaml").write_text("x: 1\n", encoding="utf-8")
             (root / "plan.json").write_text("{}", encoding="utf-8")
 
             self.assertEqual(
-                sorted(self._untracked(root)), [".keel/project.yaml", "plan.json"]
+                sorted(self._untracked(root)),
+                [".keel/extensions/e.yaml", ".keel/project.yaml", "plan.json"],
             )
+
+    def test_an_extensions_directory_named_worktrees_stays_visible(self):
+        """The entry is anchored, and this is what the anchor is for.
+
+        Unanchored, ``worktrees/`` matches at any depth — including
+        ``.keel/extensions/<ext>/worktrees/``, and ``extensions/`` is committed
+        config that the comment above the tuple calls "intentionally absent".
+        A third-party extension is far likelier to contain a directory called
+        ``worktrees`` than one called ``scratch``, so the looseness that stays
+        theoretical for the other entries is not theoretical for this one.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._repo(tmp)
+            ext = root / ".keel" / "extensions" / "myext" / "worktrees"
+            ext.mkdir(parents=True)
+            (ext / "template.yaml").write_text("x: 1\n", encoding="utf-8")
+            swarm = swarm_runtime.build_worktree_path("s1", "c1", root=root)
+            swarm.mkdir(parents=True)
+            (swarm / "f.py").write_text("x = 1\n", encoding="utf-8")
+
+            visible = set(self._untracked(root))
+            self.assertIn(
+                ".keel/extensions/myext/worktrees/template.yaml", visible,
+                "the entry reaches into extensions/, which is committed config",
+            )
+            self.assertNotIn(
+                str(swarm.relative_to(root)) + "/f.py", visible,
+                "the swarm worktree it exists for is no longer ignored",
+            )
+
+    def test_the_entries_cannot_hide_committed_config_wherever_they_land(self):
+        """Guards the over-fix the previous test only appears to guard.
+
+        Adding ``.keel/`` to the tuple looks like the obvious wholesale mistake,
+        but the entries are written *into* ``.keel/.gitignore``, so there it
+        matches only a nested ``.keel/.keel/`` and the counterweight above sails
+        through. The mistake that actually hides config is a blanket rule, or an
+        unanchored entry reaching into ``extensions/``. Both are checked here by
+        writing each entry into the **root** gitignore as well.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._repo(tmp)
+            (root / ".gitignore").write_text(
+                "\n".join(workspace.RUNTIME_IGNORE_ENTRIES) + "\n", encoding="utf-8"
+            )
+            for rel in (".keel/project.yaml", ".keel/extensions/e.yaml"):
+                path = root / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("x", encoding="utf-8")
+
+            visible = set(self._untracked(root))
+            for rel in (".keel/project.yaml", ".keel/extensions/e.yaml"):
+                with self.subTest(path=rel):
+                    self.assertIn(
+                        rel, visible,
+                        "a runtime ignore entry hides committed config when it "
+                        "lands in a gitignore above .keel/",
+                    )
+
+
+class TestTheDocsPrintTheFileKeelActuallyWrites(unittest.TestCase):
+    """`artifacts.md` reproduces the generated gitignore verbatim.
+
+    A reader comparing their own `.keel/.gitignore` against that block is doing
+    the right thing, so the block has to be the real one. Nothing pinned it, and
+    it silently fell a release behind — the page told a consumer an entry keel
+    had just added should not be there.
+    """
+
+    DOC = Path(__file__).resolve().parent.parent / "docs/keel/artifacts.md"
+
+    def _block(self) -> str:
+        text = self.DOC.read_text(encoding="utf-8")
+        start = text.index("```gitignore\n") + len("```gitignore\n")
+        return text[start : text.index("```", start)]
+
+    def test_the_printed_block_is_the_generated_body(self):
+        generated = "".join(
+            line
+            for line in workspace.runtime_gitignore_body().splitlines(True)
+            if not line.startswith("#")
+        )
+        self.assertEqual(
+            self._block(), generated,
+            "docs/keel/artifacts.md prints a gitignore that is not the one keel writes",
+        )
+
+    def test_the_directory_table_lists_every_ignored_subtree(self):
+        text = self.DOC.read_text(encoding="utf-8")
+        for entry in workspace.RUNTIME_IGNORE_ENTRIES:
+            name = entry.strip("/")
+            if name.startswith("*"):
+                continue  # a glob, not a directory the table can name
+            with self.subTest(entry=entry):
+                self.assertIn(
+                    f"`.keel/{name}/", text,
+                    f".keel/{name}/ is ignored but the artifacts table never mentions it",
+                )
 
 
 class TestRuntimeWritersStayUnderKeel(unittest.TestCase):

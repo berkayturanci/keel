@@ -7,3 +7,4 @@ activity/
 scratch/
 *.tmp
 worktrees/
+/worktrees/

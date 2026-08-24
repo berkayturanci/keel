@@ -19,6 +19,7 @@ Everything keel owns lives under a single project directory, `.keel/`:
 | `.keel/state/locks/` | merge / resource locks | ignored |
 | `.keel/activity/` | live-board activity records | ignored |
 | `.keel/scratch/` | agent scratch (diffs, dumps, drafts) | ignored |
+| `.keel/worktrees/` | one isolated checkout per `keel swarm` cluster worker | ignored |
 
 `project.yaml` and `extensions/` are config you commit. The rest is disposable per-run
 state — safe to delete at any time.
@@ -36,6 +37,7 @@ ignored:
 state/
 activity/
 scratch/
+/worktrees/
 *.tmp
 ```
 
