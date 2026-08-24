@@ -83,27 +83,35 @@ To provide honest optics during in-flight pull requests while strictly preservin
 
 | Status | CLI Exit | GitHub Check-Run | Meaning | Merge Allowed? |
 |---|---|---|---|---|
-| **`waiting`** | `2` | `neutral` (⚪ grey dot) | Review / jury verdicts are simply not posted yet, or a trusted verdict is pinned to an earlier commit (the ordinary push-after-review case). No forged or untrusted evidence. | ❌ Blocked |
+| **`waiting`** | `2` | *incomplete* (🟡 yellow dot) | Required evidence for the active phase is not posted yet, or a verdict is pinned to a commit that is not the head. | ❌ Blocked |
 | **`pass`** | `0` | `success` (✅ green check) | All required evidence items for the active phase are verified and match `HEAD_SHA`. | ✅ Allowed |
-| **`fail`** | `1` | `failure` (❌ red mark) | Explicit violations detected: a forged or untrusted verdict marker, closure comment mismatch with ledger record, missing attribution label, or unarmed gate. | ❌ Blocked |
+| **`fail`** | `1` | `failure` (❌ red mark) | Explicit violations detected: closure comment mismatch with the ledger record, missing attribution label, or an unarmed gate. | ❌ Blocked |
 
-The conclusions in that column are real check-runs. The `keel-ship` workflow
-publishes a check named **`keel evidence (required)`** against the PR head on
-every run, and that — not the workflow job's own exit code — is the check to put
-in branch protection. The job is named for the assessment it runs, so its green
-tick means "the assessment ran", never "the evidence passed".
+The `keel-ship` workflow publishes these as a real check-run named
+**`keel evidence (required)`**, against the PR head, on every run. That check —
+not the workflow job's own exit code — is the one to put in branch protection.
+The job that runs the verification is deliberately named something else
+(`keel evidence (verify)`), because Actions names a job's own check after the
+job and that check can only ever report "the job ran": two same-named checks on
+one commit would be indistinguishable to branch protection, which matches by
+name.
 
-Two distinctions are deliberate:
+Two decisions are worth stating outright, because both are easy to get wrong:
 
-* **Head drift is quiet, tampering is loud.** A trusted reviewer's verdict left
-  behind by a new push does not count as evidence — the head pin refuses it —
-  but it reports `waiting`, because otherwise every post-review push turns the
-  gate red. A verdict marker from an author GitHub does not mark as trusted
-  reports `fail`: it is a claim that evidence exists, and it must not share the
-  grey dot with a PR that simply has none yet.
-* **Being unable to report is not a pass.** If the neutral check-run cannot be
-  published — a fork PR's token is read-only — the step fails rather than
-  exiting 0. A gate that could not deliver its verdict has not delivered a pass.
+* **The waiting state is published as an *incomplete* check, not as a
+  conclusion.** GitHub's branch protection accepts three conclusions as
+  satisfying a required check: *"Required status checks must have a
+  `successful`, `skipped`, or `neutral` status before collaborators can make
+  changes to a protected branch."* So concluding the waiting state as `neutral`
+  — the obvious reading of "grey, not red" — would let a merge through with no
+  evidence at all. An incomplete run blocks the merge and still renders as a
+  yellow dot rather than a red X, which is the signal actually wanted. It
+  completes to `success` or `failure` once the evidence resolves.
+* **Being unable to report is not a pass.** If the check-run cannot be
+  published — on a pull request from a fork the token is read-only whatever the
+  workflow's `permissions:` block says — the step fails rather than exiting 0,
+  in every state including the passing one. A gate that could not deliver its
+  verdict has not delivered a pass.
 
 ---
 

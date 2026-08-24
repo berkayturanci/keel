@@ -75,7 +75,12 @@ jobs:
           gh pr comment "$PR" --body-file body.md
 
   evidence:
-    name: keel evidence (required)
+    # Deliberately NOT "keel evidence (required)". Actions names this job's own
+    # check after the job, and that check is driven by the exit code — it can only
+    # ever say "the job ran". The gating signal is the check-run the step below
+    # publishes under that name, and two same-named checks on one commit would be
+    # indistinguishable to branch protection, which matches by name.
+    name: keel evidence (verify)
     runs-on: ubuntu-latest
     # Ordered after `ship` on purpose. Arming falls through to the ship-assessment
     # comment for any branch outside evidence._SHIP_BRANCH_RE, and that comment is
@@ -97,7 +102,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number || github.event.inputs.pr }}
           DEFERRAL: ${{ github.event.inputs.deferral }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          CHECK_NAME: keel evidence (required)
         run: |
           # --phase pre-merge: the closure comments are an s11 artifact, posted after
           # the merge this gate authorizes, so requiring them here is unsatisfiable.
@@ -107,35 +113,65 @@ jobs:
           if [ -n "$DEFERRAL" ]; then
             ARGS+=(--deferral "$DEFERRAL")
           fi
+
+          # On workflow_dispatch there is no pull_request payload. Falling back to
+          # $GITHUB_SHA would stamp the verdict for PR $PR onto whatever ref the run
+          # was dispatched from — normally the default branch — and check-runs cannot
+          # be deleted. Resolve the PR's real head instead.
+          HEAD_SHA="$PR_HEAD_SHA"
+          if [ -z "$HEAD_SHA" ]; then
+            HEAD_SHA=$(gh pr view "$PR" --json headRefOid -q .headRefOid)
+          fi
+
           set +e
           keel evidence-verify "${ARGS[@]}"
           RC=$?
           set -e
 
-          # Publish the verdict as its own check-run rather than leaning on this
-          # job's exit code. This job is named "keel ship (assessment)" and its
-          # check means "the assessment ran"; the gating signal has to be a
-          # separate, honestly-named check so it can go into branch protection.
-          # Exiting 0 on the waiting state used to conclude the whole job green
-          # while zero verdicts existed (#928) — worse than the red it replaced,
-          # because red at least said "not yet".
+          # Publish the verdict as its own check-run instead of leaning on this job's
+          # exit code. A job that exits 0 concludes green, which is how a gate named
+          # for the evidence chain reported success with zero verdicts posted (#928).
           #
-          # A neutral conclusion does not satisfy a required check, so merge stays
-          # blocked in the waiting state exactly as it does today (#829).
+          # The waiting state is published as an *incomplete* run, not as a
+          # conclusion. #829 specified `neutral` on the belief that it still blocks;
+          # GitHub's branch protection documentation says the opposite -- "Required
+          # status checks must have a `successful`, `skipped`, or `neutral` status
+          # before collaborators can make changes to a protected branch" -- so
+          # neutral would have satisfied the required check while no evidence
+          # existed, reproducing #928 by another route. An incomplete run blocks the
+          # merge and renders as a yellow dot, which is the not-red signal #829 was
+          # actually after. It completes once the evidence resolves.
           publish_check() {
-            gh api -X POST "repos/${GITHUB_REPOSITORY}/check-runs" \
-              -f name="keel evidence (required)" \
-              -f head_sha="$HEAD_SHA" \
-              -f status="completed" \
-              -f conclusion="$1" \
-              -f output[title]="$2" \
-              -f output[summary]="$3" >/dev/null
+            local status="$1" conclusion="$2" title="$3" summary="$4"
+            local args=(-X POST "repos/${GITHUB_REPOSITORY}/check-runs"
+                        -f "name=${CHECK_NAME}"
+                        -f "head_sha=${HEAD_SHA}"
+                        -f "status=${status}"
+                        -f "output[title]=${title}"
+                        -f "output[summary]=${summary}")
+            if [ -n "$conclusion" ]; then
+              args+=(-f "conclusion=${conclusion}")
+            fi
+            gh api "${args[@]}" >/dev/null
+          }
+
+          # Fail-closed, and applied to every arm rather than only to the waiting
+          # one: a fork PR's token is read-only whatever `permissions:` says, so the
+          # API call can fail in any state. A gate that could not deliver its verdict
+          # has not delivered a pass, and that is as true of the passing arm as of
+          # the waiting one.
+          publish_or_fail() {
+            if publish_check "$@"; then
+              return 0
+            fi
+            echo "::error title=Could not publish the evidence check-run::Reporting the verdict to GitHub failed, so this step fails rather than leaving the gate unreported. On a pull request from a fork the token is read-only and cannot create check runs."
+            exit 1
           }
 
           case "$RC" in
             0)
               echo "Evidence verification passed."
-              publish_check success "Evidence verified" \
+              publish_or_fail completed success "Evidence verified" \
                 "All required evidence for the pre-merge phase is present and pinned to \`$HEAD_SHA\`."
               exit 0
               ;;
@@ -147,21 +183,15 @@ jobs:
                 echo "Evidence gate is in pre-verdict state — waiting for required reviewer and jury verdicts."
                 echo "_Merge remains blocked until required evidence is posted and verified._"
               } >> "$GITHUB_STEP_SUMMARY"
-              # Fail-closed: if the neutral check cannot be published (a fork PR
-              # gets a read-only token), an honest red beats a silent green — a
-              # gate that could not report its verdict has not reported a pass.
-              if ! publish_check neutral "Waiting for review evidence" \
-                   "Pre-verdict state: required reviewer and jury verdicts are not posted yet. Merge remains blocked."; then
-                echo "::error title=Could not publish the evidence check-run::Reporting the neutral verdict failed, so this step fails rather than concluding green."
-                exit 1
-              fi
+              publish_or_fail in_progress "" "Waiting for review evidence" \
+                "Pre-verdict state: required reviewer and jury verdicts are not posted yet. This check stays incomplete, which blocks a merge, until the evidence resolves."
               exit 0
               ;;
             *)
               echo "::error title=Evidence verification failed::Explicit evidence violation or finding detected."
               echo "Evidence verification failed (invalid evidence or findings detected)."
-              publish_check failure "Evidence verification failed" \
-                "Explicit evidence violation: wrong commit SHA, forged or untrusted verdict marker, closure/ledger mismatch, or an unarmed gate." || true
+              publish_or_fail completed failure "Evidence verification failed" \
+                "Explicit evidence violation: a closure comment that does not match the ledger record, a missing attribution label, or an unarmed gate. Run \`keel evidence-verify\` locally for the itemised report."
               exit 1
               ;;
           esac
