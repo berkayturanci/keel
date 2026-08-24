@@ -113,6 +113,46 @@ def _reachable(url: str) -> bool:
         ) from exc
 
 
+class TestNotLookingIsNotAPass(unittest.TestCase):
+    """The rule itself, asserted hermetically.
+
+    The checks below fail on an I/O error instead of skipping, because a skipped
+    test does not fail CI and so reads as a pass — a broken formula could ship
+    during any network blip (#933). That rule lived only in the call sites, so
+    reverting all of them to ``SkipTest`` left the suite identically green. It
+    is pinned here instead, offline.
+    """
+
+    def test_an_unreachable_url_fails_rather_than_skipping(self):
+        with self.assertRaises(AssertionError) as caught:
+            _reachable("https://example.invalid/nope")
+        self.assertIn("reads as a pass", str(caught.exception))
+
+    def test_the_shared_helper_fails_rather_than_skipping(self):
+        with self.assertRaises(AssertionError) as caught:
+            _could_not_look(self, "the formula's tarball", OSError("boom"))
+        self.assertIn("the formula's tarball", str(caught.exception))
+        self.assertIn("reads as a pass", str(caught.exception))
+
+    def test_neither_raises_a_skip(self):
+        """`SkipTest` is not an `AssertionError`, so the guards above would not
+
+        catch a revert that swapped one for the other if they only asserted
+        "something was raised".
+        """
+        for call in (
+            lambda: _reachable("https://example.invalid/nope"),
+            lambda: _could_not_look(self, "x", OSError("boom")),
+        ):
+            with self.subTest(call=call):
+                try:
+                    call()
+                except unittest.SkipTest:  # pragma: no cover - the regression
+                    self.fail("the guard skips instead of failing")
+                except AssertionError:
+                    pass
+
+
 class TestActionReferences(unittest.TestCase):
     """A documented `uses:` must resolve, or a reader's first run fails."""
 

@@ -6258,7 +6258,11 @@ class TestVerifyMergeCommand(unittest.TestCase):
         self.assertEqual(report["landed_count"], 2, "the counts were reset")
         self.assertTrue(report["incomplete"], "incompleteness is not recorded")
         self.assertIn("could not read", report["reason"])
-        self.assertEqual(rc, 0)
+        # The finding is kept, and the exit code still says "could not look".
+        # Drift is what the unreadable input cost us, and `out-of-scope` says
+        # nothing about drift — exiting 0 would wave through the merge whose
+        # riskier question went unanswered.
+        self.assertEqual(rc, 2, "an incomplete check must not report a pass")
 
     def test_the_reason_names_only_the_questions_it_could_not_answer(self):
         """Claiming drift was unanswerable when it was answered is a false report.
@@ -6275,7 +6279,14 @@ class TestVerifyMergeCommand(unittest.TestCase):
         self.assertIn("scope could not be checked", out)
         self.assertNotIn("drift could not be checked", out)
 
-    def test_out_of_scope_still_exits_zero(self):
+    def test_a_complete_out_of_scope_check_still_exits_zero(self):
+        """The counterweight: incompleteness is what raises the code, not the finding.
+
+        With every input readable, `out-of-scope` is a full answer — usually an
+        identical change already on the base. If it started exiting 2, the code
+        would stop meaning "could not look".
+        """
+
         """The counterweight: a real answer must not be swept up as "could not look".
 
         `out-of-scope` is usually an identical change already on the base. If it

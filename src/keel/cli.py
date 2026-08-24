@@ -2586,7 +2586,13 @@ def _cmd_verify_merge(args: argparse.Namespace) -> int:
     # the question asked, and usually an identical change already on the base.
     if mergeverify.is_drift(report):
         return 1
-    return 2 if report.get("status") == "unknown" else 0
+    # `incomplete` too, not just `unknown`. A kept `out-of-scope` finding answers
+    # the *scope* question; it says nothing about drift, and when the overtaking
+    # list could not be read, drift is exactly what went unchecked. Exiting 0
+    # there would mean the same unreadable input blocks a clean merge at 2 and
+    # waves through one that also has a second, weaker problem — this issue's own
+    # defect, inverted.
+    return 2 if report.get("status") == "unknown" or report.get("incomplete") else 0
 
 
 def _cmd_scope_verify(args: argparse.Namespace) -> int:

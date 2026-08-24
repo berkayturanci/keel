@@ -173,6 +173,34 @@ class TestActionPinShape(unittest.TestCase):
         ]
         self.assertEqual([], loose, "actions must be pinned to a 40-hex commit SHA")
 
+    def test_every_pin_carries_an_exact_version_comment(self):
+        # A bare major ("# v4") is not enough: major tags move, so the comment
+        # stops identifying a specific artifact the moment upstream retags.
+        vague = [
+            (name, action, claim)
+            for name, action, _sha, claim in _pins()
+            if not re.fullmatch(r"v\d+\.\d+\.\d+", claim)
+        ]
+        self.assertEqual([], vague, "pin comments must name an exact vX.Y.Z release")
+
+    def test_the_pin_pattern_matches_something(self):
+        # Keeps the assertions above from passing vacuously if the regex or the
+        # comment convention changes: zero pins found would make them trivially
+        # true while checking nothing.
+        self.assertGreater(len(list(_pins())), 0, "no pinned actions found to check")
+
+    def test_one_sha_is_never_given_two_different_versions(self):
+        # Offline and free: the same SHA annotated differently in two files means
+        # at least one is wrong, without asking GitHub which.
+        claims = {}
+        for name, action, sha, claim in _pins():
+            claims.setdefault((action, sha), {}).setdefault(claim, []).append(name)
+        self.assertEqual(
+            {},
+            {key: value for key, value in claims.items() if len(value) > 1},
+            "one SHA is annotated with two versions",
+        )
+
     def test_the_published_action_is_in_scope(self):
         """The file consumers actually run must be one of the files checked.
 
@@ -245,6 +273,14 @@ class TestActionPinShape(unittest.TestCase):
         """
         self.assertIn("docs", _NOT_OURS_ROOTS)
         self.assertEqual([], [p for p in _files() if _label(p).startswith("docs/")])
+
+
+@unittest.skipUnless(ONLINE, "set KEEL_CHECK_EXTERNAL=1 to resolve pins against GitHub")
+class TestActionPinsMatchUpstream(unittest.TestCase):
+    """Online: the version comment is the version the SHA actually is."""
+
+    def test_each_pin_resolves_to_the_release_it_claims(self):
+        assert_pins_ok(self, _pins(), _tags_for)
 
 
 class TestUnreachableIsAFailureNotASkip(unittest.TestCase):
