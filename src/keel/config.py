@@ -503,7 +503,7 @@ def _validate_delegate_profiles(profiles: Any, *, source: str) -> list[str]:
                 )
             elif (
                 key_env.upper() in BLOCKED_ENV_KEY_NAMES
-                or any(key_env.upper().startswith(p) for p in BLOCKED_ENV_PREFIXES)
+                or key_env.upper().startswith(BLOCKED_ENV_PREFIXES)
             ):
                 errors.append(
                     f"{where}: api_key_env {key_env!r} refers to a sensitive system "

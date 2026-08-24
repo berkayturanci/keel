@@ -6,6 +6,10 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Performance
+- **Tuple Startswith for Blocked Env Prefixes** (#924):
+  - Used native tuple overload in `config.py` `_validate_delegate_profiles` (`startswith(BLOCKED_ENV_PREFIXES)`) instead of generator allocation.
+
 ### Fixed
 - **Integration Copy Button Accessible Label Recapture** (#916):
   - Captured `origLabel` at bind time in `website/integrations.js` and cleared pending reset timers on rapid clicks.
