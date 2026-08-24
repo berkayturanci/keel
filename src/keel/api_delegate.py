@@ -215,8 +215,16 @@ def _parse_content(vendor: str, data: object) -> str | None:
         return None
 
 
-def _build_opener() -> urllib.request.OpenerDirector:
-    """HTTP/HTTPS-only opener: no redirect handler, no file/ftp/proxy handlers."""
+def build_http_only_opener() -> urllib.request.OpenerDirector:
+    """HTTP/HTTPS-only opener: no redirect handler, no file/ftp/proxy handlers.
+
+    Public and shared rather than private to this module, because keel makes
+    outbound HTTP from two places — this delegate and ``keel doctor``'s PyPI
+    version check — and each having its own hand-rolled opener is how the handler
+    sets drift apart. #811 hardened the second one; #810 squashed a stale base
+    over it and restored plain ``urlopen`` for six days without anything noticing
+    (#934). One opener, one owner, one place to audit the handler list.
+    """
     opener = urllib.request.OpenerDirector()
     opener.add_handler(urllib.request.HTTPHandler())
     opener.add_handler(urllib.request.HTTPSHandler())
@@ -294,7 +302,7 @@ def generate(
     # URL comes only from the hardcoded _VENDORS constants — never config, env,
     # or model/prompt content.
     request = urllib.request.Request(url, data=body, headers=headers, method="POST")  # nosec B310
-    opener = _opener if _opener is not None else _build_opener()
+    opener = _opener if _opener is not None else build_http_only_opener()
     try:
         with opener.open(request, timeout=timeout) as resp:
             raw = resp.read(50 * 1024 * 1024).decode("utf-8", errors="replace")

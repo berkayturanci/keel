@@ -20,6 +20,7 @@ from pathlib import Path
 from . import (
     __version__,
     activity,
+    api_delegate,
     artifacts,
     branchscope,
     capture,
@@ -869,6 +870,18 @@ def _cmd_merge(args: argparse.Namespace) -> int:
         _autostamp(config, args.root, "ship", getattr(args, "run_id", None) or gates_run_id, "s10",
                    status="merged",   # real merge landed → green "merged", not soft "done"
                    issue=getattr(args, "issue", None), pr=args.pr)
+        # The merge landed; now ask whether it applied only what was reviewed.
+        # Documented as running after s10 since #561 and wired to nothing until
+        # #934 — which is how a stale-base squash reverted #811 on main and stayed
+        # there for six days. It runs here rather than in a later job because the
+        # answer is most actionable in the same breath as the merge.
+        verification = _merge_drift_report(args)
+        payload["merge_verification"] = verification
+        if mergeverify.is_drift(verification):
+            # Distinct from 1. The merge *succeeded* — reporting failure would read
+            # as "merge failed" and invite a retry of something already landed.
+            # 3 says: it landed, and it may have reverted someone else's work.
+            return _finish_merge(args, payload, "merged, but drift detected", code=3)
         return _finish_merge(args, payload, "merged", code=0)
     finally:
         lock.release_resource(_lock_root(args.root), "merge", owner=owner, best_effort=True)
@@ -2544,26 +2557,21 @@ def _overtaking_prs(args: argparse.Namespace, timing: dict) -> tuple[dict, bool]
     return overtaken, complete
 
 
-def _cmd_verify_merge(args: argparse.Namespace) -> int:
-    """Did the merge apply what was reviewed? (#561)
+def _merge_drift_report(args: argparse.Namespace) -> dict:
+    """Build the merge-drift report for ``args.pr``; pure judgement over GitHub reads.
 
-    `keel merge` proves the merge succeeded. This proves it applied the reviewed
-    diff and nothing else — the gap a squash over an `update-branch` merge commit
-    fell through twice in one day, silently reverting unrelated merged work while
-    the suite stayed green because the reverted state was internally consistent.
+    Extracted so the check has two callers instead of one: the ``verify-merge``
+    subcommand, and ``keel merge`` itself once the merge lands (#934). It had been
+    documented as running after s10 since #561 and was wired to nothing — the
+    reason a stale-base squash reverted #811 on main and went unnoticed for six
+    days. A sentence in an adapter prompt is not a gate.
+
+    Never raises: every failure to read becomes ``unknown``/``incomplete`` inside
+    the report, so a caller running this *after* an irreversible merge still gets
+    an answer it can print rather than a traceback over a landed commit.
     """
-    try:
-        config = cfg.load_config(args.path)
-    except FileNotFoundError:
-        print(f"no such config: {args.path}", file=sys.stderr)
-        return 1
-    except cfg.ConfigError as exc:
-        print(str(exc), file=sys.stderr)
-        return 1
-    del config  # loaded to validate the project; this check reads only GitHub
-
     timing = github.pr_merge_window(args.pr, cwd=args.root)
-    merge_sha = args.merge_sha or (timing or {}).get("merge_commit")
+    merge_sha = getattr(args, "merge_sha", None) or (timing or {}).get("merge_commit")
     if not merge_sha or not timing:
         report = mergeverify.verify_merge(None)
         report["reason"] = (
@@ -2623,6 +2631,28 @@ def _cmd_verify_merge(args: argparse.Namespace) -> int:
                 )
     report["pull_request"] = args.pr
     report["merge_commit"] = merge_sha
+    return report
+
+
+def _cmd_verify_merge(args: argparse.Namespace) -> int:
+    """Did the merge apply what was reviewed? (#561)
+
+    `keel merge` proves the merge succeeded. This proves it applied the reviewed
+    diff and nothing else — the gap a squash over an `update-branch` merge commit
+    fell through twice in one day, silently reverting unrelated merged work while
+    the suite stayed green because the reverted state was internally consistent.
+    """
+    try:
+        config = cfg.load_config(args.path)
+    except FileNotFoundError:
+        print(f"no such config: {args.path}", file=sys.stderr)
+        return 1
+    except cfg.ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    del config  # loaded to validate the project; this check reads only GitHub
+
+    report = _merge_drift_report(args)
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))
     else:
@@ -3267,6 +3297,14 @@ def _finish_merge(args: argparse.Namespace, payload: dict[str, object], reason: 
         if isinstance(checkpoint_gate, dict):
             detail = checkpoint_gate.get("operator") or checkpoint_gate.get("checkpoint_step") or ""
             print(f"  checkpoint: {checkpoint_gate.get('status')} {detail}".rstrip())
+        verification = payload.get("merge_verification")
+        if isinstance(verification, dict):
+            # Printed in full on drift, not summarised to one word: the operator has
+            # to know *which* pull request this merge may have written over, and
+            # they have to know it now — the merge already landed.
+            print(f"  drift  : {verification.get('status')}")
+            if mergeverify.is_drift(verification):
+                print(mergeverify.render(verification))
     return code
 
 
@@ -4058,24 +4096,29 @@ _PYPI_LATEST_URL = "https://pypi.org/pypi/keel-workflow/json"
 
 
 def _fetch_latest_pypi_version(
-    *, url: str = _PYPI_LATEST_URL, timeout: float = 3.0, _open=None
+    *, url: str = _PYPI_LATEST_URL, timeout: float = 3.0, _opener=None
 ) -> str | None:
     """Fetch the latest ``keel-workflow`` version from PyPI. Thin, fail-soft I/O.
 
     Returns the version string, or ``None`` on any failure (offline, timeout,
     HTTP error, malformed JSON) so ``keel doctor`` degrades to ``latest: unknown``
-    rather than crashing or blocking. The network seam (``_open``) is injectable so
-    the parsing is unit-tested offline; the live ``urlopen`` boundary is excluded.
+    rather than crashing or blocking.
+
+    The seam is the **opener**, not an open callable, so the default path
+    constructs :func:`keel.api_delegate.build_http_only_opener` inside code a test
+    can reach. #811 replaced plain ``urlopen`` with a non-redirecting opener and
+    shipped no test; #810 squashed a stale base over it and restored ``urlopen``
+    for six days with CI green throughout (#934). The construction sat behind
+    ``pragma: no cover`` as a live-network boundary, so no test could have noticed
+    — moving it out of that block is the part that makes the next revert fail CI.
     """
     from urllib.parse import urlparse
     if urlparse(url).scheme.lower() not in ("http", "https"):
         return None  # restrict to http(s): no file://, ftp://, or custom schemes
 
-    if _open is None:  # pragma: no cover - live network boundary
-        from urllib.request import urlopen
-        _open = lambda u, t: urlopen(u, timeout=t)  # noqa: E731 # nosec B310
+    opener = _opener if _opener is not None else api_delegate.build_http_only_opener()
     try:
-        with _open(url, timeout) as response:
+        with opener.open(url, timeout=timeout) as response:
             payload = json.loads(response.read(50 * 1024 * 1024).decode("utf-8"))
         version = payload["info"]["version"]
         return version if isinstance(version, str) else None

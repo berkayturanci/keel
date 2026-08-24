@@ -5159,6 +5159,8 @@ class TestCoreMerge(unittest.TestCase):
             patch("keel.cli.ledger.read_records", return_value=[]),
             patch("keel.cli.ledger.gates_pass_for_head",
                   return_value=(True, {"run_id": "RUN-1"})),
+            patch("keel.cli._merge_drift_report",
+                  return_value={"status": "clean", "reason": "no overtaking merge"}),
             patch("keel.cli.github.merge_pr",
                   return_value=_proc("merged")),
         ):
@@ -5168,6 +5170,81 @@ class TestCoreMerge(unittest.TestCase):
         self.assertEqual(json.loads(out_fail)["reason"], "gh merge failed")
         self.assertEqual(rc_ok, 0)
         self.assertTrue(json.loads(out_ok)["merged"])
+
+    def _merge_success_patches(self):
+        """The patch stack every merge that reaches the post-merge check needs."""
+        return (
+            patch("keel.cli.runtime.detect", return_value=_merge_capability_report()),
+            patch("keel.cli.window.is_merge_open", return_value=True),
+            patch("keel.cli.github.pr_merge_snapshot",
+                  return_value=_json_result({
+                      "headRefOid": "abc",
+                      "mergeStateStatus": "CLEAN",
+                      "statusCheckRollup": [{"conclusion": "SUCCESS"}],
+                  })),
+            patch("keel.cli._verify_merge_evidence", return_value={
+                "enforced": True,
+                "verification": {"status": "pass", "missing": []},
+            }),
+            patch("keel.cli.ledger.read_records", return_value=[]),
+            patch("keel.cli.ledger.gates_pass_for_head",
+                  return_value=(True, {"run_id": "RUN-1"})),
+            patch("keel.cli.github.merge_pr", return_value=_proc("merged")),
+        )
+
+    def test_a_landed_merge_is_checked_for_drift(self):
+        """#934: verify-merge was documented as running after s10 and wired to nothing.
+
+        Asserted at the call site, not against the docs — the prose in
+        `ship.md` claiming this ran was true-looking and false for months, which
+        is how a stale-base squash reverted #811 on main for six days.
+        """
+        with contextlib.ExitStack() as stack:
+            for p in self._merge_success_patches():
+                stack.enter_context(p)
+            drift = stack.enter_context(
+                patch("keel.cli._merge_drift_report",
+                      return_value={"status": "clean", "reason": "no overtaking merge"})
+            )
+            rc, out, _ = run(_merge_args(json_out=True))
+            rc_human, out_human, _ = run(_merge_args())
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(drift.call_count, 2)
+        self.assertEqual(json.loads(out)["merge_verification"]["status"], "clean")
+        # A clean result still says so on one line — a check that reports nothing
+        # when it passes is indistinguishable from one that did not run, which is
+        # the whole shape of this issue.
+        self.assertEqual(rc_human, 0)
+        self.assertIn("drift  : clean", out_human)
+
+    def test_drift_after_a_landed_merge_exits_three_and_names_the_pr(self):
+        """Distinct from 1: the merge succeeded, so "fail" would invite a retry.
+
+        3 says it landed *and* may have written over someone else's work — the
+        operator has to act, and cannot act on a merge they think did not happen.
+        """
+        report = {
+            "status": "drift",
+            "reason": "merge wrote to files #810 changed after this PR branched",
+            "unexpected": {"src/keel/cli.py": 810},
+        }
+        with contextlib.ExitStack() as stack:
+            for p in self._merge_success_patches():
+                stack.enter_context(p)
+            stack.enter_context(patch("keel.cli._merge_drift_report", return_value=report))
+            rc, out, _ = run(_merge_args(json_out=True))
+            rc_human, out_human, _ = run(_merge_args())
+
+        self.assertEqual(rc, 3)
+        payload = json.loads(out)
+        # The merge is still reported as having happened; only the verdict differs.
+        self.assertTrue(payload["merged"])
+        self.assertEqual(payload["reason"], "merged, but drift detected")
+        self.assertEqual(payload["merge_verification"]["status"], "drift")
+        # Human output must name the overtaking PR, not just say "drift".
+        self.assertEqual(rc_human, 3)
+        self.assertIn("810", out_human)
 
     def _gates_record(self, *, pr, head_sha, ok=True, blocked=False, error=None):
         return {
@@ -5196,6 +5273,8 @@ class TestCoreMerge(unittest.TestCase):
                 "verification": {"status": "pass", "missing": []},
             }),
             patch("keel.cli.ledger.read_records", return_value=records),
+            patch("keel.cli._merge_drift_report",
+                  return_value={"status": "clean", "reason": "no overtaking merge"}),
             patch("keel.cli.github.merge_pr",
                   return_value=_proc("merged")),
         ):
@@ -5252,6 +5331,8 @@ class TestCoreMerge(unittest.TestCase):
                 "verification": {"status": "pass", "missing": []},
             }),
             patch("keel.cli.ledger.read_records") as read_mock,
+            patch("keel.cli._merge_drift_report",
+                  return_value={"status": "clean", "reason": "no overtaking merge"}),
             patch("keel.cli.github.merge_pr",
                   return_value=_proc("merged")),
             patch("keel.cli.github.issue_facts",
@@ -6469,6 +6550,8 @@ class TestMergeCheckpointGate(unittest.TestCase):
             patch("keel.cli.ledger.read_records", return_value=[]),
             patch("keel.cli.ledger.gates_pass_for_head",
                   return_value=(True, {"run_id": run_id})),
+            patch("keel.cli._merge_drift_report",
+                  return_value={"status": "clean", "reason": "no overtaking merge"}),
             patch("keel.cli.github.merge_pr",
                   return_value=_proc("merged")),
         ):

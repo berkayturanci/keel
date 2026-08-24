@@ -5,9 +5,11 @@ import io
 import json
 import tempfile
 import unittest
+import urllib.request
 from pathlib import Path
+from unittest.mock import patch
 
-from keel import __version__, cli, doctor, install
+from keel import __version__, api_delegate, cli, doctor, install
 
 PROJECTS = Path(__file__).resolve().parent.parent / "projects"
 SAMPLE_PROJECT = PROJECTS / "example-android.yaml"
@@ -243,38 +245,104 @@ class TestFetchLatestPypi(unittest.TestCase):
         def read(self, size=-1):
             return self._body if size < 0 else self._body[:size]
 
+    class _FakeOpener:
+        """Stands in for the real opener; records what it was asked to fetch."""
+
+        def __init__(self, response):
+            self._response = response
+            self.opened = []
+
+        def open(self, url, timeout=None):
+            self.opened.append((url, timeout))
+            return self._response
+
     def test_parses_version(self):
         payload = json.dumps({"info": {"version": "1.4.0"}}).encode("utf-8")
         result = cli._fetch_latest_pypi_version(
-            _open=lambda url, timeout: self._FakeResponse(payload)
+            _opener=self._FakeOpener(self._FakeResponse(payload))
         )
         self.assertEqual(result, "1.4.0")
 
     def test_non_string_version_is_none(self):
         payload = json.dumps({"info": {"version": 14}}).encode("utf-8")
         result = cli._fetch_latest_pypi_version(
-            _open=lambda url, timeout: self._FakeResponse(payload)
+            _opener=self._FakeOpener(self._FakeResponse(payload))
         )
         self.assertIsNone(result)
 
     def test_network_error_is_none(self):
-        def _boom(url, timeout):
-            raise OSError("offline")
+        class _Boom:
+            def open(self, url, timeout=None):
+                raise OSError("offline")
 
-        self.assertIsNone(cli._fetch_latest_pypi_version(_open=_boom))
+        self.assertIsNone(cli._fetch_latest_pypi_version(_opener=_Boom()))
 
     def test_malformed_json_is_none(self):
         result = cli._fetch_latest_pypi_version(
-            _open=lambda url, timeout: self._FakeResponse(b"not json")
+            _opener=self._FakeOpener(self._FakeResponse(b"not json"))
         )
         self.assertIsNone(result)
 
     def test_invalid_scheme_returns_none(self):
         result = cli._fetch_latest_pypi_version(
             url="file:///etc/passwd",
-            _open=lambda url, timeout: self._FakeResponse(b"")
+            _opener=self._FakeOpener(self._FakeResponse(b""))
         )
         self.assertIsNone(result)
+
+
+class TheVersionCheckDoesNotFollowRedirects(unittest.TestCase):
+    """The guard #811 shipped without, and #810 silently removed for six days.
+
+    #811 replaced plain ``urlopen`` with a non-redirecting opener and added no
+    test. A stale-base squash restored ``urlopen`` seventeen minutes later and CI
+    stayed green for six days, because nothing anywhere asserted the handler set
+    (#934). Both halves are pinned here: that the opener refuses redirects, and
+    that the version check is the thing using it.
+    """
+
+    def test_the_shared_opener_registers_no_redirect_handler(self):
+        opener = api_delegate.build_http_only_opener()
+
+        classes = [type(h) for h in opener.handlers]
+        self.assertNotIn(urllib.request.HTTPRedirectHandler, classes)
+        # Not vacuous: the opener must still be able to make the request at all.
+        self.assertIn(urllib.request.HTTPSHandler, classes)
+        # A redirect handler cannot arrive by subclass either.
+        self.assertFalse(
+            [c for c in classes if issubclass(c, urllib.request.HTTPRedirectHandler)],
+            "a redirect handler reached the opener the PyPI check uses",
+        )
+
+    def test_the_version_check_fetches_through_that_opener(self):
+        # Behavioural, not structural: the default path must *call* the shared
+        # builder. Reverting to `urlopen` leaves this patch unused and fails here,
+        # which is precisely what did not happen in #934.
+        payload = json.dumps({"info": {"version": "9.9.9"}}).encode("utf-8")
+        fake = TestFetchLatestPypi._FakeOpener(TestFetchLatestPypi._FakeResponse(payload))
+
+        with patch.object(api_delegate, "build_http_only_opener", return_value=fake) as built:
+            result = cli._fetch_latest_pypi_version()
+
+        self.assertEqual(result, "9.9.9")
+        built.assert_called_once_with()
+        self.assertEqual([url for url, _ in fake.opened], [cli._PYPI_LATEST_URL])
+
+    def test_only_one_opener_is_hand_rolled_in_the_package(self):
+        """Two openers with different handler sets is how the next drift happens.
+
+        Counted over the package source: exactly one place may assemble an
+        ``OpenerDirector``, so a second hand-rolled one has to displace this
+        assertion rather than quietly coexist with it.
+        """
+        package = Path(cli.__file__).resolve().parent
+        builders = sorted(
+            path.relative_to(package).as_posix()
+            for path in package.rglob("*.py")
+            if "urllib.request.OpenerDirector()" in path.read_text(encoding="utf-8")
+        )
+
+        self.assertEqual(["api_delegate.py"], builders)
 
 
 class TestScanAdapterMarkers(unittest.TestCase):

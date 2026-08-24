@@ -360,7 +360,7 @@ class TestParseContent(unittest.TestCase):
 
 class TestOpener(unittest.TestCase):
     def test_opener_has_only_http_https_handlers(self):
-        opener = api_delegate._build_opener()
+        opener = api_delegate.build_http_only_opener()
         names = {type(h).__name__ for h in opener.handlers}
         self.assertIn("HTTPHandler", names)
         self.assertIn("HTTPSHandler", names)

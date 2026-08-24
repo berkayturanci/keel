@@ -164,6 +164,16 @@ longer authorizes a merge of a newer head; if no record matches, the merge refus
 `no gates-pass recorded for the current head <sha>`. The decision is reported in the
 `gates_sha` block of the JSON payload (`matched`, `head_sha`, `run_id`).
 
+Once the merge lands, `keel merge` runs the [`verify-merge`](#keel-verify-merge-projectyaml---root-dir---pr-n---merge-sha-sha---json)
+drift check on it and reports the result as `merge_verification` in the payload and a
+`drift :` line in human output. Exit codes: **0** merged and clean, **1** the merge did not
+happen, **3** it happened *and* may have written over work another PR merged after this one
+branched — a distinct code because "fail" on a landed merge reads as "retry it". On drift
+the overtaking pull request is named in full, since the merge is already irreversible and
+the operator has to act on it now. Before #934 this check was documented as running after
+s10 and was called from nowhere; a stale-base squash reverted #811 on main and nothing
+noticed for six days.
+
 Raw adapter `gh pr merge` calls are a spec violation for ship-style flows: adapters should
 delegate s10 to this command so lock, window, CI, evidence, and gates-SHA checks are
 deterministic.

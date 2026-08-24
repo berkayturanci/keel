@@ -730,7 +730,15 @@ refuse to certify the run at s10. Then
 queue. The merge claim and "the only merge path is `keel merge` at s10" are non-negotiable
 invariants.
 
-**Immediately after a successful merge, run `keel verify-merge <config> --root . --pr <PR>`.**
+**`keel merge` now runs this check itself, immediately after the merge lands** — it exits
+**3** and prints the overtaking pull request when it finds drift, distinct from **1** for a
+merge that failed. Run `keel verify-merge <config> --root . --pr <PR>` by hand only when
+the merge happened outside `keel merge`, or to re-ask later.
+
+Until #934 this paragraph said to run it and nothing did: the instruction lived in this
+prompt and no code path invoked it, which is how a stale-base squash reverted #811 on main
+and stayed there for six days.
+
 A merge succeeding is not the same as a merge applying what was reviewed. A
 `gh api …/update-branch` merge commit followed by a squash-merge silently reverted
 unrelated already-merged work **twice in one day** while shipping 1.8.1/1.8.2, and CI never
@@ -881,4 +889,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=claude command=ship keel_version=1.19.0 source_sha256=77be8507c3683f7fc7f969896b47a60662ff78665f787e95a3e7bae009afe0fd generated_sha256=77be8507c3683f7fc7f969896b47a60662ff78665f787e95a3e7bae009afe0fd -->
+<!-- keel-generated: surface=claude command=ship keel_version=1.19.0 source_sha256=853a898bb789b827d1a9b9e988008402f21787a4a78a3d96942cf66e7ccc8e7f generated_sha256=853a898bb789b827d1a9b9e988008402f21787a4a78a3d96942cf66e7ccc8e7f -->
