@@ -138,6 +138,13 @@ let it pass. Subscribing to `pull_request_review` instead reads tidier and fires
 never: across the last twelve merged pull requests here, all 33 verdict markers
 were issue comments and none were reviews.
 
+One consequence worth knowing before you try to verify this: like
+`workflow_dispatch` and `schedule`, `issue_comment` always runs the workflow file
+from the **default branch**, never the pull request's copy. So a change to this
+trigger cannot be exercised on the pull request that makes it — it starts working
+once merged. The same rule is why the path is safe: the comment event never checks
+out contributor-authored code, even though it holds `checks: write`.
+
 ---
 
 ## Complete Enforcement: How to Prevent Agent Bypasses

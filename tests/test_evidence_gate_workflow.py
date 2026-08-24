@@ -342,6 +342,22 @@ class TestTheGateRunsWhenAVerdictArrives(unittest.TestCase):
             "the dispatch clause is not guarded by its event name, so it reads as false",
         )
 
+    def test_the_comment_path_never_checks_out_contributor_code(self):
+        """`issue_comment` runs from the default branch and holds `checks: write`.
+
+        That is the pwn-request shape if the job checks out the pull request's
+        head. It does not — `actions/checkout` here takes no `ref:`, so it gets
+        the default branch — and the assessment job, which reads the diff, is
+        excluded from the event entirely.
+        """
+        steps = _workflow()["jobs"]["evidence"]["steps"]
+        checkout = next(s for s in steps if str(s.get("uses", "")).startswith("actions/checkout"))
+        self.assertIsNone(
+            (checkout.get("with") or {}).get("ref"),
+            "the evidence job checks out an explicit ref; on issue_comment that "
+            "could be contributor-authored code running with checks: write",
+        )
+
     def test_the_pr_number_resolves_on_a_comment_event(self):
         env = next(
             s for s in _workflow()["jobs"]["evidence"]["steps"]
