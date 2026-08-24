@@ -11,6 +11,7 @@ only renders one, so it depends on keel core but core never depends on it.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import re
@@ -1065,7 +1066,33 @@ def cmd_swarm(args: argparse.Namespace) -> int:
     return 0
 
 
+def _ensure_utf8_output(stream=None) -> None:
+    """Make the output stream able to carry the board's non-ASCII glyphs.
+
+    Every renderer here emits box-drawing characters and status glyphs. On
+    Windows the default console encoding is cp1252, which cannot represent them,
+    so `keel-visual dash` died with
+
+        UnicodeEncodeError: 'charmap' codec can't encode characters …
+
+    That is a real crash for a Windows user, not a test artefact — it was
+    invisible only because the Windows job's failures were being masked (#953).
+
+    `errors="replace"` rather than a hard switch: a terminal that genuinely
+    cannot render a glyph should show a placeholder, not take the command down
+    with it. Streams that cannot be reconfigured (already-wrapped, or a plain
+    text buffer in a test) are left alone.
+    """
+    target = stream if stream is not None else sys.stdout
+    reconfigure = getattr(target, "reconfigure", None)
+    if reconfigure is None:
+        return
+    with contextlib.suppress(OSError, ValueError):
+        reconfigure(encoding="utf-8", errors="replace")
+
+
 def main(argv: list[str] | None = None) -> int:
+    _ensure_utf8_output()
     args = build_parser().parse_args(argv)
     return args.func(args)
 

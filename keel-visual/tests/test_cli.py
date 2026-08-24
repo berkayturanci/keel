@@ -1822,5 +1822,39 @@ class TestServeCli(unittest.TestCase):
             self.assertTrue(err.strip())
 
 
+class TheBoardCanBeWrittenToACp1252Console(unittest.TestCase):
+    """#953: `dash` died on Windows with UnicodeEncodeError before it printed.
+
+    Every renderer emits box-drawing characters and status glyphs; the Windows
+    console default is cp1252, which cannot represent them. A real crash for a
+    Windows user, invisible only because that job's failures were being masked.
+    """
+
+    def test_main_asks_the_stream_for_utf8(self):
+        asked = {}
+
+        class _Stream:
+            def reconfigure(self, **kwargs):
+                asked.update(kwargs)
+
+        cli._ensure_utf8_output(_Stream())
+
+        self.assertEqual("utf-8", asked.get("encoding"))
+        # replace, not strict: a terminal that cannot draw a glyph should show a
+        # placeholder rather than take the command down.
+        self.assertEqual("replace", asked.get("errors"))
+
+    def test_a_stream_that_cannot_be_reconfigured_is_left_alone(self):
+        # io.StringIO has no `reconfigure`; a test harness must not crash here.
+        cli._ensure_utf8_output(io.StringIO())
+
+    def test_a_stream_that_refuses_is_not_fatal(self):
+        class _Refuses:
+            def reconfigure(self, **kwargs):
+                raise OSError("detached")
+
+        cli._ensure_utf8_output(_Refuses())
+
+
 if __name__ == "__main__":
     unittest.main()
