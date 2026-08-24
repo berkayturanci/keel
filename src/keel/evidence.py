@@ -923,34 +923,50 @@ def _matches_head(item: dict[str, Any], body: str, head_sha: str | None) -> bool
 
 
 def _fields(body: str) -> dict[str, str]:
-    fields: dict[str, str] = {}
-    lines = (body or "").splitlines()
-    in_header = False
+    """Parse the header block at the top of a verdict comment, and only that.
 
-    for raw_line in lines:
+    Scanning stops at the first line that is not part of a header block —
+    whether or not a header has been seen yet. #868's second requirement said so
+    and only the first shipped: the earlier version `continue`d past prose and
+    blank lines until it found something header-shaped, so fields could be
+    harvested from anywhere in a comment (#932):
+
+        "Some prose line here.\\n\\nhead: 0000000\\nvendor: spoofed\\n"
+        -> {'head': '0000000', 'vendor': 'spoofed'}
+
+    Reachable through :func:`_reviewer_key`, which calls this with no marker
+    requirement, so a comment whose *prose* contains ``reviewer: someone`` was
+    keyed to that reviewer. Narrow — it needs a trusted author — and not a live
+    hole, but it is the residual of the class #868 named, and stopping costs the
+    real comment format nothing: a verdict's header is its first block.
+    """
+    fields: dict[str, str] = {}
+    started = False
+
+    for raw_line in (body or "").splitlines():
         line = raw_line.strip()
         if not line:
-            if in_header:
+            # Leading blank lines are skipped, not treated as the end: a comment
+            # body routinely begins with a newline, and breaking there would
+            # reject legitimate verdicts. Once the block has started, a blank
+            # line ends it — that is the boundary #868 asked for.
+            if started:
                 break
             continue
+        started = True
         if (
             (line.startswith("<!--") and line.endswith("-->"))
             or REVIEW_VERDICT_MARKER in line
             or JURY_VERDICT_MARKER in line
         ):
-            in_header = True
             continue
         match = _FIELD_RE.match(line)
         if match:
-            in_header = True
             key = match.group("key").lower()
             if key not in fields:
                 fields[key] = match.group("value")
-        elif _HEADER_LINE_RE.match(line):
-            in_header = True
-        else:
-            if in_header:
-                break
+        elif not _HEADER_LINE_RE.match(line):
+            break
     return fields
 
 

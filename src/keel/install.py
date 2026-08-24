@@ -301,6 +301,39 @@ def _validate_legacy_mappings(
             raise ValueError(f"keel command is not parity-ready for legacy wrapper: {command}")
 
 
+#: The one directory each legacy surface may be written into.
+_LEGACY_WRITE_ROOTS: dict[str, str] = {
+    "claude": LEGACY_CLAUDE_DIR,
+    "skills": SKILLS_DIR,
+}
+
+
+def _contained_destination(root_path: Path, rel: Path, *, agent: str, name: str) -> Path:
+    """Resolve ``rel`` under the surface's write root, refusing any escape.
+
+    #870's second requirement — "enforce that destination paths resolve strictly
+    under the target commands directory" — never shipped; only the regex on
+    legacy names did (#932). Both inputs to ``rel`` are gated today (the name by
+    that regex, the command against the packaged adapter set), so no traversal
+    can be constructed right now. This is the layer that keeps that true when a
+    third input arrives: the write is anchored to a directory rather than
+    trusting whatever the mapping produced.
+
+    Checked after ``resolve()``, so ``..`` segments and symlinked parents are
+    both accounted for — a check on the unresolved string would pass a path that
+    the filesystem then walks out of.
+    """
+    base = (root_path / _LEGACY_WRITE_ROOTS[agent]).resolve()
+    dest = (root_path / rel).resolve()
+    try:
+        dest.relative_to(base)
+    except ValueError:
+        raise ValueError(
+            f"legacy wrapper {name!r} resolves outside {_LEGACY_WRITE_ROOTS[agent]}: {dest}"
+        ) from None
+    return dest
+
+
 def install_legacy_wrappers(
     agent: str,
     root: str | Path,
@@ -321,7 +354,7 @@ def install_legacy_wrappers(
     skipped: list[str] = []
     surface = f"legacy-{agent}"
     for name, (rel, command, source_text, generated_text) in expected.items():
-        dest = root_path / rel
+        dest = _contained_destination(root_path, rel, agent=agent, name=name)
         if dest.exists() and not force:
             skipped.append(name)
             continue

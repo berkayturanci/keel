@@ -18,11 +18,8 @@ read/write/remove touch the filesystem.
 
 from __future__ import annotations
 
-import contextlib
 import json
-import os
 import re
-import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -204,23 +201,7 @@ def read_activity(path: str | Path) -> dict[str, Any] | None:
 
 def write_activity(path: str | Path, record: dict[str, Any]) -> None:
     """Write one validated activity record atomically."""
-    activity_path = Path(path)
-    activity_path.parent.mkdir(parents=True, exist_ok=True)
-    workspace.ensure_runtime_gitignore_for(activity_path)
-    content = encode_activity(record)
-    fd, temp_file = tempfile.mkstemp(
-        prefix=f".{activity_path.name}.",
-        dir=activity_path.parent,
-        text=True,
-    )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(content)
-        os.replace(temp_file, activity_path)
-    except Exception:
-        with contextlib.suppress(OSError):
-            os.unlink(temp_file)
-        raise
+    workspace.write_text_atomic(path, encode_activity(record))
 
 
 def remove_activity(path: str | Path) -> bool:

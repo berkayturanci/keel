@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from . import workspace
 from .config import ProjectConfig
 
 #: Regex to capture backticked file paths or common file paths in issue text
@@ -585,7 +586,11 @@ def save_swarm_state(state: SwarmRunState, root: str | Path = ".") -> Path:
     """Persist a SwarmRunState JSON snapshot to `.keel/state/swarm/<swarm_id>.json`."""
     state_dir = resolve_swarm_state_dir(root)
     file_path = state_dir / f"{state.swarm_id}.json"
-    file_path.write_text(json.dumps(state.to_dict(), indent=2), encoding="utf-8")
+    # Atomic + durable, like the checkpoint and activity records. This was a bare
+    # `write_text`: the same torn-file-on-interruption bug #872 fixed in its two
+    # named files and never reached here, because each writer carried its own
+    # copy of the dance instead of sharing one (#932).
+    workspace.write_text_atomic(file_path, json.dumps(state.to_dict(), indent=2))
     return file_path
 
 
