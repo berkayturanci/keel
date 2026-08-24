@@ -105,6 +105,10 @@ def _report(status: str, reason: str, **extra) -> dict:
         "overtaken": {},
         "unexpected": [],
         "landed_count": 0,
+        # Present on every report, so a consumer never has to distinguish
+        # "complete" from "this key was added later". Set by the caller when a
+        # finding is kept despite an input it could not read.
+        "incomplete": False,
     }
     report.update(extra)
     return report

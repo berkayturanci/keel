@@ -6286,13 +6286,6 @@ class TestVerifyMergeCommand(unittest.TestCase):
         identical change already on the base. If it started exiting 2, the code
         would stop meaning "could not look".
         """
-
-        """The counterweight: a real answer must not be swept up as "could not look".
-
-        `out-of-scope` is usually an identical change already on the base. If it
-        started failing, every such merge would go red and the exit code would
-        stop meaning "drift".
-        """
         rc, out, _ = self._run(
             others=[],
             files_by_pr={543: ["a.py"]},

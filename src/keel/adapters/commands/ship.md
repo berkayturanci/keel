@@ -743,9 +743,13 @@ this one branched**, which is the only way that revert can happen. Three exit co
 
 | exit | status | what to do |
 | --- | --- | --- |
-| `0` | `clean` or `out-of-scope` | proceed |
+| `0` | `clean` or `out-of-scope`, every input read | proceed |
 | `1` | `drift` | **stop and read the diff** |
-| `2` | `unknown` | the check could not run — retry, and do not read it as a pass |
+| `2` | `unknown`, or a finding kept with `incomplete: true` | the check could not answer every question — retry, and do not read it as a pass |
+
+A report can print `out-of-scope` **and** exit 2: the finding is real and is kept
+rather than erased, but an input the *drift* question needed could not be read.
+Treat the exit code as the verdict, not the status word.
 
 `drift` names each file with the pull request it collided with. Treat it as *stop and read
 the diff*, not as an automatic failure — two PRs editing one file in sequence is ordinary —

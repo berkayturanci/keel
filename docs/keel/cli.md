@@ -830,7 +830,7 @@ keel verify-merge .keel/project.yaml --root . --pr 543 --json
 | status | meaning | exit |
 | --- | --- | --- |
 | `drift` | wrote to files another PR changed after this one branched — read the diff | 1 |
-| `out-of-scope` | changed files the PR's own diff did not list | 0 |
+| `out-of-scope` | changed files the PR's own diff did not list | 0, or 2 when `incomplete` |
 | `clean` | neither | 0 |
 | `unknown` | not merged yet, or `gh` unreadable — **not** a pass | 2 |
 

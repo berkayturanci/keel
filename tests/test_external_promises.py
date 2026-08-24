@@ -26,6 +26,7 @@ import json
 import os
 import re
 import unittest
+import unittest.mock
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -124,8 +125,15 @@ class TestNotLookingIsNotAPass(unittest.TestCase):
     """
 
     def test_an_unreachable_url_fails_rather_than_skipping(self):
-        with self.assertRaises(AssertionError) as caught:
-            _reachable("https://example.invalid/nope")
+        # The network is stubbed rather than relied on. Reaching for a
+        # guaranteed-unresolvable host would still be a live DNS call in a suite
+        # that claims to be hermetic, and a stalled resolver would spend the
+        # 20-second timeout to prove something that is a pure branch.
+        with unittest.mock.patch.object(
+            urllib.request, "urlopen", side_effect=OSError("simulated outage")
+        ):
+            with self.assertRaises(AssertionError) as caught:
+                _reachable("https://example.test/nope")
         self.assertIn("reads as a pass", str(caught.exception))
 
     def test_the_shared_helper_fails_rather_than_skipping(self):
@@ -140,11 +148,14 @@ class TestNotLookingIsNotAPass(unittest.TestCase):
         catch a revert that swapped one for the other if they only asserted
         "something was raised".
         """
+        stub = unittest.mock.patch.object(
+            urllib.request, "urlopen", side_effect=OSError("simulated outage")
+        )
         for call in (
-            lambda: _reachable("https://example.invalid/nope"),
+            lambda: _reachable("https://example.test/nope"),
             lambda: _could_not_look(self, "x", OSError("boom")),
         ):
-            with self.subTest(call=call):
+            with self.subTest(call=call), stub:
                 try:
                     call()
                 except unittest.SkipTest:  # pragma: no cover - the regression
