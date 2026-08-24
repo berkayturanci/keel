@@ -29,7 +29,7 @@ class TestPricingKeyOrderIsComputedOnce(unittest.TestCase):
 
     #898 put ``sorted(MODEL_PRICING, key=len, reverse=True)`` inside the match
     loop, so every call re-sorted the whole table — and ``keel cost-report``
-    calls :func:`normalize_model_name` once per ledger record (#930). Measured:
+    calls :func:`normalize_model_name` twice per ledger record (#930). Measured:
     1.14 us/call before, 0.46 us after.
     """
 
