@@ -255,7 +255,9 @@ def pr_state(pr: int | str, *, cwd: str | None = None, _run=None) -> str | None:
     return raw if raw in ("open", "merged", "closed") else None
 
 
-def pr_files(pr: int | str, *, cwd: str | None = None, _run=None) -> list[str] | None:
+def pr_files(
+    pr: int | str, *, cwd: str | None = None, _run=None, _sleep=None
+) -> list[str] | None:
     """Paths the pull request changed — what it *meant* to change (#561).
 
     Read from GitHub rather than from a local diff on purpose: after a squash-merge
@@ -264,11 +266,13 @@ def pr_files(pr: int | str, *, cwd: str | None = None, _run=None) -> list[str] |
     """
     return _lines(
         ["gh", "pr", "view", str(pr), "--json", "files", "--jq", ".files[].path"],
-        cwd=cwd, _run=_run,
+        cwd=cwd, _run=_run, _sleep=_sleep,
     )
 
 
-def commit_files(sha: str, *, cwd: str | None = None, _run=None) -> list[str] | None:
+def commit_files(
+    sha: str, *, cwd: str | None = None, _run=None, _sleep=None
+) -> list[str] | None:
     """Paths a commit changed against its first parent — what actually *landed*.
 
     For a squash-merge the commit has one parent, so this is precisely the set of
@@ -278,19 +282,35 @@ def commit_files(sha: str, *, cwd: str | None = None, _run=None) -> list[str] | 
     return _lines(
         ["gh", "api", f"repos/{{owner}}/{{repo}}/commits/{sha}",
          "--jq", ".files[].filename"],
-        cwd=cwd, _run=_run,
+        cwd=cwd, _run=_run, _sleep=_sleep,
     )
 
 
-def _lines(argv: list[str], *, cwd: str | None, _run) -> list[str] | None:
-    result = run_argv(argv, cwd=cwd, **_kw(_run))
+def _lines(argv: list[str], *, cwd: str | None, _run, _sleep=None) -> list[str] | None:
+    """Read newline-separated ``gh`` output, retrying transient failures.
+
+    Routed through :func:`run_argv_retry` rather than :func:`run_argv`: the retry
+    was written, tested, and called by nothing (#938). These are the reads it was
+    written for — ``pr_files``, ``commit_files`` and, via :func:`_ints`,
+    ``prs_merged_between`` — and one ``keel verify-merge`` run makes ``4 + N`` of
+    them, N being the pull requests merged in the window (5–25 in this repo). Since
+    #936 made an unreadable input exit 2 instead of quietly passing, a single blip
+    on the busiest day produces a loud wrong answer, and a gate that cries wolf is
+    a gate that gets bypassed.
+
+    Retries only transient errors, so a persistent failure still returns ``None``
+    and still becomes ``unknown``. The retry must not become a slower way to
+    fail open.
+    """
+    result = run_argv_retry(argv, cwd=cwd, _run=_run, _sleep=_sleep)
     if not result.ok:
         return None
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
 
 def prs_merged_between(
-    base: str, since: str, until: str, *, cwd: str | None = None, _run=None
+    base: str, since: str, until: str, *, cwd: str | None = None, _run=None,
+    _sleep=None,
 ) -> list[int] | None:
     """Pull request numbers merged into ``base`` in the half-open window (#561).
 
@@ -302,12 +322,12 @@ def prs_merged_between(
         ["gh", "pr", "list", "--base", base, "--state", "merged", "--limit", "100",
          "--json", "number,mergedAt",
          "--jq", f'.[] | select(.mergedAt > "{since}" and .mergedAt < "{until}") | .number'],
-        cwd=cwd, _run=_run,
+        cwd=cwd, _run=_run, _sleep=_sleep,
     )
 
 
-def _ints(argv: list[str], *, cwd: str | None, _run) -> list[int] | None:
-    lines = _lines(argv, cwd=cwd, _run=_run)
+def _ints(argv: list[str], *, cwd: str | None, _run, _sleep=None) -> list[int] | None:
+    lines = _lines(argv, cwd=cwd, _run=_run, _sleep=_sleep)
     if lines is None:
         return None
     out = []
@@ -319,7 +339,28 @@ def _ints(argv: list[str], *, cwd: str | None, _run) -> list[int] | None:
     return out
 
 
-def pr_merge_window(pr: int | str, *, cwd: str | None = None, _run=None) -> dict | None:
+def _merge_window_fields(result: CommandResult) -> list[str]:
+    """The four TSV fields of a ``pr_merge_window`` read, trailing blank preserved.
+
+    Trims newlines only. ``str.strip()`` also removes the trailing tab, so a merged
+    PR whose ``mergeCommit.oid`` has not appeared yet arrives as three fields and
+    reads as malformed rather than as "not settled yet" — which is precisely the
+    state the poll above exists to recognise (#938).
+    """
+    return result.stdout.strip("\r\n").split("\t")
+
+
+#: Reads of a just-merged PR before GitHub has populated ``mergeCommit.oid``.
+#: Three attempts a second apart: the field settles in well under a second in
+#: practice, and the cap matters more than the ceiling — this runs immediately
+#: after an irreversible merge, so it must give up rather than hang (#938).
+MERGE_COMMIT_POLL_ATTEMPTS = 3
+MERGE_COMMIT_POLL_DELAY_S = 1.0
+
+
+def pr_merge_window(
+    pr: int | str, *, cwd: str | None = None, _run=None, _sleep=None
+) -> dict | None:
     """When a PR branched and merged, its base, and the SHA it merged as (#561).
 
     ``createdAt`` stands in for the branch point. It is the conservative choice: a
@@ -327,19 +368,40 @@ def pr_merge_window(pr: int | str, *, cwd: str | None = None, _run=None) -> dict
     never too narrow — a wider window over-reports rather than missing a revert.
 
     ``None`` when ``gh`` cannot be asked or the PR is not merged.
+
+    A merged PR whose ``mergeCommit.oid`` has not appeared yet is **polled** for,
+    briefly, rather than read as absent. ``ship.md`` tells the operator to run the
+    drift check "immediately after a successful merge" — the one moment the field
+    is least likely to be populated — and since #936 an unreadable input exits 2.
+    Without the poll the runbook's own timing is the most frequent trigger of the
+    loud path, and the shipped remedy is a sentence of prose asking an agent to
+    retry (#938). Bounded, and giving up still yields ``None``: the poll must not
+    become a way to eventually pass.
     """
     # Named rather than written as two adjacent literals inside the argv list: an
     # implicit concatenation there reads as a possible missing comma (CodeQL flags it),
     # and an argv list is exactly where that ambiguity is expensive.
     jq = '[.createdAt, .mergedAt, .baseRefName, (.mergeCommit.oid // "")] | @tsv'
-    result = run_argv(
-        ["gh", "pr", "view", str(pr), "--json",
-         "createdAt,mergedAt,baseRefName,mergeCommit", "--jq", jq],
-        cwd=cwd, **_kw(_run),
-    )
+    argv = ["gh", "pr", "view", str(pr), "--json",
+            "createdAt,mergedAt,baseRefName,mergeCommit", "--jq", jq]
+    sleep_fn = _sleep or time.sleep
+    for attempt in range(1, MERGE_COMMIT_POLL_ATTEMPTS + 1):
+        result = run_argv_retry(argv, cwd=cwd, _run=_run, _sleep=_sleep)
+        # Only newlines are trimmed. `.strip()` also eats the trailing tab, which is
+        # the very field being waited on — an empty SHA would arrive as three fields
+        # and read as malformed rather than as "not settled yet".
+        parts = _merge_window_fields(result) if result.ok else []
+        # Poll only the settling case: merged (first three fields present) with the
+        # SHA still empty. An unmerged PR or an unreadable `gh` is a real answer, and
+        # waiting on either would just make every such call three seconds slower.
+        settling = len(parts) == 4 and all(parts[:3]) and not parts[3]
+        if not settling:
+            break
+        if attempt < MERGE_COMMIT_POLL_ATTEMPTS:
+            sleep_fn(MERGE_COMMIT_POLL_DELAY_S)
     if not result.ok:
         return None
-    parts = result.stdout.strip().split("\t")
+    parts = _merge_window_fields(result)
     if len(parts) != 4 or not all(parts[:3]) or not parts[3]:
         return None
     return {

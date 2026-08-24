@@ -472,5 +472,141 @@ class TestGithubRetry(unittest.TestCase):
         self.assertEqual(sleeps, [])
 
 
+class TheRetryIsActuallyWiredToTheReads(unittest.TestCase):
+    """#938: `run_argv_retry` was written, tested, and called by nothing.
+
+    Every read went through plain `run_argv`, so one blip failed the whole check.
+    Since #936 an unreadable input exits 2 instead of quietly passing, and one
+    `verify-merge` run makes 4 + N of these reads — so the loud path fired on
+    exactly the busiest days.
+    """
+
+    @staticmethod
+    def _flaky(first_stderr, then_stdout):
+        """Fails once with a transient error, then succeeds."""
+        calls = []
+
+        def run(argv, **kwargs):
+            calls.append(argv)
+            if len(calls) == 1:
+                return _Proc(1, "", first_stderr)
+            return _Proc(0, then_stdout, "")
+
+        run.calls = calls
+        return run
+
+    def test_pr_files_recovers_from_a_transient_failure(self):
+        sleeps = []
+        run = self._flaky("HTTP 503 Service Unavailable", "a.py\nb.py\n")
+
+        files = github.pr_files(940, _run=run, _sleep=sleeps.append)
+
+        self.assertEqual(["a.py", "b.py"], files)
+        self.assertEqual(2, len(run.calls))
+        self.assertEqual(1, len(sleeps))
+
+    def test_commit_files_recovers_from_a_transient_failure(self):
+        run = self._flaky("secondary rate limit", "src/keel/cli.py\n")
+
+        self.assertEqual(
+            ["src/keel/cli.py"],
+            github.commit_files("abc123", _run=run, _sleep=lambda _d: None),
+        )
+
+    def test_prs_merged_between_recovers_from_a_transient_failure(self):
+        run = self._flaky("connection reset by peer", "810\n811\n")
+
+        self.assertEqual(
+            [810, 811],
+            github.prs_merged_between(
+                "main", "T1", "T2", _run=run, _sleep=lambda _d: None
+            ),
+        )
+
+    def test_a_persistent_failure_is_still_unreadable(self):
+        # The retry must not become a slower way to fail open: three transient
+        # failures is still None, which is still `unknown` and still exit 2.
+        rec = _Recorder(code=1, err="rate limit exceeded")
+
+        self.assertIsNone(github.pr_files(940, _run=rec, _sleep=lambda _d: None))
+        self.assertEqual(3, len(rec.calls))
+
+    def test_a_fatal_error_is_not_retried(self):
+        rec = _Recorder(code=1, err="HTTP 404: Not Found")
+
+        self.assertIsNone(github.pr_files(940, _run=rec, _sleep=lambda _d: None))
+        self.assertEqual(1, len(rec.calls), "a 404 is an answer, not a blip")
+
+
+class AJustMergedPrIsPolledForItsMergeCommit(unittest.TestCase):
+    """#938: ship.md says to run the drift check "immediately after a successful
+    merge" — the one moment `mergeCommit.oid` is least likely to be populated."""
+
+    ROW = "2026-08-01T00:00:00Z\t2026-08-02T00:00:00Z\tmain\t{sha}"
+
+    def test_the_sha_arriving_on_a_later_read_is_used(self):
+        sleeps, calls = [], []
+
+        def run(argv, **kwargs):
+            calls.append(argv)
+            sha = "deadbeef" if len(calls) >= 2 else ""
+            return _Proc(0, self.ROW.format(sha=sha), "")
+
+        window = github.pr_merge_window(940, _run=run, _sleep=sleeps.append)
+
+        self.assertEqual("deadbeef", window["merge_commit"])
+        self.assertEqual(2, len(calls))
+        self.assertEqual([github.MERGE_COMMIT_POLL_DELAY_S], sleeps)
+
+    def test_the_poll_gives_up_rather_than_hanging(self):
+        # Bounded, and giving up is still None — the poll must not become a way to
+        # eventually pass. It runs right after an irreversible merge, so a hang
+        # would be worse than an `unknown`.
+        sleeps, calls = [], []
+
+        def run(argv, **kwargs):
+            calls.append(argv)
+            return _Proc(0, self.ROW.format(sha=""), "")
+
+        self.assertIsNone(github.pr_merge_window(940, _run=run, _sleep=sleeps.append))
+        self.assertEqual(github.MERGE_COMMIT_POLL_ATTEMPTS, len(calls))
+        # One fewer sleep than attempts: nothing waits after the last read.
+        self.assertEqual(github.MERGE_COMMIT_POLL_ATTEMPTS - 1, len(sleeps))
+
+    def test_an_unmerged_pr_is_answered_at_once(self):
+        # Only the settling case waits. An unmerged PR is a real answer, and
+        # sleeping on it would make every such call three seconds slower.
+        sleeps, calls = [], []
+
+        def run(argv, **kwargs):
+            calls.append(argv)
+            return _Proc(0, "2026-08-01T00:00:00Z\t\tmain\t", "")
+
+        self.assertIsNone(github.pr_merge_window(940, _run=run, _sleep=sleeps.append))
+        self.assertEqual(1, len(calls))
+        self.assertEqual([], sleeps)
+
+    def test_an_unreadable_gh_is_answered_at_once(self):
+        sleeps = []
+        rec = _Recorder(code=1, err="HTTP 404: Not Found")
+
+        self.assertIsNone(github.pr_merge_window(940, _run=rec, _sleep=sleeps.append))
+        self.assertEqual(1, len(rec.calls))
+        self.assertEqual([], sleeps)
+
+    def test_a_populated_sha_is_returned_without_waiting(self):
+        sleeps, calls = [], []
+
+        def run(argv, **kwargs):
+            calls.append(argv)
+            return _Proc(0, self.ROW.format(sha="cafe1234"), "")
+
+        window = github.pr_merge_window(940, _run=run, _sleep=sleeps.append)
+
+        self.assertEqual("cafe1234", window["merge_commit"])
+        self.assertEqual(1, len(calls))
+        self.assertEqual([], sleeps)
+
+
 if __name__ == "__main__":
     unittest.main()
