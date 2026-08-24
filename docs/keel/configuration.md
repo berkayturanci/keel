@@ -198,7 +198,21 @@ Then: `/keel:ship 123 --delegate cursor`.
 | `model` | string \| null | | default model for this profile; a per-run `--delegate <name>:<model>` beats it |
 | `model_arg` | string | | flag the model is passed on, as `<model_arg> <model>` (default `--model`) |
 | `endpoint` | string | ✅ for `openai-compatible` | the OpenAI-shaped chat-completions URL. Loopback by default |
-| `api_key_env` | string | ✅ for `openai-compatible` | the **name** of the env var holding the key — never the key |
+| `api_key_env` | string | ✅ for `openai-compatible` | the **name** of the env var holding the key — never the key, and only an [allowlisted name](#which-env-vars-may-hold-a-delegate-key) |
+
+<a id="which-env-vars-may-hold-a-delegate-key"></a>
+**Which env vars may hold a delegate key.** This field names the variable whose *value*
+becomes an `Authorization: Bearer` header sent to the endpoint above, so it is restricted
+to variables created for that purpose:
+
+`OPENAI_API_KEY` · `GROQ_API_KEY` · `DEEPSEEK_API_KEY` · `TOGETHER_API_KEY` ·
+`OPENROUTER_API_KEY` · `LITELLM_API_KEY` · `VLLM_API_KEY`
+
+For a provider not on that list, name the variable `KEEL_DELEGATE_KEY_<SOMETHING>`.
+Prefixing is a deliberate act on a variable you created for this — which is exactly the
+property being protected, and one an ambient runner secret does not have. A name outside
+both forms is a `keel validate` error, so a config cannot point the header at
+`VAULT_TOKEN`, `KUBECONFIG` or `DATABASE_URL`.
 
 **`openai-compatible` reaches any OpenAI-shaped hosted API** — OpenRouter, Groq, DeepSeek,
 Together, LiteLLM, a local vLLM — from configuration rather than a code change:
@@ -220,10 +234,17 @@ to a hardcoded URL, which is what makes their SSRF story trivial. A config-suppl
 turns `project.yaml` into a request-forgery primitive pointed wherever it says, so:
 
 - `localhost` / `127.0.0.1` / `[::1]` are allowed with no ceremony;
-- any other host — **including `169.254.169.254` and other internal addresses** — is a
-  `keel validate` error unless `KEEL_ALLOW_REMOTE_ENDPOINT` is set;
-- that opt-in lives in the **environment, not this file**. The threat model is a config an
-  attacker influenced, so the switch permitting a remote host must sit outside it;
+- any other host is a `keel validate` error unless `KEEL_ALLOW_REMOTE_ENDPOINT` is set;
+- **cloud-metadata and link-local addresses are refused outright** — no opt-in reaches
+  them. `169.254.169.254` and every alternate spelling of it (`2852039166`,
+  `0251.0376.0251.0376`, `0xA9FEA9FE`) resolve to the same address before the check, so
+  the encoding cannot be used to step around it;
+- **private ranges need their own opt-in.** `10.0.0.0/8`, `172.16.0.0/12` and
+  `192.168.0.0/16` require `KEEL_ALLOW_INTERNAL_ENDPOINT=1`: `KEEL_ALLOW_REMOTE_ENDPOINT`
+  permits reaching *out*, not reaching *in*, and a model server on your own subnet is a
+  deliberate choice rather than a side effect of allowing remote hosts;
+- both opt-ins live in the **environment, not this file**. The threat model is a config an
+  attacker influenced, so the switches must sit outside the surface they would control;
 - a non-`http(s)` scheme is refused outright, blocking `file://`, `ftp://` and friends;
 - a malformed URL is a config error, not a traceback.
 

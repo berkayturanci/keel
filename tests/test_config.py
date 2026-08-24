@@ -512,7 +512,7 @@ class TestOpenAICompatibleKeyEnv(unittest.TestCase):
 
     def _profile(self, **over):
         base = {"vendor": "openai-compatible",
-                "endpoint": "http://localhost:1/v1", "api_key_env": "MY_KEY"}
+                "endpoint": "http://localhost:1/v1", "api_key_env": "OPENAI_API_KEY"}
         base.update(over)
         return self._with({"router": base})
 
@@ -535,10 +535,25 @@ class TestOpenAICompatibleKeyEnv(unittest.TestCase):
                     cfg.parse_config(self._profile(api_key_env=pasted))
                 self.assertIn("takes a name, not a key", str(ctx.exception))
 
-    def test_a_real_env_var_name_is_accepted(self):
-        for name in ("OPENROUTER_API_KEY", "MY_KEY_2", "_PRIVATE"):
+    def test_an_allowlisted_key_name_is_accepted(self):
+        for name in ("OPENROUTER_API_KEY", "GROQ_API_KEY", "KEEL_DELEGATE_KEY_ACME"):
             with self.subTest(name=name):
                 cfg.parse_config(self._profile(api_key_env=name))
+
+    def test_an_arbitrary_env_var_name_is_refused(self):
+        """#865 asked for an allowlist; only the denylist shipped (#929).
+
+        `MY_KEY_2` and `_PRIVATE` are well-formed variable names and were
+        accepted, which is the hole: the field names the variable whose *value*
+        becomes an Authorization header, so a well-formed name is not the
+        question — whether it was created to hold a model-API key is.
+        """
+        for name in ("MY_KEY_2", "_PRIVATE", "VAULT_TOKEN", "KUBECONFIG",
+                     "DATABASE_URL", "STRIPE_SECRET_KEY", "AZURE_CLIENT_SECRET"):
+            with self.subTest(name=name):
+                with self.assertRaises(cfg.ConfigError) as ctx:
+                    cfg.parse_config(self._profile(api_key_env=name))
+                self.assertIn("not an allowed delegate key", str(ctx.exception))
 
     def test_sensitive_credentials_rejected(self):
         for sensitive in (
@@ -562,7 +577,7 @@ class TestOpenAICompatibleKeyEnv(unittest.TestCase):
         serialised = contracts.project_as_dict(
             cfg.parse_config(self._profile())
         )["knobs"]["delegate_profiles"]["router"]
-        self.assertEqual(serialised["api_key_env"], "MY_KEY")
+        self.assertEqual(serialised["api_key_env"], "OPENAI_API_KEY")
         self.assertEqual(serialised["endpoint"], "http://localhost:1/v1")
 
 
@@ -612,14 +627,14 @@ class TestDelegateProfiles(unittest.TestCase):
             "local": {
                 "vendor": "openai-compatible",
                 "endpoint": "http://localhost:11434/v1/chat/completions",
-                "api_key_env": "OLLAMA_KEY",
+                "api_key_env": "VLLM_API_KEY",
                 "model": "qwen2.5",
             },
         }))
         profile = parsed.knobs.delegate_profiles["local"]
         self.assertEqual(profile.vendor, "openai-compatible")
         self.assertEqual(profile.endpoint, "http://localhost:11434/v1/chat/completions")
-        self.assertEqual(profile.api_key_env, "OLLAMA_KEY")
+        self.assertEqual(profile.api_key_env, "VLLM_API_KEY")
         self.assertIsNone(profile.command)
 
     def test_unknown_vendor_rejected(self):

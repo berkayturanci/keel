@@ -140,7 +140,11 @@ Any provider or local server exposing an OpenAI-compatible `/v1/chat/completions
 > **SSRF Protection**:
 > - Loopback addresses (`localhost`, `127.0.0.1`, `[::1]`) are allowed by default.
 > - Remote hosts require setting `export KEEL_ALLOW_REMOTE_ENDPOINT=1` in your environment.
-> - `api_key_env` stores only the **name** of the environment variable, preventing secret leakage into `config_hash`.
+> - Private ranges (`10.x`, `172.16–31.x`, `192.168.x`) need `export KEEL_ALLOW_INTERNAL_ENDPOINT=1`
+>   as well — permitting keel to reach *out* is not the same decision as permitting it to reach *in*.
+> - Cloud-metadata and link-local addresses are refused by **both** opt-ins, and every
+>   spelling of them (`2852039166`, `0xA9FEA9FE`) normalises to the same address first.
+> - `api_key_env` stores only the **name** of the environment variable, preventing secret leakage into `config_hash` — and only a name from the delegate-key allowlist (`*_API_KEY` for the supported providers, or your own `KEEL_DELEGATE_KEY_*`).
 
 ### OpenRouter
 Access hundreds of models (DeepSeek, Llama 3.3, Qwen, Mistral, Command R+) through a single key:

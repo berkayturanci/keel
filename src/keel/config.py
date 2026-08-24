@@ -12,6 +12,7 @@ import hashlib
 import ipaddress
 import json
 import os
+import socket
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -67,6 +68,38 @@ BLOCKED_ENV_PREFIXES = (
     "PYPI_",
     "SSH_",
 )
+
+#: Env vars a delegate profile may name as its API key. #865 asked for **both**
+#: this and the denylist above; only the denylist shipped, so `VAULT_TOKEN`,
+#: `AZURE_CLIENT_SECRET`, `KUBECONFIG`, `DATABASE_URL` and `STRIPE_SECRET_KEY`
+#: were all accepted and would have travelled as `Authorization: Bearer` to a
+#: config-named endpoint (#929).
+#:
+#: The allowlist is the measure that matters, and #865 said so: eleven names and
+#: six prefixes cannot enumerate every credential a runner holds, and the next
+#: secret to appear in CI is one nobody added to the list. The denylist stays as
+#: defence in depth — it catches a name that is *also* on the allowlist by
+#: accident, and it fails with a message about the specific credential.
+ALLOWED_ENV_KEY_NAMES = frozenset({
+    "OPENAI_API_KEY",
+    "GROQ_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "TOGETHER_API_KEY",
+    "OPENROUTER_API_KEY",
+    "LITELLM_API_KEY",
+    "VLLM_API_KEY",
+})
+
+#: Escape hatch for a provider the list does not name yet. Prefixing is a
+#: deliberate act on a variable created for this purpose, which is the property
+#: the allowlist is protecting — an ambient runner secret does not carry it.
+ALLOWED_ENV_KEY_PREFIX = "KEEL_DELEGATE_KEY_"
+
+
+def _is_allowed_api_key_env(name: str) -> bool:
+    """Whether ``name`` is a variable a delegate profile may read its key from."""
+    upper = name.upper()
+    return upper in ALLOWED_ENV_KEY_NAMES or upper.startswith(ALLOWED_ENV_KEY_PREFIX)
 
 #: Environment opt-in for a **non-loopback** endpoint. It lives in the environment and
 #: deliberately **not** in ``project.yaml``: the threat model here is an
@@ -350,14 +383,54 @@ BLOCKED_METADATA_HOSTS = frozenset({
 })
 
 
+#: Set to ``1`` to reach RFC1918 space on purpose — a self-hosted vLLM on the
+#: same subnet is a legitimate deployment, and #866 specified an opt-out rather
+#: than a refusal. Distinct from :data:`ALLOW_REMOTE_ENDPOINT_ENV`: that one is
+#: about reaching *outward* at all, this one about reaching *inward*.
+ALLOW_INTERNAL_ENDPOINT_ENV = "KEEL_ALLOW_INTERNAL_ENDPOINT"
+
+
+def _as_ip(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    """The address a client will actually dial, or ``None`` if the host is a name.
+
+    ``ipaddress.ip_address`` only accepts the dotted-quad spelling, so
+    ``http://2852039166/`` — the decimal form of ``169.254.169.254`` — raised,
+    the guard fell through, and the request reached the metadata service anyway
+    (#929). Octal (``0251.0376.0251.0376``) and hex (``0xA9FEA9FE``) do the same.
+
+    ``socket.inet_aton`` accepts exactly the forms a C resolver does, which is
+    what libcurl and the Python HTTP stack ultimately call — so normalising
+    through it asks the same question the client will ask, rather than a
+    stricter one that a caller can step around.
+    """
+    try:
+        return ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    try:
+        return ipaddress.IPv4Address(socket.inet_aton(host))
+    except (OSError, ipaddress.AddressValueError):
+        return None
+
+
 def _is_cloud_metadata_or_link_local(host: str) -> bool:
     if host in BLOCKED_METADATA_HOSTS:
         return True
-    try:
-        ip = ipaddress.ip_address(host)
-        return bool(ip.is_link_local)
-    except ValueError:
+    ip = _as_ip(host)
+    return bool(ip is not None and ip.is_link_local)
+
+
+def _is_private_address(host: str) -> bool:
+    """Whether ``host`` names RFC1918 / loopback / unique-local space.
+
+    #866's second measure, which never shipped: with the remote-endpoint opt-in
+    set, ``10.0.0.5``, ``172.16.5.9`` and ``192.168.1.10`` were all reachable
+    from a config-supplied endpoint (#929).
+    """
+    ip = _as_ip(host)
+    if ip is None:
         return False
+    return bool(ip.is_private or ip.is_loopback)
 
 
 def endpoint_issues(endpoint: Any, *, where: str, env=None) -> list[str]:
@@ -408,6 +481,17 @@ def endpoint_issues(endpoint: Any, *, where: str, env=None) -> list[str]:
             "model server (including internal and cloud-metadata addresses) is refused "
             f"by default. Set {ALLOW_REMOTE_ENDPOINT_ENV}=1 in the environment — not in "
             "this file — to allow a trusted remote endpoint"
+        ]
+    # #866's second measure, which never shipped: with the remote opt-in set,
+    # 10.0.0.5, 172.16.5.9 and 192.168.1.10 were all reachable from a
+    # config-supplied endpoint (#929). Checked *after* the remote gate so the
+    # error names the narrower opt-out the operator actually needs.
+    if _is_private_address(host) and not env.get(ALLOW_INTERNAL_ENDPOINT_ENV):
+        return [
+            f"{where}: endpoint host {host or '(none)'!r} is a private or loopback "
+            f"address. {ALLOW_REMOTE_ENDPOINT_ENV} permits reaching out, not reaching "
+            f"in. Set {ALLOW_INTERNAL_ENDPOINT_ENV}=1 in the environment — not in this "
+            "file — for a model server on your own network"
         ]
     return []
 
@@ -508,6 +592,14 @@ def _validate_delegate_profiles(profiles: Any, *, source: str) -> list[str]:
                 errors.append(
                     f"{where}: api_key_env {key_env!r} refers to a sensitive system "
                     "credential and is refused for security"
+                )
+            elif not _is_allowed_api_key_env(key_env):
+                errors.append(
+                    f"{where}: api_key_env {key_env!r} is not an allowed delegate key. "
+                    f"Use one of {', '.join(sorted(ALLOWED_ENV_KEY_NAMES))}, or prefix a "
+                    f"project-specific name with {ALLOWED_ENV_KEY_PREFIX} — the config "
+                    "names the variable whose value becomes an Authorization header, so "
+                    "it may only name variables meant to hold a model-API key"
                 )
         # A field that does not apply to this vendor is a config error, not a
         # silently-ignored key: an operator who sets `endpoint` on a `cli` profile has
