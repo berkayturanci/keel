@@ -100,6 +100,13 @@ class NoStaleNosecSuppressions(unittest.TestCase):
     """
 
     def test_every_remaining_nosec_suppresses_a_finding_that_exists(self):
+        # Mutating this test faithfully is harder than it looks. bandit does not
+        # register a `# nosec` on a line it never produced a finding for, so
+        # appending one to an arbitrary statement changes nothing and the test
+        # passes — twice, while this was being written. The real shape is the
+        # historical one: `# nosec B105` on the `"secret_*": <value>` entries in
+        # `consent.py`, which stopped being flagged when those values changed.
+        # Restore those three and this goes red.
         import shutil
         import subprocess
 
@@ -113,15 +120,22 @@ class NoStaleNosecSuppressions(unittest.TestCase):
         sources = [p for p in tracked if not p.startswith("tests/")]
         self.assertTrue(sources, "no sources to scan; the check would be vacuous")
 
+        # Hand bandit the tracked sources rather than `-r .` (#961). The tree
+        # version needed an exclusion per artefact directory — tests, .venv,
+        # venv, node_modules, site-packages, and a post-filter for
+        # .claude/worktrees — and still went red on the first one nobody had
+        # listed: a local `build/`, gitignored, so invisible in CI and red only
+        # for contributors who had built. That is a blocklist standing in for a
+        # definition; `sources` is the definition, and it was already computed
+        # here for the vacuity guard.
         probe = subprocess.run(
-            ["bandit", "-r", ".", "-ll",
-             "-x", "*/tests/*,*/.venv/*,*/venv/*,*/node_modules/*,*/site-packages/*"],
+            ["bandit", "-ll", *sources],
             cwd=REPO_ROOT, capture_output=True, text=True,
         )
 
         stale = [
             line.strip() for line in probe.stderr.splitlines()
-            if "nosec encountered" in line and "/.claude/worktrees/" not in line
+            if "nosec encountered" in line
         ]
         self.assertEqual(
             [], stale,
