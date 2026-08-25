@@ -364,7 +364,16 @@ def _cmd_run_gates(args: argparse.Namespace) -> int:
         print(f"  {status:>7}  {o.gate}")
 
     for f in verdict.findings:
-        print(f"    [{f.severity}] {f.source}: {f.message.splitlines()[0]}")
+        # The headline stays one scannable line; the rest of the message is
+        # printed beneath it rather than discarded (#973). `runner._tail`
+        # deliberately collects the last 20 lines of a failing command, and
+        # `.splitlines()[0]` used to drop nineteen of them at the last step —
+        # so a failing `make test` reported a stray ResourceWarning instead of
+        # the FAIL line, and #972 could not be diagnosed from its own CI log.
+        headline, *detail = f.message.splitlines()
+        print(f"    [{f.severity}] {f.source}: {headline}")
+        for line in detail:
+            print(f"      {line}")
     if verdict.blocked:
         print("BLOCKED — merge is gated by the findings above")
         return 1

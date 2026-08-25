@@ -611,6 +611,41 @@ class TestRunGates(unittest.TestCase):
         self.assertIn("FAIL", out)
         self.assertIn("BLOCKED", out)
 
+    def test_a_failing_gate_shows_the_whole_captured_tail(self):
+        """`runner._tail` keeps 20 lines; the display used to print one (#973).
+
+        Asserted on a line that is neither the first nor the last of the output.
+        "Shows more than one line" is satisfied by an off-by-one that is no
+        better than the bug, and a single-line message would pass against both
+        the old code and the new — so neither is the property under test.
+
+        This is what made #972 undiagnosable: a failing `make test` reported a
+        stray ResourceWarning from the tail instead of its `FAIL:` line.
+        """
+        script = (
+            "import sys;"
+            "print('first line');"
+            "print('MIDDLE-MARKER: the line that actually explains it');"
+            "print('last line');"
+            "sys.exit(1)"
+        )
+        cmd = json.dumps(f'"{sys.executable}" -c "{script}"')
+        rc, out, _ = run(["run-gates", _write_config(cmd), "--root", "."])
+
+        self.assertEqual(rc, 1)
+        self.assertIn("MIDDLE-MARKER", out)
+        # The headline still leads, so the output stays scannable.
+        self.assertIn("[major] build: build failed", out)
+
+    def test_a_single_line_failure_is_unchanged(self):
+        """The counterweight: the common case must not gain a blank line."""
+        script = "import sys; print('only line'); sys.exit(1)"
+        cmd = json.dumps(f'"{sys.executable}" -c "{script}"')
+        rc, out, _ = run(["run-gates", _write_config(cmd), "--root", "."])
+
+        self.assertEqual(rc, 1)
+        self.assertIn("build failed (exit 1): only line", out)
+
     def test_ship_also_renders_a_timeout_apart_from_a_failure(self):
         # #622 must land on the ship surface too, not only run-gates.
         p = _write_raw(
