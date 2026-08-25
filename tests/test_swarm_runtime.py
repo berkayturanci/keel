@@ -116,7 +116,7 @@ class TestSwarmRuntimeHelpers(unittest.TestCase):
 
             def mock_runner(cmd: list[str], cwd: Path) -> CommandResult:
                 calls.append(cmd)
-                return CommandResult(ok=True, code=0, output="{\"decision\": \"MERGE\"}")
+                return CommandResult(ok=True, code=0, output='{"decision": "MERGE"}')
 
             res = execute_cluster_worker(
                 ".keel/project.yaml",
@@ -246,6 +246,7 @@ class TestSwarmOrchestration(unittest.TestCase):
     def test_orchestration_rebalance_drops_subsequent_wave_on_failure(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             from keel.swarm import SwarmCluster, SwarmWave
+
             c1 = SwarmCluster(cluster_id="c1", issues=(101,), role="core", combined_scope=("a.py",))
             c2 = SwarmCluster(cluster_id="c2", issues=(101,), role="core", combined_scope=("a.py",))
             w1 = SwarmWave(
@@ -329,14 +330,19 @@ class TestSwarmRunCLI(unittest.TestCase):
             with patch("keel.swarm_runtime.execute_cluster_worker", return_value=mock_res):
                 buf = io.StringIO()
                 with redirect_stdout(buf):
-                    code = main([
-                        "swarm-run",
-                        ".keel/project.yaml",
-                        "--root", tmpdir,
-                        "--issues", "#101,invalid,102,102",
-                        "--swarm-id", "swarm-cli-test",
-                        "--tree",
-                    ])
+                    code = main(
+                        [
+                            "swarm-run",
+                            ".keel/project.yaml",
+                            "--root",
+                            tmpdir,
+                            "--issues",
+                            "#101,invalid,102,102",
+                            "--swarm-id",
+                            "swarm-cli-test",
+                            "--tree",
+                        ]
+                    )
                 self.assertEqual(code, 0)
                 out = buf.getvalue()
                 self.assertIn("Keel Swarm Plan — swarm-cli-test", out)
@@ -345,23 +351,30 @@ class TestSwarmRunCLI(unittest.TestCase):
                 # No issues passed (empty plan)
                 buf_empty = io.StringIO()
                 with redirect_stdout(buf_empty):
-                    code_empty = main([
-                        "swarm-run",
-                        ".keel/project.yaml",
-                        "--root", tmpdir,
-                    ])
+                    code_empty = main(
+                        [
+                            "swarm-run",
+                            ".keel/project.yaml",
+                            "--root",
+                            tmpdir,
+                        ]
+                    )
                 self.assertEqual(code_empty, 0)
 
                 # JSON output
                 buf_json = io.StringIO()
                 with redirect_stdout(buf_json):
-                    code_json = main([
-                        "swarm-run",
-                        ".keel/project.yaml",
-                        "--root", tmpdir,
-                        "--issue", "101",
-                        "--json",
-                    ])
+                    code_json = main(
+                        [
+                            "swarm-run",
+                            ".keel/project.yaml",
+                            "--root",
+                            tmpdir,
+                            "--issue",
+                            "101",
+                            "--json",
+                        ]
+                    )
                 self.assertEqual(code_json, 0)
                 data = json.loads(buf_json.getvalue())
                 self.assertEqual(data["status"], "success")
@@ -378,18 +391,24 @@ class TestSwarmRunCLI(unittest.TestCase):
             with patch("keel.swarm_runtime.execute_cluster_worker", return_value=mock_fail):
                 buf = io.StringIO()
                 with redirect_stdout(buf):
-                    code = main([
-                        "swarm-run",
-                        ".keel/project.yaml",
-                        "--root", tmpdir,
-                        "--issue-title", "Failing task",
-                        "--issue-body", "Details here",
-                    ])
+                    code = main(
+                        [
+                            "swarm-run",
+                            ".keel/project.yaml",
+                            "--root",
+                            tmpdir,
+                            "--issue-title",
+                            "Failing task",
+                            "--issue-body",
+                            "Details here",
+                        ]
+                    )
                 self.assertEqual(code, 1)
                 self.assertIn("status        : failed", buf.getvalue())
 
     def test_swarm_run_cli_partial_failure_returns_exit_code_1(self):
         with tempfile.TemporaryDirectory() as tmpdir:
+
             def mock_worker(*args, **kwargs):
                 issue = kwargs.get("issue")
                 if issue == 101:
@@ -399,12 +418,16 @@ class TestSwarmRunCLI(unittest.TestCase):
             with patch("keel.swarm_runtime.execute_cluster_worker", side_effect=mock_worker):
                 buf = io.StringIO()
                 with redirect_stdout(buf):
-                    code = main([
-                        "swarm-run",
-                        ".keel/project.yaml",
-                        "--root", tmpdir,
-                        "--issues", "101,102",
-                    ])
+                    code = main(
+                        [
+                            "swarm-run",
+                            ".keel/project.yaml",
+                            "--root",
+                            tmpdir,
+                            "--issues",
+                            "101,102",
+                        ]
+                    )
                 self.assertEqual(code, 1)
                 self.assertIn("status        : partial_failure", buf.getvalue())
 

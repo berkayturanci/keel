@@ -51,11 +51,13 @@ class TestSortAndSummarize(unittest.TestCase):
         self.assertEqual(order, ["critical", "minor", "nit"])
 
     def test_summarize_counts_and_block(self):
-        v = fnd.summarize([
-            Finding("major", "x", "a"),
-            Finding("nit", "y", "b"),
-            Finding("nit", "z", "c"),
-        ])
+        v = fnd.summarize(
+            [
+                Finding("major", "x", "a"),
+                Finding("nit", "y", "b"),
+                Finding("nit", "z", "c"),
+            ]
+        )
         self.assertTrue(v.blocked)
         self.assertEqual(v.counts["major"], 1)
         self.assertEqual(v.counts["nit"], 2)

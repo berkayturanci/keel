@@ -15,14 +15,14 @@ def _provider():
 class TestRoute(unittest.TestCase):
     def test_root_serves_page(self):
         status, ctype, body = serve.route(
-            "/", board_provider=_provider, page_html="<html>DASH</html>")
+            "/", board_provider=_provider, page_html="<html>DASH</html>"
+        )
         self.assertEqual(status, 200)
         self.assertIn("text/html", ctype)
         self.assertEqual(body, b"<html>DASH</html>")
 
     def test_index_alias(self):
-        status, _, _ = serve.route(
-            "/index.html", board_provider=_provider, page_html="x")
+        status, _, _ = serve.route("/index.html", board_provider=_provider, page_html="x")
         self.assertEqual(status, 200)
 
     def test_board_json_reads_provider_fresh(self):
@@ -53,8 +53,7 @@ class TestLiveServer(unittest.TestCase):
         try:
             port = httpd.server_address[1]
             base = f"http://127.0.0.1:{port}"
-            self.assertEqual(
-                urllib.request.urlopen(base + "/").read(), b"<html>LIVE</html>")
+            self.assertEqual(urllib.request.urlopen(base + "/").read(), b"<html>LIVE</html>")
             board = json.loads(urllib.request.urlopen(base + "/board.json").read())
             self.assertEqual(board, _provider())
             with self.assertRaises(urllib.error.HTTPError) as ctx:

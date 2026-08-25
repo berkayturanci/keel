@@ -63,7 +63,7 @@ def split_frontmatter(text: str) -> tuple[dict, str]:
     for i in range(1, len(lines)):
         if lines[i].strip() == "---":
             meta = yaml.load("\n".join(lines[1:i])) or {}
-            body = "\n".join(lines[i + 1:])
+            body = "\n".join(lines[i + 1 :])
             return meta, body
     raise ExtensionError("unterminated frontmatter (no closing '---')")
 
@@ -94,9 +94,7 @@ def parse_extension(text: str, *, source: str, expected_slot: str | None = None)
     elif slot not in SLOTS:
         errors.append(f"unknown slot {slot!r}; valid: {', '.join(SLOTS)}")
     elif expected_slot is not None and slot != expected_slot:
-        errors.append(
-            f"slot {slot!r} does not match its registered slot ({expected_slot!r})"
-        )
+        errors.append(f"slot {slot!r} does not match its registered slot ({expected_slot!r})")
 
     if kind not in KINDS:
         errors.append(f"invalid kind {kind!r}; valid: {', '.join(KINDS)}")

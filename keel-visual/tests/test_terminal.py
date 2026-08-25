@@ -188,8 +188,10 @@ class TestHeaderBadgesAndGateStrip(unittest.TestCase):
 
     def test_flow_renders_gate_strip(self):
         st = _state(checkpoint="s8")
-        st["gates"] = [{"name": "build", "ok": True, "skipped": False},
-                       {"name": "lint", "ok": False, "skipped": False}]
+        st["gates"] = [
+            {"name": "build", "ok": True, "skipped": False},
+            {"name": "lint", "ok": False, "skipped": False},
+        ]
         out = t.frame(st, 8, style="flow", color=False)
         self.assertIn("gates: build✓ lint✗", out)
 
@@ -235,17 +237,24 @@ class TestHeaderAndHelpers(unittest.TestCase):
     def test_flow_jury_tag_carries_verdict(self):
         # With a saved ai-jury outcome the review tag extends to the verdict.
         st = _state(checkpoint="s7", jury_mode="gating")
-        st["jury_verdict"] = {"verdict": "REQUEST CHANGES",
-                              "counts": {"critical": 0, "major": 1, "minor": 0, "nit": 0},
-                              "reviewers": 2}
+        st["jury_verdict"] = {
+            "verdict": "REQUEST CHANGES",
+            "counts": {"critical": 0, "major": 1, "minor": 0, "nit": 0},
+            "reviewers": 2,
+        }
         out = t.frame(st, 7, style="flow", color=False)
         self.assertIn("jury: gating — REQUEST CHANGES", out)
 
     def test_header_jury_chip_carries_verdict(self):
-        run = {"command": "ship", "jury": {"mode": "gating", "active": True},
-               "jury_verdict": {"verdict": "APPROVE",
-                                "counts": {"critical": 0, "major": 0, "minor": 0, "nit": 0},
-                                "reviewers": 2}}
+        run = {
+            "command": "ship",
+            "jury": {"mode": "gating", "active": True},
+            "jury_verdict": {
+                "verdict": "APPROVE",
+                "counts": {"critical": 0, "major": 0, "minor": 0, "nit": 0},
+                "reviewers": 2,
+            },
+        }
         self.assertIn("[jury — APPROVE]", t._header(run, enable=False))
 
     def test_jury_verdict_word_failsoft(self):

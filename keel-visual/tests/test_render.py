@@ -36,7 +36,7 @@ class TestRenderHtml(unittest.TestCase):
         self.assertNotIn("</script><img", out)
         self.assertIn("\\u003c", out)
         # Still valid JSON once the unicode escapes are parsed back.
-        body = out[len("<script>window.KEEL_RUN = "):out.index(";</script>")]
+        body = out[len("<script>window.KEEL_RUN = ") : out.index(";</script>")]
         self.assertEqual(json.loads(body), {"x": "</script><img src=x onerror=alert(1)>"})
 
     def test_ampersand_escaped(self):
@@ -53,8 +53,9 @@ class TestRenderBoardHtml(unittest.TestCase):
 
     def test_default_title_and_script_safe(self):
         self.assertEqual(render.render_board_html("__TITLE__", []), "keel board")
-        out = render.render_board_html("<script>__KEEL_BOARD__</script>",
-                                       [{"project": "</script>"}])
+        out = render.render_board_html(
+            "<script>__KEEL_BOARD__</script>", [{"project": "</script>"}]
+        )
         self.assertNotIn("</script></script>", out)
         self.assertIn("\\u003c", out)
 

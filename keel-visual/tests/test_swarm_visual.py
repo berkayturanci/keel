@@ -82,25 +82,29 @@ class TestSwarmVisual(unittest.TestCase):
             state_dir.mkdir(parents=True)
             st_file = state_dir / "swarm-run-1.json"
             st_file.write_text(
-                json.dumps({
-                    "swarm_id": "swarm-run-1",
-                    "total_workers": 1,
-                    "workers": [
-                        {"cluster_id": "c1", "issue": 714, "role": "docs", "status": "passed"}
-                    ],
-                }),
+                json.dumps(
+                    {
+                        "swarm_id": "swarm-run-1",
+                        "total_workers": 1,
+                        "workers": [
+                            {"cluster_id": "c1", "issue": 714, "role": "docs", "status": "passed"}
+                        ],
+                    }
+                ),
                 encoding="utf-8",
             )
 
             out_html = p_tmp / "out.html"
-            code = main([
-                "swarm",
-                ".keel/project.yaml",
-                "--root",
-                tmpdir,
-                "--out",
-                str(out_html),
-            ])
+            code = main(
+                [
+                    "swarm",
+                    ".keel/project.yaml",
+                    "--root",
+                    tmpdir,
+                    "--out",
+                    str(out_html),
+                ]
+            )
             self.assertEqual(code, 0)
             self.assertTrue(out_html.exists())
             content = out_html.read_text(encoding="utf-8")
@@ -108,27 +112,31 @@ class TestSwarmVisual(unittest.TestCase):
 
             # Test explicit --swarm-id
             out_html2 = p_tmp / "out2.html"
-            code2 = main([
-                "swarm",
-                "--root",
-                tmpdir,
-                "--swarm-id",
-                "swarm-run-1",
-                "--out",
-                str(out_html2),
-            ])
+            code2 = main(
+                [
+                    "swarm",
+                    "--root",
+                    tmpdir,
+                    "--swarm-id",
+                    "swarm-run-1",
+                    "--out",
+                    str(out_html2),
+                ]
+            )
             self.assertEqual(code2, 0)
             self.assertTrue(out_html2.exists())
 
             # Test explicit --swarm-id that does not exist in state_dir
-            code_missing_id = main([
-                "swarm",
-                "--root",
-                tmpdir,
-                "--swarm-id",
-                "nonexistent-id",
-                "--json",
-            ])
+            code_missing_id = main(
+                [
+                    "swarm",
+                    "--root",
+                    tmpdir,
+                    "--swarm-id",
+                    "nonexistent-id",
+                    "--json",
+                ]
+            )
             self.assertEqual(code_missing_id, 0)
 
             # Corrupt state file
@@ -157,14 +165,16 @@ class TestSwarmVisual(unittest.TestCase):
 
             with patch("keel_visual.serve.make_server", side_effect=mock_make_server):
                 out_html = Path(tmpdir) / "serve_out.html"
-                code = main([
-                    "swarm",
-                    "--root",
-                    tmpdir,
-                    "--out",
-                    str(out_html),
-                    "--serve",
-                ])
+                code = main(
+                    [
+                        "swarm",
+                        "--root",
+                        tmpdir,
+                        "--out",
+                        str(out_html),
+                        "--serve",
+                    ]
+                )
                 self.assertEqual(code, 0)
                 mock_httpd.serve_forever.assert_called_once()
                 mock_httpd.server_close.assert_called_once()

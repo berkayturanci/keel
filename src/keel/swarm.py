@@ -434,9 +434,7 @@ def build_swarm_plan(
         )
         wave_idx += 1
 
-    now_id = swarm_id or (
-        "swarm-" + datetime.datetime.now(datetime.UTC).strftime("%Y%m%d-%H%M%S")
-    )
+    now_id = swarm_id or ("swarm-" + datetime.datetime.now(datetime.UTC).strftime("%Y%m%d-%H%M%S"))
     return SwarmPlan(
         swarm_id=now_id,
         total_issues=len(sorted_scopes),
@@ -464,9 +462,7 @@ def render_swarm_plan_text(plan: SwarmPlan) -> str:
         for c in w.clusters:
             issues_str = ", ".join(f"#{i}" for i in c.issues)
             scope_prefix = c.combined_scope[:3]
-            scope_str = ", ".join(scope_prefix) + (
-                "..." if len(c.combined_scope) > 3 else ""
-            )
+            scope_str = ", ".join(scope_prefix) + ("..." if len(c.combined_scope) > 3 else "")
             dep_str = (
                 f" (depends on: {', '.join(f'#{d}' for d in c.depends_on_issues)})"
                 if c.depends_on_issues
@@ -500,9 +496,7 @@ def render_swarm_plan_tree(plan: SwarmPlan) -> str:
 
     for w in plan.waves:
         mode_icon = "⚡" if w.eligible_direct_landing else "⏳"
-        landing_label = (
-            "Direct Batch Landing" if w.eligible_direct_landing else "Sequential Funnel"
-        )
+        landing_label = "Direct Batch Landing" if w.eligible_direct_landing else "Sequential Funnel"
         lines.append(f"{mode_icon} Wave {w.wave_index} [{w.mode}] — {landing_label}")
 
         num_clusters = len(w.clusters)
@@ -702,9 +696,7 @@ def rebalance_swarm_plan(plan: SwarmPlan, failed_issue: int) -> SwarmPlan:
 def render_swarm_run_result(result: SwarmRunResult) -> str:
     """Render a human-readable text summary of a SwarmRunResult."""
     status_icon = (
-        "✓"
-        if result.status == "success"
-        else ("⚠️" if result.status == "partial_failure" else "✗")
+        "✓" if result.status == "success" else ("⚠️" if result.status == "partial_failure" else "✗")
     )
     lines = [
         f"keel swarm run — {result.swarm_id}",
@@ -769,9 +761,7 @@ def evaluate_wave_landing_mode(
 def render_swarm_landing_result(result: SwarmLandingResult) -> str:
     """Render human-readable summary of a SwarmLandingResult."""
     status_icon = (
-        "✓"
-        if result.status == "success"
-        else ("⚠️" if result.status == "partial_failure" else "✗")
+        "✓" if result.status == "success" else ("⚠️" if result.status == "partial_failure" else "✗")
     )
     lines = [
         f"keel swarm land — {result.swarm_id} (wave {result.wave_index})",
@@ -786,5 +776,3 @@ def render_swarm_landing_result(result: SwarmLandingResult) -> str:
         for cluster_id, reason in result.held_clusters:
             lines.append(f"    {cluster_id}: {reason}")
     return "\n".join(lines)
-
-

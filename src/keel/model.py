@@ -111,11 +111,11 @@ SLOTS: tuple[str, ...] = tuple(slot.name for slot in SLOT_DEFINITIONS)
 
 #: Invariants the backbone always preserves — no config or extension can override.
 INVARIANTS: tuple[str, ...] = (
-    "merge_lock",               # every merge goes through the mkdir-based lock
-    "window_gate",              # the night no-merge window is enforced
-    "fail_soft",                # a soft failure degrades to a no-op, never aborts
+    "merge_lock",  # every merge goes through the mkdir-based lock
+    "window_gate",  # the night no-merge window is enforced
+    "fail_soft",  # a soft failure degrades to a no-op, never aborts
     "orchestrator_only_writes",  # only the orchestrator writes to the PR
-    "attribution",              # implementer/reviewer vendor+model is recorded
+    "attribution",  # implementer/reviewer vendor+model is recorded
 )
 
 _BY_ID: dict[str, Step] = {s.id: s for s in BACKBONE}

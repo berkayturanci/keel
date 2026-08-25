@@ -73,7 +73,7 @@ def render_pr_body(
     intake = issue_intake if isinstance(issue_intake, dict) else {}
     lines = [
         "## Summary",
-        f"- { _value(intake.get('deliverable'), 'Implement the requested change.') }",
+        f"- {_value(intake.get('deliverable'), 'Implement the requested change.')}",
         "",
         "## Context / Root Cause",
         _value(intake.get("objective"), "See the linked issue for context."),
@@ -94,13 +94,15 @@ def render_pr_body(
     lines.extend(f"- {item.strip()}" for item in tests) if tests else lines.append(
         "- Not run yet; update this section before marking the PR ready."
     )
-    lines.extend([
-        "",
-        "## Docs Impact",
-        _value(docs_impact, "Docs Impact: none — no operator-facing behavior changed."),
-        "",
-        _closing_reference(issue_number),
-    ])
+    lines.extend(
+        [
+            "",
+            "## Docs Impact",
+            _value(docs_impact, "Docs Impact: none — no operator-facing behavior changed."),
+            "",
+            _closing_reference(issue_number),
+        ]
+    )
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -164,14 +166,16 @@ def render_review_verdict(
         lines.append(f"vendor: {_slug(vendor)}")
         if isinstance(model, str) and model.strip():
             lines.append(f"model: {_slug(model)}")
-    lines.extend([
-        "",
-        f"Verdict: {_value(verdict, 'LGTM')}",
-        "",
-        f"Scope reviewed: {_value(scope, 'Full changed-file diff and relevant contracts.')}",
-        "",
-        "Findings:",
-    ])
+    lines.extend(
+        [
+            "",
+            f"Verdict: {_value(verdict, 'LGTM')}",
+            "",
+            f"Scope reviewed: {_value(scope, 'Full changed-file diff and relevant contracts.')}",
+            "",
+            "Findings:",
+        ]
+    )
     lines.extend(_finding_lines(findings))
     lines.extend(["", f"Testing noted: {_value(testing, 'See PR Testing section.')}"])
     return "\n".join(lines) + "\n"
@@ -196,8 +200,9 @@ def render_jury_verdict(
     inferred from ``participants``, so a caller that already lists them does not
     have to count twice.
     """
-    people = [person.strip() for person in participants if isinstance(person, str)
-              and person.strip()]
+    people = [
+        person.strip() for person in participants if isinstance(person, str) and person.strip()
+    ]
     vendors = participating_vendors if participating_vendors is not None else len(people)
     lines = [
         evidence.JURY_VERDICT_MARKER,
@@ -210,8 +215,9 @@ def render_jury_verdict(
         "",
         "Findings summary:",
     ]
-    summaries = [item.strip() for item in findings_summary if isinstance(item, str)
-                 and item.strip()]
+    summaries = [
+        item.strip() for item in findings_summary if isinstance(item, str) and item.strip()
+    ]
     lines.extend(f"- {item}" for item in summaries) if summaries else lines.append("- none")
     lines.extend(["", f"Remaining risks: {_value(remaining_risks, 'none identified')}."])
     return "\n".join(lines) + "\n"
@@ -330,10 +336,12 @@ def render_flake_audit(
     lines = [
         codename,
         "",
-        (f"runs examined: {_count(stats.get('runs'))} · "
-         f"distinct failing tests: {_count(stats.get('distinct'))} · "
-         f"classified flakes: {_count(stats.get('classified'))} · "
-         f"newly-opened issues: {_count(stats.get('opened'))}"),
+        (
+            f"runs examined: {_count(stats.get('runs'))} · "
+            f"distinct failing tests: {_count(stats.get('distinct'))} · "
+            f"classified flakes: {_count(stats.get('classified'))} · "
+            f"newly-opened issues: {_count(stats.get('opened'))}"
+        ),
         "",
         "## Newly classified flakes",
         "",
@@ -343,13 +351,15 @@ def render_flake_audit(
         lines.append("| Test | Fail rate | Failures | Sample runs | Signature |")
         lines.append("| --- | --- | --- | --- | --- |")
         lines.extend(
-            _table_row([
-                _cell(_value(flake.get("test"), "—")),
-                _cell(_value(flake.get("fail_rate"), "—")),
-                _cell(str(_count(flake.get("failures")))),
-                _cell(", ".join(_string_list(flake.get("samples"))) or "—"),
-                _cell(_value(flake.get("signature"), "—")),
-            ])
+            _table_row(
+                [
+                    _cell(_value(flake.get("test"), "—")),
+                    _cell(_value(flake.get("fail_rate"), "—")),
+                    _cell(str(_count(flake.get("failures")))),
+                    _cell(", ".join(_string_list(flake.get("samples"))) or "—"),
+                    _cell(_value(flake.get("signature"), "—")),
+                ]
+            )
             for flake in flakes
         )
     else:
@@ -434,23 +444,26 @@ def _coverage_area_lines(area: dict[str, Any]) -> list[str]:
         "| --- | --- | --- | --- | --- |",
     ]
     lines.extend(
-        _coverage_row(_value(row.get("unit"), "—"), row.get("base"), row.get("head"),
-                      row.get("files", ""))
+        _coverage_row(
+            _value(row.get("unit"), "—"), row.get("base"), row.get("head"), row.get("files", "")
+        )
         for row in _dict_list(area.get("rows"))
     )
     overall = area.get("overall")
     if isinstance(overall, dict):
         lines.append(
-            _coverage_row("overall", overall.get("base"), overall.get("head"), "",
-                          is_overall=True)
+            _coverage_row("overall", overall.get("base"), overall.get("head"), "", is_overall=True)
         )
     return lines
 
 
 def _deps_sev_rank(severity: str) -> int:
     lowered = severity.lower()
-    return DEPS_SEVERITY_ORDER.index(lowered) if lowered in DEPS_SEVERITY_ORDER \
+    return (
+        DEPS_SEVERITY_ORDER.index(lowered)
+        if lowered in DEPS_SEVERITY_ORDER
         else len(DEPS_SEVERITY_ORDER)
+    )
 
 
 def _deps_counts(ecosystems: Any) -> dict[str, int]:
@@ -477,13 +490,15 @@ def _deps_ecosystem_lines(ecosystem: dict[str, Any]) -> list[str]:
         "| --- | --- | --- | --- | --- |",
     ]
     lines.extend(
-        _table_row([
-            _cell(_value(finding.get("package"), "—")),
-            _cell(_value(finding.get("version"), "—")),
-            _cell(_value(finding.get("severity"), "low")),
-            _cell(_value(finding.get("advisory"), "—")),
-            _cell(_value(finding.get("fix_available"), "—")),
-        ])
+        _table_row(
+            [
+                _cell(_value(finding.get("package"), "—")),
+                _cell(_value(finding.get("version"), "—")),
+                _cell(_value(finding.get("severity"), "low")),
+                _cell(_value(finding.get("advisory"), "—")),
+                _cell(_value(finding.get("fix_available"), "—")),
+            ]
+        )
         for finding in findings
     )
     return lines
@@ -500,12 +515,14 @@ def _deps_licence_lines(licences: Any) -> list[str]:
         "| --- | --- | --- | --- |",
     ]
     lines.extend(
-        _table_row([
-            _cell(_value(row.get("status"), "—")),
-            _cell(_value(row.get("package"), "—")),
-            _cell(_value(row.get("baseline"), "—")),
-            _cell(_value(row.get("current"), "—")),
-        ])
+        _table_row(
+            [
+                _cell(_value(row.get("status"), "—")),
+                _cell(_value(row.get("package"), "—")),
+                _cell(_value(row.get("baseline"), "—")),
+                _cell(_value(row.get("current"), "—")),
+            ]
+        )
         for row in rows
     )
     return lines
@@ -578,12 +595,14 @@ def render_triage_audit(
     risk tier on one line, then the classifier's rationale. When ``run_id`` is
     supplied an idempotent re-post edits the existing comment in place.
     """
-    labels = " · ".join([
-        f"role: {_value(role, 'unassigned')}",
-        f"priority: {_value(priority, 'unset')}",
-        f"status: {_value(status, 'unset')}",
-        f"tier: {_scalar(tier, 'n/a')}",
-    ])
+    labels = " · ".join(
+        [
+            f"role: {_value(role, 'unassigned')}",
+            f"priority: {_value(priority, 'unset')}",
+            f"status: {_value(status, 'unset')}",
+            f"tier: {_scalar(tier, 'n/a')}",
+        ]
+    )
     lines = [
         TRIAGE_AUDIT_MARKER,
         f"keel triage — {_issue_ref(issue)}: {labels}",
@@ -691,8 +710,7 @@ def _finding_lines(findings: list[dict[str, Any]] | tuple[dict[str, Any], ...]) 
 
 
 def _string_bullets(values: list[str] | tuple[str, ...]) -> list[str]:
-    return [f"  - {value.strip()}" for value in values if isinstance(value, str)
-            and value.strip()]
+    return [f"  - {value.strip()}" for value in values if isinstance(value, str) and value.strip()]
 
 
 def _string_list(values: Any) -> list[str]:
@@ -774,11 +792,11 @@ def _cycle_histogram(reviewers: list[dict[str, Any]]) -> dict[str, int]:
 
 def _aggregate_clean_areas(reviewers: list[dict[str, Any]]) -> list[str]:
     # Optimize deduplication: O(N) using C-level dict.fromkeys instead of O(N^2) list lookups
-    return list(dict.fromkeys(
-        area
-        for reviewer in reviewers
-        for area in _string_list(reviewer.get("clean_areas"))
-    ))
+    return list(
+        dict.fromkeys(
+            area for reviewer in reviewers for area in _string_list(reviewer.get("clean_areas"))
+        )
+    )
 
 
 def _merge_recommendation(reviewers: list[dict[str, Any]], histogram: dict[str, int]) -> str:

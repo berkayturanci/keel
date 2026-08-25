@@ -9,7 +9,8 @@ from keel_visual import runstate as rs
 def _run_state(*, action="merge", checkpoint=None, merge_state=None):
     rec = {
         "record_type": "ship_run",
-        "issue": {"number": 351}, "pull_request": {"number": 361},
+        "issue": {"number": 351},
+        "pull_request": {"number": 361},
         "assessment": {"merge": {"action": action, "reason": "r"}},
         "verdict": {"counts": {"critical": 0, "major": 0, "minor": 0, "nit": 0}},
     }
@@ -31,8 +32,11 @@ class TestParseWorktrees(unittest.TestCase):
 
 class TestIdentity(unittest.TestCase):
     def test_full(self):
-        rec = {"command": "ship", "queue": {"active_issue": 351},
-               "identifiers": {"pull_request": 361}}
+        rec = {
+            "command": "ship",
+            "queue": {"active_issue": 351},
+            "identifiers": {"pull_request": 361},
+        }
         self.assertEqual(
             dash.identity_from_checkpoint(rec),
             {"issue": 351, "pr": 361, "command": "ship"},
@@ -66,8 +70,11 @@ class TestStatusOf(unittest.TestCase):
 
     def test_blocked_gate(self):
         st = rs.build_run_state(
-            {"record_type": "ship_run", "assessment": {"merge": {"action": "defer"}},
-             "verdict": {"counts": {"major": 1}}},
+            {
+                "record_type": "ship_run",
+                "assessment": {"merge": {"action": "defer"}},
+                "verdict": {"counts": {"major": 1}},
+            },
             checkpoint_step="s8",
         )
         self.assertEqual(dash._status_of(st), "blocked")
@@ -120,20 +127,21 @@ class TestBoardRow(unittest.TestCase):
     def test_row_derives_number_from_run_id(self):
         st = rs.build_run_state(None, checkpoint_step="s4")
         row = dash.board_row(
-            st, {"pr": None, "issue": None, "run_id": "ship-585", "command": "ship"})
+            st, {"pr": None, "issue": None, "run_id": "ship-585", "command": "ship"}
+        )
         self.assertEqual(row["label"], "#585")
 
     def test_row_derives_number_for_multiword_command(self):
         st = rs.build_run_state(None, checkpoint_step="s4", command="pr-loop")
         row = dash.board_row(
-            st, {"pr": None, "issue": None, "run_id": "pr-loop-2253", "command": "pr-loop"})
+            st, {"pr": None, "issue": None, "run_id": "pr-loop-2253", "command": "pr-loop"}
+        )
         self.assertEqual(row["label"], "#2253")
 
     def test_row_counter_run_id_kept_raw(self):
         # an opaque counter (command name is not the run_id prefix) stays raw
         st = rs.build_run_state(None, checkpoint_step="config", command="morning")
-        row = dash.board_row(
-            st, {"pr": None, "issue": None, "run_id": "m-1", "command": "morning"})
+        row = dash.board_row(st, {"pr": None, "issue": None, "run_id": "m-1", "command": "morning"})
         self.assertEqual(row["label"], "m-1")
 
 
@@ -195,8 +203,8 @@ class TestRenderProjectBoard(unittest.TestCase):
         # The ESC byte is dropped; the leftover printable "[2J" is inert text.
         rows = [self._row("ev\x1b[2Jil", pr=1)]
         out = dash.render_project_board(rows, color=False)
-        self.assertNotIn("\x1b", out)       # the dangerous ESC is gone
-        self.assertIn("ev[2Jil", out)       # printable chars kept, just defanged
+        self.assertNotIn("\x1b", out)  # the dangerous ESC is gone
+        self.assertIn("ev[2Jil", out)  # printable chars kept, just defanged
 
 
 if __name__ == "__main__":

@@ -146,7 +146,6 @@ class TestBuildRequest(unittest.TestCase):
         payload = json.loads(body)
         self.assertEqual(payload["max_completion_tokens"], 100)
 
-
     def test_google_shape_puts_the_key_in_a_header_not_the_url(self):
         url, headers, body = api_delegate._build_request(
             "google-api", "gemini-2.5-pro", "p", "key", 100
@@ -171,15 +170,17 @@ class TestOpenAICompatible(unittest.TestCase):
     ENV = {"MY_ROUTER_KEY": "k"}
 
     def _ok_opener(self):
-        return FakeOpener(FakeResponse(json.dumps(
-            {"choices": [{"message": {"content": "diff"}}]}
-        )))
+        return FakeOpener(FakeResponse(json.dumps({"choices": [{"message": {"content": "diff"}}]})))
 
     def test_uses_the_configured_endpoint_and_key_env(self):
         result = api_delegate.generate(
-            "openai-compatible", "qwen2.5", "p",
-            endpoint=self.ENDPOINT, api_key_env="MY_ROUTER_KEY",
-            _env=self.ENV, _opener=self._ok_opener(),
+            "openai-compatible",
+            "qwen2.5",
+            "p",
+            endpoint=self.ENDPOINT,
+            api_key_env="MY_ROUTER_KEY",
+            _env=self.ENV,
+            _opener=self._ok_opener(),
         )
         self.assertTrue(result.ok, result.error)
         self.assertEqual(result.text, "diff")
@@ -208,16 +209,26 @@ class TestOpenAICompatible(unittest.TestCase):
         for endpoint, key_env in ((None, "MY_ROUTER_KEY"), (self.ENDPOINT, None), (None, None)):
             with self.subTest(endpoint=endpoint, api_key_env=key_env):
                 result = api_delegate.generate(
-                    "openai-compatible", "m", "p",
-                    endpoint=endpoint, api_key_env=key_env, _env=self.ENV, _opener=None,
+                    "openai-compatible",
+                    "m",
+                    "p",
+                    endpoint=endpoint,
+                    api_key_env=key_env,
+                    _env=self.ENV,
+                    _opener=None,
                 )
                 self.assertFalse(result.ok)
                 self.assertEqual(result.error_code, "unknown-vendor")
 
     def test_a_missing_key_in_the_environment_reports_the_configured_name(self):
         result = api_delegate.generate(
-            "openai-compatible", "m", "p",
-            endpoint=self.ENDPOINT, api_key_env="ABSENT_KEY", _env={}, _opener=None,
+            "openai-compatible",
+            "m",
+            "p",
+            endpoint=self.ENDPOINT,
+            api_key_env="ABSENT_KEY",
+            _env={},
+            _opener=None,
         )
         self.assertFalse(result.ok)
         self.assertEqual(result.error_code, "no-key")
@@ -227,9 +238,13 @@ class TestOpenAICompatible(unittest.TestCase):
         # No {model} in a configured endpoint, so the google-api restriction is
         # not silently inherited by a vendor whose model rides in the body.
         result = api_delegate.generate(
-            "openai-compatible", "vendor/model-name", "p",
-            endpoint=self.ENDPOINT, api_key_env="MY_ROUTER_KEY",
-            _env=self.ENV, _opener=self._ok_opener(),
+            "openai-compatible",
+            "vendor/model-name",
+            "p",
+            endpoint=self.ENDPOINT,
+            api_key_env="MY_ROUTER_KEY",
+            _env=self.ENV,
+            _opener=self._ok_opener(),
         )
         self.assertTrue(result.ok, result.error)
 
@@ -273,11 +288,13 @@ class TestGoogleModelIsUrlPathInput(unittest.TestCase):
         # openai-api's URL has no {model}, so an odd model must not be rejected
         # here — it rides in the body and the guard does not apply.
         result = api_delegate.generate(
-            "openai-api", "a/b", "p",
+            "openai-api",
+            "a/b",
+            "p",
             _env={"OPENAI_API_KEY": "k"},
-            _opener=FakeOpener(FakeResponse(json.dumps(
-                {"choices": [{"message": {"content": "ok"}}]}
-            ))),
+            _opener=FakeOpener(
+                FakeResponse(json.dumps({"choices": [{"message": {"content": "ok"}}]}))
+            ),
         )
         self.assertTrue(result.ok)
 
@@ -291,10 +308,15 @@ class TestGoogleModelIsUrlPathInput(unittest.TestCase):
     def test_a_valid_model_passes_the_guard_and_completes(self):
         # The guard must be a filter, not a wall: a real model id goes through.
         result = api_delegate.generate(
-            "google-api", "gemini-2.5-pro", "p", _env=self.ENV,
-            _opener=FakeOpener(FakeResponse(json.dumps(
-                {"candidates": [{"content": {"parts": [{"text": "diff"}]}}]}
-            ))),
+            "google-api",
+            "gemini-2.5-pro",
+            "p",
+            _env=self.ENV,
+            _opener=FakeOpener(
+                FakeResponse(
+                    json.dumps({"candidates": [{"content": {"parts": [{"text": "diff"}]}}]})
+                )
+            ),
         )
         self.assertTrue(result.ok, result.error)
         self.assertEqual(result.text, "diff")
@@ -346,14 +368,17 @@ class TestParseContent(unittest.TestCase):
     def test_openai_malformed(self):
         self.assertIsNone(api_delegate._parse_content("openai-api", {"choices": []}))
 
-
     def test_google_content(self):
         data = {"candidates": [{"content": {"parts": [{"text": "hi"}, {"text": "!"}]}}]}
         self.assertEqual(api_delegate._parse_content("google-api", data), "hi!")
 
     def test_google_malformed(self):
-        for data in ({}, {"candidates": []}, {"candidates": [{"content": {}}]},
-                     {"candidates": [{"content": {"parts": [{"inlineData": {}}]}}]}):
+        for data in (
+            {},
+            {"candidates": []},
+            {"candidates": [{"content": {}}]},
+            {"candidates": [{"content": {"parts": [{"inlineData": {}}]}}]},
+        ):
             with self.subTest(data=data):
                 self.assertIsNone(api_delegate._parse_content("google-api", data))
 
@@ -410,7 +435,10 @@ class TestGenerate(unittest.TestCase):
 
     def test_http_401_maps_to_auth_and_scrubs_key(self):
         exc = urllib.error.HTTPError(
-            "https://api.anthropic.com/v1/messages", 401, "Unauthorized", {},
+            "https://api.anthropic.com/v1/messages",
+            401,
+            "Unauthorized",
+            {},
             io.BytesIO(b"invalid key sk-ant-key"),
         )
         result = api_delegate.generate(
@@ -521,9 +549,7 @@ class TestGenerate(unittest.TestCase):
 
     def test_max_tokens_override_lands_in_payload(self):
         opener = FakeOpener(response=FakeResponse(_anthropic_body()))
-        api_delegate.generate(
-            "anthropic-api", "m", "p", max_tokens=42, _env=ENV, _opener=opener
-        )
+        api_delegate.generate("anthropic-api", "m", "p", max_tokens=42, _env=ENV, _opener=opener)
         request, _ = opener.requests[0]
         self.assertEqual(json.loads(request.data)["max_tokens"], 42)
 

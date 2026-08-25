@@ -56,9 +56,7 @@ def _public_text() -> dict[str, str]:
         files = [path] if path.is_file() else sorted(path.rglob("*"))
         for f in files:
             if f.is_file() and f.suffix in (".md", ".html", ".js", ".yml", ".yaml", ".txt"):
-                out[str(f.relative_to(REPO_ROOT))] = f.read_text(
-                    encoding="utf-8", errors="replace"
-                )
+                out[str(f.relative_to(REPO_ROOT))] = f.read_text(encoding="utf-8", errors="replace")
     return out
 
 
@@ -69,8 +67,9 @@ def _declared_version() -> str | None:
     what the repository *promises*, not what the package computes — so the
     version is parsed from pyproject.toml in the same spirit.
     """
-    match = re.search(r'(?m)^version = "([^"]+)"',
-                      (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    match = re.search(
+        r'(?m)^version = "([^"]+)"', (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    )
     return match.group(1) if match else None
 
 
@@ -206,11 +205,7 @@ class TestHomebrewPromise(unittest.TestCase):
     """`brew install` resolves from a tap, not from a formula sitting in this repo."""
 
     def test_a_documented_brew_install_has_a_formula_behind_it(self):
-        promised = {
-            name
-            for text in _public_text().values()
-            for name in _BREW.findall(text)
-        }
+        promised = {name for text in _public_text().values() for name in _BREW.findall(text)}
         if not promised:
             self.skipTest("no brew install documented")
         self.assertTrue(
@@ -366,10 +361,13 @@ class TestPublishedVersion(unittest.TestCase):
         stale = {
             path: refs
             for path, text in _public_text().items()
-            if (refs := {
-                ref for ref in re.findall(r"keel@(v[0-9]+\.[0-9]+\.[0-9]+)", text)
-                if ref != f"v{__version__}"
-            })
+            if (
+                refs := {
+                    ref
+                    for ref in re.findall(r"keel@(v[0-9]+\.[0-9]+\.[0-9]+)", text)
+                    if ref != f"v{__version__}"
+                }
+            )
         }
         self.assertEqual(
             stale, {}, f"install instructions pin an old tag; current is v{__version__}"

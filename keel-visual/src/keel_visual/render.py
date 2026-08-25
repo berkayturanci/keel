@@ -44,13 +44,16 @@ def render_html(template: str, run_state: dict[str, Any], *, title: str = "keel 
     See :func:`_embed` for the script-safe serialisation. Pure — reads only its
     arguments.
     """
-    return (template
-            .replace(RUN_PLACEHOLDER, _embed(run_state))
-            .replace(TITLE_PLACEHOLDER, _safe_title(title)))
+    return template.replace(RUN_PLACEHOLDER, _embed(run_state)).replace(
+        TITLE_PLACEHOLDER, _safe_title(title)
+    )
 
 
 def render_board_html(
-    template: str, board: list[dict[str, Any]], *, title: str = "keel board",
+    template: str,
+    board: list[dict[str, Any]],
+    *,
+    title: str = "keel board",
 ) -> str:
     """Return the board template with the runs array and title substituted in.
 
@@ -58,15 +61,18 @@ def render_board_html(
     front-end reads from ``window.KEEL_BOARD``. Same script-safe embedding as
     :func:`render_html`. Pure — reads only its arguments.
     """
-    return (template
-            .replace(BOARD_PLACEHOLDER, _embed(board))
-            .replace(TITLE_PLACEHOLDER, _safe_title(title)))
+    return template.replace(BOARD_PLACEHOLDER, _embed(board)).replace(
+        TITLE_PLACEHOLDER, _safe_title(title)
+    )
 
 
 def render_swarm_html(
-    template: str, swarm_data: dict[str, Any], *, title: str = "keel swarm",
+    template: str,
+    swarm_data: dict[str, Any],
+    *,
+    title: str = "keel swarm",
 ) -> str:
     """Return the swarm template with the swarm-data JSON and title substituted in."""
-    return (template
-            .replace(SWARM_PLACEHOLDER, _embed(swarm_data))
-            .replace(TITLE_PLACEHOLDER, _safe_title(title)))
+    return template.replace(SWARM_PLACEHOLDER, _embed(swarm_data)).replace(
+        TITLE_PLACEHOLDER, _safe_title(title)
+    )

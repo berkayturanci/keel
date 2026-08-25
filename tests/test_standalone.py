@@ -24,16 +24,12 @@ class TestStandaloneHelpers(unittest.TestCase):
         self.assertFalse(standalone._issue_context_provided(argparse.Namespace()))
 
     def test_standalone_target(self):
-        self.assertEqual(
-            standalone._standalone_target(argparse.Namespace(issue=42)), "issue #42"
-        )
+        self.assertEqual(standalone._standalone_target(argparse.Namespace(issue=42)), "issue #42")
         self.assertEqual(
             standalone._standalone_target(argparse.Namespace(issue=42, target="auth")),
             "issue #42 (auth)",
         )
-        self.assertEqual(
-            standalone._standalone_target(argparse.Namespace(pr=10)), "PR #10"
-        )
+        self.assertEqual(standalone._standalone_target(argparse.Namespace(pr=10)), "PR #10")
         self.assertEqual(
             standalone._standalone_target(argparse.Namespace(since="HEAD~1")),
             "since HEAD~1",
@@ -50,9 +46,7 @@ class TestStandaloneHelpers(unittest.TestCase):
             standalone._standalone_target(argparse.Namespace(scope="backend", days=7)),
             "7 day scan (scope backend)",
         )
-        self.assertEqual(
-            standalone._standalone_target(argparse.Namespace(days=7)), "7 day scan"
-        )
+        self.assertEqual(standalone._standalone_target(argparse.Namespace(days=7)), "7 day scan")
         self.assertEqual(
             standalone._standalone_target(argparse.Namespace(issues=[1, 2], max_items=2)),
             "issues #1, #2 (max 2)",

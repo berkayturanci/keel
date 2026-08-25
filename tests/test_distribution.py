@@ -15,8 +15,8 @@ class TestHomebrewFormula(unittest.TestCase):
         self.assertTrue(formula_path.exists(), "Formula/keel.rb must exist in root repo")
         content = formula_path.read_text(encoding="utf-8")
         self.assertIn("class Keel < Formula", content)
-        self.assertIn("homepage \"https://github.com/berkayturanci/keel\"", content)
-        self.assertIn("depends_on \"python@3.12\"", content)
+        self.assertIn('homepage "https://github.com/berkayturanci/keel"', content)
+        self.assertIn('depends_on "python@3.12"', content)
         self.assertIn("def install", content)
         self.assertIn("test do", content)
 

@@ -138,16 +138,18 @@ def gates_from_record(record: dict[str, Any] | None) -> list[dict[str, Any]]:
         name = entry.get("gate") if isinstance(entry, dict) else None
         if not isinstance(name, str) or not name.strip():
             continue
-        out.append({
-            "name": name,
-            "ok": entry.get("ok") is True,
-            "skipped": entry.get("skipped") is True,
-            # Carried so the strip can tell a slow host from a broken test. Absent on
-            # records written before the field existed, which reads as False.
-            "timed_out": entry.get("timed_out") is True,
-            "error": _str_or_none(entry.get("error")),
-            "finding_count": _count_or_none(entry.get("finding_count")) or 0,
-        })
+        out.append(
+            {
+                "name": name,
+                "ok": entry.get("ok") is True,
+                "skipped": entry.get("skipped") is True,
+                # Carried so the strip can tell a slow host from a broken test. Absent on
+                # records written before the field existed, which reads as False.
+                "timed_out": entry.get("timed_out") is True,
+                "error": _str_or_none(entry.get("error")),
+                "finding_count": _count_or_none(entry.get("finding_count")) or 0,
+            }
+        )
     return out
 
 
@@ -367,10 +369,12 @@ def _normalized_groups(data: dict) -> tuple[list[tuple[str, str]], int] | None:
             rep = entry.get("representative")
             severity = rep.get("severity") if isinstance(rep, dict) else None
             status = entry.get("verification_status")
-            rows.append((
-                severity.strip().lower() if isinstance(severity, str) else "",
-                status.strip().lower() if isinstance(status, str) else "",
-            ))
+            rows.append(
+                (
+                    severity.strip().lower() if isinstance(severity, str) else "",
+                    status.strip().lower() if isinstance(status, str) else "",
+                )
+            )
         metadata = data.get("metadata")
         agents = metadata.get("agents") if isinstance(metadata, dict) else None
         reviewers = len(agents) if isinstance(agents, list) else 0
@@ -388,16 +392,19 @@ def _normalized_groups(data: dict) -> tuple[list[tuple[str, str]], int] | None:
             continue
         severity = group.get("severity")
         status = group.get("status")
-        rows.append((
-            severity.strip().lower() if isinstance(severity, str) else "",
-            status.strip().lower() if isinstance(status, str) else "",
-        ))
+        rows.append(
+            (
+                severity.strip().lower() if isinstance(severity, str) else "",
+                status.strip().lower() if isinstance(status, str) else "",
+            )
+        )
     reviews = inner.get("reviews")
     agents = {
         review["agent"].strip()
         for review in (reviews if isinstance(reviews, list) else [])
         if isinstance(review, dict)
-        and isinstance(review.get("agent"), str) and review["agent"].strip()
+        and isinstance(review.get("agent"), str)
+        and review["agent"].strip()
     }
     return rows, len(agents)
 
@@ -424,8 +431,11 @@ def _jury_verdict_block(value: Any) -> dict[str, Any] | None:
 
 # Checkpoint merge_state -> merge-gate outcome shown by the visualizer.
 _MERGE_STATE_OUTCOME = {
-    "merged": "pass", "pending": "pending", "failed": "fail",
-    "skipped": "pass", "not-started": "pending",
+    "merged": "pass",
+    "pending": "pending",
+    "failed": "fail",
+    "skipped": "pass",
+    "not-started": "pending",
 }
 
 
@@ -437,7 +447,11 @@ def _merge_outcome(*, merged: bool, live_merge: str | None) -> str:
 
 
 def _gate_for_phase(
-    phase: Any, *, counts: dict[str, int], merge_outcome: str, is_ship: bool,
+    phase: Any,
+    *,
+    counts: dict[str, int],
+    merge_outcome: str,
+    is_ship: bool,
 ) -> dict[str, Any] | None:
     """Build the gate block for a gate/merge phase, or ``None`` otherwise.
 
@@ -519,7 +533,8 @@ def build_run_state(
     merged = (live_merge == "merged" or ledger_merged) if is_ship else False
     merge_outcome = _merge_outcome(merged=merged, live_merge=live_merge if is_ship else None)
     counts = (
-        _verdict_counts(rec) if (rec and is_ship)
+        _verdict_counts(rec)
+        if (rec and is_ship)
         else {"critical": 0, "major": 0, "minor": 0, "nit": 0}
     )
     active = _active_index(flow, rec, checkpoint_step, merged=merged, is_ship=is_ship)
@@ -527,16 +542,21 @@ def build_run_state(
 
     steps: list[dict[str, Any]] = []
     for idx, phase in enumerate(flow):
-        steps.append({
-            "id": phase.id,
-            "name": phase.name,
-            "kind": phase.kind,
-            "status": _status(idx, active, phase.kind, blocked=blocked),
-            "exercised": True,
-            "gate": _gate_for_phase(
-                phase, counts=counts, merge_outcome=merge_outcome, is_ship=is_ship,
-            ),
-        })
+        steps.append(
+            {
+                "id": phase.id,
+                "name": phase.name,
+                "kind": phase.kind,
+                "status": _status(idx, active, phase.kind, blocked=blocked),
+                "exercised": True,
+                "gate": _gate_for_phase(
+                    phase,
+                    counts=counts,
+                    merge_outcome=merge_outcome,
+                    is_ship=is_ship,
+                ),
+            }
+        )
 
     issue = rec.get("issue") if rec else None
     pr = rec.get("pull_request") if rec else None
@@ -577,8 +597,7 @@ def build_run_state(
         "reviewers": _str_list(actors.get("reviewers")) if isinstance(actors, dict) else [],
         "tester": _str_or_none(actors.get("tester")) if isinstance(actors, dict) else None,
         "host_agent": (
-            _str_or_none(run_context.get("host_agent"))
-            if isinstance(run_context, dict) else None
+            _str_or_none(run_context.get("host_agent")) if isinstance(run_context, dict) else None
         ),
         "merge_reason": _str_or_none(_merge_block(rec).get("reason")),
         "file_count": (
@@ -600,7 +619,11 @@ def build_run_state(
 
 
 def _regression(
-    flow: tuple[Any, ...], active: int, counts: dict[str, int], *, is_ship: bool,
+    flow: tuple[Any, ...],
+    active: int,
+    counts: dict[str, int],
+    *,
+    is_ship: bool,
 ) -> dict[str, Any]:
     """Build the regression-folder model shown while the ship test gate is active.
 

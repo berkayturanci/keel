@@ -102,8 +102,10 @@ class LegacyWrappersAreWrittenOnlyUnderTheirOwnDirectory(unittest.TestCase):
             root = Path(tmp)
 
             dest = install._contained_destination(
-                root, Path(install.LEGACY_CLAUDE_DIR) / "ship.md",
-                agent="claude", name="ship.md",
+                root,
+                Path(install.LEGACY_CLAUDE_DIR) / "ship.md",
+                agent="claude",
+                name="ship.md",
             )
 
         self.assertEqual("ship.md", dest.name)
@@ -112,13 +114,17 @@ class LegacyWrappersAreWrittenOnlyUnderTheirOwnDirectory(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             ok = install._contained_destination(
-                root, Path(install.SKILLS_DIR) / "source-command-ship" / "SKILL.md",
-                agent="skills", name="source-command-ship",
+                root,
+                Path(install.SKILLS_DIR) / "source-command-ship" / "SKILL.md",
+                agent="skills",
+                name="source-command-ship",
             )
             with self.assertRaises(ValueError):
                 install._contained_destination(
-                    root, Path(install.LEGACY_CLAUDE_DIR) / "ship.md",
-                    agent="skills", name="ship.md",
+                    root,
+                    Path(install.LEGACY_CLAUDE_DIR) / "ship.md",
+                    agent="skills",
+                    name="ship.md",
                 )
 
         self.assertEqual("SKILL.md", ok.name)
@@ -167,7 +173,8 @@ class RuntimeWritesAreAtomicAndDurable(unittest.TestCase):
 
             self.assertEqual("original\n", target.read_text(encoding="utf-8"))
             self.assertEqual(
-                ["state.json"], sorted(p.name for p in Path(tmp).iterdir()),
+                ["state.json"],
+                sorted(p.name for p in Path(tmp).iterdir()),
                 "a temp file was left behind",
             )
 

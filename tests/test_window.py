@@ -7,8 +7,8 @@ from zoneinfo import ZoneInfo
 from keel import window
 
 TZ = "Europe/Istanbul"
-WRAP = "07:00-01:30"      # open 07:00 -> 01:30 (wraps midnight)
-PLAIN = "09:00-17:00"     # same-day window
+WRAP = "07:00-01:30"  # open 07:00 -> 01:30 (wraps midnight)
+PLAIN = "09:00-17:00"  # same-day window
 
 
 def at(h, m=0, tz=TZ):

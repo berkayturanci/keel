@@ -126,8 +126,7 @@ def _gate_decision(
 
 def _has_trusted_ship_assessment(items: list[dict[str, Any]]) -> bool:
     return any(
-        _is_ship_assessment_source(item) and _is_ship_assessment(_body(item))
-        for item in items
+        _is_ship_assessment_source(item) and _is_ship_assessment(_body(item)) for item in items
     )
 
 
@@ -155,9 +154,7 @@ def contract_as_dict(
         "fail_closed": True,
         "require_distinct_vendors": _require_distinct_vendors(review_contract),
         "accepted_sources": {
-            "closure": (
-                "trusted issue/PR comments carrying keel.closure-comment.v1"
-            ),
+            "closure": ("trusted issue/PR comments carrying keel.closure-comment.v1"),
             "review": (
                 "trusted PR review/comment carrying keel.review-verdict.v1 and current head"
             ),
@@ -205,9 +202,7 @@ def required_items(
     reviewer_count = reviewer_count if isinstance(reviewer_count, int) and reviewer_count > 0 else 0
     jury = review_contract.get("jury")
     jury_required = (
-        isinstance(jury, dict)
-        and bool(jury.get("enabled"))
-        and jury.get("mode") == "gating"
+        isinstance(jury, dict) and bool(jury.get("enabled")) and jury.get("mode") == "gating"
     )
     items: list[EvidenceItem] = [
         EvidenceItem(
@@ -226,21 +221,25 @@ def required_items(
         ),
     ]
     for index in range(1, reviewer_count + 1):
-        items.append(EvidenceItem(
-            f"review-verdict-{index}",
-            "review",
-            True,
-            "Distinct posted s7 reviewer verdict for the current PR",
-            PHASE_PRE_MERGE,
-        ))
+        items.append(
+            EvidenceItem(
+                f"review-verdict-{index}",
+                "review",
+                True,
+                "Distinct posted s7 reviewer verdict for the current PR",
+                PHASE_PRE_MERGE,
+            )
+        )
     if jury_required:
-        items.append(EvidenceItem(
-            "jury-verdict",
-            "jury",
-            True,
-            "Posted gating jury verdict comment for the current PR",
-            PHASE_PRE_MERGE,
-        ))
+        items.append(
+            EvidenceItem(
+                "jury-verdict",
+                "jury",
+                True,
+                "Posted gating jury verdict comment for the current PR",
+                PHASE_PRE_MERGE,
+            )
+        )
     if phase == PHASE_ALL:
         return tuple(items)
     return tuple(item for item in items if item.phase == phase)
@@ -314,15 +313,17 @@ def verify(
         present = _is_present(item, counts)
         is_deferred = item.id in deferred or item.kind in deferred or "all" in deferred
         ok = present or is_deferred
-        results.append({
-            "id": item.id,
-            "kind": item.kind,
-            "required": item.required,
-            "present": present,
-            "deferred": is_deferred,
-            "ok": ok,
-            "reason": None if ok else _result_reason(item, mismatch),
-        })
+        results.append(
+            {
+                "id": item.id,
+                "kind": item.kind,
+                "required": item.required,
+                "present": present,
+                "deferred": is_deferred,
+                "ok": ok,
+                "reason": None if ok else _result_reason(item, mismatch),
+            }
+        )
     missing = [result["id"] for result in results if not result["ok"]]
     distinct = _distinct_vendor_finding(
         review_contract,
@@ -454,9 +455,7 @@ def _distinct_vendor_finding(
     }
 
 
-_CLOSURE_MISMATCH_REASON = (
-    "closure comment does not match the ship_run ledger record"
-)
+_CLOSURE_MISMATCH_REASON = "closure comment does not match the ship_run ledger record"
 
 
 def _result_reason(item: EvidenceItem, mismatch: set[str]) -> str:
@@ -485,13 +484,13 @@ def _closure_mismatch_scopes(
     scopes: set[str] = set()
     for scope, comments in (("pr", pr_comments), ("issue", issue_comments)):
         markered = [
-            comment for comment in comments
+            comment
+            for comment in comments
             if _is_trusted_source(comment, enforced=enforced)
             and _has_closure_marker(_body(comment))
         ]
         if markered and not any(
-            closure_body_matches_record(_body(comment), ledger_record)
-            for comment in markered
+            closure_body_matches_record(_body(comment), ledger_record) for comment in markered
         ):
             scopes.add(scope)
     return scopes
@@ -521,8 +520,10 @@ def _evidence_counts(
             for comment in issue_comments
         ),
         "review_verdict": len(review_keys),
-        "jury_verdict": sum(_is_jury_verdict(comment, head_sha=head_sha, enforced=enforced)
-                            for comment in pr_comments),
+        "jury_verdict": sum(
+            _is_jury_verdict(comment, head_sha=head_sha, enforced=enforced)
+            for comment in pr_comments
+        ),
     }
 
 
@@ -571,8 +572,7 @@ def _normalize_closure_body(body: str) -> str:
     lets a re-post edit its own comment instead of duplicating, and its presence made
     the body differ from the canonical render.
     """
-    lines = [line.rstrip() for line in body.splitlines()
-             if not RUN_ID_MARKER_RE.match(line)]
+    lines = [line.rstrip() for line in body.splitlines() if not RUN_ID_MARKER_RE.match(line)]
     normalized: list[str] = []
     for line in lines:
         if not line and (not normalized or not normalized[-1]):
@@ -618,12 +618,14 @@ def _run_context_findings(
             continue
         body = _body(item)
         if _has_empty_run_context(body):
-            findings.append({
-                "id": "run-context-empty",
-                "severity": "major" if enforced else "minor",
-                "kind": "closure",
-                "message": "Closure comment Run context is fully degraded.",
-            })
+            findings.append(
+                {
+                    "id": "run-context-empty",
+                    "severity": "major" if enforced else "minor",
+                    "kind": "closure",
+                    "message": "Closure comment Run context is fully degraded.",
+                }
+            )
     return findings
 
 
@@ -835,7 +837,7 @@ def agent_label_vendors(labels: Sequence[str] | None) -> list[str]:
     for label in labels or ():
         if not isinstance(label, str) or not label.startswith(AGENT_LABEL_PREFIX):
             continue
-        vendor = label[len(AGENT_LABEL_PREFIX):].strip().lower()
+        vendor = label[len(AGENT_LABEL_PREFIX) :].strip().lower()
         if vendor:
             vendors.append(vendor)
     return vendors
@@ -975,18 +977,16 @@ def _attribution_finding(
 #: judgement about whether the review was good — the same line ai-jury's
 #: ``emitted_findings_block()`` draws.
 _VERDICT_ANCHORS = (
-    re.compile(r"[\w./-]+\.[A-Za-z0-9]{1,5}:\d+"),          # path/to/file.py:42
-    re.compile(r"[\w-]+/[\w./-]+\.[A-Za-z0-9]{1,5}\b"),      # src/keel/thing.py
-    re.compile(r"`[^`\n]{2,}`"),                              # `a_symbol`, `--a-flag`
-    re.compile(r"\b\w+\.\w+\(\)"),                           # module.function()
+    re.compile(r"[\w./-]+\.[A-Za-z0-9]{1,5}:\d+"),  # path/to/file.py:42
+    re.compile(r"[\w-]+/[\w./-]+\.[A-Za-z0-9]{1,5}\b"),  # src/keel/thing.py
+    re.compile(r"`[^`\n]{2,}`"),  # `a_symbol`, `--a-flag`
+    re.compile(r"\b\w+\.\w+\(\)"),  # module.function()
 )
 
 #: The escape hatch the issue insists on: a genuinely clean review must stay
 #: expressible. "Checked X, Y and Z; found nothing" is a real review outcome and
 #: must not be forced to invent an anchor.
-_VERDICT_CHECKED_CLAUSE = re.compile(
-    r"\bchecked\b[^.\n]{8,}", re.IGNORECASE
-)
+_VERDICT_CHECKED_CLAUSE = re.compile(r"\bchecked\b[^.\n]{8,}", re.IGNORECASE)
 
 #: Below this share of novel words, the prose is the PR title said again. The
 #: observed shape was `Reviewed <title>: <generic affirmation>` — 75 of 75
@@ -1005,8 +1005,10 @@ def _verdict_prose(body: str) -> str:
             start = index + 1
             break
     kept = [
-        line for line in lines[start:]
-        if line.strip() and not line.strip().startswith("<!--")
+        line
+        for line in lines[start:]
+        if line.strip()
+        and not line.strip().startswith("<!--")
         and REVIEW_VERDICT_MARKER not in line
     ]
     return "\n".join(kept)

@@ -275,20 +275,23 @@ class TestRiskTrustEscalation(unittest.TestCase):
         self.assertEqual(clamped["sample"], {"rate": 100, "bucket": 0, "selected": True})
 
     def test_golden_risk_trust_decision(self):
-        rendered = json.dumps(
-            consent.evaluate_escalation(
-                risk_tier="tier-2",
-                trust_signal="low",
-                retry_count=1,
-                conflicting_sources=False,
-                changed_lines=120,
-                large_diff_threshold=500,
-                low_risk_sample_rate=10,
-                sample_bucket=42,
-            ),
-            indent=2,
-            sort_keys=True,
-        ) + "\n"
+        rendered = (
+            json.dumps(
+                consent.evaluate_escalation(
+                    risk_tier="tier-2",
+                    trust_signal="low",
+                    retry_count=1,
+                    conflicting_sources=False,
+                    changed_lines=120,
+                    large_diff_threshold=500,
+                    low_risk_sample_rate=10,
+                    sample_bucket=42,
+                ),
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n"
+        )
         if os.environ.get("UPDATE_GOLDEN"):  # pragma: no cover - dev-only refresh
             GOLDEN.parent.mkdir(parents=True, exist_ok=True)
             GOLDEN.write_text(rendered, encoding="utf-8")

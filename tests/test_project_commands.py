@@ -81,10 +81,17 @@ class TestProjectCommandsCli(unittest.TestCase):
         self.assertIn("web-check", names)
 
     def test_plan_json_can_target_project_command(self):
-        out = _run([
-            "plan", str(PROJECTS / "example-android.yaml"), "--root", str(REPO_ROOT),
-            "--command", "ui-test", "--json",
-        ])
+        out = _run(
+            [
+                "plan",
+                str(PROJECTS / "example-android.yaml"),
+                "--root",
+                str(REPO_ROOT),
+                "--command",
+                "ui-test",
+                "--json",
+            ]
+        )
         data = json.loads(out)
         self.assertEqual(data["contract"]["command"], "ui-test")
         self.assertEqual(data["contract"]["graph"][0]["source"], "project_command")
@@ -92,10 +99,16 @@ class TestProjectCommandsCli(unittest.TestCase):
         self.assertIn("browser", data["contract"]["optional_capabilities"])
 
     def test_capabilities_can_evaluate_project_command(self):
-        rc, out, _ = _run_raw([
-            "capabilities", "--project", str(PROJECTS / "example-android.yaml"),
-            "--for", "ui-test", "--json",
-        ])
+        rc, out, _ = _run_raw(
+            [
+                "capabilities",
+                "--project",
+                str(PROJECTS / "example-android.yaml"),
+                "--for",
+                "ui-test",
+                "--json",
+            ]
+        )
         self.assertIn(rc, (0, 1))
         data = json.loads(out)
         self.assertIn("adb", data["evaluation"]["required"])
@@ -105,22 +118,24 @@ class TestProjectCommandsCli(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "project.yaml"
             path.write_text(
-                "\n".join([
-                    "extends: keel",
-                    "core_version: '^0.6'",
-                    "owner: owner",
-                    "repo: repo",
-                    "base_branch: main",
-                    "merge_window: '00:00-23:59'",
-                    "timezone: UTC",
-                    "knobs:",
-                    "  build_gate_cmd: make test",
-                    "gates: []",
-                    "extensions: {}",
-                    "policy_pack:",
-                    "  name: empty",
-                    "",
-                ]),
+                "\n".join(
+                    [
+                        "extends: keel",
+                        "core_version: '^0.6'",
+                        "owner: owner",
+                        "repo: repo",
+                        "base_branch: main",
+                        "merge_window: '00:00-23:59'",
+                        "timezone: UTC",
+                        "knobs:",
+                        "  build_gate_cmd: make test",
+                        "gates: []",
+                        "extensions: {}",
+                        "policy_pack:",
+                        "  name: empty",
+                        "",
+                    ]
+                ),
                 encoding="utf-8",
             )
             out = _run(["project-commands", str(path)])
@@ -143,12 +158,14 @@ class TestProjectCommandsCli(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "project.yaml"
             path.write_text(
-                _minimal_config_yaml([
-                    "  project_commands:",
-                    "    browser-smoke:",
-                    "      command: .keel/commands/browser-smoke",
-                    "      optional_capabilities: [browser]",
-                ]),
+                _minimal_config_yaml(
+                    [
+                        "  project_commands:",
+                        "    browser-smoke:",
+                        "      command: .keel/commands/browser-smoke",
+                        "      optional_capabilities: [browser]",
+                    ]
+                ),
                 encoding="utf-8",
             )
             out = _run(["project-commands", str(path)])
@@ -173,23 +190,25 @@ def _run_raw(argv: list[str]) -> tuple[int, str, str]:
 
 
 def _minimal_config_yaml(policy_pack_lines: list[str]) -> str:
-    return "\n".join([
-        "extends: keel",
-        "core_version: '^0.6'",
-        "owner: owner",
-        "repo: repo",
-        "base_branch: main",
-        "merge_window: '00:00-23:59'",
-        "timezone: UTC",
-        "knobs:",
-        "  build_gate_cmd: make test",
-        "gates: []",
-        "extensions: {}",
-        "policy_pack:",
-        "  name: test",
-        *policy_pack_lines,
-        "",
-    ])
+    return "\n".join(
+        [
+            "extends: keel",
+            "core_version: '^0.6'",
+            "owner: owner",
+            "repo: repo",
+            "base_branch: main",
+            "merge_window: '00:00-23:59'",
+            "timezone: UTC",
+            "knobs:",
+            "  build_gate_cmd: make test",
+            "gates: []",
+            "extensions: {}",
+            "policy_pack:",
+            "  name: test",
+            *policy_pack_lines,
+            "",
+        ]
+    )
 
 
 if __name__ == "__main__":

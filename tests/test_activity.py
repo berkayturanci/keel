@@ -21,8 +21,14 @@ def _config(*, activity_dir: str | None = None) -> cfg.ProjectConfig:
 
 
 def _record(**overrides):
-    values = {"command": "triage", "run_id": "triage-2260", "phase": "classify",
-              "issue": 2260, "pr": None, "note": "n"}
+    values = {
+        "command": "triage",
+        "run_id": "triage-2260",
+        "phase": "classify",
+        "issue": 2260,
+        "pr": None,
+        "note": "n",
+    }
     values.update(overrides)
     return activity.build_activity_record(**values)
 
@@ -50,9 +56,12 @@ class TestDir(unittest.TestCase):
 
     def test_reports_not_a_dict_falls_back(self):
         config = cfg.ProjectConfig(
-            extends="keel", core_version="^0.7", base_branch="main",
+            extends="keel",
+            core_version="^0.7",
+            base_branch="main",
             knobs=cfg.Knobs(build_gate_cmd="true"),
-            policy_pack={"name": "t", "reports": "nope"})
+            policy_pack={"name": "t", "reports": "nope"},
+        )
         raw, source = activity.configured_activity_dir(config)
         self.assertEqual(source, "default")
 
@@ -104,8 +113,7 @@ class TestBuild(unittest.TestCase):
         self.assertEqual(rec["issue"], 2260)
 
     def test_build_minimal(self):
-        rec = activity.build_activity_record(
-            command="morning", run_id="m1", phase="config")
+        rec = activity.build_activity_record(command="morning", run_id="m1", phase="config")
         self.assertIsNone(rec["issue"])
         self.assertIsNone(rec["pr"])
         self.assertIsNone(rec["note"])
@@ -145,7 +153,8 @@ class TestBuild(unittest.TestCase):
     def test_build_bad_status(self):
         with self.assertRaises(activity.ActivityError):
             activity.build_activity_record(
-                command="triage", run_id="x", phase="classify", status="weird")
+                command="triage", run_id="x", phase="classify", status="weird"
+            )
 
 
 class TestValidate(unittest.TestCase):

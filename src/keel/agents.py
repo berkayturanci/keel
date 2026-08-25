@@ -197,9 +197,7 @@ def profile_attribution(
 #: can arrive from ``--delegate <profile>:<model>`` or a ``delegate-model:<name>`` issue
 #: label, which is a lower-trust source than the operator-authored ``command``, and it
 #: ends up on a subprocess argv.
-_MODEL_TOKEN_OK = frozenset(
-    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
-)
+_MODEL_TOKEN_OK = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
 
 
 def is_safe_model_token(model: str | None) -> bool:

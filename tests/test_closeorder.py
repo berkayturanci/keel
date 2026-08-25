@@ -32,9 +32,7 @@ class TestRecordAttestsMerge(unittest.TestCase):
         self.assertFalse(closeorder.record_attests_merge("nope"))
 
     def test_wrong_record_type_does_not_attest(self):
-        self.assertFalse(
-            closeorder.record_attests_merge(_record(record_type="capture"))
-        )
+        self.assertFalse(closeorder.record_attests_merge(_record(record_type="capture")))
 
     def test_missing_assessment_does_not_attest(self):
         self.assertFalse(closeorder.record_attests_merge({"record_type": "ship_run"}))
@@ -62,16 +60,19 @@ class TestLatestRecordForIssue(unittest.TestCase):
         self.assertIsNone(closeorder.latest_record_for_issue(records, 8))
 
     def test_no_match_returns_none(self):
-        self.assertIsNone(
-            closeorder.latest_record_for_issue([_record(issue=9)], 8)
-        )
+        self.assertIsNone(closeorder.latest_record_for_issue([_record(issue=9)], 8))
 
 
 class TestReconcile(unittest.TestCase):
     def test_consistent_closed_with_merge_record(self):
-        observed = [closeorder.ObservedIssue(
-            number=8, closed=True, labels=("status:done",), record=_record(action="merge"),
-        )]
+        observed = [
+            closeorder.ObservedIssue(
+                number=8,
+                closed=True,
+                labels=("status:done",),
+                record=_record(action="merge"),
+            )
+        ]
         report = closeorder.reconcile(observed)
         self.assertEqual(report["verdict"], closeorder.VERDICT_OK)
         self.assertTrue(report["ok"])
@@ -80,9 +81,13 @@ class TestReconcile(unittest.TestCase):
         self.assertTrue(report["issues"][0]["merge_attested"])
 
     def test_premature_close_without_merge_record(self):
-        observed = [closeorder.ObservedIssue(
-            number=8, closed=True, record=_record(action="defer"),
-        )]
+        observed = [
+            closeorder.ObservedIssue(
+                number=8,
+                closed=True,
+                record=_record(action="defer"),
+            )
+        ]
         report = closeorder.reconcile(observed)
         self.assertEqual(report["verdict"], closeorder.VERDICT_FLAGGED)
         self.assertFalse(report["ok"])
@@ -93,9 +98,13 @@ class TestReconcile(unittest.TestCase):
         self.assertIn("closed but no ship_run", report["findings"][0]["message"])
 
     def test_premature_status_done_without_merge_record(self):
-        observed = [closeorder.ObservedIssue(
-            number=8, labels=("status:done",), record=None,
-        )]
+        observed = [
+            closeorder.ObservedIssue(
+                number=8,
+                labels=("status:done",),
+                record=None,
+            )
+        ]
         report = closeorder.reconcile(observed)
         self.assertEqual(report["verdict"], closeorder.VERDICT_FLAGGED)
         self.assertEqual(
@@ -105,9 +114,14 @@ class TestReconcile(unittest.TestCase):
         self.assertIn("status:done", report["findings"][0]["message"])
 
     def test_closed_and_status_done_flags_both(self):
-        observed = [closeorder.ObservedIssue(
-            number=8, closed=True, labels=("status:done",), record=None,
-        )]
+        observed = [
+            closeorder.ObservedIssue(
+                number=8,
+                closed=True,
+                labels=("status:done",),
+                record=None,
+            )
+        ]
         report = closeorder.reconcile(observed)
         self.assertEqual(
             sorted(f["finding"] for f in report["findings"]),
@@ -123,9 +137,13 @@ class TestReconcile(unittest.TestCase):
         self.assertEqual(report["findings"], [])
 
     def test_custom_done_label_respected(self):
-        observed = [closeorder.ObservedIssue(
-            number=8, labels=("Done",), record=None,
-        )]
+        observed = [
+            closeorder.ObservedIssue(
+                number=8,
+                labels=("Done",),
+                record=None,
+            )
+        ]
         report = closeorder.reconcile(observed, done_label="Done")
         self.assertEqual(report["verdict"], closeorder.VERDICT_FLAGGED)
         self.assertEqual(report["done_label"], "Done")

@@ -44,9 +44,7 @@ class TestScopeVerify(unittest.TestCase):
         self.assertIsNone(report["declared"])
 
     def test_scope_waived_deferral_downgrades_creep_to_pass(self):
-        report = scope.verify(
-            ["a.py"], ["a.py", "unrelated.py"], deferrals=("scope-waived",)
-        )
+        report = scope.verify(["a.py"], ["a.py", "unrelated.py"], deferrals=("scope-waived",))
 
         self.assertEqual(report["status"], "pass")
         self.assertTrue(report["waived"])
@@ -60,9 +58,7 @@ class TestScopeVerify(unittest.TestCase):
         self.assertTrue(report["waived"])
 
     def test_clean_in_scope_diff_is_not_marked_waived(self):
-        report = scope.verify(
-            ["a.py"], ["a.py"], deferrals=("scope-waived",)
-        )
+        report = scope.verify(["a.py"], ["a.py"], deferrals=("scope-waived",))
 
         self.assertEqual(report["status"], "pass")
         self.assertTrue(report["waived"])
@@ -76,13 +72,19 @@ class TestScopeVerify(unittest.TestCase):
 
 
 def _record(*, declared_files):
-    outcome = SimpleNamespace(gate="build", ok=True, skipped=False, timed_out=False,
-                              error=None, findings=[])
+    outcome = SimpleNamespace(
+        gate="build", ok=True, skipped=False, timed_out=False, error=None, findings=[]
+    )
     verdict = SimpleNamespace(blocked=False, counts={"blocker": 0})
     merge = SimpleNamespace(action="merge", reason="all gates passed")
     assessment = SimpleNamespace(
-        tier=2, reviewers=2, window_open=True, ci_ok=None,
-        merge=merge, halted=False, bypassed_window=False,
+        tier=2,
+        reviewers=2,
+        window_open=True,
+        ci_ok=None,
+        merge=merge,
+        halted=False,
+        bypassed_window=False,
     )
     return ledger.build_ship_run_record(
         command="ship",

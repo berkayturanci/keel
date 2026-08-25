@@ -52,20 +52,24 @@ class TestBuildCommandContract(unittest.TestCase):
     def test_contract_contains_project_hooks_gates_and_capabilities(self):
         config = cfg.load_config(PROJECTS / "example-android.yaml")
         loaded = {
-            "tester": [parse_extension(
-                "---\nid: smoke\nslot: tester\nkind: command\nrun: true\n"
-                "required_capabilities: [shell]\n---\n",
-                source="smoke.md",
-            )],
+            "tester": [
+                parse_extension(
+                    "---\nid: smoke\nslot: tester\nkind: command\nrun: true\n"
+                    "required_capabilities: [shell]\n---\n",
+                    source="smoke.md",
+                )
+            ],
         }
         plan = orchestrator.build_plan(config, loaded)
-        report = runtime.CapabilityReport((
-            runtime.Capability("shell", True, "ok", "test"),
-            runtime.Capability("git", True, "ok", "test"),
-            runtime.Capability("worktree", True, "ok", "test"),
-            runtime.Capability("gh", False, "missing", "test"),
-            runtime.Capability("github-mcp", True, "ok", "test"),
-        ))
+        report = runtime.CapabilityReport(
+            (
+                runtime.Capability("shell", True, "ok", "test"),
+                runtime.Capability("git", True, "ok", "test"),
+                runtime.Capability("worktree", True, "ok", "test"),
+                runtime.Capability("gh", False, "missing", "test"),
+                runtime.Capability("github-mcp", True, "ok", "test"),
+            )
+        )
         requirement = runtime.CapabilityRequirement(required=("shell",), optional=("gh",))
         evaluation = runtime.evaluate(requirement, report)
         transport = github_transport.resolve(report)
@@ -86,23 +90,22 @@ class TestBuildCommandContract(unittest.TestCase):
         self.assertEqual(contract["project"]["repo"], "example-android")
         self.assertIn("config_hash", contract["project"])
         self.assertEqual(contract["project"]["policy_pack"]["name"], "example-android-web")
-        self.assertIn("payment-flow", [
-            rule["id"] for rule in contract["project"]["policy_pack"]["risk_rules"]
-        ])
+        self.assertIn(
+            "payment-flow",
+            [rule["id"] for rule in contract["project"]["policy_pack"]["risk_rules"]],
+        )
         self.assertIn("build", [gate["id"] for gate in contract["gates"]])
         self.assertEqual(contract["extension_hooks"]["tester"][0]["id"], "smoke")
-        test_step = next(
-            step for step in contract["backbone_plan"] if step["step_id"] == "s8"
-        )
+        test_step = next(step for step in contract["backbone_plan"] if step["step_id"] == "s8")
         tester_slot = next(
             slot for slot in test_step["extension_slots"] if slot["name"] == "tester"
         )
         self.assertEqual(tester_slot["customization"], "add-only")
         self.assertEqual(tester_slot["failure_mode"], "blocking-capable")
         self.assertEqual(tester_slot["hook_count"], 1)
-        self.assertTrue(any(
-            command["name"] == "android-build" for command in contract["project_commands"]
-        ))
+        self.assertTrue(
+            any(command["name"] == "android-build" for command in contract["project_commands"])
+        )
         self.assertIn("shell", contract["required_capabilities"])
         self.assertEqual(contract["github_transport"]["transport"], "mcp")
         self.assertEqual(contract["run_ledger"]["schema_version"], "keel.run-ledger.v1")
@@ -118,12 +121,11 @@ class TestBuildCommandContract(unittest.TestCase):
             contract["review_merge_contract"]["reviewers"]["project_additions"],
             ["Apply extra scrutiny to local data and payment-flow changes."],
         )
-        self.assertIn("Testing", contract["review_merge_contract"]["reviewers"]
-                      ["required_sections"])
-        self.assertEqual(contract["review_merge_contract"]["jury"]["mode"], "off")
-        self.assertEqual(
-            contract["closure_comment"]["schema_version"], "keel.closure-comment.v1"
+        self.assertIn(
+            "Testing", contract["review_merge_contract"]["reviewers"]["required_sections"]
         )
+        self.assertEqual(contract["review_merge_contract"]["jury"]["mode"], "off")
+        self.assertEqual(contract["closure_comment"]["schema_version"], "keel.closure-comment.v1")
         self.assertEqual(contract["evidence"]["schema_version"], "keel.evidence.v1")
         self.assertTrue(contract["evidence"]["fail_closed"])
         self.assertEqual(contract["run_controls"]["schema_version"], "keel.run-controls.v1")
@@ -143,13 +145,15 @@ class TestBuildCommandContract(unittest.TestCase):
         )
         self.assertTrue(contract["step_verification"]["no_premature_termination"])
         review_step = next(
-            step for step in contract["step_verification"]["steps"]
-            if step["step_id"] == "s7"
+            step for step in contract["step_verification"]["steps"] if step["step_id"] == "s7"
         )
-        self.assertEqual(review_step["required_evidence"], [
-            "review-verdict-1",
-            "review-verdict-2",
-        ])
+        self.assertEqual(
+            review_step["required_evidence"],
+            [
+                "review-verdict-1",
+                "review-verdict-2",
+            ],
+        )
         self.assertEqual(contract["artifact_renderers"]["schema_version"], "keel.artifacts.v1")
         self.assertEqual(
             contract["artifact_renderers"]["adapter_rule"],
@@ -222,8 +226,10 @@ class TestBuildCommandContract(unittest.TestCase):
         self.assertTrue(intake["provided"])
         self.assertTrue(intake["can_mutate_code"])
         self.assertEqual(intake["ledger_record"]["readiness"], "ready")
-        self.assertEqual(intake["work_block_policy"]["non_ready_statuses"],
-                         ["needs-input", "blocked", "out-of-scope"])
+        self.assertEqual(
+            intake["work_block_policy"]["non_ready_statuses"],
+            ["needs-input", "blocked", "out-of-scope"],
+        )
 
     def test_contract_resolves_review_flags_for_ship_like_commands(self):
         config = cfg.load_config(PROJECTS / "example-android.yaml")
@@ -254,12 +260,15 @@ class TestBuildCommandContract(unittest.TestCase):
         self.assertTrue(review["jury"]["configured_gate"])
         self.assertTrue(review["merge_gate"]["final_mergeability_recheck_inside_lock"])
         evidence_ids = [item["id"] for item in contract["evidence"]["required"]]
-        self.assertEqual(evidence_ids, [
-            "closure-comment-pr",
-            "closure-comment-issue",
-            "review-verdict-1",
-            "review-verdict-2",
-        ])
+        self.assertEqual(
+            evidence_ids,
+            [
+                "closure-comment-pr",
+                "closure-comment-issue",
+                "review-verdict-1",
+                "review-verdict-2",
+            ],
+        )
 
     def test_ship_compound_contract_exposes_first_class_compound_profile(self):
         config = cfg.load_config(PROJECTS / "example-android.yaml")
@@ -391,10 +400,12 @@ class TestBuildCommandContract(unittest.TestCase):
             requirement=runtime.CapabilityRequirement(required=("git", "worktree")),
             evaluation=runtime.evaluate(
                 runtime.CapabilityRequirement(required=("git", "worktree")),
-                runtime.CapabilityReport((
-                    runtime.Capability("git", True, "ok", "test"),
-                    runtime.Capability("worktree", True, "ok", "test"),
-                )),
+                runtime.CapabilityReport(
+                    (
+                        runtime.Capability("git", True, "ok", "test"),
+                        runtime.Capability("worktree", True, "ok", "test"),
+                    )
+                ),
             ),
             transport=github_transport.resolve(report),
         )
@@ -411,10 +422,12 @@ class TestBuildCommandContract(unittest.TestCase):
             requirement=runtime.CapabilityRequirement(required=("git", "worktree")),
             evaluation=runtime.evaluate(
                 runtime.CapabilityRequirement(required=("git", "worktree")),
-                runtime.CapabilityReport((
-                    runtime.Capability("git", True, "ok", "test"),
-                    runtime.Capability("worktree", True, "ok", "test"),
-                )),
+                runtime.CapabilityReport(
+                    (
+                        runtime.Capability("git", True, "ok", "test"),
+                        runtime.Capability("worktree", True, "ok", "test"),
+                    )
+                ),
             ),
             transport=github_transport.resolve(report),
         )
@@ -427,9 +440,10 @@ class TestBuildCommandContract(unittest.TestCase):
         self.assertEqual(work_block["run_controls"]["schema_version"], "keel.run-controls.v1")
         self.assertIn("work_block", work_block["session_contract"])
         self.assertEqual(work_block["session_contract"]["work_block"]["mode"], "daytime")
-        self.assertIn("needs_input",
-                      work_block["session_contract"]["work_block"]
-                      ["final_report"]["outcome_buckets"])
+        self.assertIn(
+            "needs_input",
+            work_block["session_contract"]["work_block"]["final_report"]["outcome_buckets"],
+        )
 
         overnight = contracts.build_command_contract(
             command="overnight",
@@ -439,10 +453,12 @@ class TestBuildCommandContract(unittest.TestCase):
             requirement=runtime.CapabilityRequirement(required=("git", "worktree")),
             evaluation=runtime.evaluate(
                 runtime.CapabilityRequirement(required=("git", "worktree")),
-                runtime.CapabilityReport((
-                    runtime.Capability("git", True, "ok", "test"),
-                    runtime.Capability("worktree", True, "ok", "test"),
-                )),
+                runtime.CapabilityReport(
+                    (
+                        runtime.Capability("git", True, "ok", "test"),
+                        runtime.Capability("worktree", True, "ok", "test"),
+                    )
+                ),
             ),
             transport=github_transport.resolve(report),
         )
@@ -491,8 +507,7 @@ class TestBuildCommandContract(unittest.TestCase):
         )
         self.assertEqual(review_cycle["workflow_profile"]["profile"], "review-feedback")
         self.assertEqual(review_cycle["workflow_profile"]["inherits"], "ship.s7-s9")
-        self.assertIn("completion_marker", review_cycle["workflow_profile"]
-                      ["shared_primitives"])
+        self.assertIn("completion_marker", review_cycle["workflow_profile"]["shared_primitives"])
         self.assertIn("feedback_workflow", review_cycle)
 
         regression = contracts.build_command_contract(
@@ -503,10 +518,12 @@ class TestBuildCommandContract(unittest.TestCase):
             requirement=runtime.CapabilityRequirement(required=("git", "worktree")),
             evaluation=runtime.evaluate(
                 runtime.CapabilityRequirement(required=("git", "worktree")),
-                runtime.CapabilityReport((
-                    runtime.Capability("git", True, "ok", "test"),
-                    runtime.Capability("worktree", True, "ok", "test"),
-                )),
+                runtime.CapabilityReport(
+                    (
+                        runtime.Capability("git", True, "ok", "test"),
+                        runtime.Capability("worktree", True, "ok", "test"),
+                    )
+                ),
             ),
             transport=github_transport.resolve(report),
         )
@@ -536,7 +553,8 @@ class TestBuildCommandContract(unittest.TestCase):
         self.assertIn("scan_contract", review_all_day)
         self.assertIn("issue_prefix", review_all_day["workflow_profile"]["shared_primitives"])
         self.assertEqual(
-            regression["scan_contract"]["scan_finding"]["marker"], "keel.scan-finding.v1")
+            regression["scan_contract"]["scan_finding"]["marker"], "keel.scan-finding.v1"
+        )
 
         triage = contracts.build_command_contract(
             command="triage",
@@ -549,7 +567,8 @@ class TestBuildCommandContract(unittest.TestCase):
         )
         self.assertEqual(triage["triage_contract"]["marker"], "keel.triage-audit.v1")
         self.assertEqual(
-            triage["triage_contract"]["renderer"], "keel.artifacts.render_triage_audit")
+            triage["triage_contract"]["renderer"], "keel.artifacts.render_triage_audit"
+        )
 
     def test_feedback_workflow_policy_preserves_command_specific_review_loops(self):
         config = cfg.ProjectConfig(
@@ -649,8 +668,7 @@ class TestBuildCommandContract(unittest.TestCase):
             target="PR title",
             transport=transport,
         )
-        self.assertEqual(wrap["session"]["wrap"]["pull_request"]["base_branch"],
-                         config.base_branch)
+        self.assertEqual(wrap["session"]["wrap"]["pull_request"]["base_branch"], config.base_branch)
         self.assertTrue(
             wrap["session"]["wrap"]["workspace_preflight"]["must_run_from_linked_worktree"]
         )
@@ -665,8 +683,7 @@ class TestBuildCommandContract(unittest.TestCase):
         )
         self.assertEqual(work_block["session"]["work_block"]["mode"], "daytime")
         self.assertTrue(
-            work_block["session"]["daytime"]["ship_handoff"]
-            ["refreshes_readiness_between_issues"]
+            work_block["session"]["daytime"]["ship_handoff"]["refreshes_readiness_between_issues"]
         )
         self.assertFalse(work_block["execution"]["merges"])
 
@@ -713,10 +730,8 @@ class TestBuildCommandContract(unittest.TestCase):
             transport=transport,
         )
         self.assertEqual(regression["scan"]["dedupe"]["near_text_similarity"], 0.6)
-        self.assertTrue(regression["scan"]["regression"]["scan_target"]
-                        ["clean_tree_preflight"])
-        self.assertEqual(regression["scan"]["regression"]["issue_creation"]["route_to"],
-                         "ship")
+        self.assertTrue(regression["scan"]["regression"]["scan_target"]["clean_tree_preflight"])
+        self.assertEqual(regression["scan"]["regression"]["issue_creation"]["route_to"], "ship")
         self.assertFalse(regression["execution"]["writes_issues"])
 
         review_all_day = contracts.standalone_result_as_dict(
@@ -758,10 +773,12 @@ class TestBuildCommandContract(unittest.TestCase):
     def test_morning_contract_is_project_extensible(self):
         android = cfg.load_config(PROJECTS / "example-android.yaml")
         flutter = cfg.load_config(PROJECTS / "example-flutter.yaml")
-        report = runtime.CapabilityReport((
-            runtime.Capability("shell", True, "ok", "test"),
-            runtime.Capability("github-mcp", True, "ok", "test"),
-        ))
+        report = runtime.CapabilityReport(
+            (
+                runtime.Capability("shell", True, "ok", "test"),
+                runtime.Capability("github-mcp", True, "ok", "test"),
+            )
+        )
         evaluation = runtime.evaluate(
             runtime.CapabilityRequirement(optional=("shell", "gh", "gh-auth")),
             report,
@@ -816,10 +833,12 @@ class TestBuildCommandContract(unittest.TestCase):
         )
         capability_check = runtime.evaluate(
             runtime.CapabilityRequirement(required=("firebase",), optional=("shell",)),
-            runtime.CapabilityReport((
-                runtime.Capability("firebase", False, "missing", "test"),
-                runtime.Capability("shell", True, "ok", "test"),
-            )),
+            runtime.CapabilityReport(
+                (
+                    runtime.Capability("firebase", False, "missing", "test"),
+                    runtime.Capability("shell", True, "ok", "test"),
+                )
+            ),
         )
 
         brief = contracts.morning_contract_as_dict(config=config, evaluation=capability_check)
@@ -835,8 +854,7 @@ class TestBuildCommandContract(unittest.TestCase):
 
         no_capability_check = contracts.morning_contract_as_dict(config=config, evaluation=None)
         providers = {
-            provider["name"]: provider
-            for provider in no_capability_check["health_providers"]
+            provider["name"]: provider for provider in no_capability_check["health_providers"]
         }
         self.assertEqual(providers["required-down"]["missing_required_capabilities"], [])
 
@@ -866,11 +884,11 @@ class TestBuildCommandContract(unittest.TestCase):
         self.assertEqual(wrap["reports"]["session"]["path"], "reports/session/")
         self.assertEqual(wrap["deferral_queue"]["status"], "configured")
         self.assertEqual(wrap["wrap"]["recap"]["path"], "reports/session/")
-        self.assertEqual(overnight["overnight"]["report"]["night_path"],
-                         "reports/overnight/")
+        self.assertEqual(overnight["overnight"]["report"]["night_path"], "reports/overnight/")
         self.assertIn("release-risk", overnight["project_policy_sources"]["risk_rules"])
-        self.assertIn("three-consecutive-unresolved-ci-failures",
-                      overnight["overnight"]["stop_conditions"])
+        self.assertIn(
+            "three-consecutive-unresolved-ci-failures", overnight["overnight"]["stop_conditions"]
+        )
 
         base_only = contracts.session_contract_as_dict(command="other", config=config)
         self.assertIn("reports", base_only)
@@ -886,16 +904,17 @@ class TestBuildCommandContract(unittest.TestCase):
         self.assertNotIn("regression", scan)
         self.assertNotIn("review_all_day", scan)
 
-
     def test_project_command_contract_has_graph_capabilities_and_side_effects(self):
         config = cfg.load_config(PROJECTS / "example-android.yaml")
         loaded = {}
         plan = orchestrator.build_plan(config, loaded)
-        report = runtime.CapabilityReport((
-            runtime.Capability("shell", True, "ok", "test"),
-            runtime.Capability("adb", False, "missing", "test"),
-            runtime.Capability("browser", False, "missing", "test"),
-        ))
+        report = runtime.CapabilityReport(
+            (
+                runtime.Capability("shell", True, "ok", "test"),
+                runtime.Capability("adb", False, "missing", "test"),
+                runtime.Capability("browser", False, "missing", "test"),
+            )
+        )
         requirement = runtime.CapabilityRequirement(
             required=("shell", "adb"),
             optional=("browser",),
@@ -1114,13 +1133,15 @@ class TestBuildCommandContract(unittest.TestCase):
     def test_capability_requirements_extend_consent_scope(self):
         config = cfg.load_config(PROJECTS / "example-android.yaml")
         loaded = {
-            "pre-merge": [parse_extension(
-                "---\nid: release\nslot: pre-merge\nkind: command\nrun: true\n"
-                "required_capabilities: [release-publish]\n"
-                "optional_capabilities: [secret-access, production-adjacent]\n"
-                "on_fail: block\n---\n",
-                source="release.md",
-            )],
+            "pre-merge": [
+                parse_extension(
+                    "---\nid: release\nslot: pre-merge\nkind: command\nrun: true\n"
+                    "required_capabilities: [release-publish]\n"
+                    "optional_capabilities: [secret-access, production-adjacent]\n"
+                    "on_fail: block\n---\n",
+                    source="release.md",
+                )
+            ],
         }
         plan = orchestrator.build_plan(config, loaded)
         report = runtime.CapabilityReport(())
@@ -1198,30 +1219,31 @@ class TestScanThresholdsAreWired(unittest.TestCase):
         # `scan.dedupe` and `scan.work_creation_policy.dedupe`. The second hardcoded the
         # default, so they agreed only while the project set the knob to exactly 0.6.
         scan = contracts.scan_contract_as_dict(
-            command="regression", config=self._config(near_text_similarity=0.9))
+            command="regression", config=self._config(near_text_similarity=0.9)
+        )
 
         self.assertEqual(scan["dedupe"]["near_text_similarity"], 0.9)
-        self.assertEqual(
-            scan["work_creation_policy"]["dedupe"]["near_text_similarity"], 0.9)
+        self.assertEqual(scan["work_creation_policy"]["dedupe"]["near_text_similarity"], 0.9)
 
     def test_reporting_contract_carries_the_same_threshold(self):
         report = contracts.reporting_contract_as_dict(
-            command="coverage", config=self._config(near_text_similarity=0.85))
+            command="coverage", config=self._config(near_text_similarity=0.85)
+        )
 
-        self.assertEqual(
-            report["work_creation_policy"]["dedupe"]["near_text_similarity"], 0.85)
+        self.assertEqual(report["work_creation_policy"]["dedupe"]["near_text_similarity"], 0.85)
 
     def test_large_diff_max_bytes_is_honoured(self):
         # Previously asserted nowhere at all: `-> 1` was a green mutation.
         scan = contracts.scan_contract_as_dict(
-            command="review-all-day", config=self._config(large_diff_max_bytes=4096))
+            command="review-all-day", config=self._config(large_diff_max_bytes=4096)
+        )
 
-        self.assertEqual(
-            scan["review_all_day"]["diff_truncation"]["max_bytes"], 4096)
+        self.assertEqual(scan["review_all_day"]["diff_truncation"]["max_bytes"], 4096)
 
     def test_batch_threshold_is_honoured(self):
         scan = contracts.scan_contract_as_dict(
-            command="review-all-day", config=self._config(batch_threshold=11))
+            command="review-all-day", config=self._config(batch_threshold=11)
+        )
         strategy = scan["review_all_day"]["strategy"]
 
         self.assertEqual(strategy["batch_threshold"], 11)
@@ -1233,7 +1255,6 @@ class TestScanThresholdsAreWired(unittest.TestCase):
 
         self.assertEqual(scan["dedupe"]["near_text_similarity"], 0.6)
         self.assertEqual(scan["review_all_day"]["diff_truncation"]["max_bytes"], 200000)
-
 
 
 class TestShipResultClosureComment(unittest.TestCase):
@@ -1278,13 +1299,15 @@ class TestShipResultClosureComment(unittest.TestCase):
         self.assertIn("- **Transport:** unknown", result["closure_comment"])
         self.assertIn("## Summary", result["artifact_bodies"]["pr_body"])
         self.assertIn("Closes #1", result["artifact_bodies"]["pr_body"])
-        self.assertIn("keel.review-verdict.v1",
-                      result["artifact_bodies"]["review_verdict_template"])
+        self.assertIn(
+            "keel.review-verdict.v1", result["artifact_bodies"]["review_verdict_template"]
+        )
         self.assertIn("head: abc123", result["artifact_bodies"]["review_verdict_template"])
-        self.assertIn("keel.jury-verdict.v1",
-                      result["artifact_bodies"]["jury_verdict_template"])
-        self.assertIn("<!-- keel.extension-result.v1 -->",
-                      result["artifact_bodies"]["extension_result_template"])
+        self.assertIn("keel.jury-verdict.v1", result["artifact_bodies"]["jury_verdict_template"])
+        self.assertIn(
+            "<!-- keel.extension-result.v1 -->",
+            result["artifact_bodies"]["extension_result_template"],
+        )
 
     def test_artifact_bodies_summarize_skipped_gates_and_docs(self):
         result = contracts.ship_result_as_dict(

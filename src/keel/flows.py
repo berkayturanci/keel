@@ -45,9 +45,7 @@ _SHIP_KINDS = {"s8": "gate", "s9": "loop", "s10": "merge"}
 
 
 def _ship_flow() -> tuple[Phase, ...]:
-    return tuple(
-        Phase(step.id, step.name, _SHIP_KINDS.get(step.id, "normal")) for step in BACKBONE
-    )
+    return tuple(Phase(step.id, step.name, _SHIP_KINDS.get(step.id, "normal")) for step in BACKBONE)
 
 
 def _flow(*phases: tuple[str, str, str]) -> tuple[Phase, ...]:

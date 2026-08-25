@@ -48,7 +48,7 @@ def current_version(root: Path) -> str:
     text = (root / "pyproject.toml").read_text(encoding="utf-8")
     match = re.search(r'^version = "([^"]+)"', text, re.MULTILINE)
     if not match:
-        raise ValueError("could not find `version = \"...\"` in pyproject.toml")
+        raise ValueError('could not find `version = "..."` in pyproject.toml')
     return match.group(1)
 
 
@@ -182,8 +182,9 @@ def bump(root: Path, new: str) -> tuple[str, list[str]]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Bump keel's release version.")
     parser.add_argument("version", help="new version, X.Y.Z")
-    parser.add_argument("--root", default=str(DEFAULT_ROOT),
-                        help="repo root (defaults to the keel checkout)")
+    parser.add_argument(
+        "--root", default=str(DEFAULT_ROOT), help="repo root (defaults to the keel checkout)"
+    )
     parser.add_argument(
         "--package",
         choices=("core", "keel-visual"),
@@ -216,11 +217,15 @@ def main(argv: list[str] | None = None) -> int:
         # Core's next steps do not apply: keel-visual has no generated adapter
         # surfaces, its own CHANGELOG, and its own tag namespace. Printing core's
         # runbook here would be a wrong instruction, which is how #796 started.
-        print("Next: add a keel-visual/CHANGELOG.md entry, then follow "
-              "keel-visual/RELEASING.md to tag `keel-visual-vX.Y.Z`.")
+        print(
+            "Next: add a keel-visual/CHANGELOG.md entry, then follow "
+            "keel-visual/RELEASING.md to tag `keel-visual-vX.Y.Z`."
+        )
     else:
-        print("Next: `make plugin && make adapters` (regenerate keel_version markers), "
-              "add a CHANGELOG.md entry, then follow docs/keel/release.md to tag.")
+        print(
+            "Next: `make plugin && make adapters` (regenerate keel_version markers), "
+            "add a CHANGELOG.md entry, then follow docs/keel/release.md to tag."
+        )
     return 0
 
 

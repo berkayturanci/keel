@@ -24,6 +24,7 @@ def _matches_any(path: str, globs: tuple[str, ...]) -> bool:
             return True
     return False
 
+
 SCHEMA_VERSION = "keel.scope-verify.v1"
 
 
@@ -78,11 +79,7 @@ def verify(
         "status": "fail" if blocking else "pass",
         "advisory": False,
         "waived": waived,
-        "note": (
-            "scope creep waived by operator deferral"
-            if creep and waived
-            else None
-        ),
+        "note": ("scope creep waived by operator deferral" if creep and waived else None),
         "declared": sorted(declared),
         "in_scope": in_scope,
         "scope_creep": creep,

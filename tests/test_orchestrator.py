@@ -28,28 +28,31 @@ class TestBuildPlan(unittest.TestCase):
         config = cfg.load_config(PROJECTS / "keel.yaml")
         plan = orch.plan_as_dict(orch.build_plan(config, {}))
         by_step = {item["step_id"]: item for item in plan}
-        self.assertEqual(by_step["s10"]["extension_slots"], [
-            {
-                "name": "pre-merge",
-                "step_id": "s10",
-                "execution_mode": "deterministic",
-                "may_block": True,
-                "adapter_required": False,
-                "hook_count": 0,
-                "customization": "add-only",
-                "failure_mode": "blocking-capable",
-            },
-            {
-                "name": "after:merge",
-                "step_id": "s10",
-                "execution_mode": "deterministic",
-                "may_block": False,
-                "adapter_required": False,
-                "hook_count": 0,
-                "customization": "add-only",
-                "failure_mode": "fail-soft",
-            },
-        ])
+        self.assertEqual(
+            by_step["s10"]["extension_slots"],
+            [
+                {
+                    "name": "pre-merge",
+                    "step_id": "s10",
+                    "execution_mode": "deterministic",
+                    "may_block": True,
+                    "adapter_required": False,
+                    "hook_count": 0,
+                    "customization": "add-only",
+                    "failure_mode": "blocking-capable",
+                },
+                {
+                    "name": "after:merge",
+                    "step_id": "s10",
+                    "execution_mode": "deterministic",
+                    "may_block": False,
+                    "adapter_required": False,
+                    "hook_count": 0,
+                    "customization": "add-only",
+                    "failure_mode": "fail-soft",
+                },
+            ],
+        )
         self.assertEqual(by_step["s0"]["extension_slots"][0]["name"], "after:config")
         self.assertTrue(all(item["extension_slots"] for item in plan))
 
@@ -65,13 +68,19 @@ class TestBuildPlan(unittest.TestCase):
         config = cfg.load_config(PROJECTS / "example-flutter.yaml")
         # Provide the extensions the config references (parsed inline; no disk).
         loaded = {
-            "tester": [parse_extension(
-                "---\nid: design-parity\nslot: tester\nkind: command\nrun: x\n---\n",
-                source="design-parity.md")],
-            "pre-merge": [parse_extension(
-                "---\nid: design-parity-gate\nslot: pre-merge\nkind: command\n"
-                "on_fail: block\nrun: x\n---\n",
-                source="design-parity-gate.md")],
+            "tester": [
+                parse_extension(
+                    "---\nid: design-parity\nslot: tester\nkind: command\nrun: x\n---\n",
+                    source="design-parity.md",
+                )
+            ],
+            "pre-merge": [
+                parse_extension(
+                    "---\nid: design-parity-gate\nslot: pre-merge\nkind: command\n"
+                    "on_fail: block\nrun: x\n---\n",
+                    source="design-parity-gate.md",
+                )
+            ],
         }
         plan = orch.build_plan(config, loaded)
         test_step = next(p for p in plan if p.step_name == "test")
@@ -80,32 +89,41 @@ class TestBuildPlan(unittest.TestCase):
         self.assertEqual(merge_step.gates, ("design-parity-gate",))
 
     def test_hooks_render_in_backbone_step_order(self):
-        config = cfg.parse_config({
-            "extends": "keel",
-            "core_version": "^0.5",
-            "base_branch": "main",
-            "knobs": {"build_gate_cmd": "make test"},
-            "extensions": {
-                "guard": ["guard.md"],
-                "after:ci": ["ci-report.md"],
-                "after:close": ["notify.md"],
-            },
-        })
+        config = cfg.parse_config(
+            {
+                "extends": "keel",
+                "core_version": "^0.5",
+                "base_branch": "main",
+                "knobs": {"build_gate_cmd": "make test"},
+                "extensions": {
+                    "guard": ["guard.md"],
+                    "after:ci": ["ci-report.md"],
+                    "after:close": ["notify.md"],
+                },
+            }
+        )
         loaded = {
-            "guard": [parse_extension(
-                "---\nid: guard-check\nslot: guard\nkind: command\non_fail: block\n"
-                "run: ./tools/guard\nrequired_capabilities: [shell]\n---\n",
-                source="guard.md",
-            )],
-            "after:ci": [parse_extension(
-                "---\nid: ci-report\nslot: after:ci\nkind: command\nrun: ./tools/report\n"
-                "optional_capabilities: [gh]\n---\n",
-                source="ci-report.md",
-            )],
-            "after:close": [parse_extension(
-                "---\nid: close-note\nslot: after:close\nkind: command\nrun: ./tools/close\n---\n",
-                source="notify.md",
-            )],
+            "guard": [
+                parse_extension(
+                    "---\nid: guard-check\nslot: guard\nkind: command\non_fail: block\n"
+                    "run: ./tools/guard\nrequired_capabilities: [shell]\n---\n",
+                    source="guard.md",
+                )
+            ],
+            "after:ci": [
+                parse_extension(
+                    "---\nid: ci-report\nslot: after:ci\nkind: command\nrun: ./tools/report\n"
+                    "optional_capabilities: [gh]\n---\n",
+                    source="ci-report.md",
+                )
+            ],
+            "after:close": [
+                parse_extension(
+                    "---\nid: close-note\nslot: after:close\n"
+                    "kind: command\nrun: ./tools/close\n---\n",
+                    source="notify.md",
+                )
+            ],
         }
         plan = orch.build_plan(config, loaded)
         guard_step = next(p for p in plan if p.step_name == "guard")
@@ -128,31 +146,39 @@ class TestBuildPlan(unittest.TestCase):
         self.assertEqual(agentic, {"implement", "classify", "review"})
 
     def test_extensions_are_add_only_and_do_not_change_backbone_order(self):
-        config = cfg.parse_config({
-            "extends": "keel",
-            "core_version": "^1.0",
-            "base_branch": "main",
-            "knobs": {"build_gate_cmd": "make test"},
-            "extensions": {
-                "before:select": ["queue-note.md"],
-                "pre-merge": ["merge-gate.md"],
-                "after:close": ["close-report.md"],
-            },
-        })
+        config = cfg.parse_config(
+            {
+                "extends": "keel",
+                "core_version": "^1.0",
+                "base_branch": "main",
+                "knobs": {"build_gate_cmd": "make test"},
+                "extensions": {
+                    "before:select": ["queue-note.md"],
+                    "pre-merge": ["merge-gate.md"],
+                    "after:close": ["close-report.md"],
+                },
+            }
+        )
         loaded = {
-            "before:select": [parse_extension(
-                "---\nid: queue-note\nslot: before:select\nkind: command\nrun: true\n---\n",
-                source="queue-note.md",
-            )],
-            "pre-merge": [parse_extension(
-                "---\nid: merge-gate\nslot: pre-merge\nkind: command\n"
-                "on_fail: block\nrun: true\n---\n",
-                source="merge-gate.md",
-            )],
-            "after:close": [parse_extension(
-                "---\nid: close-report\nslot: after:close\nkind: command\nrun: true\n---\n",
-                source="close-report.md",
-            )],
+            "before:select": [
+                parse_extension(
+                    "---\nid: queue-note\nslot: before:select\nkind: command\nrun: true\n---\n",
+                    source="queue-note.md",
+                )
+            ],
+            "pre-merge": [
+                parse_extension(
+                    "---\nid: merge-gate\nslot: pre-merge\nkind: command\n"
+                    "on_fail: block\nrun: true\n---\n",
+                    source="merge-gate.md",
+                )
+            ],
+            "after:close": [
+                parse_extension(
+                    "---\nid: close-report\nslot: after:close\nkind: command\nrun: true\n---\n",
+                    source="close-report.md",
+                )
+            ],
         }
 
         plan = orch.build_plan(config, loaded)

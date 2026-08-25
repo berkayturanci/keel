@@ -29,9 +29,7 @@ class TestCodexAdapter(unittest.TestCase):
     def test_hooks_json_points_to_repo_local_deny_hook(self):
         hooks = json.loads((CODEX_DIR / "hooks.json").read_text(encoding="utf-8"))
         commands = [
-            hook["command"]
-            for block in hooks["hooks"]["PreToolUse"]
-            for hook in block["hooks"]
+            hook["command"] for block in hooks["hooks"]["PreToolUse"] for hook in block["hooks"]
         ]
         self.assertIn("./.codex/hooks/deny-dangerous-shell.sh", commands)
         # Asked of git, not of the working tree. Windows does not model the
@@ -41,7 +39,10 @@ class TestCodexAdapter(unittest.TestCase):
         # `100755` — which is the same answer on every platform.
         entry = subprocess.run(
             ["git", "ls-files", "-s", "--", ".codex/hooks/deny-dangerous-shell.sh"],
-            cwd=HOOK.parents[2], capture_output=True, text=True, check=True,
+            cwd=HOOK.parents[2],
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout.split()
 
         self.assertTrue(entry, "the hook is not tracked, so no mode is recorded")

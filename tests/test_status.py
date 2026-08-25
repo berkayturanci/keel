@@ -40,8 +40,9 @@ def _checkpoint(**overrides):
 
 
 def _ledger_record(*, issue, pr, action="merge", blocked=False, capture_status="applied"):
-    outcome = SimpleNamespace(gate="build", ok=not blocked, skipped=False,
-                              timed_out=False, error=None, findings=[])
+    outcome = SimpleNamespace(
+        gate="build", ok=not blocked, skipped=False, timed_out=False, error=None, findings=[]
+    )
     verdict = SimpleNamespace(blocked=blocked, counts={"blocker": int(blocked)})
     merge = SimpleNamespace(action=action, reason=f"{action} reason")
     assessment = SimpleNamespace(
@@ -74,12 +75,9 @@ class TestStatusContract(unittest.TestCase):
         self.assertFalse(contract["realtime"])
         self.assertEqual(contract["snapshot_semantics"], "last-safe-boundary")
         self.assertTrue(contract["consumer_neutral"])
-        self.assertEqual(contract["source"]["checkpoint"]["schema_version"],
-                         "keel.checkpoint.v1")
-        self.assertEqual(contract["source"]["run_ledger"]["schema_version"],
-                         "keel.run-ledger.v1")
-        self.assertEqual(contract["capture_health"]["schema_version"],
-                         "keel.capture-health.v1")
+        self.assertEqual(contract["source"]["checkpoint"]["schema_version"], "keel.checkpoint.v1")
+        self.assertEqual(contract["source"]["run_ledger"]["schema_version"], "keel.run-ledger.v1")
+        self.assertEqual(contract["capture_health"]["schema_version"], "keel.capture-health.v1")
 
     def test_no_active_run_snapshot(self):
         snapshot = progress.build_status_snapshot(
@@ -193,12 +191,15 @@ class TestStatusContract(unittest.TestCase):
         )
 
         self.assertEqual(snapshot["status"], "completed")
-        self.assertEqual(snapshot["history"]["counts"], {
-            "shipped": 2,
-            "blocked": 1,
-            "deferred": 1,
-            "skipped": 1,
-        })
+        self.assertEqual(
+            snapshot["history"]["counts"],
+            {
+                "shipped": 2,
+                "blocked": 1,
+                "deferred": 1,
+                "skipped": 1,
+            },
+        )
         self.assertEqual(snapshot["history"]["items"][0]["state"], "shipped")
         self.assertEqual(snapshot["capture_health"]["counts"]["skipped"], 1)
 

@@ -502,8 +502,9 @@ def _reconcile_pr(
                 issue_numbers=issue_numbers,
                 marker=verification["marker"],
                 actions=[
-                    _action("close-linked-issue", pr_number=pr_number,
-                            issue_number=issue_numbers[0]),
+                    _action(
+                        "close-linked-issue", pr_number=pr_number, issue_number=issue_numbers[0]
+                    ),
                 ],
             )
         return _reconcile_result(
@@ -546,8 +547,9 @@ def _reconcile_pr(
     if marker_status == "skipped":
         actions.append(_action("record-skip", pr_number=pr_number, reason=marker_reason))
     if len(issue_numbers) == 1:
-        actions.append(_action("close-linked-issue", pr_number=pr_number,
-                               issue_number=issue_numbers[0]))
+        actions.append(
+            _action("close-linked-issue", pr_number=pr_number, issue_number=issue_numbers[0])
+        )
     return _reconcile_result(
         pr_number,
         status="actionable",
@@ -561,15 +563,15 @@ def _reconcile_pr(
 
 def _verify_pr(records: list[dict[str, Any]], pr_number: int) -> dict[str, Any]:
     candidates = [
-        record for record in records
+        record
+        for record in records
         if record.get("record_type") == "ship_run"
         and (record.get("pull_request") or {}).get("number") == pr_number
     ]
     markers = [
         capture_block.get("marker")
         for record in candidates
-        if isinstance(capture_block := record.get("capture"), dict)
-        and capture_block.get("marker")
+        if isinstance(capture_block := record.get("capture"), dict) and capture_block.get("marker")
     ]
     if len(markers) > 1:
         return {
@@ -848,13 +850,15 @@ def retrieve_relevant_learnings(
             lines = [line.strip() for line in content.splitlines() if line.strip()]
             title = lines[0].lstrip("#").strip() if lines else file_path.name
             summary = lines[1] if len(lines) > 1 else ""
-            results.append({
-                "file": file_path.name,
-                "path": str(file_path),
-                "title": title,
-                "summary": summary,
-                "score": score,
-            })
+            results.append(
+                {
+                    "file": file_path.name,
+                    "path": str(file_path),
+                    "title": title,
+                    "summary": summary,
+                    "score": score,
+                }
+            )
 
     results.sort(key=lambda r: (-r["score"], r["file"]))
     return results[:max_results]

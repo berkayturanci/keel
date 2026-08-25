@@ -102,9 +102,7 @@ class TestHandoffBuilder(unittest.TestCase):
             handoff["provenance"]["capability_scope"]["unknown_capabilities"],
             ["future-capability"],
         )
-        self.assertFalse(
-            handoff["provenance"]["capability_scope"]["can_expand_capabilities"]
-        )
+        self.assertFalse(handoff["provenance"]["capability_scope"]["can_expand_capabilities"])
 
     def test_unknown_step_fails_closed_by_raising(self):
         with self.assertRaises(KeyError):

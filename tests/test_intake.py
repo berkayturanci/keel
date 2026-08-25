@@ -215,5 +215,6 @@ class TestIssueIntake(unittest.TestCase):
         self.assertTrue(record["blockers"])
         self.assertTrue(record["work_block_policy"]["skip_when_not_ready"])
 
+
 if __name__ == "__main__":
     unittest.main()

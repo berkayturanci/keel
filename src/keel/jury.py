@@ -18,10 +18,13 @@ from .runner import CommandResult, run_argv
 
 #: ai-jury severities → keel severities (unknown ⇒ ``minor``).
 _SEVERITY = {
-    "critical": "critical", "blocker": "critical",
+    "critical": "critical",
+    "blocker": "critical",
     "major": "major",
     "minor": "minor",
-    "nit": "nit", "info": "nit", "note": "nit",
+    "nit": "nit",
+    "info": "nit",
+    "note": "nit",
 }
 
 MAX_DIFF_BYTES = 1_000_000
@@ -70,14 +73,16 @@ def _findings_from(data: dict) -> list[Finding]:
         path = f.get("file")
         line = f.get("line")
         line = line if isinstance(line, int) else None
-        out.append(Finding(
-            severity=map_severity(f.get("severity", "")),
-            message=f.get("claim") or "(jury finding)",
-            source=f"jury:{f.get('reviewer') or 'consensus'}",
-            path=path,
-            line=line,
-            anchorable=bool(path) and line is not None,
-        ))
+        out.append(
+            Finding(
+                severity=map_severity(f.get("severity", "")),
+                message=f.get("claim") or "(jury finding)",
+                source=f"jury:{f.get('reviewer') or 'consensus'}",
+                path=path,
+                line=line,
+                anchorable=bool(path) and line is not None,
+            )
+        )
     return out
 
 
@@ -90,9 +95,7 @@ def available(*, cwd: str | None = None, _run=None) -> bool:
     return run_argv(["jury", "--version"], cwd=cwd, timeout=30, **_kw(_run)).ok
 
 
-def _incomplete_finding(
-    result: CommandResult, *, timeout: int, severity: str = "nit"
-) -> Finding:
+def _incomplete_finding(result: CommandResult, *, timeout: int, severity: str = "nit") -> Finding:
     """Record that the jury CLI ran but produced no verdict.
 
     A timeout, or a nonzero exit whose output carries no parseable findings, means the
@@ -102,11 +105,12 @@ def _incomplete_finding(
     slow panel from a broken one.
     """
     if result.timed_out:
-        detail = (f"timed out after {timeout}s; no verdict was produced. Raise "
-                  "knobs.jury_timeout_s if the panel legitimately needs longer")
+        detail = (
+            f"timed out after {timeout}s; no verdict was produced. Raise "
+            "knobs.jury_timeout_s if the panel legitimately needs longer"
+        )
     else:
-        detail = (f"exited {result.code} without a parseable verdict; the panel did not "
-                  "complete")
+        detail = f"exited {result.code} without a parseable verdict; the panel did not complete"
     return Finding(
         severity=severity,
         message=f"jury run incomplete: the jury CLI {detail}.",
@@ -121,9 +125,11 @@ def _unreadable_diff_finding(*, severity: str = "minor") -> Finding:
     """Record that the diff itself could not be read, so no review was possible."""
     return Finding(
         severity=severity,
-        message=("jury could not run: the diff could not be read from git (is the base "
-                 "branch fetched locally? a shallow or single-branch clone cannot "
-                 "resolve base...HEAD). No review was performed."),
+        message=(
+            "jury could not run: the diff could not be read from git (is the base "
+            "branch fetched locally? a shallow or single-branch clone cannot "
+            "resolve base...HEAD). No review was performed."
+        ),
         source="jury:unreadable-diff",
         path=None,
         line=None,
@@ -140,8 +146,10 @@ def _oversize_finding(size: int, *, severity: str = "nit") -> Finding:
     """
     return Finding(
         severity=severity,
-        message=(f"jury skipped: diff is {size} bytes, over the {MAX_DIFF_BYTES}-byte "
-                 "limit (ai-jury large-diff chunking not applied)"),
+        message=(
+            f"jury skipped: diff is {size} bytes, over the {MAX_DIFF_BYTES}-byte "
+            "limit (ai-jury large-diff chunking not applied)"
+        ),
         source="jury:skipped-oversize",
         path=None,
         line=None,
@@ -184,8 +192,11 @@ def run_gate(
         # passing here would silently remove the review gate from the merge decision,
         # which is the same fail-open the verdict check below exists to prevent.
         gating = mode == "gating"
-        return (not gating), [_unreadable_diff_finding(
-            severity="major" if gating else "minor")], False
+        return (
+            (not gating),
+            [_unreadable_diff_finding(severity="major" if gating else "minor")],
+            False,
+        )
     if not diff_text:
         return True, [], False
     size = len(diff_text.encode("utf-8"))
@@ -199,8 +210,9 @@ def run_gate(
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(diff_text)
-        result = run_argv(["jury", "--format", "json", "--diff-file", path],
-                          cwd=cwd, timeout=timeout, **_kw(_run))
+        result = run_argv(
+            ["jury", "--format", "json", "--diff-file", path], cwd=cwd, timeout=timeout, **_kw(_run)
+        )
     finally:
         os.unlink(path)
     # stdout alone: ai-jury logs its progress (`[jury] …`) to stderr, and reading the
@@ -210,7 +222,8 @@ def run_gate(
     if report is None:
         gating = mode == "gating"
         incomplete = _incomplete_finding(
-            result, timeout=timeout, severity="major" if gating else "minor")
+            result, timeout=timeout, severity="major" if gating else "minor"
+        )
         # timed_out rides along so the outcome renders as TIMEOUT rather than FAIL,
         # the distinction #622 established for command gates.
         return (not gating), [incomplete], result.timed_out

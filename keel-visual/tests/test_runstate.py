@@ -11,8 +11,10 @@ def _record(*, action="merge", critical=0, major=0, minor=0, nit=0, issue=351, p
         "issue": {"number": issue},
         "pull_request": {"number": pr},
         "assessment": {"merge": {"action": action, "reason": "r"}},
-        "verdict": {"blocked": False, "counts": {
-            "critical": critical, "major": major, "minor": minor, "nit": nit}},
+        "verdict": {
+            "blocked": False,
+            "counts": {"critical": critical, "major": major, "minor": minor, "nit": nit},
+        },
     }
 
 
@@ -59,12 +61,25 @@ class TestCurrentStepFromCheckpoint(unittest.TestCase):
 
 class TestLiveStateFromCheckpoint(unittest.TestCase):
     def test_extracts_recognised_fields(self):
-        rec = {"state": {"merge": "merged", "capture": "applied", "close": "closed",
-                         "last_gate": "test", "jury_mode": "gating", "stop_reason": None}}
+        rec = {
+            "state": {
+                "merge": "merged",
+                "capture": "applied",
+                "close": "closed",
+                "last_gate": "test",
+                "jury_mode": "gating",
+                "stop_reason": None,
+            }
+        }
         self.assertEqual(
             rs.live_state_from_checkpoint(rec),
-            {"merge": "merged", "capture": "applied", "close": "closed",
-             "last_gate": "test", "jury_mode": "gating"},
+            {
+                "merge": "merged",
+                "capture": "applied",
+                "close": "closed",
+                "last_gate": "test",
+                "jury_mode": "gating",
+            },
         )
 
     def test_malformed(self):
@@ -82,9 +97,11 @@ def _outcome(groups=None, reviews=None):
 class TestJuryVerdictFromOutcome(unittest.TestCase):
     def test_bare_outcome_counts_and_blocking_verdict(self):
         data = _outcome(
-            groups=[{"severity": "major", "status": "verified"},
-                    {"severity": "minor", "status": ""},
-                    {"severity": "nit", "status": "verified"}],
+            groups=[
+                {"severity": "major", "status": "verified"},
+                {"severity": "minor", "status": ""},
+                {"severity": "nit", "status": "verified"},
+            ],
             reviews=[{"agent": "claude"}, {"agent": "codex"}, {"agent": "claude"}],
         )
         out = rs.jury_verdict_from_outcome(data)
@@ -93,16 +110,21 @@ class TestJuryVerdictFromOutcome(unittest.TestCase):
         self.assertEqual(out["reviewers"], 2)  # distinct agents, dupes collapse
 
     def test_cache_entry_wrapper_shape(self):
-        inner = _outcome(groups=[{"severity": "minor", "status": "verified"}],
-                         reviews=[{"agent": "claude"}])
+        inner = _outcome(
+            groups=[{"severity": "minor", "status": "verified"}], reviews=[{"agent": "claude"}]
+        )
         out = rs.jury_verdict_from_outcome({"cache_schema": 1, "outcome": inner, "mac": "x"})
         self.assertEqual(out["verdict"], "COMMENT")
         self.assertEqual(out["counts"]["minor"], 1)
         self.assertEqual(out["reviewers"], 1)
 
     def test_unsupported_groups_never_count_or_block(self):
-        data = _outcome(groups=[{"severity": "critical", "status": "unsupported"},
-                                {"severity": "major", "status": "unsupported"}])
+        data = _outcome(
+            groups=[
+                {"severity": "critical", "status": "unsupported"},
+                {"severity": "major", "status": "unsupported"},
+            ]
+        )
         out = rs.jury_verdict_from_outcome(data)
         self.assertEqual(out["verdict"], "APPROVE")
         self.assertEqual(out["counts"], {"critical": 0, "major": 0, "minor": 0, "nit": 0})
@@ -117,13 +139,27 @@ class TestJuryVerdictFromOutcome(unittest.TestCase):
     def test_unrecognised_shapes_are_none(self):
         # Neither a bare outcome (no "reviews") nor a cache entry (no "outcome"
         # dict) — includes a `--format json` report, which is neither.
-        for bad in (None, [], "x", 5, {}, {"outcome": "x"}, {"groups": []},
-                    {"schema_version": 1, "metadata": {}}):
+        for bad in (
+            None,
+            [],
+            "x",
+            5,
+            {},
+            {"outcome": "x"},
+            {"groups": []},
+            {"schema_version": 1, "metadata": {}},
+        ):
             self.assertIsNone(rs.jury_verdict_from_outcome(bad))
 
     def test_malformed_groups_and_severities_are_dropped(self):
-        data = _outcome(groups=["x", {"severity": 5}, {"severity": "info"},
-                                {"severity": "  MAJOR ", "status": "verified"}])
+        data = _outcome(
+            groups=[
+                "x",
+                {"severity": 5},
+                {"severity": "info"},
+                {"severity": "  MAJOR ", "status": "verified"},
+            ]
+        )
         out = rs.jury_verdict_from_outcome(data)
         self.assertEqual(out["counts"], {"critical": 0, "major": 1, "minor": 0, "nit": 0})
         self.assertEqual(out["verdict"], "REQUEST CHANGES")
@@ -133,8 +169,9 @@ class TestJuryVerdictFromOutcome(unittest.TestCase):
         self.assertEqual(out["verdict"], "APPROVE")
 
     def test_reviewers_dedup_and_drop_malformed(self):
-        data = _outcome(reviews=[{"agent": "a"}, {"agent": " a "}, {"agent": " "},
-                                 {"agent": 5}, "x"])
+        data = _outcome(
+            reviews=[{"agent": "a"}, {"agent": " a "}, {"agent": " "}, {"agent": 5}, "x"]
+        )
         self.assertEqual(rs.jury_verdict_from_outcome(data)["reviewers"], 1)
 
     def test_reviews_not_a_list_counts_zero(self):
@@ -143,9 +180,11 @@ class TestJuryVerdictFromOutcome(unittest.TestCase):
 
 
 class TestJuryVerdictInBuild(unittest.TestCase):
-    _SUMMARY = {"verdict": "REQUEST CHANGES",
-                "counts": {"critical": 0, "major": 1, "minor": 0, "nit": 0},
-                "reviewers": 3}
+    _SUMMARY = {
+        "verdict": "REQUEST CHANGES",
+        "counts": {"critical": 0, "major": 1, "minor": 0, "nit": 0},
+        "reviewers": 3,
+    }
 
     def test_passthrough_on_ship(self):
         st = rs.build_run_state(None, checkpoint_step="s7", jury_verdict=self._SUMMARY)
@@ -171,20 +210,27 @@ class TestJuryVerdictInBuild(unittest.TestCase):
             self.assertIsNone(st["jury_verdict"])
 
     def test_counts_and_reviewers_coerced(self):
-        raw = {"verdict": "APPROVE",
-               "counts": {"critical": -1, "major": "x", "minor": True},
-               "reviewers": "many"}
+        raw = {
+            "verdict": "APPROVE",
+            "counts": {"critical": -1, "major": "x", "minor": True},
+            "reviewers": "many",
+        }
         st = rs.build_run_state(None, checkpoint_step="s7", jury_verdict=raw)
-        self.assertEqual(st["jury_verdict"],
-                         {"verdict": "APPROVE",
-                          "counts": {"critical": 0, "major": 0, "minor": 0, "nit": 0},
-                          "reviewers": 0})
+        self.assertEqual(
+            st["jury_verdict"],
+            {
+                "verdict": "APPROVE",
+                "counts": {"critical": 0, "major": 0, "minor": 0, "nit": 0},
+                "reviewers": 0,
+            },
+        )
 
     def test_counts_block_not_a_dict(self):
         raw = {"verdict": "COMMENT", "counts": "x", "reviewers": 2}
         st = rs.build_run_state(None, checkpoint_step="s7", jury_verdict=raw)
-        self.assertEqual(st["jury_verdict"]["counts"],
-                         {"critical": 0, "major": 0, "minor": 0, "nit": 0})
+        self.assertEqual(
+            st["jury_verdict"]["counts"], {"critical": 0, "major": 0, "minor": 0, "nit": 0}
+        )
         self.assertEqual(st["jury_verdict"]["reviewers"], 2)
 
 
@@ -242,16 +288,17 @@ class TestJury(unittest.TestCase):
         self.assertNotIn("<", j["mode"])
 
     def test_mode_is_normalised_lowercase(self):
-        self.assertEqual(rs.jury_from_record({"run_context": {"jury_mode": "  GATING "}})["mode"],
-                         "gating")
+        self.assertEqual(
+            rs.jury_from_record({"run_context": {"jury_mode": "  GATING "}})["mode"], "gating"
+        )
 
     def test_missing_or_malformed(self):
         self.assertEqual(rs.jury_from_record(None), {"mode": None, "active": False})
         self.assertEqual(rs.jury_from_record({}), {"mode": None, "active": False})
+        self.assertEqual(rs.jury_from_record({"run_context": "x"}), {"mode": None, "active": False})
         self.assertEqual(
-            rs.jury_from_record({"run_context": "x"}), {"mode": None, "active": False})
-        self.assertEqual(
-            rs.jury_from_record({"run_context": {"jury_mode": 5}}), {"mode": None, "active": False})
+            rs.jury_from_record({"run_context": {"jury_mode": 5}}), {"mode": None, "active": False}
+        )
 
     def test_build_run_state_includes_active_jury(self):
         rec = {
@@ -271,10 +318,12 @@ class TestJury(unittest.TestCase):
         self.assertEqual(st["jury"], {"mode": None, "active": False})
 
     def test_jury_from_checkpoint_live(self):
-        self.assertEqual(rs.jury_from_checkpoint({"jury_mode": "advisory"}),
-                         {"mode": "advisory", "active": True})
-        self.assertEqual(rs.jury_from_checkpoint({"jury_mode": "off"}),
-                         {"mode": "off", "active": False})
+        self.assertEqual(
+            rs.jury_from_checkpoint({"jury_mode": "advisory"}), {"mode": "advisory", "active": True}
+        )
+        self.assertEqual(
+            rs.jury_from_checkpoint({"jury_mode": "off"}), {"mode": "off", "active": False}
+        )
         # missing / malformed -> inactive default (callers fall back to the ledger)
         self.assertEqual(rs.jury_from_checkpoint({}), {"mode": None, "active": False})
         self.assertEqual(rs.jury_from_checkpoint(None), {"mode": None, "active": False})
@@ -307,12 +356,20 @@ def _rich_record():
     rec["assessment"].update({"tier": 3, "window_open": True, "bypassed_window": False})
     rec["gates"] = [
         {"gate": "build", "ok": True, "skipped": False, "error": None, "finding_count": 0},
-        {"gate": "evidence", "ok": False, "skipped": False, "error": "no evidence",
-         "finding_count": 2},
+        {
+            "gate": "evidence",
+            "ok": False,
+            "skipped": False,
+            "error": "no evidence",
+            "finding_count": 2,
+        },
         {"gate": "jury", "ok": False, "skipped": True, "error": None, "finding_count": 0},
     ]
-    rec["actors"] = {"implementer": "agent:claude", "reviewers": ["agent:codex", "agent:gemini"],
-                     "tester": "agent:anthropic-api"}
+    rec["actors"] = {
+        "implementer": "agent:claude",
+        "reviewers": ["agent:codex", "agent:gemini"],
+        "tester": "agent:anthropic-api",
+    }
     rec["run_context"] = {"host_agent": "claude-code"}
     rec["changes"] = {"file_count": 4, "files": ["a.py"]}
     return rec
@@ -321,14 +378,35 @@ def _rich_record():
 class TestGatesFromRecord(unittest.TestCase):
     def test_projects_named_gates(self):
         gates = rs.gates_from_record(_rich_record())
-        self.assertEqual(gates, [
-            {"name": "build", "ok": True, "skipped": False, "timed_out": False,
-             "error": None, "finding_count": 0},
-            {"name": "evidence", "ok": False, "skipped": False, "timed_out": False,
-             "error": "no evidence", "finding_count": 2},
-            {"name": "jury", "ok": False, "skipped": True, "timed_out": False,
-             "error": None, "finding_count": 0},
-        ])
+        self.assertEqual(
+            gates,
+            [
+                {
+                    "name": "build",
+                    "ok": True,
+                    "skipped": False,
+                    "timed_out": False,
+                    "error": None,
+                    "finding_count": 0,
+                },
+                {
+                    "name": "evidence",
+                    "ok": False,
+                    "skipped": False,
+                    "timed_out": False,
+                    "error": "no evidence",
+                    "finding_count": 2,
+                },
+                {
+                    "name": "jury",
+                    "ok": False,
+                    "skipped": True,
+                    "timed_out": False,
+                    "error": None,
+                    "finding_count": 0,
+                },
+            ],
+        )
 
     def test_missing_or_malformed_block(self):
         self.assertEqual(rs.gates_from_record(None), [])
@@ -336,23 +414,58 @@ class TestGatesFromRecord(unittest.TestCase):
         self.assertEqual(rs.gates_from_record({"gates": "x"}), [])
 
     def test_drops_entries_without_a_usable_name(self):
-        gates = rs.gates_from_record({"gates": ["x", {}, {"gate": ""}, {"gate": 5},
-                                                {"gate": "lint", "ok": True}]})
+        gates = rs.gates_from_record(
+            {"gates": ["x", {}, {"gate": ""}, {"gate": 5}, {"gate": "lint", "ok": True}]}
+        )
         self.assertEqual([g["name"] for g in gates], ["lint"])
 
     def test_coerces_malformed_fields(self):
         # Non-bool ok/skipped, blank/non-str error, negative/bool counts — every
         # field degrades to its safe default instead of surfacing junk.
-        gates = rs.gates_from_record({"gates": [
-            {"gate": "build", "ok": "yes", "skipped": 1, "error": "  ", "finding_count": -1,
-             "timed_out": "yes"},
-            {"gate": "lint", "ok": True, "skipped": False, "error": 5, "finding_count": True},
-        ]})
-        self.assertEqual(gates[0], {"name": "build", "ok": False, "skipped": False,
-                                    "timed_out": False, "error": None, "finding_count": 0})
+        gates = rs.gates_from_record(
+            {
+                "gates": [
+                    {
+                        "gate": "build",
+                        "ok": "yes",
+                        "skipped": 1,
+                        "error": "  ",
+                        "finding_count": -1,
+                        "timed_out": "yes",
+                    },
+                    {
+                        "gate": "lint",
+                        "ok": True,
+                        "skipped": False,
+                        "error": 5,
+                        "finding_count": True,
+                    },
+                ]
+            }
+        )
+        self.assertEqual(
+            gates[0],
+            {
+                "name": "build",
+                "ok": False,
+                "skipped": False,
+                "timed_out": False,
+                "error": None,
+                "finding_count": 0,
+            },
+        )
         # A record written before the field existed simply reads as not-timed-out.
-        self.assertEqual(gates[1], {"name": "lint", "ok": True, "skipped": False,
-                                    "timed_out": False, "error": None, "finding_count": 0})
+        self.assertEqual(
+            gates[1],
+            {
+                "name": "lint",
+                "ok": True,
+                "skipped": False,
+                "timed_out": False,
+                "error": None,
+                "finding_count": 0,
+            },
+        )
 
 
 class TestLedgerFieldsInBuild(unittest.TestCase):
@@ -387,8 +500,7 @@ class TestLedgerFieldsInBuild(unittest.TestCase):
 
     def test_malformed_fields_degrade_to_none(self):
         rec = _record(action="defer")
-        rec["assessment"].update({"tier": "three", "window_open": "yes",
-                                  "bypassed_window": 1})
+        rec["assessment"].update({"tier": "three", "window_open": "yes", "bypassed_window": 1})
         rec["actors"] = {"reviewers": "agent:codex", "tester": "  "}
         rec["run_context"] = {"host_agent": 5}
         rec["changes"] = {"file_count": -2}
@@ -426,8 +538,7 @@ class TestLedgerFieldsInBuild(unittest.TestCase):
     def test_reviewers_list_drops_junk_entries(self):
         rec = _record(action="defer")
         rec["actors"] = {"reviewers": ["agent:codex", "", 5, "  ", "agent:gemini"]}
-        self.assertEqual(rs.build_run_state(rec)["reviewers"],
-                         ["agent:codex", "agent:gemini"])
+        self.assertEqual(rs.build_run_state(rec)["reviewers"], ["agent:codex", "agent:gemini"])
 
     def test_merge_reason_read_alongside_action(self):
         rec = _record(action="defer")
@@ -584,23 +695,42 @@ class RealLedgerRecordTests(unittest.TestCase):
 
         from keel import ledger
 
-        outcome = SimpleNamespace(gate="build", ok=True, skipped=False, timed_out=False,
-                                  error=None, findings=[])
-        failed = SimpleNamespace(gate="evidence", ok=False, skipped=False, timed_out=False,
-                                 error="missing verdict", findings=[object(), object()])
-        verdict = SimpleNamespace(counts={"critical": 0, "major": 1, "minor": 0, "nit": 0},
-                                  blocked=True)
+        outcome = SimpleNamespace(
+            gate="build", ok=True, skipped=False, timed_out=False, error=None, findings=[]
+        )
+        failed = SimpleNamespace(
+            gate="evidence",
+            ok=False,
+            skipped=False,
+            timed_out=False,
+            error="missing verdict",
+            findings=[object(), object()],
+        )
+        verdict = SimpleNamespace(
+            counts={"critical": 0, "major": 1, "minor": 0, "nit": 0}, blocked=True
+        )
         assessment = SimpleNamespace(
-            tier=3, reviewers=2, window_open=False, ci_ok=True, halted=False,
+            tier=3,
+            reviewers=2,
+            window_open=False,
+            ci_ok=True,
+            halted=False,
             bypassed_window=True,
             merge=SimpleNamespace(action="blocked", reason="window closed"),
         )
         return ledger.build_ship_run_record(
-            command="ship", base_branch="main", changed_files=["a.py", "b.py"],
-            outcomes=[outcome, failed], verdict=verdict, assessment=assessment,
-            issue_number=7, pr_number=9, branch="feat/x",
+            command="ship",
+            base_branch="main",
+            changed_files=["a.py", "b.py"],
+            outcomes=[outcome, failed],
+            verdict=verdict,
+            assessment=assessment,
+            issue_number=7,
+            pr_number=9,
+            branch="feat/x",
             implementer="anthropic-api:claude-sonnet-5",
-            reviewer_agents=["claude", "codex"], tester="claude",
+            reviewer_agents=["claude", "codex"],
+            tester="claude",
             host_agent="claude",
         )
 
@@ -616,10 +746,24 @@ class RealLedgerRecordTests(unittest.TestCase):
         self.assertEqual(state["host_agent"], "claude")
         self.assertEqual(
             state["gates"],
-            [{"name": "build", "ok": True, "skipped": False, "timed_out": False,
-              "error": None, "finding_count": 0},
-             {"name": "evidence", "ok": False, "skipped": False, "timed_out": False,
-              "error": "missing verdict", "finding_count": 2}],
+            [
+                {
+                    "name": "build",
+                    "ok": True,
+                    "skipped": False,
+                    "timed_out": False,
+                    "error": None,
+                    "finding_count": 0,
+                },
+                {
+                    "name": "evidence",
+                    "ok": False,
+                    "skipped": False,
+                    "timed_out": False,
+                    "error": "missing verdict",
+                    "finding_count": 2,
+                },
+            ],
         )
 
 
@@ -628,21 +772,27 @@ class JuryVerdictGateFidelityTests(unittest.TestCase):
     only VERIFIED critical/major blocks; unverified/disputed stays COMMENT."""
 
     def test_unverified_critical_is_comment_not_blocking(self):
-        data = {"reviews": [{"agent": "claude"}],
-                "groups": [{"severity": "critical", "status": ""}]}
+        data = {
+            "reviews": [{"agent": "claude"}],
+            "groups": [{"severity": "critical", "status": ""}],
+        }
         out = rs.jury_verdict_from_outcome(data)
         self.assertEqual(out["verdict"], "COMMENT")
         self.assertEqual(out["counts"]["critical"], 1)
 
     def test_disputed_critical_is_comment_not_blocking(self):
-        data = {"reviews": [{"agent": "claude"}],
-                "groups": [{"severity": "critical", "status": "needs_human_decision"}]}
+        data = {
+            "reviews": [{"agent": "claude"}],
+            "groups": [{"severity": "critical", "status": "needs_human_decision"}],
+        }
         out = rs.jury_verdict_from_outcome(data)
         self.assertEqual(out["verdict"], "COMMENT")
 
     def test_verified_major_blocks(self):
-        data = {"reviews": [{"agent": "claude"}],
-                "groups": [{"severity": "major", "status": "verified"}]}
+        data = {
+            "reviews": [{"agent": "claude"}],
+            "groups": [{"severity": "major", "status": "verified"}],
+        }
         out = rs.jury_verdict_from_outcome(data)
         self.assertEqual(out["verdict"], "REQUEST CHANGES")
 
@@ -653,12 +803,9 @@ class JuryVerdictGateFidelityTests(unittest.TestCase):
             "schema_version": "ai-jury.report.v1",
             "metadata": {"agents": [{"agent": "claude"}, {"agent": "codex"}]},
             "consensus": [
-                {"representative": {"severity": "major"},
-                 "verification_status": "verified"},
-                {"representative": {"severity": "minor"},
-                 "verification_status": None},
-                {"representative": {"severity": "critical"},
-                 "verification_status": "unsupported"},
+                {"representative": {"severity": "major"}, "verification_status": "verified"},
+                {"representative": {"severity": "minor"}, "verification_status": None},
+                {"representative": {"severity": "critical"}, "verification_status": "unsupported"},
             ],
             "verdict": "",
         }
@@ -668,8 +815,11 @@ class JuryVerdictGateFidelityTests(unittest.TestCase):
         self.assertEqual(out["reviewers"], 2)
 
     def test_report_shape_malformed_entries_skipped(self):
-        data = {"schema_version": "x", "consensus": ["junk", {"representative": None}],
-                "metadata": None}
+        data = {
+            "schema_version": "x",
+            "consensus": ["junk", {"representative": None}],
+            "metadata": None,
+        }
         out = rs.jury_verdict_from_outcome(data)
         self.assertEqual(out["verdict"], "APPROVE")
         self.assertEqual(out["reviewers"], 0)

@@ -101,9 +101,7 @@ class TheEndpointHostTable(unittest.TestCase):
         `169.254.169.254` never is. Checked in that order so the metadata guard
         runs first.
         """
-        self.assertEqual(
-            [], cfg.endpoint_issues("http://10.0.0.5/v1", where="p", env=INTERNAL_OK)
-        )
+        self.assertEqual([], cfg.endpoint_issues("http://10.0.0.5/v1", where="p", env=INTERNAL_OK))
         for url in ("http://169.254.169.254/", "http://2852039166/"):
             with self.subTest(url=url):
                 self.assertTrue(
@@ -116,8 +114,11 @@ class TheEndpointHostTable(unittest.TestCase):
         issues = cfg.endpoint_issues("http://10.0.0.5/v1", where="p", env=REMOTE_OK)
 
         self.assertTrue(issues)
-        self.assertIn(cfg.ALLOW_INTERNAL_ENDPOINT_ENV, issues[0],
-                      "the error should name the opt-out the operator needs")
+        self.assertIn(
+            cfg.ALLOW_INTERNAL_ENDPOINT_ENV,
+            issues[0],
+            "the error should name the opt-out the operator needs",
+        )
 
     def test_a_hostname_is_not_mistaken_for_an_address(self):
         # `_as_ip` must return None for names, or every hostname would be

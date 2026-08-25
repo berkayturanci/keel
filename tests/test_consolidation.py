@@ -65,23 +65,31 @@ def _write_raw(text):
 
 def _mcp_only_report() -> runtime.CapabilityReport:
     """A report whose only GitHub transport is MCP -> github_transport.resolve degrades."""
-    return runtime.CapabilityReport((
-        runtime.Capability("shell", True, "ok", "test"),
-        runtime.Capability("git", True, "ok", "test"),
-        runtime.Capability("worktree", True, "ok", "test"),
-        runtime.Capability("filesystem-write", True, "ok", "test"),
-        runtime.Capability("gh", False, "missing", "test"),
-        runtime.Capability("gh-auth", False, "missing", "test"),
-        runtime.Capability("github-mcp", True, "ok", "test"),
-    ))
+    return runtime.CapabilityReport(
+        (
+            runtime.Capability("shell", True, "ok", "test"),
+            runtime.Capability("git", True, "ok", "test"),
+            runtime.Capability("worktree", True, "ok", "test"),
+            runtime.Capability("filesystem-write", True, "ok", "test"),
+            runtime.Capability("gh", False, "missing", "test"),
+            runtime.Capability("gh-auth", False, "missing", "test"),
+            runtime.Capability("github-mcp", True, "ok", "test"),
+        )
+    )
 
 
 class TestCliPlanConsent(unittest.TestCase):
     def test_plan_bad_approve_scope_raises_value_error(self):
         # cli.py 106-108: _approved_scopes -> consent.normalize_scopes ValueError path.
         rc, _, err = run(
-            ["plan", str(PROJECTS / "example-android.yaml"), "--root", str(REPO_ROOT),
-             "--approve-scope", "bogus"]
+            [
+                "plan",
+                str(PROJECTS / "example-android.yaml"),
+                "--root",
+                str(REPO_ROOT),
+                "--approve-scope",
+                "bogus",
+            ]
         )
         self.assertEqual(rc, 1)
         self.assertIn("unknown consent scope", err)
@@ -91,15 +99,30 @@ class TestCliPlanConsent(unittest.TestCase):
             "extends: keel\ncore_version: '^0.6'\nbase_branch: main\n"
             "repo: tmp\ngates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
         )
-        with tempfile.TemporaryDirectory() as d, patch.dict(
-            os.environ,
-            {"KEEL_APPROVE_SCOPE": "filesystem,git,github", "KEEL_OPERATOR": "automation:cron"},
-            clear=False,
+        with (
+            tempfile.TemporaryDirectory() as d,
+            patch.dict(
+                os.environ,
+                {"KEEL_APPROVE_SCOPE": "filesystem,git,github", "KEEL_OPERATOR": "automation:cron"},
+                clear=False,
+            ),
         ):
-            rc, out, err = run([
-                "plan", p, "--root", d, "--command", "ship", "--live", "--json",
-                "--target", "nightly queue", "--consent-mode", "standing",
-            ])
+            rc, out, err = run(
+                [
+                    "plan",
+                    p,
+                    "--root",
+                    d,
+                    "--command",
+                    "ship",
+                    "--live",
+                    "--json",
+                    "--target",
+                    "nightly queue",
+                    "--consent-mode",
+                    "standing",
+                ]
+            )
         self.assertEqual(rc, 0, err)
         contract = json.loads(out)["contract"]
         self.assertEqual(contract["operator_consent"]["status"], "approved")
@@ -115,15 +138,28 @@ class TestCliPlanConsent(unittest.TestCase):
             "extends: keel\ncore_version: '^0.6'\nbase_branch: main\n"
             "repo: tmp\ngates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
         )
-        with tempfile.TemporaryDirectory() as d, patch.dict(
-            os.environ,
-            {"KEEL_APPROVE_SCOPE": "filesystem,git,github"},
-            clear=True,
+        with (
+            tempfile.TemporaryDirectory() as d,
+            patch.dict(
+                os.environ,
+                {"KEEL_APPROVE_SCOPE": "filesystem,git,github"},
+                clear=True,
+            ),
         ):
-            rc, _, err = run([
-                "plan", p, "--root", d, "--command", "ship", "--live", "--json",
-                "--consent-mode", "standing",
-            ])
+            rc, _, err = run(
+                [
+                    "plan",
+                    p,
+                    "--root",
+                    d,
+                    "--command",
+                    "ship",
+                    "--live",
+                    "--json",
+                    "--consent-mode",
+                    "standing",
+                ]
+            )
         self.assertEqual(rc, 1)
         self.assertIn("KEEL_OPERATOR is required", err)
 
@@ -137,10 +173,20 @@ class TestCliPlanConsent(unittest.TestCase):
             "gates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
         )
         with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {}, clear=True):
-            rc, out, err = run([
-                "plan", p, "--root", d, "--command", "ship", "--live", "--json",
-                "--target", "nightly queue",
-            ])
+            rc, out, err = run(
+                [
+                    "plan",
+                    p,
+                    "--root",
+                    d,
+                    "--command",
+                    "ship",
+                    "--live",
+                    "--json",
+                    "--target",
+                    "nightly queue",
+                ]
+            )
         self.assertEqual(rc, 0, err)
         contract = json.loads(out)["contract"]
         self.assertEqual(contract["operator_consent"]["status"], "approved")
@@ -160,9 +206,18 @@ class TestCliPlanConsent(unittest.TestCase):
             "gates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
         )
         with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {}, clear=True):
-            rc, _, err = run([
-                "plan", p, "--root", d, "--command", "ship", "--live", "--json",
-            ])
+            rc, _, err = run(
+                [
+                    "plan",
+                    p,
+                    "--root",
+                    d,
+                    "--command",
+                    "ship",
+                    "--live",
+                    "--json",
+                ]
+            )
         self.assertEqual(rc, 1)
         self.assertIn("automation.operator is required", err)
 
@@ -174,15 +229,30 @@ class TestCliPlanConsent(unittest.TestCase):
             "  operator: automation:nightly\n"
             "gates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
         )
-        with tempfile.TemporaryDirectory() as d, patch.dict(
-            os.environ,
-            {"KEEL_APPROVE_SCOPE": "filesystem,git,github", "KEEL_OPERATOR": "automation:cron"},
-            clear=False,
+        with (
+            tempfile.TemporaryDirectory() as d,
+            patch.dict(
+                os.environ,
+                {"KEEL_APPROVE_SCOPE": "filesystem,git,github", "KEEL_OPERATOR": "automation:cron"},
+                clear=False,
+            ),
         ):
-            rc, out, err = run([
-                "plan", p, "--root", d, "--command", "ship", "--live", "--json",
-                "--approve-scope", "filesystem,git,github", "--operator", "human",
-            ])
+            rc, out, err = run(
+                [
+                    "plan",
+                    p,
+                    "--root",
+                    d,
+                    "--command",
+                    "ship",
+                    "--live",
+                    "--json",
+                    "--approve-scope",
+                    "filesystem,git,github",
+                    "--operator",
+                    "human",
+                ]
+            )
         self.assertEqual(rc, 0, err)
         contract = json.loads(out)["contract"]
         self.assertEqual(contract["operator_consent"]["approval_source"], "flag")
@@ -194,10 +264,13 @@ class TestCliPlanConsent(unittest.TestCase):
             "extends: keel\ncore_version: '^0.6'\nbase_branch: main\n"
             "repo: tmp\ngates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
         )
-        with tempfile.TemporaryDirectory() as d, patch.dict(
-            os.environ,
-            {"KEEL_APPROVE_SCOPE": "bogus"},
-            clear=True,
+        with (
+            tempfile.TemporaryDirectory() as d,
+            patch.dict(
+                os.environ,
+                {"KEEL_APPROVE_SCOPE": "bogus"},
+                clear=True,
+            ),
         ):
             rc, out, err = run(["plan", p, "--root", d, "--command", "ship", "--json"])
         self.assertEqual(rc, 0, err)
@@ -210,10 +283,20 @@ class TestCliPlanConsent(unittest.TestCase):
             "repo: tmp\ngates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
         )
         with tempfile.TemporaryDirectory() as d:
-            rc, out, err = run([
-                "plan", p, "--root", d, "--command", "ship", "--live", "--json",
-                "--consent-mode", "agent",
-            ])
+            rc, out, err = run(
+                [
+                    "plan",
+                    p,
+                    "--root",
+                    d,
+                    "--command",
+                    "ship",
+                    "--live",
+                    "--json",
+                    "--consent-mode",
+                    "agent",
+                ]
+            )
         self.assertEqual(rc, 0, err)
         consent_block = json.loads(out)["contract"]["operator_consent"]
         self.assertEqual(consent_block["mode"], "agent")
@@ -238,18 +321,30 @@ class TestCliPlanConsent(unittest.TestCase):
             "extends: keel\ncore_version: '^0.6'\nbase_branch: main\n"
             "repo: tmp\ngates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
         )
-        with tempfile.TemporaryDirectory() as d, patch.dict(
-            os.environ,
-            {
-                "KEEL_CONSENT_MODE": "standing",
-                "KEEL_APPROVE_SCOPE": "filesystem,git,github",
-                "KEEL_OPERATOR": "automation:cron",
-            },
-            clear=True,
+        with (
+            tempfile.TemporaryDirectory() as d,
+            patch.dict(
+                os.environ,
+                {
+                    "KEEL_CONSENT_MODE": "standing",
+                    "KEEL_APPROVE_SCOPE": "filesystem,git,github",
+                    "KEEL_OPERATOR": "automation:cron",
+                },
+                clear=True,
+            ),
         ):
-            rc, out, err = run([
-                "plan", p, "--root", d, "--command", "ship", "--live", "--json",
-            ])
+            rc, out, err = run(
+                [
+                    "plan",
+                    p,
+                    "--root",
+                    d,
+                    "--command",
+                    "ship",
+                    "--live",
+                    "--json",
+                ]
+            )
         self.assertEqual(rc, 0, err)
         consent_block = json.loads(out)["contract"]["operator_consent"]
         self.assertEqual(consent_block["mode"], "standing")
@@ -261,10 +356,20 @@ class TestCliPlanConsent(unittest.TestCase):
             "repo: tmp\ngates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
         )
         with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {}, clear=True):
-            rc, out, _ = run([
-                "plan", p, "--root", d, "--command", "ship", "--live", "--json",
-                "--consent-mode", "standing",
-            ])
+            rc, out, _ = run(
+                [
+                    "plan",
+                    p,
+                    "--root",
+                    d,
+                    "--command",
+                    "ship",
+                    "--live",
+                    "--json",
+                    "--consent-mode",
+                    "standing",
+                ]
+            )
         self.assertEqual(rc, 1)
         consent_block = json.loads(out)["contract"]["operator_consent"]
         self.assertEqual(consent_block["mode"], "standing")
@@ -276,12 +381,26 @@ class TestCliPlanConsent(unittest.TestCase):
             "extends: keel\ncore_version: '^0.6'\nbase_branch: main\n"
             "repo: tmp\ngates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
         )
-        with tempfile.TemporaryDirectory() as d, patch.dict(
-            os.environ, {"KEEL_CONSENT_MODE": "maybe"}, clear=True,
+        with (
+            tempfile.TemporaryDirectory() as d,
+            patch.dict(
+                os.environ,
+                {"KEEL_CONSENT_MODE": "maybe"},
+                clear=True,
+            ),
         ):
-            rc, _, err = run([
-                "plan", p, "--root", d, "--command", "ship", "--live", "--json",
-            ])
+            rc, _, err = run(
+                [
+                    "plan",
+                    p,
+                    "--root",
+                    d,
+                    "--command",
+                    "ship",
+                    "--live",
+                    "--json",
+                ]
+            )
         self.assertEqual(rc, 1)
         self.assertIn("unknown consent mode", err)
 
@@ -290,10 +409,13 @@ class TestCliPlanConsent(unittest.TestCase):
             "extends: keel\ncore_version: '^0.6'\nbase_branch: main\n"
             "repo: tmp\ngates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
         )
-        with tempfile.TemporaryDirectory() as d, patch.dict(
-            os.environ,
-            {"KEEL_APPROVE_SCOPE": "bogus"},
-            clear=True,
+        with (
+            tempfile.TemporaryDirectory() as d,
+            patch.dict(
+                os.environ,
+                {"KEEL_APPROVE_SCOPE": "bogus"},
+                clear=True,
+            ),
         ):
             rc, out, err = run(["ci-check", p, "--root", d, "--json"])
         self.assertEqual(rc, 0, err)
@@ -305,14 +427,26 @@ class TestCliPlanConsent(unittest.TestCase):
             "extends: keel\ncore_version: '^0.6'\nbase_branch: main\n"
             "repo: tmp\ngates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
         )
-        with tempfile.TemporaryDirectory() as d, patch.dict(
-            os.environ,
-            {"KEEL_CONSENT_MODE": "standing", "KEEL_APPROVE_SCOPE": "bogus"},
-            clear=True,
+        with (
+            tempfile.TemporaryDirectory() as d,
+            patch.dict(
+                os.environ,
+                {"KEEL_CONSENT_MODE": "standing", "KEEL_APPROVE_SCOPE": "bogus"},
+                clear=True,
+            ),
         ):
-            rc, out, err = run([
-                "plan", p, "--root", d, "--command", "ci-check", "--live", "--json",
-            ])
+            rc, out, err = run(
+                [
+                    "plan",
+                    p,
+                    "--root",
+                    d,
+                    "--command",
+                    "ci-check",
+                    "--live",
+                    "--json",
+                ]
+            )
         self.assertEqual(rc, 0, err)
         consent_block = json.loads(out)["contract"]["operator_consent"]
         self.assertEqual(consent_block["status"], "not-required-read-only")
@@ -328,9 +462,18 @@ class TestCliPlanConsent(unittest.TestCase):
             "gates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
         )
         with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {}, clear=True):
-            rc, out, err = run([
-                "plan", p, "--root", d, "--command", "ci-check", "--live", "--json",
-            ])
+            rc, out, err = run(
+                [
+                    "plan",
+                    p,
+                    "--root",
+                    d,
+                    "--command",
+                    "ci-check",
+                    "--live",
+                    "--json",
+                ]
+            )
         self.assertEqual(rc, 0, err)
         consent_block = json.loads(out)["contract"]["operator_consent"]
         self.assertEqual(consent_block["status"], "not-required-read-only")
@@ -355,17 +498,28 @@ class TestCliPlanConsent(unittest.TestCase):
             "extends: keel\ncore_version: '^0.6'\nbase_branch: main\n"
             "repo: tmp\ngates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
         )
-        with tempfile.TemporaryDirectory() as d, patch.dict(
-            os.environ,
-            _isolated_env(
-                KEEL_APPROVE_SCOPE="filesystem,git,github", KEEL_OPERATOR="automation:cron"
+        with (
+            tempfile.TemporaryDirectory() as d,
+            patch.dict(
+                os.environ,
+                _isolated_env(
+                    KEEL_APPROVE_SCOPE="filesystem,git,github", KEEL_OPERATOR="automation:cron"
+                ),
+                clear=True,
             ),
-            clear=True,
         ):
-            rc, out, err = run([
-                "overnight", p, "--root", d, "--live", "--json",
-                "--consent-mode", "standing",
-            ])
+            rc, out, err = run(
+                [
+                    "overnight",
+                    p,
+                    "--root",
+                    d,
+                    "--live",
+                    "--json",
+                    "--consent-mode",
+                    "standing",
+                ]
+            )
         self.assertEqual(rc, 0, err)
         consent_block = json.loads(out)["contract"]["operator_consent"]
         self.assertEqual(consent_block["status"], "approved")
@@ -427,8 +581,9 @@ class TestCliShipConsent(unittest.TestCase):
 
     def test_ship_human_degraded_transport_reports_degraded(self):
         # cli.py 318: ship human output with a DEGRADED (mcp) transport.
-        with tempfile.TemporaryDirectory() as d, patch(
-            "keel.cli.runtime.detect", return_value=_mcp_only_report()
+        with (
+            tempfile.TemporaryDirectory() as d,
+            patch("keel.cli.runtime.detect", return_value=_mcp_only_report()),
         ):
             p = _write_raw(
                 "extends: keel\ncore_version: '^0.6'\nbase_branch: main\n"
@@ -442,16 +597,19 @@ class TestCliShipConsent(unittest.TestCase):
     def test_ship_human_non_degraded_transport(self):
         # cli.py 317->319: ship human output with a NON-degraded (gh) transport, so the
         # `if transport.degraded` branch is skipped.
-        report = runtime.CapabilityReport((
-            runtime.Capability("shell", True, "ok", "test"),
-            runtime.Capability("git", True, "ok", "test"),
-            runtime.Capability("worktree", True, "ok", "test"),
-            runtime.Capability("filesystem-write", True, "ok", "test"),
-            runtime.Capability("gh", True, "ok", "test"),
-            runtime.Capability("gh-auth", True, "ok", "test"),
-        ))
-        with tempfile.TemporaryDirectory() as d, patch(
-            "keel.cli.runtime.detect", return_value=report
+        report = runtime.CapabilityReport(
+            (
+                runtime.Capability("shell", True, "ok", "test"),
+                runtime.Capability("git", True, "ok", "test"),
+                runtime.Capability("worktree", True, "ok", "test"),
+                runtime.Capability("filesystem-write", True, "ok", "test"),
+                runtime.Capability("gh", True, "ok", "test"),
+                runtime.Capability("gh-auth", True, "ok", "test"),
+            )
+        )
+        with (
+            tempfile.TemporaryDirectory() as d,
+            patch("keel.cli.runtime.detect", return_value=report),
         ):
             p = _write_raw(
                 "extends: keel\ncore_version: '^0.6'\nbase_branch: main\n"
@@ -567,9 +725,7 @@ class TestInstallSplitMarker(unittest.TestCase):
 class TestRuntimeRenderBranch(unittest.TestCase):
     def test_render_with_required_missing_and_no_optional(self):
         # runtime.py 137->139: missing_required present while missing_optional is empty.
-        report = runtime.CapabilityReport((
-            runtime.Capability("git", False, "missing", "test"),
-        ))
+        report = runtime.CapabilityReport((runtime.Capability("git", False, "missing", "test"),))
         req = runtime.CapabilityRequirement(required=("git",))
         evaluation = runtime.evaluate(req, report)
         rendered = evaluation.render()

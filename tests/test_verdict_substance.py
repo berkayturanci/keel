@@ -139,7 +139,8 @@ class TheCanonicalTemplateDoesNotSatisfyTheGateByDefault(unittest.TestCase):
 
     def test_a_named_scope_is_enough(self):
         body = artifacts.render_review_verdict(
-            reviewer="r", head_sha="abc123",
+            reviewer="r",
+            head_sha="abc123",
             scope="src/keel/config.py and tests/test_config.py",
         )
 
@@ -149,9 +150,9 @@ class TheCanonicalTemplateDoesNotSatisfyTheGateByDefault(unittest.TestCase):
 
     def test_a_real_finding_is_enough(self):
         body = artifacts.render_review_verdict(
-            reviewer="r", head_sha="abc123",
-            findings=[{"severity": "minor",
-                       "message": "`_as_ip` returns None for names"}],
+            reviewer="r",
+            head_sha="abc123",
+            findings=[{"severity": "minor", "message": "`_as_ip` returns None for names"}],
         )
 
         ok, _ = evidence.verdict_substance(body, pr_title=TITLE)
@@ -169,6 +170,7 @@ class TheGateHoldsWithAReason(unittest.TestCase):
 
     def _verify(self, bodies, *, title=TITLE):
         from keel import ship
+
         contract = ship.resolve_review_contract(tier=1)
         return evidence.verify(
             contract,
@@ -183,8 +185,9 @@ class TheGateHoldsWithAReason(unittest.TestCase):
 
         ids = [f["id"] for f in report["findings"]]
         self.assertIn("review-verdict-insubstantial", ids)
-        message = next(f["message"] for f in report["findings"]
-                       if f["id"] == "review-verdict-insubstantial")
+        message = next(
+            f["message"] for f in report["findings"] if f["id"] == "review-verdict-insubstantial"
+        )
         self.assertIn("reviewer:r", message, "the finding should name the reviewer")
 
     def test_a_substantial_verdict_produces_no_finding(self):
@@ -200,10 +203,12 @@ class TheGateHoldsWithAReason(unittest.TestCase):
         counted and not held — otherwise the only way out of a bad first comment
         is a new identity.
         """
-        report = self._verify([
-            HEADER + OBSERVED[0],
-            HEADER + "src/keel/config.py:557 checks the denylist first.",
-        ])
+        report = self._verify(
+            [
+                HEADER + OBSERVED[0],
+                HEADER + "src/keel/config.py:557 checks the denylist first.",
+            ]
+        )
 
         ids = [f["id"] for f in report["findings"]]
         self.assertNotIn("review-verdict-insubstantial", ids)

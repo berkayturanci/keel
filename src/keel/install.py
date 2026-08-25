@@ -115,7 +115,7 @@ def _split_marker(text: str) -> tuple[str, dict[str, str]]:
     match = MARKER_RE.search(text)
     if not match:
         return text, {}
-    body = text[:match.start()].rstrip() + "\n"
+    body = text[: match.start()].rstrip() + "\n"
     meta: dict[str, str] = {}
     for part in match.group("meta").split():
         if "=" in part:
@@ -176,8 +176,9 @@ def render_skill(adapter_text: str, command: str) -> str:
     meta, body = _split_frontmatter(adapter_text)
     desc = " ".join(str(meta.get("description", f"keel {command} workflow")).split())
     name = f"{SKILL_PREFIX}{command}"
-    front = yaml.dump({"name": name, "description": desc},
-                           sort_keys=False, allow_unicode=True, width=10**9).strip()
+    front = yaml.dump(
+        {"name": name, "description": desc}, sort_keys=False, allow_unicode=True, width=10**9
+    ).strip()
     intro = (
         f"Use this skill when the user asks to run the keel command `{command}` "
         f"(e.g. `keel {command} ...`, `{command} <args>`, or `/keel:{command}`). It reads every "
@@ -212,8 +213,9 @@ def render_legacy_skill_wrapper(legacy_command: str, keel_command: str) -> str:
         f"Compatibility wrapper for the legacy `{legacy_command}` command; delegates to "
         f"`/keel:{keel_command}` and the `keel-{keel_command}` skill without changing flags."
     )
-    front = yaml.dump({"name": name, "description": desc},
-                           sort_keys=False, allow_unicode=True, width=10**9).strip()
+    front = yaml.dump(
+        {"name": name, "description": desc}, sort_keys=False, allow_unicode=True, width=10**9
+    ).strip()
     return (
         f"---\n{front}\n---\n\n"
         f"# {name}\n\n"
@@ -359,8 +361,9 @@ def install_legacy_wrappers(
             skipped.append(name)
             continue
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(_with_marker(surface, command, source_text, generated_text),
-                        encoding="utf-8")
+        dest.write_text(
+            _with_marker(surface, command, source_text, generated_text), encoding="utf-8"
+        )
         installed.append(name)
     return installed, skipped
 
@@ -401,8 +404,7 @@ def _install_commands(
             skipped.append(f.name)
             continue
         source_text = f.read_text(encoding="utf-8")
-        dest.write_text(_with_marker("claude", f.stem, source_text, source_text),
-                        encoding="utf-8")
+        dest.write_text(_with_marker("claude", f.stem, source_text, source_text), encoding="utf-8")
         installed.append(f.name)
     return installed, skipped
 
@@ -423,8 +425,7 @@ def _install_skills(
         dest.parent.mkdir(parents=True, exist_ok=True)
         source_text = f.read_text(encoding="utf-8")
         rendered = render_skill(source_text, f.stem)
-        dest.write_text(_with_marker("skills", f.stem, source_text, rendered),
-                        encoding="utf-8")
+        dest.write_text(_with_marker("skills", f.stem, source_text, rendered), encoding="utf-8")
         installed.append(name)
     return installed, skipped
 
@@ -520,35 +521,70 @@ def adapter_status(
                 # never opted in. Installed legacy wrappers are still freshness-checked.
                 if surface == "legacy-claude":
                     continue
-                rows.append(AdapterFileStatus(surface, name, str(rel), "missing",
-                                              expected_sha256=expected_hash,
-                                              source_sha256=source_hash))
+                rows.append(
+                    AdapterFileStatus(
+                        surface,
+                        name,
+                        str(rel),
+                        "missing",
+                        expected_sha256=expected_hash,
+                        source_sha256=source_hash,
+                    )
+                )
                 continue
             body, marker = _split_marker(path.read_text(encoding="utf-8"))
             installed_hash = _sha256(body)
             if not marker:
-                rows.append(AdapterFileStatus(surface, name, str(rel), "unknown",
-                                              "missing keel-generated marker",
-                                              installed_sha256=installed_hash,
-                                              expected_sha256=expected_hash,
-                                              source_sha256=source_hash))
+                rows.append(
+                    AdapterFileStatus(
+                        surface,
+                        name,
+                        str(rel),
+                        "unknown",
+                        "missing keel-generated marker",
+                        installed_sha256=installed_hash,
+                        expected_sha256=expected_hash,
+                        source_sha256=source_hash,
+                    )
+                )
             elif installed_hash != marker.get("generated_sha256"):
-                rows.append(AdapterFileStatus(surface, name, str(rel), "locally-modified",
-                                              "generated file changed after install",
-                                              installed_sha256=installed_hash,
-                                              expected_sha256=expected_hash,
-                                              source_sha256=source_hash))
+                rows.append(
+                    AdapterFileStatus(
+                        surface,
+                        name,
+                        str(rel),
+                        "locally-modified",
+                        "generated file changed after install",
+                        installed_sha256=installed_hash,
+                        expected_sha256=expected_hash,
+                        source_sha256=source_hash,
+                    )
+                )
             elif marker.get("source_sha256") != source_hash or installed_hash != expected_hash:
-                rows.append(AdapterFileStatus(surface, name, str(rel), "outdated",
-                                              "packaged adapter source changed",
-                                              installed_sha256=installed_hash,
-                                              expected_sha256=expected_hash,
-                                              source_sha256=source_hash))
+                rows.append(
+                    AdapterFileStatus(
+                        surface,
+                        name,
+                        str(rel),
+                        "outdated",
+                        "packaged adapter source changed",
+                        installed_sha256=installed_hash,
+                        expected_sha256=expected_hash,
+                        source_sha256=source_hash,
+                    )
+                )
             else:
-                rows.append(AdapterFileStatus(surface, name, str(rel), "current",
-                                              installed_sha256=installed_hash,
-                                              expected_sha256=expected_hash,
-                                              source_sha256=source_hash))
+                rows.append(
+                    AdapterFileStatus(
+                        surface,
+                        name,
+                        str(rel),
+                        "current",
+                        installed_sha256=installed_hash,
+                        expected_sha256=expected_hash,
+                        source_sha256=source_hash,
+                    )
+                )
         out[surface] = rows
     return out
 
@@ -586,7 +622,7 @@ def _surface_command_from_name(surface: str, name: str) -> str:
         parent = Path(name).parent.name
         for prefix in (SKILL_PREFIX, LEGACY_SKILL_PREFIX):
             if parent.startswith(prefix):
-                return parent[len(prefix):]
+                return parent[len(prefix) :]
         return parent
     return stem
 
@@ -628,12 +664,16 @@ def scan_surface_orphans(
                 command = marker.get("command", "")
                 if command in known_commands:
                     continue  # a recognised, managed surface — not an orphan.
-                out.append(OrphanFileStatus(
-                    surface, name, str(path.relative_to(root_path).as_posix()),
-                    ORPHAN_STALE_MARKER,
-                    f"stale-marker: command {command!r} not in installed keel",
-                    command,
-                ))
+                out.append(
+                    OrphanFileStatus(
+                        surface,
+                        name,
+                        str(path.relative_to(root_path).as_posix()),
+                        ORPHAN_STALE_MARKER,
+                        f"stale-marker: command {command!r} not in installed keel",
+                        command,
+                    )
+                )
                 continue
             # no marker: heuristic, opt-in only.
             if not include_unmanaged:
@@ -641,12 +681,16 @@ def scan_surface_orphans(
             command = _surface_command_from_name(surface, name)
             if command in project_only:
                 continue  # declared project-only command — never flagged.
-            out.append(OrphanFileStatus(
-                surface, name, str(path.relative_to(root_path).as_posix()),
-                UNMANAGED_NO_MARKER,
-                "no-marker: command-like surface not keel-managed",
-                command,
-            ))
+            out.append(
+                OrphanFileStatus(
+                    surface,
+                    name,
+                    str(path.relative_to(root_path).as_posix()),
+                    UNMANAGED_NO_MARKER,
+                    "no-marker: command-like surface not keel-managed",
+                    command,
+                )
+            )
     return out
 
 
@@ -672,12 +716,14 @@ def scan_adapter_markers(root: str | Path) -> list[dict[str, str]]:
             _body, marker = _split_marker(path.read_text(encoding="utf-8"))
             if not marker:
                 continue
-            out.append({
-                "surface": surface,
-                "name": path.relative_to(base).as_posix(),
-                "command": marker.get("command", ""),
-                "keel_version": marker.get("keel_version", ""),
-            })
+            out.append(
+                {
+                    "surface": surface,
+                    "name": path.relative_to(base).as_posix(),
+                    "command": marker.get("command", ""),
+                    "keel_version": marker.get("keel_version", ""),
+                }
+            )
     return out
 
 
@@ -709,12 +755,19 @@ def update_adapters(
             if not dry_run:
                 path = root_path / rel
                 path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(_with_marker(surface, command, source_text, generated_text),
-                                encoding="utf-8")
-            updated[surface].append(AdapterFileStatus(surface, name, str(rel), "would-update"
-                                                      if dry_run else "updated",
-                                                      row.detail,
-                                                      source_sha256=row.source_sha256,
-                                                      installed_sha256=row.installed_sha256,
-                                                      expected_sha256=row.expected_sha256))
+                path.write_text(
+                    _with_marker(surface, command, source_text, generated_text), encoding="utf-8"
+                )
+            updated[surface].append(
+                AdapterFileStatus(
+                    surface,
+                    name,
+                    str(rel),
+                    "would-update" if dry_run else "updated",
+                    row.detail,
+                    source_sha256=row.source_sha256,
+                    installed_sha256=row.installed_sha256,
+                    expected_sha256=row.expected_sha256,
+                )
+            )
     return updated

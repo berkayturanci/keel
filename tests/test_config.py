@@ -68,9 +68,15 @@ class TestSeedConfigs(unittest.TestCase):
 
     def test_example_flutter_has_no_android_leak(self):
         config = cfg.load_config(PROJECTS_DIR / "example-flutter.yaml")
-        blob = (config.knobs.build_gate_cmd + " " + (config.knobs.lint_cmd or "")
-                + " " + " ".join(config.knobs.tier3_globs)
-                + " " + " ".join(config.knobs.implementer_agents.values())).lower()
+        blob = (
+            config.knobs.build_gate_cmd
+            + " "
+            + (config.knobs.lint_cmd or "")
+            + " "
+            + " ".join(config.knobs.tier3_globs)
+            + " "
+            + " ".join(config.knobs.implementer_agents.values())
+        ).lower()
         for foreign in ("gradle", "kotlin", "realm", "android"):
             self.assertNotIn(foreign, blob, f"foreign token {foreign!r} leaked in")
 
@@ -153,13 +159,15 @@ class TestParse(unittest.TestCase):
                 "role": ["app", "service"],
             },
             "status_transitions": {"done": "status:done"},
-            "risk_rules": [{
-                "id": "data-migration",
-                "paths": ["migrations/**"],
-                "required_gates": ["migration-check"],
-                "review_additions": ["Check rollback safety."],
-                "docs_required": True,
-            }],
+            "risk_rules": [
+                {
+                    "id": "data-migration",
+                    "paths": ["migrations/**"],
+                    "required_gates": ["migration-check"],
+                    "review_additions": ["Check rollback safety."],
+                    "docs_required": True,
+                }
+            ],
             "test_groups": {
                 "app": {
                     "command": "./tools/test-app",
@@ -228,13 +236,13 @@ class TestParse(unittest.TestCase):
         self.assertEqual(config.policy_pack["name"], "example-service")
         self.assertEqual(config.policy_pack["labels"]["role"], ["app", "service"])
         self.assertEqual(config.policy_pack["risk_rules"][0]["id"], "data-migration")
-        self.assertEqual(config.policy_pack["test_groups"]["app"]["command"],
-                         "./tools/test-app")
+        self.assertEqual(config.policy_pack["test_groups"]["app"]["command"], "./tools/test-app")
         self.assertEqual(config.policy_pack["scan"]["areas"]["app"], ["src/app/**"])
-        self.assertEqual(config.policy_pack["project_commands"]["device-smoke"]["command"],
-                         ".keel/commands/device-smoke")
-        self.assertEqual(config.policy_pack["capture"]["learning"]["mode"],
-                         "create-learning")
+        self.assertEqual(
+            config.policy_pack["project_commands"]["device-smoke"]["command"],
+            ".keel/commands/device-smoke",
+        )
+        self.assertEqual(config.policy_pack["capture"]["learning"]["mode"], "create-learning")
 
     def test_policy_pack_required_fields_fail_validation(self):
         bad = copy.deepcopy(VALID)
@@ -351,8 +359,10 @@ class TestParse(unittest.TestCase):
         # that has not adopted the knob gets a spurious cache/determinism churn.
         data = copy.deepcopy(VALID)
         data["knobs"]["jury_timeout_s"] = 600
-        self.assertEqual(cfg.config_hash(cfg.parse_config(copy.deepcopy(VALID))),
-                         cfg.config_hash(cfg.parse_config(data)))
+        self.assertEqual(
+            cfg.config_hash(cfg.parse_config(copy.deepcopy(VALID))),
+            cfg.config_hash(cfg.parse_config(data)),
+        )
 
     def test_jury_timeout_changes_config_hash(self):
         base = cfg.parse_config(copy.deepcopy(VALID))
@@ -439,8 +449,12 @@ class TestOpenAICompatibleEndpointGuard(unittest.TestCase):
         return cfg.endpoint_issues(endpoint, where="p.router", env=env or {})
 
     def test_loopback_is_allowed_without_any_opt_in(self):
-        for endpoint in ("http://localhost:11434/v1", "http://127.0.0.1:8000/v1",
-                         "http://[::1]:8000/v1", "https://localhost/v1"):
+        for endpoint in (
+            "http://localhost:11434/v1",
+            "http://127.0.0.1:8000/v1",
+            "http://[::1]:8000/v1",
+            "https://localhost/v1",
+        ):
             with self.subTest(endpoint=endpoint):
                 self.assertEqual(self._issues(endpoint), [])
 
@@ -474,13 +488,10 @@ class TestOpenAICompatibleEndpointGuard(unittest.TestCase):
         ):
             with self.subTest(endpoint=endpoint):
                 self.assertNotEqual(self._issues(endpoint), [])
-                self.assertEqual(
-                    self._issues(endpoint, {cfg.ALLOW_REMOTE_ENDPOINT_ENV: "1"}), []
-                )
+                self.assertEqual(self._issues(endpoint, {cfg.ALLOW_REMOTE_ENDPOINT_ENV: "1"}), [])
 
     def test_non_http_schemes_are_refused(self):
-        for endpoint in ("file:///etc/passwd", "ftp://host/x", "gopher://host/",
-                         "//host/x"):
+        for endpoint in ("file:///etc/passwd", "ftp://host/x", "gopher://host/", "//host/x"):
             with self.subTest(endpoint=endpoint):
                 issues = self._issues(endpoint, {cfg.ALLOW_REMOTE_ENDPOINT_ENV: "1"})
                 self.assertEqual(len(issues), 1)
@@ -511,8 +522,11 @@ class TestOpenAICompatibleKeyEnv(unittest.TestCase):
         return data
 
     def _profile(self, **over):
-        base = {"vendor": "openai-compatible",
-                "endpoint": "http://localhost:1/v1", "api_key_env": "OPENAI_API_KEY"}
+        base = {
+            "vendor": "openai-compatible",
+            "endpoint": "http://localhost:1/v1",
+            "api_key_env": "OPENAI_API_KEY",
+        }
         base.update(over)
         return self._with({"router": base})
 
@@ -548,8 +562,15 @@ class TestOpenAICompatibleKeyEnv(unittest.TestCase):
         becomes an Authorization header, so a well-formed name is not the
         question — whether it was created to hold a model-API key is.
         """
-        for name in ("MY_KEY_2", "_PRIVATE", "VAULT_TOKEN", "KUBECONFIG",
-                     "DATABASE_URL", "STRIPE_SECRET_KEY", "AZURE_CLIENT_SECRET"):
+        for name in (
+            "MY_KEY_2",
+            "_PRIVATE",
+            "VAULT_TOKEN",
+            "KUBECONFIG",
+            "DATABASE_URL",
+            "STRIPE_SECRET_KEY",
+            "AZURE_CLIENT_SECRET",
+        ):
             with self.subTest(name=name):
                 with self.assertRaises(cfg.ConfigError) as ctx:
                     cfg.parse_config(self._profile(api_key_env=name))
@@ -574,9 +595,9 @@ class TestOpenAICompatibleKeyEnv(unittest.TestCase):
     def test_the_key_name_is_published_but_a_key_would_be_too(self):
         # The contract carries api_key_env verbatim, which is exactly why it must
         # be a name: this dict is emitted publicly and hashed into config_hash.
-        serialised = contracts.project_as_dict(
-            cfg.parse_config(self._profile())
-        )["knobs"]["delegate_profiles"]["router"]
+        serialised = contracts.project_as_dict(cfg.parse_config(self._profile()))["knobs"][
+            "delegate_profiles"
+        ]["router"]
         self.assertEqual(serialised["api_key_env"], "OPENAI_API_KEY")
         self.assertEqual(serialised["endpoint"], "http://localhost:1/v1")
 
@@ -594,43 +615,63 @@ class TestDelegateProfiles(unittest.TestCase):
         self.assertEqual(cfg.parse_config(copy.deepcopy(VALID)).knobs.delegate_profiles, {})
 
     def test_full_profile_parses(self):
-        config = cfg.parse_config(self._with({
-            "cursor": {
-                "vendor": "cli",
-                "command": "cursor-agent",
-                "prompt_mode": "arg",
-                "model": "composer-1",
-            },
-        }))
+        config = cfg.parse_config(
+            self._with(
+                {
+                    "cursor": {
+                        "vendor": "cli",
+                        "command": "cursor-agent",
+                        "prompt_mode": "arg",
+                        "model": "composer-1",
+                    },
+                }
+            )
+        )
         profile = config.knobs.delegate_profiles["cursor"]
-        self.assertEqual(profile, cfg.DelegateProfile(vendor="cli", command="cursor-agent",
-                                              prompt_mode="arg", model="composer-1"))
+        self.assertEqual(
+            profile,
+            cfg.DelegateProfile(
+                vendor="cli", command="cursor-agent", prompt_mode="arg", model="composer-1"
+            ),
+        )
 
     def test_prompt_mode_defaults_to_stdin(self):
         # The existing "pipe via stdin" guidance stays the norm; `arg` is the opt-in.
-        config = cfg.parse_config(self._with({
-            "gemini-cli": {"vendor": "cli", "command": "gemini"},
-        }))
+        config = cfg.parse_config(
+            self._with(
+                {
+                    "gemini-cli": {"vendor": "cli", "command": "gemini"},
+                }
+            )
+        )
         profile = config.knobs.delegate_profiles["gemini-cli"]
         self.assertEqual(profile.prompt_mode, cfg.DEFAULT_PROMPT_MODE)
         self.assertEqual(profile.prompt_mode, "stdin")
         self.assertIsNone(profile.model)
 
     def test_explicit_null_model_parses(self):
-        config = cfg.parse_config(self._with({
-            "cursor": {"vendor": "cli", "command": "cursor-agent", "model": None},
-        }))
+        config = cfg.parse_config(
+            self._with(
+                {
+                    "cursor": {"vendor": "cli", "command": "cursor-agent", "model": None},
+                }
+            )
+        )
         self.assertIsNone(config.knobs.delegate_profiles["cursor"].model)
 
     def test_openai_compatible_full_profile_parses(self):
-        parsed = cfg.parse_config(self._with({
-            "local": {
-                "vendor": "openai-compatible",
-                "endpoint": "http://localhost:11434/v1/chat/completions",
-                "api_key_env": "VLLM_API_KEY",
-                "model": "qwen2.5",
-            },
-        }))
+        parsed = cfg.parse_config(
+            self._with(
+                {
+                    "local": {
+                        "vendor": "openai-compatible",
+                        "endpoint": "http://localhost:11434/v1/chat/completions",
+                        "api_key_env": "VLLM_API_KEY",
+                        "model": "qwen2.5",
+                    },
+                }
+            )
+        )
         profile = parsed.knobs.delegate_profiles["local"]
         self.assertEqual(profile.vendor, "openai-compatible")
         self.assertEqual(profile.endpoint, "http://localhost:11434/v1/chat/completions")
@@ -657,9 +698,17 @@ class TestDelegateProfiles(unittest.TestCase):
 
     def test_invalid_prompt_mode_rejected(self):
         with self.assertRaises(cfg.ConfigError) as ctx:
-            cfg.parse_config(self._with({
-                "cursor": {"vendor": "cli", "command": "cursor-agent", "prompt_mode": "pipe"},
-            }))
+            cfg.parse_config(
+                self._with(
+                    {
+                        "cursor": {
+                            "vendor": "cli",
+                            "command": "cursor-agent",
+                            "prompt_mode": "pipe",
+                        },
+                    }
+                )
+            )
         message = str(ctx.exception)
         self.assertIn("invalid prompt_mode 'pipe'", message)
         self.assertIn("valid: stdin, arg", message)
@@ -668,9 +717,13 @@ class TestDelegateProfiles(unittest.TestCase):
         for name in ("claude", "codex", "agy", "ollama", "anthropic-api", "openai-api"):
             with self.subTest(name=name):
                 with self.assertRaises(cfg.ConfigError) as ctx:
-                    cfg.parse_config(self._with({
-                        name: {"vendor": "cli", "command": "whatever"},
-                    }))
+                    cfg.parse_config(
+                        self._with(
+                            {
+                                name: {"vendor": "cli", "command": "whatever"},
+                            }
+                        )
+                    )
                 message = str(ctx.exception)
                 self.assertIn(f"profile name {name!r} shadows a built-in delegate vendor", message)
                 self.assertIn("rename the profile", message)
@@ -683,9 +736,13 @@ class TestDelegateProfiles(unittest.TestCase):
         name would leave a config entry that silently never runs.
         """
         with self.assertRaises(cfg.ConfigError) as ctx:
-            cfg.parse_config(self._with({
-                "cursor:pro": {"vendor": "cli", "command": "cursor-agent"},
-            }))
+            cfg.parse_config(
+                self._with(
+                    {
+                        "cursor:pro": {"vendor": "cli", "command": "cursor-agent"},
+                    }
+                )
+            )
         message = str(ctx.exception)
         self.assertIn("may not contain ':'", message)
         self.assertIn("could never be selected", message)
@@ -694,9 +751,13 @@ class TestDelegateProfiles(unittest.TestCase):
         for name in ("", "   "):
             with self.subTest(name=name):
                 with self.assertRaises(cfg.ConfigError) as ctx:
-                    cfg.parse_config(self._with({
-                        name: {"vendor": "cli", "command": "cursor-agent"},
-                    }))
+                    cfg.parse_config(
+                        self._with(
+                            {
+                                name: {"vendor": "cli", "command": "cursor-agent"},
+                            }
+                        )
+                    )
                 self.assertIn("may not be empty or blank", str(ctx.exception))
 
     def test_non_string_key_reported_not_crashed(self):
@@ -709,9 +770,13 @@ class TestDelegateProfiles(unittest.TestCase):
         for key, kind in ((True, "bool"), (2, "int"), (None, "NoneType")):
             with self.subTest(key=key):
                 with self.assertRaises(cfg.ConfigError) as ctx:
-                    cfg.parse_config(self._with({
-                        key: {"vendor": "cli", "command": "cursor-agent"},
-                    }))
+                    cfg.parse_config(
+                        self._with(
+                            {
+                                key: {"vendor": "cli", "command": "cursor-agent"},
+                            }
+                        )
+                    )
                 message = str(ctx.exception)
                 self.assertIn(f"is {kind}, not a string", message)
                 self.assertIn("quote the key", message)
@@ -723,22 +788,37 @@ class TestDelegateProfiles(unittest.TestCase):
         Without `args` an operator would have to fold `-p --force` into `command`,
         which keel would then treat as a single filename.
         """
-        parsed = cfg.parse_config(self._with({
-            "cursor": {"vendor": "cli", "command": "cursor-agent",
-                       "args": ["-p", "--force"]},
-            "plain": {"vendor": "cli", "command": "gemini"},
-        }))
+        parsed = cfg.parse_config(
+            self._with(
+                {
+                    "cursor": {
+                        "vendor": "cli",
+                        "command": "cursor-agent",
+                        "args": ["-p", "--force"],
+                    },
+                    "plain": {"vendor": "cli", "command": "gemini"},
+                }
+            )
+        )
         profiles = parsed.knobs.delegate_profiles
         self.assertEqual(profiles["cursor"].args, ("-p", "--force"))
         self.assertEqual(profiles["plain"].args, ())
 
     def test_args_change_the_config_hash(self):
-        base = cfg.parse_config(self._with({
-            "cursor": {"vendor": "cli", "command": "cursor-agent"},
-        }))
-        changed = cfg.parse_config(self._with({
-            "cursor": {"vendor": "cli", "command": "cursor-agent", "args": ["-p"]},
-        }))
+        base = cfg.parse_config(
+            self._with(
+                {
+                    "cursor": {"vendor": "cli", "command": "cursor-agent"},
+                }
+            )
+        )
+        changed = cfg.parse_config(
+            self._with(
+                {
+                    "cursor": {"vendor": "cli", "command": "cursor-agent", "args": ["-p"]},
+                }
+            )
+        )
         self.assertNotEqual(cfg.config_hash(base), cfg.config_hash(changed))
 
     def test_review_args_separate_the_reviewer_from_the_implementer(self):
@@ -748,11 +828,19 @@ class TestDelegateProfiles(unittest.TestCase):
         reviewer. keel cannot enforce read-only on an arbitrary CLI, so this is the
         operator's lever; `role_args` is where the choice is made.
         """
-        parsed = cfg.parse_config(self._with({
-            "cursor": {"vendor": "cli", "command": "cursor-agent",
-                       "args": ["-p", "--force"], "review_args": ["-p"]},
-            "shared": {"vendor": "cli", "command": "gemini", "args": ["-p"]},
-        }))
+        parsed = cfg.parse_config(
+            self._with(
+                {
+                    "cursor": {
+                        "vendor": "cli",
+                        "command": "cursor-agent",
+                        "args": ["-p", "--force"],
+                        "review_args": ["-p"],
+                    },
+                    "shared": {"vendor": "cli", "command": "gemini", "args": ["-p"]},
+                }
+            )
+        )
         profiles = parsed.knobs.delegate_profiles
         self.assertEqual(profiles["cursor"].role_args(), ("-p", "--force"))
         self.assertEqual(profiles["cursor"].role_args(review=True), ("-p",))
@@ -761,9 +849,13 @@ class TestDelegateProfiles(unittest.TestCase):
         self.assertEqual(profiles["shared"].role_args(review=True), ("-p",))
 
     def test_empty_review_args_is_not_the_same_as_unset(self):
-        parsed = cfg.parse_config(self._with({
-            "bare": {"vendor": "cli", "command": "x", "args": ["-p"], "review_args": []},
-        }))
+        parsed = cfg.parse_config(
+            self._with(
+                {
+                    "bare": {"vendor": "cli", "command": "x", "args": ["-p"], "review_args": []},
+                }
+            )
+        )
         self.assertEqual(parsed.knobs.delegate_profiles["bare"].role_args(review=True), ())
 
     def test_no_profiles_does_not_appear_in_the_hashed_form(self):
@@ -779,39 +871,63 @@ class TestDelegateProfiles(unittest.TestCase):
 
     def test_the_hashed_form_and_the_published_contract_agree(self):
         """One helper feeds both, so the two serialisations cannot drift apart."""
-        parsed = cfg.parse_config(self._with({
-            "cursor": {"vendor": "cli", "command": "cursor-agent", "args": ["-p"]},
-        }))
+        parsed = cfg.parse_config(
+            self._with(
+                {
+                    "cursor": {"vendor": "cli", "command": "cursor-agent", "args": ["-p"]},
+                }
+            )
+        )
         self.assertEqual(
             cfg._canonical(parsed)["knobs"]["delegate_profiles"],
             contracts.project_as_dict(parsed)["knobs"]["delegate_profiles"],
         )
 
     def test_review_args_change_the_config_hash(self):
-        base = cfg.parse_config(self._with({
-            "cursor": {"vendor": "cli", "command": "cursor-agent", "args": ["-p"]},
-        }))
-        changed = cfg.parse_config(self._with({
-            "cursor": {"vendor": "cli", "command": "cursor-agent", "args": ["-p"],
-                       "review_args": []},
-        }))
+        base = cfg.parse_config(
+            self._with(
+                {
+                    "cursor": {"vendor": "cli", "command": "cursor-agent", "args": ["-p"]},
+                }
+            )
+        )
+        changed = cfg.parse_config(
+            self._with(
+                {
+                    "cursor": {
+                        "vendor": "cli",
+                        "command": "cursor-agent",
+                        "args": ["-p"],
+                        "review_args": [],
+                    },
+                }
+            )
+        )
         self.assertNotEqual(cfg.config_hash(base), cfg.config_hash(changed))
 
     def test_profile_named_after_its_vendor_rejected(self):
         """A profile called `cli` makes every attribution field say the same nothing."""
         with self.assertRaises(cfg.ConfigError) as ctx:
-            cfg.parse_config(self._with({
-                "cli": {"vendor": "cli", "command": "cursor-agent"},
-            }))
+            cfg.parse_config(
+                self._with(
+                    {
+                        "cli": {"vendor": "cli", "command": "cursor-agent"},
+                    }
+                )
+            )
         message = str(ctx.exception)
         self.assertIn("would make attribution ambiguous", message)
         self.assertIn("e.g. 'cursor'", message)
 
     def test_model_arg_defaults_and_overrides(self):
-        parsed = cfg.parse_config(self._with({
-            "cursor": {"vendor": "cli", "command": "cursor-agent"},
-            "weird": {"vendor": "cli", "command": "weirdcli", "model_arg": "-m"},
-        }))
+        parsed = cfg.parse_config(
+            self._with(
+                {
+                    "cursor": {"vendor": "cli", "command": "cursor-agent"},
+                    "weird": {"vendor": "cli", "command": "weirdcli", "model_arg": "-m"},
+                }
+            )
+        )
         profiles = parsed.knobs.delegate_profiles
         # Without a way to spell model selection, the documented precedence would be
         # unimplementable for an arbitrary CLI.
@@ -819,12 +935,20 @@ class TestDelegateProfiles(unittest.TestCase):
         self.assertEqual(profiles["weird"].model_arg, "-m")
 
     def test_model_arg_changes_the_config_hash(self):
-        base = cfg.parse_config(self._with({
-            "cursor": {"vendor": "cli", "command": "cursor-agent"},
-        }))
-        changed = cfg.parse_config(self._with({
-            "cursor": {"vendor": "cli", "command": "cursor-agent", "model_arg": "-m"},
-        }))
+        base = cfg.parse_config(
+            self._with(
+                {
+                    "cursor": {"vendor": "cli", "command": "cursor-agent"},
+                }
+            )
+        )
+        changed = cfg.parse_config(
+            self._with(
+                {
+                    "cursor": {"vendor": "cli", "command": "cursor-agent", "model_arg": "-m"},
+                }
+            )
+        )
         self.assertNotEqual(cfg.config_hash(base), cfg.config_hash(changed))
 
     def test_missing_vendor_left_to_the_schema(self):
@@ -849,9 +973,13 @@ class TestDelegateProfiles(unittest.TestCase):
 
     def test_unknown_profile_field_rejected(self):
         with self.assertRaises(cfg.ConfigError) as ctx:
-            cfg.parse_config(self._with({
-                "cursor": {"vendor": "cli", "command": "cursor-agent", "proxy": "http://x"},
-            }))
+            cfg.parse_config(
+                self._with(
+                    {
+                        "cursor": {"vendor": "cli", "command": "cursor-agent", "proxy": "http://x"},
+                    }
+                )
+            )
         self.assertIn("unknown property 'proxy'", str(ctx.exception))
 
     def test_a_field_belonging_to_another_vendor_is_rejected_not_ignored(self):
@@ -861,53 +989,75 @@ class TestDelegateProfiles(unittest.TestCase):
         run, and a silently-ignored key is how that survives to the first real run.
         """
         with self.assertRaises(cfg.ConfigError) as ctx:
-            cfg.parse_config(self._with({
-                "cursor": {"vendor": "cli", "command": "cursor-agent",
-                           "endpoint": "http://localhost:1/v1"},
-            }))
+            cfg.parse_config(
+                self._with(
+                    {
+                        "cursor": {
+                            "vendor": "cli",
+                            "command": "cursor-agent",
+                            "endpoint": "http://localhost:1/v1",
+                        },
+                    }
+                )
+            )
         message = str(ctx.exception)
         self.assertIn("'endpoint' does not apply to vendor 'cli'", message)
         self.assertIn("silently ignored", message)
 
     def test_command_on_an_endpoint_vendor_is_rejected_too(self):
         with self.assertRaises(cfg.ConfigError) as ctx:
-            cfg.parse_config(self._with({
-                "router": {"vendor": "openai-compatible", "command": "curl",
-                           "endpoint": "http://localhost:1/v1", "api_key_env": "K"},
-            }))
-        self.assertIn("'command' does not apply to vendor 'openai-compatible'",
-                      str(ctx.exception))
+            cfg.parse_config(
+                self._with(
+                    {
+                        "router": {
+                            "vendor": "openai-compatible",
+                            "command": "curl",
+                            "endpoint": "http://localhost:1/v1",
+                            "api_key_env": "K",
+                        },
+                    }
+                )
+            )
+        self.assertIn("'command' does not apply to vendor 'openai-compatible'", str(ctx.exception))
 
     def test_round_trips_through_the_project_contract(self):
-        data = self._with({
-            "gemini-cli": {"vendor": "cli", "command": "gemini", "prompt_mode": "arg"},
-            "cursor": {"vendor": "cli", "command": "cursor-agent", "model": "composer-1"},
-        })
+        data = self._with(
+            {
+                "gemini-cli": {"vendor": "cli", "command": "gemini", "prompt_mode": "arg"},
+                "cursor": {"vendor": "cli", "command": "cursor-agent", "model": "composer-1"},
+            }
+        )
         serialised = contracts.project_as_dict(cfg.parse_config(data))["knobs"]
         profiles = serialised["delegate_profiles"]
         self.assertEqual(list(profiles), ["cursor", "gemini-cli"])  # sorted, order-stable
-        self.assertEqual(profiles["cursor"], {
-            "vendor": "cli",
-            "command": "cursor-agent",
-            "args": [],
-            "review_args": None,     # unset -> the reviewer role falls back to args
-            "prompt_mode": "stdin",  # the default, made explicit on the way out
-            "model": "composer-1",
-            "model_arg": "--model",  # ditto: how the model actually reaches the CLI
-            "endpoint": None,        # cli profiles carry no endpoint
-            "api_key_env": None,
-        })
-        self.assertEqual(profiles["gemini-cli"], {
-            "vendor": "cli",
-            "command": "gemini",
-            "args": [],
-            "review_args": None,
-            "prompt_mode": "arg",
-            "model": None,
-            "model_arg": "--model",
-            "endpoint": None,
-            "api_key_env": None,
-        })
+        self.assertEqual(
+            profiles["cursor"],
+            {
+                "vendor": "cli",
+                "command": "cursor-agent",
+                "args": [],
+                "review_args": None,  # unset -> the reviewer role falls back to args
+                "prompt_mode": "stdin",  # the default, made explicit on the way out
+                "model": "composer-1",
+                "model_arg": "--model",  # ditto: how the model actually reaches the CLI
+                "endpoint": None,  # cli profiles carry no endpoint
+                "api_key_env": None,
+            },
+        )
+        self.assertEqual(
+            profiles["gemini-cli"],
+            {
+                "vendor": "cli",
+                "command": "gemini",
+                "args": [],
+                "review_args": None,
+                "prompt_mode": "arg",
+                "model": None,
+                "model_arg": "--model",
+                "endpoint": None,
+                "api_key_env": None,
+            },
+        )
         # A round trip through the contract reparses to the same profiles.
         reparsed = self._with({name: dict(p) for name, p in profiles.items()})
         self.assertEqual(
@@ -916,32 +1066,48 @@ class TestDelegateProfiles(unittest.TestCase):
         )
 
     def test_profile_key_order_does_not_change_the_hash(self):
-        one = self._with({
-            "cursor": {"vendor": "cli", "command": "cursor-agent"},
-            "gemini-cli": {"vendor": "cli", "command": "gemini"},
-        })
-        two = self._with({
-            "gemini-cli": {"vendor": "cli", "command": "gemini"},
-            "cursor": {"vendor": "cli", "command": "cursor-agent"},
-        })
+        one = self._with(
+            {
+                "cursor": {"vendor": "cli", "command": "cursor-agent"},
+                "gemini-cli": {"vendor": "cli", "command": "gemini"},
+            }
+        )
+        two = self._with(
+            {
+                "gemini-cli": {"vendor": "cli", "command": "gemini"},
+                "cursor": {"vendor": "cli", "command": "cursor-agent"},
+            }
+        )
         self.assertEqual(
             cfg.config_hash(cfg.parse_config(one)), cfg.config_hash(cfg.parse_config(two))
         )
 
     def test_profiles_change_the_config_hash(self):
         base = cfg.parse_config(copy.deepcopy(VALID))
-        changed = cfg.parse_config(self._with({
-            "cursor": {"vendor": "cli", "command": "cursor-agent"},
-        }))
+        changed = cfg.parse_config(
+            self._with(
+                {
+                    "cursor": {"vendor": "cli", "command": "cursor-agent"},
+                }
+            )
+        )
         self.assertNotEqual(cfg.config_hash(base), cfg.config_hash(changed))
 
     def test_prompt_mode_changes_the_config_hash(self):
-        stdin = cfg.parse_config(self._with({
-            "cursor": {"vendor": "cli", "command": "cursor-agent"},
-        }))
-        arg = cfg.parse_config(self._with({
-            "cursor": {"vendor": "cli", "command": "cursor-agent", "prompt_mode": "arg"},
-        }))
+        stdin = cfg.parse_config(
+            self._with(
+                {
+                    "cursor": {"vendor": "cli", "command": "cursor-agent"},
+                }
+            )
+        )
+        arg = cfg.parse_config(
+            self._with(
+                {
+                    "cursor": {"vendor": "cli", "command": "cursor-agent", "prompt_mode": "arg"},
+                }
+            )
+        )
         self.assertNotEqual(cfg.config_hash(stdin), cfg.config_hash(arg))
 
 
@@ -996,7 +1162,6 @@ class TestConfigHash(unittest.TestCase):
         )
 
 
-
 class TestSwarmReviewEvidenceKnob(unittest.TestCase):
     """#828: the swarm review gate defaults on; the opt-out is explicit config."""
 
@@ -1031,6 +1196,7 @@ class TestSwarmReviewEvidenceKnob(unittest.TestCase):
 
     def test_load_config_malformed_yaml_raises_config_error(self):
         import tempfile
+
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tf:
             tf.write("extends: [unclosed list\n")
             path = tf.name

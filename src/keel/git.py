@@ -45,9 +45,9 @@ def list_branches(*, cwd: str | None = None, _run=None) -> CommandResult:
     when it cannot observe — can inspect ``result.ok``. Parsing is the caller's.
     """
     return run_argv(
-        ["git", "for-each-ref", "--format=%(refname:short)",
-         "refs/heads", "refs/remotes"],
-        cwd=cwd, **_kw(_run),
+        ["git", "for-each-ref", "--format=%(refname:short)", "refs/heads", "refs/remotes"],
+        cwd=cwd,
+        **_kw(_run),
     )
 
 
@@ -73,9 +73,7 @@ def merge_base(a: str, b: str, *, cwd: str | None = None, _run=None) -> str | No
 
 def rev_count(base: str, head: str, *, cwd: str | None = None, _run=None) -> int | None:
     """Commits in ``base..head`` (how far ``head`` is ahead of ``base``); ``None`` on error."""
-    result = run_argv(
-        ["git", "rev-list", "--count", f"{base}..{head}"], cwd=cwd, **_kw(_run)
-    )
+    result = run_argv(["git", "rev-list", "--count", f"{base}..{head}"], cwd=cwd, **_kw(_run))
     if not result.ok:
         return None
     output = result.stdout.strip()

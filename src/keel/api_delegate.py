@@ -62,9 +62,7 @@ _VENDORS: dict[str, tuple[str, str]] = {
 }
 
 #: Characters a model id may contain when it is interpolated into a URL path.
-_MODEL_PATH_OK = frozenset(
-    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-_"
-)
+_MODEL_PATH_OK = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-_")
 
 
 def _unsafe_model_reason(model: str) -> str | None:
@@ -277,7 +275,8 @@ def generate(
         # `keel validate` time; this is the dispatch-time contract check.
         if not endpoint or not api_key_env:
             return ApiResult(
-                False, error_code="unknown-vendor",
+                False,
+                error_code="unknown-vendor",
                 error=f"{OPENAI_COMPATIBLE} requires both endpoint and api_key_env",
             )
         entry: tuple[str, str] | None = (endpoint, api_key_env)
@@ -326,9 +325,7 @@ def generate(
     try:
         data = json.loads(raw)
     except ValueError:
-        return ApiResult(
-            False, error_code="bad-response", error="response is not valid JSON"
-        )
+        return ApiResult(False, error_code="bad-response", error="response is not valid JSON")
     text = _parse_content(vendor, data)
     if not text:
         return ApiResult(

@@ -72,14 +72,16 @@ def build_plan(config: ProjectConfig, loaded: dict[str, list[Extension]]) -> tup
             step_gates = pre_merge_gates
         else:
             step_gates = ()
-        items.append(PlanItem(
-            step.id,
-            step.name,
-            step.agentic,
-            step_gates,
-            _slots_for_step(step.id, loaded),
-            _hooks_for_step(step.id, loaded),
-        ))
+        items.append(
+            PlanItem(
+                step.id,
+                step.name,
+                step.agentic,
+                step_gates,
+                _slots_for_step(step.id, loaded),
+                _hooks_for_step(step.id, loaded),
+            )
+        )
     return tuple(items)
 
 
@@ -163,16 +165,18 @@ def _hooks_for_step(step_id: str, loaded: dict[str, list[Extension]]) -> tuple[P
     hooks: list[PlanHook] = []
     for slot in model.slots_for_step(step_id):
         for ext in loaded.get(slot.name, []):
-            hooks.append(PlanHook(
-                slot=slot.name,
-                id=ext.id,
-                kind=ext.kind,
-                on_fail=ext.on_fail,
-                execution_mode=ext.mode,
-                adapter_required=slot.adapter_required or ext.kind == "agentic",
-                required_capabilities=ext.required_capabilities,
-                optional_capabilities=ext.optional_capabilities,
-            ))
+            hooks.append(
+                PlanHook(
+                    slot=slot.name,
+                    id=ext.id,
+                    kind=ext.kind,
+                    on_fail=ext.on_fail,
+                    execution_mode=ext.mode,
+                    adapter_required=slot.adapter_required or ext.kind == "agentic",
+                    required_capabilities=ext.required_capabilities,
+                    optional_capabilities=ext.optional_capabilities,
+                )
+            )
     return tuple(hooks)
 
 

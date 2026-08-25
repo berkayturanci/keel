@@ -67,7 +67,8 @@ def verify_merge(
         return _report("unknown", "could not read the merge commit's file list from GitHub")
     landed_set = {p.strip() for p in landed if p.strip()}
     collisions = {
-        path: pr for path, pr in (overtaken or {}).items()
+        path: pr
+        for path, pr in (overtaken or {}).items()
         if path.strip() and path.strip() in landed_set
     }
     if collisions:
@@ -91,8 +92,7 @@ def verify_merge(
             )
     return _report(
         "clean",
-        "no file in this merge was changed by another pull request after this one "
-        "branched",
+        "no file in this merge was changed by another pull request after this one branched",
         landed_count=len(landed_set),
     )
 

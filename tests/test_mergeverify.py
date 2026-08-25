@@ -84,8 +84,11 @@ class TestUnknownIsNotClean(unittest.TestCase):
 class TestReportSurface(unittest.TestCase):
     def test_is_drift_only_for_drift(self):
         self.assertTrue(mv.is_drift(mv.verify_merge(["a"], {"a": 1})))
-        for other in (mv.verify_merge(["a"], {}), mv.verify_merge(None),
-                      mv.verify_merge(["a", "b"], {}, ["a"])):
+        for other in (
+            mv.verify_merge(["a"], {}),
+            mv.verify_merge(None),
+            mv.verify_merge(["a", "b"], {}, ["a"]),
+        ):
             self.assertFalse(mv.is_drift(other))
         self.assertFalse(mv.is_drift("not a report"))
 
@@ -104,6 +107,9 @@ class TestReportSurface(unittest.TestCase):
         self.assertIn("clean", mv.render(mv.verify_merge(["a.py"], {})))
 
     def test_every_report_carries_the_schema_version(self):
-        for report in (mv.verify_merge(None), mv.verify_merge(["a"], {}),
-                       mv.verify_merge(["a"], {"a": 1})):
+        for report in (
+            mv.verify_merge(None),
+            mv.verify_merge(["a"], {}),
+            mv.verify_merge(["a"], {"a": 1}),
+        ):
             self.assertEqual(report["schema_version"], mv.SCHEMA_VERSION)

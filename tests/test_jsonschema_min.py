@@ -7,8 +7,15 @@ from keel import jsonschema_min as js
 
 class TestType(unittest.TestCase):
     def test_accepts_correct_types(self):
-        for value, t in [("x", "string"), (1, "integer"), (1.5, "number"),
-                         (True, "boolean"), ([], "array"), ({}, "object"), (None, "null")]:
+        for value, t in [
+            ("x", "string"),
+            (1, "integer"),
+            (1.5, "number"),
+            (True, "boolean"),
+            ([], "array"),
+            ({}, "object"),
+            (None, "null"),
+        ]:
             self.assertEqual(js.validate(value, {"type": t}), [], f"{value!r} as {t}")
 
     def test_rejects_wrong_type(self):
@@ -196,13 +203,16 @@ class TestSchemaBoundsNowEnforced(unittest.TestCase):
 
     def test_previously_unenforced_scan_bounds_now_fail(self):
         from keel import config as cfg
+
         for field, bad in (
             ("batch_threshold", 0),
             ("large_diff_max_bytes", 0),
             ("near_text_similarity", 42),
         ):
             data = {
-                "extends": "keel", "core_version": "^0.1", "base_branch": "main",
+                "extends": "keel",
+                "core_version": "^0.1",
+                "base_branch": "main",
                 "knobs": {"build_gate_cmd": "make test"},
                 "policy_pack": {"name": "p", "scan": {field: bad}},
             }
@@ -252,4 +262,3 @@ class TestAdversarialSchemas(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

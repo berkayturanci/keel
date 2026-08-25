@@ -25,24 +25,31 @@ def _fixture(root: Path, old: str) -> None:
     (root / "website").mkdir()
     (root / ".github" / "workflows").mkdir(parents=True)
     (root / "pyproject.toml").write_text(
-        f'[project]\nname = "keel-workflow"\nversion = "{old}"\n', encoding="utf-8")
+        f'[project]\nname = "keel-workflow"\nversion = "{old}"\n', encoding="utf-8"
+    )
     (root / "src" / "keel" / "__init__.py").write_text(
-        f'"""doc."""\n__version__ = "{old}"\n', encoding="utf-8")
+        f'"""doc."""\n__version__ = "{old}"\n', encoding="utf-8"
+    )
     (root / ".claude-plugin" / "plugin.json").write_text(
-        f'{{\n  "name": "keel",\n  "version": "{old}"\n}}\n', encoding="utf-8")
+        f'{{\n  "name": "keel",\n  "version": "{old}"\n}}\n', encoding="utf-8"
+    )
     (root / ".codex-plugin" / "plugin.json").write_text(
-        f'{{\n  "name": "keel",\n  "version": "{old}"\n}}\n', encoding="utf-8")
+        f'{{\n  "name": "keel",\n  "version": "{old}"\n}}\n', encoding="utf-8"
+    )
     # README carries the pinned install AND a historical mention that must survive.
     (root / "README.md").write_text(
         f'pip install "git+https://github.com/berkayturanci/keel@v{old}"\n'
-        f'Since **{old}**, the board stamps merged.\n', encoding="utf-8")
+        f"Since **{old}**, the board stamps merged.\n",
+        encoding="utf-8",
+    )
     (root / "website" / "index.html").write_text(
         f'<span class="ver" data-version>v{old}</span>\n'
         f'<code>pip install "git+https://github.com/berkayturanci/keel@v{old}"</code>\n',
-        encoding="utf-8")
+        encoding="utf-8",
+    )
     (root / ".github" / "workflows" / "keel-ship.yml").write_text(
-        f'# (`pip install "git+https://github.com/berkayturanci/keel@v{old}"`)\n',
-        encoding="utf-8")
+        f'# (`pip install "git+https://github.com/berkayturanci/keel@v{old}"`)\n', encoding="utf-8"
+    )
 
 
 class TestBump(unittest.TestCase):
@@ -57,12 +64,14 @@ class TestBump(unittest.TestCase):
             _fixture(root, "1.7.0")
             site = root / "website"
             (site / "docs.html").write_text(
-                '<span class="ver" data-version>v1.2.3</span>', encoding="utf-8")
+                '<span class="ver" data-version>v1.2.3</span>', encoding="utf-8"
+            )
             (site / "coverage.html").write_text(
-                '<span class="ver" data-version>v1.2.3</span>', encoding="utf-8")
+                '<span class="ver" data-version>v1.2.3</span>', encoding="utf-8"
+            )
             (site / "content.js").write_text(
-                'version: "v1.2.3",\ninstallAlt: "pip install keel@v1.2.3"\n',
-                encoding="utf-8")
+                'version: "v1.2.3",\ninstallAlt: "pip install keel@v1.2.3"\n', encoding="utf-8"
+            )
 
             _old, changed = release_bump.bump(root, "1.8.0")
 
@@ -81,7 +90,8 @@ class TestBump(unittest.TestCase):
             root = Path(tmp)
             _fixture(root, "1.7.0")
             (root / "website" / "docs.html").write_text(
-                '<span class="ver" data-version>v1.2.3</span>', encoding="utf-8")
+                '<span class="ver" data-version>v1.2.3</span>', encoding="utf-8"
+            )
 
             old, changed = release_bump.bump(root, "1.7.0")
 
@@ -106,7 +116,8 @@ class TestBump(unittest.TestCase):
             _fixture(root, "1.7.0")
             site = root / "website"
             (site / "docs.html").write_text(
-                '<span class="ver" data-version>v1.8.0</span>', encoding="utf-8")
+                '<span class="ver" data-version>v1.8.0</span>', encoding="utf-8"
+            )
 
             _old, changed = release_bump.bump(root, "1.8.0")
 
@@ -130,23 +141,33 @@ class TestBump(unittest.TestCase):
             _fixture(root, "1.7.0")
             old, changed = release_bump.bump(root, "1.8.0")
             self.assertEqual(old, "1.7.0")
-            self.assertEqual(sorted(changed), [
-                ".claude-plugin/plugin.json",
-                ".codex-plugin/plugin.json",
-                ".github/workflows/keel-ship.yml",
-                "README.md",
-                "pyproject.toml",
-                "src/keel/__init__.py",
-                "website/index.html",
-            ])
-            self.assertIn('version = "1.8.0"',
-                          (root / "pyproject.toml").read_text(encoding="utf-8"))
-            self.assertIn('__version__ = "1.8.0"',
-                          (root / "src" / "keel" / "__init__.py").read_text(encoding="utf-8"))
-            self.assertIn('"version": "1.8.0"',
-                          (root / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
-            self.assertIn('"version": "1.8.0"',
-                          (root / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
+            self.assertEqual(
+                sorted(changed),
+                [
+                    ".claude-plugin/plugin.json",
+                    ".codex-plugin/plugin.json",
+                    ".github/workflows/keel-ship.yml",
+                    "README.md",
+                    "pyproject.toml",
+                    "src/keel/__init__.py",
+                    "website/index.html",
+                ],
+            )
+            self.assertIn(
+                'version = "1.8.0"', (root / "pyproject.toml").read_text(encoding="utf-8")
+            )
+            self.assertIn(
+                '__version__ = "1.8.0"',
+                (root / "src" / "keel" / "__init__.py").read_text(encoding="utf-8"),
+            )
+            self.assertIn(
+                '"version": "1.8.0"',
+                (root / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"),
+            )
+            self.assertIn(
+                '"version": "1.8.0"',
+                (root / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"),
+            )
             readme = (root / "README.md").read_text(encoding="utf-8")
             self.assertIn("keel@v1.8.0", readme)
             self.assertNotIn("keel@v1.7.0", readme)
@@ -191,7 +212,8 @@ class TestBump(unittest.TestCase):
             root = Path(tmp)
             _fixture(root, "1.7.0")
             (root / ".github" / "workflows" / "keel-ship.yml").write_text(
-                "# no pinned install here\n", encoding="utf-8")
+                "# no pinned install here\n", encoding="utf-8"
+            )
             _old, changed = release_bump.bump(root, "1.8.0")
             self.assertNotIn(".github/workflows/keel-ship.yml", changed)
             self.assertIn("pyproject.toml", changed)

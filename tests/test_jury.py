@@ -6,13 +6,25 @@ import unittest
 
 from keel import jury
 
-SAMPLE = {"findings": [
-    {"severity": "major", "file": "src/x.py", "line": 42, "claim": "unchecked return",
-     "reviewer": "claude"},
-    {"severity": "minor", "file": "src/x.py", "line": 7, "claim": "missing docstring",
-     "reviewer": "codex"},
-    {"severity": "nit", "file": None, "line": None, "claim": "style", "reviewer": "agy"},
-]}
+SAMPLE = {
+    "findings": [
+        {
+            "severity": "major",
+            "file": "src/x.py",
+            "line": 42,
+            "claim": "unchecked return",
+            "reviewer": "claude",
+        },
+        {
+            "severity": "minor",
+            "file": "src/x.py",
+            "line": 7,
+            "claim": "missing docstring",
+            "reviewer": "codex",
+        },
+        {"severity": "nit", "file": None, "line": None, "claim": "style", "reviewer": "agy"},
+    ]
+}
 
 
 class _Proc:
@@ -124,8 +136,13 @@ class TestRunGate(unittest.TestCase):
         def clean(argv, **kw):
             if "--version" in argv:
                 return _Proc(0)
-            return _Proc(0, json.dumps(
-                {"findings": [{"severity": "minor", "file": "a", "line": 1, "claim": "x"}]}))
+            return _Proc(
+                0,
+                json.dumps(
+                    {"findings": [{"severity": "minor", "file": "a", "line": 1, "claim": "x"}]}
+                ),
+            )
+
         ok, fs, _to = jury.run_gate("diff", _run=clean)
         self.assertTrue(ok)
         self.assertEqual(len(fs), 1)
@@ -199,8 +216,7 @@ class TestIncompleteRun(unittest.TestCase):
                 return _Proc(0, "jury 1.0")
             return _Proc(0, json.dumps({"findings": []}))
 
-        self.assertEqual(
-            jury.run_gate("diff", mode="gating", _run=_clean_empty), (True, [], False))
+        self.assertEqual(jury.run_gate("diff", mode="gating", _run=_clean_empty), (True, [], False))
 
     def test_report_followed_by_stderr_noise_still_parses(self):
         # run_argv hands back stdout + stderr concatenated and ai-jury logs progress to
@@ -213,8 +229,8 @@ class TestIncompleteRun(unittest.TestCase):
 
         ok, fs, _to = jury.run_gate("diff", mode="gating", _run=_noisy)
         self.assertFalse(ok)
-        self.assertEqual(len(fs), 3)                       # findings survive
-        self.assertEqual(fs[0].source, "jury:claude")      # not jury:incomplete-run
+        self.assertEqual(len(fs), 3)  # findings survive
+        self.assertEqual(fs[0].source, "jury:claude")  # not jury:incomplete-run
 
     def test_clean_exit_with_unreadable_output_is_not_a_pass(self):
         # A zero exit carrying no report is still no review. Keying on "did we parse a

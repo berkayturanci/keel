@@ -31,9 +31,7 @@ REPO = Path(__file__).resolve().parent.parent
 ONLINE = os.environ.get("KEEL_CHECK_EXTERNAL") == "1"
 
 # owner/repo[/subpath]@<40-hex>  # vX.Y.Z
-_PIN = re.compile(
-    r"uses:\s*([\w.-]+/[\w.-]+(?:/[\w.-]+)*)@([0-9a-f]{40})[ \t]*#[ \t]*(\S+)"
-)
+_PIN = re.compile(r"uses:\s*([\w.-]+/[\w.-]+(?:/[\w.-]+)*)@([0-9a-f]{40})[ \t]*#[ \t]*(\S+)")
 _UNPINNED = re.compile(r"uses:\s*([\w.-]+/[\w.-]+(?:/[\w.-]+)*)@(?![0-9a-f]{40})(\S+)")
 
 
@@ -77,7 +75,10 @@ def _files():
         return []
     proc = subprocess.run(
         [git, "-C", str(REPO), "ls-files", "-z", "*.yml", "*.yaml"],
-        capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        stdin=subprocess.DEVNULL,
     )
     if proc.returncode != 0:  # pragma: no cover - env guard
         return []

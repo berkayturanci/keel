@@ -113,7 +113,7 @@ class TestTheGateCannotReportSilently(unittest.TestCase):
         run = _evidence_run()
         self.assertIn("check-runs", run, "the step no longer creates a check-run")
         self.assertIn('name=${CHECK_NAME}"', run.replace("'", '"'))
-        self.assertIn('head_sha=${HEAD_SHA}', run, "the check must be pinned to the head")
+        self.assertIn("head_sha=${HEAD_SHA}", run, "the check must be pinned to the head")
 
     def test_the_published_name_differs_from_every_job_name(self):
         """Two same-named checks on one commit are indistinguishable to protection.
@@ -134,7 +134,8 @@ class TestTheGateCannotReportSilently(unittest.TestCase):
 
     def test_the_step_declares_the_check_name_it_publishes(self):
         env = next(
-            s for s in _workflow()["jobs"]["evidence"]["steps"]
+            s
+            for s in _workflow()["jobs"]["evidence"]["steps"]
             if s.get("name") == "Verify posted ship evidence"
         )["env"]
         self.assertEqual(env.get("CHECK_NAME"), CHECK_NAME)
@@ -181,7 +182,7 @@ class TestTheGateCannotReportSilently(unittest.TestCase):
         code carries the verdict instead, which is green only for a real pass.
         """
         run = _evidence_run()
-        self.assertIn('IS_FORK', run, "the fork case is not detected")
+        self.assertIn("IS_FORK", run, "the fork case is not detected")
         self.assertIn('exit "$FALLBACK_EXIT"', run, "the fork path ignores the verdict")
         fork_branch = run[run.index('if [ "$IS_FORK"') :]
         self.assertIn("::warning", fork_branch, "the fork path fails silently")
@@ -214,18 +215,18 @@ class TestTheGateCannotReportSilently(unittest.TestCase):
         """
         body = self._publisher()
         self.assertIn(
-            'conclusion=${conclusion}',
+            "conclusion=${conclusion}",
             body,
             "the publisher sends a literal conclusion instead of the one it was given",
         )
         self.assertIn(
-            'status=${status}',
+            "status=${status}",
             body,
             "the publisher sends a literal status instead of the one it was given",
         )
         self.assertNotRegex(
             body,
-            r'conclusion=(success|neutral|failure|skipped)\b',
+            r"conclusion=(success|neutral|failure|skipped)\b",
             "the publisher hardcodes a conclusion",
         )
         # The conditional is what lets the waiting arm publish no conclusion at
@@ -352,7 +353,7 @@ class TestTheDocsDescribeWhatShips(unittest.TestCase):
         return tail if cut == -1 else tail[:cut]
 
     def test_the_fork_recovery_path_is_the_one_that_works(self):
-        """"Re-run all jobs" replays the same read-only token and fails identically.
+        """ "Re-run all jobs" replays the same read-only token and fails identically.
 
         All three places that tell a maintainer how to unstick a fork PR — both
         docs and the runtime warning — said to re-run. The path that actually
@@ -428,8 +429,11 @@ class TestTheGateRunsWhenAVerdictArrives(unittest.TestCase):
         """
         condition = _workflow()["jobs"]["evidence"]["if"]
         self.assertIn("issue_comment", condition, "the gate cannot run on a verdict")
-        self.assertIn("github.event.issue.pull_request", condition,
-                      "the gate would run for comments on plain issues too")
+        self.assertIn(
+            "github.event.issue.pull_request",
+            condition,
+            "the gate would run for comments on plain issues too",
+        )
         self.assertRegex(
             condition,
             r"github\.event_name == 'workflow_dispatch' && github\.event\.inputs\.pr",
@@ -454,7 +458,8 @@ class TestTheGateRunsWhenAVerdictArrives(unittest.TestCase):
 
     def test_the_pr_number_resolves_on_a_comment_event(self):
         env = next(
-            s for s in _workflow()["jobs"]["evidence"]["steps"]
+            s
+            for s in _workflow()["jobs"]["evidence"]["steps"]
             if s.get("name") == "Verify posted ship evidence"
         )["env"]
         self.assertIn("github.event.issue.number", env["PR"])
@@ -479,7 +484,8 @@ class TestTheGateRunsWhenAVerdictArrives(unittest.TestCase):
         would hand those repos the fork fallback by accident.
         """
         env = next(
-            s for s in _workflow()["jobs"]["evidence"]["steps"]
+            s
+            for s in _workflow()["jobs"]["evidence"]["steps"]
             if s.get("name") == "Verify posted ship evidence"
         )["env"]
         self.assertIn("full_name != github.repository", env["IS_FORK"])
@@ -492,9 +498,7 @@ class TestTheGateRunsWhenAVerdictArrives(unittest.TestCase):
 
     def test_the_lookup_cannot_be_neutered_into_a_blind_post(self):
         """`--jq 'empty'` would always miss, silently restoring the stacking."""
-        body = re.search(
-            r"publish_check\(\)\s*\{(.*?)\n\}", _evidence_run(), re.DOTALL
-        ).group(1)
+        body = re.search(r"publish_check\(\)\s*\{(.*?)\n\}", _evidence_run(), re.DOTALL).group(1)
         self.assertIn(".check_runs[0].id // empty", body)
 
 

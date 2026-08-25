@@ -10,13 +10,15 @@ class TestArtifactContract(unittest.TestCase):
         contract = artifacts.contract_as_dict()
 
         self.assertEqual(contract["schema_version"], "keel.artifacts.v1")
-        self.assertEqual(contract["markers"]["review_verdict"],
-                         evidence.REVIEW_VERDICT_MARKER)
+        self.assertEqual(contract["markers"]["review_verdict"], evidence.REVIEW_VERDICT_MARKER)
         self.assertEqual(contract["markers"]["jury_verdict"], evidence.JURY_VERDICT_MARKER)
-        self.assertEqual(contract["markers"]["review_cycle_summary"],
-                         artifacts.REVIEW_CYCLE_SUMMARY_MARKER)
-        self.assertEqual(contract["renderers"]["review_cycle_summary"],
-                         "keel.artifacts.render_review_cycle_summary")
+        self.assertEqual(
+            contract["markers"]["review_cycle_summary"], artifacts.REVIEW_CYCLE_SUMMARY_MARKER
+        )
+        self.assertEqual(
+            contract["renderers"]["review_cycle_summary"],
+            "keel.artifacts.render_review_cycle_summary",
+        )
         self.assertEqual(contract["markers"]["step_handoff"], "<!-- keel.step-handoff.v1 -->")
         self.assertEqual(
             contract["markers"]["run_control_halt"],
@@ -161,12 +163,14 @@ class TestReviewCycleSummaryRenderer(unittest.TestCase):
                     codename="Alpha-2269",
                     focus="Security and architecture",
                     verdict="LGTM-with-suggestions",
-                    findings=[{
-                        "severity": "minor",
-                        "location": "web/functions/pubsub-debug.log:1",
-                        "description": "Accidental debug log",
-                        "suggested_fix": "Remove it",
-                    }],
+                    findings=[
+                        {
+                            "severity": "minor",
+                            "location": "web/functions/pubsub-debug.log:1",
+                            "description": "Accidental debug log",
+                            "suggested_fix": "Remove it",
+                        }
+                    ],
                     clean_areas=["auth flows"],
                 ),
                 self._reviewer(
@@ -174,10 +178,18 @@ class TestReviewCycleSummaryRenderer(unittest.TestCase):
                     focus="Bugs",
                     verdict="LGTM",
                     findings=[
-                        {"severity": "nit", "location": "a.js:1",
-                         "description": "binds via && over ||", "suggested_fix": ""},
-                        {"severity": "critical", "location": "x.js:1",
-                         "description": "pipe | and\nnewline", "suggested_fix": "fix"},
+                        {
+                            "severity": "nit",
+                            "location": "a.js:1",
+                            "description": "binds via && over ||",
+                            "suggested_fix": "",
+                        },
+                        {
+                            "severity": "critical",
+                            "location": "x.js:1",
+                            "description": "pipe | and\nnewline",
+                            "suggested_fix": "fix",
+                        },
                     ],
                 ),
             ],
@@ -216,22 +228,38 @@ class TestReviewCycleSummaryRenderer(unittest.TestCase):
 
     def test_minor_finding_downgrades_lgtm_to_request_changes(self):
         body = artifacts.render_review_cycle_summary(
-            reviewers=[self._reviewer(
-                verdict="LGTM",
-                findings=[{"severity": "minor", "location": "a:1",
-                           "description": "d", "suggested_fix": "f"}],
-            )],
+            reviewers=[
+                self._reviewer(
+                    verdict="LGTM",
+                    findings=[
+                        {
+                            "severity": "minor",
+                            "location": "a:1",
+                            "description": "d",
+                            "suggested_fix": "f",
+                        }
+                    ],
+                )
+            ],
         )
 
         self.assertIn("Merge recommendation: ⚠️ request changes", body)
 
     def test_nit_only_approves_with_cosmetic_note(self):
         body = artifacts.render_review_cycle_summary(
-            reviewers=[self._reviewer(
-                verdict="LGTM-with-suggestions",
-                findings=[{"severity": "nit", "location": "a:1",
-                           "description": "d", "suggested_fix": "f"}],
-            )],
+            reviewers=[
+                self._reviewer(
+                    verdict="LGTM-with-suggestions",
+                    findings=[
+                        {
+                            "severity": "nit",
+                            "location": "a:1",
+                            "description": "d",
+                            "suggested_fix": "f",
+                        }
+                    ],
+                )
+            ],
         )
 
         self.assertIn("Merge recommendation: ✅ approve (cosmetic nits)", body)
@@ -251,8 +279,12 @@ class TestReviewCycleSummaryRenderer(unittest.TestCase):
                     codename="Gamma",
                     findings=[
                         "junk",  # skipped: not a dict
-                        {"severity": "wat", "location": "z:1",
-                         "description": "unknown sev", "suggested_fix": "x"},
+                        {
+                            "severity": "wat",
+                            "location": "z:1",
+                            "description": "unknown sev",
+                            "suggested_fix": "x",
+                        },
                     ],
                     clean_areas=["core", "", 5],  # non-strings/blanks filtered out
                 ),
@@ -277,9 +309,18 @@ class TestReviewCycleSummaryRenderer(unittest.TestCase):
         self.assertNotIn("keel.run-id", body)  # blank run-id is not embedded
 
     def test_render_is_byte_stable_for_the_same_input(self):
-        reviewers = [self._reviewer(
-            findings=[{"severity": "major", "location": "a:1",
-                       "description": "d", "suggested_fix": "f"}])]
+        reviewers = [
+            self._reviewer(
+                findings=[
+                    {
+                        "severity": "major",
+                        "location": "a:1",
+                        "description": "d",
+                        "suggested_fix": "f",
+                    }
+                ]
+            )
+        ]
         first = artifacts.render_review_cycle_summary(reviewers=reviewers, head_sha="h")
         second = artifacts.render_review_cycle_summary(reviewers=reviewers, head_sha="h")
         self.assertEqual(first, second)
@@ -288,21 +329,34 @@ class TestReviewCycleSummaryRenderer(unittest.TestCase):
 class TestCoverageDeltaRenderer(unittest.TestCase):
     def test_full_delta_with_bold_rows_skipped_area_and_missing_values(self):
         body = artifacts.render_coverage_delta(
-            codename="COVERAGE-1-T", base_sha="aaa", head_sha="bbb",
+            codename="COVERAGE-1-T",
+            base_sha="aaa",
+            head_sha="bbb",
             areas=[
                 "junk",  # non-dict area is skipped
-                {"name": "core", "rows": [
-                    "junk",  # non-dict row is skipped
-                    {"unit": "a.py", "base": 90.0, "head": 90.9, "files": 2},   # +0.9 → bold
-                    {"unit": "b.py", "base": 80.0, "head": 80.1, "files": 1},   # +0.1 → plain
-                    {"unit": "new.py", "base": None, "head": 100.0, "files": 1},  # missing base
-                    {"unit": "wt.py", "base": 90.0, "head": True},  # boolean head → not a number
-                ], "overall": {"base": 88.0, "head": 88.2}},  # +0.2 → label-only bold
+                {
+                    "name": "core",
+                    "rows": [
+                        "junk",  # non-dict row is skipped
+                        {"unit": "a.py", "base": 90.0, "head": 90.9, "files": 2},  # +0.9 → bold
+                        {"unit": "b.py", "base": 80.0, "head": 80.1, "files": 1},  # +0.1 → plain
+                        {"unit": "new.py", "base": None, "head": 100.0, "files": 1},  # missing base
+                        {
+                            "unit": "wt.py",
+                            "base": 90.0,
+                            "head": True,
+                        },  # boolean head → not a number
+                    ],
+                    "overall": {"base": 88.0, "head": 88.2},
+                },  # +0.2 → label-only bold
                 {"name": "empty", "overall": {"base": 50.0, "head": 50.0}},  # no rows key
-                {"name": "rows-only", "rows": [
-                    {"unit": "z.py", "base": 70.0, "head": 71.0, "files": 1}]},  # no overall
+                {
+                    "name": "rows-only",
+                    "rows": [{"unit": "z.py", "base": 70.0, "head": 71.0, "files": 1}],
+                },  # no overall
                 {"name": "docs", "skipped": True, "skip_reason": "untouched"},
-            ])
+            ],
+        )
         self.assertTrue(body.startswith("COVERAGE-1-T\n"))
         self.assertIn("Coverage delta: base@aaa → head@bbb", body)
         self.assertIn("| **a.py** | **90.0%** | **90.9%** | **+0.9%** | **2** |", body)
@@ -325,18 +379,31 @@ class TestDepsAuditRenderer(unittest.TestCase):
             codename="DEPS-T",
             ecosystems=[
                 "junk",  # non-dict ecosystem is skipped
-                {"name": "pip", "findings": [
-                    {"package": "p1", "version": "1", "severity": "low",
-                     "advisory": "A1", "fix_available": "yes"},
-                    {"package": "p2", "version": "2", "severity": "critical",
-                     "advisory": "A2", "fix_available": "no"},
-                    {"severity": "weird"},  # unknown severity: shown, not counted
-                ]},
+                {
+                    "name": "pip",
+                    "findings": [
+                        {
+                            "package": "p1",
+                            "version": "1",
+                            "severity": "low",
+                            "advisory": "A1",
+                            "fix_available": "yes",
+                        },
+                        {
+                            "package": "p2",
+                            "version": "2",
+                            "severity": "critical",
+                            "advisory": "A2",
+                            "fix_available": "no",
+                        },
+                        {"severity": "weird"},  # unknown severity: shown, not counted
+                    ],
+                },
                 {"name": "npm", "findings": [], "threshold": "moderate"},
             ],
-            licences=[{"status": "changed", "package": "x",
-                       "baseline": "MIT", "current": "GPL"}],
-            skipped=["cargo"])
+            licences=[{"status": "changed", "package": "x", "baseline": "MIT", "current": "GPL"}],
+            skipped=["cargo"],
+        )
         self.assertTrue(body.startswith("DEPS-T\n"))
         self.assertIn("critical: 1 | high: 0 | moderate: 0 | low: 1", body)
         self.assertLess(body.index("| p2 |"), body.index("| p1 |"))  # critical before low
@@ -348,7 +415,8 @@ class TestDepsAuditRenderer(unittest.TestCase):
 
     def test_security_only_omits_licences_and_skipped(self):
         body = artifacts.render_deps_audit(
-            codename="D", ecosystems=[], licences=[{"status": "x"}], security_only=True)
+            codename="D", ecosystems=[], licences=[{"status": "x"}], security_only=True
+        )
         self.assertNotIn("Licences", body)
         self.assertNotIn("## Skipped", body)
 
@@ -364,13 +432,23 @@ class TestFlakeAuditRenderer(unittest.TestCase):
             summary={"runs": 10, "distinct": 2, "classified": 1, "opened": 1},
             new_flakes=[
                 "junk",  # non-dict is skipped
-                {"test": "t1", "fail_rate": "3/10", "failures": 3,
-                 "samples": ["u1", "u2"], "signature": "Boom | x"}],
+                {
+                    "test": "t1",
+                    "fail_rate": "3/10",
+                    "failures": 3,
+                    "samples": ["u1", "u2"],
+                    "signature": "Boom | x",
+                },
+            ],
             tracked=[{"test": "t2", "issue": 7}, {"test": "t3", "issue": "n/a"}],
-            limitations=["history partial"])
+            limitations=["history partial"],
+        )
         self.assertTrue(body.startswith("FLAKE-T\n"))
-        self.assertIn("runs examined: 10 · distinct failing tests: 2 · "
-                      "classified flakes: 1 · newly-opened issues: 1", body)
+        self.assertIn(
+            "runs examined: 10 · distinct failing tests: 2 · "
+            "classified flakes: 1 · newly-opened issues: 1",
+            body,
+        )
         self.assertIn("| t1 | 3/10 | 3 | u1, u2 | Boom \\| x |", body)
         self.assertIn("- t2 — see #7", body)
         self.assertIn("- t3 — see n/a", body)
@@ -379,8 +457,11 @@ class TestFlakeAuditRenderer(unittest.TestCase):
 
     def test_empty_report_omits_optional_sections(self):
         body = artifacts.render_flake_audit(codename="F")
-        self.assertIn("runs examined: 0 · distinct failing tests: 0 · "
-                      "classified flakes: 0 · newly-opened issues: 0", body)
+        self.assertIn(
+            "runs examined: 0 · distinct failing tests: 0 · "
+            "classified flakes: 0 · newly-opened issues: 0",
+            body,
+        )
         self.assertIn("_no new flakes above threshold_", body)
         self.assertNotIn("## Already tracked", body)
         self.assertNotIn("## Limitations", body)
@@ -388,21 +469,28 @@ class TestFlakeAuditRenderer(unittest.TestCase):
     def test_flake_without_samples_shows_placeholder(self):
         body = artifacts.render_flake_audit(
             codename="F",
-            new_flakes=[{"test": "t", "fail_rate": "3/9", "failures": 3, "signature": "s"}])
+            new_flakes=[{"test": "t", "fail_rate": "3/9", "failures": 3, "signature": "s"}],
+        )
         self.assertIn("| t | 3/9 | 3 | — | s |", body)
 
     def test_count_ignores_boolean_noise(self):
         body = artifacts.render_flake_audit(codename="F", summary={"runs": True, "classified": 2})
-        self.assertIn("runs examined: 0 ·", body)        # True is not a count
+        self.assertIn("runs examined: 0 ·", body)  # True is not a count
         self.assertIn("classified flakes: 2 ·", body)
 
 
 class TestScanFindingRenderer(unittest.TestCase):
     def test_full_issue_body_with_regression_of_as_last_line(self):
         body = artifacts.render_scan_finding_issue(
-            problem="Null deref in parser", location="src/p.py:42", severity="major",
-            justification="crashes on empty input", evidence="if x:\n  y",
-            suggested_fix="guard x", source="regression", regression_of=120)
+            problem="Null deref in parser",
+            location="src/p.py:42",
+            severity="major",
+            justification="crashes on empty input",
+            evidence="if x:\n  y",
+            suggested_fix="guard x",
+            source="regression",
+            regression_of=120,
+        )
         self.assertIn("## Problem\n\nNull deref in parser", body)
         self.assertIn("## Location\n\n`src/p.py:42`", body)
         self.assertIn("major — crashes on empty input", body)
@@ -425,18 +513,28 @@ class TestScanFindingRenderer(unittest.TestCase):
 class TestTriageAuditRenderer(unittest.TestCase):
     def test_full_comment_with_run_id_and_numeric_tier(self):
         body = artifacts.render_triage_audit(
-            issue=77, role="core", priority="priority:high", status="status:in-progress",
-            tier=3, rationale="Touches tier-3 orchestrator path.", run_id="run-9:triage-77")
+            issue=77,
+            role="core",
+            priority="priority:high",
+            status="status:in-progress",
+            tier=3,
+            rationale="Touches tier-3 orchestrator path.",
+            run_id="run-9:triage-77",
+        )
         self.assertTrue(body.startswith("keel.triage-audit.v1\n"))
-        self.assertIn("keel triage — #77: role: core · priority: priority:high · "
-                      "status: status:in-progress · tier: 3", body)
+        self.assertIn(
+            "keel triage — #77: role: core · priority: priority:high · "
+            "status: status:in-progress · tier: 3",
+            body,
+        )
         self.assertIn("Touches tier-3 orchestrator path.", body)
         self.assertIn("<!-- keel.run-id: run-9:triage-77 -->", body)
 
     def test_defaults_without_run_id(self):
         body = artifacts.render_triage_audit(issue=5)
-        self.assertIn("keel triage — #5: role: unassigned · priority: unset · "
-                      "status: unset · tier: n/a", body)
+        self.assertIn(
+            "keel triage — #5: role: unassigned · priority: unset · status: unset · tier: n/a", body
+        )
         self.assertIn("Classified from the existing label set.", body)
         self.assertNotIn("keel.run-id", body)
 

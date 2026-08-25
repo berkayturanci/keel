@@ -10,6 +10,7 @@ class TestYamlHelper(unittest.TestCase):
         import yaml
 
         from keel import yaml_helper
+
         self.assertIs(yaml_helper._SafeLoader, yaml.CSafeLoader)
         self.assertIs(yaml_helper._SafeDumper, yaml.CSafeDumper)
 
@@ -23,17 +24,19 @@ class TestYamlHelper(unittest.TestCase):
 
     def test_pure_python_fallback(self):
         import yaml
+
         original_import = builtins.__import__
 
         def custom_import(name, globals=None, locals=None, fromlist=(), level=0):
-            if name == 'yaml' and fromlist:
-                if 'CSafeLoader' in fromlist or 'CSafeDumper' in fromlist:
+            if name == "yaml" and fromlist:
+                if "CSafeLoader" in fromlist or "CSafeDumper" in fromlist:
                     raise ImportError("Cannot import C extensions")
             return original_import(name, globals, locals, fromlist, level)
 
-        with patch('builtins.__import__', side_effect=custom_import):
+        with patch("builtins.__import__", side_effect=custom_import):
             # Reload yaml_helper to trigger the ImportError logic
             import keel.yaml_helper
+
             reload(keel.yaml_helper)
 
             self.assertIs(keel.yaml_helper._SafeLoader, yaml.SafeLoader)
@@ -50,5 +53,6 @@ class TestYamlHelper(unittest.TestCase):
         # Restore the module state for subsequent tests
         reload(keel.yaml_helper)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     unittest.main()

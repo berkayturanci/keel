@@ -6,10 +6,9 @@ from keel import github_transport, runtime
 
 
 def report(*caps: tuple[str, bool]) -> runtime.CapabilityReport:
-    return runtime.CapabilityReport(tuple(
-        runtime.Capability(name, available, "test", "test")
-        for name, available in caps
-    ))
+    return runtime.CapabilityReport(
+        tuple(runtime.Capability(name, available, "test", "test") for name, available in caps)
+    )
 
 
 class TestResolve(unittest.TestCase):
@@ -22,11 +21,13 @@ class TestResolve(unittest.TestCase):
         self.assertEqual(transport.degraded, ())
 
     def test_mcp_fallback_degrades_known_gaps(self):
-        transport = github_transport.resolve(report(
-            ("gh", False),
-            ("gh-auth", False),
-            ("github-mcp", True),
-        ))
+        transport = github_transport.resolve(
+            report(
+                ("gh", False),
+                ("gh-auth", False),
+                ("github-mcp", True),
+            )
+        )
         self.assertEqual(transport.name, "mcp")
         self.assertTrue(transport.supports("issue_read"))
         self.assertTrue(transport.supports("comments"))

@@ -48,8 +48,9 @@ class TestEnsureGitignore(unittest.TestCase):
             keel.mkdir()
             self.assertTrue(workspace.ensure_runtime_gitignore(keel))
             gitignore = keel / ".gitignore"
-            self.assertEqual(gitignore.read_text(encoding="utf-8"),
-                             workspace.runtime_gitignore_body())
+            self.assertEqual(
+                gitignore.read_text(encoding="utf-8"), workspace.runtime_gitignore_body()
+            )
 
     def test_idempotent_second_call_is_noop(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -175,10 +176,13 @@ class TestGitActuallyIgnoresWhatKeelWrites(unittest.TestCase):
     def _untracked(self, root: Path) -> list[str]:
         proc = subprocess.run(
             ["git", "-C", str(root), "status", "--porcelain", "--untracked-files=all"],
-            capture_output=True, text=True, check=True,
+            capture_output=True,
+            text=True,
+            check=True,
         )
         return [
-            line[3:] for line in proc.stdout.splitlines()
+            line[3:]
+            for line in proc.stdout.splitlines()
             if line.startswith("??") and not line[3:].startswith(".keel/.gitignore")
         ]
 
@@ -210,8 +214,8 @@ class TestGitActuallyIgnoresWhatKeelWrites(unittest.TestCase):
         # literal is not the only spelling. Resolve `<NAME>_DIRNAME = "value"`
         # constants too, or the next subtree written that way is invisible here
         # exactly as `worktrees/` was invisible to the tuple.
-        r'keel_dir\([^)]*\)\s*/\s*([A-Z_]+DIRNAME)',
-        r'KEEL_DIRNAME\s*/\s*([A-Z_]+DIRNAME)',
+        r"keel_dir\([^)]*\)\s*/\s*([A-Z_]+DIRNAME)",
+        r"KEEL_DIRNAME\s*/\s*([A-Z_]+DIRNAME)",
     )
 
     def _subtrees_in_source(self) -> dict[str, set[str]]:
@@ -253,7 +257,8 @@ class TestGitActuallyIgnoresWhatKeelWrites(unittest.TestCase):
             if not entry.startswith("*")
         }
         self.assertLessEqual(
-            directories, set(found),
+            directories,
+            set(found),
             "the patterns no longer reach a subtree keel is known to write: "
             f"{sorted(directories - set(found))}",
         )
@@ -263,7 +268,8 @@ class TestGitActuallyIgnoresWhatKeelWrites(unittest.TestCase):
             if name not in ignored and name not in self.COMMITTED_SUBTREES
         }
         self.assertEqual(
-            {}, unclassified,
+            {},
+            unclassified,
             "a .keel subtree is written by the source but is neither ignored at "
             f"runtime nor declared committed: {unclassified}",
         )
@@ -286,7 +292,8 @@ class TestGitActuallyIgnoresWhatKeelWrites(unittest.TestCase):
             for name in sorted(self.COMMITTED_SUBTREES):
                 with self.subTest(subtree=name):
                     self.assertIn(
-                        f".keel/{name}/f.yaml", visible,
+                        f".keel/{name}/f.yaml",
+                        visible,
                         f"{name} is declared committed but keel ignores it — either "
                         "it belongs in RUNTIME_IGNORE_ENTRIES, or the declaration is "
                         "hiding an unclassified subtree",
@@ -311,7 +318,8 @@ class TestGitActuallyIgnoresWhatKeelWrites(unittest.TestCase):
                 path.write_text("{}", encoding="utf-8")
 
             self.assertEqual(
-                [], self._untracked(root),
+                [],
+                self._untracked(root),
                 "a runtime path keel writes to is not covered by .keel/.gitignore",
             )
 
@@ -355,11 +363,13 @@ class TestGitActuallyIgnoresWhatKeelWrites(unittest.TestCase):
 
             visible = set(self._untracked(root))
             self.assertIn(
-                ".keel/extensions/myext/worktrees/template.yaml", visible,
+                ".keel/extensions/myext/worktrees/template.yaml",
+                visible,
                 "the entry reaches into extensions/, which is committed config",
             )
             self.assertNotIn(
-                str(swarm.relative_to(root)) + "/f.py", visible,
+                str(swarm.relative_to(root)) + "/f.py",
+                visible,
                 "the swarm worktree it exists for is no longer ignored",
             )
 
@@ -387,7 +397,8 @@ class TestGitActuallyIgnoresWhatKeelWrites(unittest.TestCase):
             for rel in (".keel/project.yaml", ".keel/extensions/e.yaml"):
                 with self.subTest(path=rel):
                     self.assertIn(
-                        rel, visible,
+                        rel,
+                        visible,
                         "a runtime ignore entry hides committed config when it "
                         "lands in a gitignore above .keel/",
                     )
@@ -426,7 +437,8 @@ class TestKeelsOwnGitignoreMatchesWhatItGenerates(unittest.TestCase):
         bare = [line.strip("/") for line in lines]
         duplicates = sorted({name for name in bare if bare.count(name) > 1})
         self.assertEqual(
-            [], duplicates,
+            [],
+            duplicates,
             f"two spellings of the same entry are both present: {duplicates}",
         )
 
@@ -454,7 +466,8 @@ class TestTheDocsPrintTheFileKeelActuallyWrites(unittest.TestCase):
             if not line.startswith("#")
         )
         self.assertEqual(
-            self._block(), generated,
+            self._block(),
+            generated,
             "docs/keel/artifacts.md prints a gitignore that is not the one keel writes",
         )
 
@@ -475,7 +488,8 @@ class TestTheDocsPrintTheFileKeelActuallyWrites(unittest.TestCase):
                 # The status cell, not just the name: the table could otherwise
                 # say a runtime subtree is committed and still pass.
                 self.assertIn(
-                    "| ignored |", row,
+                    "| ignored |",
+                    row,
                     f"the table lists .keel/{name}/ as something other than ignored",
                 )
 
@@ -498,17 +512,16 @@ class TestRuntimeWritersStayUnderKeel(unittest.TestCase):
             checkpoint.write_checkpoint(
                 root / ".keel" / "state" / "checkpoint.json",
                 checkpoint.build_checkpoint_record(
-                    run_id="r1", command="ship", current_step="s4",
-                    base_branch="main", target="473"),
+                    run_id="r1", command="ship", current_step="s4", base_branch="main", target="473"
+                ),
             )
             activity.write_activity(
                 root / ".keel" / "activity" / "r1.json",
                 activity.build_activity_record(
-                    command="ship", run_id="r1", phase="s4",
-                    issue=473, pr=None, note=None),
+                    command="ship", run_id="r1", phase="s4", issue=473, pr=None, note=None
+                ),
             )
-            lock.claim_resource(root / ".keel" / "state" / "locks", "merge",
-                                owner="tester")
+            lock.claim_resource(root / ".keel" / "state" / "locks", "merge", owner="tester")
 
             # The only top-level entry the run created is `.keel`.
             self.assertEqual(self._root_entries(root), {".keel"})
@@ -530,8 +543,8 @@ class TestRuntimeWritersStayUnderKeel(unittest.TestCase):
             checkpoint.write_checkpoint(
                 root / "explicit" / "checkpoint.json",
                 checkpoint.build_checkpoint_record(
-                    run_id="r1", command="ship", current_step="s0",
-                    base_branch="main", target="473"),
+                    run_id="r1", command="ship", current_step="s0", base_branch="main", target="473"
+                ),
             )
             self.assertTrue((root / "explicit" / "checkpoint.json").exists())
             self.assertFalse((root / ".keel").exists())
@@ -573,8 +586,7 @@ class TestPruneActivity(unittest.TestCase):
 
     def test_missing_dir_is_noop(self):
         with tempfile.TemporaryDirectory() as tmp:
-            self.assertEqual(
-                workspace.activity_prune_plan(Path(tmp) / "nope", keep_last=2), [])
+            self.assertEqual(workspace.activity_prune_plan(Path(tmp) / "nope", keep_last=2), [])
 
     def test_within_budget_keeps_everything(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -585,7 +597,8 @@ class TestPruneActivity(unittest.TestCase):
     def test_prunes_oldest_beyond_budget_and_ignores_non_json(self):
         with tempfile.TemporaryDirectory() as tmp:
             directory = _activity_dir_with(
-                tmp, ["old1.json", "old2.json", "new1.json", "new2.json"])
+                tmp, ["old1.json", "old2.json", "new1.json", "new2.json"]
+            )
             (directory / "notes.txt").write_text("keep me")  # non-json never counts
             plan = workspace.activity_prune_plan(directory, keep_last=2)
             self.assertEqual(plan, ["old1.json", "old2.json"])
@@ -593,24 +606,27 @@ class TestPruneActivity(unittest.TestCase):
             self.assertEqual(removed, ["old1.json", "old2.json"])
             # Newest two records and the non-json file survive.
             self.assertEqual(
-                sorted(p.name for p in directory.iterdir()),
-                ["new1.json", "new2.json", "notes.txt"])
+                sorted(p.name for p in directory.iterdir()), ["new1.json", "new2.json", "notes.txt"]
+            )
 
     def test_keep_zero_removes_all_records(self):
         with tempfile.TemporaryDirectory() as tmp:
             directory = _activity_dir_with(tmp, ["a.json", "b.json"])
-            self.assertEqual(workspace.prune_activity(directory, keep_last=0),
-                             ["a.json", "b.json"])
+            self.assertEqual(workspace.prune_activity(directory, keep_last=0), ["a.json", "b.json"])
 
 
 def _write_config(tmp: str, *, activity_path: str | None = None) -> str:
     target = Path(tmp) / ".keel" / "project.yaml"
     target.parent.mkdir(parents=True, exist_ok=True)
-    lines = ["extends: keel", "core_version: '^1.0'", "base_branch: main",
-             "knobs:", "  build_gate_cmd: 'true'"]
+    lines = [
+        "extends: keel",
+        "core_version: '^1.0'",
+        "base_branch: main",
+        "knobs:",
+        "  build_gate_cmd: 'true'",
+    ]
     if activity_path is not None:
-        lines += ["policy_pack:", "  name: t", "  reports:",
-                  f"    activity: '{activity_path}'"]
+        lines += ["policy_pack:", "  name: t", "  reports:", f"    activity: '{activity_path}'"]
     target.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return str(target)
 
@@ -642,8 +658,8 @@ class TestGcCommand(unittest.TestCase):
             (scratch / "pr.diff").write_text("x")
             _activity_dir_with(tmp, ["a.json", "b.json", "c.json"])
             rc, out, _ = self._run(
-                ["gc", cfg_path, "--root", tmp, "--keep-activity", "1",
-                 "--dry-run", "--json"])
+                ["gc", cfg_path, "--root", tmp, "--keep-activity", "1", "--dry-run", "--json"]
+            )
             self.assertEqual(rc, 0)
             payload = json.loads(out)
             self.assertTrue(payload["dry_run"])
@@ -661,13 +677,13 @@ class TestGcCommand(unittest.TestCase):
             _activity_dir_with(tmp, ["a.json", "b.json", "c.json"])
             rc, out, _ = self._run(["gc", cfg_path, "--root", tmp, "--keep-activity", "1"])
             self.assertEqual(rc, 0)
-            self.assertIn("removed 1 entry", out)          # singular scratch entry
+            self.assertIn("removed 1 entry", out)  # singular scratch entry
             self.assertIn("removed 2 record(s)", out)
             self.assertEqual(workspace.scratch_entries(tmp), [])
             self.assertTrue((Path(tmp) / ".keel" / "scratch").is_dir())
             self.assertEqual(
-                [p.name for p in (Path(tmp) / ".keel" / "activity").iterdir()],
-                ["c.json"])
+                [p.name for p in (Path(tmp) / ".keel" / "activity").iterdir()], ["c.json"]
+            )
 
     def test_plural_entries_wording(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -706,8 +722,7 @@ class TestGcCommand(unittest.TestCase):
     def test_scratch_failure_is_fail_soft(self):
         with tempfile.TemporaryDirectory() as tmp:
             cfg_path = _write_config(tmp)
-            with mock.patch.object(workspace, "clean_scratch",
-                                   side_effect=OSError("disk gone")):
+            with mock.patch.object(workspace, "clean_scratch", side_effect=OSError("disk gone")):
                 rc, out, err = self._run(["gc", cfg_path, "--root", tmp, "--no-activity"])
             self.assertEqual(rc, 0)  # degrades, never aborts
             self.assertIn("degraded", err)
@@ -732,4 +747,3 @@ class TestGcCommand(unittest.TestCase):
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
-

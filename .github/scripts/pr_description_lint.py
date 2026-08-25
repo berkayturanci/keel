@@ -59,22 +59,18 @@ def description_errors(body: str, template: str = "") -> list[str]:
 
     # Lines the author left exactly as the template shipped them (the prose
     # placeholder, checklist rows, headings) don't count as a real summary.
-    boilerplate = {
-        line.strip()
-        for line in strip_comments(template).splitlines()
-        if line.strip()
-    }
+    boilerplate = {line.strip() for line in strip_comments(template).splitlines() if line.strip()}
 
     prose = []
     for line in authored.splitlines():
         stripped = line.strip()
         if not stripped:
             continue
-        if re.match(r"#{1,6}\s", stripped):            # markdown heading (not "#123")
+        if re.match(r"#{1,6}\s", stripped):  # markdown heading (not "#123")
             continue
-        if re.match(r"^[-*]\s*\[[ xX]\]", stripped):   # "- [ ] ..." checklist row
+        if re.match(r"^[-*]\s*\[[ xX]\]", stripped):  # "- [ ] ..." checklist row
             continue
-        if stripped in boilerplate:                    # unchanged template line
+        if stripped in boilerplate:  # unchanged template line
             continue
         prose.append(stripped)
     summary = " ".join(prose).strip()

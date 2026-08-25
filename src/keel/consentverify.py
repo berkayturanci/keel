@@ -101,8 +101,7 @@ def required_scopes_for_effect(effect_kind: str) -> tuple[str, ...]:
     side_effect = _EFFECT_SIDE_EFFECTS.get(effect_kind)
     if side_effect is None:
         raise ValueError(
-            f"unknown observed effect {effect_kind!r}; "
-            f"valid: {', '.join(OBSERVED_EFFECT_KINDS)}"
+            f"unknown observed effect {effect_kind!r}; valid: {', '.join(OBSERVED_EFFECT_KINDS)}"
         )
     side_effects = (side_effect, *_EFFECT_EXTRA_SIDE_EFFECTS.get(effect_kind, ()))
     return consent.side_effect_scopes(side_effects)
@@ -142,22 +141,26 @@ def reconcile(
         required = required_scopes_for_effect(kind)
         missing = tuple(scope for scope in required if scope not in approved)
         covered = not missing
-        effects.append({
-            "effect": kind,
-            "required_scopes": list(required),
-            "missing_scopes": list(missing),
-            "covered": covered,
-        })
-        if not covered and has_consent_record:
-            uncovered.append({
+        effects.append(
+            {
                 "effect": kind,
                 "required_scopes": list(required),
                 "missing_scopes": list(missing),
-                "message": (
-                    f"mutation {kind} not covered by approved consent scopes "
-                    f"(requires {', '.join(required)}; missing {', '.join(missing)})"
-                ),
-            })
+                "covered": covered,
+            }
+        )
+        if not covered and has_consent_record:
+            uncovered.append(
+                {
+                    "effect": kind,
+                    "required_scopes": list(required),
+                    "missing_scopes": list(missing),
+                    "message": (
+                        f"mutation {kind} not covered by approved consent scopes "
+                        f"(requires {', '.join(required)}; missing {', '.join(missing)})"
+                    ),
+                }
+            )
     verdict = _verdict(has_consent_record=has_consent_record, uncovered=uncovered)
     return {
         "schema_version": SCHEMA_VERSION,

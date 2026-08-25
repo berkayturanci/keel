@@ -174,12 +174,7 @@ def verify_step_completion(
         _check_handoff_marker(handoff),
         _check_required_evidence(requirement, evidence_report),
     ]
-    missing = [
-        reason
-        for check in checks
-        if not check["ok"]
-        for reason in check["missing"]
-    ]
+    missing = [reason for check in checks if not check["ok"] for reason in check["missing"]]
     return {
         "schema_version": SCHEMA_VERSION,
         "step_id": step_id,
@@ -250,9 +245,7 @@ def _check_required_evidence(
         if result.get("ok") is True and isinstance(result.get("id"), str)
     }
     missing = [
-        evidence_id
-        for evidence_id in requirement.required_evidence
-        if evidence_id not in ok_ids
+        evidence_id for evidence_id in requirement.required_evidence if evidence_id not in ok_ids
     ]
     return _check("required_evidence", not missing, *missing)
 

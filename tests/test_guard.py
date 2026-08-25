@@ -54,9 +54,7 @@ class TestDefaultRules(unittest.TestCase):
 
     def test_multiple_rules_fire_in_order(self):
         result = guard.evaluate("security: token leak", ["blocker"], rules=self.rules)
-        self.assertEqual(
-            result.matched, ("blocker-label", "blocker-title-regex")
-        )
+        self.assertEqual(result.matched, ("blocker-label", "blocker-title-regex"))
 
     def test_as_dict_is_structured(self):
         result = guard.evaluate("hotfix: x", ["blocker"], rules=self.rules)
@@ -83,9 +81,7 @@ class TestResolveRules(unittest.TestCase):
     def test_non_list_blocker_rules_uses_defaults(self):
         # A non-list value can't pass the schema, so inject it directly to cover
         # resolve_rules' defensive fallback.
-        config = dataclasses.replace(
-            _config(), policy_pack={"name": "x", "blocker_rules": "nope"}
-        )
+        config = dataclasses.replace(_config(), policy_pack={"name": "x", "blocker_rules": "nope"})
         rules = guard.resolve_rules(config)
         self.assertEqual(len(rules), len(guard.DEFAULT_RULES))
 
@@ -94,10 +90,16 @@ class TestResolveRules(unittest.TestCase):
         self.assertEqual(len(guard.resolve_rules(config)), len(guard.DEFAULT_RULES))
 
     def test_configured_label_and_regex_rules(self):
-        rules = guard.resolve_rules(_config({"blocker_rules": [
-            {"id": "p0", "kind": "label", "labels": ["P0"]},
-            {"id": "urgent", "kind": "title-regex", "pattern": r"\burgent\b"},
-        ]}))
+        rules = guard.resolve_rules(
+            _config(
+                {
+                    "blocker_rules": [
+                        {"id": "p0", "kind": "label", "labels": ["P0"]},
+                        {"id": "urgent", "kind": "title-regex", "pattern": r"\burgent\b"},
+                    ]
+                }
+            )
+        )
         self.assertEqual([r.id for r in rules], ["p0", "urgent"])
         result = guard.evaluate("an urgent fix", ["other"], rules=rules)
         self.assertEqual(result.matched, ("urgent",))
@@ -113,9 +115,7 @@ class TestMalformedRules(unittest.TestCase):
     # Malformed rules can't pass the config schema, so these inject the raw
     # policy_pack directly to cover resolve_rules' fail-closed validation.
     def _config_raw(self, rules):
-        return dataclasses.replace(
-            _config(), policy_pack={"name": "x", "blocker_rules": rules}
-        )
+        return dataclasses.replace(_config(), policy_pack={"name": "x", "blocker_rules": rules})
 
     def _err(self, rule):
         with self.assertRaises(guard.GuardError) as ctx:
@@ -136,19 +136,21 @@ class TestMalformedRules(unittest.TestCase):
 
     def test_duplicate_id(self):
         with self.assertRaises(guard.GuardError) as ctx:
-            guard.resolve_rules(self._config_raw([
-                {"id": "dup", "kind": "label", "labels": ["a"]},
-                {"id": "dup", "kind": "label", "labels": ["b"]},
-            ]))
+            guard.resolve_rules(
+                self._config_raw(
+                    [
+                        {"id": "dup", "kind": "label", "labels": ["a"]},
+                        {"id": "dup", "kind": "label", "labels": ["b"]},
+                    ]
+                )
+            )
         self.assertIn("duplicate rule id", str(ctx.exception))
 
     def test_label_rule_missing_labels(self):
         self.assertIn("non-empty 'labels'", self._err({"id": "x", "kind": "label"}))
 
     def test_label_rule_empty_labels(self):
-        self.assertIn(
-            "non-empty 'labels'", self._err({"id": "x", "kind": "label", "labels": []})
-        )
+        self.assertIn("non-empty 'labels'", self._err({"id": "x", "kind": "label", "labels": []}))
 
     def test_title_regex_missing_pattern(self):
         self.assertIn("non-empty 'pattern'", self._err({"id": "x", "kind": "title-regex"}))

@@ -19,6 +19,7 @@ from . import capabilities
 
 KNOWN_CAPABILITIES = capabilities.KNOWN_CAPABILITIES
 
+
 @dataclass(frozen=True)
 class Capability:
     """One detected runtime capability."""
@@ -133,6 +134,7 @@ def detect(
     env = os.environ if env is None else env
     if run is None:
         from .runner import run_argv
+
         run = run_argv
     root_path = Path(root)
     sh = which("sh")
@@ -153,29 +155,58 @@ def detect(
         Capability("git", git is not None, git or "git not found", "PATH"),
         Capability("gh", gh is not None, gh or "gh not found", "PATH"),
         Capability("gh-auth", gh_auth, gh_auth_detail, "gh auth status"),
-        Capability("github-mcp", _truthy(env.get("KEEL_GITHUB_MCP")),
-                   "KEEL_GITHUB_MCP", "environment"),
-        Capability("subagents", _truthy(env.get("KEEL_SUBAGENTS")),
-                   "KEEL_SUBAGENTS", "environment"),
-        Capability("parallel-subagents", _truthy(env.get("KEEL_PARALLEL_SUBAGENTS")),
-                   "KEEL_PARALLEL_SUBAGENTS", "environment"),
-        Capability("browser", _truthy(env.get("KEEL_BROWSER")),
-                   "KEEL_BROWSER", "environment"),
+        Capability(
+            "github-mcp", _truthy(env.get("KEEL_GITHUB_MCP")), "KEEL_GITHUB_MCP", "environment"
+        ),
+        Capability(
+            "subagents", _truthy(env.get("KEEL_SUBAGENTS")), "KEEL_SUBAGENTS", "environment"
+        ),
+        Capability(
+            "parallel-subagents",
+            _truthy(env.get("KEEL_PARALLEL_SUBAGENTS")),
+            "KEEL_PARALLEL_SUBAGENTS",
+            "environment",
+        ),
+        Capability("browser", _truthy(env.get("KEEL_BROWSER")), "KEEL_BROWSER", "environment"),
         adb,
         firebase,
-        Capability("filesystem-write", filesystem_write,
-                   "root writable" if filesystem_write else "root not writable", "filesystem"),
-        Capability("worktree", git is not None and filesystem_write,
-                   "requires git and writable root", "derived"),
-        Capability("release-publish", _truthy(env.get("KEEL_RELEASE_PUBLISH")),
-                   "KEEL_RELEASE_PUBLISH", "environment"),
-        Capability("secret-access", _truthy(env.get("KEEL_SECRET_ACCESS")),
-                   "KEEL_SECRET_ACCESS", "environment"),
+        Capability(
+            "filesystem-write",
+            filesystem_write,
+            "root writable" if filesystem_write else "root not writable",
+            "filesystem",
+        ),
+        Capability(
+            "worktree",
+            git is not None and filesystem_write,
+            "requires git and writable root",
+            "derived",
+        ),
+        Capability(
+            "release-publish",
+            _truthy(env.get("KEEL_RELEASE_PUBLISH")),
+            "KEEL_RELEASE_PUBLISH",
+            "environment",
+        ),
+        Capability(
+            "secret-access",
+            _truthy(env.get("KEEL_SECRET_ACCESS")),
+            "KEEL_SECRET_ACCESS",
+            "environment",
+        ),
         _api_token_capability(env),
-        Capability("production-adjacent", _truthy(env.get("KEEL_PRODUCTION_ADJACENT")),
-                   "KEEL_PRODUCTION_ADJACENT", "environment"),
-        Capability("private-setup", _truthy(env.get("KEEL_PRIVATE_SETUP")),
-                   "KEEL_PRIVATE_SETUP", "environment"),
+        Capability(
+            "production-adjacent",
+            _truthy(env.get("KEEL_PRODUCTION_ADJACENT")),
+            "KEEL_PRODUCTION_ADJACENT",
+            "environment",
+        ),
+        Capability(
+            "private-setup",
+            _truthy(env.get("KEEL_PRIVATE_SETUP")),
+            "KEEL_PRIVATE_SETUP",
+            "environment",
+        ),
     )
     return CapabilityReport(caps)
 
@@ -260,35 +291,54 @@ def build_capability_requirement(
     except gates.GateError:
         return req
     if project_command := project_commands.get_project_command(config, command):
-        req = req.merged(CapabilityRequirement(
-            required=project_command.required_capabilities,
-            optional=project_command.optional_capabilities,
-        ))
+        req = req.merged(
+            CapabilityRequirement(
+                required=project_command.required_capabilities,
+                optional=project_command.optional_capabilities,
+            )
+        )
 
     command_gate_commands = {
-        "run-gates", "ship", "pr-loop", "wrap", "work-block", "overnight",
-        "implement", "coverage", "deps-audit", "flake-audit",
+        "run-gates",
+        "ship",
+        "pr-loop",
+        "wrap",
+        "work-block",
+        "overnight",
+        "implement",
+        "coverage",
+        "deps-audit",
+        "flake-audit",
     }
     if command in command_gate_commands and any(s.kind == "command" for s in specs):
         req = req.merged(CapabilityRequirement(required=("shell",)))
-    worktree_commands = {
-        "ship", "pr-loop", "wrap", "work-block", "overnight", "implement"
-    }
+    worktree_commands = {"ship", "pr-loop", "wrap", "work-block", "overnight", "implement"}
     github_read_commands = {
-        "morning", "review-cycle", "triage", "stale-prs", "regression", "review-all-day",
-        "coverage", "deps-audit", "flake-audit", "ci-check",
+        "morning",
+        "review-cycle",
+        "triage",
+        "stale-prs",
+        "regression",
+        "review-all-day",
+        "coverage",
+        "deps-audit",
+        "flake-audit",
+        "ci-check",
     }
     if command in worktree_commands:
-        req = req.merged(CapabilityRequirement(required=("git", "worktree"),
-                                               optional=("gh", "gh-auth")))
+        req = req.merged(
+            CapabilityRequirement(required=("git", "worktree"), optional=("gh", "gh-auth"))
+        )
     elif command in github_read_commands:
         req = req.merged(CapabilityRequirement(optional=("gh", "gh-auth")))
     for spec in specs:
         if spec.required_capabilities or spec.optional_capabilities:
-            req = req.merged(CapabilityRequirement(
-                required=spec.required_capabilities,
-                optional=spec.optional_capabilities,
-            ))
+            req = req.merged(
+                CapabilityRequirement(
+                    required=spec.required_capabilities,
+                    optional=spec.optional_capabilities,
+                )
+            )
     return req
 
 
@@ -329,4 +379,3 @@ def scan_capability_requirement(command: str, config) -> CapabilityRequirement:
         required=("git",),
         optional=("gh", "gh-auth", "github-mcp", "parallel-subagents"),
     )
-

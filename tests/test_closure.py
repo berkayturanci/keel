@@ -98,8 +98,9 @@ class TestRenderClosureComment(unittest.TestCase):
         )
 
     def test_jury_only_no_real_reviewers(self):
-        record = _record(actors={"implementer": "codex (gpt-5)",
-                                 "reviewers": ["AI Jury"], "tester": None})
+        record = _record(
+            actors={"implementer": "codex (gpt-5)", "reviewers": ["AI Jury"], "tester": None}
+        )
         rendered = closure.render_closure_comment(record)
         self.assertIn(f"- **Reviewers:** {closure.JURY_LABEL}", rendered)
         reviewer_lines = [
@@ -108,13 +109,13 @@ class TestRenderClosureComment(unittest.TestCase):
         self.assertNotIn("—", reviewer_lines[0])
 
     def test_reviewers_blank_strings_only(self):
-        record = _record(actors={"implementer": "codex (gpt-5)",
-                                 "reviewers": [""], "tester": None})
+        record = _record(actors={"implementer": "codex (gpt-5)", "reviewers": [""], "tester": None})
         self.assertIn("- **Reviewers:** none", closure.render_closure_comment(record))
 
     def test_jury_absent(self):
-        record = _record(actors={"implementer": "codex (gpt-5)",
-                                 "reviewers": ["claude (opus)"], "tester": None})
+        record = _record(
+            actors={"implementer": "codex (gpt-5)", "reviewers": ["claude (opus)"], "tester": None}
+        )
         rendered = closure.render_closure_comment(record)
         self.assertNotIn(closure.JURY_LABEL, rendered)
         self.assertIn("- **Reviewers:** claude (opus)", rendered)
@@ -124,14 +125,16 @@ class TestRenderClosureComment(unittest.TestCase):
         self.assertIn("- **Capture:** applied", closure.render_closure_comment(record))
 
     def test_capture_includes_learning_decision_when_present(self):
-        record = _record(capture={
-            "status": "applied",
-            "reason": None,
-            "learning": {
-                "decision": "marker-only",
-                "reason": "policy-unavailable",
-            },
-        })
+        record = _record(
+            capture={
+                "status": "applied",
+                "reason": None,
+                "learning": {
+                    "decision": "marker-only",
+                    "reason": "policy-unavailable",
+                },
+            }
+        )
 
         self.assertIn(
             "- **Capture:** applied; learning: marker-only (policy-unavailable)",
@@ -139,13 +142,15 @@ class TestRenderClosureComment(unittest.TestCase):
         )
 
     def test_capture_includes_learning_decision_without_reason(self):
-        record = _record(capture={
-            "status": "applied",
-            "reason": None,
-            "learning": {
-                "decision": "defer",
-            },
-        })
+        record = _record(
+            capture={
+                "status": "applied",
+                "reason": None,
+                "learning": {
+                    "decision": "defer",
+                },
+            }
+        )
 
         self.assertIn(
             "- **Capture:** applied; learning: defer",
@@ -176,18 +181,17 @@ class TestRenderClosureComment(unittest.TestCase):
         self.assertIn("- **Capture:** not recorded", closure.render_closure_comment(record))
 
     def test_no_tester(self):
-        record = _record(actors={"implementer": "codex (gpt-5)", "reviewers": [],
-                                 "tester": None})
+        record = _record(actors={"implementer": "codex (gpt-5)", "reviewers": [], "tester": None})
         self.assertIn("- **Tester:** none", closure.render_closure_comment(record))
 
     def test_empty_reviewers(self):
-        record = _record(actors={"implementer": "codex (gpt-5)", "reviewers": [],
-                                 "tester": "host"})
+        record = _record(actors={"implementer": "codex (gpt-5)", "reviewers": [], "tester": "host"})
         self.assertIn("- **Reviewers:** none", closure.render_closure_comment(record))
 
     def test_reviewers_not_a_list(self):
-        record = _record(actors={"implementer": "codex (gpt-5)", "reviewers": None,
-                                 "tester": "host"})
+        record = _record(
+            actors={"implementer": "codex (gpt-5)", "reviewers": None, "tester": "host"}
+        )
         self.assertIn("- **Reviewers:** none", closure.render_closure_comment(record))
 
     def test_no_pr(self):
@@ -239,8 +243,7 @@ class TestRenderClosureComment(unittest.TestCase):
         self.assertNotIn("- **Docs touched:** no", rendered)
 
     def test_a_readable_changeset_is_unaffected_by_the_flag(self):
-        record = _record(changes={"file_count": 1, "files": ["docs/a.md"],
-                                  "unreadable": False})
+        record = _record(changes={"file_count": 1, "files": ["docs/a.md"], "unreadable": False})
         rendered = closure.render_closure_comment(record)
 
         self.assertIn("- **Changed files:** 1", rendered)
@@ -376,9 +379,11 @@ class TestRunContext(unittest.TestCase):
         self.assertIn("- **Jury:** off", rendered)
 
     def test_each_scalar_field_missing_degrades(self):
-        record = _record(run_context={
-            "consent": {"status": "approved", "scopes": ["pr-merge"]},
-        })
+        record = _record(
+            run_context={
+                "consent": {"status": "approved", "scopes": ["pr-merge"]},
+            }
+        )
         rendered = closure.render_closure_comment(record)
         self.assertIn("- **Host agent:** unknown", rendered)
         self.assertIn("- **Transport:** unknown", rendered)
@@ -387,13 +392,15 @@ class TestRunContext(unittest.TestCase):
         self.assertIn("- **Consent:** approved (scopes: pr-merge)", rendered)
 
     def test_blank_scalar_fields_degrade(self):
-        record = _record(run_context={
-            "host_agent": "  ",
-            "transport": "",
-            "profile": "   ",
-            "jury_mode": "",
-            "consent": {"status": "  ", "scopes": []},
-        })
+        record = _record(
+            run_context={
+                "host_agent": "  ",
+                "transport": "",
+                "profile": "   ",
+                "jury_mode": "",
+                "consent": {"status": "  ", "scopes": []},
+            }
+        )
         rendered = closure.render_closure_comment(record)
         self.assertIn("- **Host agent:** unknown", rendered)
         self.assertIn("- **Transport:** unknown", rendered)
@@ -416,9 +423,11 @@ class TestRunContext(unittest.TestCase):
         )
 
     def test_consent_scopes_drop_blank_entries(self):
-        record = _record(run_context={
-            "consent": {"status": "approved", "scopes": ["pr-merge", "  ", 7, ""]},
-        })
+        record = _record(
+            run_context={
+                "consent": {"status": "approved", "scopes": ["pr-merge", "  ", 7, ""]},
+            }
+        )
         self.assertIn(
             "- **Consent:** approved (scopes: pr-merge)",
             closure.render_closure_comment(record),
@@ -462,9 +471,7 @@ class TestClosureContract(unittest.TestCase):
         self.assertIn("run_context", contract["sections"])
         self.assertIn("watermark", contract["sections"])
         sections = contract["sections"]
-        self.assertEqual(
-            sections.index("docs_touched"), sections.index("changed_files") + 1
-        )
+        self.assertEqual(sections.index("docs_touched"), sections.index("changed_files") + 1)
         self.assertEqual(sections[-1], "watermark")
         self.assertEqual(
             contract["run_context_fields"],

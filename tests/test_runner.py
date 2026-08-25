@@ -55,7 +55,6 @@ class TestRunCommand(unittest.TestCase):
         self.assertEqual(r.code, 127)
         self.assertIn("no such binary", r.output)
 
-
     def test_stdin_is_devnull(self):
         passed_kwargs = {}
 
@@ -134,6 +133,7 @@ class TestCommandGateRunner(unittest.TestCase):
     def test_fail_with_location_is_anchorable(self):
         def _located(*a, **k):
             return _Proc(1, "src/app.py:42:5: undefined name 'x'", "")
+
         _, findings, _, _nr = runner.command_gate_runner(_run=_located)(self._spec())
         self.assertEqual(findings[0].path, "src/app.py")
         self.assertEqual(findings[0].line, 42)
@@ -217,8 +217,9 @@ class TestFirstLocation(unittest.TestCase):
         self.assertEqual(runner.first_location("a/b.py:12: oops"), ("a/b.py", 12))
 
     def test_first_match_wins(self):
-        self.assertEqual(runner.first_location("no loc\nsrc/a.py:1: x\nsrc/b.py:2: y"),
-                         ("src/a.py", 1))
+        self.assertEqual(
+            runner.first_location("no loc\nsrc/a.py:1: x\nsrc/b.py:2: y"), ("src/a.py", 1)
+        )
 
     def test_none_when_absent(self):
         self.assertEqual(runner.first_location("just a message"), (None, None))

@@ -11,8 +11,7 @@ class TestWorkCreationContract(unittest.TestCase):
 
         self.assertEqual(contract["schema_version"], "keel.work-creation.v1")
         self.assertTrue(contract["consumer_neutral"])
-        self.assertEqual(contract["transient_filter"]["transient_outcome"],
-                         "suppress-transient")
+        self.assertEqual(contract["transient_filter"]["transient_outcome"], "suppress-transient")
         self.assertEqual(contract["dedupe"]["duplicate_outcome"], "suppress-duplicate")
         self.assertEqual(contract["cycle_limit"]["limit_outcome"], "limit-reached")
         self.assertIn("regression", contract["consumers"])
@@ -21,42 +20,48 @@ class TestWorkCreationContract(unittest.TestCase):
 
 class TestWorkCreationEvaluation(unittest.TestCase):
     def test_clean_candidate_creates_work(self):
-        report = workcreation.evaluate_candidates([
-            {
-                "id": "signal-1",
-                "title": "Fix payment flow crash",
-                "body": "Crash reproduced twice.",
-                "occurrences": 2,
-                "confidence": 0.9,
-            }
-        ])
+        report = workcreation.evaluate_candidates(
+            [
+                {
+                    "id": "signal-1",
+                    "title": "Fix payment flow crash",
+                    "body": "Crash reproduced twice.",
+                    "occurrences": 2,
+                    "confidence": 0.9,
+                }
+            ]
+        )
 
         self.assertEqual(report["summary"]["create"], 1)
         self.assertEqual(report["decisions"][0]["decision"], "create")
         self.assertTrue(report["decisions"][0]["creates_issue"])
 
     def test_transient_signal_is_suppressed_by_occurrence_floor(self):
-        report = workcreation.evaluate_candidates([
-            {
-                "id": "blip",
-                "title": "One-off CI failure",
-                "occurrences": 1,
-                "confidence": 1.0,
-            }
-        ])
+        report = workcreation.evaluate_candidates(
+            [
+                {
+                    "id": "blip",
+                    "title": "One-off CI failure",
+                    "occurrences": 1,
+                    "confidence": 1.0,
+                }
+            ]
+        )
 
         self.assertEqual(report["summary"]["suppress_transient"], 1)
         self.assertEqual(report["decisions"][0]["reason"], "transient-signal")
 
     def test_low_confidence_signal_is_transient(self):
-        report = workcreation.evaluate_candidates([
-            {
-                "id": "weak",
-                "title": "Possible UI drift",
-                "occurrences": 5,
-                "confidence": 0.2,
-            }
-        ])
+        report = workcreation.evaluate_candidates(
+            [
+                {
+                    "id": "weak",
+                    "title": "Possible UI drift",
+                    "occurrences": 5,
+                    "confidence": 0.2,
+                }
+            ]
+        )
 
         self.assertEqual(report["decisions"][0]["decision"], "suppress-transient")
 
@@ -179,30 +184,35 @@ class TestWorkCreationEvaluation(unittest.TestCase):
             max_creations=2,
         )
 
-        self.assertEqual([item["decision"] for item in report["decisions"]], [
-            "create",
-            "create",
-            "limit-reached",
-        ])
+        self.assertEqual(
+            [item["decision"] for item in report["decisions"]],
+            [
+                "create",
+                "create",
+                "limit-reached",
+            ],
+        )
         self.assertEqual(report["summary"]["limit_reached"], 1)
 
     def test_created_items_dedupe_later_candidates_in_same_cycle(self):
-        report = workcreation.evaluate_candidates([
-            {
-                "id": "first",
-                "title": "Duplicate within cycle",
-                "dedupe_key": "same",
-                "occurrences": 2,
-                "confidence": 1.0,
-            },
-            {
-                "id": "second",
-                "title": "Duplicate within cycle again",
-                "dedupe_key": "same",
-                "occurrences": 2,
-                "confidence": 1.0,
-            },
-        ])
+        report = workcreation.evaluate_candidates(
+            [
+                {
+                    "id": "first",
+                    "title": "Duplicate within cycle",
+                    "dedupe_key": "same",
+                    "occurrences": 2,
+                    "confidence": 1.0,
+                },
+                {
+                    "id": "second",
+                    "title": "Duplicate within cycle again",
+                    "dedupe_key": "same",
+                    "occurrences": 2,
+                    "confidence": 1.0,
+                },
+            ]
+        )
 
         self.assertEqual(report["decisions"][0]["decision"], "create")
         self.assertEqual(report["decisions"][1]["decision"], "suppress-duplicate")
@@ -219,21 +229,21 @@ class TestWorkCreationEvaluation(unittest.TestCase):
             near_text_similarity=2.0,
         )
 
-        self.assertEqual(report["policy"]["min_occurrences"],
-                         workcreation.DEFAULT_MIN_OCCURRENCES)
-        self.assertEqual(report["policy"]["min_confidence"],
-                         workcreation.DEFAULT_MIN_CONFIDENCE)
-        self.assertEqual(report["policy"]["max_creations"],
-                         workcreation.DEFAULT_MAX_CREATIONS)
-        self.assertEqual(report["policy"]["near_text_similarity"],
-                         workcreation.DEFAULT_NEAR_TEXT_SIMILARITY)
+        self.assertEqual(report["policy"]["min_occurrences"], workcreation.DEFAULT_MIN_OCCURRENCES)
+        self.assertEqual(report["policy"]["min_confidence"], workcreation.DEFAULT_MIN_CONFIDENCE)
+        self.assertEqual(report["policy"]["max_creations"], workcreation.DEFAULT_MAX_CREATIONS)
+        self.assertEqual(
+            report["policy"]["near_text_similarity"], workcreation.DEFAULT_NEAR_TEXT_SIMILARITY
+        )
         self.assertEqual(report["decisions"][0]["candidate_id"], "candidate-1")
 
     def test_non_dict_candidates_are_ignored(self):
-        report = workcreation.evaluate_candidates([
-            "not-a-candidate",
-            {"title": "Valid", "occurrences": 2, "confidence": 1.0},
-        ])
+        report = workcreation.evaluate_candidates(
+            [
+                "not-a-candidate",
+                {"title": "Valid", "occurrences": 2, "confidence": 1.0},
+            ]
+        )
 
         self.assertEqual(report["summary"]["candidates"], 1)
         self.assertEqual(report["summary"]["create"], 1)

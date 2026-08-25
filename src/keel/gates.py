@@ -43,8 +43,7 @@ POLICY_PACK_PRESETS: dict[str, tuple[str, str, str, str]] = {
     # preset: (gate_id, phase, on_fail, run_cmd)
     "gitleaks": ("gitleaks", "guard", "block", "gitleaks detect --no-git -v"),
     "semgrep": ("semgrep", "test", "suggest", "semgrep scan"),
-    "bandit": ("bandit", "test", "suggest",
-               f"bandit -r . -ll -x '{_SCAN_EXCLUDE_GLOBS}'"),
+    "bandit": ("bandit", "test", "suggest", f"bandit -r . -ll -x '{_SCAN_EXCLUDE_GLOBS}'"),
     "trivy": ("trivy", "test", "warn", "trivy fs ."),
 }
 
@@ -138,34 +137,68 @@ def plan_gates(config: ProjectConfig, loaded: dict[str, list[Extension]]) -> tup
 
     specs: list[GateSpec] = []
     presets = (
-        tuple(config.policy_pack.get("presets", ()))
-        if isinstance(config.policy_pack, dict)
-        else ()
+        tuple(config.policy_pack.get("presets", ())) if isinstance(config.policy_pack, dict) else ()
     )
 
     for e in loaded.get("guard", []):
-        specs.append(GateSpec(e.id, e.kind, "guard", e.on_fail,
-                              run=e.run, prompt=e.prompt, agent=e.agent, source=e.source,
-                              required_capabilities=e.required_capabilities,
-                              optional_capabilities=e.optional_capabilities,
-                              timeout=_timeout_for(e)))
+        specs.append(
+            GateSpec(
+                e.id,
+                e.kind,
+                "guard",
+                e.on_fail,
+                run=e.run,
+                prompt=e.prompt,
+                agent=e.agent,
+                source=e.source,
+                required_capabilities=e.required_capabilities,
+                optional_capabilities=e.optional_capabilities,
+                timeout=_timeout_for(e),
+            )
+        )
 
     if "gitleaks" in presets:
         gid, phase, on_fail, run_cmd = POLICY_PACK_PRESETS["gitleaks"]
-        specs.append(GateSpec(gid, "command", phase, on_fail, run=run_cmd,
-                              source="policy_pack:preset:gitleaks", timeout=project_timeout))
+        specs.append(
+            GateSpec(
+                gid,
+                "command",
+                phase,
+                on_fail,
+                run=run_cmd,
+                source="policy_pack:preset:gitleaks",
+                timeout=project_timeout,
+            )
+        )
 
     for name in config.gates:
         if name == "build":
-            specs.append(GateSpec("build", "command", "test", "block",
-                                  run=config.knobs.build_gate_cmd, timeout=project_timeout))
+            specs.append(
+                GateSpec(
+                    "build",
+                    "command",
+                    "test",
+                    "block",
+                    run=config.knobs.build_gate_cmd,
+                    timeout=project_timeout,
+                )
+            )
         elif name == "lint":
             if config.knobs.lint_cmd:  # lint is optional
-                specs.append(GateSpec("lint", "command", "test", "block",
-                                      run=config.knobs.lint_cmd, timeout=project_timeout))
+                specs.append(
+                    GateSpec(
+                        "lint",
+                        "command",
+                        "test",
+                        "block",
+                        run=config.knobs.lint_cmd,
+                        timeout=project_timeout,
+                    )
+                )
         elif name == "jury":
-            specs.append(GateSpec("jury", "builtin", "test", "block",
-                                  timeout=config.knobs.jury_timeout_s))
+            specs.append(
+                GateSpec("jury", "builtin", "test", "block", timeout=config.knobs.jury_timeout_s)
+            )
         else:
             raise GateError(
                 f"unknown built-in gate {name!r}; valid: {', '.join(BUILTIN_GATES)} "
@@ -175,17 +208,35 @@ def plan_gates(config: ProjectConfig, loaded: dict[str, list[Extension]]) -> tup
     for preset_name in ("semgrep", "bandit", "trivy"):
         if preset_name in presets:
             gid, phase, on_fail, run_cmd = POLICY_PACK_PRESETS[preset_name]
-            specs.append(GateSpec(gid, "command", phase, on_fail, run=run_cmd,
-                                  source=f"policy_pack:preset:{preset_name}",
-                                  timeout=project_timeout))
+            specs.append(
+                GateSpec(
+                    gid,
+                    "command",
+                    phase,
+                    on_fail,
+                    run=run_cmd,
+                    source=f"policy_pack:preset:{preset_name}",
+                    timeout=project_timeout,
+                )
+            )
 
     for slot, phase in (("tester", "test"), ("test", "test"), ("pre-merge", "pre-merge")):
         for e in loaded.get(slot, []):
-            specs.append(GateSpec(e.id, e.kind, phase, e.on_fail,
-                                  run=e.run, prompt=e.prompt, agent=e.agent, source=e.source,
-                                  required_capabilities=e.required_capabilities,
-                                  optional_capabilities=e.optional_capabilities,
-                                  timeout=_timeout_for(e)))
+            specs.append(
+                GateSpec(
+                    e.id,
+                    e.kind,
+                    phase,
+                    e.on_fail,
+                    run=e.run,
+                    prompt=e.prompt,
+                    agent=e.agent,
+                    source=e.source,
+                    required_capabilities=e.required_capabilities,
+                    optional_capabilities=e.optional_capabilities,
+                    timeout=_timeout_for(e),
+                )
+            )
     return tuple(specs)
 
 
@@ -202,6 +253,7 @@ def run_gates(
     standard library ``concurrent.futures.ThreadPoolExecutor``, while preserving
     exact deterministic outcome ordering.
     """
+
     def _run_single(spec: GateSpec) -> GateOutcome:
         try:
             # tuple() first: the runner contract has always been "any 2-iterable",
@@ -218,24 +270,24 @@ def run_gates(
             if spec.on_fail == "block":
                 # A hard gate that errors must still block (can't silently pass).
                 finding = Finding("major", f"gate {spec.id!r} errored: {exc}", spec.id)
-                return GateOutcome(spec.id, False, (finding,), error=str(exc),
-                                   on_fail=spec.on_fail)
+                return GateOutcome(spec.id, False, (finding,), error=str(exc), on_fail=spec.on_fail)
             # Soft gate broke -> degrade to a no-op (logged), never abort.
-            return GateOutcome(spec.id, True, (), error=str(exc), skipped=True,
-                               on_fail=spec.on_fail)
+            return GateOutcome(
+                spec.id, True, (), error=str(exc), skipped=True, on_fail=spec.on_fail
+            )
 
         found = tuple(found)
         if ok:
-            return GateOutcome(spec.id, True, found, not_run=not_run,
-                               on_fail=spec.on_fail)
+            return GateOutcome(spec.id, True, found, not_run=not_run, on_fail=spec.on_fail)
         if not found:
             sev = _ON_FAIL_SEVERITY[spec.on_fail]
             found = (Finding(sev, f"gate {spec.id!r} failed", spec.id),)
         # ok stays False for a timeout: the merge gate is unchanged, only the label.
         # not_run rides along on this branch too: dropping it would let a future
         # runner that reports a not-run gate as *failing* certify the merge anyway.
-        return GateOutcome(spec.id, False, found, timed_out=timed_out,
-                           not_run=not_run, on_fail=spec.on_fail)
+        return GateOutcome(
+            spec.id, False, found, timed_out=timed_out, not_run=not_run, on_fail=spec.on_fail
+        )
 
     spec_list = list(specs)
     if concurrency <= 1 or len(spec_list) <= 1:
@@ -290,16 +342,26 @@ def apply_recorded_results(
             applied.append(outcome)
             continue
         if verdict == "pass":
-            applied.append(GateOutcome(outcome.gate, True, outcome.findings,
-                                       error=outcome.error, on_fail=outcome.on_fail))
+            applied.append(
+                GateOutcome(
+                    outcome.gate,
+                    True,
+                    outcome.findings,
+                    error=outcome.error,
+                    on_fail=outcome.on_fail,
+                )
+            )
             continue
         found = outcome.findings or (
-            Finding(_ON_FAIL_SEVERITY[outcome.on_fail],
-                    f"gate {outcome.gate!r} failed (reported by the dispatching agent)",
-                    outcome.gate),
+            Finding(
+                _ON_FAIL_SEVERITY[outcome.on_fail],
+                f"gate {outcome.gate!r} failed (reported by the dispatching agent)",
+                outcome.gate,
+            ),
         )
-        applied.append(GateOutcome(outcome.gate, False, found, error=outcome.error,
-                                   on_fail=outcome.on_fail))
+        applied.append(
+            GateOutcome(outcome.gate, False, found, error=outcome.error, on_fail=outcome.on_fail)
+        )
     return applied, rejected
 
 

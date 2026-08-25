@@ -185,8 +185,7 @@ class TestGitHub(unittest.TestCase):
         self.assertIn("max_by", jq_expr)
 
     def test_pr_state_parsed(self):
-        for raw, expected in (("OPEN\n", "open"), ("MERGED\n", "merged"),
-                              ("CLOSED\n", "closed")):
+        for raw, expected in (("OPEN\n", "open"), ("MERGED\n", "merged"), ("CLOSED\n", "closed")):
             with self.subTest(raw=raw):
                 self.assertEqual(github.pr_state(7, _run=_Recorder(out=raw)), expected)
 
@@ -199,8 +198,7 @@ class TestGitHub(unittest.TestCase):
         self.assertIsNone(github.pr_state(7, _run=_Recorder(out="\n")))
 
     def test_pr_files_parsed(self):
-        self.assertEqual(
-            github.pr_files(7, _run=_Recorder(out="a.py\nb.py\n")), ["a.py", "b.py"])
+        self.assertEqual(github.pr_files(7, _run=_Recorder(out="a.py\nb.py\n")), ["a.py", "b.py"])
 
     def test_pr_files_failsoft(self):
         self.assertIsNone(github.pr_files(7, _run=_Recorder(code=1)))
@@ -215,12 +213,15 @@ class TestGitHub(unittest.TestCase):
 
     def test_pr_merge_window_parsed(self):
         rec = _Recorder(out="2026-07-08T23:02:16Z\t2026-07-10T15:19:57Z\tmain\t7c140f3\n")
-        self.assertEqual(github.pr_merge_window(543, _run=rec), {
-            "branched_at": "2026-07-08T23:02:16Z",
-            "merged_at": "2026-07-10T15:19:57Z",
-            "base": "main",
-            "merge_commit": "7c140f3",
-        })
+        self.assertEqual(
+            github.pr_merge_window(543, _run=rec),
+            {
+                "branched_at": "2026-07-08T23:02:16Z",
+                "merged_at": "2026-07-10T15:19:57Z",
+                "base": "main",
+                "merge_commit": "7c140f3",
+            },
+        )
 
     def test_pr_merge_window_none_for_an_unmerged_pr(self):
         # No merge commit -> the check has nothing to verify.
@@ -234,9 +235,7 @@ class TestGitHub(unittest.TestCase):
     @staticmethod
     def _merged_page(*rows):
         """`gh pr list --json number,mergedAt` output, newest first."""
-        return _Recorder(out=json.dumps(
-            [{"number": n, "mergedAt": at} for n, at in rows]
-        ))
+        return _Recorder(out=json.dumps([{"number": n, "mergedAt": at} for n, at in rows]))
 
     def test_prs_merged_between_keeps_only_the_window(self):
         # The window filter moved from --jq into Python (#937): the truncation
@@ -244,20 +243,22 @@ class TestGitHub(unittest.TestCase):
         page = self._merged_page((550, "B0"), (546, "A5"), (540, "9x"))
 
         self.assertEqual(
-            [546], github.prs_merged_between("main", "A", "B", _run=page),
+            [546],
+            github.prs_merged_between("main", "A", "B", _run=page),
             "entries outside the half-open window must be dropped",
         )
 
     def test_prs_merged_between_skips_malformed_rows(self):
-        page = _Recorder(out=json.dumps(
-            [{"number": 546, "mergedAt": "A5"}, {"number": "nope", "mergedAt": "A6"}]
-        ))
+        page = _Recorder(
+            out=json.dumps(
+                [{"number": 546, "mergedAt": "A5"}, {"number": "nope", "mergedAt": "A6"}]
+            )
+        )
 
         self.assertEqual([546], github.prs_merged_between("main", "A", "B", _run=page))
 
     def test_prs_merged_between_failsoft(self):
-        self.assertIsNone(
-            github.prs_merged_between("main", "A", "B", _run=_Recorder(code=1)))
+        self.assertIsNone(github.prs_merged_between("main", "A", "B", _run=_Recorder(code=1)))
 
     def test_a_truncated_page_reads_as_unreadable_not_as_empty(self):
         """#937, the same rule as #933 through a read that *succeeded*.
@@ -283,33 +284,42 @@ class TestGitHub(unittest.TestCase):
         result is a real answer.
         """
         page = self._merged_page(
-            (905, "C0"), (904, "B5"), (903, "A5"), (902, "A1"), (901, "09"),
+            (905, "C0"),
+            (904, "B5"),
+            (903, "A5"),
+            (902, "A1"),
+            (901, "09"),
         )
 
         self.assertEqual(
             # Only A5 and A1 fall inside the half-open (A, B) window: B5 sorts
             # after B, C0 after that.
-            [903, 902], github.prs_merged_between("main", "A", "B", _run=page, limit=5),
+            [903, 902],
+            github.prs_merged_between("main", "A", "B", _run=page, limit=5),
         )
 
     def test_a_short_page_is_never_treated_as_truncated(self):
         page = self._merged_page((550, "Z9"))
 
         self.assertEqual(
-            [], github.prs_merged_between("main", "A", "B", _run=page, limit=5),
+            [],
+            github.prs_merged_between("main", "A", "B", _run=page, limit=5),
             "a page shorter than the limit saw everything there was",
         )
 
     def test_an_empty_page_is_an_answer(self):
         self.assertEqual(
-            [], github.prs_merged_between("main", "A", "B", _run=_Recorder(out="[]")),
+            [],
+            github.prs_merged_between("main", "A", "B", _run=_Recorder(out="[]")),
         )
 
     def test_prs_merged_between_rejects_output_that_is_not_a_json_list(self):
         self.assertIsNone(
-            github.prs_merged_between("main", "A", "B", _run=_Recorder(out="garbage")))
+            github.prs_merged_between("main", "A", "B", _run=_Recorder(out="garbage"))
+        )
         self.assertIsNone(
-            github.prs_merged_between("main", "A", "B", _run=_Recorder(out='{"a": 1}')))
+            github.prs_merged_between("main", "A", "B", _run=_Recorder(out='{"a": 1}'))
+        )
 
     def test_merge_pr_method(self):
         rec = _Recorder()
@@ -322,8 +332,12 @@ class TestGitHub(unittest.TestCase):
         self.assertEqual(
             rec.calls[0],
             [
-                "gh", "pr", "view", "7",
-                "--json", "headRefOid,mergeStateStatus,statusCheckRollup",
+                "gh",
+                "pr",
+                "view",
+                "7",
+                "--json",
+                "headRefOid,mergeStateStatus,statusCheckRollup",
             ],
         )
 
@@ -341,8 +355,19 @@ class TestGitHub(unittest.TestCase):
         github.merged_prs(search="merged:>=2026-06-01", limit=5, _run=rec)
         self.assertEqual(
             rec.calls[0],
-            ["gh", "pr", "list", "--state", "merged", "--limit", "5", "--json", "number",
-             "--search", "merged:>=2026-06-01"],
+            [
+                "gh",
+                "pr",
+                "list",
+                "--state",
+                "merged",
+                "--limit",
+                "5",
+                "--json",
+                "number",
+                "--search",
+                "merged:>=2026-06-01",
+            ],
         )
 
     def test_comment_and_close(self):
@@ -365,8 +390,17 @@ class TestGitHub(unittest.TestCase):
         github.list_prs(_run=rec)
         self.assertEqual(
             rec.calls[0],
-            ["gh", "pr", "list", "--state", "all", "--limit", "100",
-             "--json", "number,headRefName"],
+            [
+                "gh",
+                "pr",
+                "list",
+                "--state",
+                "all",
+                "--limit",
+                "100",
+                "--json",
+                "number,headRefName",
+            ],
         )
 
     def test_list_prs_argv_with_head(self):
@@ -374,8 +408,19 @@ class TestGitHub(unittest.TestCase):
         github.list_prs(head="feature/issue-8", limit=5, _run=rec)
         self.assertEqual(
             rec.calls[0],
-            ["gh", "pr", "list", "--state", "all", "--limit", "5",
-             "--json", "number,headRefName", "--head", "feature/issue-8"],
+            [
+                "gh",
+                "pr",
+                "list",
+                "--state",
+                "all",
+                "--limit",
+                "5",
+                "--json",
+                "number,headRefName",
+                "--head",
+                "feature/issue-8",
+            ],
         )
 
 
@@ -385,8 +430,7 @@ class TestListBranches(unittest.TestCase):
         result = git.list_branches(_run=rec)
         self.assertEqual(
             rec.calls[0],
-            ["git", "for-each-ref", "--format=%(refname:short)",
-             "refs/heads", "refs/remotes"],
+            ["git", "for-each-ref", "--format=%(refname:short)", "refs/heads", "refs/remotes"],
         )
         # Returns the raw CommandResult (parsing is the caller's) so an error is
         # distinguishable from an empty repo.
@@ -431,6 +475,7 @@ class TestStderrContamination(unittest.TestCase):
 
     def test_command_result_keeps_streams_separate(self):
         from keel.runner import run_argv
+
         rec = _Recorder(out="payload", err="noise")
         r = run_argv(["git", "x"], _run=rec)
         self.assertEqual(r.stdout, "payload")
@@ -441,6 +486,7 @@ class TestStderrContamination(unittest.TestCase):
 class TestGithubRetry(unittest.TestCase):
     def test_is_transient_error(self):
         from keel.runner import CommandResult
+
         # ok result is not transient
         self.assertFalse(github.is_transient_error(CommandResult(True, 0, "ok", stdout="ok")))
         # timed out result is transient
@@ -470,9 +516,7 @@ class TestGithubRetry(unittest.TestCase):
         )
         # non-transient error (e.g. 404 not found, validation error)
         self.assertFalse(
-            github.is_transient_error(
-                CommandResult(False, 1, "404", stderr="HTTP 404: Not Found")
-            )
+            github.is_transient_error(CommandResult(False, 1, "404", stderr="HTTP 404: Not Found"))
         )
         self.assertFalse(
             github.is_transient_error(
@@ -583,15 +627,12 @@ class TheRetryIsActuallyWiredToTheReads(unittest.TestCase):
     def test_prs_merged_between_recovers_from_a_transient_failure(self):
         run = self._flaky(
             "connection reset by peer",
-            json.dumps([{"number": 810, "mergedAt": "T1a"},
-                        {"number": 811, "mergedAt": "T1b"}]),
+            json.dumps([{"number": 810, "mergedAt": "T1a"}, {"number": 811, "mergedAt": "T1b"}]),
         )
 
         self.assertEqual(
             [810, 811],
-            github.prs_merged_between(
-                "main", "T1", "T2", _run=run, _sleep=lambda _d: None
-            ),
+            github.prs_merged_between("main", "T1", "T2", _run=run, _sleep=lambda _d: None),
         )
 
     def test_a_persistent_failure_is_still_unreadable(self):

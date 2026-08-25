@@ -281,8 +281,11 @@ def resume_plan_as_dict(
             next_step = None
             action = None
             reason = "merge, capture, and close are already complete"
-    elif state["merge"] == "pending" and live_pr_state == "unknown" \
-            and identifiers.get("pull_request"):
+    elif (
+        state["merge"] == "pending"
+        and live_pr_state == "unknown"
+        and identifiers.get("pull_request")
+    ):
         # A crash *during* the merge is the genuinely ambiguous case, and it used to
         # resume as a plain `pr-open / next: s10` with no warning at all (#635). Only
         # live evidence resolves it: `merged` and `open` are handled above/below and
@@ -420,9 +423,7 @@ def find_orphans(
     for it (the GAP-13 hazard from the git side). Advisory only.
     """
     known_branches, known_prs = _known_references(checkpoint_record, ledger_records)
-    orphan_branches = [
-        branch for branch in (live_branches or []) if branch not in known_branches
-    ]
+    orphan_branches = [branch for branch in (live_branches or []) if branch not in known_branches]
     orphan_prs = [pr for pr in (live_pull_requests or []) if pr not in known_prs]
     return {
         "branches": orphan_branches,

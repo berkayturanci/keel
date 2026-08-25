@@ -207,9 +207,9 @@ class TestReconcile(unittest.TestCase):
         self.assertEqual(finding["type"], captureverify.FINDING_INVALID_MARKER)
         self.assertEqual(finding["pr"], 6)
 
-
     def test_invalid_marker_fallback_reason(self):
         from unittest.mock import patch
+
         ret = {"ok": False, "status": "invalid", "reason": None}
         with patch("keel.capture._verify_pr", return_value=ret):
             report = captureverify.reconcile([], [6])

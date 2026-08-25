@@ -40,8 +40,11 @@ DEFAULT_RULES: tuple[dict[str, Any], ...] = (
     {"id": "blocker-label", "kind": "label", "labels": ["blocker"]},
     {"id": "hotfix-label", "kind": "label", "labels": ["hotfix"]},
     {"id": "security-label", "kind": "label", "labels": ["security"]},
-    {"id": "blocker-title-regex", "kind": "title-regex",
-     "pattern": r"\b(?:hotfix|security|blocker)\b"},
+    {
+        "id": "blocker-title-regex",
+        "kind": "title-regex",
+        "pattern": r"\b(?:hotfix|security|blocker)\b",
+    },
 )
 
 
@@ -155,8 +158,9 @@ def _build_rules(raw_rules: Any, *, source: str) -> tuple[Rule, ...]:
     return tuple(rules)
 
 
-def evaluate(title: str, labels: tuple[str, ...] | list[str], *,
-             rules: tuple[Rule, ...]) -> GuardResult:
+def evaluate(
+    title: str, labels: tuple[str, ...] | list[str], *, rules: tuple[Rule, ...]
+) -> GuardResult:
     """Evaluate the issue facts against ``rules`` (pure).
 
     Returns a :class:`GuardResult` carrying the ids of every rule that fired
@@ -174,7 +178,8 @@ def evaluate(title: str, labels: tuple[str, ...] | list[str], *,
     )
 
 
-def evaluate_config(title: str, labels: tuple[str, ...] | list[str], *,
-                    config: cfg.ProjectConfig | None) -> GuardResult:
+def evaluate_config(
+    title: str, labels: tuple[str, ...] | list[str], *, config: cfg.ProjectConfig | None
+) -> GuardResult:
     """Convenience: resolve rules from ``config`` then :func:`evaluate`."""
     return evaluate(title, labels, rules=resolve_rules(config))

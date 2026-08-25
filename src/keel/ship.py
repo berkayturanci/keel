@@ -57,11 +57,13 @@ def reviewer_count(tier: int) -> int:
 def reviewer_focuses(count: int) -> tuple[dict[str, Any], ...]:
     """Focus coverage for each reviewer slot. Lower counts merge focus; none are dropped."""
     if count <= 1:
-        return ({
-            "slot": "A",
-            "focus": list(REVIEW_FOCUS_A + REVIEW_FOCUS_B + REVIEW_FOCUS_C),
-            "merged_from": ["A", "B", "C"],
-        },)
+        return (
+            {
+                "slot": "A",
+                "focus": list(REVIEW_FOCUS_A + REVIEW_FOCUS_B + REVIEW_FOCUS_C),
+                "merged_from": ["A", "B", "C"],
+            },
+        )
     if count == 2:
         return (
             {
@@ -170,7 +172,8 @@ def resolve_review_contract(
         raise ValueError("review_comments must be 'inline' or 'summary'")
     count = reviewer_override if reviewer_override is not None else reviewer_count(tier or 2)
     source = (
-        "override" if reviewer_override is not None
+        "override"
+        if reviewer_override is not None
         else ("risk-tier" if tier is not None else "unresolved")
     )
     pack = policy_pack or {}
@@ -342,10 +345,9 @@ def missing_ci_workflows(
     if not ci_workflows or workflow_names is None:
         return ()
     reported = {name.strip().lower() for name in workflow_names if name.strip()}
-    return tuple(sorted(
-        declared for declared in ci_workflows
-        if declared.strip().lower() not in reported
-    ))
+    return tuple(
+        sorted(declared for declared in ci_workflows if declared.strip().lower() not in reported)
+    )
 
 
 def is_hotfix(labels: list[str] | tuple[str, ...], *, hotfix_label: str = "hotfix") -> bool:
@@ -365,7 +367,7 @@ class ShipAssessment:
     window_open: bool
     ci_ok: bool | None
     merge: MergeDecision
-    halted: bool = False           # pause mode + outside window ⇒ pipeline halted
+    halted: bool = False  # pause mode + outside window ⇒ pipeline halted
     bypassed_window: bool = False  # hotfix merged outside the window (audited)
     review_contract: dict[str, Any] | None = None
     #: Did any check report? False == the rollup was empty (nothing verified this
@@ -422,10 +424,13 @@ def assess(
     tier = (
         classify.UNKNOWN_TIER
         if changed_files is None
-        else classify.tier_for_files(changed_files, tier3_globs=tier3_globs,
-                                     docs_globs=docs_globs,
-                                     allowlist_globs=allowlist_globs,
-                                     patches=patches)
+        else classify.tier_for_files(
+            changed_files,
+            tier3_globs=tier3_globs,
+            docs_globs=docs_globs,
+            allowlist_globs=allowlist_globs,
+            patches=patches,
+        )
     )
     reviewers = reviewer_override if reviewer_override is not None else reviewer_count(tier)
     window_open = (
@@ -434,9 +439,7 @@ def assess(
     halted = (merge_window_mode == "pause") and not window_open and not is_blocker
     ci_ok = ci_passing(ci_conclusion)
     ran = ci_ran(ci_conclusion)
-    docs_only = changed_files is not None and classify.is_docs_only(
-        list(changed_files), docs_globs
-    )
+    docs_only = changed_files is not None and classify.is_docs_only(list(changed_files), docs_globs)
     missing = () if docs_only else missing_ci_workflows(ci_workflow_names, ci_workflows)
     if ci_ok is False:
         merge = MergeDecision("block", "CI failing")
@@ -451,12 +454,14 @@ def assess(
         # with an empty rollup was simply never verified.
         merge = MergeDecision("block", "no CI ran — nothing verified this commit")
     elif missing:
-        merge = MergeDecision(
-            "block", f"declared CI workflow(s) never ran: {', '.join(missing)}"
-        )
+        merge = MergeDecision("block", f"declared CI workflow(s) never ran: {', '.join(missing)}")
     else:
-        merge = decide_merge(gate_verdict, window_open=window_open, is_blocker=is_blocker,
-                             unrun_blocking_gates=unrun_blocking_gates)
+        merge = decide_merge(
+            gate_verdict,
+            window_open=window_open,
+            is_blocker=is_blocker,
+            unrun_blocking_gates=unrun_blocking_gates,
+        )
     bypassed = is_blocker and not window_open and merge.action == "merge"
     review_contract = resolve_review_contract(
         tier=tier,
@@ -469,6 +474,14 @@ def assess(
         jury_advisory=jury_advisory,
     )
     return ShipAssessment(
-        tier, reviewers, window_open, ci_ok, merge, halted, bypassed, review_contract,
-        ran, missing,
+        tier,
+        reviewers,
+        window_open,
+        ci_ok,
+        merge,
+        halted,
+        bypassed,
+        review_contract,
+        ran,
+        missing,
     )

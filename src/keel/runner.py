@@ -73,8 +73,7 @@ class CommandResult:
 def _result(proc) -> CommandResult:
     out = proc.stdout or ""
     err = proc.stderr or ""
-    return CommandResult(proc.returncode == 0, proc.returncode, out + err,
-                         stdout=out, stderr=err)
+    return CommandResult(proc.returncode == 0, proc.returncode, out + err, stdout=out, stderr=err)
 
 
 def run_command(
@@ -168,9 +167,20 @@ def command_gate_runner(
         if tail:
             message += f": {tail}"
         path, line = first_location(result.output)
-        return False, [Finding(
-            severity, message, spec.id,
-            path=path, line=line, anchorable=path is not None and line is not None,
-        )], False, False
+        return (
+            False,
+            [
+                Finding(
+                    severity,
+                    message,
+                    spec.id,
+                    path=path,
+                    line=line,
+                    anchorable=path is not None and line is not None,
+                )
+            ],
+            False,
+            False,
+        )
 
     return runner

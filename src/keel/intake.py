@@ -208,9 +208,7 @@ def _sentences(text: str) -> list[str]:
 
 
 def _is_out_of_scope(combined: str, labels: tuple[str, ...]) -> bool:
-    return not _OUT_OF_SCOPE_LABELS.isdisjoint(labels) or bool(
-        _OUT_OF_SCOPE_RE.search(combined)
-    )
+    return not _OUT_OF_SCOPE_LABELS.isdisjoint(labels) or bool(_OUT_OF_SCOPE_RE.search(combined))
 
 
 def _is_blocked(combined: str, labels: tuple[str, ...]) -> bool:

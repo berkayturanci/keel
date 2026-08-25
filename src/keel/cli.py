@@ -83,8 +83,9 @@ def _gate_status(outcome) -> str:
     return "TIMEOUT" if outcome.timed_out else "FAIL"
 
 
-def _gate_runner(root: str, diff_text: str, *, jury_mode: str = "gating",
-                 timeout: int = DEFAULT_GATE_TIMEOUT_S):
+def _gate_runner(
+    root: str, diff_text: str, *, jury_mode: str = "gating", timeout: int = DEFAULT_GATE_TIMEOUT_S
+):
     """A gate runner that handles command gates plus the ``jury`` built-in (on the diff).
 
     ``timeout`` is the project's ``knobs.gate_timeout_s``; it covers any command spec
@@ -135,9 +136,18 @@ def _cmd_validate(args: argparse.Namespace) -> int:
     return rc
 
 
-def _autostamp(config: cfg.ProjectConfig, root: str, command: str, run_id: str | None,
-               phase: str, *, status: str = "running", verdict: str | None = None,
-               issue: int | None = None, pr: int | None = None) -> None:
+def _autostamp(
+    config: cfg.ProjectConfig,
+    root: str,
+    command: str,
+    run_id: str | None,
+    phase: str,
+    *,
+    status: str = "running",
+    verdict: str | None = None,
+    issue: int | None = None,
+    pr: int | None = None,
+) -> None:
     """Record a run on keel-visual's board at ``phase`` from a deterministic core call.
 
     The agent orchestrates the backbone but reliably **skips** the per-phase
@@ -164,14 +174,24 @@ def _autostamp(config: cfg.ProjectConfig, root: str, command: str, run_id: str |
         path = activity.record_path(root, config, run_id)
         existing = activity.read_activity(path)
         if existing and existing.get("status") == "merged":
-            return   # merged is terminal; never overwrite a landed run
-        if (status == "running" and existing and existing.get("status") == "running"
-                and existing.get("phase") in order
-                and order.index(existing["phase"]) > order.index(phase)):
-            return   # don't regress a more-advanced still-running run
+            return  # merged is terminal; never overwrite a landed run
+        if (
+            status == "running"
+            and existing
+            and existing.get("status") == "running"
+            and existing.get("phase") in order
+            and order.index(existing["phase"]) > order.index(phase)
+        ):
+            return  # don't regress a more-advanced still-running run
         record = activity.build_activity_record(
-            command=command, run_id=run_id, phase=phase, status=status,
-            verdict=verdict, issue=issue, pr=pr)
+            command=command,
+            run_id=run_id,
+            phase=phase,
+            status=status,
+            verdict=verdict,
+            issue=issue,
+            pr=pr,
+        )
         activity.write_activity(path, record)
     except (activity.ActivityError, OSError):
         return
@@ -182,9 +202,15 @@ def _plan_stamp_activity(args: argparse.Namespace, config: cfg.ProjectConfig) ->
     command = args.command_contract
     if not flows.is_known(command):
         return
-    _autostamp(config, args.root, command, getattr(args, "run_id", None),
-               flows.flow_for(command)[0].id,
-               issue=getattr(args, "issue", None), pr=getattr(args, "pull_request", None))
+    _autostamp(
+        config,
+        args.root,
+        command,
+        getattr(args, "run_id", None),
+        flows.flow_for(command)[0].id,
+        issue=getattr(args, "issue", None),
+        pr=getattr(args, "pull_request", None),
+    )
 
 
 def _cmd_plan(args: argparse.Namespace) -> int:
@@ -225,9 +251,7 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         approved_scopes, approval_source, approval_operator, consent_mode = _approved_consent(
             args,
             config,
-            _has_live_consent_scope(
-                args, args.command_contract, config, requirement, loaded
-            ),
+            _has_live_consent_scope(args, args.command_contract, config, requirement, loaded),
         )
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
@@ -259,12 +283,18 @@ def _cmd_plan(args: argparse.Namespace) -> int:
     )
     consent_ok, consent_message = consent.assert_operator_consent(contract["operator_consent"])
     if args.json:
-        print(json.dumps({
-            "contract": contract,
-            "plan": orch.plan_as_dict(plan),
-            "capabilities": evaluation.as_dict(),
-            "github_transport": transport.as_dict(),
-        }, indent=2, sort_keys=True))
+        print(
+            json.dumps(
+                {
+                    "contract": contract,
+                    "plan": orch.plan_as_dict(plan),
+                    "capabilities": evaluation.as_dict(),
+                    "github_transport": transport.as_dict(),
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
     else:
         print(orch.render_plan(config, plan))
         print(evaluation.render())
@@ -275,7 +305,7 @@ def _cmd_plan(args: argparse.Namespace) -> int:
     if not consent_ok:
         print(consent_message, file=sys.stderr)
         return 1
-    _plan_stamp_activity(args, config)   # surface the run on the board from Step 0
+    _plan_stamp_activity(args, config)  # surface the run on the board from Step 0
     return 0
 
 
@@ -309,16 +339,24 @@ def _cmd_run_gates(args: argparse.Namespace) -> int:
         print(evaluation.render(), file=sys.stderr)
 
     diff_text = git.diff(config.base_branch, "HEAD", cwd=args.root)
-    outcomes = gates.run_gates(specs, _gate_runner(args.root, diff_text, jury_mode="gating",
-                                                   timeout=config.knobs.gate_timeout_s))
+    outcomes = gates.run_gates(
+        specs,
+        _gate_runner(args.root, diff_text, jury_mode="gating", timeout=config.knobs.gate_timeout_s),
+    )
     verdict = fnd.summarize(gates.collect_findings(outcomes))
     # Stamp *after* the verdict exists, and carry it. Stamping on reach alone recorded
     # a red gate as `phase: s8, status: running` with no failure signal, so the board
     # painted a run that failed its gates as one still working through them (#636).
-    _autostamp(config, args.root, args.gate_command, getattr(args, "run_id", None),
-               args.gate_phase, verdict="blocked" if verdict.blocked else "pass",
-               issue=getattr(args, "issue", None),
-               pr=getattr(args, "pull_request", None))   # the run reached the test gate (s8)
+    _autostamp(
+        config,
+        args.root,
+        args.gate_command,
+        getattr(args, "run_id", None),
+        args.gate_phase,
+        verdict="blocked" if verdict.blocked else "pass",
+        issue=getattr(args, "issue", None),
+        pr=getattr(args, "pull_request", None),
+    )  # the run reached the test gate (s8)
     for o in outcomes:
         # A timeout still blocks; it is labelled apart so a slow host does not read
         # as a broken test (and a hanging command still reads as red).
@@ -386,12 +424,18 @@ def _cmd_worktree_remove(args: argparse.Namespace) -> int:
         return 1
     result = git.worktree_remove(str(worktree_path), cwd=args.root)
     if args.json:
-        print(json.dumps({
-            "worktree": str(worktree_path),
-            "removed": result.ok,
-            "code": result.code,
-            "output": result.output,
-        }, indent=2, sort_keys=True))
+        print(
+            json.dumps(
+                {
+                    "worktree": str(worktree_path),
+                    "removed": result.ok,
+                    "code": result.code,
+                    "output": result.output,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
     else:
         print(f"keel worktree-remove — {'removed' if result.ok else 'failed'}  {worktree_path}")
         if result.output.strip():
@@ -746,9 +790,7 @@ def _cmd_merge(args: argparse.Namespace) -> int:
 
     hotfix_justification: dict[str, object] | None = None
     if args.hotfix:
-        hotfix_justification, hotfix_error = _hotfix_justification(
-            args, config, approval_operator
-        )
+        hotfix_justification, hotfix_error = _hotfix_justification(args, config, approval_operator)
         if hotfix_justification is None:
             payload = {
                 "schema_version": "keel.merge.v1",
@@ -818,8 +860,8 @@ def _cmd_merge(args: argparse.Namespace) -> int:
             payload["ci_no_checks_docs_only"] = docs_only
             if not docs_only:
                 return _finish_merge(
-                    args, payload,
-                    "CI did not run on a non-docs PR (empty check set)", code=1)
+                    args, payload, "CI did not run on a non-docs PR (empty check set)", code=1
+                )
         if not evidence_payload["enforced"]:
             return _finish_merge(args, payload, "evidence gate is not enforced", code=1)
         if evidence_payload["verification"]["status"] != "pass":
@@ -867,9 +909,16 @@ def _cmd_merge(args: argparse.Namespace) -> int:
         payload["merge_output"] = merged.output
         if not merged.ok:
             return _finish_merge(args, payload, "gh merge failed", code=1)
-        _autostamp(config, args.root, "ship", getattr(args, "run_id", None) or gates_run_id, "s10",
-                   status="merged",   # real merge landed → green "merged", not soft "done"
-                   issue=getattr(args, "issue", None), pr=args.pr)
+        _autostamp(
+            config,
+            args.root,
+            "ship",
+            getattr(args, "run_id", None) or gates_run_id,
+            "s10",
+            status="merged",  # real merge landed → green "merged", not soft "done"
+            issue=getattr(args, "issue", None),
+            pr=args.pr,
+        )
         # The merge landed; now ask whether it applied only what was reviewed.
         # Documented as running after s10 since #561 and wired to nothing until
         # #934 — which is how a stale-base squash reverted #811 on main and stayed
@@ -968,16 +1017,17 @@ def _cmd_ship(args: argparse.Namespace) -> int:
             if args.json:
                 print(json.dumps({"contract": contract}, indent=2, sort_keys=True))
             else:
-                print(f"issue intake: {intake_record['status']} — {intake_record['reason']}",
-                      file=sys.stderr)
+                print(
+                    f"issue intake: {intake_record['status']} — {intake_record['reason']}",
+                    file=sys.stderr,
+                )
                 for question in intake_record["questions"]:
                     print(f"  question: {question}", file=sys.stderr)
             return 1
     if args.live and args.append_ledger and args.capture_status is None:
         message = "--capture-status is required when --live --append-ledger is used"
         if args.json:
-            print(json.dumps({"contract": contract, "error": message}, indent=2,
-                             sort_keys=True))
+            print(json.dumps({"contract": contract, "error": message}, indent=2, sort_keys=True))
         else:
             print(message, file=sys.stderr)
         return 1
@@ -991,8 +1041,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
             "a run that never reached capture produced no artifact"
         )
         if args.json:
-            print(json.dumps({"contract": contract, "error": message}, indent=2,
-                             sort_keys=True))
+            print(json.dumps({"contract": contract, "error": message}, indent=2, sort_keys=True))
         else:
             print(message, file=sys.stderr)
         return 1
@@ -1000,8 +1049,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     if args.live and args.append_ledger and args.strict_run_context and run_context_warnings:
         message = "; ".join(run_context_warnings)
         if args.json:
-            print(json.dumps({"contract": contract, "error": message}, indent=2,
-                             sort_keys=True))
+            print(json.dumps({"contract": contract, "error": message}, indent=2, sort_keys=True))
         else:
             print(message, file=sys.stderr)
         return 1
@@ -1047,8 +1095,12 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     diff_text = git.diff(config.base_branch, "HEAD", cwd=args.root)
     outcomes = gates.run_gates(
         specs,
-        _gate_runner(args.root, diff_text, jury_mode=review_contract["jury"]["mode"],
-                     timeout=config.knobs.gate_timeout_s),
+        _gate_runner(
+            args.root,
+            diff_text,
+            jury_mode=review_contract["jury"]["mode"],
+            timeout=config.knobs.gate_timeout_s,
+        ),
     )
     recorded_results = dict(getattr(args, "gate_result", None) or ())
     planned = {spec.id for spec in specs}
@@ -1060,8 +1112,10 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     if rejected:
         # Refuse loudly: keel ran these and has a measured verdict. Silently discarding
         # the flag would leave the operator believing they recorded something.
-        print(f"--gate-result cannot override a gate keel executed: {', '.join(rejected)}",
-              file=sys.stderr)
+        print(
+            f"--gate-result cannot override a gate keel executed: {', '.join(rejected)}",
+            file=sys.stderr,
+        )
         return 1
     verdict = fnd.summarize(gates.collect_findings(outcomes))
     read_ci = bool(args.pr) and transport.name == "gh"
@@ -1114,8 +1168,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         return 1
     try:
         run_control_events = (
-            _read_json_list(args.run_events_file, missing_ok=True)
-            if args.run_events_file else []
+            _read_json_list(args.run_events_file, missing_ok=True) if args.run_events_file else []
         )
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
@@ -1166,8 +1219,9 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         message = f"capture redaction policy invalid; skipping ledger append: {exc}"
         if args.append_ledger and args.live:
             if args.json:
-                print(json.dumps({"contract": contract, "error": message}, indent=2,
-                                 sort_keys=True))
+                print(
+                    json.dumps({"contract": contract, "error": message}, indent=2, sort_keys=True)
+                )
             else:
                 print(message, file=sys.stderr)
             return 1
@@ -1203,17 +1257,23 @@ def _cmd_ship(args: argparse.Namespace) -> int:
             ledger_result["existing_run_id"] = clash.get("run_id")
 
     if args.json:
-        print(json.dumps({
-            "contract": contract,
-            "result": contracts.ship_result_as_dict(
-                changed_files=changed_read,
-                outcomes=outcomes,
-                verdict=verdict,
-                assessment=a,
-                issue_intake=contract.get("issue_intake"),
-                run_ledger=ledger_result,
-            ),
-        }, indent=2, sort_keys=True))
+        print(
+            json.dumps(
+                {
+                    "contract": contract,
+                    "result": contracts.ship_result_as_dict(
+                        changed_files=changed_read,
+                        outcomes=outcomes,
+                        verdict=verdict,
+                        assessment=a,
+                        issue_intake=contract.get("issue_intake"),
+                        run_ledger=ledger_result,
+                    ),
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
         if run_control_report["hard_halt"]:
             return 1
         return 0 if a.merge.action != "block" else 1
@@ -1222,8 +1282,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     print(f"keel {command} — {name}  (base {config.base_branch})")
     if changed_unreadable:
         # Never let this be silent: the tier below was forced, not measured.
-        print("  changed files : UNREADABLE (git diff failed) — "
-              "classified TIER-3 fail-closed")
+        print("  changed files : UNREADABLE (git diff failed) — classified TIER-3 fail-closed")
     else:
         print(f"  changed files : {len(changed)}")
     print(f"  profile       : {contract['workflow_profile']['profile']}")
@@ -1253,13 +1312,13 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     print(f"  run controls  : {run_control_report['status']}")
     if args.append_ledger:
         if ledger_result.get("skipped") == "duplicate-capture-marker":
-            print("  ledger append : skipped — PR already has a capture marker "
-                  f"(run {ledger_result['existing_run_id']}); a second one would block "
-                  "capture-verify with no automated repair")
-        else:
             print(
-                f"  ledger append : {'yes' if ledger_result['appended'] else 'dry-run/no-live'}"
+                "  ledger append : skipped — PR already has a capture marker "
+                f"(run {ledger_result['existing_run_id']}); a second one would block "
+                "capture-verify with no automated repair"
             )
+        else:
+            print(f"  ledger append : {'yes' if ledger_result['appended'] else 'dry-run/no-live'}")
     for warning in run_context_warnings:
         print(f"  run context   : warning: {warning}")
     if intake_record["questions"]:
@@ -1299,7 +1358,7 @@ def _cmd_ledger(args: argparse.Namespace) -> int:
         print(f"invalid ledger {path}: {exc}", file=sys.stderr)
         return 1
     if args.limit is not None:
-        records = records[-args.limit:]
+        records = records[-args.limit :]
     payload = {
         "contract": contract,
         "path": str(path),
@@ -1377,18 +1436,20 @@ def _cmd_capture_verify(args: argparse.Namespace) -> int:
         print(f"keel capture-verify — {status}  {ledger_path}")
         print(f"  merged-PR source: {derivation['source']} ({len(derived_prs)} PR(s))")
         if transport_failed:
-            print("  transport     : FAILED — the derived merged-PR set is unobservable, "
-                  "so this audit cannot certify that every merged PR was captured")
+            print(
+                "  transport     : FAILED — the derived merged-PR set is unobservable, "
+                "so this audit cannot certify that every merged PR was captured"
+            )
         for result in report["results"]:
             state = "ok" if result["ok"] else "FAIL"
             print(
-                f"  {state:>4}  PR #{result['pr']}  "
-                f"{result['status']}  {result['reason'] or '-'}"
+                f"  {state:>4}  PR #{result['pr']}  {result['status']}  {result['reason'] or '-'}"
             )
         if reconcile_report is not None:
             for finding in reconcile_report["findings"]:
-                print(f"  FAIL  reconcile PR #{finding['pr']}  "
-                      f"{finding['type']}  {finding['reason']}")
+                print(
+                    f"  FAIL  reconcile PR #{finding['pr']}  {finding['type']}  {finding['reason']}"
+                )
             if reconcile_report["ok"]:
                 print("  reconcile: ok")
     return 0 if payload["certified"] else 1
@@ -1416,9 +1477,7 @@ def _cmd_consent_verify(args: argparse.Namespace) -> int:
         return 1
 
     has_record, approved_scopes = consentverify.consent_record_from_ledger(record)
-    report = consentverify.reconcile(
-        observed, approved_scopes, has_consent_record=has_record
-    )
+    report = consentverify.reconcile(observed, approved_scopes, has_consent_record=has_record)
     payload = {
         "schema_version": consentverify.SCHEMA_VERSION,
         "pull_request": args.pr,
@@ -1575,18 +1634,25 @@ def _close_observed_issues(
         record = closeorder.latest_record_for_issue(records, number)
         if args.offline:
             labels = (done_label,) if args.status_done else ()
-            observed.append(closeorder.ObservedIssue(
-                number=number, closed=args.closed, labels=labels, record=record,
-            ))
+            observed.append(
+                closeorder.ObservedIssue(
+                    number=number,
+                    closed=args.closed,
+                    labels=labels,
+                    record=record,
+                )
+            )
             continue
         owner_repo = _owner_repo(config)
         issue = _gh_json(["repos", owner_repo, "issues", str(number)], cwd=args.root)
-        observed.append(closeorder.ObservedIssue(
-            number=number,
-            closed=issue.get("state") == "closed",
-            labels=tuple(_label_names(issue.get("labels"))),
-            record=record,
-        ))
+        observed.append(
+            closeorder.ObservedIssue(
+                number=number,
+                closed=issue.get("state") == "closed",
+                labels=tuple(_label_names(issue.get("labels"))),
+                record=record,
+            )
+        )
     return observed
 
 
@@ -1666,17 +1732,15 @@ def _dryrun_after_snapshot(
         raise ValueError(
             "after snapshot incomplete: git branch listing failed; cannot certify dry run"
         )
-    branches = tuple(
-        line.strip() for line in branches_result.stdout.splitlines() if line.strip()
-    )
+    branches = tuple(line.strip() for line in branches_result.stdout.splitlines() if line.strip())
     pattern = dryrunverify.issue_branch_pattern(args.issue)
     pr_numbers = tuple(
-        number
-        for number, head in _dryrun_live_prs(args.root)
-        if pattern.search(head)
+        number for number, head in _dryrun_live_prs(args.root) if pattern.search(head)
     )
     return dryrunverify.ArtifactSnapshot(
-        ledger_run_ids=run_ids, branches=branches, pr_numbers=pr_numbers,
+        ledger_run_ids=run_ids,
+        branches=branches,
+        pr_numbers=pr_numbers,
     )
 
 
@@ -1690,9 +1754,7 @@ def _dryrun_live_prs(root: str) -> list[tuple[int, str]]:
     """
     result = github.list_prs(cwd=root)
     if not result.ok:
-        raise ValueError(
-            "after snapshot incomplete: gh PR listing failed; cannot certify dry run"
-        )
+        raise ValueError("after snapshot incomplete: gh PR listing failed; cannot certify dry run")
     entries = json.loads(result.stdout or "[]")
     pairs: list[tuple[int, str]] = []
     for entry in entries if isinstance(entries, list) else ():
@@ -1734,9 +1796,7 @@ def _capture_verify_merged_prs(
         derived, failed = _merged_prs_from_transport(args)
         merged = _dedupe_ints([*derived, *explicit])
         if not merged:
-            raise ValueError(
-                "no merged PRs derived from transport and none passed via --merged-pr"
-            )
+            raise ValueError("no merged PRs derived from transport and none passed via --merged-pr")
         return merged, {"source": "transport", "transport_failed": failed}
     if not explicit:
         raise ValueError("provide --merged-pr or --from-transport")
@@ -1803,9 +1863,7 @@ def _capture_verify_verdict_counts(
             )
         except ValueError:
             continue
-        counts[pr] = evidence.count_review_verdicts(
-            pr_comments, pr_reviews, enforced=False
-        )
+        counts[pr] = evidence.count_review_verdicts(pr_comments, pr_reviews, enforced=False)
     return counts
 
 
@@ -1829,8 +1887,7 @@ def _cmd_capture_reconcile(args: argparse.Namespace) -> int:
     for pr, issue in args.linked_issue:
         linked_issues.setdefault(pr, []).append(issue)
     merged_prs = [
-        {"number": pr, "issue_numbers": linked_issues.get(pr, [])}
-        for pr in args.merged_pr
+        {"number": pr, "issue_numbers": linked_issues.get(pr, [])} for pr in args.merged_pr
     ]
     try:
         plan = capture.reconcile_session(
@@ -1961,9 +2018,7 @@ def _cmd_review(args: argparse.Namespace) -> int:
         return 1
 
     report = runtime.detect(args.root)
-    evaluation = runtime.evaluate(
-        runtime.CapabilityRequirement(required=("gh", "gh-auth")), report
-    )
+    evaluation = runtime.evaluate(runtime.CapabilityRequirement(required=("gh", "gh-auth")), report)
     transport = github_transport.resolve(report)
     if not evaluation.ok or not transport.supports("comments"):
         print(evaluation.render(), file=sys.stderr)
@@ -2052,7 +2107,8 @@ def _cmd_review(args: argparse.Namespace) -> int:
             allowlist_globs=config.knobs.docs_only_allowlist,
             patches=artifacts_patches,
         )
-        if changed_files else None
+        if changed_files
+        else None
     )
     review_contract = ship.resolve_review_contract(
         tier=tier,
@@ -2080,15 +2136,19 @@ def _cmd_review(args: argparse.Namespace) -> int:
     posted: list[dict[str, object]] = []
     for post in plan.posts:
         if dry_run:
-            posted.append({
-                "artifact": post.artifact,
-                "target": {"kind": post.target_kind, "number": post.target_number},
-                "run_id": post.run_id,
-                "action": "dry-run",
-            })
+            posted.append(
+                {
+                    "artifact": post.artifact,
+                    "target": {"kind": post.target_kind, "number": post.target_number},
+                    "run_id": post.run_id,
+                    "action": "dry-run",
+                }
+            )
             if not args.json:
-                print(f"DRY-RUN: would post {post.artifact} to "
-                      f"{post.target_kind}:{post.target_number} (run-id {post.run_id})")
+                print(
+                    f"DRY-RUN: would post {post.artifact} to "
+                    f"{post.target_kind}:{post.target_number} (run-id {post.run_id})"
+                )
             continue
         try:
             result, error = _post_artifact_comment(
@@ -2174,16 +2234,18 @@ def _cmd_review_cycle_summary(args: argparse.Namespace) -> int:
         run_id=args.run_id,
     )
     if args.json:
-        print(json.dumps(
-            {
-                "schema_version": artifacts.SCHEMA_VERSION,
-                "marker": artifacts.REVIEW_CYCLE_SUMMARY_MARKER,
-                "reviewers": len(reviewers),
-                "body": body,
-            },
-            indent=2,
-            sort_keys=True,
-        ))
+        print(
+            json.dumps(
+                {
+                    "schema_version": artifacts.SCHEMA_VERSION,
+                    "marker": artifacts.REVIEW_CYCLE_SUMMARY_MARKER,
+                    "reviewers": len(reviewers),
+                    "body": body,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
     else:
         print(body, end="")
     return 0
@@ -2224,16 +2286,18 @@ def _cmd_render_report(args: argparse.Namespace) -> int:
         print(f"--payload does not match the {args.kind} report fields: {exc}", file=sys.stderr)
         return 1
     if args.json:
-        print(json.dumps(
-            {
-                "schema_version": artifacts.SCHEMA_VERSION,
-                "kind": args.kind,
-                "marker": _REPORT_MARKERS[args.kind],
-                "body": body,
-            },
-            indent=2,
-            sort_keys=True,
-        ))
+        print(
+            json.dumps(
+                {
+                    "schema_version": artifacts.SCHEMA_VERSION,
+                    "kind": args.kind,
+                    "marker": _REPORT_MARKERS[args.kind],
+                    "body": body,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
     else:
         print(body, end="")
     return 0
@@ -2275,9 +2339,7 @@ def _cmd_post_comment(args: argparse.Namespace) -> int:
         return 1
 
     report = runtime.detect(args.root)
-    evaluation = runtime.evaluate(
-        runtime.CapabilityRequirement(required=("gh", "gh-auth")), report
-    )
+    evaluation = runtime.evaluate(runtime.CapabilityRequirement(required=("gh", "gh-auth")), report)
     transport = github_transport.resolve(report)
     if not evaluation.ok or not transport.supports("comments"):
         print(evaluation.render(), file=sys.stderr)
@@ -2396,7 +2458,8 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
             allowlist_globs=config.knobs.docs_only_allowlist,
             patches=artifacts_patches,
         )
-        if changed_files else None
+        if changed_files
+        else None
     )
     review_contract = ship.resolve_review_contract(
         tier=tier,
@@ -2408,8 +2471,7 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
         no_jury=args.no_jury,
         jury_advisory=args.jury_advisory,
         require_distinct_vendors=(
-            args.require_distinct_vendors
-            or config.knobs.evidence_require_distinct_vendors
+            args.require_distinct_vendors or config.knobs.evidence_require_distinct_vendors
         ),
         # An explicit --jury-vendors wins; otherwise take the count a posted jury
         # verdict declared, so the downgrade works unattended in CI where neither
@@ -2625,10 +2687,10 @@ def _merge_drift_report(args: argparse.Namespace) -> dict:
                     else "nothing"
                 )
                 report = mergeverify.verify_merge(None)
-                report["reason"] = (
-                    f"{note} from GitHub, so "
-                    + (f"{unanswered} could not be checked" if unanswered != "nothing"
-                       else "nothing could be checked")
+                report["reason"] = f"{note} from GitHub, so " + (
+                    f"{unanswered} could not be checked"
+                    if unanswered != "nothing"
+                    else "nothing could be checked"
                 )
     report["pull_request"] = args.pr
     report["merge_commit"] = merge_sha
@@ -2773,8 +2835,7 @@ def _cmd_verify_branch(args: argparse.Namespace) -> int:
         ancestry = report["ancestry"]
         if ancestry["base_distance"] is not None:
             print(
-                f"  base-distance : {ancestry['base_distance']} "
-                f"(tolerance {report['tolerance']})"
+                f"  base-distance : {ancestry['base_distance']} (tolerance {report['tolerance']})"
             )
         isolation = report["isolation"]
         print(f"  isolation     : {isolation['verdict']}")
@@ -2811,11 +2872,7 @@ def _gather_branch_facts(args: argparse.Namespace, base_branch: str) -> dict[str
             base_tip_sha = git.rev_parse(base_ref, cwd=args.root)
         if merge_base_sha is None and head_sha is not None and base_tip_sha is not None:
             merge_base_sha = git.merge_base(head_sha, base_tip_sha, cwd=args.root)
-        if (
-            base_distance is None
-            and merge_base_sha is not None
-            and base_tip_sha is not None
-        ):
+        if base_distance is None and merge_base_sha is not None and base_tip_sha is not None:
             base_distance = git.rev_count(merge_base_sha, base_tip_sha, cwd=args.root)
 
     worktree_path = args.worktree_path
@@ -3066,18 +3123,28 @@ def _cmd_activity(args: argparse.Namespace) -> int:
 def _emit_activity(args, records, *, path, removed=None):
     """Render activity output (JSON or a short line)."""
     if args.json:
-        print(json.dumps(
-            {"contract": activity.activity_contract_as_dict(), "path": path,
-             "removed": removed, "activity": records},
-            indent=2, sort_keys=True))
+        print(
+            json.dumps(
+                {
+                    "contract": activity.activity_contract_as_dict(),
+                    "path": path,
+                    "removed": removed,
+                    "activity": records,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
         return
     if removed is not None:
         print(f"keel activity — {'cleared' if removed else 'nothing to clear'}  {path}")
         return
     print(f"keel activity — {len(records)} record(s)  {path}")
     for record in records:
-        print(f"  {record['command']:14} {record['run_id']:18} "
-              f"{record['phase']:12} {record['status']}")
+        print(
+            f"  {record['command']:14} {record['run_id']:18} "
+            f"{record['phase']:12} {record['status']}"
+        )
 
 
 def _cmd_scratch_dir(args: argparse.Namespace) -> int:
@@ -3132,21 +3199,29 @@ def _cmd_gc(args: argparse.Namespace) -> int:
             activity_dir = activity.resolve_dir(args.root, config)
             if args.dry_run:
                 activity_removed = workspace.activity_prune_plan(
-                    activity_dir, keep_last=args.keep_activity)
+                    activity_dir, keep_last=args.keep_activity
+                )
             else:
                 activity_removed = workspace.prune_activity(
-                    activity_dir, keep_last=args.keep_activity)
+                    activity_dir, keep_last=args.keep_activity
+                )
         except (OSError, activity.ActivityError) as exc:  # fail-soft
             degraded.append(f"activity: {exc}")
 
     if args.json:
-        print(json.dumps({
-            "dry_run": args.dry_run,
-            "scratch_removed": scratch_removed,
-            "activity_removed": activity_removed,
-            "keep_activity": args.keep_activity,
-            "degraded": degraded,
-        }, indent=2, sort_keys=True))
+        print(
+            json.dumps(
+                {
+                    "dry_run": args.dry_run,
+                    "scratch_removed": scratch_removed,
+                    "activity_removed": activity_removed,
+                    "keep_activity": args.keep_activity,
+                    "degraded": degraded,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
         return 0
 
     verb = "would remove" if args.dry_run else "removed"
@@ -3155,16 +3230,16 @@ def _cmd_gc(args: argparse.Namespace) -> int:
         plural = "y" if len(scratch_removed) == 1 else "ies"
         print(f"  scratch   : {verb} {len(scratch_removed)} entr{plural}")
     if args.activity:
-        print(f"  activity  : {verb} {len(activity_removed)} record(s) "
-              f"(kept newest {args.keep_activity})")
+        print(
+            f"  activity  : {verb} {len(activity_removed)} record(s) "
+            f"(kept newest {args.keep_activity})"
+        )
     for note in degraded:
         print(f"  ! degraded: {note}", file=sys.stderr)
     return 0
 
 
-def _observe_live_state(
-    args: argparse.Namespace, record: dict | None
-) -> dict:
+def _observe_live_state(args: argparse.Namespace, record: dict | None) -> dict:
     """Resolve the live PR / worktree / head state ``resume`` reconciles against.
 
     Core used to be *told* this and never looked (#635): the flags defaulted to
@@ -3199,8 +3274,7 @@ def _observe_live_state(
     if identifiers.get("branch"):
         # Read the head from the recorded worktree when it still exists — a resume run
         # from the main checkout would otherwise compare against the wrong branch.
-        cwd = str(identifiers["worktree"]) if observed["worktree"] == "present" \
-            else args.root
+        cwd = str(identifiers["worktree"]) if observed["worktree"] == "present" else args.root
         observed["head_sha"] = git.rev_parse(str(identifiers["branch"]), cwd=cwd)
     return observed
 
@@ -3259,13 +3333,13 @@ def _issue_labels(args: argparse.Namespace) -> tuple[str, ...]:
     return standalone._issue_labels(args)
 
 
-
 def _lock_root(root: str | Path) -> Path:
     return Path(root) / ".keel" / "state" / "locks"
 
 
-def _finish_merge(args: argparse.Namespace, payload: dict[str, object], reason: str, *,
-                  code: int) -> int:
+def _finish_merge(
+    args: argparse.Namespace, payload: dict[str, object], reason: str, *, code: int
+) -> int:
     payload["reason"] = reason
     payload["status"] = "pass" if code == 0 else "fail"
     if args.json:
@@ -3376,8 +3450,13 @@ def _dedupe_rollup(rollup: list[object]) -> list[dict]:
 
 def _ci_rollup_state(rollup: list[object]) -> dict[str, object]:
     failures = {
-        "ACTION_REQUIRED", "CANCELLED", "ERROR", "FAILURE",
-        "STARTUP_FAILURE", "STALE", "TIMED_OUT",
+        "ACTION_REQUIRED",
+        "CANCELLED",
+        "ERROR",
+        "FAILURE",
+        "STARTUP_FAILURE",
+        "STALE",
+        "TIMED_OUT",
     }
     pending_states = _PENDING_CHECK_STATES
     saw_pending = False
@@ -3430,7 +3509,8 @@ def _verify_merge_evidence(
             allowlist_globs=config.knobs.docs_only_allowlist,
             patches=artifacts_patches,
         )
-        if changed_files else None
+        if changed_files
+        else None
     )
     # Asked directly, not inferred from `tier == 1`: `docs_only_allowlist` can keep a
     # change at TIER-1 without making it docs-*only*, and a generated site file riding
@@ -3530,7 +3610,8 @@ def _load_evidence_artifacts(
     injected_labels = list(args.pr_label or ())
     pr_labels: list[str] = []
     using_fixtures = any(
-        path is not None for path in (
+        path is not None
+        for path in (
             args.pr_body_file,
             args.pr_comments_json,
             args.issue_comments_json,
@@ -3540,7 +3621,7 @@ def _load_evidence_artifacts(
     if args.dry_run:
         return {
             "pr_body": pr_body,
-        "pr_title": pr_title,
+            "pr_title": pr_title,
             "pr_comments": [],
             "issue_comments": [],
             "pr_reviews": [],
@@ -3831,7 +3912,8 @@ def _gate_result_arg(value: str) -> tuple[str, str]:
         raise argparse.ArgumentTypeError("--gate-result requires a gate id")
     if verdict not in GATE_RESULTS:
         raise argparse.ArgumentTypeError(
-            f"--gate-result verdict must be one of {', '.join(GATE_RESULTS)}")
+            f"--gate-result verdict must be one of {', '.join(GATE_RESULTS)}"
+        )
     return gate_id, verdict
 
 
@@ -3884,8 +3966,9 @@ def _pr_patches(owner_repo: str, pr: int, *, cwd: str) -> dict[str, str]:
 
 
 def _linked_issue_from_body(body: str) -> int | None:
-    match = re.search(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(?P<n>[1-9]\d*)",
-                      body, re.IGNORECASE)
+    match = re.search(
+        r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(?P<n>[1-9]\d*)", body, re.IGNORECASE
+    )
     return int(match.group("n")) if match else None
 
 
@@ -3926,11 +4009,6 @@ def _has_live_consent_scope(
     return standalone._has_live_consent_scope(args, command, config, requirement, loaded)
 
 
-
-
-
-
-
 def _cmd_capabilities(args: argparse.Namespace) -> int:
     report = runtime.detect(args.root)
     transport = github_transport.resolve(report)
@@ -3949,12 +4027,18 @@ def _cmd_capabilities(args: argparse.Namespace) -> int:
         requirement = _capability_requirement(args.for_command, config, loaded, pr=args.pr)
     evaluation = runtime.evaluate(requirement, report)
     if args.json:
-        print(json.dumps({
-            "report": report.as_dict(),
-            "github_transport": transport.as_dict(),
-            "evaluation": evaluation.as_dict(),
-            "extension_problems": problems,
-        }, indent=2, sort_keys=True))
+        print(
+            json.dumps(
+                {
+                    "report": report.as_dict(),
+                    "github_transport": transport.as_dict(),
+                    "evaluation": evaluation.as_dict(),
+                    "extension_problems": problems,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
     else:
         print(report.render())
         print(transport.render())
@@ -3977,8 +4061,13 @@ def _cmd_project_commands(args: argparse.Namespace) -> int:
 
     commands = project_commands.list_project_commands(config)
     if args.json:
-        print(json.dumps({"project_commands": [command.as_dict() for command in commands]},
-                         indent=2, sort_keys=True))
+        print(
+            json.dumps(
+                {"project_commands": [command.as_dict() for command in commands]},
+                indent=2,
+                sort_keys=True,
+            )
+        )
     else:
         if not commands:
             print("project commands: none")
@@ -4121,6 +4210,7 @@ def _fetch_latest_pypi_version(
     — moving it out of that block is the part that makes the next revert fail CI.
     """
     from urllib.parse import urlparse
+
     if urlparse(url).scheme.lower() not in ("http", "https"):
         return None  # restrict to http(s): no file://, ftp://, or custom schemes
 
@@ -4144,15 +4234,16 @@ def _doctor_state_paths(root: str, config: cfg.ProjectConfig) -> list[dict[str, 
         try:
             path = resolver(root, config)
         except error as exc:
-            entries.append({"label": label, "path": None, "status": "invalid",
-                            "reason": str(exc)})
+            entries.append({"label": label, "path": None, "status": "invalid", "reason": str(exc)})
             continue
-        entries.append({
-            "label": label,
-            "path": str(path),
-            "status": "present" if path.exists() else "missing",
-            "reason": "",
-        })
+        entries.append(
+            {
+                "label": label,
+                "path": str(path),
+                "status": "present" if path.exists() else "missing",
+                "reason": "",
+            }
+        )
     return entries
 
 
@@ -4208,24 +4299,29 @@ def _cmd_install_adapter(args: argparse.Namespace) -> int:
     if args.agent == "plugin":
         installed, skipped = install.install_plugin(args.root, force=args.force)
         _report_install("plugin", installed, skipped)
-        print(f"{len(installed)} plugin command file(s) written under commands/ — "
-              "install via /plugin marketplace add berkayturanci/keel; /plugin install keel")
+        print(
+            f"{len(installed)} plugin command file(s) written under commands/ — "
+            "install via /plugin marketplace add berkayturanci/keel; /plugin install keel"
+        )
         return 0
     if args.agent == "all":
         results = install.install_all(args.root, force=args.force)
     elif args.agent in install.TARGETS:
         results = {args.agent: install.install(args.agent, args.root, force=args.force)}
     else:
-        print(f"unknown target {args.agent!r}; valid: all, plugin, "
-              f"{', '.join(install.TARGETS)}",
-              file=sys.stderr)
+        print(
+            f"unknown target {args.agent!r}; valid: all, plugin, {', '.join(install.TARGETS)}",
+            file=sys.stderr,
+        )
         return 1
     total = 0
     for surface, (installed, skipped) in results.items():
         _report_install(surface, installed, skipped)
         total += len(installed)
-    print(f"{total} adapter(s) installed — Claude: /keel:<command>; "
-          f"other agents: keel-<command> skill (.agents/skills/)")
+    print(
+        f"{total} adapter(s) installed — Claude: /keel:<command>; "
+        f"other agents: keel-<command> skill (.agents/skills/)"
+    )
     return 0
 
 
@@ -4257,8 +4353,10 @@ def _cmd_setup(args: argparse.Namespace) -> int:
         print("  extensions   : preserved (setup never deletes .keel/extensions/)")
 
     if workspace.ensure_runtime_gitignore(target.parent):
-        print(f"  gitignore    : scaffolded {target.parent / workspace.GITIGNORE_NAME} "
-              "(keeps runtime state out of git)")
+        print(
+            f"  gitignore    : scaffolded {target.parent / workspace.GITIGNORE_NAME} "
+            "(keeps runtime state out of git)"
+        )
 
     agent = args.adapter_target
     if agent == "all":
@@ -4269,8 +4367,10 @@ def _cmd_setup(args: argparse.Namespace) -> int:
     for surface, (installed, skipped) in results.items():
         _report_install(surface, installed, skipped)
         total += len(installed)
-    print(f"  adapters     : {total} installed, "
-          f"{sum(len(skipped) for _, skipped in results.values())} skipped")
+    print(
+        f"  adapters     : {total} installed, "
+        f"{sum(len(skipped) for _, skipped in results.values())} skipped"
+    )
 
     try:
         config = cfg.load_config(target)
@@ -4293,16 +4393,23 @@ def _cmd_adapter_status(args: argparse.Namespace) -> int:
     try:
         rows = install.adapter_status(args.agent, args.root)
     except KeyError:
-        print(f"unknown target {args.agent!r}; valid: all, {', '.join(install.STATUS_TARGETS)}",
-              file=sys.stderr)
+        print(
+            f"unknown target {args.agent!r}; valid: all, {', '.join(install.STATUS_TARGETS)}",
+            file=sys.stderr,
+        )
         return 1
     orphans = _scan_orphans(args.root, include_unmanaged=args.include_unmanaged)
     if args.json:
         payload = {
             "adapters": {
                 surface: [
-                    {"surface": r.surface, "name": r.name, "path": r.path,
-                     "status": r.status, "detail": r.detail}
+                    {
+                        "surface": r.surface,
+                        "name": r.name,
+                        "path": r.path,
+                        "status": r.status,
+                        "detail": r.detail,
+                    }
                     for r in statuses
                 ]
                 for surface, statuses in rows.items()
@@ -4316,8 +4423,10 @@ def _cmd_adapter_status(args: argparse.Namespace) -> int:
     if orphans:
         stale = sum(1 for o in orphans if o.category == install.ORPHAN_STALE_MARKER)
         unmanaged = len(orphans) - stale
-        print(f"  {len(orphans)} unmanaged keel-like file(s): "
-              f"{stale} orphan (stale-marker), {unmanaged} unmanaged (no-marker) — advisory only")
+        print(
+            f"  {len(orphans)} unmanaged keel-like file(s): "
+            f"{stale} orphan (stale-marker), {unmanaged} unmanaged (no-marker) — advisory only"
+        )
     if not args.include_unmanaged:
         print("  note: pass --include-unmanaged to also scan for marker-less command surfaces")
     return 0
@@ -4327,8 +4436,10 @@ def _cmd_update_adapter(args: argparse.Namespace) -> int:
     try:
         rows = install.update_adapters(args.agent, args.root, dry_run=args.dry_run)
     except KeyError:
-        print(f"unknown target {args.agent!r}; valid: all, {', '.join(install.TARGETS)}",
-              file=sys.stderr)
+        print(
+            f"unknown target {args.agent!r}; valid: all, {', '.join(install.TARGETS)}",
+            file=sys.stderr,
+        )
         return 1
     _report_adapter_rows(rows)
     if args.dry_run:
@@ -4344,8 +4455,10 @@ def _cmd_sync(args: argparse.Namespace) -> int:
     if rc == 0:
         orphans = _scan_orphans(args.root, include_unmanaged=False)
         if orphans:
-            print(f"  orphans      : {len(orphans)} unmanaged keel-like file(s) found — "
-                  "run keel adapter-status for details")
+            print(
+                f"  orphans      : {len(orphans)} unmanaged keel-like file(s) found — "
+                "run keel adapter-status for details"
+            )
         print("  next         : run keel validate .keel/project.yaml --root .")
         print("  next         : run keel plan .keel/project.yaml --root .")
     return rc
@@ -4369,9 +4482,11 @@ def _cmd_install_legacy_wrappers(args: argparse.Namespace) -> int:
         )
         return 1
     ready_commands = install.parity_ready_commands(matrix.read_text(encoding="utf-8"))
-    mappings = dict(args.command) if args.command else {
-        command: command for command in sorted(ready_commands)
-    }
+    mappings = (
+        dict(args.command)
+        if args.command
+        else {command: command for command in sorted(ready_commands)}
+    )
     try:
         if args.agent == "all":
             results = install.install_all_legacy_wrappers(
@@ -4392,8 +4507,7 @@ def _cmd_install_legacy_wrappers(args: argparse.Namespace) -> int:
             }
         else:
             print(
-                f"unknown target {args.agent!r}; valid: all, "
-                f"{', '.join(install.LEGACY_TARGETS)}",
+                f"unknown target {args.agent!r}; valid: all, {', '.join(install.LEGACY_TARGETS)}",
                 file=sys.stderr,
             )
             return 1
@@ -4609,9 +4723,19 @@ def _swarm_land_evidence_checker(
     def check(branch_name: str) -> swarm_landing.EvidenceCheck:
         hold = lambda why: swarm_landing.EvidenceCheck(False, why)  # noqa: E731
         lookup = run_argv(
-            ["gh", "pr", "list", "--head", branch_name,
-             "--base", config.base_branch, "--state", "all",
-             "--json", "number,state"],
+            [
+                "gh",
+                "pr",
+                "list",
+                "--head",
+                branch_name,
+                "--base",
+                config.base_branch,
+                "--state",
+                "all",
+                "--json",
+                "number,state",
+            ],
             cwd=args.root,
         )
         if not lookup.ok:
@@ -4623,9 +4747,9 @@ def _swarm_land_evidence_checker(
         if not isinstance(prs, list):
             prs = []
         open_prs = [
-            p for p in prs
-            if isinstance(p, dict) and p.get("state") == "OPEN"
-            and isinstance(p.get("number"), int)
+            p
+            for p in prs
+            if isinstance(p, dict) and p.get("state") == "OPEN" and isinstance(p.get("number"), int)
         ]
         if len(open_prs) > 1:
             numbers = ", ".join(f"#{p['number']}" for p in open_prs)
@@ -4635,8 +4759,10 @@ def _swarm_land_evidence_checker(
             )
         if not open_prs:
             merged = [
-                p for p in prs
-                if isinstance(p, dict) and p.get("state") == "MERGED"
+                p
+                for p in prs
+                if isinstance(p, dict)
+                and p.get("state") == "MERGED"
                 and isinstance(p.get("number"), int)
             ]
             if merged:
@@ -4653,9 +4779,15 @@ def _swarm_land_evidence_checker(
         # review_comments in particular is validated against the posting modes
         # and must never be None.
         evidence_ns = argparse.Namespace(
-            pr=number, issue=None, reviewers=None, review_comments="inline",
-            jury=False, no_jury=False, jury_advisory=False,
-            gate_label=None, root=args.root,
+            pr=number,
+            issue=None,
+            reviewers=None,
+            review_comments="inline",
+            jury=False,
+            no_jury=False,
+            jury_advisory=False,
+            gate_label=None,
+            root=args.root,
         )
         try:
             payload = _verify_merge_evidence(evidence_ns, config)
@@ -4663,9 +4795,7 @@ def _swarm_land_evidence_checker(
         # validation raises it — that would abort the whole wave mid-flight
         # instead of holding one cluster.
         except (Exception, SystemExit) as exc:  # noqa: BLE001 - one cluster holds, wave survives
-            return hold(
-                f"evidence verification errored: {type(exc).__name__}: {exc}"[:160]
-            )
+            return hold(f"evidence verification errored: {type(exc).__name__}: {exc}"[:160])
         if not payload.get("enforced"):
             return hold(f"PR #{number}: evidence gate is not armed")
         verification = payload.get("verification") or {}
@@ -4772,15 +4902,15 @@ def _cmd_swarm_land(args: argparse.Namespace) -> int:
         # would be held entirely.
         evidence_checker = _swarm_land_evidence_checker(args, config)
     elif args.live:
-            # The opt-out must be impossible to miss in the transcript: the
-            # whole point of #828 is that skipping review is a visible,
-            # configured exception, never a silent default.
-            print(
-                "swarm review evidence: OFF by config "
-                "(knobs.swarm_review_evidence: false) — clusters land "
-                "unverified (swarm-land checks no CI of its own)",
-                file=sys.stderr,
-            )
+        # The opt-out must be impossible to miss in the transcript: the
+        # whole point of #828 is that skipping review is a visible,
+        # configured exception, never a silent default.
+        print(
+            "swarm review evidence: OFF by config "
+            "(knobs.swarm_review_evidence: false) — clusters land "
+            "unverified (swarm-land checks no CI of its own)",
+            file=sys.stderr,
+        )
 
     result = swarm_landing.land_wave_clusters(
         plan,
@@ -4878,65 +5008,139 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_validate = sub.add_parser("validate", help="validate project config(s) against the schema")
     p_validate.add_argument("paths", nargs="+", help="path(s) to project.yaml")
-    p_validate.add_argument("--root", default=None,
-                            help="repo root; if set, also strict-validate extensions")
+    p_validate.add_argument(
+        "--root", default=None, help="repo root; if set, also strict-validate extensions"
+    )
     p_validate.set_defaults(func=_cmd_validate)
 
     p_plan = sub.add_parser("plan", help="render the backbone plan for a project")
     p_plan.add_argument("path", help="path to project.yaml")
     p_plan.add_argument("--root", default=".", help="repo root for resolving extensions")
-    p_plan.add_argument("--command", dest="command_contract", default="ship",
-                        help="adapter command contract to include in JSON output")
-    p_plan.add_argument("--profile", choices=("standard", "compound"), default="standard",
-                        help="workflow profile for ship command contracts")
-    p_plan.add_argument("--live", action="store_true",
-                        help="render a live preflight contract and fail if consent is missing")
-    p_plan.add_argument("--approve-scope", action="append", default=[],
-                        help="approve a consent scope for this run; repeat or comma-separate")
-    p_plan.add_argument("--operator", default=None,
-                        help="operator identifier to include in an approved consent record")
-    p_plan.add_argument("--consent-mode", choices=consent.CONSENT_MODES, default=None,
-                        help="operator consent mode: explicit, standing, or agent")
-    p_plan.add_argument("--target", default=None,
-                        help="task target to include in the consent prompt and record")
-    p_plan.add_argument("--issue-title", default=None,
-                        help="issue title to include in the intake/readiness contract")
-    p_plan.add_argument("--issue-body", default=None,
-                        help="issue body markdown to include in the intake/readiness contract")
-    p_plan.add_argument("--issue-label", action="append", default=[],
-                        help="issue label for intake/readiness; repeat or comma-separate")
-    p_plan.add_argument("--review-comments", choices=("inline", "summary"), default="inline",
-                        help="review posting mode for ship-like command contracts")
-    p_plan.add_argument("--reviewers", type=int, choices=(1, 2, 3), default=None,
-                        help="override the resolved reviewer count")
-    p_plan.add_argument("--jury", action="store_true",
-                        help="enable the cross-vendor jury contract")
-    p_plan.add_argument("--no-jury", action="store_true",
-                        help="disable the cross-vendor jury contract")
-    p_plan.add_argument("--jury-advisory", action="store_true",
-                        help="run jury in advisory mode when enabled")
-    p_plan.add_argument("--run-id", default=None,
-                        help="stamp the activity record for this run id (board visibility)")
-    p_plan.add_argument("--issue", type=_positive_int, default=None,
-                        help="issue number to record on the activity stamp")
-    p_plan.add_argument("--pull-request", type=_positive_int, default=None,
-                        help="pull request number to record on the activity stamp")
+    p_plan.add_argument(
+        "--command",
+        dest="command_contract",
+        default="ship",
+        help="adapter command contract to include in JSON output",
+    )
+    p_plan.add_argument(
+        "--profile",
+        choices=("standard", "compound"),
+        default="standard",
+        help="workflow profile for ship command contracts",
+    )
+    p_plan.add_argument(
+        "--live",
+        action="store_true",
+        help="render a live preflight contract and fail if consent is missing",
+    )
+    p_plan.add_argument(
+        "--approve-scope",
+        action="append",
+        default=[],
+        help="approve a consent scope for this run; repeat or comma-separate",
+    )
+    p_plan.add_argument(
+        "--operator",
+        default=None,
+        help="operator identifier to include in an approved consent record",
+    )
+    p_plan.add_argument(
+        "--consent-mode",
+        choices=consent.CONSENT_MODES,
+        default=None,
+        help="operator consent mode: explicit, standing, or agent",
+    )
+    p_plan.add_argument(
+        "--target", default=None, help="task target to include in the consent prompt and record"
+    )
+    p_plan.add_argument(
+        "--issue-title",
+        default=None,
+        help="issue title to include in the intake/readiness contract",
+    )
+    p_plan.add_argument(
+        "--issue-body",
+        default=None,
+        help="issue body markdown to include in the intake/readiness contract",
+    )
+    p_plan.add_argument(
+        "--issue-label",
+        action="append",
+        default=[],
+        help="issue label for intake/readiness; repeat or comma-separate",
+    )
+    p_plan.add_argument(
+        "--review-comments",
+        choices=("inline", "summary"),
+        default="inline",
+        help="review posting mode for ship-like command contracts",
+    )
+    p_plan.add_argument(
+        "--reviewers",
+        type=int,
+        choices=(1, 2, 3),
+        default=None,
+        help="override the resolved reviewer count",
+    )
+    p_plan.add_argument("--jury", action="store_true", help="enable the cross-vendor jury contract")
+    p_plan.add_argument(
+        "--no-jury", action="store_true", help="disable the cross-vendor jury contract"
+    )
+    p_plan.add_argument(
+        "--jury-advisory", action="store_true", help="run jury in advisory mode when enabled"
+    )
+    p_plan.add_argument(
+        "--run-id",
+        default=None,
+        help="stamp the activity record for this run id (board visibility)",
+    )
+    p_plan.add_argument(
+        "--issue",
+        type=_positive_int,
+        default=None,
+        help="issue number to record on the activity stamp",
+    )
+    p_plan.add_argument(
+        "--pull-request",
+        type=_positive_int,
+        default=None,
+        help="pull request number to record on the activity stamp",
+    )
     p_plan.add_argument("--json", action="store_true", help="emit structured JSON")
     p_plan.set_defaults(func=_cmd_plan)
 
     p_run = sub.add_parser("run-gates", help="run a project's command gates")
     p_run.add_argument("path", help="path to project.yaml")
     p_run.add_argument("--root", default=".", help="repo root for commands + extensions")
-    p_run.add_argument("--run-id", default=None,
-                       help="stamp the activity record for this run id (board visibility)")
-    p_run.add_argument("--command", dest="gate_command", default="ship",
-                       help="command flow the gates belong to (for the activity stamp)")
-    p_run.add_argument("--phase", dest="gate_phase", default="s8",
-                       help="flow phase to stamp when the gates run (default the test step)")
-    p_run.add_argument("--issue", type=_positive_int, default=None,
-                       help="issue number to record on the activity stamp")
-    p_run.add_argument("--pull-request", type=_positive_int, default=None,
-                       help="pull request number to record on the activity stamp")
+    p_run.add_argument(
+        "--run-id",
+        default=None,
+        help="stamp the activity record for this run id (board visibility)",
+    )
+    p_run.add_argument(
+        "--command",
+        dest="gate_command",
+        default="ship",
+        help="command flow the gates belong to (for the activity stamp)",
+    )
+    p_run.add_argument(
+        "--phase",
+        dest="gate_phase",
+        default="s8",
+        help="flow phase to stamp when the gates run (default the test step)",
+    )
+    p_run.add_argument(
+        "--issue",
+        type=_positive_int,
+        default=None,
+        help="issue number to record on the activity stamp",
+    )
+    p_run.add_argument(
+        "--pull-request",
+        type=_positive_int,
+        default=None,
+        help="pull request number to record on the activity stamp",
+    )
     p_run.set_defaults(func=_cmd_run_gates)
 
     p_window = sub.add_parser("window", help="is the merge window open now?")
@@ -4962,11 +5166,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_guard.add_argument("path", help="path to project.yaml")
     p_guard.add_argument("--root", default=".", help="repo root for live gh issue fetch")
-    p_guard.add_argument("--issue", type=_positive_int, default=None,
-                         help="issue number to fetch title/labels live (offline: use the flags)")
+    p_guard.add_argument(
+        "--issue",
+        type=_positive_int,
+        default=None,
+        help="issue number to fetch title/labels live (offline: use the flags)",
+    )
     p_guard.add_argument("--issue-title", default=None, help="issue title for offline evaluation")
-    p_guard.add_argument("--issue-labels", default=None,
-                         help="comma-separated issue labels for offline evaluation")
+    p_guard.add_argument(
+        "--issue-labels", default=None, help="comma-separated issue labels for offline evaluation"
+    )
     p_guard.add_argument("--json", action="store_true", help="emit structured JSON")
     p_guard.set_defaults(func=_cmd_guard)
 
@@ -4974,54 +5183,114 @@ def build_parser() -> argparse.ArgumentParser:
     p_merge.add_argument("path", help="path to project.yaml")
     p_merge.add_argument("--root", default=".", help="repo root for git/GitHub operations")
     p_merge.add_argument("--pr", type=_positive_int, required=True, help="pull request number")
-    p_merge.add_argument("--issue", type=_positive_int, default=None,
-                         help="linked issue number for evidence verification")
-    p_merge.add_argument("--method", choices=("squash", "merge", "rebase"), default="squash",
-                         help="GitHub merge method")
+    p_merge.add_argument(
+        "--issue",
+        type=_positive_int,
+        default=None,
+        help="linked issue number for evidence verification",
+    )
+    p_merge.add_argument(
+        "--method",
+        choices=("squash", "merge", "rebase"),
+        default="squash",
+        help="GitHub merge method",
+    )
     p_merge.add_argument("--owner", default=None, help="resource claim owner id")
-    p_merge.add_argument("--hotfix", action="store_true",
-                         help="bypass the merge window with a recorded justification")
-    p_merge.add_argument("--blocker-rule", default=None,
-                         help="keel guard rule id justifying a --hotfix bypass")
-    p_merge.add_argument("--operator-override", action="store_true",
-                         help="authorize a --hotfix bypass as a named operator (audited)")
-    p_merge.add_argument("--run-id", default=None,
-                         help="run id for the checkpoint gate (defaults to the gates-pass run id)")
-    p_merge.add_argument("--no-checkpoint-gate", action="store_true",
-                         help="bypass the checkpoint gate as a named operator (audited)")
-    p_merge.add_argument("--issue-title", default=None,
-                         help="issue title for offline blocker-rule validation")
-    p_merge.add_argument("--issue-labels", default=None,
-                         help="comma-separated issue labels for offline blocker-rule validation")
+    p_merge.add_argument(
+        "--hotfix",
+        action="store_true",
+        help="bypass the merge window with a recorded justification",
+    )
+    p_merge.add_argument(
+        "--blocker-rule", default=None, help="keel guard rule id justifying a --hotfix bypass"
+    )
+    p_merge.add_argument(
+        "--operator-override",
+        action="store_true",
+        help="authorize a --hotfix bypass as a named operator (audited)",
+    )
+    p_merge.add_argument(
+        "--run-id",
+        default=None,
+        help="run id for the checkpoint gate (defaults to the gates-pass run id)",
+    )
+    p_merge.add_argument(
+        "--no-checkpoint-gate",
+        action="store_true",
+        help="bypass the checkpoint gate as a named operator (audited)",
+    )
+    p_merge.add_argument(
+        "--issue-title", default=None, help="issue title for offline blocker-rule validation"
+    )
+    p_merge.add_argument(
+        "--issue-labels",
+        default=None,
+        help="comma-separated issue labels for offline blocker-rule validation",
+    )
     p_merge.add_argument("--dry-run", action="store_true", help="verify only; do not merge")
-    p_merge.add_argument("--approve-scope", action="append", default=[],
-                         help="approve a consent scope for this merge")
-    p_merge.add_argument("--operator", default=None,
-                         help="operator identifier for consent evidence")
-    p_merge.add_argument("--consent-mode", choices=consent.CONSENT_MODES, default=None,
-                         help="operator consent mode")
-    p_merge.add_argument("--risk-tier", choices=consent.RISK_TIERS, default="tier-1",
-                         help="risk tier for deterministic escalation evaluation")
-    p_merge.add_argument("--trust-signal", choices=consent.TRUST_SIGNALS, default="medium",
-                         help="trust signal for deterministic escalation evaluation")
-    p_merge.add_argument("--retry-count", type=int, default=0,
-                         help="retry count for deterministic escalation evaluation")
-    p_merge.add_argument("--conflicting-sources", action="store_true",
-                         help="mark conflicting sources for escalation evaluation")
-    p_merge.add_argument("--changed-lines", type=int, default=0,
-                         help="changed-line count for escalation evaluation")
-    p_merge.add_argument("--escalation-side-effect", action="append", default=[],
-                         help="additional side-effect signal for escalation evaluation")
-    p_merge.add_argument("--review-comments", choices=("inline", "summary"), default="inline",
-                         help="review posting mode for evidence verification")
-    p_merge.add_argument("--reviewers", type=int, choices=(1, 2, 3), default=None,
-                         help="override required reviewer count")
+    p_merge.add_argument(
+        "--approve-scope",
+        action="append",
+        default=[],
+        help="approve a consent scope for this merge",
+    )
+    p_merge.add_argument(
+        "--operator", default=None, help="operator identifier for consent evidence"
+    )
+    p_merge.add_argument(
+        "--consent-mode", choices=consent.CONSENT_MODES, default=None, help="operator consent mode"
+    )
+    p_merge.add_argument(
+        "--risk-tier",
+        choices=consent.RISK_TIERS,
+        default="tier-1",
+        help="risk tier for deterministic escalation evaluation",
+    )
+    p_merge.add_argument(
+        "--trust-signal",
+        choices=consent.TRUST_SIGNALS,
+        default="medium",
+        help="trust signal for deterministic escalation evaluation",
+    )
+    p_merge.add_argument(
+        "--retry-count",
+        type=int,
+        default=0,
+        help="retry count for deterministic escalation evaluation",
+    )
+    p_merge.add_argument(
+        "--conflicting-sources",
+        action="store_true",
+        help="mark conflicting sources for escalation evaluation",
+    )
+    p_merge.add_argument(
+        "--changed-lines", type=int, default=0, help="changed-line count for escalation evaluation"
+    )
+    p_merge.add_argument(
+        "--escalation-side-effect",
+        action="append",
+        default=[],
+        help="additional side-effect signal for escalation evaluation",
+    )
+    p_merge.add_argument(
+        "--review-comments",
+        choices=("inline", "summary"),
+        default="inline",
+        help="review posting mode for evidence verification",
+    )
+    p_merge.add_argument(
+        "--reviewers",
+        type=int,
+        choices=(1, 2, 3),
+        default=None,
+        help="override required reviewer count",
+    )
     p_merge.add_argument("--jury", action="store_true", help="enable jury evidence")
     p_merge.add_argument("--no-jury", action="store_true", help="disable jury evidence")
-    p_merge.add_argument("--jury-advisory", action="store_true",
-                         help="make jury advisory for evidence verification")
-    p_merge.add_argument("--gate-label", default=None,
-                         help="override evidence gate label")
+    p_merge.add_argument(
+        "--jury-advisory", action="store_true", help="make jury advisory for evidence verification"
+    )
+    p_merge.add_argument("--gate-label", default=None, help="override evidence gate label")
     p_merge.add_argument("--json", action="store_true", help="emit structured JSON")
     p_merge.set_defaults(func=_cmd_merge)
 
@@ -5034,8 +5303,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_ledger = sub.add_parser("ledger", help="read the structured run ledger offline")
     p_ledger.add_argument("path", help="path to project.yaml")
     p_ledger.add_argument("--root", default=".", help="repo root for resolving the ledger path")
-    p_ledger.add_argument("--limit", type=_positive_int, default=None,
-                          help="return only the newest N records")
+    p_ledger.add_argument(
+        "--limit", type=_positive_int, default=None, help="return only the newest N records"
+    )
     p_ledger.add_argument("--json", action="store_true", help="emit structured JSON")
     p_ledger.set_defaults(func=_cmd_ledger)
 
@@ -5044,24 +5314,43 @@ def build_parser() -> argparse.ArgumentParser:
         help="verify post-merge capture markers for merged PRs",
     )
     p_capture.add_argument("path", help="path to project.yaml")
-    p_capture.add_argument("--root", default=".",
-                           help="repo root for resolving the ledger path")
-    p_capture.add_argument("--merged-pr", type=_positive_int, action="append",
-                           help="merged PR number expected to have a capture marker "
-                                "(explicit override; always added to the derived set)")
-    p_capture.add_argument("--from-transport", action="store_true",
-                           help="derive the merged-PR set from the transport instead of "
-                                "trusting --merged-pr (also runs reconcile cross-checks)")
-    p_capture.add_argument("--merged-since", default=None,
-                           help="with --from-transport, only PRs merged on/after this date "
-                                "(YYYY-MM-DD)")
-    p_capture.add_argument("--merged-prs-json", default=None,
-                           help="offline transport fixture: JSON array of {\"number\": N}")
-    p_capture.add_argument("--pr-reviews-json", default=None,
-                           help="offline fixture path; presence activates reconcile checks")
-    p_capture.add_argument("--verdict-count", type=_verdict_count_arg, action="append",
-                           default=None, metavar="PR=N",
-                           help="evidence-side review-verdict count for a PR (offline fixture)")
+    p_capture.add_argument("--root", default=".", help="repo root for resolving the ledger path")
+    p_capture.add_argument(
+        "--merged-pr",
+        type=_positive_int,
+        action="append",
+        help="merged PR number expected to have a capture marker "
+        "(explicit override; always added to the derived set)",
+    )
+    p_capture.add_argument(
+        "--from-transport",
+        action="store_true",
+        help="derive the merged-PR set from the transport instead of "
+        "trusting --merged-pr (also runs reconcile cross-checks)",
+    )
+    p_capture.add_argument(
+        "--merged-since",
+        default=None,
+        help="with --from-transport, only PRs merged on/after this date (YYYY-MM-DD)",
+    )
+    p_capture.add_argument(
+        "--merged-prs-json",
+        default=None,
+        help='offline transport fixture: JSON array of {"number": N}',
+    )
+    p_capture.add_argument(
+        "--pr-reviews-json",
+        default=None,
+        help="offline fixture path; presence activates reconcile checks",
+    )
+    p_capture.add_argument(
+        "--verdict-count",
+        type=_verdict_count_arg,
+        action="append",
+        default=None,
+        metavar="PR=N",
+        help="evidence-side review-verdict count for a PR (offline fixture)",
+    )
     p_capture.add_argument("--json", action="store_true", help="emit structured JSON")
     p_capture.set_defaults(func=_cmd_capture_verify)
 
@@ -5070,23 +5359,35 @@ def build_parser() -> argparse.ArgumentParser:
         help="reconcile observed PR side effects against approved consent scopes",
     )
     p_consent.add_argument("path", help="path to project.yaml")
-    p_consent.add_argument("--root", default=".",
-                           help="repo root for live gh observation and the ledger path")
-    p_consent.add_argument("--pr", type=_positive_int, required=True,
-                           help="pull request number to reconcile")
-    p_consent.add_argument("--ledger-jsonl", default=None,
-                           help="offline run-ledger JSONL fixture; otherwise the configured "
-                                "ledger under --root is read for the consent record")
-    p_consent.add_argument("--offline", action="store_true",
-                           help="use only the supplied observed-effect flags; make no gh calls")
-    p_consent.add_argument("--pr-exists", action="store_true",
-                           help="offline: the PR exists (implies git push + gh pr create)")
-    p_consent.add_argument("--commented", action="store_true",
-                           help="offline: comments were posted on the PR")
-    p_consent.add_argument("--merged", action="store_true",
-                           help="offline: the PR was merged")
-    p_consent.add_argument("--labeled", action="store_true",
-                           help="offline: labels were written on the PR")
+    p_consent.add_argument(
+        "--root", default=".", help="repo root for live gh observation and the ledger path"
+    )
+    p_consent.add_argument(
+        "--pr", type=_positive_int, required=True, help="pull request number to reconcile"
+    )
+    p_consent.add_argument(
+        "--ledger-jsonl",
+        default=None,
+        help="offline run-ledger JSONL fixture; otherwise the configured "
+        "ledger under --root is read for the consent record",
+    )
+    p_consent.add_argument(
+        "--offline",
+        action="store_true",
+        help="use only the supplied observed-effect flags; make no gh calls",
+    )
+    p_consent.add_argument(
+        "--pr-exists",
+        action="store_true",
+        help="offline: the PR exists (implies git push + gh pr create)",
+    )
+    p_consent.add_argument(
+        "--commented", action="store_true", help="offline: comments were posted on the PR"
+    )
+    p_consent.add_argument("--merged", action="store_true", help="offline: the PR was merged")
+    p_consent.add_argument(
+        "--labeled", action="store_true", help="offline: labels were written on the PR"
+    )
     p_consent.add_argument("--json", action="store_true", help="emit structured JSON")
     p_consent.set_defaults(func=_cmd_consent_verify)
 
@@ -5095,21 +5396,38 @@ def build_parser() -> argparse.ArgumentParser:
         help="flag issues closed or status-done without a merge-attesting ledger record",
     )
     p_close.add_argument("path", help="path to project.yaml")
-    p_close.add_argument("--root", default=".",
-                         help="repo root for live gh observation and the ledger path")
-    p_close.add_argument("--issue", type=_positive_int, action="append", required=True,
-                         help="issue number to reconcile (repeat for several)")
-    p_close.add_argument("--ledger-jsonl", default=None,
-                         help="offline run-ledger JSONL fixture; otherwise the configured "
-                              "ledger under --root is read for the ship_run records")
-    p_close.add_argument("--offline", action="store_true",
-                         help="use only the supplied lifecycle flags; make no gh calls "
-                              "(test/back-compat; live mode reads host-authoritative state)")
-    p_close.add_argument("--closed", action="store_true",
-                         help="offline only: treat every --issue as closed (ignored when live)")
-    p_close.add_argument("--status-done", action="store_true",
-                         help="offline only: treat every --issue as carrying the done label "
-                              "(ignored when live)")
+    p_close.add_argument(
+        "--root", default=".", help="repo root for live gh observation and the ledger path"
+    )
+    p_close.add_argument(
+        "--issue",
+        type=_positive_int,
+        action="append",
+        required=True,
+        help="issue number to reconcile (repeat for several)",
+    )
+    p_close.add_argument(
+        "--ledger-jsonl",
+        default=None,
+        help="offline run-ledger JSONL fixture; otherwise the configured "
+        "ledger under --root is read for the ship_run records",
+    )
+    p_close.add_argument(
+        "--offline",
+        action="store_true",
+        help="use only the supplied lifecycle flags; make no gh calls "
+        "(test/back-compat; live mode reads host-authoritative state)",
+    )
+    p_close.add_argument(
+        "--closed",
+        action="store_true",
+        help="offline only: treat every --issue as closed (ignored when live)",
+    )
+    p_close.add_argument(
+        "--status-done",
+        action="store_true",
+        help="offline only: treat every --issue as carrying the done label (ignored when live)",
+    )
     p_close.add_argument("--json", action="store_true", help="emit structured JSON")
     p_close.set_defaults(func=_cmd_close_reconcile)
 
@@ -5118,18 +5436,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="assert a dry run left no new ledger record, branch, or PR (post-hoc)",
     )
     p_dryrun.add_argument("path", help="path to project.yaml")
-    p_dryrun.add_argument("--root", default=".",
-                          help="repo root for the ledger, git, and gh observation")
-    p_dryrun.add_argument("--run-id", required=True,
-                          help="the rehearsed dry-run id whose leaks to detect")
-    p_dryrun.add_argument("--issue", type=_positive_int, required=True,
-                          help="the issue the dry run rehearsed (scopes branch/PR attribution)")
-    p_dryrun.add_argument("--before-json", required=True,
-                          help="JSON snapshot {ledger_run_ids, branches, pr_numbers} "
-                               "captured before the dry run")
-    p_dryrun.add_argument("--after-json", default=None,
-                          help="offline after-snapshot JSON; otherwise gathered live "
-                               "from the ledger, git, and gh")
+    p_dryrun.add_argument(
+        "--root", default=".", help="repo root for the ledger, git, and gh observation"
+    )
+    p_dryrun.add_argument(
+        "--run-id", required=True, help="the rehearsed dry-run id whose leaks to detect"
+    )
+    p_dryrun.add_argument(
+        "--issue",
+        type=_positive_int,
+        required=True,
+        help="the issue the dry run rehearsed (scopes branch/PR attribution)",
+    )
+    p_dryrun.add_argument(
+        "--before-json",
+        required=True,
+        help="JSON snapshot {ledger_run_ids, branches, pr_numbers} captured before the dry run",
+    )
+    p_dryrun.add_argument(
+        "--after-json",
+        default=None,
+        help="offline after-snapshot JSON; otherwise gathered live from the ledger, git, and gh",
+    )
     p_dryrun.add_argument("--json", action="store_true", help="emit structured JSON")
     p_dryrun.set_defaults(func=_cmd_dryrun_verify)
 
@@ -5138,10 +5466,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="plan idempotent post-merge capture reconciliation actions",
     )
     p_reconcile.add_argument("path", help="path to project.yaml")
-    p_reconcile.add_argument("--root", default=".",
-                             help="repo root for resolving the ledger path")
-    p_reconcile.add_argument("--merged-pr", type=_positive_int, action="append", required=True,
-                             help="merged PR number to reconcile")
+    p_reconcile.add_argument("--root", default=".", help="repo root for resolving the ledger path")
+    p_reconcile.add_argument(
+        "--merged-pr",
+        type=_positive_int,
+        action="append",
+        required=True,
+        help="merged PR number to reconcile",
+    )
     p_reconcile.add_argument(
         "--linked-issue",
         type=_parse_pr_issue_mapping,
@@ -5155,8 +5487,9 @@ def build_parser() -> argparse.ArgumentParser:
         default="unavailable",
         help="whether the capture extension capability is currently available",
     )
-    p_reconcile.add_argument("--live", action="store_true",
-                             help="label the output as a live reconciliation plan")
+    p_reconcile.add_argument(
+        "--live", action="store_true", help="label the output as a live reconciliation plan"
+    )
     p_reconcile.add_argument("--json", action="store_true", help="emit structured JSON")
     p_reconcile.set_defaults(func=_cmd_capture_reconcile)
 
@@ -5166,22 +5499,41 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_step.add_argument("--step", required=True, help="backbone step id, e.g. s7")
     p_step.add_argument("--handoff-file", required=True, help="JSON step handoff file")
-    p_step.add_argument("--evidence-report", required=True,
-                        help="JSON evidence verification report or verification block")
-    p_step.add_argument("--review-comments", choices=("inline", "summary"),
-                        default="inline", help="review posting mode in the ship contract")
-    p_step.add_argument("--reviewers", type=int, choices=(1, 2, 3), default=None,
-                        help="override the required reviewer verdict count")
-    p_step.add_argument("--jury", action="store_true",
-                        help="enable the cross-vendor jury requirement")
-    p_step.add_argument("--no-jury", action="store_true",
-                        help="disable the cross-vendor jury requirement")
-    p_step.add_argument("--jury-advisory", action="store_true",
-                        help="make an enabled jury advisory instead of required")
-    p_step.add_argument("--dry-run", action="store_true",
-                        help="verify with dry-run evidence requirements")
-    p_step.add_argument("--not-enforced", action="store_true",
-                        help="verify with evidence requirements disabled")
+    p_step.add_argument(
+        "--evidence-report",
+        required=True,
+        help="JSON evidence verification report or verification block",
+    )
+    p_step.add_argument(
+        "--review-comments",
+        choices=("inline", "summary"),
+        default="inline",
+        help="review posting mode in the ship contract",
+    )
+    p_step.add_argument(
+        "--reviewers",
+        type=int,
+        choices=(1, 2, 3),
+        default=None,
+        help="override the required reviewer verdict count",
+    )
+    p_step.add_argument(
+        "--jury", action="store_true", help="enable the cross-vendor jury requirement"
+    )
+    p_step.add_argument(
+        "--no-jury", action="store_true", help="disable the cross-vendor jury requirement"
+    )
+    p_step.add_argument(
+        "--jury-advisory",
+        action="store_true",
+        help="make an enabled jury advisory instead of required",
+    )
+    p_step.add_argument(
+        "--dry-run", action="store_true", help="verify with dry-run evidence requirements"
+    )
+    p_step.add_argument(
+        "--not-enforced", action="store_true", help="verify with evidence requirements disabled"
+    )
     p_step.add_argument("--json", action="store_true", help="emit structured JSON")
     p_step.set_defaults(func=_cmd_step_verify)
 
@@ -5198,20 +5550,37 @@ def build_parser() -> argparse.ArgumentParser:
     p_rc.add_argument("--diff-fingerprint", default=None, help="event diff fingerprint")
     p_rc.add_argument("--work-units", type=int, default=None, help="event work-unit count")
     p_rc.add_argument("--soft-failure", action="store_true", help="mark event as soft failure")
-    p_rc.add_argument("--max-work-units", type=int, default=runcontrols.DEFAULT_RUN_BUDGET,
-                      help="run budget hard cap")
-    p_rc.add_argument("--default-step-cap", type=int, default=runcontrols.DEFAULT_STEP_CAP,
-                      help="default per-step/slot iteration cap")
-    p_rc.add_argument("--step-cap", action="append", default=[],
-                      help="override per-slot cap as SLOT=N; repeatable")
-    p_rc.add_argument("--identical-action-threshold", type=int,
-                      default=runcontrols.DEFAULT_IDENTICAL_THRESHOLD,
-                      help="oscillation threshold for repeated identical actions")
-    p_rc.add_argument("--alternating-diff-window", type=int,
-                      default=runcontrols.DEFAULT_ALTERNATION_WINDOW,
-                      help="oscillation window for alternating diff fingerprints")
-    p_rc.add_argument("--dry-run", action="store_true",
-                      help="evaluate without appending the event")
+    p_rc.add_argument(
+        "--max-work-units",
+        type=int,
+        default=runcontrols.DEFAULT_RUN_BUDGET,
+        help="run budget hard cap",
+    )
+    p_rc.add_argument(
+        "--default-step-cap",
+        type=int,
+        default=runcontrols.DEFAULT_STEP_CAP,
+        help="default per-step/slot iteration cap",
+    )
+    p_rc.add_argument(
+        "--step-cap",
+        action="append",
+        default=[],
+        help="override per-slot cap as SLOT=N; repeatable",
+    )
+    p_rc.add_argument(
+        "--identical-action-threshold",
+        type=int,
+        default=runcontrols.DEFAULT_IDENTICAL_THRESHOLD,
+        help="oscillation threshold for repeated identical actions",
+    )
+    p_rc.add_argument(
+        "--alternating-diff-window",
+        type=int,
+        default=runcontrols.DEFAULT_ALTERNATION_WINDOW,
+        help="oscillation window for alternating diff fingerprints",
+    )
+    p_rc.add_argument("--dry-run", action="store_true", help="evaluate without appending the event")
     p_rc.add_argument("--json", action="store_true", help="emit structured JSON")
     p_rc.set_defaults(func=_cmd_runcontrols)
 
@@ -5253,34 +5622,72 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_review.add_argument("path", help="path to project.yaml")
     p_review.add_argument("--root", default=".", help="repo root for GitHub operations")
-    p_review.add_argument("--pr", type=_positive_int, required=True,
-                          help="pull request number to attach verdicts to")
-    p_review.add_argument("--reviews", required=True,
-                          help="JSON array of reviewer verdict objects supplied by the host")
-    p_review.add_argument("--issue", type=_positive_int, default=None,
-                          help="linked issue number; otherwise inferred from PR body")
-    p_review.add_argument("--closure", default=None,
-                          help="optional ship_run-shaped JSON record to post as the closure")
-    p_review.add_argument("--reviewers", type=int, choices=(1, 2, 3), default=None,
-                          help="override the required reviewer verdict count")
-    p_review.add_argument("--head-sha", default=None,
-                          help="offline PR head SHA used to pin verdict evidence")
-    p_review.add_argument("--changed-file", action="append", default=[],
-                          help="offline changed file path; repeat to derive tier from fixtures")
-    p_review.add_argument("--run-id", default="run",
-                          help="run id; per-reviewer sub-keys bind idempotent comments")
-    p_review.add_argument("--verify", action="store_true",
-                          help="run evidence-verify after posting and include the outcome")
-    p_review.add_argument("--dry-run", action="store_true",
-                          help="render and print what would post; do not mutate GitHub")
-    p_review.add_argument("--live", action="store_true",
-                          help="actually post the rendered bundle (consent-gated)")
-    p_review.add_argument("--approve-scope", action="append", default=[],
-                          help="approve a consent scope for the live run; repeatable")
-    p_review.add_argument("--operator", default=None,
-                          help="operator identity recorded with an approved live run")
-    p_review.add_argument("--consent-mode", choices=consent.CONSENT_MODES, default=None,
-                          help="override the project consent mode for this run")
+    p_review.add_argument(
+        "--pr", type=_positive_int, required=True, help="pull request number to attach verdicts to"
+    )
+    p_review.add_argument(
+        "--reviews",
+        required=True,
+        help="JSON array of reviewer verdict objects supplied by the host",
+    )
+    p_review.add_argument(
+        "--issue",
+        type=_positive_int,
+        default=None,
+        help="linked issue number; otherwise inferred from PR body",
+    )
+    p_review.add_argument(
+        "--closure",
+        default=None,
+        help="optional ship_run-shaped JSON record to post as the closure",
+    )
+    p_review.add_argument(
+        "--reviewers",
+        type=int,
+        choices=(1, 2, 3),
+        default=None,
+        help="override the required reviewer verdict count",
+    )
+    p_review.add_argument(
+        "--head-sha", default=None, help="offline PR head SHA used to pin verdict evidence"
+    )
+    p_review.add_argument(
+        "--changed-file",
+        action="append",
+        default=[],
+        help="offline changed file path; repeat to derive tier from fixtures",
+    )
+    p_review.add_argument(
+        "--run-id", default="run", help="run id; per-reviewer sub-keys bind idempotent comments"
+    )
+    p_review.add_argument(
+        "--verify",
+        action="store_true",
+        help="run evidence-verify after posting and include the outcome",
+    )
+    p_review.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="render and print what would post; do not mutate GitHub",
+    )
+    p_review.add_argument(
+        "--live", action="store_true", help="actually post the rendered bundle (consent-gated)"
+    )
+    p_review.add_argument(
+        "--approve-scope",
+        action="append",
+        default=[],
+        help="approve a consent scope for the live run; repeatable",
+    )
+    p_review.add_argument(
+        "--operator", default=None, help="operator identity recorded with an approved live run"
+    )
+    p_review.add_argument(
+        "--consent-mode",
+        choices=consent.CONSENT_MODES,
+        default=None,
+        help="override the project consent mode for this run",
+    )
     p_review.add_argument("--json", action="store_true", help="emit structured JSON")
     p_review.set_defaults(func=_cmd_review)
 
@@ -5293,10 +5700,12 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help="JSON array of reviewer findings blocks supplied by the host",
     )
-    p_rcs.add_argument("--head-sha", default=None,
-                       help="PR head SHA to pin the summary to")
-    p_rcs.add_argument("--run-id", default=None,
-                       help="embed a run-id marker so an idempotent re-post edits in place")
+    p_rcs.add_argument("--head-sha", default=None, help="PR head SHA to pin the summary to")
+    p_rcs.add_argument(
+        "--run-id",
+        default=None,
+        help="embed a run-id marker so an idempotent re-post edits in place",
+    )
     p_rcs.add_argument("--json", action="store_true", help="emit structured JSON")
     p_rcs.set_defaults(func=_cmd_review_cycle_summary)
 
@@ -5304,12 +5713,15 @@ def build_parser() -> argparse.ArgumentParser:
         "render-report",
         help="render a deterministic reporting comment (coverage / deps-audit / flake-audit)",
     )
-    p_report.add_argument("--kind", required=True,
-                          choices=("coverage", "deps-audit", "flake-audit",
-                                   "scan-finding", "triage-audit"),
-                          help="which reporting artifact to render")
-    p_report.add_argument("--payload", required=True,
-                          help="JSON object of renderer fields supplied by the host")
+    p_report.add_argument(
+        "--kind",
+        required=True,
+        choices=("coverage", "deps-audit", "flake-audit", "scan-finding", "triage-audit"),
+        help="which reporting artifact to render",
+    )
+    p_report.add_argument(
+        "--payload", required=True, help="JSON object of renderer fields supplied by the host"
+    )
     p_report.add_argument("--json", action="store_true", help="emit structured JSON")
     p_report.set_defaults(func=_cmd_render_report)
 
@@ -5319,65 +5731,124 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_evidence.add_argument("path", help="path to project.yaml")
     p_evidence.add_argument("--root", default=".", help="repo root for live gh fetches")
-    p_evidence.add_argument("--pr", type=_positive_int, required=True,
-                            help="pull request number to verify")
-    p_evidence.add_argument("--issue", type=_positive_int, default=None,
-                            help="linked issue number; otherwise inferred from PR body")
-    p_evidence.add_argument("--review-comments", choices=("inline", "summary"),
-                            default="inline", help="review posting mode in the ship contract")
-    p_evidence.add_argument("--reviewers", type=int, choices=(1, 2, 3), default=None,
-                            help="override the required reviewer verdict count")
-    p_evidence.add_argument("--jury", action="store_true",
-                            help="enable the cross-vendor jury requirement")
-    p_evidence.add_argument("--no-jury", action="store_true",
-                            help="disable the cross-vendor jury requirement")
-    p_evidence.add_argument("--jury-advisory", action="store_true",
-                            help="make an enabled jury advisory instead of required")
-    p_evidence.add_argument("--jury-vendors", type=_nonnegative_int, default=None,
-                            help="distinct vendors that actually took part in the jury panel; "
-                                 f"below {ship.MINIMUM_JURY_VENDORS} a gating jury is downgraded "
-                                 "to advisory and no jury verdict is required. 0 covers a run "
-                                 "where no agent returned output. Omit when the panel is unknown")
-    p_evidence.add_argument("--require-distinct-vendors", action="store_true",
-                            help="require each review verdict to carry a distinct vendor "
-                                 "(overrides the project knob; off by default)")
-    p_evidence.add_argument("--phase", choices=evidence.PHASES, default=evidence.PHASE_ALL,
-                            help="which phase's evidence to require: pre-merge (review + "
-                                 "gating jury, the s10 merge gate), post-merge (the s11 "
-                                 "closure comments), or all (default)")
-    p_evidence.add_argument("--require-armed", action="store_true",
-                            help="fail instead of passing when the gate is not armed, so a "
-                                 "green result cannot mean 'checked nothing'; the operator "
-                                 "waiver label remains the deliberate way to disarm")
-    p_evidence.add_argument("--dry-run", action="store_true",
-                            help="emit the contract without requiring evidence")
-    p_evidence.add_argument("--deferral", action="append", default=[],
-                            help="explicitly defer an evidence id, kind, or all")
-    p_evidence.add_argument("--pr-comments-json", default=None,
-                            help="offline PR issue-comments JSON fixture")
-    p_evidence.add_argument("--issue-comments-json", default=None,
-                            help="offline linked-issue comments JSON fixture")
-    p_evidence.add_argument("--pr-reviews-json", default=None,
-                            help="offline PR reviews JSON fixture")
-    p_evidence.add_argument("--pr-body-file", default=None,
-                            help="offline PR body fixture, used only to infer linked issue")
-    p_evidence.add_argument("--ledger-jsonl", default=None,
-                            help="offline run-ledger JSONL fixture; otherwise the configured "
-                                 "ledger under --root is read to enforce closure fidelity")
-    p_evidence.add_argument("--changed-file", action="append", default=[],
-                            help="offline changed file path; repeat to derive tier from fixtures")
-    p_evidence.add_argument("--head-sha", default=None,
-                            help="offline PR head SHA used to bind verdict evidence")
-    p_evidence.add_argument("--head-ref", default=None,
-                            help="offline PR head branch used to detect ship provenance")
-    p_evidence.add_argument("--pr-label", action="append", default=[],
-                            help="inject a PR label name (repeatable); merged with live labels. "
-                                 "A live PR fetch still runs unless an offline fixture flag is "
-                                 "also supplied")
-    p_evidence.add_argument("--gate-label", default=None,
-                            help="override the legacy evidence arming label")
-    p_evidence.add_argument("--waiver-label", default=None,
-                            help="override the operator-applied evidence waiver label")
+    p_evidence.add_argument(
+        "--pr", type=_positive_int, required=True, help="pull request number to verify"
+    )
+    p_evidence.add_argument(
+        "--issue",
+        type=_positive_int,
+        default=None,
+        help="linked issue number; otherwise inferred from PR body",
+    )
+    p_evidence.add_argument(
+        "--review-comments",
+        choices=("inline", "summary"),
+        default="inline",
+        help="review posting mode in the ship contract",
+    )
+    p_evidence.add_argument(
+        "--reviewers",
+        type=int,
+        choices=(1, 2, 3),
+        default=None,
+        help="override the required reviewer verdict count",
+    )
+    p_evidence.add_argument(
+        "--jury", action="store_true", help="enable the cross-vendor jury requirement"
+    )
+    p_evidence.add_argument(
+        "--no-jury", action="store_true", help="disable the cross-vendor jury requirement"
+    )
+    p_evidence.add_argument(
+        "--jury-advisory",
+        action="store_true",
+        help="make an enabled jury advisory instead of required",
+    )
+    p_evidence.add_argument(
+        "--jury-vendors",
+        type=_nonnegative_int,
+        default=None,
+        help="distinct vendors that actually took part in the jury panel; "
+        f"below {ship.MINIMUM_JURY_VENDORS} a gating jury is downgraded "
+        "to advisory and no jury verdict is required. 0 covers a run "
+        "where no agent returned output. Omit when the panel is unknown",
+    )
+    p_evidence.add_argument(
+        "--require-distinct-vendors",
+        action="store_true",
+        help="require each review verdict to carry a distinct vendor "
+        "(overrides the project knob; off by default)",
+    )
+    p_evidence.add_argument(
+        "--phase",
+        choices=evidence.PHASES,
+        default=evidence.PHASE_ALL,
+        help="which phase's evidence to require: pre-merge (review + "
+        "gating jury, the s10 merge gate), post-merge (the s11 "
+        "closure comments), or all (default)",
+    )
+    p_evidence.add_argument(
+        "--require-armed",
+        action="store_true",
+        help="fail instead of passing when the gate is not armed, so a "
+        "green result cannot mean 'checked nothing'; the operator "
+        "waiver label remains the deliberate way to disarm",
+    )
+    p_evidence.add_argument(
+        "--dry-run", action="store_true", help="emit the contract without requiring evidence"
+    )
+    p_evidence.add_argument(
+        "--deferral",
+        action="append",
+        default=[],
+        help="explicitly defer an evidence id, kind, or all",
+    )
+    p_evidence.add_argument(
+        "--pr-comments-json", default=None, help="offline PR issue-comments JSON fixture"
+    )
+    p_evidence.add_argument(
+        "--issue-comments-json", default=None, help="offline linked-issue comments JSON fixture"
+    )
+    p_evidence.add_argument(
+        "--pr-reviews-json", default=None, help="offline PR reviews JSON fixture"
+    )
+    p_evidence.add_argument(
+        "--pr-body-file",
+        default=None,
+        help="offline PR body fixture, used only to infer linked issue",
+    )
+    p_evidence.add_argument(
+        "--ledger-jsonl",
+        default=None,
+        help="offline run-ledger JSONL fixture; otherwise the configured "
+        "ledger under --root is read to enforce closure fidelity",
+    )
+    p_evidence.add_argument(
+        "--changed-file",
+        action="append",
+        default=[],
+        help="offline changed file path; repeat to derive tier from fixtures",
+    )
+    p_evidence.add_argument(
+        "--head-sha", default=None, help="offline PR head SHA used to bind verdict evidence"
+    )
+    p_evidence.add_argument(
+        "--head-ref", default=None, help="offline PR head branch used to detect ship provenance"
+    )
+    p_evidence.add_argument(
+        "--pr-label",
+        action="append",
+        default=[],
+        help="inject a PR label name (repeatable); merged with live labels. "
+        "A live PR fetch still runs unless an offline fixture flag is "
+        "also supplied",
+    )
+    p_evidence.add_argument(
+        "--gate-label", default=None, help="override the legacy evidence arming label"
+    )
+    p_evidence.add_argument(
+        "--waiver-label", default=None, help="override the operator-applied evidence waiver label"
+    )
     p_evidence.add_argument("--json", action="store_true", help="emit structured JSON")
     p_evidence.set_defaults(func=_cmd_evidence_verify)
 
@@ -5387,10 +5858,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_vm.add_argument("path", help="path to project.yaml")
     p_vm.add_argument("--root", default=".", help="repo root for live gh fetches")
-    p_vm.add_argument("--pr", type=_positive_int, required=True,
-                      help="merged pull request number to verify")
-    p_vm.add_argument("--merge-sha", default=None,
-                      help="merge commit SHA; read from the PR when omitted")
+    p_vm.add_argument(
+        "--pr", type=_positive_int, required=True, help="merged pull request number to verify"
+    )
+    p_vm.add_argument(
+        "--merge-sha", default=None, help="merge commit SHA; read from the PR when omitted"
+    )
     p_vm.add_argument("--json", action="store_true", help="emit structured JSON")
     p_vm.set_defaults(func=_cmd_verify_merge)
 
@@ -5400,34 +5873,56 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_scope.add_argument("path", help="path to project.yaml")
     p_scope.add_argument("--root", default=".", help="repo root for live gh fetches")
-    p_scope.add_argument("--pr", type=_positive_int, required=True,
-                         help="pull request number to verify")
-    p_scope.add_argument("--issue", type=_positive_int, default=None,
-                         help="linked issue number; otherwise inferred from PR body")
-    p_scope.add_argument("--deferral", action="append", default=[],
-                         help="operator escape hatch; pass 'scope-waived' (or 'all') to "
-                              "accept scope creep for this run")
-    p_scope.add_argument("--ledger-jsonl", default=None,
-                         help="offline run-ledger JSONL fixture; otherwise the configured "
-                              "ledger under --root is read for the declared scope")
-    p_scope.add_argument("--changed-file", action="append", default=[],
-                         help="offline changed file path; repeat to supply the diff offline")
-    p_scope.add_argument("--head-sha", default=None,
-                         help="offline PR head SHA recorded in the report")
-    p_scope.add_argument("--head-ref", default=None,
-                         help="offline PR head branch")
-    p_scope.add_argument("--pr-body-file", default=None,
-                         help="offline PR body fixture, used only to infer the linked issue")
-    p_scope.add_argument("--pr-comments-json", default=None,
-                         help="offline PR issue-comments JSON fixture")
-    p_scope.add_argument("--issue-comments-json", default=None,
-                         help="offline linked-issue comments JSON fixture")
-    p_scope.add_argument("--pr-reviews-json", default=None,
-                         help="offline PR reviews JSON fixture")
-    p_scope.add_argument("--pr-label", action="append", default=[],
-                         help="inject a PR label name (repeatable)")
-    p_scope.add_argument("--dry-run", action="store_true",
-                         help="use offline inputs without a live gh fetch")
+    p_scope.add_argument(
+        "--pr", type=_positive_int, required=True, help="pull request number to verify"
+    )
+    p_scope.add_argument(
+        "--issue",
+        type=_positive_int,
+        default=None,
+        help="linked issue number; otherwise inferred from PR body",
+    )
+    p_scope.add_argument(
+        "--deferral",
+        action="append",
+        default=[],
+        help="operator escape hatch; pass 'scope-waived' (or 'all') to "
+        "accept scope creep for this run",
+    )
+    p_scope.add_argument(
+        "--ledger-jsonl",
+        default=None,
+        help="offline run-ledger JSONL fixture; otherwise the configured "
+        "ledger under --root is read for the declared scope",
+    )
+    p_scope.add_argument(
+        "--changed-file",
+        action="append",
+        default=[],
+        help="offline changed file path; repeat to supply the diff offline",
+    )
+    p_scope.add_argument(
+        "--head-sha", default=None, help="offline PR head SHA recorded in the report"
+    )
+    p_scope.add_argument("--head-ref", default=None, help="offline PR head branch")
+    p_scope.add_argument(
+        "--pr-body-file",
+        default=None,
+        help="offline PR body fixture, used only to infer the linked issue",
+    )
+    p_scope.add_argument(
+        "--pr-comments-json", default=None, help="offline PR issue-comments JSON fixture"
+    )
+    p_scope.add_argument(
+        "--issue-comments-json", default=None, help="offline linked-issue comments JSON fixture"
+    )
+    p_scope.add_argument("--pr-reviews-json", default=None, help="offline PR reviews JSON fixture")
+    p_scope.add_argument(
+        "--pr-label", action="append", default=[], help="inject a PR label name (repeatable)"
+    )
+    p_scope.add_argument(
+        "--dry-run", action="store_true", help="use offline inputs without a live gh fetch"
+    )
     p_scope.add_argument("--json", action="store_true", help="emit structured JSON")
     p_scope.set_defaults(func=_cmd_scope_verify)
 
@@ -5436,170 +5931,259 @@ def build_parser() -> argparse.ArgumentParser:
         help="verify the s2 branch contract: up-to-date base + worktree isolation",
     )
     p_verify_branch.add_argument("path", help="path to project.yaml")
-    p_verify_branch.add_argument("--root", default=".",
-                                 help="repo root for live git/gh fact gathering")
-    p_verify_branch.add_argument("--pr", type=_positive_int, required=True,
-                                 help="pull request number to verify")
     p_verify_branch.add_argument(
-        "--tolerance", type=_nonnegative_int, default=branchscope.DEFAULT_BASE_DISTANCE,
+        "--root", default=".", help="repo root for live git/gh fact gathering"
+    )
+    p_verify_branch.add_argument(
+        "--pr", type=_positive_int, required=True, help="pull request number to verify"
+    )
+    p_verify_branch.add_argument(
+        "--tolerance",
+        type=_nonnegative_int,
+        default=branchscope.DEFAULT_BASE_DISTANCE,
         help="commits the merge-base may sit behind the base tip before stale "
-             f"(default {branchscope.DEFAULT_BASE_DISTANCE}; 0 is strict)")
+        f"(default {branchscope.DEFAULT_BASE_DISTANCE}; 0 is strict)",
+    )
     p_verify_branch.add_argument(
-        "--allow-stale-base", action="store_true",
+        "--allow-stale-base",
+        action="store_true",
         help="operator escape (consent scope git): downgrade a stale base from a "
-             "failure to an advisory note, recorded on the report")
-    p_verify_branch.add_argument("--offline", action="store_true",
-                                 help="use only supplied facts; make no git/gh calls")
-    p_verify_branch.add_argument("--head-sha", default=None,
-                                 help="offline PR head SHA (otherwise fetched via gh)")
-    p_verify_branch.add_argument("--head-ref", default=None,
-                                 help="offline PR head branch (otherwise fetched via gh)")
-    p_verify_branch.add_argument("--base-tip-sha", default=None,
-                                 help="offline current origin/<base> tip SHA")
-    p_verify_branch.add_argument("--merge-base-sha", default=None,
-                                 help="offline merge-base of head and the base tip")
-    p_verify_branch.add_argument("--base-distance", type=_nonnegative_int, default=None,
-                                 help="offline commit distance merge-base..base-tip")
-    p_verify_branch.add_argument("--worktree-path", default=None,
-                                 help="offline working-tree path for the head branch")
-    p_verify_branch.add_argument("--repo-root", default=None,
-                                 help="offline repo root (primary checkout) path")
-    p_verify_branch.add_argument("--linked-worktree", choices=("true", "false"), default=None,
-                                 help="offline: is the head branch in a linked worktree?")
+        "failure to an advisory note, recorded on the report",
+    )
+    p_verify_branch.add_argument(
+        "--offline", action="store_true", help="use only supplied facts; make no git/gh calls"
+    )
+    p_verify_branch.add_argument(
+        "--head-sha", default=None, help="offline PR head SHA (otherwise fetched via gh)"
+    )
+    p_verify_branch.add_argument(
+        "--head-ref", default=None, help="offline PR head branch (otherwise fetched via gh)"
+    )
+    p_verify_branch.add_argument(
+        "--base-tip-sha", default=None, help="offline current origin/<base> tip SHA"
+    )
+    p_verify_branch.add_argument(
+        "--merge-base-sha", default=None, help="offline merge-base of head and the base tip"
+    )
+    p_verify_branch.add_argument(
+        "--base-distance",
+        type=_nonnegative_int,
+        default=None,
+        help="offline commit distance merge-base..base-tip",
+    )
+    p_verify_branch.add_argument(
+        "--worktree-path", default=None, help="offline working-tree path for the head branch"
+    )
+    p_verify_branch.add_argument(
+        "--repo-root", default=None, help="offline repo root (primary checkout) path"
+    )
+    p_verify_branch.add_argument(
+        "--linked-worktree",
+        choices=("true", "false"),
+        default=None,
+        help="offline: is the head branch in a linked worktree?",
+    )
     p_verify_branch.add_argument("--json", action="store_true", help="emit structured JSON")
     p_verify_branch.set_defaults(func=_cmd_verify_branch)
 
     p_status = sub.add_parser("status", help="show active/recent run progress")
     p_status.add_argument("path", help="path to project.yaml")
-    p_status.add_argument("--root", default=".",
-                          help="repo root for resolving checkpoint and ledger paths")
-    p_status.add_argument("--live-branch", action="append", default=[],
-                          help="live branch name for orphan detection (repeatable)")
-    p_status.add_argument("--live-pr", action="append", type=_positive_int, default=[],
-                          help="live pull-request number for orphan detection (repeatable)")
+    p_status.add_argument(
+        "--root", default=".", help="repo root for resolving checkpoint and ledger paths"
+    )
+    p_status.add_argument(
+        "--live-branch",
+        action="append",
+        default=[],
+        help="live branch name for orphan detection (repeatable)",
+    )
+    p_status.add_argument(
+        "--live-pr",
+        action="append",
+        type=_positive_int,
+        default=[],
+        help="live pull-request number for orphan detection (repeatable)",
+    )
     p_status.add_argument("--json", action="store_true", help="emit structured JSON")
     p_status.set_defaults(func=_cmd_status)
 
     p_checkpoint = sub.add_parser("checkpoint", help="read or write the resumable checkpoint")
     p_checkpoint.add_argument("path", help="path to project.yaml")
-    p_checkpoint.add_argument("--root", default=".",
-                              help="repo root for resolving the checkpoint path")
-    p_checkpoint.add_argument("--write", action="store_true",
-                              help="write a checkpoint record instead of reading it")
-    p_checkpoint.add_argument("--run-id", default="run",
-                              help="run id for --write")
-    p_checkpoint.add_argument("--checkpoint-command", dest="checkpoint_command_name",
-                              choices=checkpoint.COMMANDS, default="ship",
-                              help="workflow command being checkpointed")
-    p_checkpoint.add_argument("--step", choices=checkpoint.STEP_IDS,
-                              default="s0", help="current backbone step for --write")
-    p_checkpoint.add_argument("--target", default=None,
-                              help="target text to store in the checkpoint")
-    p_checkpoint.add_argument("--issue-queue", type=_positive_int, action="append", default=[],
-                              help="queued issue number; repeatable")
-    p_checkpoint.add_argument("--active-issue", type=_positive_int, default=None,
-                              help="active issue number")
+    p_checkpoint.add_argument(
+        "--root", default=".", help="repo root for resolving the checkpoint path"
+    )
+    p_checkpoint.add_argument(
+        "--write", action="store_true", help="write a checkpoint record instead of reading it"
+    )
+    p_checkpoint.add_argument("--run-id", default="run", help="run id for --write")
+    p_checkpoint.add_argument(
+        "--checkpoint-command",
+        dest="checkpoint_command_name",
+        choices=checkpoint.COMMANDS,
+        default="ship",
+        help="workflow command being checkpointed",
+    )
+    p_checkpoint.add_argument(
+        "--step",
+        choices=checkpoint.STEP_IDS,
+        default="s0",
+        help="current backbone step for --write",
+    )
+    p_checkpoint.add_argument(
+        "--target", default=None, help="target text to store in the checkpoint"
+    )
+    p_checkpoint.add_argument(
+        "--issue-queue",
+        type=_positive_int,
+        action="append",
+        default=[],
+        help="queued issue number; repeatable",
+    )
+    p_checkpoint.add_argument(
+        "--active-issue", type=_positive_int, default=None, help="active issue number"
+    )
     p_checkpoint.add_argument("--branch", default=None, help="recorded branch")
     p_checkpoint.add_argument("--worktree", default=None, help="recorded worktree path")
-    p_checkpoint.add_argument("--pull-request", type=_positive_int, default=None,
-                              help="recorded pull request number")
+    p_checkpoint.add_argument(
+        "--pull-request", type=_positive_int, default=None, help="recorded pull request number"
+    )
     p_checkpoint.add_argument("--head-sha", default=None, help="recorded head SHA")
-    p_checkpoint.add_argument("--completed-step", choices=checkpoint.STEP_IDS,
-                              action="append", default=[],
-                              help="completed backbone step; repeatable")
+    p_checkpoint.add_argument(
+        "--completed-step",
+        choices=checkpoint.STEP_IDS,
+        action="append",
+        default=[],
+        help="completed backbone step; repeatable",
+    )
     p_checkpoint.add_argument("--last-gate", default=None, help="last completed gate id")
-    p_checkpoint.add_argument("--last-review", default=None,
-                              help="last completed review marker")
-    p_checkpoint.add_argument("--last-check", default=None,
-                              help="last completed CI/check marker")
-    p_checkpoint.add_argument("--jury-mode", default=None,
-                              help="resolved jury mode at this step (off/advisory/gating); "
-                                   "lets a live consumer show jury status before run end")
-    p_checkpoint.add_argument("--merge-state", choices=checkpoint.MERGE_STATES,
-                              default="not-started")
-    p_checkpoint.add_argument("--capture-state", choices=checkpoint.CAPTURE_STATES,
-                              default="not-started")
-    p_checkpoint.add_argument("--close-state", choices=checkpoint.CLOSE_STATES,
-                              default="not-started")
-    p_checkpoint.add_argument("--stop-reason", default=None,
-                              help="why the run stopped at this checkpoint")
+    p_checkpoint.add_argument("--last-review", default=None, help="last completed review marker")
+    p_checkpoint.add_argument("--last-check", default=None, help="last completed CI/check marker")
+    p_checkpoint.add_argument(
+        "--jury-mode",
+        default=None,
+        help="resolved jury mode at this step (off/advisory/gating); "
+        "lets a live consumer show jury status before run end",
+    )
+    p_checkpoint.add_argument(
+        "--merge-state", choices=checkpoint.MERGE_STATES, default="not-started"
+    )
+    p_checkpoint.add_argument(
+        "--capture-state", choices=checkpoint.CAPTURE_STATES, default="not-started"
+    )
+    p_checkpoint.add_argument(
+        "--close-state", choices=checkpoint.CLOSE_STATES, default="not-started"
+    )
+    p_checkpoint.add_argument(
+        "--stop-reason", default=None, help="why the run stopped at this checkpoint"
+    )
     p_checkpoint.add_argument("--json", action="store_true", help="emit structured JSON")
     p_checkpoint.set_defaults(func=_cmd_checkpoint)
 
     p_activity = sub.add_parser(
         "activity",
-        help="read/write the additive command-activity records (live board for "
-             "non-ship commands)")
+        help="read/write the additive command-activity records (live board for non-ship commands)",
+    )
     p_activity.add_argument("path", help="path to project.yaml")
-    p_activity.add_argument("--root", default=".",
-                            help="repo root for resolving the activity dir")
+    p_activity.add_argument("--root", default=".", help="repo root for resolving the activity dir")
     g_act = p_activity.add_mutually_exclusive_group()
-    g_act.add_argument("--write", action="store_true",
-                       help="write/update an activity record for --run-id")
-    g_act.add_argument("--done", action="store_true",
-                       help="mark --run-id's activity record finished")
-    g_act.add_argument("--clear", action="store_true",
-                       help="remove --run-id's activity record")
-    p_activity.add_argument("--command", dest="activity_command_name",
-                            choices=flows.command_names(), default="ship",
-                            help="workflow command the activity belongs to")
-    p_activity.add_argument("--run-id", default="run",
-                            help="run id keying the record (one file each)")
-    p_activity.add_argument("--phase", default=None,
-                            help="current flow phase id for the command (--write)")
-    p_activity.add_argument("--status", choices=activity.STATUSES, default="running",
-                            help="activity status for --write")
-    p_activity.add_argument("--verdict", choices=activity.VERDICTS, default=None,
-                            help="verdict status for phase outcome (--write)")
-    p_activity.add_argument("--issue", type=_positive_int, default=None,
-                            help="issue number to record")
-    p_activity.add_argument("--pull-request", type=_positive_int, default=None,
-                            help="pull request number to record")
+    g_act.add_argument(
+        "--write", action="store_true", help="write/update an activity record for --run-id"
+    )
+    g_act.add_argument(
+        "--done", action="store_true", help="mark --run-id's activity record finished"
+    )
+    g_act.add_argument("--clear", action="store_true", help="remove --run-id's activity record")
+    p_activity.add_argument(
+        "--command",
+        dest="activity_command_name",
+        choices=flows.command_names(),
+        default="ship",
+        help="workflow command the activity belongs to",
+    )
+    p_activity.add_argument(
+        "--run-id", default="run", help="run id keying the record (one file each)"
+    )
+    p_activity.add_argument(
+        "--phase", default=None, help="current flow phase id for the command (--write)"
+    )
+    p_activity.add_argument(
+        "--status", choices=activity.STATUSES, default="running", help="activity status for --write"
+    )
+    p_activity.add_argument(
+        "--verdict",
+        choices=activity.VERDICTS,
+        default=None,
+        help="verdict status for phase outcome (--write)",
+    )
+    p_activity.add_argument(
+        "--issue", type=_positive_int, default=None, help="issue number to record"
+    )
+    p_activity.add_argument(
+        "--pull-request", type=_positive_int, default=None, help="pull request number to record"
+    )
     p_activity.add_argument("--note", default=None, help="optional free-text note")
     p_activity.add_argument("--json", action="store_true", help="emit structured JSON")
     p_activity.set_defaults(func=_cmd_activity)
 
     p_scratch = sub.add_parser(
-        "scratch-dir",
-        help="print (and create) the keel-owned scratch dir for transient artifacts")
-    p_scratch.add_argument("--root", default=".",
-                           help="repo root under which .keel/scratch lives")
-    p_scratch.add_argument("--no-create", dest="create", action="store_false",
-                           help="print the path without creating it")
+        "scratch-dir", help="print (and create) the keel-owned scratch dir for transient artifacts"
+    )
+    p_scratch.add_argument("--root", default=".", help="repo root under which .keel/scratch lives")
+    p_scratch.add_argument(
+        "--no-create",
+        dest="create",
+        action="store_false",
+        help="print the path without creating it",
+    )
     p_scratch.set_defaults(func=_cmd_scratch_dir, create=True)
 
     p_gc = sub.add_parser(
-        "gc",
-        help="reclaim disposable runtime artifacts (empty scratch, prune old activity)")
+        "gc", help="reclaim disposable runtime artifacts (empty scratch, prune old activity)"
+    )
     p_gc.add_argument("path", help="path to project.yaml")
-    p_gc.add_argument("--root", default=".",
-                      help="repo root under which .keel runtime artifacts live")
-    p_gc.add_argument("--keep-activity", type=_nonnegative_int,
-                      default=DEFAULT_GC_KEEP_ACTIVITY,
-                      help=f"activity records to keep, newest first "
-                           f"(default {DEFAULT_GC_KEEP_ACTIVITY})")
-    p_gc.add_argument("--no-scratch", dest="scratch", action="store_false",
-                      help="skip emptying .keel/scratch")
-    p_gc.add_argument("--no-activity", dest="activity", action="store_false",
-                      help="skip pruning .keel/activity")
-    p_gc.add_argument("--dry-run", action="store_true",
-                      help="report what would be reclaimed without removing anything")
+    p_gc.add_argument(
+        "--root", default=".", help="repo root under which .keel runtime artifacts live"
+    )
+    p_gc.add_argument(
+        "--keep-activity",
+        type=_nonnegative_int,
+        default=DEFAULT_GC_KEEP_ACTIVITY,
+        help=f"activity records to keep, newest first (default {DEFAULT_GC_KEEP_ACTIVITY})",
+    )
+    p_gc.add_argument(
+        "--no-scratch", dest="scratch", action="store_false", help="skip emptying .keel/scratch"
+    )
+    p_gc.add_argument(
+        "--no-activity", dest="activity", action="store_false", help="skip pruning .keel/activity"
+    )
+    p_gc.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="report what would be reclaimed without removing anything",
+    )
     p_gc.add_argument("--json", action="store_true", help="emit structured JSON")
     p_gc.set_defaults(func=_cmd_gc, scratch=True, activity=True)
 
     p_resume = sub.add_parser("resume", help="render a dry-run resume plan")
     p_resume.add_argument("path", help="path to project.yaml")
-    p_resume.add_argument("--root", default=".",
-                          help="repo root for resolving the checkpoint path")
-    p_resume.add_argument("--live-pr-state", choices=checkpoint.LIVE_PR_STATES,
-                          default=None,
-                          help="override the observed live PR state (offline/fixture path)")
-    p_resume.add_argument("--live-worktree-state", choices=checkpoint.LIVE_WORKTREE_STATES,
-                          default=None,
-                          help="override the observed live worktree state "
-                               "(offline/fixture path)")
-    p_resume.add_argument("--no-observe", action="store_true",
-                          help="do not read git/gh; treat unsupplied live state as unknown")
+    p_resume.add_argument("--root", default=".", help="repo root for resolving the checkpoint path")
+    p_resume.add_argument(
+        "--live-pr-state",
+        choices=checkpoint.LIVE_PR_STATES,
+        default=None,
+        help="override the observed live PR state (offline/fixture path)",
+    )
+    p_resume.add_argument(
+        "--live-worktree-state",
+        choices=checkpoint.LIVE_WORKTREE_STATES,
+        default=None,
+        help="override the observed live worktree state (offline/fixture path)",
+    )
+    p_resume.add_argument(
+        "--no-observe",
+        action="store_true",
+        help="do not read git/gh; treat unsupplied live state as unknown",
+    )
     p_resume.add_argument("--json", action="store_true", help="emit structured JSON")
     p_resume.set_defaults(func=_cmd_resume)
 
@@ -5615,26 +6199,51 @@ def build_parser() -> argparse.ArgumentParser:
     p_implement.add_argument("path", help="path to project.yaml")
     p_implement.add_argument("issue", type=_positive_int, help="issue number to implement")
     p_implement.add_argument("--root", default=".", help="repo root for git and extensions")
-    p_implement.add_argument("--delegate", default=None,
-                             help="explicit implementer delegate override")
-    p_implement.add_argument("--dry-run", action="store_true",
-                             help="explicitly mark the assessment as non-mutating")
-    p_implement.add_argument("--live", action="store_true",
-                             help="render a live preflight and fail if consent is missing")
-    p_implement.add_argument("--approve-scope", action="append", default=[],
-                             help="approve a consent scope for this run; repeat or comma-separate")
-    p_implement.add_argument("--operator", default=None,
-                             help="operator identifier to include in an approved consent record")
-    p_implement.add_argument("--consent-mode", choices=consent.CONSENT_MODES, default=None,
-                             help="operator consent mode: explicit, standing, or agent")
-    p_implement.add_argument("--target", default=None,
-                             help="additional target text for the consent prompt")
-    p_implement.add_argument("--issue-title", default=None,
-                             help="issue title to include in the intake/readiness contract")
-    p_implement.add_argument("--issue-body", default=None,
-                             help="issue body markdown to include in the intake/readiness contract")
-    p_implement.add_argument("--issue-label", action="append", default=[],
-                             help="issue label for intake/readiness; repeat or comma-separate")
+    p_implement.add_argument(
+        "--delegate", default=None, help="explicit implementer delegate override"
+    )
+    p_implement.add_argument(
+        "--dry-run", action="store_true", help="explicitly mark the assessment as non-mutating"
+    )
+    p_implement.add_argument(
+        "--live", action="store_true", help="render a live preflight and fail if consent is missing"
+    )
+    p_implement.add_argument(
+        "--approve-scope",
+        action="append",
+        default=[],
+        help="approve a consent scope for this run; repeat or comma-separate",
+    )
+    p_implement.add_argument(
+        "--operator",
+        default=None,
+        help="operator identifier to include in an approved consent record",
+    )
+    p_implement.add_argument(
+        "--consent-mode",
+        choices=consent.CONSENT_MODES,
+        default=None,
+        help="operator consent mode: explicit, standing, or agent",
+    )
+    p_implement.add_argument(
+        "--target", default=None, help="additional target text for the consent prompt"
+    )
+    p_implement.add_argument(
+        "--issue-title",
+        default=None,
+        help="issue title to include in the intake/readiness contract",
+    )
+    p_implement.add_argument(
+        "--issue-body",
+        default=None,
+        help="issue body markdown to include in the intake/readiness contract",
+    )
+    p_implement.add_argument(
+        "--issue-label",
+        action="append",
+        default=[],
+        help="issue label for intake/readiness; repeat or comma-separate",
+    )
     p_implement.add_argument("--json", action="store_true", help="emit structured JSON")
     p_implement.set_defaults(func=_cmd_standalone, standalone_command="implement")
 
@@ -5644,10 +6253,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_ci.add_argument("path", help="path to project.yaml")
     p_ci.add_argument("--root", default=".", help="repo root for capability checks")
-    p_ci.add_argument("--pr", type=_positive_int, default=None,
-                      help="PR number whose latest checks should be diagnosed")
-    p_ci.add_argument("--target", default=None,
-                      help="target text to include in the diagnostic contract")
+    p_ci.add_argument(
+        "--pr",
+        type=_positive_int,
+        default=None,
+        help="PR number whose latest checks should be diagnosed",
+    )
+    p_ci.add_argument(
+        "--target", default=None, help="target text to include in the diagnostic contract"
+    )
     p_ci.add_argument("--json", action="store_true", help="emit structured JSON")
     p_ci.set_defaults(func=_cmd_standalone, standalone_command="ci-check")
 
@@ -5657,20 +6271,35 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_morning.add_argument("path", help="path to project.yaml")
     p_morning.add_argument("--root", default=".", help="repo root for capability checks")
-    p_morning.add_argument("--since", default=None,
-                           help="optional brief window start label or timestamp")
-    p_morning.add_argument("--target", default=None,
-                           help="target text to include in the morning contract")
-    p_morning.add_argument("--dry-run", action="store_true",
-                           help="explicitly mark the assessment as non-mutating")
-    p_morning.add_argument("--live", action="store_true",
-                           help="render a live preflight and fail if consent is missing")
-    p_morning.add_argument("--approve-scope", action="append", default=[],
-                           help="approve a consent scope for this run; repeat or comma-separate")
-    p_morning.add_argument("--operator", default=None,
-                           help="operator identifier to include in an approved consent record")
-    p_morning.add_argument("--consent-mode", choices=consent.CONSENT_MODES, default=None,
-                           help="operator consent mode: explicit, standing, or agent")
+    p_morning.add_argument(
+        "--since", default=None, help="optional brief window start label or timestamp"
+    )
+    p_morning.add_argument(
+        "--target", default=None, help="target text to include in the morning contract"
+    )
+    p_morning.add_argument(
+        "--dry-run", action="store_true", help="explicitly mark the assessment as non-mutating"
+    )
+    p_morning.add_argument(
+        "--live", action="store_true", help="render a live preflight and fail if consent is missing"
+    )
+    p_morning.add_argument(
+        "--approve-scope",
+        action="append",
+        default=[],
+        help="approve a consent scope for this run; repeat or comma-separate",
+    )
+    p_morning.add_argument(
+        "--operator",
+        default=None,
+        help="operator identifier to include in an approved consent record",
+    )
+    p_morning.add_argument(
+        "--consent-mode",
+        choices=consent.CONSENT_MODES,
+        default=None,
+        help="operator consent mode: explicit, standing, or agent",
+    )
     p_morning.add_argument("--json", action="store_true", help="emit structured JSON")
     p_morning.set_defaults(func=_cmd_standalone, standalone_command="morning")
 
@@ -5679,23 +6308,40 @@ def build_parser() -> argparse.ArgumentParser:
         help="standalone session-wrap preflight contract",
     )
     p_wrap.add_argument("path", help="path to project.yaml")
-    p_wrap.add_argument("title", nargs="?", default=None,
-                        help="optional PR title override to include in the contract")
+    p_wrap.add_argument(
+        "title",
+        nargs="?",
+        default=None,
+        help="optional PR title override to include in the contract",
+    )
     p_wrap.add_argument("--root", default=".", help="repo root for git and capability checks")
-    p_wrap.add_argument("--since", default=None,
-                        help="optional session start label or timestamp")
-    p_wrap.add_argument("--target", default=None,
-                        help="target text to include in the wrap contract")
-    p_wrap.add_argument("--dry-run", action="store_true",
-                        help="explicitly mark the assessment as non-mutating")
-    p_wrap.add_argument("--live", action="store_true",
-                        help="render a live preflight and fail if consent is missing")
-    p_wrap.add_argument("--approve-scope", action="append", default=[],
-                        help="approve a consent scope for this run; repeat or comma-separate")
-    p_wrap.add_argument("--operator", default=None,
-                        help="operator identifier to include in an approved consent record")
-    p_wrap.add_argument("--consent-mode", choices=consent.CONSENT_MODES, default=None,
-                        help="operator consent mode: explicit, standing, or agent")
+    p_wrap.add_argument("--since", default=None, help="optional session start label or timestamp")
+    p_wrap.add_argument(
+        "--target", default=None, help="target text to include in the wrap contract"
+    )
+    p_wrap.add_argument(
+        "--dry-run", action="store_true", help="explicitly mark the assessment as non-mutating"
+    )
+    p_wrap.add_argument(
+        "--live", action="store_true", help="render a live preflight and fail if consent is missing"
+    )
+    p_wrap.add_argument(
+        "--approve-scope",
+        action="append",
+        default=[],
+        help="approve a consent scope for this run; repeat or comma-separate",
+    )
+    p_wrap.add_argument(
+        "--operator",
+        default=None,
+        help="operator identifier to include in an approved consent record",
+    )
+    p_wrap.add_argument(
+        "--consent-mode",
+        choices=consent.CONSENT_MODES,
+        default=None,
+        help="operator consent mode: explicit, standing, or agent",
+    )
     p_wrap.add_argument("--json", action="store_true", help="emit structured JSON")
     p_wrap.set_defaults(func=_cmd_standalone, standalone_command="wrap")
 
@@ -5704,36 +6350,64 @@ def build_parser() -> argparse.ArgumentParser:
         help="standalone daytime multi-issue work-block preflight contract",
     )
     p_work_block.add_argument("path", help="path to project.yaml")
-    p_work_block.add_argument("issues", nargs="*", type=_positive_int,
-                              help="explicit issue numbers to process in order")
-    p_work_block.add_argument("--root", default=".",
-                              help="repo root for git and capability checks")
-    p_work_block.add_argument("--queue", default=None,
-                              help=(
-                                  "project queue selector to use when no explicit issues "
-                                  "are given"
-                              ))
-    p_work_block.add_argument("--max", dest="max_items", type=_positive_int, default=None,
-                              help="maximum issues to attempt in this work block")
-    p_work_block.add_argument("--hours", type=float, default=None,
-                              help="optional time budget in hours")
-    p_work_block.add_argument("--review-comments", choices=("inline", "summary"),
-                              default="inline",
-                              help="review posting mode to pass through ship handoffs")
-    p_work_block.add_argument("--reviewers", type=int, choices=(1, 2, 3), default=None,
-                              help="reviewer override for ship handoff contracts")
-    p_work_block.add_argument("--target", default=None,
-                              help="target text to include in the work-block contract")
-    p_work_block.add_argument("--dry-run", action="store_true",
-                              help="explicitly mark the assessment as non-mutating")
-    p_work_block.add_argument("--live", action="store_true",
-                              help="render a live preflight and fail if consent is missing")
-    p_work_block.add_argument("--approve-scope", action="append", default=[],
-                              help="approve a consent scope for this run; repeat or comma-separate")
-    p_work_block.add_argument("--operator", default=None,
-                              help="operator identifier to include in an approved consent record")
-    p_work_block.add_argument("--consent-mode", choices=consent.CONSENT_MODES, default=None,
-                              help="operator consent mode: explicit, standing, or agent")
+    p_work_block.add_argument(
+        "issues", nargs="*", type=_positive_int, help="explicit issue numbers to process in order"
+    )
+    p_work_block.add_argument("--root", default=".", help="repo root for git and capability checks")
+    p_work_block.add_argument(
+        "--queue",
+        default=None,
+        help=("project queue selector to use when no explicit issues are given"),
+    )
+    p_work_block.add_argument(
+        "--max",
+        dest="max_items",
+        type=_positive_int,
+        default=None,
+        help="maximum issues to attempt in this work block",
+    )
+    p_work_block.add_argument(
+        "--hours", type=float, default=None, help="optional time budget in hours"
+    )
+    p_work_block.add_argument(
+        "--review-comments",
+        choices=("inline", "summary"),
+        default="inline",
+        help="review posting mode to pass through ship handoffs",
+    )
+    p_work_block.add_argument(
+        "--reviewers",
+        type=int,
+        choices=(1, 2, 3),
+        default=None,
+        help="reviewer override for ship handoff contracts",
+    )
+    p_work_block.add_argument(
+        "--target", default=None, help="target text to include in the work-block contract"
+    )
+    p_work_block.add_argument(
+        "--dry-run", action="store_true", help="explicitly mark the assessment as non-mutating"
+    )
+    p_work_block.add_argument(
+        "--live", action="store_true", help="render a live preflight and fail if consent is missing"
+    )
+    p_work_block.add_argument(
+        "--approve-scope",
+        action="append",
+        default=[],
+        help="approve a consent scope for this run; repeat or comma-separate",
+    )
+    p_work_block.add_argument(
+        "--operator",
+        default=None,
+        help="operator identifier to include in an approved consent record",
+    )
+    p_work_block.add_argument(
+        "--consent-mode",
+        choices=consent.CONSENT_MODES,
+        default=None,
+        help="operator consent mode: explicit, standing, or agent",
+    )
     p_work_block.add_argument("--json", action="store_true", help="emit structured JSON")
     p_work_block.set_defaults(func=_cmd_standalone, standalone_command="work-block")
 
@@ -5742,27 +6416,56 @@ def build_parser() -> argparse.ArgumentParser:
         help="standalone overnight-session preflight contract",
     )
     p_overnight.add_argument("path", help="path to project.yaml")
-    p_overnight.add_argument("hours", nargs="?", type=float, default=None,
-                             help="optional time budget in hours")
+    p_overnight.add_argument(
+        "hours", nargs="?", type=float, default=None, help="optional time budget in hours"
+    )
     p_overnight.add_argument("--root", default=".", help="repo root for git and capability checks")
-    p_overnight.add_argument("--max", dest="max_items", type=_positive_int, default=None,
-                             help="maximum issues to attempt in this session")
-    p_overnight.add_argument("--review-comments", choices=("inline", "summary"), default="inline",
-                             help="review posting mode to pass through ship handoffs")
-    p_overnight.add_argument("--reviewers", type=int, choices=(1, 2, 3), default=None,
-                             help="reviewer override for ship handoff contracts")
-    p_overnight.add_argument("--target", default=None,
-                             help="target text to include in the overnight contract")
-    p_overnight.add_argument("--dry-run", action="store_true",
-                             help="explicitly mark the assessment as non-mutating")
-    p_overnight.add_argument("--live", action="store_true",
-                             help="render a live preflight and fail if consent is missing")
-    p_overnight.add_argument("--approve-scope", action="append", default=[],
-                             help="approve a consent scope for this run; repeat or comma-separate")
-    p_overnight.add_argument("--operator", default=None,
-                             help="operator identifier to include in an approved consent record")
-    p_overnight.add_argument("--consent-mode", choices=consent.CONSENT_MODES, default=None,
-                             help="operator consent mode: explicit, standing, or agent")
+    p_overnight.add_argument(
+        "--max",
+        dest="max_items",
+        type=_positive_int,
+        default=None,
+        help="maximum issues to attempt in this session",
+    )
+    p_overnight.add_argument(
+        "--review-comments",
+        choices=("inline", "summary"),
+        default="inline",
+        help="review posting mode to pass through ship handoffs",
+    )
+    p_overnight.add_argument(
+        "--reviewers",
+        type=int,
+        choices=(1, 2, 3),
+        default=None,
+        help="reviewer override for ship handoff contracts",
+    )
+    p_overnight.add_argument(
+        "--target", default=None, help="target text to include in the overnight contract"
+    )
+    p_overnight.add_argument(
+        "--dry-run", action="store_true", help="explicitly mark the assessment as non-mutating"
+    )
+    p_overnight.add_argument(
+        "--live", action="store_true", help="render a live preflight and fail if consent is missing"
+    )
+    p_overnight.add_argument(
+        "--approve-scope",
+        action="append",
+        default=[],
+        help="approve a consent scope for this run; repeat or comma-separate",
+    )
+    p_overnight.add_argument(
+        "--operator",
+        default=None,
+        help="operator identifier to include in an approved consent record",
+    )
+    p_overnight.add_argument(
+        "--consent-mode",
+        choices=consent.CONSENT_MODES,
+        default=None,
+        help="operator consent mode: explicit, standing, or agent",
+    )
     p_overnight.add_argument("--json", action="store_true", help="emit structured JSON")
     p_overnight.set_defaults(func=_cmd_standalone, standalone_command="overnight")
 
@@ -5772,22 +6475,41 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_regression.add_argument("path", help="path to project.yaml")
     p_regression.add_argument("--root", default=".", help="repo root for git/capability checks")
-    p_regression.add_argument("--scope", choices=("full", "changed", "since"), default="full",
-                              help="scan scope to include in the preflight target")
-    p_regression.add_argument("--since", default=None,
-                              help="optional ref or timestamp when --scope since is used")
-    p_regression.add_argument("--target", default=None,
-                              help="target text to include in the regression contract")
-    p_regression.add_argument("--dry-run", action="store_true",
-                              help="explicitly mark the assessment as non-mutating")
-    p_regression.add_argument("--live", action="store_true",
-                              help="render a live preflight and fail if consent is missing")
-    p_regression.add_argument("--approve-scope", action="append", default=[],
-                              help="approve a consent scope for this run; repeat or comma-separate")
-    p_regression.add_argument("--operator", default=None,
-                              help="operator identifier to include in an approved consent record")
-    p_regression.add_argument("--consent-mode", choices=consent.CONSENT_MODES, default=None,
-                              help="operator consent mode: explicit, standing, or agent")
+    p_regression.add_argument(
+        "--scope",
+        choices=("full", "changed", "since"),
+        default="full",
+        help="scan scope to include in the preflight target",
+    )
+    p_regression.add_argument(
+        "--since", default=None, help="optional ref or timestamp when --scope since is used"
+    )
+    p_regression.add_argument(
+        "--target", default=None, help="target text to include in the regression contract"
+    )
+    p_regression.add_argument(
+        "--dry-run", action="store_true", help="explicitly mark the assessment as non-mutating"
+    )
+    p_regression.add_argument(
+        "--live", action="store_true", help="render a live preflight and fail if consent is missing"
+    )
+    p_regression.add_argument(
+        "--approve-scope",
+        action="append",
+        default=[],
+        help="approve a consent scope for this run; repeat or comma-separate",
+    )
+    p_regression.add_argument(
+        "--operator",
+        default=None,
+        help="operator identifier to include in an approved consent record",
+    )
+    p_regression.add_argument(
+        "--consent-mode",
+        choices=consent.CONSENT_MODES,
+        default=None,
+        help="operator consent mode: explicit, standing, or agent",
+    )
     p_regression.add_argument("--json", action="store_true", help="emit structured JSON")
     p_regression.set_defaults(func=_cmd_standalone, standalone_command="regression")
 
@@ -5796,34 +6518,56 @@ def build_parser() -> argparse.ArgumentParser:
         help="standalone time-window scan-and-file preflight contract",
     )
     p_review_all_day.add_argument("path", help="path to project.yaml")
-    p_review_all_day.add_argument("days", nargs="?", type=_positive_int, default=1,
-                                  help="number of merge-window days to scan")
+    p_review_all_day.add_argument(
+        "days", nargs="?", type=_positive_int, default=1, help="number of merge-window days to scan"
+    )
     p_review_all_day.add_argument("--root", default=".", help="repo root for git/capability checks")
-    p_review_all_day.add_argument("--target", default=None,
-                                  help="target text to include in the review-all-day contract")
-    p_review_all_day.add_argument("--dry-run", action="store_true",
-                                  help="explicitly mark the assessment as non-mutating")
-    p_review_all_day.add_argument("--live", action="store_true",
-                                  help="render a live preflight and fail if consent is missing")
-    p_review_all_day.add_argument("--approve-scope", action="append", default=[],
-                                  help=("approve a consent scope for this run; repeat or "
-                                        "comma-separate"))
-    p_review_all_day.add_argument("--operator", default=None,
-                                  help=("operator identifier to include in an approved "
-                                        "consent record"))
-    p_review_all_day.add_argument("--consent-mode", choices=consent.CONSENT_MODES, default=None,
-                                  help="operator consent mode: explicit, standing, or agent")
+    p_review_all_day.add_argument(
+        "--target", default=None, help="target text to include in the review-all-day contract"
+    )
+    p_review_all_day.add_argument(
+        "--dry-run", action="store_true", help="explicitly mark the assessment as non-mutating"
+    )
+    p_review_all_day.add_argument(
+        "--live", action="store_true", help="render a live preflight and fail if consent is missing"
+    )
+    p_review_all_day.add_argument(
+        "--approve-scope",
+        action="append",
+        default=[],
+        help=("approve a consent scope for this run; repeat or comma-separate"),
+    )
+    p_review_all_day.add_argument(
+        "--operator",
+        default=None,
+        help=("operator identifier to include in an approved consent record"),
+    )
+    p_review_all_day.add_argument(
+        "--consent-mode",
+        choices=consent.CONSENT_MODES,
+        default=None,
+        help="operator consent mode: explicit, standing, or agent",
+    )
     p_review_all_day.add_argument("--json", action="store_true", help="emit structured JSON")
     p_review_all_day.set_defaults(func=_cmd_standalone, standalone_command="review-all-day")
 
     p_caps = sub.add_parser("capabilities", help="print runtime capability report")
     p_caps.add_argument("--root", default=".", help="repo root for capability checks")
-    p_caps.add_argument("--project", dest="path", default=None,
-                        help="optional project.yaml to evaluate requirements")
-    p_caps.add_argument("--for", dest="for_command", default="ship",
-                        help="command requirement to evaluate when --project is set")
-    p_caps.add_argument("--pr", type=int, default=None,
-                        help="PR number for ship capability requirements")
+    p_caps.add_argument(
+        "--project",
+        dest="path",
+        default=None,
+        help="optional project.yaml to evaluate requirements",
+    )
+    p_caps.add_argument(
+        "--for",
+        dest="for_command",
+        default="ship",
+        help="command requirement to evaluate when --project is set",
+    )
+    p_caps.add_argument(
+        "--pr", type=int, default=None, help="PR number for ship capability requirements"
+    )
     p_caps.add_argument("--json", action="store_true", help="emit structured JSON")
     p_caps.set_defaults(func=_cmd_capabilities)
 
@@ -5831,18 +6575,29 @@ def build_parser() -> argparse.ArgumentParser:
         "doctor",
         help="read-only diagnostics: CLI/adapter version drift, orphans, core_version, state",
     )
-    p_doctor.add_argument("path", nargs="?", default=None,
-                          help="optional project.yaml (enables core_version + state checks)")
+    p_doctor.add_argument(
+        "path",
+        nargs="?",
+        default=None,
+        help="optional project.yaml (enables core_version + state checks)",
+    )
     p_doctor.add_argument("--root", default=".", help="project root to inspect")
-    p_doctor.add_argument("--offline", action="store_true",
-                          help="skip the PyPI latest-version check (report latest as unknown)")
-    p_doctor.add_argument("--strict", action="store_true",
-                          help="exit non-zero when any check fails (default: advisory, exit 0)")
+    p_doctor.add_argument(
+        "--offline",
+        action="store_true",
+        help="skip the PyPI latest-version check (report latest as unknown)",
+    )
+    p_doctor.add_argument(
+        "--strict",
+        action="store_true",
+        help="exit non-zero when any check fails (default: advisory, exit 0)",
+    )
     p_doctor.add_argument("--json", action="store_true", help="emit structured JSON")
     p_doctor.set_defaults(func=_cmd_doctor)
 
-    p_proj = sub.add_parser("project-commands",
-                            help="list project-provided commands declared by policy")
+    p_proj = sub.add_parser(
+        "project-commands", help="list project-provided commands declared by policy"
+    )
     p_proj.add_argument("path", help="path to project.yaml")
     p_proj.add_argument("--json", action="store_true", help="emit structured JSON")
     p_proj.set_defaults(func=_cmd_project_commands)
@@ -5876,25 +6631,35 @@ def build_parser() -> argparse.ArgumentParser:
     p_setup.set_defaults(func=_cmd_setup)
 
     p_ia = sub.add_parser("install-adapter", help="install the /keel:<command> adapters")
-    p_ia.add_argument("agent",
-                      help=f"'all', 'plugin', or one of: {', '.join(install.TARGETS)}")
+    p_ia.add_argument("agent", help=f"'all', 'plugin', or one of: {', '.join(install.TARGETS)}")
     p_ia.add_argument("--root", default=".", help="project root to install into")
     p_ia.add_argument("--force", action="store_true", help="overwrite existing adapters")
     p_ia.set_defaults(func=_cmd_install_adapter)
 
     p_as = sub.add_parser("adapter-status", help="report generated adapter freshness")
-    p_as.add_argument("agent", nargs="?", default="all",
-                      help=f"'all' or one of: {', '.join(install.STATUS_TARGETS)}")
+    p_as.add_argument(
+        "agent",
+        nargs="?",
+        default="all",
+        help=f"'all' or one of: {', '.join(install.STATUS_TARGETS)}",
+    )
     p_as.add_argument("--root", default=".", help="project root to inspect")
-    p_as.add_argument("--include-unmanaged", action="store_true",
-                      help="also report marker-less command-like surfaces (heuristic, opt-in)")
-    p_as.add_argument("--json", action="store_true",
-                      help="emit adapter freshness + orphan/unmanaged findings as JSON")
+    p_as.add_argument(
+        "--include-unmanaged",
+        action="store_true",
+        help="also report marker-less command-like surfaces (heuristic, opt-in)",
+    )
+    p_as.add_argument(
+        "--json",
+        action="store_true",
+        help="emit adapter freshness + orphan/unmanaged findings as JSON",
+    )
     p_as.set_defaults(func=_cmd_adapter_status)
 
     p_ua = sub.add_parser("update-adapter", help="safely update generated adapters")
-    p_ua.add_argument("agent", nargs="?", default="all",
-                      help=f"'all' or one of: {', '.join(install.TARGETS)}")
+    p_ua.add_argument(
+        "agent", nargs="?", default="all", help=f"'all' or one of: {', '.join(install.TARGETS)}"
+    )
     p_ua.add_argument("--root", default=".", help="project root to update")
     p_ua.add_argument("--dry-run", action="store_true", help="show planned updates only")
     p_ua.set_defaults(func=_cmd_update_adapter)
@@ -5940,14 +6705,24 @@ def build_parser() -> argparse.ArgumentParser:
     p_sp.add_argument(
         "--issues", default=None, help="comma-separated issue numbers (e.g. 101,102,103)"
     )
-    p_sp.add_argument("--issue", type=_positive_int, action="append", default=[],
-                      help="specific issue number; repeat for multiple")
-    p_sp.add_argument("--declared-file", action="append", default=[],
-                      help="declared file path; repeat for multiple")
+    p_sp.add_argument(
+        "--issue",
+        type=_positive_int,
+        action="append",
+        default=[],
+        help="specific issue number; repeat for multiple",
+    )
+    p_sp.add_argument(
+        "--declared-file",
+        action="append",
+        default=[],
+        help="declared file path; repeat for multiple",
+    )
     p_sp.add_argument("--issue-title", default=None, help="issue title")
     p_sp.add_argument("--issue-body", default=None, help="issue body markdown")
-    p_sp.add_argument("--issue-label", action="append", default=[],
-                      help="issue label; repeat or comma-separate")
+    p_sp.add_argument(
+        "--issue-label", action="append", default=[], help="issue label; repeat or comma-separate"
+    )
     p_sp.add_argument("--swarm-id", default=None, help="custom swarm ID")
     p_sp.add_argument("--tree", action="store_true", help="render visual ASCII/Unicode DAG tree")
     p_sp.add_argument("--json", action="store_true", help="emit structured JSON")
@@ -5972,17 +6747,28 @@ def build_parser() -> argparse.ArgumentParser:
     p_sr.add_argument(
         "--issues", default=None, help="comma-separated issue numbers (e.g. 101,102,103)"
     )
-    p_sr.add_argument("--issue", type=_positive_int, action="append", default=[],
-                      help="specific issue number; repeat for multiple")
-    p_sr.add_argument("--declared-file", action="append", default=[],
-                      help="declared file path; repeat for multiple")
+    p_sr.add_argument(
+        "--issue",
+        type=_positive_int,
+        action="append",
+        default=[],
+        help="specific issue number; repeat for multiple",
+    )
+    p_sr.add_argument(
+        "--declared-file",
+        action="append",
+        default=[],
+        help="declared file path; repeat for multiple",
+    )
     p_sr.add_argument("--issue-title", default=None, help="issue title")
     p_sr.add_argument("--issue-body", default=None, help="issue body markdown")
-    p_sr.add_argument("--issue-label", action="append", default=[],
-                      help="issue label; repeat or comma-separate")
+    p_sr.add_argument(
+        "--issue-label", action="append", default=[], help="issue label; repeat or comma-separate"
+    )
     p_sr.add_argument("--swarm-id", default=None, help="custom swarm ID")
-    p_sr.add_argument("--max-workers", type=_positive_int, default=4,
-                      help="maximum parallel workers (default: 4)")
+    p_sr.add_argument(
+        "--max-workers", type=_positive_int, default=4, help="maximum parallel workers (default: 4)"
+    )
     p_sr.add_argument("--live", action="store_true", help="run mutating live execution")
     p_sr.add_argument("--tree", action="store_true", help="render visual DAG tree")
     p_sr.add_argument("--json", action="store_true", help="emit structured JSON")
@@ -6000,14 +6786,24 @@ def build_parser() -> argparse.ArgumentParser:
     p_sl.add_argument(
         "--issues", default=None, help="comma-separated issue numbers (e.g. 101,102,103)"
     )
-    p_sl.add_argument("--issue", type=_positive_int, action="append", default=[],
-                      help="specific issue number; repeat for multiple")
-    p_sl.add_argument("--declared-file", action="append", default=[],
-                      help="declared file path; repeat for multiple")
+    p_sl.add_argument(
+        "--issue",
+        type=_positive_int,
+        action="append",
+        default=[],
+        help="specific issue number; repeat for multiple",
+    )
+    p_sl.add_argument(
+        "--declared-file",
+        action="append",
+        default=[],
+        help="declared file path; repeat for multiple",
+    )
     p_sl.add_argument("--issue-title", default=None, help="issue title")
     p_sl.add_argument("--issue-body", default=None, help="issue body markdown")
-    p_sl.add_argument("--issue-label", action="append", default=[],
-                      help="issue label; repeat or comma-separate")
+    p_sl.add_argument(
+        "--issue-label", action="append", default=[], help="issue label; repeat or comma-separate"
+    )
     p_sl.add_argument("--swarm-id", default=None, help="custom swarm ID")
     p_sl.add_argument("--live", action="store_true", help="run live mutating git landing")
     p_sl.add_argument("--json", action="store_true", help="emit structured JSON")
@@ -6056,86 +6852,184 @@ def _add_ship_parser(parser: argparse.ArgumentParser, *, command: str) -> None:
     parser.add_argument("--root", default=".", help="repo root for git, gates + extensions")
     parser.add_argument("--pr", type=int, default=None, help="PR number for CI status (gh)")
     parser.add_argument("--hotfix", action="store_true", help="emergency: bypass the merge window")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="explicitly mark the assessment as non-mutating")
-    parser.add_argument("--live", action="store_true",
-                        help=("run the live preflight gate and fail before gates "
-                              "if consent is missing"))
-    parser.add_argument("--approve-scope", action="append", default=[],
-                        help="approve a consent scope for this run; repeat or comma-separate")
-    parser.add_argument("--operator", default=None,
-                        help="operator identifier to include in an approved consent record")
-    parser.add_argument("--consent-mode", choices=consent.CONSENT_MODES, default=None,
-                        help="operator consent mode: explicit, standing, or agent")
-    parser.add_argument("--target", default=None,
-                        help="task target to include in the consent prompt and record")
-    parser.add_argument("--append-ledger", action="store_true",
-                        help="append the structured ship run record when --live succeeds")
-    parser.add_argument("--run-id", default=None,
-                        help="operator/session run id to store in the run ledger record")
-    parser.add_argument("--run-events-file", default=None,
-                        help="JSON run-events file to evaluate and stamp into the ledger record")
-    parser.add_argument("--max-rounds", type=_positive_int, default=None,
-                        help="explicit run-control work-unit budget override")
-    parser.add_argument("--issue", type=_positive_int, default=None,
-                        help="issue number to store in the run ledger record")
-    parser.add_argument("--pull-request", dest="ledger_pr", type=_positive_int, default=None,
-                        help="PR number to store in the run ledger record without CI lookup")
-    parser.add_argument("--branch", default=None,
-                        help="branch name to store in the run ledger record")
-    parser.add_argument("--head-sha", default=None,
-                        help="head commit SHA to store in the run ledger record")
-    parser.add_argument("--declared-file", action="append", default=None,
-                        help="implementer's declared in-scope file path (repeatable); "
-                             "recorded for keel scope-verify branch-contamination checks")
-    parser.add_argument("--capture-status", type=_capture_status_arg, default=None,
-                        help="capture outcome to store in the run ledger record; pass "
-                             f"'{CAPTURE_STATUS_NOT_RUN}' for a run that never reached "
-                             "capture (e.g. re-recording gates after a rebase), which "
-                             "records no marker and does not count as a merge")
-    parser.add_argument("--capture-reason", default=None,
-                        help="capture outcome reason to store in the run ledger record")
-    parser.add_argument("--capture-artifact", default=None,
-                        help="durable capture artifact reference (path or content hash) "
-                             "proving an applied capture; required for clean reconcile")
-    parser.add_argument("--gate-result", action="append", default=[],
-                        type=_gate_result_arg, metavar="ID=pass|fail",
-                        help="record the verdict of a gate this command cannot execute "
-                             "(an agentic gate, run by the dispatching agent); repeatable")
-    parser.add_argument("--implementer", default=None,
-                        help="effective implementer codename or vendor/model label")
-    parser.add_argument("--reviewer-agent", action="append", default=[],
-                        help="effective reviewer codename or vendor/model label; repeatable")
-    parser.add_argument("--tester", default=None,
-                        help="effective tester codename or vendor/model label")
-    parser.add_argument("--host-agent", default=None,
-                        help="host agent codename (e.g. claude/codex/agy) for the run context")
-    parser.add_argument("--transport", choices=("gh", "mcp"), default=None,
-                        help="detected GitHub transport for the run context; "
-                             "defaults to the resolved transport when omitted")
-    parser.add_argument("--strict-run-context", action="store_true",
-                        help="block live ledger append when required run-context fields "
-                             "would degrade")
-    parser.add_argument("--issue-title", default=None,
-                        help="issue title to include in the intake/readiness contract")
-    parser.add_argument("--issue-body", default=None,
-                        help="issue body markdown to include in the intake/readiness contract")
-    parser.add_argument("--issue-label", action="append", default=[],
-                        help="issue label for intake/readiness; repeat or comma-separate")
-    parser.add_argument("--review-comments", choices=("inline", "summary"), default="inline",
-                        help="review posting mode for the resolved ship contract")
-    parser.add_argument("--reviewers", type=int, choices=(1, 2, 3), default=None,
-                        help="override the risk-derived reviewer count")
-    parser.add_argument("--jury", action="store_true",
-                        help="enable the cross-vendor jury gate")
-    parser.add_argument("--no-jury", action="store_true",
-                        help="disable the cross-vendor jury gate")
-    parser.add_argument("--jury-advisory", action="store_true",
-                        help="make an enabled jury advisory instead of merge-gating")
-    parser.add_argument("--profile", choices=("standard", "compound"), default="standard",
-                        help="workflow profile: standard (default) or compound")
-    parser.add_argument("--compound", action="store_true",
-                        help="select the compound workflow profile (alias for --profile compound)")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="explicitly mark the assessment as non-mutating"
+    )
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        help=("run the live preflight gate and fail before gates if consent is missing"),
+    )
+    parser.add_argument(
+        "--approve-scope",
+        action="append",
+        default=[],
+        help="approve a consent scope for this run; repeat or comma-separate",
+    )
+    parser.add_argument(
+        "--operator",
+        default=None,
+        help="operator identifier to include in an approved consent record",
+    )
+    parser.add_argument(
+        "--consent-mode",
+        choices=consent.CONSENT_MODES,
+        default=None,
+        help="operator consent mode: explicit, standing, or agent",
+    )
+    parser.add_argument(
+        "--target", default=None, help="task target to include in the consent prompt and record"
+    )
+    parser.add_argument(
+        "--append-ledger",
+        action="store_true",
+        help="append the structured ship run record when --live succeeds",
+    )
+    parser.add_argument(
+        "--run-id", default=None, help="operator/session run id to store in the run ledger record"
+    )
+    parser.add_argument(
+        "--run-events-file",
+        default=None,
+        help="JSON run-events file to evaluate and stamp into the ledger record",
+    )
+    parser.add_argument(
+        "--max-rounds",
+        type=_positive_int,
+        default=None,
+        help="explicit run-control work-unit budget override",
+    )
+    parser.add_argument(
+        "--issue",
+        type=_positive_int,
+        default=None,
+        help="issue number to store in the run ledger record",
+    )
+    parser.add_argument(
+        "--pull-request",
+        dest="ledger_pr",
+        type=_positive_int,
+        default=None,
+        help="PR number to store in the run ledger record without CI lookup",
+    )
+    parser.add_argument(
+        "--branch", default=None, help="branch name to store in the run ledger record"
+    )
+    parser.add_argument(
+        "--head-sha", default=None, help="head commit SHA to store in the run ledger record"
+    )
+    parser.add_argument(
+        "--declared-file",
+        action="append",
+        default=None,
+        help="implementer's declared in-scope file path (repeatable); "
+        "recorded for keel scope-verify branch-contamination checks",
+    )
+    parser.add_argument(
+        "--capture-status",
+        type=_capture_status_arg,
+        default=None,
+        help="capture outcome to store in the run ledger record; pass "
+        f"'{CAPTURE_STATUS_NOT_RUN}' for a run that never reached "
+        "capture (e.g. re-recording gates after a rebase), which "
+        "records no marker and does not count as a merge",
+    )
+    parser.add_argument(
+        "--capture-reason",
+        default=None,
+        help="capture outcome reason to store in the run ledger record",
+    )
+    parser.add_argument(
+        "--capture-artifact",
+        default=None,
+        help="durable capture artifact reference (path or content hash) "
+        "proving an applied capture; required for clean reconcile",
+    )
+    parser.add_argument(
+        "--gate-result",
+        action="append",
+        default=[],
+        type=_gate_result_arg,
+        metavar="ID=pass|fail",
+        help="record the verdict of a gate this command cannot execute "
+        "(an agentic gate, run by the dispatching agent); repeatable",
+    )
+    parser.add_argument(
+        "--implementer", default=None, help="effective implementer codename or vendor/model label"
+    )
+    parser.add_argument(
+        "--reviewer-agent",
+        action="append",
+        default=[],
+        help="effective reviewer codename or vendor/model label; repeatable",
+    )
+    parser.add_argument(
+        "--tester", default=None, help="effective tester codename or vendor/model label"
+    )
+    parser.add_argument(
+        "--host-agent",
+        default=None,
+        help="host agent codename (e.g. claude/codex/agy) for the run context",
+    )
+    parser.add_argument(
+        "--transport",
+        choices=("gh", "mcp"),
+        default=None,
+        help="detected GitHub transport for the run context; "
+        "defaults to the resolved transport when omitted",
+    )
+    parser.add_argument(
+        "--strict-run-context",
+        action="store_true",
+        help="block live ledger append when required run-context fields would degrade",
+    )
+    parser.add_argument(
+        "--issue-title",
+        default=None,
+        help="issue title to include in the intake/readiness contract",
+    )
+    parser.add_argument(
+        "--issue-body",
+        default=None,
+        help="issue body markdown to include in the intake/readiness contract",
+    )
+    parser.add_argument(
+        "--issue-label",
+        action="append",
+        default=[],
+        help="issue label for intake/readiness; repeat or comma-separate",
+    )
+    parser.add_argument(
+        "--review-comments",
+        choices=("inline", "summary"),
+        default="inline",
+        help="review posting mode for the resolved ship contract",
+    )
+    parser.add_argument(
+        "--reviewers",
+        type=int,
+        choices=(1, 2, 3),
+        default=None,
+        help="override the risk-derived reviewer count",
+    )
+    parser.add_argument("--jury", action="store_true", help="enable the cross-vendor jury gate")
+    parser.add_argument("--no-jury", action="store_true", help="disable the cross-vendor jury gate")
+    parser.add_argument(
+        "--jury-advisory",
+        action="store_true",
+        help="make an enabled jury advisory instead of merge-gating",
+    )
+    parser.add_argument(
+        "--profile",
+        choices=("standard", "compound"),
+        default="standard",
+        help="workflow profile: standard (default) or compound",
+    )
+    parser.add_argument(
+        "--compound",
+        action="store_true",
+        help="select the compound workflow profile (alias for --profile compound)",
+    )
     parser.add_argument("--json", action="store_true", help="emit structured JSON")
     parser.set_defaults(func=_cmd_ship, ship_command=command)
 

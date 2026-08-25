@@ -73,8 +73,9 @@ class TestJuryContract(unittest.TestCase):
             },
         )
         self.assertEqual(contract["posting"]["mode"], "summary")
-        self.assertEqual(contract["reviewers"]["project_additions"],
-                         ["Check project rollout notes."])
+        self.assertEqual(
+            contract["reviewers"]["project_additions"], ["Check project rollout notes."]
+        )
         self.assertEqual(contract["reviewers"]["required_sections"], ["Testing"])
 
     def test_invalid_reviewer_override_rejected(self):
@@ -123,7 +124,7 @@ class TestFixLoop(unittest.TestCase):
 
 
 class TestCiRan(unittest.TestCase):
-    """"Everything passed" and "nothing ran" are different facts (#675)."""
+    """ "Everything passed" and "nothing ran" are different facts (#675)."""
 
     def test_empty_rollup_means_nothing_ran(self):
         self.assertIs(ship.ci_ran(""), False)
@@ -146,9 +147,7 @@ class TestMissingCiWorkflows(unittest.TestCase):
     WORKFLOWS = {"CI": "**", "CodeQL": "**"}
 
     def test_none_missing_when_all_declared_reported(self):
-        self.assertEqual(
-            ship.missing_ci_workflows(["CI", "CodeQL"], self.WORKFLOWS), ()
-        )
+        self.assertEqual(ship.missing_ci_workflows(["CI", "CodeQL"], self.WORKFLOWS), ())
 
     def test_names_a_declared_workflow_that_never_ran(self):
         self.assertEqual(ship.missing_ci_workflows(["CI"], self.WORKFLOWS), ("CodeQL",))
@@ -167,17 +166,13 @@ class TestMissingCiWorkflows(unittest.TestCase):
 
     def test_matching_is_exact_not_a_prefix(self):
         # A prefix rule would let an unrelated "testing-utils" satisfy "test".
-        self.assertEqual(
-            ship.missing_ci_workflows(["testing-utils"], {"test": "**"}), ("test",)
-        )
+        self.assertEqual(ship.missing_ci_workflows(["testing-utils"], {"test": "**"}), ("test",))
 
     def test_case_insensitive(self):
         self.assertEqual(ship.missing_ci_workflows(["ci", "codeql"], self.WORKFLOWS), ())
 
     def test_everything_missing_when_nothing_ran(self):
-        self.assertEqual(
-            ship.missing_ci_workflows([], self.WORKFLOWS), ("CI", "CodeQL")
-        )
+        self.assertEqual(ship.missing_ci_workflows([], self.WORKFLOWS), ("CI", "CodeQL"))
 
     def test_no_declaration_means_no_finding(self):
         # Absence of a declaration is not evidence of a missing run.
@@ -188,9 +183,7 @@ class TestMissingCiWorkflows(unittest.TestCase):
         self.assertEqual(ship.missing_ci_workflows(None, self.WORKFLOWS), ())
 
     def test_blank_reported_names_are_ignored(self):
-        self.assertEqual(
-            ship.missing_ci_workflows(["  ", "CI", "CodeQL"], self.WORKFLOWS), ()
-        )
+        self.assertEqual(ship.missing_ci_workflows(["  ", "CI", "CodeQL"], self.WORKFLOWS), ())
 
 
 class TestCiPassing(unittest.TestCase):
@@ -216,8 +209,12 @@ DOCS = ("docs/**", "*.md")
 
 class TestAssess(unittest.TestCase):
     def test_tier3_three_reviewers_and_merge(self):
-        a = ship.assess(changed_files=[".github/workflows/ci.yml"], gate_verdict=CLEAN,
-                        tier3_globs=TIER3, docs_globs=DOCS)
+        a = ship.assess(
+            changed_files=[".github/workflows/ci.yml"],
+            gate_verdict=CLEAN,
+            tier3_globs=TIER3,
+            docs_globs=DOCS,
+        )
         self.assertEqual(a.tier, 3)
         self.assertEqual(a.reviewers, 3)
         self.assertEqual(a.review_contract["jury"]["mode"], "gating")
@@ -244,10 +241,12 @@ class TestAssess(unittest.TestCase):
         # `None` is git.changed_files' "could not read", distinct from `[]`. It must
         # not borrow the empty-changeset answer: the default tier asks for fewer
         # reviewers and turns the jury off on a change nobody has seen.
-        unreadable = ship.assess(changed_files=None, gate_verdict=CLEAN,
-                                 tier3_globs=TIER3, docs_globs=DOCS)
-        empty = ship.assess(changed_files=[], gate_verdict=CLEAN,
-                            tier3_globs=TIER3, docs_globs=DOCS)
+        unreadable = ship.assess(
+            changed_files=None, gate_verdict=CLEAN, tier3_globs=TIER3, docs_globs=DOCS
+        )
+        empty = ship.assess(
+            changed_files=[], gate_verdict=CLEAN, tier3_globs=TIER3, docs_globs=DOCS
+        )
         self.assertEqual(unreadable.tier, 3)
         self.assertEqual(unreadable.reviewers, 3)
         self.assertEqual(unreadable.review_contract["jury"]["mode"], "gating")
@@ -257,25 +256,29 @@ class TestAssess(unittest.TestCase):
         # `record_gates_passed` refuses to certify such a record, so reporting
         # "clear to merge" would promise a merge `keel merge` then refuses, with no
         # reason given to the operator.
-        blocked = ship.assess(changed_files=["x.py"], gate_verdict=CLEAN,
-                              unrun_blocking_gates=("security-review",))
+        blocked = ship.assess(
+            changed_files=["x.py"], gate_verdict=CLEAN, unrun_blocking_gates=("security-review",)
+        )
         self.assertEqual(blocked.merge.action, "block")
         self.assertIn("security-review", blocked.merge.reason)
         self.assertIn("--gate-result", blocked.merge.reason)
 
     def test_advisory_gates_that_did_not_run_do_not_block(self):
         self.assertEqual(
-            ship.assess(changed_files=["x.py"], gate_verdict=CLEAN).merge.action, "merge")
+            ship.assess(changed_files=["x.py"], gate_verdict=CLEAN).merge.action, "merge"
+        )
 
     def test_blocking_findings_outrank_an_unrun_gate_in_the_reason(self):
-        blocked = ship.assess(changed_files=["x.py"], gate_verdict=BLOCKED,
-                              unrun_blocking_gates=("security-review",))
+        blocked = ship.assess(
+            changed_files=["x.py"], gate_verdict=BLOCKED, unrun_blocking_gates=("security-review",)
+        )
         self.assertEqual(blocked.merge.action, "block")
         self.assertEqual(blocked.merge.reason, "blocking findings present")
 
     def test_docs_only_tier1(self):
-        a = ship.assess(changed_files=["docs/x.md"], gate_verdict=CLEAN,
-                        tier3_globs=TIER3, docs_globs=DOCS)
+        a = ship.assess(
+            changed_files=["docs/x.md"], gate_verdict=CLEAN, tier3_globs=TIER3, docs_globs=DOCS
+        )
         self.assertEqual(a.tier, 1)
         self.assertEqual(a.reviewers, 1)
 
@@ -314,17 +317,25 @@ class TestAssess(unittest.TestCase):
         cli._ci_state's `no-checks` branch lets it through. An assessment that
         blocked it would contradict the gate it exists to predict.
         """
-        a = ship.assess(changed_files=["docs/a.md"], gate_verdict=CLEAN,
-                        ci_conclusion="", ci_check_names=[],
-                        docs_globs=("docs/**", "*.md"))
+        a = ship.assess(
+            changed_files=["docs/a.md"],
+            gate_verdict=CLEAN,
+            ci_conclusion="",
+            ci_check_names=[],
+            docs_globs=("docs/**", "*.md"),
+        )
         self.assertIs(a.ci_ran, False)
         self.assertEqual(a.merge.action, "merge")
 
     def test_docs_only_does_not_report_declared_workflows_as_missing(self):
-        a = ship.assess(changed_files=["docs/a.md"], gate_verdict=CLEAN,
-                        ci_conclusion="", ci_check_names=[],
-                        docs_globs=("docs/**", "*.md"),
-                        ci_workflows={"CI": "**"})
+        a = ship.assess(
+            changed_files=["docs/a.md"],
+            gate_verdict=CLEAN,
+            ci_conclusion="",
+            ci_check_names=[],
+            docs_globs=("docs/**", "*.md"),
+            ci_workflows={"CI": "**"},
+        )
         self.assertEqual(a.missing_workflows, ())
         self.assertEqual(a.merge.action, "merge")
 
@@ -342,45 +353,66 @@ class TestAssess(unittest.TestCase):
         self.assertEqual(a.merge.action, "merge")
 
     def test_a_failing_check_still_reports_as_failing_not_as_unrun(self):
-        a = ship.assess(changed_files=["x.py"], gate_verdict=CLEAN,
-                        ci_conclusion="FAILURE", ci_check_names=["CI"])
+        a = ship.assess(
+            changed_files=["x.py"],
+            gate_verdict=CLEAN,
+            ci_conclusion="FAILURE",
+            ci_check_names=["CI"],
+        )
         self.assertIs(a.ci_ran, True)
         self.assertEqual(a.merge.reason, "CI failing")
 
     def test_declared_workflow_that_never_ran_blocks(self):
         """Green is not enough when a workflow the project declares produced no run."""
-        a = ship.assess(changed_files=["x.py"], gate_verdict=CLEAN,
-                        ci_conclusion="SUCCESS", ci_check_names=["CI"],
-                        ci_workflow_names=["CI"],
-                        ci_workflows={"CI": "**", "CodeQL": "**"})
+        a = ship.assess(
+            changed_files=["x.py"],
+            gate_verdict=CLEAN,
+            ci_conclusion="SUCCESS",
+            ci_check_names=["CI"],
+            ci_workflow_names=["CI"],
+            ci_workflows={"CI": "**", "CodeQL": "**"},
+        )
         self.assertTrue(a.ci_ok)
         self.assertEqual(a.missing_workflows, ("CodeQL",))
         self.assertEqual(a.merge.action, "block")
         self.assertIn("CodeQL", a.merge.reason)
 
     def test_all_declared_workflows_present_merges(self):
-        a = ship.assess(changed_files=["x.py"], gate_verdict=CLEAN,
-                        ci_conclusion="SUCCESS",
-                        ci_check_names=["test (py3.13 / ubuntu-latest)", "CodeQL"],
-                        ci_workflow_names=["CI", "CodeQL"],
-                        ci_workflows={"CI": "**", "CodeQL": "**"})
+        a = ship.assess(
+            changed_files=["x.py"],
+            gate_verdict=CLEAN,
+            ci_conclusion="SUCCESS",
+            ci_check_names=["test (py3.13 / ubuntu-latest)", "CodeQL"],
+            ci_workflow_names=["CI", "CodeQL"],
+            ci_workflows={"CI": "**", "CodeQL": "**"},
+        )
         self.assertEqual(a.missing_workflows, ())
         self.assertEqual(a.merge.action, "merge")
 
     def test_a_red_check_outranks_a_missing_workflow_in_the_reason(self):
         # Both are true; the operator should be told about the failure first.
-        a = ship.assess(changed_files=["x.py"], gate_verdict=CLEAN,
-                        ci_conclusion="FAILURE", ci_check_names=["CI"],
-                        ci_workflow_names=["CI"],
-                        ci_workflows={"CI": "**", "CodeQL": "**"})
+        a = ship.assess(
+            changed_files=["x.py"],
+            gate_verdict=CLEAN,
+            ci_conclusion="FAILURE",
+            ci_check_names=["CI"],
+            ci_workflow_names=["CI"],
+            ci_workflows={"CI": "**", "CodeQL": "**"},
+        )
         self.assertEqual(a.merge.action, "block")
         self.assertEqual(a.merge.reason, "CI failing")
 
     def test_outside_window_defers(self):
         from datetime import datetime
+
         night = datetime(2026, 6, 5, 3, 0)  # inside 01:30-07:00 no-merge
-        a = ship.assess(changed_files=["x.py"], gate_verdict=CLEAN,
-                        timezone="Europe/Istanbul", merge_window="07:00-01:30", now=night)
+        a = ship.assess(
+            changed_files=["x.py"],
+            gate_verdict=CLEAN,
+            timezone="Europe/Istanbul",
+            merge_window="07:00-01:30",
+            now=night,
+        )
         self.assertFalse(a.window_open)
         self.assertEqual(a.merge.action, "defer")
         self.assertFalse(a.halted)
@@ -401,14 +433,26 @@ class TestHotfix(unittest.TestCase):
         self.assertFalse(ship.is_hotfix([]))
 
     def test_hotfix_bypasses_closed_window(self):
-        a = ship.assess(changed_files=["x.py"], gate_verdict=CLEAN, timezone=TZ,
-                        merge_window=WIN, now=NIGHT, is_blocker=True)
+        a = ship.assess(
+            changed_files=["x.py"],
+            gate_verdict=CLEAN,
+            timezone=TZ,
+            merge_window=WIN,
+            now=NIGHT,
+            is_blocker=True,
+        )
         self.assertEqual(a.merge.action, "merge")
         self.assertTrue(a.bypassed_window)
 
     def test_hotfix_never_bypasses_findings(self):
-        a = ship.assess(changed_files=["x.py"], gate_verdict=BLOCKED, timezone=TZ,
-                        merge_window=WIN, now=NIGHT, is_blocker=True)
+        a = ship.assess(
+            changed_files=["x.py"],
+            gate_verdict=BLOCKED,
+            timezone=TZ,
+            merge_window=WIN,
+            now=NIGHT,
+            is_blocker=True,
+        )
         self.assertEqual(a.merge.action, "block")
         self.assertFalse(a.bypassed_window)
 
@@ -419,19 +463,38 @@ class TestHotfix(unittest.TestCase):
 
 class TestPauseMode(unittest.TestCase):
     def test_pause_halts_outside_window(self):
-        a = ship.assess(changed_files=["x.py"], gate_verdict=CLEAN, timezone=TZ,
-                        merge_window=WIN, merge_window_mode="pause", now=NIGHT)
+        a = ship.assess(
+            changed_files=["x.py"],
+            gate_verdict=CLEAN,
+            timezone=TZ,
+            merge_window=WIN,
+            merge_window_mode="pause",
+            now=NIGHT,
+        )
         self.assertTrue(a.halted)
         self.assertEqual(a.merge.action, "defer")
 
     def test_freeze_does_not_halt(self):
-        a = ship.assess(changed_files=["x.py"], gate_verdict=CLEAN, timezone=TZ,
-                        merge_window=WIN, merge_window_mode="freeze", now=NIGHT)
+        a = ship.assess(
+            changed_files=["x.py"],
+            gate_verdict=CLEAN,
+            timezone=TZ,
+            merge_window=WIN,
+            merge_window_mode="freeze",
+            now=NIGHT,
+        )
         self.assertFalse(a.halted)
 
     def test_pause_hotfix_not_halted(self):
-        a = ship.assess(changed_files=["x.py"], gate_verdict=CLEAN, timezone=TZ,
-                        merge_window=WIN, merge_window_mode="pause", now=NIGHT, is_blocker=True)
+        a = ship.assess(
+            changed_files=["x.py"],
+            gate_verdict=CLEAN,
+            timezone=TZ,
+            merge_window=WIN,
+            merge_window_mode="pause",
+            now=NIGHT,
+            is_blocker=True,
+        )
         self.assertFalse(a.halted)
         self.assertEqual(a.merge.action, "merge")
 
@@ -562,7 +625,8 @@ class TestAssessTierReadsTheDiff(unittest.TestCase):
         patch = "@@\n-          exit 1\n+          echo notice\n"
         patches = {self.WORKFLOW: patch}
         gate_tier = classify.tier_for_files(
-            [self.WORKFLOW], tier3_globs=self.GLOBS, patches=patches)
+            [self.WORKFLOW], tier3_globs=self.GLOBS, patches=patches
+        )
         self.assertEqual(self._tier(patches), gate_tier)
 
 

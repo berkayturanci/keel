@@ -120,33 +120,39 @@ def reconcile(
     findings: list[dict[str, Any]] = []
     leaked_records = [rid for rid in new_run_ids if rid == run_id]
     for rid in leaked_records:
-        findings.append({
-            "finding": FINDING_NEW_LEDGER_RECORD,
-            "artifact": rid,
-            "message": (
-                f"dry run {run_id!r} left a new ledger record (run_id {rid!r}); "
-                f"a rehearsal must append no record"
-            ),
-        })
+        findings.append(
+            {
+                "finding": FINDING_NEW_LEDGER_RECORD,
+                "artifact": rid,
+                "message": (
+                    f"dry run {run_id!r} left a new ledger record (run_id {rid!r}); "
+                    f"a rehearsal must append no record"
+                ),
+            }
+        )
     leaked_branches = [name for name in new_branches if pattern.search(name)]
     for name in leaked_branches:
-        findings.append({
-            "finding": FINDING_NEW_BRANCH,
-            "artifact": name,
-            "message": (
-                f"dry run {run_id!r} left a new branch {name!r} for issue "
-                f"#{issue}; a rehearsal must create no branch"
-            ),
-        })
+        findings.append(
+            {
+                "finding": FINDING_NEW_BRANCH,
+                "artifact": name,
+                "message": (
+                    f"dry run {run_id!r} left a new branch {name!r} for issue "
+                    f"#{issue}; a rehearsal must create no branch"
+                ),
+            }
+        )
     for number in new_prs:
-        findings.append({
-            "finding": FINDING_NEW_PR,
-            "artifact": number,
-            "message": (
-                f"dry run {run_id!r} left a new PR #{number} for issue #{issue}; "
-                f"a rehearsal must open no PR"
-            ),
-        })
+        findings.append(
+            {
+                "finding": FINDING_NEW_PR,
+                "artifact": number,
+                "message": (
+                    f"dry run {run_id!r} left a new PR #{number} for issue #{issue}; "
+                    f"a rehearsal must open no PR"
+                ),
+            }
+        )
 
     verdict = VERDICT_VIOLATED if findings else VERDICT_CLEAN
     return {

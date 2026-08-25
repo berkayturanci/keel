@@ -245,7 +245,7 @@ def _alternating_diff(events: list[dict[str, Any]], *, window: int) -> HaltReaso
         return None
     tail = diffs[-window:]
     left = tail[: window // 2]
-    right = tail[window // 2:]
+    right = tail[window // 2 :]
     if left == right and len(set(left)) > 1:
         return HaltReason(
             control="oscillation",

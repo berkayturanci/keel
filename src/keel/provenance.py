@@ -116,11 +116,7 @@ def _optional(value: Any) -> str | None:
 
 def _capabilities(values: tuple[str, ...] | list[str]) -> tuple[list[str], list[str]]:
     known = set(KNOWN_CAPABILITIES)
-    clean = {
-        item.strip()
-        for item in values
-        if isinstance(item, str) and item.strip()
-    }
+    clean = {item.strip() for item in values if isinstance(item, str) and item.strip()}
     return (
         sorted(item for item in clean if item in known),
         sorted(item for item in clean if item not in known),

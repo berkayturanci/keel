@@ -106,19 +106,27 @@ class TestReleaseDocs(unittest.TestCase):
         """
         formula = (REPO_ROOT / "Formula" / "keel.rb").read_text(encoding="utf-8")
 
-        self.assertIn(f"/tags/v{__version__}.tar.gz", formula,
-                      "formula url must point at the current release tag")
+        self.assertIn(
+            f"/tags/v{__version__}.tar.gz",
+            formula,
+            "formula url must point at the current release tag",
+        )
         digest = re.search(r'sha256 "([0-9a-f]{64})"', formula)
         self.assertIsNotNone(digest, "formula must carry a sha256")
-        self.assertNotEqual(digest.group(1), "0" * 64,
-                            "formula sha256 is still the placeholder; brew would refuse it")
+        self.assertNotEqual(
+            digest.group(1),
+            "0" * 64,
+            "formula sha256 is still the placeholder; brew would refuse it",
+        )
         # Read the licence from the project rather than hard-coding it here, so the
         # test cannot drift into asserting the wrong thing either.
-        declared = re.search(r'license = "([^"]+)"',
-                             (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        declared = re.search(
+            r'license = "([^"]+)"', (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        )
         self.assertIsNotNone(declared)
-        self.assertIn(f'license "{declared.group(1)}"', formula,
-                      "formula licence must match pyproject")
+        self.assertIn(
+            f'license "{declared.group(1)}"', formula, "formula licence must match pyproject"
+        )
 
     def test_keel_visual_version_markers_agree(self):
         """keel-visual shipped `__version__ = "0.6.0"` as 0.8.0 (#796).
@@ -165,9 +173,7 @@ class TestReleaseDocs(unittest.TestCase):
         checkable offline — no network, no `brew` binary.
         """
         formula = (REPO_ROOT / "Formula" / "keel.rb").read_text(encoding="utf-8")
-        project = tomllib.loads(
-            (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-        )
+        project = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
         # Homebrew runs on macOS and Linux only, so a Windows-marked dependency
         # (tzdata) is correctly absent. Anything unconditional must be vendored.
@@ -194,9 +200,9 @@ class TestReleaseDocs(unittest.TestCase):
 
     def test_publish_workflow_uses_hash_locked_release_tools(self):
         workflow = (REPO_ROOT / ".github/workflows/publish.yml").read_text(encoding="utf-8")
-        lockfile = (
-            REPO_ROOT / ".github/requirements/publish-tools.txt"
-        ).read_text(encoding="utf-8")
+        lockfile = (REPO_ROOT / ".github/requirements/publish-tools.txt").read_text(
+            encoding="utf-8"
+        )
 
         self.assertIn("--require-hashes", workflow)
         self.assertIn("-r .github/requirements/publish-tools.txt", workflow)

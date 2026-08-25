@@ -157,32 +157,38 @@ def reconcile(
         issue_findings: list[str] = []
         if issue.closed and not attested:
             issue_findings.append(FINDING_PREMATURE_CLOSE)
-            findings.append({
-                "issue": issue.number,
-                "finding": FINDING_PREMATURE_CLOSE,
-                "message": (
-                    f"issue #{issue.number} is closed but no ship_run ledger "
-                    f"record attests a merge"
-                ),
-            })
+            findings.append(
+                {
+                    "issue": issue.number,
+                    "finding": FINDING_PREMATURE_CLOSE,
+                    "message": (
+                        f"issue #{issue.number} is closed but no ship_run ledger "
+                        f"record attests a merge"
+                    ),
+                }
+            )
         if status_done and not attested:
             issue_findings.append(FINDING_PREMATURE_STATUS_DONE)
-            findings.append({
+            findings.append(
+                {
+                    "issue": issue.number,
+                    "finding": FINDING_PREMATURE_STATUS_DONE,
+                    "message": (
+                        f"issue #{issue.number} carries {done_label!r} but no "
+                        f"ship_run ledger record attests a merge"
+                    ),
+                }
+            )
+        issues.append(
+            {
                 "issue": issue.number,
-                "finding": FINDING_PREMATURE_STATUS_DONE,
-                "message": (
-                    f"issue #{issue.number} carries {done_label!r} but no "
-                    f"ship_run ledger record attests a merge"
-                ),
-            })
-        issues.append({
-            "issue": issue.number,
-            "closed": issue.closed,
-            "status_done": status_done,
-            "merge_attested": attested,
-            "findings": issue_findings,
-            "consistent": not issue_findings,
-        })
+                "closed": issue.closed,
+                "status_done": status_done,
+                "merge_attested": attested,
+                "findings": issue_findings,
+                "consistent": not issue_findings,
+            }
+        )
     verdict = VERDICT_FLAGGED if findings else VERDICT_OK
     return {
         "schema_version": SCHEMA_VERSION,

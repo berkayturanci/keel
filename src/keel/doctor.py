@@ -114,7 +114,8 @@ def _check_cli_version(installed: str, latest: str | None) -> CheckResult:
     """Installed CLI vs latest on PyPI. Offline => ``warn`` (unknown); stale => ``fail``."""
     if latest is None:
         return CheckResult(
-            "cli_version", _WARN,
+            "cli_version",
+            _WARN,
             f"installed {installed}; latest unknown (offline or PyPI unreachable)",
             {"installed": installed, "latest": "unknown"},
         )
@@ -122,25 +123,31 @@ def _check_cli_version(installed: str, latest: str | None) -> CheckResult:
     detail = {"installed": installed, "latest": latest}
     if inst is None or lat is None:
         return CheckResult(
-            "cli_version", _WARN,
+            "cli_version",
+            _WARN,
             f"installed {installed}; latest {latest}; cannot compare versions",
             detail,
         )
     pi, pl = _pad(inst, lat)
     if pi < pl:
         return CheckResult(
-            "cli_version", _FAIL,
+            "cli_version",
+            _FAIL,
             f"installed {installed} is behind latest {latest} — upgrade keel-workflow",
             detail,
         )
     if pi > pl:
         return CheckResult(
-            "cli_version", _WARN,
+            "cli_version",
+            _WARN,
             f"installed {installed} is ahead of latest {latest} (pre-release or unpublished)",
             detail,
         )
     return CheckResult(
-        "cli_version", _OK, f"installed {installed} is up to date", detail,
+        "cli_version",
+        _OK,
+        f"installed {installed} is up to date",
+        detail,
     )
 
 
@@ -148,7 +155,8 @@ def _check_adapter_version(installed: str, markers: list[dict[str, object]]) -> 
     """Installed adapter ``keel_version`` markers vs the running CLI version."""
     if not markers:
         return CheckResult(
-            "adapter_version", _WARN,
+            "adapter_version",
+            _WARN,
             "no keel-generated adapter surfaces found under --root",
             {"installed": installed, "surfaces": 0, "drift": []},
         )
@@ -156,20 +164,24 @@ def _check_adapter_version(installed: str, markers: list[dict[str, object]]) -> 
     for marker in markers:
         marker_version = marker.get("keel_version")
         if marker_version != installed:
-            drift.append({
-                "surface": marker.get("surface", ""),
-                "name": marker.get("name", ""),
-                "keel_version": marker_version,
-            })
+            drift.append(
+                {
+                    "surface": marker.get("surface", ""),
+                    "name": marker.get("name", ""),
+                    "keel_version": marker_version,
+                }
+            )
     if drift:
         return CheckResult(
-            "adapter_version", _WARN,
+            "adapter_version",
+            _WARN,
             f"{len(drift)} of {len(markers)} adapter surface(s) drift from CLI {installed} "
             "— run keel update-adapter",
             {"installed": installed, "surfaces": len(markers), "drift": drift},
         )
     return CheckResult(
-        "adapter_version", _OK,
+        "adapter_version",
+        _OK,
         f"all {len(markers)} adapter surface(s) match CLI {installed}",
         {"installed": installed, "surfaces": len(markers), "drift": []},
     )
@@ -179,10 +191,14 @@ def _check_orphan_adapters(orphans: list[dict[str, object]]) -> CheckResult:
     """Surfaces whose command is no longer in the installed keel (stale-marker orphans)."""
     if not orphans:
         return CheckResult(
-            "orphan_adapters", _OK, "no orphan adapter surfaces", {"orphans": []},
+            "orphan_adapters",
+            _OK,
+            "no orphan adapter surfaces",
+            {"orphans": []},
         )
     return CheckResult(
-        "orphan_adapters", _WARN,
+        "orphan_adapters",
+        _WARN,
         f"{len(orphans)} orphan adapter surface(s) — command(s) no longer in installed keel",
         {"orphans": list(orphans)},
     )
@@ -192,25 +208,30 @@ def _check_core_version(installed: str, core_version: str | None) -> CheckResult
     """``core_version`` constraint from project.yaml vs the installed CLI version."""
     if core_version is None:
         return CheckResult(
-            "core_version", _OK, "no project config given — core_version check skipped",
+            "core_version",
+            _OK,
+            "no project config given — core_version check skipped",
             {"installed": installed, "core_version": None},
         )
     detail = {"installed": installed, "core_version": core_version}
     satisfied = constraint_satisfied(installed, core_version)
     if satisfied is None:
         return CheckResult(
-            "core_version", _WARN,
+            "core_version",
+            _WARN,
             f"cannot evaluate core_version {core_version!r} against installed {installed}",
             detail,
         )
     if not satisfied:
         return CheckResult(
-            "core_version", _FAIL,
+            "core_version",
+            _FAIL,
             f"installed {installed} does not satisfy core_version {core_version!r}",
             detail,
         )
     return CheckResult(
-        "core_version", _OK,
+        "core_version",
+        _OK,
         f"installed {installed} satisfies core_version {core_version!r}",
         detail,
     )
@@ -220,19 +241,24 @@ def _check_state_paths(state_paths: list[dict[str, object]]) -> CheckResult:
     """Advisory check on configured ledger/checkpoint paths — missing == empty history."""
     if not state_paths:
         return CheckResult(
-            "state_paths", _OK, "no state paths configured", {"paths": []},
+            "state_paths",
+            _OK,
+            "no state paths configured",
+            {"paths": []},
         )
     for entry in state_paths:
         if entry.get("status") == "invalid":
             present = sum(1 for e in state_paths if e.get("status") == "present")
             return CheckResult(
-                "state_paths", _WARN,
+                "state_paths",
+                _WARN,
                 "one or more configured state paths are invalid",
                 {"paths": list(state_paths), "present": present},
             )
     present = sum(1 for e in state_paths if e.get("status") == "present")
     return CheckResult(
-        "state_paths", _OK,
+        "state_paths",
+        _OK,
         f"{present} of {len(state_paths)} state path(s) present "
         "(missing paths report as empty history)",
         {"paths": list(state_paths), "present": present},
@@ -242,7 +268,7 @@ def _check_state_paths(state_paths: list[dict[str, object]]) -> CheckResult:
 def _within(child: str, parent: str) -> bool:
     """Is ``child`` ``parent`` itself, or nested inside it? Pure path-part comparison."""
     parent_parts = PurePath(parent).parts
-    return PurePath(child).parts[:len(parent_parts)] == parent_parts
+    return PurePath(child).parts[: len(parent_parts)] == parent_parts
 
 
 def _check_checkout_binding(module_path: str | None, checkout_root: str | None) -> CheckResult:
@@ -259,25 +285,32 @@ def _check_checkout_binding(module_path: str | None, checkout_root: str | None) 
     """
     if not checkout_root:
         return CheckResult(
-            "checkout_binding", _OK,
+            "checkout_binding",
+            _OK,
             "not run against a keel checkout; binding not checked",
             {"module_path": module_path, "checkout_root": None},
         )
     detail: dict[str, object] = {"module_path": module_path, "checkout_root": checkout_root}
     if not module_path:
         return CheckResult(
-            "checkout_binding", _WARN,
-            "the importable keel could not be located", detail,
+            "checkout_binding",
+            _WARN,
+            "the importable keel could not be located",
+            detail,
         )
     if _within(module_path, checkout_root):
         return CheckResult(
-            "checkout_binding", _OK,
-            "importable keel resolves inside this checkout", detail,
+            "checkout_binding",
+            _OK,
+            "importable keel resolves inside this checkout",
+            detail,
         )
     return CheckResult(
-        "checkout_binding", _WARN,
+        "checkout_binding",
+        _WARN,
         f"importable keel resolves outside this checkout ({module_path}) — local runs "
-        "exercise that tree; reinstall with `pip install -e .` from here", detail,
+        "exercise that tree; reinstall with `pip install -e .` from here",
+        detail,
     )
 
 
@@ -327,7 +360,5 @@ def render_report(report: dict[str, object]) -> str:
         state = str(check["status"]).upper()
         lines.append(f"  {state:>4}  {check['name']:<16}  {check['summary']}")
     counts = report["counts"]
-    lines.append(
-        f"  summary       : {counts[_OK]} ok, {counts[_WARN]} warn, {counts[_FAIL]} fail"
-    )
+    lines.append(f"  summary       : {counts[_OK]} ok, {counts[_WARN]} warn, {counts[_FAIL]} fail")
     return "\n".join(lines)

@@ -20,9 +20,7 @@ from typing import Any
 BoardProvider = Callable[[], list[dict[str, Any]]]
 
 
-def route(
-    path: str, *, board_provider: BoardProvider, page_html: str
-) -> tuple[int, str, bytes]:
+def route(path: str, *, board_provider: BoardProvider, page_html: str) -> tuple[int, str, bytes]:
     """Resolve a GET ``path`` to ``(status, content_type, body)``. Pure.
 
     ``/`` (and ``/index.html``) serve the dashboard page; ``/board.json`` calls
@@ -43,7 +41,8 @@ def make_handler(board_provider: BoardProvider, page_html: str) -> type[BaseHTTP
     class _Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802 - stdlib API name
             status, content_type, body = route(
-                self.path, board_provider=board_provider, page_html=page_html)
+                self.path, board_provider=board_provider, page_html=page_html
+            )
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))

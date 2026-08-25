@@ -185,8 +185,9 @@ def _configured_rules(config: cfg.ProjectConfig, *, strict: bool = True) -> list
             if strict:
                 raise
             continue
-        rules.append(RedactionRule(rule_id, compiled, replacement, source,
-                                   literal_replacement=True))
+        rules.append(
+            RedactionRule(rule_id, compiled, replacement, source, literal_replacement=True)
+        )
     return rules
 
 
@@ -212,7 +213,8 @@ def _sanitize_string(value: str, policy: RedactionPolicy, counts: dict[str, int]
     for rule in policy.rules:
         replacement = (
             (lambda _match, value=rule.replacement: value)
-            if rule.literal_replacement else rule.replacement
+            if rule.literal_replacement
+            else rule.replacement
         )
         text, count = rule.pattern.subn(replacement, text)
         if count:

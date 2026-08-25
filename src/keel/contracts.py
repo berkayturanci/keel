@@ -54,19 +54,51 @@ _STEP_RE = re.compile(
 )
 
 _BASE_SIDE_EFFECTS: dict[str, tuple[str, ...]] = {
-    "ship": ("git_worktree", "git_branch", "file_edit", "git_push", "pull_request", "comments",
-             "reviews", "merge",
-             "issue_close", "capture"),
+    "ship": (
+        "git_worktree",
+        "git_branch",
+        "file_edit",
+        "git_push",
+        "pull_request",
+        "comments",
+        "reviews",
+        "merge",
+        "issue_close",
+        "capture",
+    ),
     "pr-loop": ("file_edit", "git_commit", "git_push", "comments", "reviews", "check_runs"),
     "review-cycle": ("file_edit", "comments", "reviews", "git_commit", "git_push"),
     "morning": ("issue_read", "pr_read", "report_write"),
     "wrap": ("git_commit", "git_push", "pull_request", "session_recap"),
-    "work-block": ("git_branch", "git_push", "pull_request", "comments", "reviews", "merge",
-                   "deferral_queue", "session_report"),
-    "overnight": ("git_branch", "git_push", "pull_request", "comments", "reviews", "merge",
-                  "deferral_queue", "session_report"),
-    "implement": ("git_worktree", "git_branch", "file_edit", "git_commit", "git_push",
-                  "pull_request", "comments"),
+    "work-block": (
+        "git_branch",
+        "git_push",
+        "pull_request",
+        "comments",
+        "reviews",
+        "merge",
+        "deferral_queue",
+        "session_report",
+    ),
+    "overnight": (
+        "git_branch",
+        "git_push",
+        "pull_request",
+        "comments",
+        "reviews",
+        "merge",
+        "deferral_queue",
+        "session_report",
+    ),
+    "implement": (
+        "git_worktree",
+        "git_branch",
+        "file_edit",
+        "git_commit",
+        "git_push",
+        "pull_request",
+        "comments",
+    ),
     "ci-check": ("check_runs",),
     "triage": ("labels", "comments"),
     "stale-prs": ("comments", "git_checkout", "git_push"),
@@ -164,7 +196,8 @@ def command_graph(command: str, *, profile: str = "standard") -> list[dict[str, 
                 "slot": step.slot,
                 "source": "backbone",
                 "profile_step": _COMPOUND_OVERRIDES.get(step.id, "standard")
-                if compound else "standard",
+                if compound
+                else "standard",
             }
             for step in model.BACKBONE
         ]
@@ -203,13 +236,15 @@ def build_command_contract(
     declared_side_effects = command_side_effects(command, config, requirement, loaded)
     graph = command_graph(command, profile=profile)
     if not graph and (project_command := get_project_command(config, command)):
-        graph = [{
-            "step_id": f"project-command:{project_command.name}",
-            "step_name": project_command.name,
-            "agentic": bool(project_command.agent_role),
-            "slot": None,
-            "source": "project_command",
-        }]
+        graph = [
+            {
+                "step_id": f"project-command:{project_command.name}",
+                "step_name": project_command.name,
+                "agentic": bool(project_command.agent_role),
+                "slot": None,
+                "source": "project_command",
+            }
+        ]
     contract = {
         "schema_version": SCHEMA_VERSION,
         "command": command,
@@ -676,8 +711,7 @@ def reporting_contract_as_dict(
                 "unwired_tool": "skip-area",
                 "coverage_command_failure": "fatal",
             },
-            "arguments": ["pr", "--base", "--threshold", "--changed", "--open-issues",
-                          "--dry-run"],
+            "arguments": ["pr", "--base", "--threshold", "--changed", "--open-issues", "--dry-run"],
         }
     if command == "deps-audit":
         return {
@@ -697,8 +731,13 @@ def reporting_contract_as_dict(
                 "per_ecosystem_failure": "skipped-section",
                 "argument_failure": "fatal",
             },
-            "arguments": ["ecosystem", "--severity", "--security-only", "--open-issues",
-                          "--dry-run"],
+            "arguments": [
+                "ecosystem",
+                "--severity",
+                "--security-only",
+                "--open-issues",
+                "--dry-run",
+            ],
         }
     if command == "flake-audit":
         return {
@@ -830,7 +869,8 @@ def ship_result_as_dict(
             status="ready-for-merge" if not verdict.blocked else "blocked",
             summary=assessment.merge.reason,
             next_step="Merge when CI and evidence are green."
-            if not verdict.blocked else "Resolve blocking findings before merge.",
+            if not verdict.blocked
+            else "Resolve blocking findings before merge.",
         ),
         "review_verdict_template": artifacts.render_review_verdict(
             reviewer="reviewer",
@@ -1195,8 +1235,13 @@ def scan_contract_as_dict(
             "finding_filter": {
                 "skip_minor": True,
                 "keep_minor_categories": ["security"],
-                "file_categories": ["bug-insert", "regression", "security", "config",
-                                    "test-coverage"],
+                "file_categories": [
+                    "bug-insert",
+                    "regression",
+                    "security",
+                    "config",
+                    "test-coverage",
+                ],
             },
             "issue_creation": {
                 "title_prefix": "[review-all-day] ",
@@ -1236,8 +1281,9 @@ def session_contract_as_dict(
         "project_policy_sources": {
             "gates": list(config.gates),
             "extensions": {slot: list(files) for slot, files in sorted(config.extensions.items())},
-            "risk_rules": [rule.get("id") for rule in pack.get("risk_rules", [])
-                           if isinstance(rule, dict)],
+            "risk_rules": [
+                rule.get("id") for rule in pack.get("risk_rules", []) if isinstance(rule, dict)
+            ],
             "source_of_truth_doc": config.knobs.sot_doc,
         },
     }
@@ -1271,7 +1317,8 @@ def session_contract_as_dict(
             "recap": {
                 "report_key": "session",
                 "path": reports.get("session") or reports.get("wrap"),
-                "status": "configured" if reports.get("session") or reports.get("wrap")
+                "status": "configured"
+                if reports.get("session") or reports.get("wrap")
                 else "unconfigured",
             },
         }
@@ -1320,8 +1367,14 @@ def session_contract_as_dict(
             },
             "queue": {
                 "source": "project policy or adapter query",
-                "tiers": ["T0-blocker", "T1-open-prs", "T2-coverage", "T3-ci-quality",
-                          "T4-modernization", "T5-docs-backlog"],
+                "tiers": [
+                    "T0-blocker",
+                    "T1-open-prs",
+                    "T2-coverage",
+                    "T3-ci-quality",
+                    "T4-modernization",
+                    "T5-docs-backlog",
+                ],
             },
             "ship_handoff": {
                 "command": "ship",
@@ -1337,9 +1390,7 @@ def session_contract_as_dict(
                 "status": (
                     "configured"
                     if (
-                        reports.get("overnight")
-                        or reports.get("morning")
-                        or reports.get("session")
+                        reports.get("overnight") or reports.get("morning") or reports.get("session")
                     )
                     else "unconfigured"
                 ),
@@ -1536,8 +1587,7 @@ def _near_text_similarity(config: cfg.ProjectConfig) -> float:
     """
     pack = config.policy_pack or {}
     scan = pack.get("scan") if isinstance(pack.get("scan"), dict) else {}
-    return _scan_float(scan, "near_text_similarity",
-                       workcreation.DEFAULT_NEAR_TEXT_SIMILARITY)
+    return _scan_float(scan, "near_text_similarity", workcreation.DEFAULT_NEAR_TEXT_SIMILARITY)
 
 
 def _target_identifier(target: str | None) -> str:
@@ -1560,13 +1610,15 @@ def _adapter_steps(command: str) -> list[dict[str, Any]]:
             continue
         raw_id = match.group("id").strip()
         step_id = raw_id.lower().replace(" ", "-").replace(".", "-")
-        steps.append({
-            "step_id": step_id,
-            "step_name": match.group("name").strip() or raw_id,
-            "agentic": "agent" in match.group("name").lower(),
-            "slot": None,
-            "source": "adapter",
-        })
+        steps.append(
+            {
+                "step_id": step_id,
+                "step_name": match.group("name").strip() or raw_id,
+                "agentic": "agent" in match.group("name").lower(),
+                "slot": None,
+                "source": "adapter",
+            }
+        )
     return steps
 
 

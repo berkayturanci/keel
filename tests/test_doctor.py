@@ -215,8 +215,10 @@ class TestRollupAndRender(unittest.TestCase):
     def test_all_ok_rollup(self):
         markers = [{"surface": "claude", "name": "ship.md", "keel_version": "1.2.3"}]
         report = _doctor(
-            installed_version="1.2.3", latest_version="1.2.3",
-            adapter_markers=markers, core_version="^1.0",
+            installed_version="1.2.3",
+            latest_version="1.2.3",
+            adapter_markers=markers,
+            core_version="^1.0",
         )
         self.assertEqual(report["status"], "ok")
 
@@ -285,8 +287,7 @@ class TestFetchLatestPypi(unittest.TestCase):
 
     def test_invalid_scheme_returns_none(self):
         result = cli._fetch_latest_pypi_version(
-            url="file:///etc/passwd",
-            _opener=self._FakeOpener(self._FakeResponse(b""))
+            url="file:///etc/passwd", _opener=self._FakeOpener(self._FakeResponse(b""))
         )
         self.assertIsNone(result)
 
@@ -391,8 +392,14 @@ class TestDoctorCli(unittest.TestCase):
         names = {c["name"] for c in report["checks"]}
         self.assertEqual(
             names,
-            {"checkout_binding", "cli_version", "adapter_version",
-             "orphan_adapters", "core_version", "state_paths"},
+            {
+                "checkout_binding",
+                "cli_version",
+                "adapter_version",
+                "orphan_adapters",
+                "core_version",
+                "state_paths",
+            },
         )
         # --offline => latest unknown.
         cli_check = next(c for c in report["checks"] if c["name"] == "cli_version")
@@ -418,9 +425,7 @@ class TestDoctorCli(unittest.TestCase):
     def test_with_project_runs_core_version_and_state(self):
         with tempfile.TemporaryDirectory() as d:
             install.install_all(d)
-            rc, out, _ = run(
-                ["doctor", str(SAMPLE_PROJECT), "--root", d, "--offline", "--json"]
-            )
+            rc, out, _ = run(["doctor", str(SAMPLE_PROJECT), "--root", d, "--offline", "--json"])
         report = json.loads(out)
         core = next(c for c in report["checks"] if c["name"] == "core_version")
         self.assertEqual(core["status"], "ok")  # installed 1.2.3 satisfies ^1.0
@@ -447,8 +452,7 @@ class TestDoctorCli(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             install.install_all(d)
             rc, out, _ = run(
-                ["doctor", str(SAMPLE_PROJECT), "--root", d, "--offline",
-                 "--strict", "--json"]
+                ["doctor", str(SAMPLE_PROJECT), "--root", d, "--offline", "--strict", "--json"]
             )
         report = json.loads(out)
         self.assertEqual(report["status"], "fail")
@@ -458,9 +462,7 @@ class TestDoctorCli(unittest.TestCase):
         self._real_setup()
         with tempfile.TemporaryDirectory() as d:
             install.install_all(d)
-            rc, out, _ = run(
-                ["doctor", str(SAMPLE_PROJECT), "--root", d, "--offline", "--json"]
-            )
+            rc, out, _ = run(["doctor", str(SAMPLE_PROJECT), "--root", d, "--offline", "--json"])
         report = json.loads(out)
         self.assertEqual(report["status"], "fail")
         self.assertEqual(rc, 0)  # advisory by default
@@ -468,6 +470,7 @@ class TestDoctorCli(unittest.TestCase):
     def _real_setup(self):
         # Force the installed version to a 0.x so core_version ^1.0 fails.
         import keel.doctor as dmod
+
         orig = dmod.run_doctor
 
         def patched(**kwargs):
@@ -481,9 +484,11 @@ class TestDoctorCli(unittest.TestCase):
 class TestDoctorStatePaths(unittest.TestCase):
     def test_invalid_path_reported(self):
         from keel import config as cfg
+
         config = cfg.load_config(str(SAMPLE_PROJECT))
         # Patch the resolver to raise, exercising the invalid branch.
         from keel import ledger
+
         orig = ledger.resolve_path
 
         def boom(root, conf):
@@ -503,8 +508,9 @@ class TestCheckoutBinding(unittest.TestCase):
 
     def test_skipped_when_root_is_not_a_checkout(self):
         # Nothing to compare against, so this must not manufacture a warning.
-        check = _check(_doctor(module_path="/anywhere/src/keel", checkout_root=None),
-                       "checkout_binding")
+        check = _check(
+            _doctor(module_path="/anywhere/src/keel", checkout_root=None), "checkout_binding"
+        )
         self.assertEqual(check["status"], "ok")
         self.assertIn("not run against a keel checkout", check["summary"])
         self.assertIsNone(check["detail"]["checkout_root"])
@@ -514,14 +520,14 @@ class TestCheckoutBinding(unittest.TestCase):
         self.assertEqual(_check(_doctor(), "checkout_binding")["status"], "ok")
 
     def test_unlocatable_module_warns(self):
-        check = _check(_doctor(module_path=None, checkout_root="/repo"),
-                       "checkout_binding")
+        check = _check(_doctor(module_path=None, checkout_root="/repo"), "checkout_binding")
         self.assertEqual(check["status"], "warn")
         self.assertIn("could not be located", check["summary"])
 
     def test_module_inside_the_checkout_is_ok(self):
-        check = _check(_doctor(module_path="/repo/src/keel", checkout_root="/repo"),
-                       "checkout_binding")
+        check = _check(
+            _doctor(module_path="/repo/src/keel", checkout_root="/repo"), "checkout_binding"
+        )
         self.assertEqual(check["status"], "ok")
         self.assertIn("inside this checkout", check["summary"])
 
@@ -538,8 +544,9 @@ class TestCheckoutBinding(unittest.TestCase):
     def test_sibling_prefix_is_not_treated_as_nested(self):
         # "/repo-two" starts with "/repo" as a string but is a different tree;
         # comparing path *parts* rather than characters is what catches this.
-        check = _check(_doctor(module_path="/repo-two/src/keel", checkout_root="/repo"),
-                       "checkout_binding")
+        check = _check(
+            _doctor(module_path="/repo-two/src/keel", checkout_root="/repo"), "checkout_binding"
+        )
         self.assertEqual(check["status"], "warn")
 
     def test_mismatch_rolls_up_into_the_report_status(self):

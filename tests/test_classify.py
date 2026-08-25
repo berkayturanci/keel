@@ -52,25 +52,33 @@ class TestDocsOnlyAllowlist(unittest.TestCase):
     FILES = ["docs/keel/cli.md", "website/index.html"]
 
     def test_a_rider_demotes_the_change_without_the_allowlist(self):
-        self.assertEqual(
-            classify.tier_for_files(self.FILES, tier3_globs=TIER3, docs_globs=DOCS), 2)
+        self.assertEqual(classify.tier_for_files(self.FILES, tier3_globs=TIER3, docs_globs=DOCS), 2)
 
     def test_the_allowlist_keeps_it_tier1(self):
         self.assertEqual(
-            classify.tier_for_files(self.FILES, tier3_globs=TIER3, docs_globs=DOCS,
-                                    allowlist_globs=self.ALLOW), 1)
+            classify.tier_for_files(
+                self.FILES, tier3_globs=TIER3, docs_globs=DOCS, allowlist_globs=self.ALLOW
+            ),
+            1,
+        )
 
     def test_the_allowlist_never_overrides_tier3(self):
         files = ["docs/x.md", ".github/workflows/ci.yml"]
         self.assertEqual(
-            classify.tier_for_files(files, tier3_globs=TIER3, docs_globs=DOCS,
-                                    allowlist_globs=(".github/**",)), 3)
+            classify.tier_for_files(
+                files, tier3_globs=TIER3, docs_globs=DOCS, allowlist_globs=(".github/**",)
+            ),
+            3,
+        )
 
     def test_an_unlisted_rider_still_demotes(self):
         files = ["docs/x.md", "src/app.py"]
         self.assertEqual(
-            classify.tier_for_files(files, tier3_globs=TIER3, docs_globs=DOCS,
-                                    allowlist_globs=self.ALLOW), 2)
+            classify.tier_for_files(
+                files, tier3_globs=TIER3, docs_globs=DOCS, allowlist_globs=self.ALLOW
+            ),
+            2,
+        )
 
 
 class TestIsDocsOnly(unittest.TestCase):
@@ -90,7 +98,8 @@ class TestIsDocsOnly(unittest.TestCase):
         # generated site file riding along is exactly when a workflow should have run.
         files = ["docs/a.md", "website/index.html"]
         self.assertEqual(
-            classify.tier_for_files(files, docs_globs=DOCS, allowlist_globs=("website/**",)), 1)
+            classify.tier_for_files(files, docs_globs=DOCS, allowlist_globs=("website/**",)), 1
+        )
         self.assertFalse(classify.is_docs_only(files, DOCS))
 
 
@@ -185,9 +194,7 @@ class TestTierFromTheDiff(unittest.TestCase):
         # Backwards compatible: every existing caller passes no patches and keeps
         # exactly the behaviour it had.
         self.assertEqual(3, classify.tier_for_files([_WF], tier3_globs=(_WF,)))
-        self.assertEqual(
-            3, classify.tier_for_files([_WF], tier3_globs=(_WF,), patches={})
-        )
+        self.assertEqual(3, classify.tier_for_files([_WF], tier3_globs=(_WF,), patches={}))
 
     def test_non_workflow_tier3_paths_are_never_downgraded(self):
         # For these the content *is* the risk — a checksum, a pin — so there is no
@@ -239,9 +246,7 @@ class TestSplitUnifiedDiff(unittest.TestCase):
     def test_a_rename_is_keyed_by_the_new_name(self):
         # The changed-file list reports the new path, so the keys have to agree or
         # the lookup misses and the file silently keeps its path-based tier.
-        out = classify.split_unified_diff(
-            "diff --git a/old.yml b/new.yml\n@@ -1 +1 @@\n-x\n+y\n"
-        )
+        out = classify.split_unified_diff("diff --git a/old.yml b/new.yml\n@@ -1 +1 @@\n-x\n+y\n")
         self.assertEqual(["new.yml"], list(out))
 
     def test_nothing_readable_yields_no_evidence(self):

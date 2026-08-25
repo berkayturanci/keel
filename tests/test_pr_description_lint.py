@@ -119,8 +119,10 @@ class TheWorkflowUsesTheModule(unittest.TestCase):
 
     def setUp(self):
         self.code = [
-            line for line in (REPO_ROOT / ".github" / "workflows" / "pr-lint.yml")
-            .read_text(encoding="utf-8").splitlines()
+            line
+            for line in (REPO_ROOT / ".github" / "workflows" / "pr-lint.yml")
+            .read_text(encoding="utf-8")
+            .splitlines()
             if line.strip() and not line.lstrip().startswith("#")
         ]
 

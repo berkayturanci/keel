@@ -53,8 +53,9 @@ def _step_sets_shell(text: str, block_start: int, indent: int) -> bool:
                 continue
             current = len(line) - len(line.lstrip())
             stripped = line.lstrip()
-            if current < indent or (direction == -1 and stripped.startswith("- ")
-                                    and cursor != index):
+            if current < indent or (
+                direction == -1 and stripped.startswith("- ") and cursor != index
+            ):
                 if stripped.startswith("- ") and current == indent - 2:
                     break
                 if current < indent:
@@ -127,7 +128,8 @@ class EveryMultiCommandStepDeclaresItsShell(unittest.TestCase):
 
     def test_no_multi_command_block_leaves_the_shell_to_the_runner(self):
         self.assertEqual(
-            [], self._offenders(),
+            [],
+            self._offenders(),
             "a multi-command `run:` block does not set `shell:`. On Windows the "
             "default is PowerShell, where only the last command's exit code "
             "reaches the step — a failing command in any earlier line is "
@@ -146,7 +148,7 @@ class EveryMultiCommandStepDeclaresItsShell(unittest.TestCase):
     def test_the_ci_test_step_is_the_one_that_was_masked(self):
         """The specific regression, named — this is where the seven hid."""
         text = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
-        step = text[text.index("- name: Test + coverage gate"):]
+        step = text[text.index("- name: Test + coverage gate") :]
         step = step[: step.index("      - name:", 1)]
 
         self.assertIn("shell: bash", step)

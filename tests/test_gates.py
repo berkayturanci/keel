@@ -24,8 +24,19 @@ def _config(gates_list=("build", "lint"), lint=True):
 
 def _ext(eid, slot, on_fail="warn", kind="command", run="x"):
     mode = "deterministic" if kind == "command" else "agentic"
-    return Extension(id=eid, slot=slot, kind=kind, mode=mode, agent="inherit", on_fail=on_fail,
-                     anchorable=False, run=run, prompt=None, body="", source=f"{eid}.md")
+    return Extension(
+        id=eid,
+        slot=slot,
+        kind=kind,
+        mode=mode,
+        agent="inherit",
+        on_fail=on_fail,
+        anchorable=False,
+        run=run,
+        prompt=None,
+        body="",
+        source=f"{eid}.md",
+    )
 
 
 class TestPlan(unittest.TestCase):
@@ -51,10 +62,11 @@ class TestPlan(unittest.TestCase):
             "pre-merge": [_ext("dp-gate", "pre-merge", on_fail="block")],
         }
         specs = gates.plan_gates(_config(("build",)), loaded)
-        self.assertEqual([s.id for s in specs],
-                         ["guard-check", "build", "design-parity", "test-extra", "dp-gate"])
-        self.assertEqual([s.phase for s in specs],
-                         ["guard", "test", "test", "test", "pre-merge"])
+        self.assertEqual(
+            [s.id for s in specs],
+            ["guard-check", "build", "design-parity", "test-extra", "dp-gate"],
+        )
+        self.assertEqual([s.phase for s in specs], ["guard", "test", "test", "test", "pre-merge"])
 
     def test_policy_pack_presets_slotted(self):
         data = {
@@ -102,6 +114,7 @@ class TestRun(unittest.TestCase):
     def test_explicit_findings_preserved(self):
         def runner(spec):
             return False, [Finding("minor", "nit-ish", spec.id)]
+
         outcomes = gates.run_gates(self._specs(), runner)
         sev = {f.severity for f in gates.collect_findings(outcomes)}
         self.assertEqual(sev, {"minor"})
@@ -131,8 +144,9 @@ class TestRun(unittest.TestCase):
     def test_no_failsoft_reraises(self):
         spec = gates.GateSpec("x", "command", "test", "warn", run="x")
         with self.assertRaises(RuntimeError):
-            gates.run_gates([spec], lambda s: (_ for _ in ()).throw(RuntimeError("x")),
-                            fail_soft=False)
+            gates.run_gates(
+                [spec], lambda s: (_ for _ in ()).throw(RuntimeError("x")), fail_soft=False
+            )
 
     def test_severity_mapping_for_soft_failure(self):
         spec = gates.GateSpec("s", "command", "test", "suggest", run="x")
@@ -167,21 +181,32 @@ class TestGateTimeoutResolution(unittest.TestCase):
     def test_jury_builtin_carries_its_own_budget(self):
         # The jury builtin *does* shell out (via run_argv), so unlike an agentic gate it
         # needs a resolved limit — from knobs.jury_timeout_s, not gate_timeout_s.
-        config = cfg.parse_config({
-            "extends": "keel", "core_version": "^0.1", "base_branch": "main",
-            "knobs": {"build_gate_cmd": "make test", "gate_timeout_s": 1200,
-                      "jury_timeout_s": 3600},
-            "gates": ["jury"],
-        })
+        config = cfg.parse_config(
+            {
+                "extends": "keel",
+                "core_version": "^0.1",
+                "base_branch": "main",
+                "knobs": {
+                    "build_gate_cmd": "make test",
+                    "gate_timeout_s": 1200,
+                    "jury_timeout_s": 3600,
+                },
+                "gates": ["jury"],
+            }
+        )
         self.assertEqual(gates.plan_gates(config, {})[0].timeout, 3600)
 
     def test_jury_builtin_defaults_to_the_jury_constant(self):
-        config = cfg.parse_config({
-            "extends": "keel", "core_version": "^0.1", "base_branch": "main",
-            "knobs": {"build_gate_cmd": "make test"}, "gates": ["jury"],
-        })
-        self.assertEqual(gates.plan_gates(config, {})[0].timeout,
-                         model.DEFAULT_JURY_TIMEOUT_S)
+        config = cfg.parse_config(
+            {
+                "extends": "keel",
+                "core_version": "^0.1",
+                "base_branch": "main",
+                "knobs": {"build_gate_cmd": "make test"},
+                "gates": ["jury"],
+            }
+        )
+        self.assertEqual(gates.plan_gates(config, {})[0].timeout, model.DEFAULT_JURY_TIMEOUT_S)
 
     def test_extension_timeout_wins_over_the_project_knob(self):
         piece = _ext("slow-gate", "pre-merge", on_fail="block")
@@ -226,7 +251,8 @@ class TestTimedOutOutcome(unittest.TestCase):
 
     def test_plain_failure_is_not_flagged_as_a_timeout(self):
         outcomes = gates.run_gates(
-            [self._spec()], lambda s: (False, [Finding("major", "boom", "build")], False))
+            [self._spec()], lambda s: (False, [Finding("major", "boom", "build")], False)
+        )
         self.assertFalse(outcomes[0].timed_out)
 
     def test_two_tuple_runner_still_supported(self):
@@ -270,8 +296,6 @@ class TestTimedOutOutcome(unittest.TestCase):
         self.assertFalse(outcomes[0].timed_out)
 
 
-
-
 class TestNotRunPropagation(unittest.TestCase):
     """`not_run` + `on_fail` must survive the whole chain, or #626 re-opens.
 
@@ -288,14 +312,22 @@ class TestNotRunPropagation(unittest.TestCase):
         from types import SimpleNamespace
 
         from keel import ledger
+
         return ledger.build_ship_run_record(
-            command="ship", base_branch="main", changed_files=["a.py"],
+            command="ship",
+            base_branch="main",
+            changed_files=["a.py"],
             outcomes=outcomes,
             verdict=summarize(gates.collect_findings(outcomes)),
             assessment=SimpleNamespace(
-                tier=2, reviewers=2, window_open=True, ci_ok=None,
+                tier=2,
+                reviewers=2,
+                window_open=True,
+                ci_ok=None,
                 merge=SimpleNamespace(action="merge", reason="ok"),
-                halted=False, bypassed_window=False),
+                halted=False,
+                bypassed_window=False,
+            ),
         )
 
     def test_a_blocking_agentic_gate_never_certifies_end_to_end(self):
@@ -327,7 +359,7 @@ class TestNotRunPropagation(unittest.TestCase):
         applied, rejected = gates.apply_recorded_results(outcomes, {"security-review": "pass"})
         self.assertEqual(rejected, [])
 
-        self.assertFalse(applied[0].not_run)     # it *was* run — by the agent
+        self.assertFalse(applied[0].not_run)  # it *was* run — by the agent
         self.assertEqual(gates.unrun_blocking(applied), ())
         self.assertTrue(ledger.record_gates_passed(self._record(applied)))
 
@@ -346,8 +378,7 @@ class TestNotRunPropagation(unittest.TestCase):
 
     def test_an_unnamed_gate_is_left_alone(self):
         outcomes = [gates.GateOutcome("build", True, not_run=True, on_fail="block")]
-        self.assertEqual(gates.apply_recorded_results(outcomes, {"other": "fail"}),
-                         (outcomes, []))
+        self.assertEqual(gates.apply_recorded_results(outcomes, {"other": "fail"}), (outcomes, []))
 
     def test_a_gate_keel_executed_cannot_be_overridden(self):
         # The channel exists for gates keel *cannot* run. Letting it override a measured
@@ -355,22 +386,27 @@ class TestNotRunPropagation(unittest.TestCase):
         # fail-open from the other direction. A `warn` gate is the sharp case: its
         # failure carries no blocking finding to save it.
         from keel import ledger
+
         failed = gates.GateOutcome(
-            "flaky-check", False,
+            "flaky-check",
+            False,
             (Finding("nit", "flaky-check failed (exit 1)", "flaky-check"),),
-            on_fail="warn")
-        applied, rejected = gates.apply_recorded_results(applied_in := [failed],
-                                                        {"flaky-check": "pass"})
+            on_fail="warn",
+        )
+        applied, rejected = gates.apply_recorded_results(
+            applied_in := [failed], {"flaky-check": "pass"}
+        )
 
         self.assertEqual(rejected, ["flaky-check"])
-        self.assertEqual(applied, applied_in)     # verdict untouched
+        self.assertEqual(applied, applied_in)  # verdict untouched
         self.assertFalse(ledger.record_gates_passed(self._record(applied)))
 
     def test_a_recorded_result_drops_timed_out_and_skipped(self):
         # A not-run gate can be neither, so carrying either forward would produce a
         # self-contradictory record (and lose the TIMEOUT label's meaning).
-        stale = gates.GateOutcome("g", True, not_run=True, timed_out=True, skipped=True,
-                                  on_fail="block")
+        stale = gates.GateOutcome(
+            "g", True, not_run=True, timed_out=True, skipped=True, on_fail="block"
+        )
         for verdict in ("pass", "fail"):
             with self.subTest(verdict=verdict):
                 applied, _ = gates.apply_recorded_results([stale], {"g": verdict})
@@ -457,6 +493,7 @@ class TestScanPresetExclusions(unittest.TestCase):
     def test_exclusions_match_a_nested_path(self):
         # The property that actually matters, asserted rather than assumed.
         import fnmatch
+
         nested = "./.claude/worktrees/some-branch/tests/test_cli.py"
         self.assertTrue(
             any(fnmatch.fnmatch(nested, p) for p in self._parsed_exclusions()),

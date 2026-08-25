@@ -51,8 +51,11 @@ class TestAncestry(unittest.TestCase):
 
     def test_allow_stale_base_downgrades_to_advisory_pass(self):
         report = _verify(
-            merge_base_sha="old", base_tip_sha="tip", base_distance=9,
-            tolerance=5, allow_stale_base=True,
+            merge_base_sha="old",
+            base_tip_sha="tip",
+            base_distance=9,
+            tolerance=5,
+            allow_stale_base=True,
         )
         self.assertEqual(report["status"], "pass")
         self.assertEqual(report["verdict"], "stale")
@@ -80,7 +83,9 @@ class TestIsolation(unittest.TestCase):
 
     def test_primary_checkout_edit_is_contaminated(self):
         report = _verify(
-            worktree_path="/repo", repo_root="/repo", is_linked_worktree=False,
+            worktree_path="/repo",
+            repo_root="/repo",
+            is_linked_worktree=False,
         )
         self.assertEqual(report["status"], "fail")
         self.assertEqual(report["verdict"], "contaminated")
@@ -88,7 +93,9 @@ class TestIsolation(unittest.TestCase):
 
     def test_linked_but_outside_repo_root_is_contaminated(self):
         report = _verify(
-            worktree_path="/elsewhere/wt", repo_root="/repo", is_linked_worktree=True,
+            worktree_path="/elsewhere/wt",
+            repo_root="/repo",
+            is_linked_worktree=True,
         )
         self.assertEqual(report["status"], "fail")
         self.assertEqual(report["verdict"], "contaminated")
@@ -98,8 +105,13 @@ class TestIsolation(unittest.TestCase):
         # --allow-stale-base only downgrades a stale ancestry; contamination must
         # still fail (precedence contamination > stale), even with the escape on.
         report = _verify(
-            merge_base_sha="old", base_tip_sha="tip", base_distance=9, tolerance=5,
-            worktree_path="/repo", repo_root="/repo", is_linked_worktree=False,
+            merge_base_sha="old",
+            base_tip_sha="tip",
+            base_distance=9,
+            tolerance=5,
+            worktree_path="/repo",
+            repo_root="/repo",
+            is_linked_worktree=False,
             allow_stale_base=True,
         )
         self.assertEqual(report["status"], "fail")
@@ -130,8 +142,13 @@ class TestCombinedPrecedence(unittest.TestCase):
     def test_contaminated_overrides_stale(self):
         # When both checks fail, contamination is the headline verdict.
         report = _verify(
-            merge_base_sha="old", base_tip_sha="tip", base_distance=9, tolerance=5,
-            worktree_path="/repo", repo_root="/repo", is_linked_worktree=False,
+            merge_base_sha="old",
+            base_tip_sha="tip",
+            base_distance=9,
+            tolerance=5,
+            worktree_path="/repo",
+            repo_root="/repo",
+            is_linked_worktree=False,
         )
         self.assertEqual(report["verdict"], "contaminated")
         self.assertEqual(report["status"], "fail")
@@ -139,8 +156,13 @@ class TestCombinedPrecedence(unittest.TestCase):
 
     def test_stale_note_surfaced_over_isolation_skip(self):
         report = _verify(
-            merge_base_sha="old", base_tip_sha="tip", base_distance=9, tolerance=5,
-            worktree_path=None, repo_root=None, is_linked_worktree=None,
+            merge_base_sha="old",
+            base_tip_sha="tip",
+            base_distance=9,
+            tolerance=5,
+            worktree_path=None,
+            repo_root=None,
+            is_linked_worktree=None,
         )
         self.assertEqual(report["verdict"], "stale")
         self.assertIn("base is stale", report["note"])

@@ -56,6 +56,35 @@ jobs:
           python -m keel plan .keel/project.yaml --root .
           python -m keel run-gates .keel/project.yaml --root .
 
+  format:
+    # Its own job rather than a step in the 9-way test matrix: formatting is a
+    # property of the tree, not of the interpreter or the OS, so checking it
+    # nine times costs nine pinned installs to learn one fact.
+    #
+    # Without this the tree drifts back. `.pre-commit-config.yaml` declares
+    # `ruff-format` as a *rewriting* hook, so before #966 a contributor who
+    # installed the hooks got 126 unrelated files rewritten into their next
+    # commit — silently, already staged. CI was green throughout, having only
+    # ever run `ruff check`. A formatter is a shared convention only if
+    # something asserts it.
+    name: Format (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.13"
+      # Pinned, and pinned to the SAME version as the `ruff-format` hook in
+      # .pre-commit-config.yaml — `tests/test_ruff_pin.py` asserts they match.
+      # The dev extra is an unpinned `ruff`, which is right for `check` (new
+      # rules are worth picking up) and wrong behind a format gate: a floating
+      # formatter turns every PR red the day ruff changes its style, for
+      # reasons that have nothing to do with the change under review.
+      - name: Install the pinned formatter
+        run: python -m pip install --upgrade pip && pip install "ruff==0.16.4"
+      - name: Format
+        run: ruff format --check .
+
   external-promises:
     # The offline suite compares the repo against itself, which is how #772/#773/#774
     # all shipped green. This job is the only place the repo is compared against the

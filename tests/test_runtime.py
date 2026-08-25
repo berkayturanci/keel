@@ -117,11 +117,13 @@ class TestDetect(unittest.TestCase):
 
 class TestEvaluate(unittest.TestCase):
     def test_required_missing_blocks_optional_missing_degrades(self):
-        report = runtime.CapabilityReport((
-            runtime.Capability("shell", True, "ok", "test"),
-            runtime.Capability("git", False, "missing", "test"),
-            runtime.Capability("browser", False, "missing", "test"),
-        ))
+        report = runtime.CapabilityReport(
+            (
+                runtime.Capability("shell", True, "ok", "test"),
+                runtime.Capability("git", False, "missing", "test"),
+                runtime.Capability("browser", False, "missing", "test"),
+            )
+        )
         req = runtime.CapabilityRequirement(required=("shell", "git"), optional=("browser",))
         evaluation = runtime.evaluate(req, report)
         self.assertFalse(evaluation.ok)

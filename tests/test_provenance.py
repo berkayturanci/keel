@@ -36,12 +36,15 @@ class TestSourceTag(unittest.TestCase):
 
         self.assertEqual(tag["role"], "untrusted-agent-output")
         self.assertFalse(tag["trusted_as_instructions"])
-        self.assertEqual(tag["source"], {
-            "agent_id": "reviewer-a",
-            "step_id": "s7",
-            "vendor": "openai",
-            "model": "gpt-5",
-        })
+        self.assertEqual(
+            tag["source"],
+            {
+                "agent_id": "reviewer-a",
+                "step_id": "s7",
+                "vendor": "openai",
+                "model": "gpt-5",
+            },
+        )
         self.assertEqual(
             tag["capability_scope"]["allowed_capabilities"],
             ["gh", "shell"],

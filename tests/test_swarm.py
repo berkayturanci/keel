@@ -363,40 +363,54 @@ class TestSwarmCLI(unittest.TestCase):
         # Text mode with comma separated and invalid/duplicate parts
         buf = io.StringIO()
         with redirect_stdout(buf):
-            code = main([
-                "swarm-plan",
-                ".keel/project.yaml",
-                "--issues", "#714,invalid,715,715,716",
-                "--swarm-id", "swarm-test-123",
-            ])
+            code = main(
+                [
+                    "swarm-plan",
+                    ".keel/project.yaml",
+                    "--issues",
+                    "#714,invalid,715,715,716",
+                    "--swarm-id",
+                    "swarm-test-123",
+                ]
+            )
         self.assertEqual(code, 0)
         self.assertIn("keel swarm plan — swarm-test-123", buf.getvalue())
 
         # Tree mode
         buf_tree = io.StringIO()
         with redirect_stdout(buf_tree):
-            code = main([
-                "swarm-plan",
-                ".keel/project.yaml",
-                "--issues", "714,715,716",
-                "--swarm-id", "swarm-tree-123",
-                "--tree",
-            ])
+            code = main(
+                [
+                    "swarm-plan",
+                    ".keel/project.yaml",
+                    "--issues",
+                    "714,715,716",
+                    "--swarm-id",
+                    "swarm-tree-123",
+                    "--tree",
+                ]
+            )
         self.assertEqual(code, 0)
         self.assertIn("Keel Swarm Plan — swarm-tree-123", buf_tree.getvalue())
 
         # JSON mode
         buf_json = io.StringIO()
         with redirect_stdout(buf_json):
-            code = main([
-                "swarm-plan",
-                ".keel/project.yaml",
-                "--issue", "101",
-                "--issue", "102",
-                "--declared-file", "src/keel/swarm.py",
-                "--issue-label", "role:core,area:swarm",
-                "--json",
-            ])
+            code = main(
+                [
+                    "swarm-plan",
+                    ".keel/project.yaml",
+                    "--issue",
+                    "101",
+                    "--issue",
+                    "102",
+                    "--declared-file",
+                    "src/keel/swarm.py",
+                    "--issue-label",
+                    "role:core,area:swarm",
+                    "--json",
+                ]
+            )
         self.assertEqual(code, 0)
         parsed = json.loads(buf_json.getvalue())
         self.assertEqual(parsed["total_issues"], 2)
@@ -405,13 +419,17 @@ class TestSwarmCLI(unittest.TestCase):
     def test_swarm_plan_cli_single_issue_from_flags(self):
         buf = io.StringIO()
         with redirect_stdout(buf):
-            code = main([
-                "swarm-plan",
-                ".keel/project.yaml",
-                "--issue-title", "Add swarm feature",
-                "--issue-body", "Modify `src/keel/swarm.py`",
-                "--json",
-            ])
+            code = main(
+                [
+                    "swarm-plan",
+                    ".keel/project.yaml",
+                    "--issue-title",
+                    "Add swarm feature",
+                    "--issue-body",
+                    "Modify `src/keel/swarm.py`",
+                    "--json",
+                ]
+            )
         self.assertEqual(code, 0)
         parsed = json.loads(buf.getvalue())
         self.assertEqual(parsed["total_issues"], 1)
@@ -419,11 +437,13 @@ class TestSwarmCLI(unittest.TestCase):
     def test_swarm_plan_cli_no_issues_empty_plan(self):
         buf = io.StringIO()
         with redirect_stdout(buf):
-            code = main([
-                "swarm-plan",
-                ".keel/project.yaml",
-                "--json",
-            ])
+            code = main(
+                [
+                    "swarm-plan",
+                    ".keel/project.yaml",
+                    "--json",
+                ]
+            )
         self.assertEqual(code, 0)
         parsed = json.loads(buf.getvalue())
         self.assertEqual(parsed["total_issues"], 0)
@@ -468,6 +488,7 @@ class TestSwarmCLI(unittest.TestCase):
                 self.assertIn("no active or recent swarm run found", buf.getvalue())
             finally:
                 import shutil
+
                 shutil.rmtree(tmp_fresh, ignore_errors=True)
 
             # Empty root directory with --json
@@ -502,13 +523,17 @@ class TestSwarmCLI(unittest.TestCase):
             # Explicit ID with --json
             buf_id_json = io.StringIO()
             with redirect_stdout(buf_id_json):
-                code = main([
-                    "swarm-status",
-                    ".keel/project.yaml",
-                    "--root", tmpdir,
-                    "--swarm-id", "swarm-live-999",
-                    "--json",
-                ])
+                code = main(
+                    [
+                        "swarm-status",
+                        ".keel/project.yaml",
+                        "--root",
+                        tmpdir,
+                        "--swarm-id",
+                        "swarm-live-999",
+                        "--json",
+                    ]
+                )
             self.assertEqual(code, 0)
             parsed = json.loads(buf_id_json.getvalue())
             self.assertEqual(parsed["swarm_id"], "swarm-live-999")

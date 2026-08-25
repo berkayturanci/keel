@@ -42,10 +42,12 @@ def parse_conflict_hunks(text: str) -> list[dict[str, str]]:
             in_theirs = True
         elif in_conflict and line.startswith(">>>>>>>"):
             in_conflict = False
-            hunks.append({
-                "ours": "".join(ours_lines),
-                "theirs": "".join(theirs_lines),
-            })
+            hunks.append(
+                {
+                    "ours": "".join(ours_lines),
+                    "theirs": "".join(theirs_lines),
+                }
+            )
         elif in_conflict:
             if in_theirs:
                 theirs_lines.append(line)
@@ -87,9 +89,7 @@ def resolve_adjacent_conflict(ours: str, theirs: str) -> str | None:
     """
     ours_lines = [line for line in ours.splitlines() if line.strip()]
     theirs_lines = [line for line in theirs.splitlines() if line.strip()]
-    if not is_safe_declarative_chunk(ours_lines) or not is_safe_declarative_chunk(
-        theirs_lines
-    ):
+    if not is_safe_declarative_chunk(ours_lines) or not is_safe_declarative_chunk(theirs_lines):
         return None
     if not ours_lines:
         return theirs
@@ -188,9 +188,7 @@ def rebase_and_heal_cluster_branch(
                 break
 
         if healed_all:
-            continue_res = run(
-                ["git", "-c", "core.editor=true", "rebase", "--continue"], repo_root
-            )
+            continue_res = run(["git", "-c", "core.editor=true", "rebase", "--continue"], repo_root)
             if continue_res.ok:
                 return True, "self_healed_rebase"
 
@@ -263,10 +261,7 @@ def _pin_drifted(
     if not res.ok or not tip:
         return "cannot re-read the branch tip before merging"
     if tip != pinned_sha:
-        return (
-            f"branch tip moved to {tip[:12]} after the review check pinned "
-            f"{pinned_sha[:12]}"
-        )
+        return f"branch tip moved to {tip[:12]} after the review check pinned {pinned_sha[:12]}"
     return None
 
 
@@ -287,9 +282,7 @@ def _restore_pin(
     # update-ref, not `reset --hard`: a hard reset acts on whatever is checked
     # out, and one call earlier in this loop leaves HEAD on the base branch.
     # Naming the ref makes rewinding the wrong branch impossible.
-    res = run(
-        ["git", "update-ref", f"refs/heads/{branch_name}", pinned_sha], repo_root
-    )
+    res = run(["git", "update-ref", f"refs/heads/{branch_name}", pinned_sha], repo_root)
     if getattr(res, "ok", False):
         return f"the branch was restored to the reviewed commit {pinned_sha[:12]}"
     return (
@@ -446,14 +439,15 @@ def land_wave_clusters(
             # Applies to both arms: the evidence check ran outside the lock,
             # and on the funnel path the rebase itself voids the pin, so the
             # re-read has to happen before either one touches the branch.
-            drift = _pin_drifted(
-                root_path, branch_name, pinned.get(c.cluster_id), runner
-            )
+            drift = _pin_drifted(root_path, branch_name, pinned.get(c.cluster_id), runner)
             if drift is not None:
                 held.append((c.cluster_id, drift))
                 if state:
                     state = update_worker_state(
-                        state, c.cluster_id, step="s10", status="held",
+                        state,
+                        c.cluster_id,
+                        step="s10",
+                        status="held",
                         details=f"pin drift: {drift}",
                     )
                 continue
@@ -476,8 +470,11 @@ def land_wave_clusters(
             else:
                 # Sequential funnel with rebase & heal
                 rebase_ok, reason = rebase_and_heal_cluster_branch(
-                    root_path, branch_name, base_branch=base_branch,
-                    runner=runner, resolver=resolver
+                    root_path,
+                    branch_name,
+                    base_branch=base_branch,
+                    runner=runner,
+                    resolver=resolver,
                 )
                 if rebase_ok:
                     # The heal rewrote the branch: new SHAs, and on the
@@ -504,15 +501,20 @@ def land_wave_clusters(
                         restored = _restore_pin(
                             root_path, branch_name, pinned.get(c.cluster_id), runner
                         )
-                        held.append((
-                            c.cluster_id,
-                            f"landing rebase resolved conflicts ({reason}), so "
-                            f"content nobody reviewed would land; {restored} — "
-                            "rebase and re-review the PR before landing",
-                        ))
+                        held.append(
+                            (
+                                c.cluster_id,
+                                f"landing rebase resolved conflicts ({reason}), so "
+                                f"content nobody reviewed would land; {restored} — "
+                                "rebase and re-review the PR before landing",
+                            )
+                        )
                         if state:
                             state = update_worker_state(
-                                state, c.cluster_id, step="s10", status="held",
+                                state,
+                                c.cluster_id,
+                                step="s10",
+                                status="held",
                                 details=f"post-rebase content: {reason}",
                             )
                         continue

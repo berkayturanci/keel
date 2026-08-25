@@ -85,7 +85,8 @@ def open_pr(
 ) -> CommandResult:
     return run_argv(
         ["gh", "pr", "create", "--title", title, "--body", body, "--base", base, "--head", head],
-        cwd=cwd, **_kw(_run),
+        cwd=cwd,
+        **_kw(_run),
     )
 
 
@@ -121,28 +122,27 @@ def ci_conclusion(pr: int | str, *, cwd: str | None = None, _run=None) -> str | 
     verified against a real ``jq`` binary; jq output can't be exercised by
     this module's offline unit tests (see the module docstring).
     """
-    pending_states = (
-        "\"EXPECTED\",\"PENDING\",\"QUEUED\",\"REQUESTED\",\"WAITING\",\"IN_PROGRESS\""
-    )
+    pending_states = '"EXPECTED","PENDING","QUEUED","REQUESTED","WAITING","IN_PROGRESS"'
     jq = (
         "[.statusCheckRollup[]] "
         "| group_by("
-        "(.context | select(. != null and . != \"\")) "
-        "// (.name | select(. != null and . != \"\")) "
-        "// \"\""
+        '(.context | select(. != null and . != "")) '
+        '// (.name | select(. != null and . != "")) '
+        '// ""'
         ") "
         "| map(max_by(["
         "((.conclusion == null) and "
-        "((.status | if type == \"string\" then ascii_upcase else \"\" end) "
+        '((.status | if type == "string" then ascii_upcase else "" end) '
         "| IN(" + pending_states + "))), "
-        "(.completedAt // .startedAt // \"\")"
+        '(.completedAt // .startedAt // "")'
         "])) "
         "| map(.conclusion // empty) "
-        "| unique | join(\",\")"
+        '| unique | join(",")'
     )
     result = run_argv(
         ["gh", "pr", "view", str(pr), "--json", "statusCheckRollup", "--jq", jq],
-        cwd=cwd, **_kw(_run),
+        cwd=cwd,
+        **_kw(_run),
     )
     if not result.ok:
         return None
@@ -161,8 +161,8 @@ def ci_check_names(pr: int | str, *, cwd: str | None = None, _run=None) -> list[
     """
     jq = (
         "[.statusCheckRollup[] "
-        "| (.context | select(. != null and . != \"\")) "
-        "// (.name | select(. != null and . != \"\")) "
+        '| (.context | select(. != null and . != "")) '
+        '// (.name | select(. != null and . != "")) '
         "// empty] "
         "| unique | .[]"
     )
@@ -184,9 +184,9 @@ def ci_workflow_names(pr: int | str, *, cwd: str | None = None, _run=None) -> li
     """
     jq = (
         "[.statusCheckRollup[] "
-        "| (.workflowName | select(. != null and . != \"\")) "
-        "// (.context | select(. != null and . != \"\")) "
-        "// (.name | select(. != null and . != \"\")) "
+        '| (.workflowName | select(. != null and . != "")) '
+        '// (.context | select(. != null and . != "")) '
+        '// (.name | select(. != null and . != "")) '
         "// empty] "
         "| unique | .[]"
     )
@@ -196,7 +196,8 @@ def ci_workflow_names(pr: int | str, *, cwd: str | None = None, _run=None) -> li
 def _rollup_strings(pr, jq: str, *, cwd: str | None, _run) -> list[str] | None:
     result = run_argv(
         ["gh", "pr", "view", str(pr), "--json", "statusCheckRollup", "--jq", jq],
-        cwd=cwd, **_kw(_run),
+        cwd=cwd,
+        **_kw(_run),
     )
     if not result.ok:
         return None
@@ -230,8 +231,15 @@ def list_prs(
     PRs observed" when offline.
     """
     argv = [
-        "gh", "pr", "list", "--state", "all", "--limit", str(limit),
-        "--json", "number,headRefName",
+        "gh",
+        "pr",
+        "list",
+        "--state",
+        "all",
+        "--limit",
+        str(limit),
+        "--json",
+        "number,headRefName",
     ]
     if head:
         argv += ["--head", head]
@@ -248,7 +256,8 @@ def pr_state(pr: int | str, *, cwd: str | None = None, _run=None) -> str | None:
     """
     result = run_argv(
         ["gh", "pr", "view", str(pr), "--json", "state", "--jq", ".state"],
-        cwd=cwd, **_kw(_run),
+        cwd=cwd,
+        **_kw(_run),
     )
     if not result.ok:
         return None
@@ -256,9 +265,7 @@ def pr_state(pr: int | str, *, cwd: str | None = None, _run=None) -> str | None:
     return raw if raw in ("open", "merged", "closed") else None
 
 
-def pr_files(
-    pr: int | str, *, cwd: str | None = None, _run=None, _sleep=None
-) -> list[str] | None:
+def pr_files(pr: int | str, *, cwd: str | None = None, _run=None, _sleep=None) -> list[str] | None:
     """Paths the pull request changed — what it *meant* to change (#561).
 
     Read from GitHub rather than from a local diff on purpose: after a squash-merge
@@ -267,13 +274,13 @@ def pr_files(
     """
     return _lines(
         ["gh", "pr", "view", str(pr), "--json", "files", "--jq", ".files[].path"],
-        cwd=cwd, _run=_run, _sleep=_sleep,
+        cwd=cwd,
+        _run=_run,
+        _sleep=_sleep,
     )
 
 
-def commit_files(
-    sha: str, *, cwd: str | None = None, _run=None, _sleep=None
-) -> list[str] | None:
+def commit_files(sha: str, *, cwd: str | None = None, _run=None, _sleep=None) -> list[str] | None:
     """Paths a commit changed against its first parent — what actually *landed*.
 
     For a squash-merge the commit has one parent, so this is precisely the set of
@@ -281,9 +288,10 @@ def commit_files(
     asked; an empty list means the commit changed nothing, which is itself a fact.
     """
     return _lines(
-        ["gh", "api", f"repos/{{owner}}/{{repo}}/commits/{sha}",
-         "--jq", ".files[].filename"],
-        cwd=cwd, _run=_run, _sleep=_sleep,
+        ["gh", "api", f"repos/{{owner}}/{{repo}}/commits/{sha}", "--jq", ".files[].filename"],
+        cwd=cwd,
+        _run=_run,
+        _sleep=_sleep,
     )
 
 
@@ -316,8 +324,14 @@ MERGED_PAGE_LIMIT = 100
 
 
 def prs_merged_between(
-    base: str, since: str, until: str, *, cwd: str | None = None, _run=None,
-    _sleep=None, limit: int = MERGED_PAGE_LIMIT,
+    base: str,
+    since: str,
+    until: str,
+    *,
+    cwd: str | None = None,
+    _run=None,
+    _sleep=None,
+    limit: int = MERGED_PAGE_LIMIT,
 ) -> list[int] | None:
     """Pull request numbers merged into ``base`` in the half-open window (#561).
 
@@ -348,9 +362,22 @@ def prs_merged_between(
     check needs the raw ``mergedAt`` values, which ``--jq`` had already discarded.
     """
     rows = _json_rows(
-        ["gh", "pr", "list", "--base", base, "--state", "merged",
-         "--limit", str(limit), "--json", "number,mergedAt"],
-        cwd=cwd, _run=_run, _sleep=_sleep,
+        [
+            "gh",
+            "pr",
+            "list",
+            "--base",
+            base,
+            "--state",
+            "merged",
+            "--limit",
+            str(limit),
+            "--json",
+            "number,mergedAt",
+        ],
+        cwd=cwd,
+        _run=_run,
+        _sleep=_sleep,
     )
     if rows is None:
         return None
@@ -362,14 +389,11 @@ def prs_merged_between(
     return [
         int(row["number"])
         for row in rows
-        if isinstance(row.get("number"), int)
-        and since < str(row.get("mergedAt") or "") < until
+        if isinstance(row.get("number"), int) and since < str(row.get("mergedAt") or "") < until
     ]
 
 
-def _json_rows(
-    argv: list[str], *, cwd: str | None, _run, _sleep=None
-) -> list[dict] | None:
+def _json_rows(argv: list[str], *, cwd: str | None, _run, _sleep=None) -> list[dict] | None:
     """Parse ``gh --json`` output into rows, or ``None`` when it could not be read."""
     result = run_argv_retry(argv, cwd=cwd, _run=_run, _sleep=_sleep)
     if not result.ok:
@@ -379,7 +403,6 @@ def _json_rows(
     except ValueError:
         return None
     return data if isinstance(data, list) else None
-
 
 
 def _merge_window_fields(result: CommandResult) -> list[str]:
@@ -425,8 +448,16 @@ def pr_merge_window(
     # implicit concatenation there reads as a possible missing comma (CodeQL flags it),
     # and an argv list is exactly where that ambiguity is expensive.
     jq = '[.createdAt, .mergedAt, .baseRefName, (.mergeCommit.oid // "")] | @tsv'
-    argv = ["gh", "pr", "view", str(pr), "--json",
-            "createdAt,mergedAt,baseRefName,mergeCommit", "--jq", jq]
+    argv = [
+        "gh",
+        "pr",
+        "view",
+        str(pr),
+        "--json",
+        "createdAt,mergedAt,baseRefName,mergeCommit",
+        "--jq",
+        jq,
+    ]
     sleep_fn = _sleep or time.sleep
     for attempt in range(1, MERGE_COMMIT_POLL_ATTEMPTS + 1):
         result = run_argv_retry(argv, cwd=cwd, _run=_run, _sleep=_sleep)
@@ -458,10 +489,15 @@ def pr_merge_window(
 def pr_merge_snapshot(pr: int | str, *, cwd: str | None = None, _run=None) -> CommandResult:
     return run_argv(
         [
-            "gh", "pr", "view", str(pr),
-            "--json", "headRefOid,mergeStateStatus,statusCheckRollup",
+            "gh",
+            "pr",
+            "view",
+            str(pr),
+            "--json",
+            "headRefOid,mergeStateStatus,statusCheckRollup",
         ],
-        cwd=cwd, **_kw(_run),
+        cwd=cwd,
+        **_kw(_run),
     )
 
 
@@ -534,7 +570,8 @@ def issue_facts(issue: int | str, *, cwd: str | None = None, _run=None) -> Comma
     """
     return run_argv(
         ["gh", "issue", "view", str(issue), "--json", "title,labels"],
-        cwd=cwd, **_kw(_run),
+        cwd=cwd,
+        **_kw(_run),
     )
 
 

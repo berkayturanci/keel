@@ -440,9 +440,7 @@ def capture_health_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
         "counts": counts,
         "skipped_by_reason": dict(sorted(skipped_by_reason.items())),
         "items": items,
-        "reconcile_actions": [
-            action for item in items for action in item["reconcile_actions"]
-        ],
+        "reconcile_actions": [action for item in items for action in item["reconcile_actions"]],
         "dry_run": {
             "no_mutations": True,
             "description": "Morning and wrap surface these actions; they do not mutate "

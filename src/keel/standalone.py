@@ -186,8 +186,7 @@ def cmd_standalone(args: argparse.Namespace) -> int:
     )
     if not consent_ok:
         if args.json:
-            print(json.dumps({"contract": contract, "result": result}, indent=2,
-                             sort_keys=True))
+            print(json.dumps({"contract": contract, "result": result}, indent=2, sort_keys=True))
         else:
             print(consent_message, file=sys.stderr)
         return 1
@@ -196,11 +195,14 @@ def cmd_standalone(args: argparse.Namespace) -> int:
     if is_live_implement and _issue_context_provided(args):
         if intake_record and not intake_record["can_mutate_code"]:
             if args.json:
-                print(json.dumps({"contract": contract, "result": result}, indent=2,
-                                 sort_keys=True))
+                print(
+                    json.dumps({"contract": contract, "result": result}, indent=2, sort_keys=True)
+                )
             else:
-                print(f"issue intake: {intake_record['status']} — {intake_record['reason']}",
-                      file=sys.stderr)
+                print(
+                    f"issue intake: {intake_record['status']} — {intake_record['reason']}",
+                    file=sys.stderr,
+                )
                 for question in intake_record["questions"]:
                     print(f"  question: {question}", file=sys.stderr)
             return 1
@@ -242,9 +244,9 @@ def cmd_standalone(args: argparse.Namespace) -> int:
         print(f"  reports       : {report_names}")
         print(f"  deferrals     : {session['deferral_queue']['status']}")
         if command == "wrap":
-            linked_required = (
-                session["wrap"]["workspace_preflight"]["must_run_from_linked_worktree"]
-            )
+            linked_required = session["wrap"]["workspace_preflight"][
+                "must_run_from_linked_worktree"
+            ]
             print(f"  worktree      : linked required={linked_required}")
             print("  pr            : ready PR after configured gates")
         elif command == "work-block":

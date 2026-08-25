@@ -32,8 +32,9 @@ def _config(
 
 
 def _record(*, config: cfg.ProjectConfig | None = None) -> dict:
-    outcome = SimpleNamespace(gate="build", ok=True, skipped=False, timed_out=False,
-                              error=None, findings=[])
+    outcome = SimpleNamespace(
+        gate="build", ok=True, skipped=False, timed_out=False, error=None, findings=[]
+    )
     verdict = SimpleNamespace(blocked=False, counts={"blocker": 0})
     merge = SimpleNamespace(action="merge", reason="all gates passed")
     assessment = SimpleNamespace(
@@ -81,8 +82,7 @@ class TestLedgerContract(unittest.TestCase):
         self.assertFalse(contract["capture_redaction"]["audit_includes_original_values"])
         self.assertEqual(contract["capture_contract"]["schema_version"], "keel.capture.v1")
         self.assertTrue(contract["capture_contract"]["fail_soft"]["enabled"])
-        self.assertEqual(contract["capture_health"]["schema_version"],
-                         "keel.capture-health.v1")
+        self.assertEqual(contract["capture_health"]["schema_version"], "keel.capture-health.v1")
         self.assertTrue(contract["capture_health"]["consumer_neutral"])
         self.assertIn("ship", contract["append_owner"])
         self.assertIn("morning", contract["readers"])
@@ -120,26 +120,29 @@ class TestLedgerRecords(unittest.TestCase):
     def test_ship_run_record_schema_is_stable(self):
         record = _record()
 
-        self.assertEqual(list(record), [
-            "schema_version",
-            "record_type",
-            "command",
-            "run_id",
-            "target",
-            "issue",
-            "pull_request",
-            "git",
-            "changes",
-            "declared",
-            "gates",
-            "verdict",
-            "assessment",
-            "actors",
-            "run_context",
-            "run_controls",
-            "issue_intake",
-            "capture",
-        ])
+        self.assertEqual(
+            list(record),
+            [
+                "schema_version",
+                "record_type",
+                "command",
+                "run_id",
+                "target",
+                "issue",
+                "pull_request",
+                "git",
+                "changes",
+                "declared",
+                "gates",
+                "verdict",
+                "assessment",
+                "actors",
+                "run_context",
+                "run_controls",
+                "issue_intake",
+                "capture",
+            ],
+        )
         self.assertEqual(record["record_type"], "ship_run")
         self.assertEqual(record["issue"]["number"], 140)
         self.assertEqual(record["changes"]["file_count"], 1)
@@ -149,8 +152,7 @@ class TestLedgerRecords(unittest.TestCase):
         self.assertEqual(record["actors"]["tester"], "tester:gpt-5-mini")
         self.assertIsNone(record["run_controls"])
         self.assertEqual(record["capture"]["schema_version"], "keel.capture.v1")
-        self.assertEqual(record["capture"]["marker"],
-                         "compound-learning: pr=160 status=applied")
+        self.assertEqual(record["capture"]["marker"], "compound-learning: pr=160 status=applied")
         self.assertEqual(record["capture"]["learning"]["decision"], "marker-only")
         self.assertEqual(record["capture"]["learning"]["reason"], "policy-unavailable")
         self.assertTrue(record["capture"]["fail_soft"])
@@ -163,9 +165,13 @@ class TestLedgerRecords(unittest.TestCase):
             outcomes=[],
             verdict=SimpleNamespace(blocked=False, counts={}),
             assessment=SimpleNamespace(
-                tier=2, reviewers=2, window_open=True, ci_ok=None,
+                tier=2,
+                reviewers=2,
+                window_open=True,
+                ci_ok=None,
                 merge=SimpleNamespace(action="merge", reason="ok"),
-                halted=False, bypassed_window=False,
+                halted=False,
+                bypassed_window=False,
             ),
             host_agent="claude",
             transport="mcp",
@@ -201,9 +207,13 @@ class TestLedgerRecords(unittest.TestCase):
             outcomes=[],
             verdict=SimpleNamespace(blocked=False, counts={}),
             assessment=SimpleNamespace(
-                tier=1, reviewers=1, window_open=True, ci_ok=None,
+                tier=1,
+                reviewers=1,
+                window_open=True,
+                ci_ok=None,
                 merge=SimpleNamespace(action="merge", reason="ok"),
-                halted=False, bypassed_window=False,
+                halted=False,
+                bypassed_window=False,
             ),
             host_agent="  ",
             transport="",
@@ -224,11 +234,13 @@ class TestLedgerRecords(unittest.TestCase):
 
     def test_ship_run_record_can_store_learning_create_decision(self):
         record = _record(
-            config=_config(learning_policy={
-                "enabled": True,
-                "mode": "create-learning",
-                "reason": "new invariant",
-            })
+            config=_config(
+                learning_policy={
+                    "enabled": True,
+                    "mode": "create-learning",
+                    "reason": "new invariant",
+                }
+            )
         )
 
         learning = record["capture"]["learning"]
@@ -238,10 +250,12 @@ class TestLedgerRecords(unittest.TestCase):
 
     def test_capture_health_clean_session(self):
         record = _record(
-            config=_config(learning_policy={
-                "enabled": True,
-                "mode": "create-learning",
-            })
+            config=_config(
+                learning_policy={
+                    "enabled": True,
+                    "mode": "create-learning",
+                }
+            )
         )
 
         summary = ledger.capture_health_summary([record])
@@ -264,8 +278,7 @@ class TestLedgerRecords(unittest.TestCase):
         self.assertEqual(summary["counts"]["missing_marker"], 1)
         self.assertEqual(summary["counts"]["skipped"], 0)
         self.assertEqual(summary["items"][0]["status"], "missing-marker")
-        self.assertEqual(summary["items"][0]["reconcile_actions"][0]["type"],
-                         "capture-reconcile")
+        self.assertEqual(summary["items"][0]["reconcile_actions"][0]["type"], "capture-reconcile")
 
     def test_capture_health_counts_skipped_by_allowed_reason(self):
         record = _record()
@@ -290,10 +303,12 @@ class TestLedgerRecords(unittest.TestCase):
 
     def test_capture_health_deferred_capture_needs_reconcile(self):
         record = _record(
-            config=_config(learning_policy={
-                "enabled": True,
-                "mode": "defer",
-            })
+            config=_config(
+                learning_policy={
+                    "enabled": True,
+                    "mode": "defer",
+                }
+            )
         )
         record["capture"]["status"] = "deferred"
         record["capture"]["reason"] = "capture extension can be rerun"
@@ -347,13 +362,15 @@ class TestLedgerRecords(unittest.TestCase):
             "capture": {"status": "applied", "marker": "compound-learning: pr=2 status=applied"},
         }
 
-        summary = ledger.capture_health_summary([
-            unmerged_record,
-            "not-a-dict",
-            {"record_type": "other"},
-            non_dict_assessment,
-            non_dict_merge,
-        ])
+        summary = ledger.capture_health_summary(
+            [
+                unmerged_record,
+                "not-a-dict",
+                {"record_type": "other"},
+                non_dict_assessment,
+                non_dict_merge,
+            ]
+        )
 
         self.assertEqual(summary["record_count"], 2)
         self.assertEqual(summary["status"], "clean")
@@ -363,8 +380,7 @@ class TestLedgerRecords(unittest.TestCase):
     def test_sanitize_record_redacts_default_secret_patterns(self):
         record = _record()
         record["capture"]["reason"] = (
-            "Bearer abcdefghijklmnopqrstuvwxyz and "
-            "https://user:supersecret@example.test/repo"
+            "Bearer abcdefghijklmnopqrstuvwxyz and https://user:supersecret@example.test/repo"
         )
 
         sanitized = ledger.sanitize_record(record, _config())
@@ -380,9 +396,9 @@ class TestLedgerRecords(unittest.TestCase):
     def test_sanitize_record_uses_project_deny_patterns(self):
         record = _record()
         record["capture"]["reason"] = "Private host: internal.example.test"
-        config = _config(deny_patterns=[
-            {"id": "private-host", "pattern": r"internal\.example\.test"}
-        ])
+        config = _config(
+            deny_patterns=[{"id": "private-host", "pattern": r"internal\.example\.test"}]
+        )
 
         sanitized = ledger.sanitize_record(record, config)
 
@@ -393,13 +409,15 @@ class TestLedgerRecords(unittest.TestCase):
     def test_sanitize_record_uses_project_custom_replacement(self):
         record = _record()
         record["capture"]["reason"] = "Ticket: https://tickets.example.test/ABC-123"
-        config = _config(deny_patterns=[
-            {
-                "id": "ticket-url",
-                "pattern": r"https://tickets\.example\.test/[A-Z]+-[0-9]+",
-                "replacement": "[REDACTED:ticket-url]",
-            }
-        ])
+        config = _config(
+            deny_patterns=[
+                {
+                    "id": "ticket-url",
+                    "pattern": r"https://tickets\.example\.test/[A-Z]+-[0-9]+",
+                    "replacement": "[REDACTED:ticket-url]",
+                }
+            ]
+        )
 
         sanitized = ledger.sanitize_record(record, config)
 
@@ -409,9 +427,11 @@ class TestLedgerRecords(unittest.TestCase):
     def test_project_replacement_is_literal_and_cannot_reinsert_secret(self):
         record = _record()
         record["capture"]["reason"] = "captured top-secret-value"
-        config = _config(deny_patterns=[
-            {"id": "bad-replacement", "pattern": r"top-secret-value", "replacement": r"\g<0>"}
-        ])
+        config = _config(
+            deny_patterns=[
+                {"id": "bad-replacement", "pattern": r"top-secret-value", "replacement": r"\g<0>"}
+            ]
+        )
 
         sanitized = ledger.sanitize_record(record, config)
 
@@ -429,17 +449,18 @@ class TestLedgerRecords(unittest.TestCase):
     def test_malformed_project_redaction_entries_are_ignored_until_valid_regex_compiles(self):
         record = _record()
         record["capture"]["reason"] = "x marks the value"
-        config = _config(deny_patterns=[
-            "not-a-rule",
-            {"id": "missing-pattern"},
-            {"pattern": "x"},
-        ])
+        config = _config(
+            deny_patterns=[
+                "not-a-rule",
+                {"id": "missing-pattern"},
+                {"pattern": "x"},
+            ]
+        )
 
         contract = ledger.ledger_contract_as_dict(config)["capture_redaction"]
         sanitized = ledger.sanitize_record(record, config)
 
-        self.assertEqual(contract["configured_rule_ids"],
-                         ["missing-pattern", "deny-pattern-3"])
+        self.assertEqual(contract["configured_rule_ids"], ["missing-pattern", "deny-pattern-3"])
         self.assertEqual(
             sanitized["capture"]["reason"],
             "[REDACTED:deny-pattern-3] marks the value",
@@ -479,8 +500,7 @@ class TestLedgerRecords(unittest.TestCase):
             ledger.append_record(path, record)
             ledger.append_record(path, record)
 
-            self.assertEqual(ledger.parse_records("\n" + ledger.encode_record(record)),
-                             [record])
+            self.assertEqual(ledger.parse_records("\n" + ledger.encode_record(record)), [record])
             self.assertEqual(ledger.read_records(path), [record, record])
 
     def test_parse_rejects_invalid_json_and_schema(self):
@@ -535,22 +555,28 @@ def _gates_record(*, pr, head_sha, run_id="RUN-1", blocked=False, gates=None):
         "pull_request": {"number": pr},
         "git": {"head_sha": head_sha},
         "verdict": {"blocked": blocked},
-        "gates": gates if gates is not None
+        "gates": gates
+        if gates is not None
         else [{"gate": "build", "ok": True, "skipped": False, "error": None}],
     }
 
 
 class TestRecordGatesPassed(unittest.TestCase):
     def test_clean_run_with_ok_and_skipped_gates_passes(self):
-        record = _gates_record(pr=1, head_sha="a", gates=[
-            {"gate": "build", "ok": True, "skipped": False, "error": None},
-            {"gate": "docs", "ok": False, "skipped": True, "error": None},
-        ])
+        record = _gates_record(
+            pr=1,
+            head_sha="a",
+            gates=[
+                {"gate": "build", "ok": True, "skipped": False, "error": None},
+                {"gate": "docs", "ok": False, "skipped": True, "error": None},
+            ],
+        )
         self.assertTrue(ledger.record_gates_passed(record))
 
     def test_blocked_verdict_is_not_a_pass(self):
-        self.assertFalse(ledger.record_gates_passed(_gates_record(pr=1, head_sha="a",
-                                                                  blocked=True)))
+        self.assertFalse(
+            ledger.record_gates_passed(_gates_record(pr=1, head_sha="a", blocked=True))
+        )
 
     def test_missing_or_malformed_verdict_is_not_a_pass(self):
         no_verdict = _gates_record(pr=1, head_sha="a")
@@ -567,20 +593,40 @@ class TestRecordGatesPassed(unittest.TestCase):
         # `ok=True, not_run=True` is what a command-only runner reports for an agentic
         # gate it does not execute. "Nobody ran it" must never certify as "it passed",
         # or a required review gate authorizes the merge without a reviewer (#626).
-        never_ran = _gates_record(pr=1, head_sha="a", gates=[
-            {"gate": "build", "ok": True, "skipped": False, "error": None},
-            {"gate": "review", "ok": True, "skipped": False, "error": None,
-             "not_run": True, "on_fail": "block"},
-        ])
+        never_ran = _gates_record(
+            pr=1,
+            head_sha="a",
+            gates=[
+                {"gate": "build", "ok": True, "skipped": False, "error": None},
+                {
+                    "gate": "review",
+                    "ok": True,
+                    "skipped": False,
+                    "error": None,
+                    "not_run": True,
+                    "on_fail": "block",
+                },
+            ],
+        )
         self.assertFalse(ledger.record_gates_passed(never_ran))
 
     def test_a_non_blocking_gate_that_never_ran_still_passes(self):
         # A warn/suggest gate is advisory by declaration; not running it withholds
         # advice, it does not withhold a merge authorization.
-        advisory = _gates_record(pr=1, head_sha="a", gates=[
-            {"gate": "style", "ok": True, "skipped": False, "error": None,
-             "not_run": True, "on_fail": "warn"},
-        ])
+        advisory = _gates_record(
+            pr=1,
+            head_sha="a",
+            gates=[
+                {
+                    "gate": "style",
+                    "ok": True,
+                    "skipped": False,
+                    "error": None,
+                    "not_run": True,
+                    "on_fail": "warn",
+                },
+            ],
+        )
         self.assertTrue(ledger.record_gates_passed(advisory))
 
     def test_an_unrun_gate_with_no_recognised_severity_is_not_a_pass(self):
@@ -590,27 +636,49 @@ class TestRecordGatesPassed(unittest.TestCase):
         # cannot tell this gate was optional" — and this is the certification path.
         for on_fail in ({}, {"on_fail": None}, {"on_fail": "bogus"}, {"on_fail": ""}):
             with self.subTest(on_fail=on_fail):
-                record = _gates_record(pr=1, head_sha="a", gates=[
-                    {"gate": "review", "ok": True, "skipped": False, "error": None,
-                     "not_run": True, **on_fail},
-                ])
+                record = _gates_record(
+                    pr=1,
+                    head_sha="a",
+                    gates=[
+                        {
+                            "gate": "review",
+                            "ok": True,
+                            "skipped": False,
+                            "error": None,
+                            "not_run": True,
+                            **on_fail,
+                        },
+                    ],
+                )
                 self.assertFalse(ledger.record_gates_passed(record))
 
     def test_a_record_predating_the_not_run_field_still_passes(self):
         # Older ledger lines carry neither key; absence means "ran", as it always did.
-        legacy = _gates_record(pr=1, head_sha="a", gates=[
-            {"gate": "build", "ok": True, "skipped": False, "error": None},
-        ])
+        legacy = _gates_record(
+            pr=1,
+            head_sha="a",
+            gates=[
+                {"gate": "build", "ok": True, "skipped": False, "error": None},
+            ],
+        )
         self.assertTrue(ledger.record_gates_passed(legacy))
 
     def test_gate_with_error_or_not_ok_is_not_a_pass(self):
-        errored = _gates_record(pr=1, head_sha="a", gates=[
-            {"gate": "build", "ok": True, "skipped": False, "error": "boom"},
-        ])
+        errored = _gates_record(
+            pr=1,
+            head_sha="a",
+            gates=[
+                {"gate": "build", "ok": True, "skipped": False, "error": "boom"},
+            ],
+        )
         self.assertFalse(ledger.record_gates_passed(errored))
-        failed = _gates_record(pr=1, head_sha="a", gates=[
-            {"gate": "build", "ok": False, "skipped": False, "error": None},
-        ])
+        failed = _gates_record(
+            pr=1,
+            head_sha="a",
+            gates=[
+                {"gate": "build", "ok": False, "skipped": False, "error": None},
+            ],
+        )
         self.assertFalse(ledger.record_gates_passed(failed))
         malformed = _gates_record(pr=1, head_sha="a", gates=["nope"])
         self.assertFalse(ledger.record_gates_passed(malformed))
@@ -645,7 +713,8 @@ class TestExistingCaptureMarker(unittest.TestCase):
     def test_a_record_carrying_no_marker_never_clashes(self):
         existing = _marker_record(pr=7)
         self.assertIsNone(
-            ledger.existing_capture_marker([existing], _marker_record(pr=7, marker=None)))
+            ledger.existing_capture_marker([existing], _marker_record(pr=7, marker=None))
+        )
         blank = _marker_record(pr=7, marker="   ")
         self.assertIsNone(ledger.existing_capture_marker([existing], blank))
 
@@ -655,12 +724,15 @@ class TestExistingCaptureMarker(unittest.TestCase):
         self.assertIsNone(ledger.existing_capture_marker([_marker_record(pr=7)], candidate))
 
     def test_markerless_and_non_ship_records_are_skipped(self):
-        markerless = _gates_record(pr=7, head_sha="a")          # no capture block at all
+        markerless = _gates_record(pr=7, head_sha="a")  # no capture block at all
         malformed_pr = _marker_record(pr=7)
         malformed_pr["pull_request"] = "nope"
         non_ship = dict(_marker_record(pr=7), record_type="capture_run")
-        self.assertIsNone(ledger.existing_capture_marker(
-            [markerless, malformed_pr, non_ship], _marker_record(pr=7, run_id="RUN-2")))
+        self.assertIsNone(
+            ledger.existing_capture_marker(
+                [markerless, malformed_pr, non_ship], _marker_record(pr=7, run_id="RUN-2")
+            )
+        )
 
 
 class TestGatesPassForHead(unittest.TestCase):
@@ -692,8 +764,7 @@ class TestGatesPassForHead(unittest.TestCase):
 
     def test_other_pr_and_non_ship_run_are_ignored(self):
         other_pr = _gates_record(pr=99, head_sha="head-new")
-        non_ship = dict(_gates_record(pr=42, head_sha="head-new"),
-                        record_type="capture_run")
+        non_ship = dict(_gates_record(pr=42, head_sha="head-new"), record_type="capture_run")
         malformed_git = _gates_record(pr=42, head_sha="head-new")
         malformed_git["git"] = "nope"
         bad_pr = _gates_record(pr=42, head_sha="head-new")

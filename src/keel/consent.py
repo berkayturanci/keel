@@ -381,9 +381,7 @@ def resolve_consent_mode(
     """Resolve and validate the effective consent mode."""
     mode = mode_override or env_mode or config_mode
     if mode not in CONSENT_MODES:
-        raise ValueError(
-            f"unknown consent mode {mode!r}; valid: {', '.join(CONSENT_MODES)}"
-        )
+        raise ValueError(f"unknown consent mode {mode!r}; valid: {', '.join(CONSENT_MODES)}")
     return mode
 
 
@@ -420,4 +418,3 @@ def resolve_approved_consent(
             )
         return normalize_scopes(config_approved_scopes), "config", config_operator, mode
     return (), "none", operator, mode
-

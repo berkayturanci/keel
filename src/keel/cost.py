@@ -60,10 +60,22 @@ FRONTIER_BENCHMARK_PRICE = (15.00, 75.00)  # Used for computing savings vs Claud
 #: code split on the first ``:`` and kept the **right** side, so a Bedrock id
 #: normalised to ``0`` — not an approximation, a total loss of the model name
 #: (#941).
-_REHOST_VENDORS = frozenset({
-    "anthropic", "openai", "google", "meta", "mistral", "cohere", "amazon", "ai21",
-    "deepseek", "qwen", "x-ai", "perplexity",
-})
+_REHOST_VENDORS = frozenset(
+    {
+        "anthropic",
+        "openai",
+        "google",
+        "meta",
+        "mistral",
+        "cohere",
+        "amazon",
+        "ai21",
+        "deepseek",
+        "qwen",
+        "x-ai",
+        "perplexity",
+    }
+)
 
 #: A release stamp or revision that carries no pricing signal: ``-20240229``,
 #: ``-v1``, ``-latest``, ``-preview``.
@@ -191,9 +203,7 @@ def _family_root(raw: str) -> str:
     return "-".join(head) if head and len(head) < len(segments) else raw
 
 
-def estimate_token_cost(
-    prompt_tokens: int, completion_tokens: int, model: str = ""
-) -> float:
+def estimate_token_cost(prompt_tokens: int, completion_tokens: int, model: str = "") -> float:
     """Calculate estimated USD cost for token usage based on model pricing."""
     key = normalize_model_name(model)
     prompt_rate, completion_rate = MODEL_PRICING.get(key, DEFAULT_FALLBACK_PRICE)

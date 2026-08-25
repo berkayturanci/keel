@@ -36,14 +36,17 @@ _CODES = {
 
 # Status / worst -> colour name.
 _STATUS_COLOR = {
-    "done": "green", "active": "cyan", "gate": "amber",
-    "loop": "amber", "pending": "dim", "blocked": "red",
+    "done": "green",
+    "active": "cyan",
+    "gate": "amber",
+    "loop": "amber",
+    "pending": "dim",
+    "blocked": "red",
 }
 _WORST_COLOR = {"none": "green", "minor": "yellow", "major": "amber", "critical": "red"}
 
 # Glyph per display status (filled = reached, hollow = pending).
-_GLYPH = {"done": "●", "active": "◉", "gate": "◆", "loop": "↻", "pending": "○",
-          "blocked": "✖"}
+_GLYPH = {"done": "●", "active": "◉", "gate": "◆", "loop": "↻", "pending": "○", "blocked": "✖"}
 
 
 def paint(text: str, color: str | None, *, enable: bool) -> str:
@@ -54,8 +57,7 @@ def paint(text: str, color: str | None, *, enable: bool) -> str:
     return f"{code}{text}{RESET}" if code else text
 
 
-def display_status(step: dict[str, Any], idx: int, active: int,
-                   *, blocked: bool = False) -> str:
+def display_status(step: dict[str, Any], idx: int, active: int, *, blocked: bool = False) -> str:
     """Resolve the *display* status of ``step`` for a given playhead ``active``.
 
     Independent of the run's recorded position so the CLI can scrub/animate: a
@@ -145,8 +147,12 @@ def _header(run: dict[str, Any], *, enable: bool) -> str:
 # Named-gate outcome -> (glyph, colour): ✓ ran clean, ✗ failed, ⧗ timed out, – skipped.
 # A timeout stays red — it blocks exactly as a failure does — but reads apart from one,
 # so a slow host is not mistaken for a broken test.
-_GATE_GLYPHS = {"ok": ("✓", "green"), "fail": ("✗", "red"),
-                "timeout": ("⧗", "red"), "skip": ("–", "dim")}
+_GATE_GLYPHS = {
+    "ok": ("✓", "green"),
+    "fail": ("✗", "red"),
+    "timeout": ("⧗", "red"),
+    "skip": ("–", "dim"),
+}
 
 
 def _gate_strip(gates: list[dict[str, Any]], *, enable: bool) -> str:
@@ -213,7 +219,7 @@ def _flow_body(
     word = ""
     if cur.get("kind") in ("gate", "merge"):
         gw = _gate_word(cur)
-        word = f"  [gate: {paint(gw, 'red' if gw=='blocked' else 'green', enable=color)}]"
+        word = f"  [gate: {paint(gw, 'red' if gw == 'blocked' else 'green', enable=color)}]"
         if cur.get("kind") == "merge" and merged_now:
             word = f"  [{paint('merged', 'green', enable=color)}]"
     elif cur.get("kind") == "loop":

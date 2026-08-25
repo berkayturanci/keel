@@ -83,6 +83,7 @@ def privileged_change(patch: str) -> tuple[bool, str]:
             return True, line.strip()[:120]
     return False, ""
 
+
 #: Strictest tier — the fail-closed answer when the changed-file list could not be
 #: read at all. An unreadable diff must never classify as the *default* tier: that
 #: is the answer for "an empty changeset", and it silently drops a reviewer and the
@@ -136,7 +137,7 @@ def split_unified_diff(diff: str | None) -> dict[str, str]:
     out: dict[str, str] = {}
     for index, mark in enumerate(marks):
         end = marks[index + 1].start() if index + 1 < len(marks) else len(diff)
-        out[mark.group(1)] = diff[mark.start():end]
+        out[mark.group(1)] = diff[mark.start() : end]
     return out
 
 

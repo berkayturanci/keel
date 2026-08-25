@@ -33,9 +33,7 @@ class TestRequiredScopesForEffect(unittest.TestCase):
         self.assertEqual(consentverify.required_scopes_for_effect("label"), ("github",))
 
     def test_pr_created_requires_github(self):
-        self.assertEqual(
-            consentverify.required_scopes_for_effect("pr_created"), ("github",)
-        )
+        self.assertEqual(consentverify.required_scopes_for_effect("pr_created"), ("github",))
 
     def test_unknown_effect_raises(self):
         with self.assertRaises(ValueError) as ctx:
@@ -61,9 +59,7 @@ class TestObservedEffects(unittest.TestCase):
         observed = consentverify.ObservedEffects(
             pr_exists=True, commented=True, merged=True, labeled=True
         )
-        self.assertEqual(
-            observed.as_kinds(), ("pr_exists", "comment", "merged", "label")
-        )
+        self.assertEqual(observed.as_kinds(), ("pr_exists", "comment", "merged", "label"))
 
 
 class TestReconcile(unittest.TestCase):
@@ -71,9 +67,7 @@ class TestReconcile(unittest.TestCase):
         observed = consentverify.ObservedEffects(
             pr_exists=True, commented=True, merged=True, labeled=True
         )
-        report = consentverify.reconcile(
-            observed, ["git", "github"], has_consent_record=True
-        )
+        report = consentverify.reconcile(observed, ["git", "github"], has_consent_record=True)
         self.assertEqual(report["schema_version"], consentverify.SCHEMA_VERSION)
         self.assertEqual(report["verdict"], consentverify.VERDICT_PASS)
         self.assertTrue(report["ok"])
@@ -121,9 +115,7 @@ class TestReconcile(unittest.TestCase):
 
     def test_matching_record_with_full_scopes_passes(self):
         observed = consentverify.ObservedEffects(pr_exists=True, merged=True)
-        report = consentverify.reconcile(
-            observed, ["git", "github"], has_consent_record=True
-        )
+        report = consentverify.reconcile(observed, ["git", "github"], has_consent_record=True)
         self.assertEqual(report["verdict"], consentverify.VERDICT_PASS)
         self.assertTrue(report["ok"])
 
@@ -162,16 +154,12 @@ class TestConsentRecordFromLedger(unittest.TestCase):
         self.assertEqual(scopes, ())
 
     def test_missing_run_context_is_no_record(self):
-        has_record, scopes = consentverify.consent_record_from_ledger(
-            {"record_type": "ship_run"}
-        )
+        has_record, scopes = consentverify.consent_record_from_ledger({"record_type": "ship_run"})
         self.assertFalse(has_record)
         self.assertEqual(scopes, ())
 
     def test_missing_consent_block_is_no_record(self):
-        has_record, scopes = consentverify.consent_record_from_ledger(
-            {"run_context": {}}
-        )
+        has_record, scopes = consentverify.consent_record_from_ledger({"run_context": {}})
         self.assertFalse(has_record)
         self.assertEqual(scopes, ())
 

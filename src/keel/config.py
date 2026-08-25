@@ -46,19 +46,21 @@ _ENDPOINT_VENDORS = ("openai-compatible",)
 LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "::1", "[::1]")
 
 #: High-privilege system credentials that delegate profiles may not target as API keys.
-BLOCKED_ENV_KEY_NAMES = frozenset({
-    "GITHUB_TOKEN",
-    "GH_TOKEN",
-    "GITHUB_PAT",
-    "AWS_SECRET_ACCESS_KEY",
-    "AWS_ACCESS_KEY_ID",
-    "AWS_SESSION_TOKEN",
-    "SSH_AUTH_SOCK",
-    "NPM_TOKEN",
-    "PYPI_TOKEN",
-    "SLACK_TOKEN",
-    "DISCORD_TOKEN",
-})
+BLOCKED_ENV_KEY_NAMES = frozenset(
+    {
+        "GITHUB_TOKEN",
+        "GH_TOKEN",
+        "GITHUB_PAT",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SESSION_TOKEN",
+        "SSH_AUTH_SOCK",
+        "NPM_TOKEN",
+        "PYPI_TOKEN",
+        "SLACK_TOKEN",
+        "DISCORD_TOKEN",
+    }
+)
 
 BLOCKED_ENV_PREFIXES = (
     "GITHUB_",
@@ -80,15 +82,17 @@ BLOCKED_ENV_PREFIXES = (
 #: secret to appear in CI is one nobody added to the list. The denylist stays as
 #: defence in depth — it catches a name that is *also* on the allowlist by
 #: accident, and it fails with a message about the specific credential.
-ALLOWED_ENV_KEY_NAMES = frozenset({
-    "OPENAI_API_KEY",
-    "GROQ_API_KEY",
-    "DEEPSEEK_API_KEY",
-    "TOGETHER_API_KEY",
-    "OPENROUTER_API_KEY",
-    "LITELLM_API_KEY",
-    "VLLM_API_KEY",
-})
+ALLOWED_ENV_KEY_NAMES = frozenset(
+    {
+        "OPENAI_API_KEY",
+        "GROQ_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "TOGETHER_API_KEY",
+        "OPENROUTER_API_KEY",
+        "LITELLM_API_KEY",
+        "VLLM_API_KEY",
+    }
+)
 
 #: Escape hatch for a provider the list does not name yet. Prefixing is a
 #: deliberate act on a variable created for this purpose, which is the property
@@ -100,6 +104,7 @@ def _is_allowed_api_key_env(name: str) -> bool:
     """Whether ``name`` is a variable a delegate profile may read its key from."""
     upper = name.upper()
     return upper in ALLOWED_ENV_KEY_NAMES or upper.startswith(ALLOWED_ENV_KEY_PREFIX)
+
 
 #: Environment opt-in for a **non-loopback** endpoint. It lives in the environment and
 #: deliberately **not** in ``project.yaml``: the threat model here is an
@@ -119,12 +124,27 @@ DEFAULT_PROMPT_MODE = "stdin"
 #: because "arbitrary CLI" is the whole point and nothing guarantees the spelling.
 DEFAULT_MODEL_ARG = "--model"
 
-__all__ = ["SLOTS", "DEFAULT_EXTENSIONS_DIR", "DELEGATE_PROFILE_VENDORS",
-           "LOOPBACK_HOSTS", "ALLOW_REMOTE_ENDPOINT_ENV",
-           "DELEGATE_PROMPT_MODES", "DEFAULT_PROMPT_MODE", "DEFAULT_MODEL_ARG",
-           "Automation", "DelegateProfile",
-           "Knobs", "ProjectConfig", "ConfigError", "load_config", "parse_config",
-           "validate_data", "load_schema", "config_hash", "delegate_profiles_dict"]
+__all__ = [
+    "SLOTS",
+    "DEFAULT_EXTENSIONS_DIR",
+    "DELEGATE_PROFILE_VENDORS",
+    "LOOPBACK_HOSTS",
+    "ALLOW_REMOTE_ENDPOINT_ENV",
+    "DELEGATE_PROMPT_MODES",
+    "DEFAULT_PROMPT_MODE",
+    "DEFAULT_MODEL_ARG",
+    "Automation",
+    "DelegateProfile",
+    "Knobs",
+    "ProjectConfig",
+    "ConfigError",
+    "load_config",
+    "parse_config",
+    "validate_data",
+    "load_schema",
+    "config_hash",
+    "delegate_profiles_dict",
+]
 
 
 class ConfigError(ValueError):
@@ -332,18 +352,24 @@ def parse_config(data: Any, *, source: str = "<dict>", schema: dict | None = Non
     errors = validate_data(data, schema)
     if isinstance(data, dict) and isinstance(data.get("knobs"), dict):
         knobs = data["knobs"]
-        errors.extend(validate_names(
-            tuple(knobs.get("required_capabilities", [])),
-            source=f"{source}: knobs.required_capabilities",
-        ))
-        errors.extend(validate_names(
-            tuple(knobs.get("optional_capabilities", [])),
-            source=f"{source}: knobs.optional_capabilities",
-        ))
-        errors.extend(_validate_delegate_profiles(
-            knobs.get("delegate_profiles", {}),
-            source=f"{source}: knobs.delegate_profiles",
-        ))
+        errors.extend(
+            validate_names(
+                tuple(knobs.get("required_capabilities", [])),
+                source=f"{source}: knobs.required_capabilities",
+            )
+        )
+        errors.extend(
+            validate_names(
+                tuple(knobs.get("optional_capabilities", [])),
+                source=f"{source}: knobs.optional_capabilities",
+            )
+        )
+        errors.extend(
+            _validate_delegate_profiles(
+                knobs.get("delegate_profiles", {}),
+                source=f"{source}: knobs.delegate_profiles",
+            )
+        )
     if isinstance(data, dict) and isinstance(data.get("policy_pack"), dict):
         for path, names in _policy_capability_fields(data["policy_pack"]):
             errors.extend(validate_names(tuple(names), source=f"{source}: {path}"))
@@ -370,17 +396,17 @@ def config_hash(config: ProjectConfig) -> str:
 
 def _is_env_var_name(value: str) -> bool:
     """Cheap shape check that ``api_key_env`` is a *name*, not a pasted secret."""
-    return bool(value) and not value[0].isdigit() and all(
-        ch.isalnum() or ch == "_" for ch in value
-    )
+    return bool(value) and not value[0].isdigit() and all(ch.isalnum() or ch == "_" for ch in value)
 
 
-BLOCKED_METADATA_HOSTS = frozenset({
-    "169.254.169.254",
-    "metadata.google.internal",
-    "instance-data",
-    "metadata",
-})
+BLOCKED_METADATA_HOSTS = frozenset(
+    {
+        "169.254.169.254",
+        "metadata.google.internal",
+        "instance-data",
+        "metadata",
+    }
+)
 
 
 #: Set to ``1`` to reach RFC1918 space on purpose — a self-hosted vLLM on the
@@ -585,9 +611,8 @@ def _validate_delegate_profiles(profiles: Any, *, source: str) -> list[str]:
                     "variable name (letters, digits, underscore; not starting with a "
                     "digit) — this field takes a name, not a key"
                 )
-            elif (
-                key_env.upper() in BLOCKED_ENV_KEY_NAMES
-                or key_env.upper().startswith(BLOCKED_ENV_PREFIXES)
+            elif key_env.upper() in BLOCKED_ENV_KEY_NAMES or key_env.upper().startswith(
+                BLOCKED_ENV_PREFIXES
             ):
                 errors.append(
                     f"{where}: api_key_env {key_env!r} refers to a sensitive system "
@@ -605,11 +630,16 @@ def _validate_delegate_profiles(profiles: Any, *, source: str) -> list[str]:
         # silently-ignored key: an operator who sets `endpoint` on a `cli` profile has
         # a mistaken model of what will run, and the schema cannot catch it because
         # both fields are legal *somewhere*.
-        for field_name, owners in (("command", _COMMAND_VENDORS),
-                                   ("endpoint", _ENDPOINT_VENDORS),
-                                   ("api_key_env", _ENDPOINT_VENDORS)):
-            if profile.get(field_name) and vendor in DELEGATE_PROFILE_VENDORS \
-                    and vendor not in owners:
+        for field_name, owners in (
+            ("command", _COMMAND_VENDORS),
+            ("endpoint", _ENDPOINT_VENDORS),
+            ("api_key_env", _ENDPOINT_VENDORS),
+        ):
+            if (
+                profile.get(field_name)
+                and vendor in DELEGATE_PROFILE_VENDORS
+                and vendor not in owners
+            ):
                 errors.append(
                     f"{where}: {field_name!r} does not apply to vendor {vendor!r} "
                     f"(only {', '.join(owners)}) — it would be silently ignored"
@@ -628,9 +658,8 @@ def _policy_capability_fields(value: Any, path: str = "policy_pack") -> list[tup
     if isinstance(value, dict):
         for key, child in value.items():
             child_path = f"{path}.{key}"
-            if (
-                key in {"required_capabilities", "optional_capabilities"}
-                and isinstance(child, list)
+            if key in {"required_capabilities", "optional_capabilities"} and isinstance(
+                child, list
             ):
                 fields.append((child_path, child))
             else:

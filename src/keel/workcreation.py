@@ -70,9 +70,7 @@ def contract_as_dict(*, near_text_similarity: float | None = None) -> dict[str, 
         "dedupe": {
             "against": "open work",
             "keys": ["dedupe_key", "normalized_title", "near_text"],
-            "near_text_similarity": _confidence(
-                near_text_similarity, DEFAULT_NEAR_TEXT_SIMILARITY
-            ),
+            "near_text_similarity": _confidence(near_text_similarity, DEFAULT_NEAR_TEXT_SIMILARITY),
             "duplicate_outcome": "suppress-duplicate",
         },
         "cycle_limit": {
@@ -121,35 +119,43 @@ def evaluate_candidates(
         candidate = _normalize_candidate(raw, index)
         duplicate = _find_duplicate(candidate, normalized_existing, policy["near_text_similarity"])
         if _is_transient(candidate, policy):
-            decisions.append(WorkDecision(
-                candidate["id"],
-                "suppress-transient",
-                "transient-signal",
-                candidate["title"],
-            ))
+            decisions.append(
+                WorkDecision(
+                    candidate["id"],
+                    "suppress-transient",
+                    "transient-signal",
+                    candidate["title"],
+                )
+            )
         elif duplicate is not None:
-            decisions.append(WorkDecision(
-                candidate["id"],
-                "suppress-duplicate",
-                "open-work-duplicate",
-                candidate["title"],
-                duplicate_of=duplicate["number"],
-            ))
+            decisions.append(
+                WorkDecision(
+                    candidate["id"],
+                    "suppress-duplicate",
+                    "open-work-duplicate",
+                    candidate["title"],
+                    duplicate_of=duplicate["number"],
+                )
+            )
         elif created >= policy["max_creations"]:
-            decisions.append(WorkDecision(
-                candidate["id"],
-                "limit-reached",
-                "per-cycle-limit-reached",
-                candidate["title"],
-            ))
+            decisions.append(
+                WorkDecision(
+                    candidate["id"],
+                    "limit-reached",
+                    "per-cycle-limit-reached",
+                    candidate["title"],
+                )
+            )
         else:
             created += 1
-            decisions.append(WorkDecision(
-                candidate["id"],
-                "create",
-                "eligible",
-                candidate["title"],
-            ))
+            decisions.append(
+                WorkDecision(
+                    candidate["id"],
+                    "create",
+                    "eligible",
+                    candidate["title"],
+                )
+            )
             normalized_existing.append(_created_as_existing(candidate, created))
     decision_dicts = [decision.as_dict() for decision in decisions]
     return {

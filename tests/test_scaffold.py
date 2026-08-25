@@ -139,6 +139,7 @@ class TestDefaultConfig(unittest.TestCase):
         for stack in ("flutter", "python", "node", "android", "rust", "go", "java", "generic"):
             text = scaffold.default_config(stack, repo="demo")
             import yaml
+
             data = yaml.safe_load(text)
             # parse_config raises on any schema error
             config = cfg.parse_config(data, source=f"<{stack}>")
@@ -161,14 +162,17 @@ class TestDefaultConfig(unittest.TestCase):
 class TestWizard(unittest.TestCase):
     def test_sets_window_and_validates(self):
         import yaml
-        answers = iter([
-            "develop",
-            "Etc/GMT-3",
-            "09:00-18:00",
-            "agent",
-            "pytest",
-            "ruff check .",
-        ])
+
+        answers = iter(
+            [
+                "develop",
+                "Etc/GMT-3",
+                "09:00-18:00",
+                "agent",
+                "pytest",
+                "ruff check .",
+            ]
+        )
 
         def ask(prompt, default):
             return next(answers)
@@ -209,6 +213,7 @@ class TestWizard(unittest.TestCase):
 class TestRenderConfig(unittest.TestCase):
     def test_minimal_validates(self):
         import yaml
+
         text = scaffold.render_config(repo="x")
         self.assertEqual(cfg.parse_config(yaml.safe_load(text)).repo, "x")
         self.assertEqual(cfg.parse_config(yaml.safe_load(text)).consent_mode, "explicit")

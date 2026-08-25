@@ -47,11 +47,13 @@ def list_project_commands(config: ProjectConfig) -> tuple[ProjectCommand, ...]:
     """Return project-owned commands declared by the policy pack."""
     pack = config.policy_pack
     commands: list[ProjectCommand] = []
-    commands.extend(_commands_from_map(pack.get("project_commands", {}),
-                                       source="policy_pack.project_commands"))
+    commands.extend(
+        _commands_from_map(pack.get("project_commands", {}), source="policy_pack.project_commands")
+    )
     legacy_names = {cmd.name for cmd in commands}
-    for command in _commands_from_map(pack.get("command_routing", {}),
-                                      source="policy_pack.command_routing"):
+    for command in _commands_from_map(
+        pack.get("command_routing", {}), source="policy_pack.command_routing"
+    ):
         if command.name not in legacy_names:
             commands.append(command)
     return tuple(sorted(commands, key=lambda cmd: cmd.name))
@@ -72,16 +74,18 @@ def _commands_from_map(value: Any, *, source: str) -> list[ProjectCommand]:
     for name, raw in value.items():
         if not isinstance(raw, dict):
             continue
-        commands.append(ProjectCommand(
-            name=name,
-            command=raw.get("command"),
-            description=raw.get("description"),
-            agent_role=raw.get("agent_role"),
-            paths=tuple(raw.get("paths", [])),
-            required_capabilities=tuple(raw.get("required_capabilities", [])),
-            optional_capabilities=tuple(raw.get("optional_capabilities", [])),
-            side_effects=tuple(raw.get("side_effects", [])),
-            dry_run_safe=bool(raw.get("dry_run_safe", False)),
-            source=source,
-        ))
+        commands.append(
+            ProjectCommand(
+                name=name,
+                command=raw.get("command"),
+                description=raw.get("description"),
+                agent_role=raw.get("agent_role"),
+                paths=tuple(raw.get("paths", [])),
+                required_capabilities=tuple(raw.get("required_capabilities", [])),
+                optional_capabilities=tuple(raw.get("optional_capabilities", [])),
+                side_effects=tuple(raw.get("side_effects", [])),
+                dry_run_safe=bool(raw.get("dry_run_safe", False)),
+                source=source,
+            )
+        )
     return commands

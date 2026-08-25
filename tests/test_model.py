@@ -52,8 +52,13 @@ class TestBackbone(unittest.TestCase):
         self.assertEqual(agentic, {"implement", "classify", "review"})
 
     def test_invariants_present(self):
-        for inv in ("merge_lock", "window_gate", "fail_soft",
-                    "orchestrator_only_writes", "attribution"):
+        for inv in (
+            "merge_lock",
+            "window_gate",
+            "fail_soft",
+            "orchestrator_only_writes",
+            "attribution",
+        ):
             self.assertIn(inv, model.INVARIANTS)
 
 

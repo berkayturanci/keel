@@ -37,8 +37,7 @@ class TestCaptureContract(unittest.TestCase):
         self.assertEqual(contract["schema_version"], "keel.capture.v1")
         self.assertEqual(contract["marker"]["prefix"], "compound-learning")
         self.assertIn("recursion-guard", contract["marker"]["skip_reasons"])
-        self.assertEqual(contract["durable_artifacts"]["project_destination"],
-                         "extension-owned")
+        self.assertEqual(contract["durable_artifacts"]["project_destination"], "extension-owned")
         self.assertTrue(contract["fail_soft"]["enabled"])
         self.assertEqual(contract["reconcile"]["primitive"], "capture.reconcile_session")
         self.assertTrue(contract["reconcile"]["idempotent"])
@@ -58,12 +57,15 @@ class TestCaptureContract(unittest.TestCase):
 
         learning = contract["learning_quality"]
         self.assertEqual(learning["schema_version"], "keel.capture-learning.v1")
-        self.assertEqual(learning["decisions"], [
-            "create-learning",
-            "marker-only",
-            "defer",
-            "duplicate",
-        ])
+        self.assertEqual(
+            learning["decisions"],
+            [
+                "create-learning",
+                "marker-only",
+                "defer",
+                "duplicate",
+            ],
+        )
         self.assertTrue(learning["policy_enabled"])
         self.assertEqual(learning["policy_mode"], "create-learning")
         self.assertTrue(learning["marker_required_for_every_merge"])
@@ -248,11 +250,13 @@ class TestCaptureContract(unittest.TestCase):
             labels=["enhancement"],
             changed_files=["src/keel/release.py"],
             capture_status="applied",
-            config=_config_with_learning_policy({
-                "enabled": True,
-                "mode": "create-learning",
-                "reason": "new release invariant",
-            }),
+            config=_config_with_learning_policy(
+                {
+                    "enabled": True,
+                    "mode": "create-learning",
+                    "reason": "new release invariant",
+                }
+            ),
         )
 
         self.assertEqual(decision["decision"], "create-learning")
@@ -264,10 +268,12 @@ class TestCaptureContract(unittest.TestCase):
             title="Capture skipped by policy",
             changed_files=["src/keel/capture.py"],
             capture_status="skipped:no-policy",
-            config=_config_with_learning_policy({
-                "enabled": True,
-                "mode": "create-learning",
-            }),
+            config=_config_with_learning_policy(
+                {
+                    "enabled": True,
+                    "mode": "create-learning",
+                }
+            ),
         )
 
         self.assertEqual(decision["decision"], "marker-only")
@@ -279,10 +285,12 @@ class TestCaptureContract(unittest.TestCase):
             title="Needs human synthesis",
             changed_files=["docs/keel/release.md"],
             capture_status="applied",
-            config=_config_with_learning_policy({
-                "enabled": True,
-                "mode": "defer",
-            }),
+            config=_config_with_learning_policy(
+                {
+                    "enabled": True,
+                    "mode": "defer",
+                }
+            ),
         )
 
         self.assertEqual(decision["decision"], "defer")
@@ -295,10 +303,12 @@ class TestCaptureContract(unittest.TestCase):
             changed_files=["docs/keel/release.md"],
             capture_status="deferred",
             capture_reason="operator-specific temporary note",
-            config=_config_with_learning_policy({
-                "enabled": True,
-                "mode": "defer",
-            }),
+            config=_config_with_learning_policy(
+                {
+                    "enabled": True,
+                    "mode": "defer",
+                }
+            ),
         )
 
         self.assertEqual(decision["decision"], "defer")
@@ -309,11 +319,13 @@ class TestCaptureContract(unittest.TestCase):
             title="Routine generated adapter sync",
             changed_files=[".claude/commands/keel/ship.md"],
             capture_status="applied",
-            config=_config_with_learning_policy({
-                "enabled": True,
-                "mode": "marker-only",
-                "reason": "routine generated sync",
-            }),
+            config=_config_with_learning_policy(
+                {
+                    "enabled": True,
+                    "mode": "marker-only",
+                    "reason": "routine generated sync",
+                }
+            ),
         )
 
         self.assertEqual(decision["decision"], "marker-only")
@@ -325,16 +337,18 @@ class TestCaptureContract(unittest.TestCase):
             labels=["enhancement"],
             changed_files=["src/keel/release.py"],
         )
-        existing = [{
-            "run_id": "RUN-1",
-            "pull_request": {"number": 1},
-            "capture": {
-                "learning": {
-                    "decision": "create-learning",
-                    "fingerprint": fingerprint,
+        existing = [
+            {
+                "run_id": "RUN-1",
+                "pull_request": {"number": 1},
+                "capture": {
+                    "learning": {
+                        "decision": "create-learning",
+                        "fingerprint": fingerprint,
+                    },
                 },
-            },
-        }]
+            }
+        ]
 
         decision = capture.learning_decision(
             title="  release   invariant ",
@@ -342,10 +356,12 @@ class TestCaptureContract(unittest.TestCase):
             changed_files=["SRC\\KEEL\\RELEASE.PY"],
             capture_status="applied",
             existing_records=existing,
-            config=_config_with_learning_policy({
-                "enabled": True,
-                "mode": "create-learning",
-            }),
+            config=_config_with_learning_policy(
+                {
+                    "enabled": True,
+                    "mode": "create-learning",
+                }
+            ),
         )
 
         self.assertEqual(decision["decision"], "duplicate")
@@ -359,15 +375,17 @@ class TestCaptureContract(unittest.TestCase):
             labels=["enhancement"],
             changed_files=["src/keel/release.py"],
         )
-        existing = [{
-            "run_id": "RUN-1",
-            "capture": {
-                "learning": {
-                    "decision": "create-learning",
-                    "fingerprint": fingerprint,
+        existing = [
+            {
+                "run_id": "RUN-1",
+                "capture": {
+                    "learning": {
+                        "decision": "create-learning",
+                        "fingerprint": fingerprint,
+                    },
                 },
-            },
-        }]
+            }
+        ]
 
         decision = capture.learning_decision(
             title="Release invariant",
@@ -375,11 +393,13 @@ class TestCaptureContract(unittest.TestCase):
             changed_files=["src/keel/release.py"],
             capture_status="applied",
             existing_records=existing,
-            config=_config_with_learning_policy({
-                "enabled": True,
-                "mode": "create-learning",
-                "dedupe": {"enabled": False},
-            }),
+            config=_config_with_learning_policy(
+                {
+                    "enabled": True,
+                    "mode": "create-learning",
+                    "dedupe": {"enabled": False},
+                }
+            ),
         )
 
         self.assertEqual(decision["decision"], "create-learning")
@@ -428,10 +448,12 @@ class TestCaptureContract(unittest.TestCase):
             changed_files=["src/keel/release.py"],
             capture_status="applied",
             existing_records=existing,
-            config=_config_with_learning_policy({
-                "enabled": True,
-                "mode": "create-learning",
-            }),
+            config=_config_with_learning_policy(
+                {
+                    "enabled": True,
+                    "mode": "create-learning",
+                }
+            ),
         )
 
         self.assertEqual(decision["decision"], "duplicate")
@@ -472,12 +494,17 @@ class TestCaptureContract(unittest.TestCase):
         self.assertEqual(plan["status"], "actionable")
         self.assertEqual(result["marker"], "compound-learning: pr=170 status=applied")
         self.assertEqual(result["issue_numbers"], [45])
-        self.assertEqual(result["actions"], [{
-            "type": "close-linked-issue",
-            "pr": 170,
-            "idempotency_key": "close-linked-issue:issue-45:pr-170",
-            "issue": 45,
-        }])
+        self.assertEqual(
+            result["actions"],
+            [
+                {
+                    "type": "close-linked-issue",
+                    "pr": 170,
+                    "idempotency_key": "close-linked-issue:issue-45:pr-170",
+                    "issue": 45,
+                }
+            ],
+        )
 
     def test_reconcile_valid_marker_blocks_ambiguous_issue_closeout(self):
         plan = capture.reconcile_session(
@@ -495,12 +522,15 @@ class TestCaptureContract(unittest.TestCase):
 
         self.assertEqual(plan["status"], "actionable")
         self.assertEqual(result["marker"], "compound-learning: pr=170 status=skipped:no-policy")
-        self.assertEqual([action["type"] for action in result["actions"]], [
-            "emit-capture-marker",
-            "post-closure-summary",
-            "record-skip",
-            "close-linked-issue",
-        ])
+        self.assertEqual(
+            [action["type"] for action in result["actions"]],
+            [
+                "emit-capture-marker",
+                "post-closure-summary",
+                "record-skip",
+                "close-linked-issue",
+            ],
+        )
         self.assertEqual(result["actions"][-1]["issue"], 45)
 
     def test_reconcile_records_capability_unavailable_when_extension_policy_exists(self):
@@ -514,11 +544,14 @@ class TestCaptureContract(unittest.TestCase):
         result = plan["results"][0]
         self.assertIn("capability-unavailable", result["marker"])
         self.assertEqual(result["actions"][2]["reason"], "capability-unavailable")
-        self.assertEqual([action["type"] for action in result["actions"]], [
-            "emit-capture-marker",
-            "post-closure-summary",
-            "record-skip",
-        ])
+        self.assertEqual(
+            [action["type"] for action in result["actions"]],
+            [
+                "emit-capture-marker",
+                "post-closure-summary",
+                "record-skip",
+            ],
+        )
 
     def test_reconcile_marker_only_policy_records_applied_marker(self):
         plan = capture.reconcile_session(
@@ -531,21 +564,26 @@ class TestCaptureContract(unittest.TestCase):
         result = plan["results"][0]
         self.assertEqual(result["marker"], "compound-learning: pr=171 status=applied")
         self.assertEqual(result["reason"], "marker-only capture policy configured")
-        self.assertEqual([action["type"] for action in result["actions"]], [
-            "emit-capture-marker",
-            "post-closure-summary",
-            "close-linked-issue",
-        ])
+        self.assertEqual(
+            [action["type"] for action in result["actions"]],
+            [
+                "emit-capture-marker",
+                "post-closure-summary",
+                "close-linked-issue",
+            ],
+        )
 
     def test_reconcile_defers_to_capture_extension_when_capability_available(self):
         plan = capture.reconcile_session(
             [_record(172)],
-            [{
-                "number": 172,
-                "labels": ["enhancement"],
-                "changed_files": ["src/keel/runner.py"],
-                "issue_numbers": [50],
-            }],
+            [
+                {
+                    "number": 172,
+                    "labels": ["enhancement"],
+                    "changed_files": ["src/keel/runner.py"],
+                    "issue_numbers": [50],
+                }
+            ],
             config=_config_with_capture_policy({"enabled": True, "mode": "extension"}),
             capture_capability_available=True,
         )
@@ -559,13 +597,15 @@ class TestCaptureContract(unittest.TestCase):
     def test_reconcile_respects_recursion_guard(self):
         plan = capture.reconcile_session(
             [_record(173)],
-            [{
-                "number": 173,
-                "title": "Add capture reconcile",
-                "labels": "capture",
-                "changed_files": "src/keel/capture.py",
-                "issue_numbers": "47",
-            }],
+            [
+                {
+                    "number": 173,
+                    "title": "Add capture reconcile",
+                    "labels": "capture",
+                    "changed_files": "src/keel/capture.py",
+                    "issue_numbers": "47",
+                }
+            ],
             config=_config_with_capture_policy({"enabled": True, "mode": "extension"}),
             capture_capability_available=True,
         )
@@ -602,12 +642,14 @@ class TestRetrieveRelevantLearnings(unittest.TestCase):
 
     def test_empty_tokens_returns_empty(self):
         import tempfile
+
         with tempfile.TemporaryDirectory() as td:
             self.assertEqual(capture.retrieve_relevant_learnings("the and for", td), [])
 
     def test_retrieves_relevant_learning_records(self):
         import tempfile
         from pathlib import Path
+
         with tempfile.TemporaryDirectory() as td:
             p = Path(td)
             (p / "auth_tokens.md").write_text(
@@ -629,6 +671,7 @@ class TestRetrieveRelevantLearnings(unittest.TestCase):
         import tempfile
         from pathlib import Path
         from unittest.mock import patch
+
         with tempfile.TemporaryDirectory() as td:
             p = Path(td)
             (p / "lesson.md").write_text("# Lesson\nSome content")

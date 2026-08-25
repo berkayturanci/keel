@@ -31,20 +31,48 @@ _MARKERS: tuple[tuple[str, str], ...] = (
 
 #: per-stack defaults: platform, build cmd, lint cmd (or None), tier-3 globs.
 _TEMPLATES: dict[str, dict] = {
-    "flutter": {"platform": "flutter", "build": "flutter test", "lint": "flutter analyze",
-                "globs": ("lib/**/*.dart",)},
-    "python": {"platform": "python", "build": "make test", "lint": "ruff check .",
-               "globs": ("src/**/*.py",)},
-    "node": {"platform": "node", "build": "npm test", "lint": "npm run lint",
-             "globs": ("src/**/*.ts", "src/**/*.js")},
-    "android": {"platform": "android", "build": "./gradlew test", "lint": "./gradlew lint",
-                "globs": ("app/src/**",)},
-    "rust": {"platform": "rust", "build": "cargo test", "lint": "cargo clippy",
-             "globs": ("src/**/*.rs",)},
-    "go": {"platform": "go", "build": "go test ./...", "lint": "golangci-lint run",
-           "globs": ("**/*.go",)},
-    "java": {"platform": "java", "build": "mvn test", "lint": "mvn checkstyle:check",
-             "globs": ("src/main/**",)},
+    "flutter": {
+        "platform": "flutter",
+        "build": "flutter test",
+        "lint": "flutter analyze",
+        "globs": ("lib/**/*.dart",),
+    },
+    "python": {
+        "platform": "python",
+        "build": "make test",
+        "lint": "ruff check .",
+        "globs": ("src/**/*.py",),
+    },
+    "node": {
+        "platform": "node",
+        "build": "npm test",
+        "lint": "npm run lint",
+        "globs": ("src/**/*.ts", "src/**/*.js"),
+    },
+    "android": {
+        "platform": "android",
+        "build": "./gradlew test",
+        "lint": "./gradlew lint",
+        "globs": ("app/src/**",),
+    },
+    "rust": {
+        "platform": "rust",
+        "build": "cargo test",
+        "lint": "cargo clippy",
+        "globs": ("src/**/*.rs",),
+    },
+    "go": {
+        "platform": "go",
+        "build": "go test ./...",
+        "lint": "golangci-lint run",
+        "globs": ("**/*.go",),
+    },
+    "java": {
+        "platform": "java",
+        "build": "mvn test",
+        "lint": "mvn checkstyle:check",
+        "globs": ("src/main/**",),
+    },
     "generic": {"platform": "generic", "build": "make test", "lint": None, "globs": ()},
 }
 
@@ -66,7 +94,7 @@ def detect_base_branch(root: str | Path) -> str:
         try:
             content = head_file.read_text(encoding="utf-8").strip()
             if content.startswith("ref: refs/heads/"):
-                ref_name = content[len("ref: refs/heads/"):].strip()
+                ref_name = content[len("ref: refs/heads/") :].strip()
                 if ref_name in ("main", "master", "develop", "trunk"):
                     return ref_name
         except OSError:
@@ -105,10 +133,16 @@ def auto_detect_config(
 
 
 def render_config(
-    *, repo: str = "my-repo", base_branch: str = "main", platform: str = "generic",
-    build_cmd: str = "make test", lint_cmd: str | None = None,
-    tier3_globs: tuple[str, ...] = (), timezone: str | None = None,
-    merge_window: str | None = None, consent_mode: str = "explicit",
+    *,
+    repo: str = "my-repo",
+    base_branch: str = "main",
+    platform: str = "generic",
+    build_cmd: str = "make test",
+    lint_cmd: str | None = None,
+    tier3_globs: tuple[str, ...] = (),
+    timezone: str | None = None,
+    merge_window: str | None = None,
+    consent_mode: str = "explicit",
     generator: str = "keel init",
 ) -> str:
     """Render a valid ``project.yaml`` from explicit values (passes ``keel validate``)."""
@@ -155,8 +189,14 @@ def _yaml_scalar(value: str) -> str:
 def default_config(stack: str, *, repo: str = "my-repo", base_branch: str = "main") -> str:
     """Render the default ``project.yaml`` for ``stack`` (non-interactive)."""
     t = _TEMPLATES.get(stack, _TEMPLATES["generic"])
-    return render_config(repo=repo, base_branch=base_branch, platform=t["platform"],
-                         build_cmd=t["build"], lint_cmd=t["lint"], tier3_globs=t["globs"])
+    return render_config(
+        repo=repo,
+        base_branch=base_branch,
+        platform=t["platform"],
+        build_cmd=t["build"],
+        lint_cmd=t["lint"],
+        tier3_globs=t["globs"],
+    )
 
 
 def wizard(stack: str, ask: Callable[[str, str], str], *, repo: str = "my-repo") -> str:
@@ -173,8 +213,14 @@ def wizard(stack: str, ask: Callable[[str, str], str], *, repo: str = "my-repo")
     build = ask("Build/test command", t["build"])
     lint = ask("Lint command (blank to skip)", t["lint"] or "")
     return render_config(
-        repo=repo, base_branch=base, platform=t["platform"], build_cmd=build,
-        lint_cmd=lint or None, tier3_globs=t["globs"],
-        timezone=tz or None, merge_window=win or None, consent_mode=mode,
+        repo=repo,
+        base_branch=base,
+        platform=t["platform"],
+        build_cmd=build,
+        lint_cmd=lint or None,
+        tier3_globs=t["globs"],
+        timezone=tz or None,
+        merge_window=win or None,
+        consent_mode=mode,
         generator="keel init --wizard",
     )

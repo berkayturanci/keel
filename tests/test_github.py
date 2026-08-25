@@ -6,9 +6,7 @@ from keel import github
 
 
 def _proc(out: str = "", code: int = 0) -> subprocess.CompletedProcess:
-    return subprocess.CompletedProcess(
-        args=["gh"], returncode=code, stdout=out, stderr=""
-    )
+    return subprocess.CompletedProcess(args=["gh"], returncode=code, stdout=out, stderr="")
 
 
 class TestGithubComments(unittest.TestCase):
@@ -35,9 +33,7 @@ class TestGithubComments(unittest.TestCase):
 
     def test_edit_issue_comment_uses_raw_field(self):
         mock_runner = MagicMock(return_value=_proc('{"id": 123}'))
-        res = github.edit_issue_comment(
-            "owner/repo", 999, "@updated review body", _run=mock_runner
-        )
+        res = github.edit_issue_comment("owner/repo", 999, "@updated review body", _run=mock_runner)
         self.assertTrue(res.ok)
         mock_runner.assert_called_once()
         cmd = mock_runner.call_args[0][0]

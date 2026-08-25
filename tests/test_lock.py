@@ -93,9 +93,9 @@ class TestResourceClaims(unittest.TestCase):
 
             self.assertEqual(released.status, "not-owner")
             self.assertEqual(released.holder, lk.UNKNOWN_HOLDER)
-            self.assertTrue(path.exists())          # still held
+            self.assertTrue(path.exists())  # still held
             denied = lk.claim_resource(d, "shared", owner="agent-b")
-            self.assertFalse(denied.granted)        # and agent-b cannot take it
+            self.assertFalse(denied.granted)  # and agent-b cannot take it
 
     def test_a_missing_owner_file_refuses_a_named_release(self):
         # The reachable version: `_claim_path` mkdirs before writing owner.json, so a

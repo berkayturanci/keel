@@ -226,8 +226,7 @@ class CredentialAssignmentRedactionTest(unittest.TestCase):
 
     def test_short_quoted_status_values_are_not_redacted(self) -> None:
         """Short quoted values (status strings, not secrets) keep the 8-char floor."""
-        for line in ('token="none"', 'token=""', 'api_key="n/a"',
-                     'password="test"', 'token: "ok"'):
+        for line in ('token="none"', 'token=""', 'api_key="n/a"', 'password="test"', 'token: "ok"'):
             result = redaction.sanitize(line, self.policy)
             self.assertEqual(result.value, line)
             self.assertEqual(_rule_count(result.audit, "credential-assignment"), 0)
@@ -315,4 +314,3 @@ class CredentialAssignmentRedactionTest(unittest.TestCase):
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
-

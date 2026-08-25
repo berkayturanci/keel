@@ -95,7 +95,7 @@ class TestSimulatorCopyButtonLabels(unittest.TestCase):
     def _handler(self) -> str:
         source = (REPO_ROOT / "website" / "swarm-simulator.js").read_text(encoding="utf-8")
         start = source.index('var copyBtn = document.getElementById("sim-copy-cli");')
-        return source[start:source.index("\n    }", start)]
+        return source[start : source.index("\n    }", start)]
 
     def test_handler_does_not_re_read_the_live_aria_label(self):
         # The root cause. Any capture of the live label is the bug returning.
@@ -105,7 +105,7 @@ class TestSimulatorCopyButtonLabels(unittest.TestCase):
         handler = self._handler()
         self.assertIn("COPY_TEXT", handler)
         self.assertIn("COPY_ARIA", handler)
-        self.assertIn('copyBtn.textContent = COPY_TEXT;', handler)
+        self.assertIn("copyBtn.textContent = COPY_TEXT;", handler)
         self.assertIn('copyBtn.setAttribute("aria-label", COPY_ARIA);', handler)
 
     def test_pending_timer_is_cleared_per_click(self):
@@ -124,8 +124,7 @@ class TestSimulatorCopyButtonLabels(unittest.TestCase):
         # label would otherwise silently disagree with what the timer restores.
         source = (REPO_ROOT / "website" / "swarm-simulator.js").read_text(encoding="utf-8")
         start = source.index('id="sim-copy-cli"')
-        button = source[source.rindex("<button", 0, start):
-                        source.index("</button>", start)]
+        button = source[source.rindex("<button", 0, start) : source.index("</button>", start)]
         self.assertIn('aria-label="Copy CLI command"', button)
         self.assertTrue(button.endswith(">Copy"), f"unexpected button text: {button!r}")
         handler = self._handler()

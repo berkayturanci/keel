@@ -37,12 +37,12 @@ DISPATCHED_MODELS = (
 class KeelPricesItsOwnRuns(unittest.TestCase):
     def test_every_dispatched_model_resolves_to_a_real_key(self):
         unpriced = [
-            model for model in DISPATCHED_MODELS
-            if cost.normalize_model_name(model) == "default"
+            model for model in DISPATCHED_MODELS if cost.normalize_model_name(model) == "default"
         ]
 
         self.assertEqual(
-            [], unpriced,
+            [],
+            unpriced,
             "keel emits these model labels and cannot price them, so its own "
             "cost report falls back to a guess and claims the difference as "
             "savings (#942)",
@@ -89,7 +89,8 @@ class KeelPricesItsOwnRuns(unittest.TestCase):
 
     def test_every_alias_points_at_a_key_that_exists(self):
         dangling = {
-            alias: target for alias, target in cost.MODEL_ALIASES.items()
+            alias: target
+            for alias, target in cost.MODEL_ALIASES.items()
             if target not in cost.MODEL_PRICING
         }
 
@@ -115,7 +116,8 @@ class AnUnpricedModelIsReportedAsUnpriced(unittest.TestCase):
 
         self.assertEqual(1, report.unpriced_runs)
         self.assertEqual(
-            0.0, report.estimated_savings_usd,
+            0.0,
+            report.estimated_savings_usd,
             "a run with no attribution cannot evidence a saving",
         )
 
@@ -126,11 +128,17 @@ class AnUnpricedModelIsReportedAsUnpriced(unittest.TestCase):
         alone = cost.calculate_cost_report([priced])
         together = cost.calculate_cost_report([priced, unpriced])
 
-        self.assertEqual(alone.estimated_savings_usd, together.estimated_savings_usd,
-                         "an unpriced run moved the savings figure")
+        self.assertEqual(
+            alone.estimated_savings_usd,
+            together.estimated_savings_usd,
+            "an unpriced run moved the savings figure",
+        )
         self.assertEqual(1, together.unpriced_runs)
-        self.assertGreater(together.total_cost_usd, alone.total_cost_usd,
-                           "its tokens were still spent and must still be counted")
+        self.assertGreater(
+            together.total_cost_usd,
+            alone.total_cost_usd,
+            "its tokens were still spent and must still be counted",
+        )
 
     def test_the_render_says_how_much_of_the_report_is_a_guess(self):
         report = cost.calculate_cost_report([{"prompt_tokens": 10}])
@@ -141,9 +149,7 @@ class AnUnpricedModelIsReportedAsUnpriced(unittest.TestCase):
         self.assertIn("excluded from savings", text)
 
     def test_a_fully_priced_report_does_not_mention_unpriced_runs(self):
-        report = cost.calculate_cost_report(
-            [{"model": "claude-3-5-haiku", "prompt_tokens": 10}]
-        )
+        report = cost.calculate_cost_report([{"model": "claude-3-5-haiku", "prompt_tokens": 10}])
 
         self.assertNotIn("Unpriced Runs", cost.render_cost_report(report))
 

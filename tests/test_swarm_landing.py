@@ -1037,6 +1037,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
     def test_land_wave_clusters_uses_unified_merge_lock_path(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             from keel import lock
+
             s1 = IssueScope(issue=101, title="A", predicted_files=("src/a.py",))
             plan = build_swarm_plan([s1], swarm_id="swarm-lock-test")
             expected_lock_path = lock.resource_path(
@@ -1055,9 +1056,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
             def mock_ok_runner(cmd: list[str], cwd: Path) -> CommandResult:
                 return CommandResult(ok=True, code=0, output="ok")
 
-            with patch(
-                "keel.swarm_landing.merge_lock", side_effect=recording_merge_lock
-            ):
+            with patch("keel.swarm_landing.merge_lock", side_effect=recording_merge_lock):
                 land_wave_clusters(
                     plan,
                     wave_index=1,
@@ -1701,6 +1700,7 @@ class TestSwarmLandCLI(unittest.TestCase):
     def test_swarm_land_cli_partial_failure_returns_exit_code_1(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             from keel.swarm import SwarmLandingResult
+
             partial_res = SwarmLandingResult(
                 swarm_id="swarm-part",
                 wave_index=1,
@@ -1716,18 +1716,20 @@ class TestSwarmLandCLI(unittest.TestCase):
             st = SwarmRunState(swarm_id="swarm-part", total_workers=1, workers=(w1,))
             save_swarm_state(st, root=tmpdir)
 
-            with patch(
-                "keel.swarm_landing.land_wave_clusters", return_value=partial_res
-            ):
+            with patch("keel.swarm_landing.land_wave_clusters", return_value=partial_res):
                 buf = io.StringIO()
                 with redirect_stdout(buf):
-                    code = main([
-                        "swarm-land",
-                        ".keel/project.yaml",
-                        "--root", tmpdir,
-                        "--swarm-id", "swarm-part",
-                        "--live",
-                    ])
+                    code = main(
+                        [
+                            "swarm-land",
+                            ".keel/project.yaml",
+                            "--root",
+                            tmpdir,
+                            "--swarm-id",
+                            "swarm-part",
+                            "--live",
+                        ]
+                    )
                 self.assertEqual(code, 1)
                 self.assertIn("partial_failure", buf.getvalue())
 

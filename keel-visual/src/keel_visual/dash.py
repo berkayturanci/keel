@@ -35,7 +35,7 @@ def parse_worktrees(porcelain: str) -> list[str]:
     paths: list[str] = []
     for line in porcelain.splitlines():
         if line.startswith("worktree "):
-            path = line[len("worktree "):].strip()
+            path = line[len("worktree ") :].strip()
             if path:
                 paths.append(path)
     return paths
@@ -88,12 +88,11 @@ def _issue_from_run_id(run_id: str | None, command: str | None) -> str | None:
     ``morning`` run's ``m-1`` is left alone rather than mislabelled ``#1``."""
     if not run_id or not command or not run_id.startswith(command):
         return None
-    rest = run_id[len(command):].lstrip("-_.")
+    rest = run_id[len(command) :].lstrip("-_.")
     return rest if rest.isdigit() else None
 
 
-def _row_label(pr: int | None, issue: int | None,
-               run_id: str | None, command: str | None) -> str:
+def _row_label(pr: int | None, issue: int | None, run_id: str | None, command: str | None) -> str:
     """Pick the board label: ``#<issue>→#<PR>`` when a run carries both (so a row is
     unambiguous), else the PR number, else the issue number, else the issue a
     ``<command>-<number>`` run_id encodes, else the raw run_id, else ``?``."""
@@ -181,7 +180,8 @@ def render_project_board(rows: list[dict[str, Any]], *, color: bool = True, widt
     head = terminal.paint(
         f"keel · {nruns} run{'' if nruns == 1 else 's'} across "
         f"{nproj} project{'' if nproj == 1 else 's'}",
-        "white", enable=color,
+        "white",
+        enable=color,
     )
     if not rows:
         return head + "\n  " + terminal.paint("no active runs found", "dim", enable=color)

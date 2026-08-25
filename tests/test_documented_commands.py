@@ -37,9 +37,7 @@ _DOC_GLOBS = ("README.md", "AGENTS.md", "CLAUDE.md", "docs/**/*.md", "keel-visua
 #: `keel run-step`), and `docs/keel/cutover.md` has a legend line reading
 #: `keel core (pip, pinned)`. Failing those would be wrong, and a check that
 #: cries wolf on design docs is one people switch off.
-_FENCE = re.compile(
-    r"^```(?:bash|sh|shell|console|zsh)[^\n]*\n(.*?)^```", re.DOTALL | re.MULTILINE
-)
+_FENCE = re.compile(r"^```(?:bash|sh|shell|console|zsh)[^\n]*\n(.*?)^```", re.DOTALL | re.MULTILINE)
 
 #: A command invocation at the start of a line, optionally after a shell prompt.
 _INVOCATION = re.compile(r"(?m)^\s*(?:\$\s+)?keel\s+([a-z][a-z0-9-]*)")
@@ -66,9 +64,7 @@ def _documented() -> dict[str, set[str]]:
             text = path.read_text(encoding="utf-8", errors="replace")
             for block in _FENCE.findall(text):
                 for name in _INVOCATION.findall(block):
-                    found.setdefault(name, set()).add(
-                        str(path.relative_to(REPO_ROOT))
-                    )
+                    found.setdefault(name, set()).add(str(path.relative_to(REPO_ROOT)))
     return found
 
 
@@ -85,11 +81,7 @@ class TestDocumentedCommandsExist(unittest.TestCase):
 
     def test_every_documented_command_is_real(self):
         real = _real_subcommands()
-        unknown = {
-            name: sorted(files)
-            for name, files in _documented().items()
-            if name not in real
-        }
+        unknown = {name: sorted(files) for name, files in _documented().items() if name not in real}
         self.assertEqual(
             {},
             unknown,
@@ -143,7 +135,8 @@ class TestAgentMemoryFilesDoNotAccreteDuplicates(unittest.TestCase):
             titles.setdefault(title.casefold(), []).append(heading)
         repeated = {t: h for t, h in titles.items() if len(h) > 1}
         self.assertEqual(
-            repeated, {},
+            repeated,
+            {},
             "duplicate palette entry titles — merge them, or retitle the newer one "
             f"to say what it adds: {repeated}",
         )
@@ -173,12 +166,13 @@ class TestModuleInvocationsCarryThePathPrefix(unittest.TestCase):
         text = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
         unprefixed = []
         for match in self._INVOCATION.finditer(text):
-            before = text[:match.start()]
+            before = text[: match.start()]
             if not before.endswith("PYTHONPATH=src "):
                 line = text.count("\n", 0, match.start()) + 1
                 unprefixed.append(f"AGENTS.md:{line}")
         self.assertEqual(
-            unprefixed, [],
+            unprefixed,
+            [],
             "`python3 -m keel` documented without the `PYTHONPATH=src` prefix — it "
             "would run the released package or another checkout, not this one: "
             f"{unprefixed}",

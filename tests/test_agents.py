@@ -5,33 +5,37 @@ import unittest
 from keel import agents
 from keel import config as cfg
 
-CONFIG = cfg.parse_config({
-    "extends": "keel",
-    "core_version": "^0.1",
-    "base_branch": "main",
-    "knobs": {
-        "build_gate_cmd": "make test",
-        "implementer_agents": {"mobile": "flutter-developer", "backend": "supabase-developer"},
-    },
-})
-
-PROFILE_CONFIG = cfg.parse_config({
-    "extends": "keel",
-    "core_version": "^0.1",
-    "base_branch": "main",
-    "knobs": {
-        "build_gate_cmd": "make test",
-        "delegate_profiles": {
-            "cursor": {
-                "vendor": "cli",
-                "command": "cursor-agent",
-                "prompt_mode": "arg",
-                "model": "composer-1",
-            },
-            "gemini-cli": {"vendor": "cli", "command": "gemini", "prompt_mode": "arg"},
+CONFIG = cfg.parse_config(
+    {
+        "extends": "keel",
+        "core_version": "^0.1",
+        "base_branch": "main",
+        "knobs": {
+            "build_gate_cmd": "make test",
+            "implementer_agents": {"mobile": "flutter-developer", "backend": "supabase-developer"},
         },
-    },
-})
+    }
+)
+
+PROFILE_CONFIG = cfg.parse_config(
+    {
+        "extends": "keel",
+        "core_version": "^0.1",
+        "base_branch": "main",
+        "knobs": {
+            "build_gate_cmd": "make test",
+            "delegate_profiles": {
+                "cursor": {
+                    "vendor": "cli",
+                    "command": "cursor-agent",
+                    "prompt_mode": "arg",
+                    "model": "composer-1",
+                },
+                "gemini-cli": {"vendor": "cli", "command": "gemini", "prompt_mode": "arg"},
+            },
+        },
+    }
+)
 
 #: Every pre-existing delegate form, so a profile-aware resolver cannot quietly
 #: change what any of them mean.
@@ -59,17 +63,13 @@ class TestSplitDelegate(unittest.TestCase):
 
 class TestResolveAgent(unittest.TestCase):
     def test_delegate_wins(self):
-        self.assertEqual(
-            agents.resolve_agent(CONFIG, role="mobile", delegate="codex"), "codex"
-        )
+        self.assertEqual(agents.resolve_agent(CONFIG, role="mobile", delegate="codex"), "codex")
 
     def test_role_mapping(self):
         self.assertEqual(agents.resolve_agent(CONFIG, role="mobile"), "flutter-developer")
 
     def test_unknown_role_falls_back_to_host(self):
-        self.assertEqual(
-            agents.resolve_agent(CONFIG, role="desktop", host_agent="agy"), "agy"
-        )
+        self.assertEqual(agents.resolve_agent(CONFIG, role="desktop", host_agent="agy"), "agy")
 
     def test_default_host(self):
         self.assertEqual(agents.resolve_agent(CONFIG), "claude")
@@ -146,8 +146,7 @@ class TestBuiltinVendors(unittest.TestCase):
     def test_builtin_set_is_the_documented_one(self):
         self.assertEqual(
             agents.BUILTIN_DELEGATE_VENDORS,
-            ("claude", "codex", "agy", "ollama",
-             "anthropic-api", "openai-api", "google-api"),
+            ("claude", "codex", "agy", "ollama", "anthropic-api", "openai-api", "google-api"),
         )
 
     def test_composed_from_the_per_category_tuples(self):
@@ -160,8 +159,12 @@ class TestBuiltinVendors(unittest.TestCase):
 class TestResolveDelegateProfile(unittest.TestCase):
     def test_configured_profile_resolves(self):
         profile = agents.resolve_delegate_profile(PROFILE_CONFIG, "cursor")
-        self.assertEqual(profile, cfg.DelegateProfile(vendor="cli", command="cursor-agent",
-                                              prompt_mode="arg", model="composer-1"))
+        self.assertEqual(
+            profile,
+            cfg.DelegateProfile(
+                vendor="cli", command="cursor-agent", prompt_mode="arg", model="composer-1"
+            ),
+        )
 
     def test_unknown_name_resolves_to_none(self):
         self.assertIsNone(agents.resolve_delegate_profile(PROFILE_CONFIG, "aider"))
@@ -179,8 +182,8 @@ class TestResolveDelegateProfile(unittest.TestCase):
             knobs=cfg.Knobs(
                 build_gate_cmd="make test",
                 delegate_profiles={
-                    name: cfg.DelegateProfile(vendor="cli", command="evil") for name in
-                    agents.BUILTIN_DELEGATE_VENDORS
+                    name: cfg.DelegateProfile(vendor="cli", command="evil")
+                    for name in agents.BUILTIN_DELEGATE_VENDORS
                 },
             ),
         )
@@ -257,14 +260,34 @@ class TestSafeModelToken(unittest.TestCase):
     """The model may come from an issue label, so it is argv-bound untrusted input."""
 
     def test_accepts_real_model_ids(self):
-        for model in ("cursor-grok-4.5-high", "gpt-5.3-codex", "composer-2.5",
-                      "qwen2.5", "claude-sonnet-5", "gemini_2.5"):
+        for model in (
+            "cursor-grok-4.5-high",
+            "gpt-5.3-codex",
+            "composer-2.5",
+            "qwen2.5",
+            "claude-sonnet-5",
+            "gemini_2.5",
+        ):
             with self.subTest(model=model):
                 self.assertTrue(agents.is_safe_model_token(model))
 
     def test_rejects_argv_and_shell_hazards(self):
-        for model in ("--version", "-m", "a b", "a;rm -rf /", "a|b", "a$(id)",
-                      "a`id`", "a&b", "a>b", "a\nb", "a'b", 'a"b', "a/b", "a:b"):
+        for model in (
+            "--version",
+            "-m",
+            "a b",
+            "a;rm -rf /",
+            "a|b",
+            "a$(id)",
+            "a`id`",
+            "a&b",
+            "a>b",
+            "a\nb",
+            "a'b",
+            'a"b',
+            "a/b",
+            "a:b",
+        ):
             with self.subTest(model=model):
                 self.assertFalse(agents.is_safe_model_token(model))
 

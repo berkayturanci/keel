@@ -85,9 +85,7 @@ class SwarmWorkersNeverInheritStdin(unittest.TestCase):
         """Keeps the rule above from passing on a tree it cannot read."""
         found = [f"{p.relative_to(REPO_ROOT)}:{n.lineno}" for p, n in self._spawn_sites()]
 
-        self.assertGreaterEqual(
-            len(found), 3, f"expected the known spawn sites, found {found}"
-        )
+        self.assertGreaterEqual(len(found), 3, f"expected the known spawn sites, found {found}")
 
 
 class TheGateRunnerAliasCannotDrift(unittest.TestCase):
@@ -148,7 +146,8 @@ class TheCopyButtonFixIsPinned(unittest.TestCase):
         source = self._script()
 
         self.assertLess(
-            source.index("clearTimeout"), source.index("setTimeout"),
+            source.index("clearTimeout"),
+            source.index("setTimeout"),
             "the pending timer must be cleared before the next is scheduled",
         )
 
@@ -166,7 +165,7 @@ class SwarmLandDryRunSharesTheLiveExitContract(unittest.TestCase):
     def test_the_cli_has_one_exit_rule_for_both_modes(self):
         source = (REPO_ROOT / "src" / "keel" / "cli.py").read_text(encoding="utf-8")
         marker = "def _cmd_swarm_land"
-        body = source[source.index(marker):]
+        body = source[source.index(marker) :]
         body = body[: body.index("\ndef ", 1)]
 
         returns = [ln.strip() for ln in body.splitlines() if ln.strip().startswith("return 0 if")]

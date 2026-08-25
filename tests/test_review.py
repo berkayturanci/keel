@@ -26,6 +26,7 @@ def _proc(output="", *, ok=True):
     """
     return CommandResult(ok, 0 if ok else 1, output, stdout=output)
 
+
 # Module-level scratch directory backing the path-returning ``_write`` helper.
 # Cleaned at process exit so the suite leaves no stray temp files behind.
 _TMP = tempfile.TemporaryDirectory()
@@ -41,11 +42,13 @@ def run(argv):
 
 
 def _capable_report():
-    return runtime.CapabilityReport((
-        runtime.Capability("shell", True, "ok", "test"),
-        runtime.Capability("gh", True, "ok", "test"),
-        runtime.Capability("gh-auth", True, "ok", "test"),
-    ))
+    return runtime.CapabilityReport(
+        (
+            runtime.Capability("shell", True, "ok", "test"),
+            runtime.Capability("gh", True, "ok", "test"),
+            runtime.Capability("gh-auth", True, "ok", "test"),
+        )
+    )
 
 
 def _write(value) -> str:
@@ -56,8 +59,13 @@ def _write(value) -> str:
 
 def _two_reviews():
     return [
-        {"reviewer": "Reviewer A", "verdict": "LGTM", "scope": "core",
-         "findings": [{"severity": "nit", "message": "tidy"}], "testing": "make test"},
+        {
+            "reviewer": "Reviewer A",
+            "verdict": "LGTM",
+            "scope": "core",
+            "findings": [{"severity": "nit", "message": "tidy"}],
+            "testing": "make test",
+        },
         {"reviewer": "Reviewer B", "verdict": "LGTM"},
     ]
 
@@ -119,10 +127,12 @@ class TestParseReviews(unittest.TestCase):
         self.assertEqual(items[0].findings, ())
 
     def test_parses_optional_vendor_and_model_provenance(self):
-        items = review.parse_reviews([
-            {"reviewer": "a", "verdict": "LGTM", "vendor": " Claude ", "model": "opus"},
-            {"reviewer": "b", "verdict": "LGTM"},
-        ])
+        items = review.parse_reviews(
+            [
+                {"reviewer": "a", "verdict": "LGTM", "vendor": " Claude ", "model": "opus"},
+                {"reviewer": "b", "verdict": "LGTM"},
+            ]
+        )
         self.assertEqual(items[0].vendor, "Claude")
         self.assertEqual(items[0].model, "opus")
         self.assertIsNone(items[1].vendor)
@@ -176,10 +186,12 @@ class TestBuildReviewPlan(unittest.TestCase):
         self.assertIn("Verdict: LGTM", first.body)
 
     def test_vendor_provenance_flows_into_rendered_verdict(self):
-        items = review.parse_reviews([
-            {"reviewer": "A", "verdict": "LGTM", "vendor": "claude", "model": "opus"},
-            {"reviewer": "B", "verdict": "LGTM", "vendor": "codex"},
-        ])
+        items = review.parse_reviews(
+            [
+                {"reviewer": "A", "verdict": "LGTM", "vendor": "claude", "model": "opus"},
+                {"reviewer": "B", "verdict": "LGTM", "vendor": "codex"},
+            ]
+        )
         plan = review.build_review_plan(
             items,
             required_count=2,
@@ -195,11 +207,15 @@ class TestBuildReviewPlan(unittest.TestCase):
         self.assertNotIn("model:", plan.posts[1].body)
 
     def test_over_count_is_allowed(self):
-        items = review.parse_reviews([*_two_reviews(),
-                                      {"reviewer": "C", "verdict": "LGTM"}])
+        items = review.parse_reviews([*_two_reviews(), {"reviewer": "C", "verdict": "LGTM"}])
         plan = review.build_review_plan(
-            items, required_count=2, head_sha="h", pull_request=1,
-            issue=None, run_id="run", tier=2,
+            items,
+            required_count=2,
+            head_sha="h",
+            pull_request=1,
+            issue=None,
+            run_id="run",
+            tier=2,
         )
         self.assertEqual(len(plan.posts), 3)
 
@@ -207,21 +223,36 @@ class TestBuildReviewPlan(unittest.TestCase):
         items = review.parse_reviews([{"reviewer": "a", "verdict": "LGTM"}])
         with self.assertRaises(review.ReviewError):
             review.build_review_plan(
-                items, required_count=2, head_sha="h", pull_request=1,
-                issue=None, run_id="run", tier=2,
+                items,
+                required_count=2,
+                head_sha="h",
+                pull_request=1,
+                issue=None,
+                run_id="run",
+                tier=2,
             )
 
     def test_head_sha_none_renders_placeholder(self):
         plan = review.build_review_plan(
-            self._items(), required_count=2, head_sha=None, pull_request=1,
-            issue=None, run_id="run", tier=2,
+            self._items(),
+            required_count=2,
+            head_sha=None,
+            pull_request=1,
+            issue=None,
+            run_id="run",
+            tier=2,
         )
         self.assertIn("head: <head-sha>", plan.posts[0].body)
 
     def test_closure_posts_to_pr_and_issue(self):
         plan = review.build_review_plan(
-            self._items(), required_count=2, head_sha="h", pull_request=9,
-            issue=33, run_id="run", tier=2,
+            self._items(),
+            required_count=2,
+            head_sha="h",
+            pull_request=9,
+            issue=33,
+            run_id="run",
+            tier=2,
             closure_record={"run_id": "RUN-1", "pull_request": {"number": 9}},
         )
         closure_posts = [p for p in plan.posts if p.artifact == "closure-comment"]
@@ -232,8 +263,13 @@ class TestBuildReviewPlan(unittest.TestCase):
 
     def test_closure_omits_issue_when_absent(self):
         plan = review.build_review_plan(
-            self._items(), required_count=2, head_sha="h", pull_request=9,
-            issue=None, run_id="run", tier=2,
+            self._items(),
+            required_count=2,
+            head_sha="h",
+            pull_request=9,
+            issue=None,
+            run_id="run",
+            tier=2,
             closure_record={"run_id": "RUN-1"},
         )
         closure_posts = [p for p in plan.posts if p.artifact == "closure-comment"]
@@ -243,14 +279,25 @@ class TestBuildReviewPlan(unittest.TestCase):
     def test_closure_must_be_object(self):
         with self.assertRaises(review.ReviewError):
             review.build_review_plan(
-                self._items(), required_count=2, head_sha="h", pull_request=9,
-                issue=None, run_id="run", tier=2, closure_record=["nope"],
+                self._items(),
+                required_count=2,
+                head_sha="h",
+                pull_request=9,
+                issue=None,
+                run_id="run",
+                tier=2,
+                closure_record=["nope"],
             )
 
     def test_as_dict_round_trips(self):
         plan = review.build_review_plan(
-            self._items(), required_count=2, head_sha="h", pull_request=9,
-            issue=2, run_id="run", tier=3,
+            self._items(),
+            required_count=2,
+            head_sha="h",
+            pull_request=9,
+            issue=2,
+            run_id="run",
+            tier=3,
         )
         data = plan.as_dict()
         self.assertEqual(data["schema_version"], review.SCHEMA_VERSION)
@@ -262,11 +309,21 @@ class TestReviewCli(unittest.TestCase):
     def test_dry_run_json_renders_and_does_not_post(self):
         reviews = _write(_two_reviews())
         with patch("keel.cli.runtime.detect", return_value=_capable_report()):
-            rc, out, _ = run([
-                "review", ANDROID, "--pr", "42", "--reviews", reviews,
-                "--changed-file", "android/app/src/main/Foo.kt",
-                "--head-sha", "abc123", "--json",
-            ])
+            rc, out, _ = run(
+                [
+                    "review",
+                    ANDROID,
+                    "--pr",
+                    "42",
+                    "--reviews",
+                    reviews,
+                    "--changed-file",
+                    "android/app/src/main/Foo.kt",
+                    "--head-sha",
+                    "abc123",
+                    "--json",
+                ]
+            )
         self.assertEqual(rc, 0)
         data = json.loads(out)
         self.assertTrue(data["dry_run"])
@@ -280,10 +337,18 @@ class TestReviewCli(unittest.TestCase):
     def test_dry_run_human_output(self):
         reviews = _write(_two_reviews())
         with patch("keel.cli.runtime.detect", return_value=_capable_report()):
-            rc, out, _ = run([
-                "review", ANDROID, "--pr", "42", "--reviews", reviews,
-                "--head-sha", "abc",
-            ])
+            rc, out, _ = run(
+                [
+                    "review",
+                    ANDROID,
+                    "--pr",
+                    "42",
+                    "--reviews",
+                    reviews,
+                    "--head-sha",
+                    "abc",
+                ]
+            )
         self.assertEqual(rc, 0)
         self.assertIn("DRY-RUN: would post review-verdict", out)
         self.assertIn("keel review — dry-run", out)
@@ -293,38 +358,73 @@ class TestReviewCli(unittest.TestCase):
     def test_tier3_changed_file_requires_three_reviewers(self):
         reviews = _write(_two_reviews())
         with patch("keel.cli.runtime.detect", return_value=_capable_report()):
-            rc, _, err = run([
-                "review", ANDROID, "--pr", "42", "--reviews", reviews,
-                "--changed-file", ".github/workflows/ci.yml",
-                "--head-sha", "abc",
-            ])
+            rc, _, err = run(
+                [
+                    "review",
+                    ANDROID,
+                    "--pr",
+                    "42",
+                    "--reviews",
+                    reviews,
+                    "--changed-file",
+                    ".github/workflows/ci.yml",
+                    "--head-sha",
+                    "abc",
+                ]
+            )
         self.assertEqual(rc, 1)
         self.assertIn("tier requires at least 3", err)
 
     def test_reviewer_override_lowers_required_count(self):
         reviews = _write([{"reviewer": "Solo", "verdict": "LGTM"}])
         with patch("keel.cli.runtime.detect", return_value=_capable_report()):
-            rc, out, _ = run([
-                "review", ANDROID, "--pr", "42", "--reviews", reviews,
-                "--reviewers", "1", "--head-sha", "abc", "--json",
-            ])
+            rc, out, _ = run(
+                [
+                    "review",
+                    ANDROID,
+                    "--pr",
+                    "42",
+                    "--reviews",
+                    reviews,
+                    "--reviewers",
+                    "1",
+                    "--head-sha",
+                    "abc",
+                    "--json",
+                ]
+            )
         self.assertEqual(rc, 0)
         self.assertEqual(json.loads(out)["plan"]["required_count"], 1)
 
     def test_dry_run_and_live_conflict(self):
         reviews = _write(_two_reviews())
-        rc, _, err = run([
-            "review", ANDROID, "--pr", "42", "--reviews", reviews,
-            "--dry-run", "--live",
-        ])
+        rc, _, err = run(
+            [
+                "review",
+                ANDROID,
+                "--pr",
+                "42",
+                "--reviews",
+                reviews,
+                "--dry-run",
+                "--live",
+            ]
+        )
         self.assertEqual(rc, 1)
         self.assertIn("cannot be used together", err)
 
     def test_missing_config(self):
         reviews = _write(_two_reviews())
-        rc, _, err = run([
-            "review", str(PROJECTS / "nope.yaml"), "--pr", "1", "--reviews", reviews,
-        ])
+        rc, _, err = run(
+            [
+                "review",
+                str(PROJECTS / "nope.yaml"),
+                "--pr",
+                "1",
+                "--reviews",
+                reviews,
+            ]
+        )
         self.assertEqual(rc, 1)
         self.assertIn("no such config", err)
 
@@ -340,23 +440,38 @@ class TestReviewCli(unittest.TestCase):
 
     def test_missing_capability_blocks(self):
         reviews = _write(_two_reviews())
-        missing = runtime.CapabilityReport((
-            runtime.Capability("gh", False, "missing", "test"),
-            runtime.Capability("gh-auth", False, "missing", "test"),
-        ))
+        missing = runtime.CapabilityReport(
+            (
+                runtime.Capability("gh", False, "missing", "test"),
+                runtime.Capability("gh-auth", False, "missing", "test"),
+            )
+        )
         with patch("keel.cli.runtime.detect", return_value=missing):
-            rc, _, err = run([
-                "review", ANDROID, "--pr", "1", "--reviews", reviews,
-            ])
+            rc, _, err = run(
+                [
+                    "review",
+                    ANDROID,
+                    "--pr",
+                    "1",
+                    "--reviews",
+                    reviews,
+                ]
+            )
         self.assertEqual(rc, 1)
         self.assertIn("missing required", err)
 
     def test_unreadable_reviews_file(self):
         with patch("keel.cli.runtime.detect", return_value=_capable_report()):
-            rc, _, err = run([
-                "review", ANDROID, "--pr", "1", "--reviews",
-                str(PROJECTS / "does-not-exist.json"),
-            ])
+            rc, _, err = run(
+                [
+                    "review",
+                    ANDROID,
+                    "--pr",
+                    "1",
+                    "--reviews",
+                    str(PROJECTS / "does-not-exist.json"),
+                ]
+            )
         self.assertEqual(rc, 1)
         self.assertIn("cannot read --reviews", err)
 
@@ -366,28 +481,50 @@ class TestReviewCli(unittest.TestCase):
         path.close()
         self.addCleanup(os.unlink, path.name)
         with patch("keel.cli.runtime.detect", return_value=_capable_report()):
-            rc, _, err = run([
-                "review", ANDROID, "--pr", "1", "--reviews", path.name,
-            ])
+            rc, _, err = run(
+                [
+                    "review",
+                    ANDROID,
+                    "--pr",
+                    "1",
+                    "--reviews",
+                    path.name,
+                ]
+            )
         self.assertEqual(rc, 1)
         self.assertIn("not valid JSON", err)
 
     def test_malformed_review_shape(self):
         reviews = _write([{"verdict": "LGTM"}])
         with patch("keel.cli.runtime.detect", return_value=_capable_report()):
-            rc, _, err = run([
-                "review", ANDROID, "--pr", "1", "--reviews", reviews,
-            ])
+            rc, _, err = run(
+                [
+                    "review",
+                    ANDROID,
+                    "--pr",
+                    "1",
+                    "--reviews",
+                    reviews,
+                ]
+            )
         self.assertEqual(rc, 1)
         self.assertIn("requires a non-empty 'reviewer'", err)
 
     def test_unreadable_closure_file(self):
         reviews = _write(_two_reviews())
         with patch("keel.cli.runtime.detect", return_value=_capable_report()):
-            rc, _, err = run([
-                "review", ANDROID, "--pr", "1", "--reviews", reviews,
-                "--closure", str(PROJECTS / "missing-closure.json"),
-            ])
+            rc, _, err = run(
+                [
+                    "review",
+                    ANDROID,
+                    "--pr",
+                    "1",
+                    "--reviews",
+                    reviews,
+                    "--closure",
+                    str(PROJECTS / "missing-closure.json"),
+                ]
+            )
         self.assertEqual(rc, 1)
         self.assertIn("cannot read --closure", err)
 
@@ -395,10 +532,20 @@ class TestReviewCli(unittest.TestCase):
         reviews = _write(_two_reviews())
         closure_path = _write(["not", "an", "object"])
         with patch("keel.cli.runtime.detect", return_value=_capable_report()):
-            rc, _, err = run([
-                "review", ANDROID, "--pr", "1", "--reviews", reviews,
-                "--closure", closure_path, "--head-sha", "abc",
-            ])
+            rc, _, err = run(
+                [
+                    "review",
+                    ANDROID,
+                    "--pr",
+                    "1",
+                    "--reviews",
+                    reviews,
+                    "--closure",
+                    closure_path,
+                    "--head-sha",
+                    "abc",
+                ]
+            )
         self.assertEqual(rc, 1)
         self.assertIn("must be a JSON object", err)
 
@@ -406,11 +553,23 @@ class TestReviewCli(unittest.TestCase):
         reviews = _write(_two_reviews())
         closure_path = _write({"run_id": "RUN-1", "pull_request": {"number": 42}})
         with patch("keel.cli.runtime.detect", return_value=_capable_report()):
-            rc, out, _ = run([
-                "review", ANDROID, "--pr", "42", "--reviews", reviews,
-                "--closure", closure_path, "--issue", "7",
-                "--head-sha", "abc", "--json",
-            ])
+            rc, out, _ = run(
+                [
+                    "review",
+                    ANDROID,
+                    "--pr",
+                    "42",
+                    "--reviews",
+                    reviews,
+                    "--closure",
+                    closure_path,
+                    "--issue",
+                    "7",
+                    "--head-sha",
+                    "abc",
+                    "--json",
+                ]
+            )
         self.assertEqual(rc, 0)
         posts = json.loads(out)["plan"]["posts"]
         closure_posts = [p for p in posts if p["artifact"] == "closure-comment"]
@@ -419,20 +578,37 @@ class TestReviewCli(unittest.TestCase):
     def test_under_count_fails_via_cli(self):
         reviews = _write([{"reviewer": "Solo", "verdict": "LGTM"}])
         with patch("keel.cli.runtime.detect", return_value=_capable_report()):
-            rc, _, err = run([
-                "review", ANDROID, "--pr", "42", "--reviews", reviews,
-                "--head-sha", "abc",
-            ])
+            rc, _, err = run(
+                [
+                    "review",
+                    ANDROID,
+                    "--pr",
+                    "42",
+                    "--reviews",
+                    reviews,
+                    "--head-sha",
+                    "abc",
+                ]
+            )
         self.assertEqual(rc, 1)
         self.assertIn("refusing to under-post", err)
 
     def test_live_without_consent_is_blocked(self):
         reviews = _write(_two_reviews())
         with patch("keel.cli.runtime.detect", return_value=_capable_report()):
-            rc, _, err = run([
-                "review", ANDROID, "--pr", "42", "--reviews", reviews,
-                "--head-sha", "abc", "--live",
-            ])
+            rc, _, err = run(
+                [
+                    "review",
+                    ANDROID,
+                    "--pr",
+                    "42",
+                    "--reviews",
+                    reviews,
+                    "--head-sha",
+                    "abc",
+                    "--live",
+                ]
+            )
         self.assertEqual(rc, 1)
         self.assertIn("operator consent required", err)
 
@@ -449,11 +625,22 @@ class TestReviewCli(unittest.TestCase):
             patch("keel.cli.run_argv", side_effect=fake_run),
             patch("keel.github.run_argv", side_effect=fake_run),
         ):
-            rc, out, _ = run([
-                "review", ANDROID, "--pr", "42", "--reviews", reviews,
-                "--live", "--json",
-                "--approve-scope", "github", "--operator", "tester",
-            ])
+            rc, out, _ = run(
+                [
+                    "review",
+                    ANDROID,
+                    "--pr",
+                    "42",
+                    "--reviews",
+                    reviews,
+                    "--live",
+                    "--json",
+                    "--approve-scope",
+                    "github",
+                    "--operator",
+                    "tester",
+                ]
+            )
         self.assertEqual(rc, 0)
         data = json.loads(out)
         self.assertFalse(data["dry_run"])
@@ -464,10 +651,19 @@ class TestReviewCli(unittest.TestCase):
     def test_invalid_approve_scope_is_reported(self):
         reviews = _write(_two_reviews())
         with patch("keel.cli.runtime.detect", return_value=_capable_report()):
-            rc, _, err = run([
-                "review", ANDROID, "--pr", "42", "--reviews", reviews,
-                "--live", "--approve-scope", "bogus-scope",
-            ])
+            rc, _, err = run(
+                [
+                    "review",
+                    ANDROID,
+                    "--pr",
+                    "42",
+                    "--reviews",
+                    reviews,
+                    "--live",
+                    "--approve-scope",
+                    "bogus-scope",
+                ]
+            )
         self.assertEqual(rc, 1)
         self.assertIn("unknown consent scope", err)
 
@@ -492,11 +688,23 @@ class TestReviewCli(unittest.TestCase):
             patch("keel.cli.run_argv", side_effect=fake_run),
             patch("keel.github.run_argv", side_effect=fake_run),
         ):
-            rc, _, err = run([
-                "review", ANDROID, "--pr", "42", "--reviews", reviews,
-                "--reviewers", "1", "--live",
-                "--approve-scope", "github", "--operator", "tester",
-            ])
+            rc, _, err = run(
+                [
+                    "review",
+                    ANDROID,
+                    "--pr",
+                    "42",
+                    "--reviews",
+                    reviews,
+                    "--reviewers",
+                    "1",
+                    "--live",
+                    "--approve-scope",
+                    "github",
+                    "--operator",
+                    "tester",
+                ]
+            )
         self.assertEqual(rc, 1)
         self.assertIn("did not return a JSON array", err)
 
@@ -510,11 +718,21 @@ class TestReviewCli(unittest.TestCase):
             patch("keel.cli.runtime.detect", return_value=_capable_report()),
             patch("keel.cli.run_argv", side_effect=fake_run),
         ):
-            rc, _, err = run([
-                "review", ANDROID, "--pr", "42", "--reviews", reviews,
-                "--live",
-                "--approve-scope", "github", "--operator", "tester",
-            ])
+            rc, _, err = run(
+                [
+                    "review",
+                    ANDROID,
+                    "--pr",
+                    "42",
+                    "--reviews",
+                    reviews,
+                    "--live",
+                    "--approve-scope",
+                    "github",
+                    "--operator",
+                    "tester",
+                ]
+            )
         self.assertEqual(rc, 1)
         self.assertIn("boom", err)
 
@@ -531,11 +749,23 @@ class TestReviewCli(unittest.TestCase):
             patch("keel.cli.run_argv", side_effect=fake_run),
             patch("keel.github.run_argv", side_effect=fake_run),
         ):
-            rc, _, err = run([
-                "review", ANDROID, "--pr", "42", "--reviews", reviews,
-                "--reviewers", "1", "--live",
-                "--approve-scope", "github", "--operator", "tester",
-            ])
+            rc, _, err = run(
+                [
+                    "review",
+                    ANDROID,
+                    "--pr",
+                    "42",
+                    "--reviews",
+                    reviews,
+                    "--reviewers",
+                    "1",
+                    "--live",
+                    "--approve-scope",
+                    "github",
+                    "--operator",
+                    "tester",
+                ]
+            )
         self.assertEqual(rc, 1)
         self.assertIn("post failed", err)
 
@@ -547,11 +777,23 @@ class TestReviewCli(unittest.TestCase):
         self.addCleanup(os.unlink, cfg_path)
 
         with patch("keel.cli.runtime.detect", return_value=_capable_report()):
-            rc, _, err = run([
-                "review", cfg_path, "--pr", "42", "--reviews", reviews,
-                "--reviewers", "1", "--live",
-                "--approve-scope", "github", "--operator", "tester",
-            ])
+            rc, _, err = run(
+                [
+                    "review",
+                    cfg_path,
+                    "--pr",
+                    "42",
+                    "--reviews",
+                    reviews,
+                    "--reviewers",
+                    "1",
+                    "--live",
+                    "--approve-scope",
+                    "github",
+                    "--operator",
+                    "tester",
+                ]
+            )
         self.assertEqual(rc, 1)
         self.assertIn("owner and repo", err)
 
@@ -576,11 +818,24 @@ class TestReviewCli(unittest.TestCase):
             patch("keel.github.run_argv", side_effect=_live_fetch),
             patch("keel.cli._verify_merge_evidence", return_value=fake),
         ):
-            rc, out, _ = run([
-                "review", ANDROID, "--pr", "42", "--reviews", reviews,
-                "--reviewers", "1", "--live", "--verify",
-                "--approve-scope", "github", "--operator", "tester",
-            ])
+            rc, out, _ = run(
+                [
+                    "review",
+                    ANDROID,
+                    "--pr",
+                    "42",
+                    "--reviews",
+                    reviews,
+                    "--reviewers",
+                    "1",
+                    "--live",
+                    "--verify",
+                    "--approve-scope",
+                    "github",
+                    "--operator",
+                    "tester",
+                ]
+            )
         self.assertEqual(rc, 0)
         self.assertIn("verify        : pass", out)
 
@@ -593,11 +848,25 @@ class TestReviewCli(unittest.TestCase):
             patch("keel.github.run_argv", side_effect=_live_fetch),
             patch("keel.cli._verify_merge_evidence", return_value=fake_verification),
         ):
-            return run([
-                "review", ANDROID, "--pr", "42", "--reviews", reviews,
-                "--reviewers", "1", "--live", "--verify", "--json",
-                "--approve-scope", "github", "--operator", "tester",
-            ])
+            return run(
+                [
+                    "review",
+                    ANDROID,
+                    "--pr",
+                    "42",
+                    "--reviews",
+                    reviews,
+                    "--reviewers",
+                    "1",
+                    "--live",
+                    "--verify",
+                    "--json",
+                    "--approve-scope",
+                    "github",
+                    "--operator",
+                    "tester",
+                ]
+            )
 
 
 def _live_fetch(argv, **_kw):
@@ -606,9 +875,15 @@ def _live_fetch(argv, **_kw):
         return _proc(json.dumps({"id": 1, "html_url": "u"}))
     endpoint = argv[-1]
     if endpoint.endswith("/pulls/42"):
-        return _proc(json.dumps({
-            "body": "", "head": {"sha": "abc123"}, "labels": [],
-        }))
+        return _proc(
+            json.dumps(
+                {
+                    "body": "",
+                    "head": {"sha": "abc123"},
+                    "labels": [],
+                }
+            )
+        )
     if endpoint.endswith("/pulls/42/files"):
         return _proc(json.dumps([]))
     if endpoint.endswith("/pulls/42/reviews"):
@@ -620,17 +895,20 @@ def _live_fetch(argv, **_kw):
 
 def _config_without_owner() -> str:
     lines = (PROJECTS / "example-android.yaml").read_text(encoding="utf-8").splitlines()
-    kept = [line for line in lines
-            if not line.startswith("owner:") and not line.startswith("repo:")]
+    kept = [
+        line for line in lines if not line.startswith("owner:") and not line.startswith("repo:")
+    ]
     return "\n".join(kept) + "\n"
 
 
 class TestParseCycleReviewers(unittest.TestCase):
     def test_parses_a_list_of_reviewer_objects(self):
-        reviewers = review.parse_cycle_reviewers([
-            {"codename": "Alpha", "verdict": "LGTM", "findings": []},
-            {"codename": "Beta", "verdict": "needs fixes"},
-        ])
+        reviewers = review.parse_cycle_reviewers(
+            [
+                {"codename": "Alpha", "verdict": "LGTM", "findings": []},
+                {"codename": "Beta", "verdict": "needs fixes"},
+            ]
+        )
         self.assertEqual(len(reviewers), 2)
         self.assertEqual(reviewers[0]["codename"], "Alpha")
         self.assertEqual(reviewers[1]["verdict"], "needs fixes")
@@ -653,20 +931,35 @@ class TestParseCycleReviewers(unittest.TestCase):
 
 class TestReviewCycleSummaryCli(unittest.TestCase):
     def _findings(self):
-        return [{
-            "codename": "Alpha-2269",
-            "focus": "Security",
-            "verdict": "LGTM-with-suggestions",
-            "findings": [{"severity": "minor", "location": "a.js:1",
-                          "description": "d", "suggested_fix": "f"}],
-        }]
+        return [
+            {
+                "codename": "Alpha-2269",
+                "focus": "Security",
+                "verdict": "LGTM-with-suggestions",
+                "findings": [
+                    {
+                        "severity": "minor",
+                        "location": "a.js:1",
+                        "description": "d",
+                        "suggested_fix": "f",
+                    }
+                ],
+            }
+        ]
 
     def test_renders_body_to_stdout(self):
         path = _write(self._findings())
-        rc, out, _ = run([
-            "review-cycle-summary", "--findings", path,
-            "--head-sha", "abc123", "--run-id", "run-1:cycle-summary",
-        ])
+        rc, out, _ = run(
+            [
+                "review-cycle-summary",
+                "--findings",
+                path,
+                "--head-sha",
+                "abc123",
+                "--run-id",
+                "run-1:cycle-summary",
+            ]
+        )
         self.assertEqual(rc, 0)
         self.assertTrue(out.startswith("keel.review-cycle-summary.v1\n"))
         self.assertIn("head: abc123", out)
@@ -684,10 +977,13 @@ class TestReviewCycleSummaryCli(unittest.TestCase):
         self.assertIn("## Consolidated Summary", data["body"])
 
     def test_missing_findings_file_errors(self):
-        rc, _, err = run([
-            "review-cycle-summary", "--findings",
-            str(Path(_TMP.name) / "does-not-exist.json"),
-        ])
+        rc, _, err = run(
+            [
+                "review-cycle-summary",
+                "--findings",
+                str(Path(_TMP.name) / "does-not-exist.json"),
+            ]
+        )
         self.assertEqual(rc, 1)
         self.assertIn("cannot read --findings", err)
 

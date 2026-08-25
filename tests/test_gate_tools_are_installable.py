@@ -57,7 +57,8 @@ class EveryEnabledGateToolIsDeclared(unittest.TestCase):
             missing.append((preset, tool))
 
         self.assertEqual(
-            [], missing,
+            [],
+            missing,
             "a policy-pack preset is enabled whose tool is not in the dev extras; "
             "the gate will report `command not found` wherever it runs: "
             f"{missing}",
@@ -114,8 +115,11 @@ class NoStaleNosecSuppressions(unittest.TestCase):
             self.skipTest("bandit is not installed")
 
         tracked = subprocess.run(
-            ["git", "ls-files", "*.py"], cwd=REPO_ROOT,
-            capture_output=True, text=True, check=True,
+            ["git", "ls-files", "*.py"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout.split()
         sources = [p for p in tracked if not p.startswith("tests/")]
         self.assertTrue(sources, "no sources to scan; the check would be vacuous")
@@ -130,15 +134,15 @@ class NoStaleNosecSuppressions(unittest.TestCase):
         # here for the vacuity guard.
         probe = subprocess.run(
             ["bandit", "-ll", *sources],
-            cwd=REPO_ROOT, capture_output=True, text=True,
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
         )
 
-        stale = [
-            line.strip() for line in probe.stderr.splitlines()
-            if "nosec encountered" in line
-        ]
+        stale = [line.strip() for line in probe.stderr.splitlines() if "nosec encountered" in line]
         self.assertEqual(
-            [], stale,
+            [],
+            stale,
             "a `# nosec` sits on a line bandit does not flag. Bandit warns about "
             "it and exits non-zero, which is how this gate stayed red for months: "
             f"{stale}",
