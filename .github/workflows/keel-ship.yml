@@ -150,7 +150,20 @@ jobs:
           # the merge this gate authorizes, so requiring them here is unsatisfiable.
           # --require-armed: an unarmed gate must not report success, or a green check
           # cannot be told apart from one that never evaluated anything.
-          ARGS=(.keel/project.yaml --root . --pr "$PR" --phase pre-merge --require-armed)
+          # --no-jury: tier-3 auto-enables a *gating* jury verdict, which is a paid
+          # cross-vendor panel run. #965 measured what that costs in practice — it
+          # blocked four PRs at once, three of which were a two-line hash bump, a
+          # six-line hash bump, and a mechanical reformat whose correctness argument
+          # is a syntax-tree diff no panel can check better. A gate nobody can
+          # afford to satisfy on routine changes is a gate that gets waived, and a
+          # waiver habit costs more than the review it replaces.
+          #
+          # It drops ONLY the jury verdict. Tier-3 still requires three distinct
+          # reviewer verdicts, which is where the review substance is, and
+          # tests/test_jury_is_advisory.py pins that the disarm stays this narrow.
+          # A jury remains the right call on a change where cross-vendor
+          # disagreement is informative — run it deliberately, per PR, as #958 did.
+          ARGS=(.keel/project.yaml --root . --pr "$PR" --phase pre-merge --require-armed --no-jury)
           if [ -n "$DEFERRAL" ]; then
             ARGS+=(--deferral "$DEFERRAL")
           fi
