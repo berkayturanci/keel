@@ -150,7 +150,7 @@ curl -fsSL https://raw.githubusercontent.com/berkayturanci/keel/main/scripts/ins
 ```bash
 pipx install keel-workflow                                    # isolated global CLI tool
 pip install keel-workflow                                     # from PyPI (provides the `keel` command)
-pip install "git+https://github.com/berkayturanci/keel@v1.19.0"  # or pin an existing git tag
+pip install "git+https://github.com/berkayturanci/keel@v1.19.1"  # or pin an existing git tag
 ```
 
 In a cloud agent session, install it from a `SessionStart` hook (or add keel to the

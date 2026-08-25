@@ -6,6 +6,8 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.19.1] - 2026-08-25
+
 ### Performance
 - **Tuple Startswith for Blocked Env Prefixes** (#924):
   - Used native tuple overload in `config.py` `_validate_delegate_profiles` (`startswith(BLOCKED_ENV_PREFIXES)`) instead of generator allocation.

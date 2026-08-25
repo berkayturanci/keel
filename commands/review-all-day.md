@@ -272,4 +272,4 @@ Always print the final report on exit, even if partial.
 - Fail-soft (a missing tool/gate degrades to a skipped check, never aborts) · deterministic
   ordering (same commits ⇒ same findings ⇒ same issues).
 
-<!-- keel-generated: surface=plugin command=review-all-day keel_version=1.19.0 source_sha256=a869b7917f756a31b726c0bff423cf44cbed7573cd4eaf66e3dfb2ab09cf28eb generated_sha256=a869b7917f756a31b726c0bff423cf44cbed7573cd4eaf66e3dfb2ab09cf28eb -->
+<!-- keel-generated: surface=plugin command=review-all-day keel_version=1.19.1 source_sha256=a869b7917f756a31b726c0bff423cf44cbed7573cd4eaf66e3dfb2ab09cf28eb generated_sha256=a869b7917f756a31b726c0bff423cf44cbed7573cd4eaf66e3dfb2ab09cf28eb -->
