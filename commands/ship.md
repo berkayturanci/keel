@@ -411,9 +411,13 @@ created a worktree must remove it before the host path recreates one at the same
 **Attribution (mandatory on every path, even a plain run).** Record and persist a vendor
 label and the full `IMPLEMENTER_SYSTEM` string (vendor + model when known, e.g.
 `codex:<model>`, `ollama:<model>`). When a specific model is known, also add a versionless
-`model:<base>` label (strip an Ollama `:tag`; drop a trailing numeric run on non-hyphenated
-families, e.g. `<word>2.5`→`<word>`; keep `<word>-<major>` on hyphenated ones, dropping a
-`.minor`). Attribution always reflects the **effective** implementer that actually ran —
+`model:<base>` label. Read a colon by **what is on either side of it**, never by position:
+after a transport prefix (`ollama:`, `*-api:`) the model is on the right, and any other
+colon is the model's own suffix — an Ollama `:tag` — so the model is on the left. Then drop
+a trailing numeric run on non-hyphenated families, e.g. `<word>2.5`→`<word>`; keep
+`<word>-<major>` on hyphenated ones, dropping a `.minor`. Specifying this positionally is
+what labelled every hosted-API run `model:<vendor>` (#955); the label must name the model
+that ran, so two runs on one vendor are distinguishable. Attribution always reflects the **effective** implementer that actually ran —
 never the requested-but-fell-back one — and is written at label-flip time (skipped only
 under `--dry-run`, logged instead).
 
@@ -889,4 +893,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=plugin command=ship keel_version=1.19.0 source_sha256=853a898bb789b827d1a9b9e988008402f21787a4a78a3d96942cf66e7ccc8e7f generated_sha256=853a898bb789b827d1a9b9e988008402f21787a4a78a3d96942cf66e7ccc8e7f -->
+<!-- keel-generated: surface=plugin command=ship keel_version=1.19.0 source_sha256=0a34c895c3019802280cada81c766d01f8440fa30138218f12da68c0c12339a3 generated_sha256=0a34c895c3019802280cada81c766d01f8440fa30138218f12da68c0c12339a3 -->

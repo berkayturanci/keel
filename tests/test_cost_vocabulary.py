@@ -50,15 +50,22 @@ class KeelPricesItsOwnRuns(unittest.TestCase):
 
     def test_the_attribution_label_resolves_as_well_as_the_raw_id(self):
         """The label is what lands on the PR, so it is what a later audit reads."""
+        # The `-api` exemption this loop used to carry is gone: #955 fixed the
+        # attribution algorithm, so `anthropic-api:claude-opus-4-5` now labels as
+        # `model:claude-opus-4-5` and prices like its raw id.
         for model in DISPATCHED_MODELS:
             base = agents.model_base(model)
-            if not base or base.endswith("-api"):
-                # `anthropic-api:claude-opus-4-5` labels as `model:anthropic-api`:
-                # `model_base` reads the colon as an Ollama tag and keeps the
-                # vendor. That is a defect in the attribution algorithm, not in
-                # pricing — tracked as #955 — and asserting it here would pin the
-                # wrong module. The raw id resolves correctly, which is what this
-                # change is responsible for.
+            if not base or model.startswith(tuple(f"{p}:" for p in agents.LOCAL_TRANSPORTS)):
+                # A local run is the one case where the label and the raw id
+                # answer different questions, and both answers are right. The
+                # label names the model that ran (`model:qwen`); the price comes
+                # from the transport, because `MODEL_PRICING` prices local
+                # inference at zero and has no entry for the model itself.
+                # Pinning them equal would mean either pricing an open-weight
+                # family at zero everywhere — it is also sold hosted — or going
+                # back to labelling every local run `model:ollama`.
+                # `test_a_local_run_is_still_priced_free` covers the half that
+                # matters, on the id the report actually reads.
                 continue
             with self.subTest(model=model):
                 self.assertEqual(
@@ -66,6 +73,19 @@ class KeelPricesItsOwnRuns(unittest.TestCase):
                     cost.normalize_model_name(base),
                     "the raw id and the label keel records for it price differently",
                 )
+
+    def test_a_local_run_is_still_priced_free(self):
+        """#955 made the label name the model; the price must stay at the tier.
+
+        `calculate_cost_report` reads `rec["model"]` — the raw id — so this is
+        the value that decides whether a local run counts as free or as an
+        unpriced guess. Asserted on the price, not on the key, because the key
+        being `ollama` is an implementation detail and free is the promise.
+        """
+        for model in ("ollama:qwen2.5-coder", "local:whatever", "ollama:mistral:7b"):
+            with self.subTest(model=model):
+                self.assertEqual(cost.estimate_token_cost(1_000_000, 1_000_000, model), 0.0)
+                self.assertNotEqual(cost.normalize_model_name(model), "default")
 
     def test_every_alias_points_at_a_key_that_exists(self):
         dangling = {

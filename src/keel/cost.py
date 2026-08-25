@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from . import activity, agents
+from .agents import LOCAL_TRANSPORTS
 
 # Model pricing in USD per 1,000,000 tokens: (prompt_price_per_m, completion_price_per_m)
 MODEL_PRICING: dict[str, tuple[float, float]] = {
@@ -117,13 +118,22 @@ def _bare_model_id(model: str) -> str:
     a Bedrock id carries *both* (``anthropic.claude-3-opus-20240229-v1:0``).
     """
     raw = model.lower().strip()
-    if raw.startswith(("ollama:", "local:")):
+    # Local inference is free, and `MODEL_PRICING` prices the *tier* at 0.00 —
+    # so `ollama:`/`local:` collapse to the transport on purpose. This is the one
+    # place where pricing and attribution legitimately want different answers:
+    # #955's label must name the model, this must name the free tier.
+    if raw.startswith(tuple(f"{p}:" for p in LOCAL_TRANSPORTS)):
         return raw.split(":", 1)[0]
+    # `<vendor>-api:model` is a transport prefix, and which names are transports
+    # is defined once, in `agents` (#955). Sharing the definition is what stops
+    # the pricing key and the attribution label drifting apart again.
+    raw = agents.strip_transport(raw)
     if "/" in raw:  # openrouter `vendor/model`, vertex `publishers/v/models/model`
         raw = raw.rsplit("/", 1)[1]
     if ":" in raw:
         head, tail = raw.split(":", 1)
-        # `…-v1:0` is a Bedrock revision; `anthropic-api:claude-…` is vendor:model.
+        # `…-v1:0` is a Bedrock revision; `google:gemini-2.5-pro` is an
+        # unrecognised re-hoster, whose model is still on the right.
         raw = head if tail.isdigit() else tail
     if "." in raw and raw.split(".", 1)[0] in _REHOST_VENDORS:
         raw = raw.split(".", 1)[1]

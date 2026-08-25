@@ -88,13 +88,45 @@ def resolve_agent(
     return host_agent
 
 
+#: Transports that run a model on the operator's own hardware. Named separately
+#: because :mod:`keel.cost` prices the *tier* at zero rather than the model —
+#: the one place pricing and attribution want different halves of the same
+#: string. ``local`` is not a keel delegate; it appears in ids keel ingests.
+LOCAL_TRANSPORTS = LOCAL_VENDORS + ("local",)
+
+#: Prefixes that name a **transport** rather than a model. Derived from the
+#: vendor tuples above, so a vendor added there is covered the day it lands
+#: instead of on the day someone remembers this list.
+_TRANSPORT_PREFIXES = frozenset(API_VENDORS + LOCAL_TRANSPORTS)
+
+
+def strip_transport(model: str) -> str:
+    """Drop a ``<transport>:`` prefix, leaving the vendor's own model id.
+
+    Both ``ollama:qwen2.5:7b`` and ``anthropic-api:claude-opus-4-5`` carry a
+    colon and only the second has the model on the right, so the colon has to be
+    read by *what is on either side of it* — never by position (#955). Reading
+    it positionally is what labelled every hosted-API run ``model:anthropic-api``.
+
+    A colon that is not preceded by a transport belongs to the model: an Ollama
+    ``:tag`` (``qwen2.5:7b``) or a Bedrock revision (``…-v1:0``). Those are left
+    for the caller, which knows whether it wants the tag.
+    """
+    m = model.strip().lower()
+    head, sep, tail = m.partition(":")
+    if sep and tail and head in _TRANSPORT_PREFIXES:
+        return tail
+    return m
+
+
 def model_base(model: str) -> str:
     """Strip a model id to a coarse, versionless base label (ship #2036 algorithm).
 
     Examples: ``qwen2.5:7b`` -> ``qwen``, ``gemma2`` -> ``gemma``,
-    ``llama3.1`` -> ``llama``, ``gpt-5.5`` -> ``gpt-5``, ``gpt-4o`` -> ``gpt-4o``.
+    ``llama3.1`` -> ``llama``, ``gpt-5.5`` -> ``gpt-5``, ``gpt-4o`` -> ``gpt-4o``,
+    ``anthropic-api:claude-opus-4-5`` -> ``claude-opus-4-5``.
     """
-    m = model.strip().lower()
+    m = strip_transport(model)
     if not m:
         return ""
     m = m.split(":", 1)[0]  # (1) drop any ollama :tag
