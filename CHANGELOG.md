@@ -31,6 +31,12 @@ All notable changes to keel are documented here. The format follows
   - Both issues are pinned as **tables** of accepted/refused names and hosts — every row measured against the code as it stood, each `ACCEPTED` row a hole — so a future partial implementation fails rather than closes. Existing tests that accepted an arbitrary well-formed variable name are updated with the reason.
 
 ### Fixed
+- **Duplicate Changelog Sections In Three Released Versions** (#975): `1.12.0`, `1.10.0` and `1.6.4` each repeated a section, shipped that way across seven releases to PyPI's description and the GitHub Release notes.
+  - Nothing was lost — entries were inserted above the previous top section, so those blocks grew alternating headings and a reader looking for "what changed" found two lists of the same kind.
+  - Consolidated across every version block. The entry count is identical before and after (283 lines beginning `- `), which is the check that separates a merge from a deletion; the diff alone does not.
+  - `tests/test_changelog_sections.py` asserts no version repeats a section, that headings come from a known vocabulary — `### Fixes` is silently a different bucket from `### Fixed` — and that `Unreleased` is non-empty, since a release cut from an empty block is blank.
+  - The vocabulary is fixed rather than derived from the file, which would assert only that the file contains what it contains. It covers Keep a Changelog's six plus the four this project uses (`Performance`, `Refactored`, `Tests`, `Companion`).
+  - Found while checking release readiness; `## [Unreleased]` was already clean, so this fixes history and adds the guard rather than unblocking anything. Same defect and fix as ai-jury#627.
 - **A Failing Gate Collected 20 Lines And Printed One** (#973): `runner._tail` deliberately captures the last 20 lines of a failing command; `cli.py`'s renderer took `.splitlines()[0]` and dropped nineteen of them at the last step.
   - What an operator saw when `make test` failed in CI: `[major] build: build failed (exit 2):     self.cleanup()` — a source line from `tempfile`'s finaliser, a stray `ResourceWarning`, not the failure. The `FAIL:` line and its traceback were gathered on purpose and deleted a line before reaching the reader.
   - The exit code cannot stand in for it either: GNU make returns **2** whenever a recipe fails, whatever the recipe returned, so `exit 2` does not even distinguish "a test failed" from anything else. The discarded output was the only diagnostic there was.
@@ -488,6 +494,61 @@ always red is a check people stop reading.
   revert was inside the diff a reviewer reads. Scope comparison cannot see it; it survives
   as a weaker secondary signal.
 
+- **`openai-compatible` delegate profiles — any OpenAI-shaped hosted API from config**
+  (#666): OpenRouter, Groq, DeepSeek, Together, LiteLLM and a local vLLM become
+  `knobs.delegate_profiles` entries rather than code changes, completing the "every model"
+  half of the issue. A profile names an `endpoint` and an `api_key_env`, and inherits the
+  no-tools contract, `secrets` scope, retry-×2-then-fall-back and no-retry-on-429 rules of
+  the hardcoded hosted vendors. Because this is the first keel delegate whose URL comes
+  from configuration, it carries a guard ported from ai-jury rather than reinvented:
+  loopback hosts pass freely; any other host — **including cloud-metadata addresses** — is
+  a `keel validate` error unless `KEEL_ALLOW_REMOTE_ENDPOINT` is set **in the environment**
+  (the threat model is an attacker-influenced config, so the opt-in must sit outside the
+  surface an attacker controls); non-`http(s)` schemes are refused, blocking `file://` and
+  `ftp://`; and a malformed URL is a clean config error rather than a traceback out of
+  `keel validate`. `api_key_env` takes a variable **name** and rejects anything shaped like
+  a pasted secret, because profile config is serialised into the command contract and
+  hashed into `config_hash` — a key there would be published.
+- A profile field belonging to a different vendor (`endpoint` on a `cli` profile,
+  `command` on an `openai-compatible` one) is now a validation error rather than a
+  silently-ignored key. The schema cannot catch it, since both fields are legal somewhere.
+
+- **`google-api:MODEL` hosted delegate** (#666): Gemini can now be an implementer or
+  reviewer with only `GEMINI_API_KEY` in the environment — no agent CLI. Same no-tools
+  contract, `secrets` scope, retry-×2-then-fall-back and no-retry-on-429 rules as the
+  existing `anthropic-api:`/`openai-api:` delegates. Two vendor-specific details are
+  handled rather than inherited, both verified against the live endpoint: Gemini puts
+  the **model in the URL path**, so a model id outside `[A-Za-z0-9._-]` (or containing
+  `..`) is refused as `bad-model` before any request instead of being escaped — for this
+  vendor a `delegate-model:` label is untrusted input reaching a URL; and it answers an
+  invalid key with **HTTP 400**, not 401, which now maps to `auth` so a mistyped key
+  does not read as a generic transport error. The key travels as an `x-goog-api-key`
+  header, never as a `?key=` query parameter.
+
+- **`knobs.delegate_profiles` — the generic `cli` delegate vendor** (#659): `--delegate`
+  accepted a closed set of vendors, so every new provider was a code change. Installed and
+  authenticated CLIs like `cursor-agent` and `gemini` simply could not be used as a keel
+  implementer or reviewer. A named profile (`vendor: cli`, `command`, optional `args`,
+  `prompt_mode`, `model`, `model_arg`) is now referenced as `--delegate <name>`, turning
+  provider support into configuration. `prompt_mode` exists because stdin is not universal: `stdin` stays the
+  default (positional-arg passing hangs some CLIs), `arg` is the opt-in for CLIs whose usage
+  makes the prompt a positional argument. `args` carries the standing flags a real CLI
+  needs (`cursor-agent -p --force`), since `command` is one executable rather than a shell
+  line, `review_args` keeps the reviewer role off those write-enabling flags (keel cannot
+  enforce read-only on an arbitrary binary, so this is the operator's lever and s7 says so
+  plainly rather than promising what it cannot keep), and `model_arg` (default `--model`) says how the effective model reaches it —
+  arbitrary CLIs share no model-selection syntax, so without it the documented precedence
+  (per-run `--delegate <name>:<model>` > profile `model` > CLI default) would be
+  unimplementable and attribution would report a model that was never selected. Name resolution is **fail-closed** — profiles
+  resolve after the built-in vendors, and a profile that shadows `claude`/`codex`/`agy`/
+  `ollama`/`anthropic-api`/`openai-api` is a `keel validate` error, never a silent override.
+  A `cli` delegate inherits the local-model contract exactly: no tools, retry ×2 then fall
+  back to the host agent, and **refused on tier-3**. Attribution records `agent:cli` plus the
+  effective model and the profile name under `delegate_profile` — not `profile`, which the
+  run record already uses for the workflow profile — so the closure says which CLI ran. Design (including
+  the deliberately deferred `openai-compatible` / `google-api` vendors):
+  `docs/proposals/generic-delegate-vendors.md`.
+
 ### Fixed
 - **A project's own review rubric now actually reaches its reviewers** (#677):
   `policy_pack.review.additions` and `required_sections` have been in the schema, in the
@@ -500,7 +561,6 @@ always red is a check people stop reading.
   codebase keeps producing — measured to be what makes a reviewer follow a defect from the
   symptom to where it lands, rather than what makes it find more.
 
-### Fixed
 - **`keel resume` observes the live state instead of being told it** (#635): the
   `--live-pr-state` / `--live-worktree-state` flags defaulted to `unknown` and core never
   looked, so every ambiguous outcome required the agent to volunteer the damning state — a
@@ -543,40 +603,6 @@ always red is a check people stop reading.
   kind rather than reading `steps[].status`, so adding the field alone would have painted
   nothing.
 
-### Added
-- **`openai-compatible` delegate profiles — any OpenAI-shaped hosted API from config**
-  (#666): OpenRouter, Groq, DeepSeek, Together, LiteLLM and a local vLLM become
-  `knobs.delegate_profiles` entries rather than code changes, completing the "every model"
-  half of the issue. A profile names an `endpoint` and an `api_key_env`, and inherits the
-  no-tools contract, `secrets` scope, retry-×2-then-fall-back and no-retry-on-429 rules of
-  the hardcoded hosted vendors. Because this is the first keel delegate whose URL comes
-  from configuration, it carries a guard ported from ai-jury rather than reinvented:
-  loopback hosts pass freely; any other host — **including cloud-metadata addresses** — is
-  a `keel validate` error unless `KEEL_ALLOW_REMOTE_ENDPOINT` is set **in the environment**
-  (the threat model is an attacker-influenced config, so the opt-in must sit outside the
-  surface an attacker controls); non-`http(s)` schemes are refused, blocking `file://` and
-  `ftp://`; and a malformed URL is a clean config error rather than a traceback out of
-  `keel validate`. `api_key_env` takes a variable **name** and rejects anything shaped like
-  a pasted secret, because profile config is serialised into the command contract and
-  hashed into `config_hash` — a key there would be published.
-- A profile field belonging to a different vendor (`endpoint` on a `cli` profile,
-  `command` on an `openai-compatible` one) is now a validation error rather than a
-  silently-ignored key. The schema cannot catch it, since both fields are legal somewhere.
-
-### Added
-- **`google-api:MODEL` hosted delegate** (#666): Gemini can now be an implementer or
-  reviewer with only `GEMINI_API_KEY` in the environment — no agent CLI. Same no-tools
-  contract, `secrets` scope, retry-×2-then-fall-back and no-retry-on-429 rules as the
-  existing `anthropic-api:`/`openai-api:` delegates. Two vendor-specific details are
-  handled rather than inherited, both verified against the live endpoint: Gemini puts
-  the **model in the URL path**, so a model id outside `[A-Za-z0-9._-]` (or containing
-  `..`) is refused as `bad-model` before any request instead of being escaped — for this
-  vendor a `delegate-model:` label is untrusted input reaching a URL; and it answers an
-  invalid key with **HTTP 400**, not 401, which now maps to `auth` so a mistyped key
-  does not read as a generic transport error. The key travels as an `x-goog-api-key`
-  header, never as a `?key=` query parameter.
-
-### Changed
 - **s7 reviewers are now briefed to refute, not to approve** (#679): the adapter told
   reviewers *where* to look (`logic correctness`, `threading`, `test coverage`, …) and never
   *how* — there was no `refute`, `adversarial` or "default to wrong" anywhere in it. A
@@ -597,31 +623,6 @@ always red is a check people stop reading.
   same. Also bumps `setuptools` 80.9.0 → 84.0.0, clearing that alert. The new entry is
   deliberately ungrouped: `publish.yml` runs only on a `v*` tag, so a bad pin there
   surfaces during a release rather than in CI, and each bump should be reviewed alone.
-
-### Added
-- **`knobs.delegate_profiles` — the generic `cli` delegate vendor** (#659): `--delegate`
-  accepted a closed set of vendors, so every new provider was a code change. Installed and
-  authenticated CLIs like `cursor-agent` and `gemini` simply could not be used as a keel
-  implementer or reviewer. A named profile (`vendor: cli`, `command`, optional `args`,
-  `prompt_mode`, `model`, `model_arg`) is now referenced as `--delegate <name>`, turning
-  provider support into configuration. `prompt_mode` exists because stdin is not universal: `stdin` stays the
-  default (positional-arg passing hangs some CLIs), `arg` is the opt-in for CLIs whose usage
-  makes the prompt a positional argument. `args` carries the standing flags a real CLI
-  needs (`cursor-agent -p --force`), since `command` is one executable rather than a shell
-  line, `review_args` keeps the reviewer role off those write-enabling flags (keel cannot
-  enforce read-only on an arbitrary binary, so this is the operator's lever and s7 says so
-  plainly rather than promising what it cannot keep), and `model_arg` (default `--model`) says how the effective model reaches it —
-  arbitrary CLIs share no model-selection syntax, so without it the documented precedence
-  (per-run `--delegate <name>:<model>` > profile `model` > CLI default) would be
-  unimplementable and attribution would report a model that was never selected. Name resolution is **fail-closed** — profiles
-  resolve after the built-in vendors, and a profile that shadows `claude`/`codex`/`agy`/
-  `ollama`/`anthropic-api`/`openai-api` is a `keel validate` error, never a silent override.
-  A `cli` delegate inherits the local-model contract exactly: no tools, retry ×2 then fall
-  back to the host agent, and **refused on tier-3**. Attribution records `agent:cli` plus the
-  effective model and the profile name under `delegate_profile` — not `profile`, which the
-  run record already uses for the workflow profile — so the closure says which CLI ran. Design (including
-  the deliberately deferred `openai-compatible` / `google-api` vendors):
-  `docs/proposals/generic-delegate-vendors.md`.
 
 ## [1.11.0] — 2026-07-28
 
@@ -880,6 +881,14 @@ of them — and why several were found only by mutating the code and watching no
   neither, while PR comments are always visible. An undeclared count leaves the mode alone —
   only a verdict that states the panel size may relax the gate.
 
+- **Display settings popover is reachable again** (#606): the `[data-motion="max"]` animation
+  rules in `styles.css` had no UI — `wireSeg()` queried a `.seg[data-seg]` control that no
+  page rendered, so the only way to reach them was editing `localStorage` by hand. The
+  titlebar gains a display button whose popover exposes the Motion segment, wired with
+  correct single-select semantics: `role="radiogroup"` + `role="radio"`/`aria-checked`
+  (not `aria-pressed`), roving tabindex, Arrow/Home/End, `aria-expanded` on the trigger,
+  and focus returned to it on `Escape`.
+
 ### Changed
 - **The ship adapter describes the jury downgrade instead of instructing it** (#612): the
   `s8` prose still told the agent to "count distinct participating vendors" and perform the
@@ -917,23 +926,6 @@ of them — and why several were found only by mutating the code and watching no
   through to the ship-assessment comment for any branch outside `_SHIP_BRANCH_RE` and the
   two jobs previously raced.
 
-### Added
-- **Display settings popover is reachable again** (#606): the `[data-motion="max"]` animation
-  rules in `styles.css` had no UI — `wireSeg()` queried a `.seg[data-seg]` control that no
-  page rendered, so the only way to reach them was editing `localStorage` by hand. The
-  titlebar gains a display button whose popover exposes the Motion segment, wired with
-  correct single-select semantics: `role="radiogroup"` + `role="radio"`/`aria-checked`
-  (not `aria-pressed`), roving tabindex, Arrow/Home/End, `aria-expanded` on the trigger,
-  and focus returned to it on `Escape`.
-
-### Removed
-- **Dead `data-type` plumbing** (#606): every page set `data-type` on `<html>` from
-  `localStorage`, but no stylesheet has ever read it. Dropped from all four pages.
-- **`plan.md` is no longer tracked** (#606): a leftover agent scratch plan at the repo root.
-  Because it was in version control, every agent run that rewrote its plan landed as a
-  source change inside an unrelated PR. Untracked and gitignored.
-
-### Fixed
 - **Command rail is a complete ARIA tabs pattern** (#604): the website's showcase rail
   drives a detail panel but announced itself as 16 independent toggle buttons via
   `aria-pressed`. It now carries the whole pattern — roving tabindex (one Tab stop instead
@@ -941,6 +933,13 @@ of them — and why several were found only by mutating the code and watching no
   `#show-detail` as a `tabpanel` wired both ways via `aria-controls`/`aria-labelledby`. The
   interleaved group headings become `role="presentation"` (a tablist may only own tabs) and
   their text moves into each tab's accessible name so the grouping survives.
+
+### Removed
+- **Dead `data-type` plumbing** (#606): every page set `data-type` on `<html>` from
+  `localStorage`, but no stylesheet has ever read it. Dropped from all four pages.
+- **`plan.md` is no longer tracked** (#606): a leftover agent scratch plan at the repo root.
+  Because it was in version control, every agent run that rewrote its plan landed as a
+  source change inside an unrelated PR. Untracked and gitignored.
 
 ## [1.9.0] — 2026-07-17
 
@@ -1106,7 +1105,6 @@ of them — and why several were found only by mutating the code and watching no
   `keel:ship` run merge with the review step skipped and a fabricated "reviewed in a
   prior session" closure line).
 
-### Changed
 - **`keel activity` emission is now a required, up-front adapter step.** In 1.6.0/1.6.1
   the "Live progress" stamping sat in a *best-effort* footer at the end of each stepped
   command's adapter, so agents routinely skipped it and non-ship runs never reached
@@ -1767,3 +1765,4 @@ of them — and why several were found only by mutating the code and watching no
 ### Removed
 - `scripts/sync.sh` and the `/sync-to-ai-infra` mechanism (retired; superseded by
   the thin-consumer model).
+
