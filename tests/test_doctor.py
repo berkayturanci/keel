@@ -308,7 +308,13 @@ class TheVersionCheckDoesNotFollowRedirects(unittest.TestCase):
         classes = [type(h) for h in opener.handlers]
         self.assertNotIn(urllib.request.HTTPRedirectHandler, classes)
         # Not vacuous: the opener must still be able to make the request at all.
-        self.assertIn(urllib.request.HTTPSHandler, classes)
+        # `issubclass`, not membership: #969 wrapped the handlers so the
+        # connection can check where the host resolved, and the property here is
+        # "an HTTPS handler is present", not "this exact class is".
+        self.assertTrue(
+            [c for c in classes if issubclass(c, urllib.request.HTTPSHandler)],
+            "the opener the PyPI check uses cannot make an HTTPS request",
+        )
         # A redirect handler cannot arrive by subclass either.
         self.assertFalse(
             [c for c in classes if issubclass(c, urllib.request.HTTPRedirectHandler)],

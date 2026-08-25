@@ -385,13 +385,22 @@ class TestParseContent(unittest.TestCase):
 
 class TestOpener(unittest.TestCase):
     def test_opener_has_only_http_https_handlers(self):
+        # `isinstance`, not class names: #969 wrapped the handlers so the
+        # connection can check where the host resolved. Matching on the name
+        # would have failed for a subclass that satisfies the property, and —
+        # worse — would have *passed* a subclass of HTTPRedirectHandler, which
+        # is the assertion that actually matters here.
         opener = api_delegate.build_http_only_opener()
-        names = {type(h).__name__ for h in opener.handlers}
-        self.assertIn("HTTPHandler", names)
-        self.assertIn("HTTPSHandler", names)
-        self.assertNotIn("HTTPRedirectHandler", names)
-        self.assertNotIn("FileHandler", names)
-        self.assertNotIn("FTPHandler", names)
+        handlers = opener.handlers
+        self.assertTrue([h for h in handlers if isinstance(h, urllib.request.HTTPHandler)])
+        self.assertTrue([h for h in handlers if isinstance(h, urllib.request.HTTPSHandler)])
+        for forbidden in (
+            urllib.request.HTTPRedirectHandler,
+            urllib.request.FileHandler,
+            urllib.request.FTPHandler,
+        ):
+            with self.subTest(handler=forbidden.__name__):
+                self.assertFalse([h for h in handlers if isinstance(h, forbidden)])
 
 
 class TestGenerate(unittest.TestCase):

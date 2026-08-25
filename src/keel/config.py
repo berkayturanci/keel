@@ -129,6 +129,7 @@ __all__ = [
     "DEFAULT_EXTENSIONS_DIR",
     "DELEGATE_PROFILE_VENDORS",
     "LOOPBACK_HOSTS",
+    "resolved_address_refusal",
     "ALLOW_REMOTE_ENDPOINT_ENV",
     "DELEGATE_PROMPT_MODES",
     "DEFAULT_PROMPT_MODE",
@@ -457,6 +458,48 @@ def _is_private_address(host: str) -> bool:
     if ip is None:
         return False
     return bool(ip.is_private or ip.is_loopback)
+
+
+def resolved_address_refusal(host: str, ip: Any, *, env=None) -> str | None:
+    """Why a name's *resolved* address may not be connected to, or ``None``.
+
+    :func:`endpoint_issues` classifies the host as written. A hostname carries no
+    address, so `_as_ip` returns ``None`` and both the metadata and the private
+    checks answer "no" — leaving a name free to reach what its literal spelling
+    could not (#969, found by the ai-jury panel on #958):
+
+        ALLOW_REMOTE on, ALLOW_INTERNAL off:
+          refused   http://10.0.0.5/                     literal RFC1918
+          allowed   http://<name resolving to 10.0.0.5>/ the same target
+
+    That is exactly the boundary the refusal text draws — *"permits reaching out,
+    not reaching in"* — so this applies the same rule to whatever the name
+    actually resolved to. It is a *policy* function on purpose: the resolution
+    and the connection belong at the I/O edge (:mod:`keel.api_delegate`), and
+    keeping the decision here is what lets it be tested without a network.
+
+    ``host`` is still needed alongside ``ip``: a literal loopback endpoint is the
+    default-allowed case for a local model server, and refusing 127.0.0.1 would
+    break ``http://localhost:11434``. A *name* that resolves to loopback is a
+    different act — it only passed the earlier gate because the remote opt-in was
+    set — so it is held to the internal opt-in like any other reach-in.
+    """
+    env = os.environ if env is None else env
+    if ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified:
+        return (
+            f"resolves to {ip}, which is link-local, multicast or reserved space; "
+            "refused whatever the name"
+        )
+    if not (ip.is_private or ip.is_loopback):
+        return None
+    if host in LOOPBACK_HOSTS or env.get(ALLOW_INTERNAL_ENDPOINT_ENV):
+        return None
+    return (
+        f"resolves to {ip}, a private or loopback address. "
+        f"{ALLOW_REMOTE_ENDPOINT_ENV} permits reaching out, not reaching in. Set "
+        f"{ALLOW_INTERNAL_ENDPOINT_ENV}=1 in the environment for a model server on "
+        "your own network"
+    )
 
 
 def endpoint_issues(endpoint: Any, *, where: str, env=None) -> list[str]:

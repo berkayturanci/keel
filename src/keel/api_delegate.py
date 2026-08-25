@@ -27,12 +27,17 @@ Design (docs/proposals/api-token-delegate.md):
 
 from __future__ import annotations
 
+import functools
 import http.client
+import ipaddress
 import json
 import os
+import socket
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+
+from . import config
 
 #: Response cap for a single unattended completion; overridable per call.
 DEFAULT_MAX_TOKENS = 16384
@@ -213,7 +218,102 @@ def _parse_content(vendor: str, data: object) -> str | None:
         return None
 
 
-def build_http_only_opener() -> urllib.request.OpenerDirector:
+class GuardedAddressError(OSError):
+    """A connection was refused because of where the host name resolved."""
+
+
+def _permitted_addresses(host, port, *, env, resolve):
+    """Every address ``host`` may be connected to. Raises if none may be.
+
+    Resolution happens **once** and the caller connects to what was checked.
+    Re-resolving after the check is the whole vulnerability: a name that answers
+    a public address to the check and a private one to ``connect`` passes both.
+    """
+    try:
+        candidates = resolve(host, port, type=socket.SOCK_STREAM)
+    except OSError as exc:
+        # Not a policy refusal. Reporting an unresolvable name as a security
+        # block would send an operator hunting for a threat that is a typo.
+        raise GuardedAddressError(f"cannot resolve {host!r}: {exc}") from None
+    permitted, refusals = [], []
+    for candidate in candidates:
+        try:
+            ip = ipaddress.ip_address(candidate[4][0])
+        except ValueError:  # pragma: no cover - getaddrinfo yields literals
+            continue
+        refusal = config.resolved_address_refusal(host, ip, env=env)
+        if refusal is None:
+            permitted.append(candidate)
+        else:
+            refusals.append(refusal)
+    if not permitted:
+        detail = refusals[0] if refusals else "resolved to no usable address"
+        raise GuardedAddressError(f"endpoint host {host!r} {detail}")
+    return permitted
+
+
+def _guarded_create_connection(*, env, resolve):
+    """A ``socket.create_connection`` that only reaches checked addresses.
+
+    Substituted for ``HTTPConnection._create_connection`` rather than overriding
+    ``connect``: ``HTTPSConnection.connect`` calls ``super().connect()`` and then
+    wraps the socket in TLS with ``server_hostname``. Replacing this one seam
+    leaves that intact, so the guard cannot accidentally change how the
+    certificate is checked — which reimplementing ``connect`` for HTTPS would
+    have risked.
+    """
+
+    def create_connection(address, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, source_address=None):
+        host, port = address[0], address[1]
+        permitted = _permitted_addresses(host, port, env=env, resolve=resolve)
+        # Hand stdlib the **checked address**, not the name. Resolving a literal
+        # is a no-op, so this pins the connection to what was approved while
+        # reusing socket.create_connection's timeout, source-address and
+        # address-family handling rather than reimplementing them here.
+        return socket.create_connection((permitted[0][4][0], port), timeout, source_address)
+
+    return create_connection
+
+
+def _guarded_handlers(*, env, resolve):
+    """HTTP and HTTPS handlers whose connections check where the name went."""
+    create = _guarded_create_connection(env=env, resolve=resolve)
+
+    # Assigned *after* `super().__init__`, not as a class attribute:
+    # `HTTPConnection.__init__` does `self._create_connection =
+    # socket.create_connection`, so an instance attribute shadows anything set
+    # on the subclass. A class-level override silently does nothing — which is
+    # how the first cut of this guard let a rebinding resolver straight through
+    # while every unit test still passed.
+    def _init(self, *args, _base, **kwargs):
+        _base.__init__(self, *args, **kwargs)
+        self._create_connection = create
+
+    http_conn = type(
+        "GuardedHTTPConnection",
+        (http.client.HTTPConnection,),
+        {"__init__": functools.partialmethod(_init, _base=http.client.HTTPConnection)},
+    )
+    https_conn = type(
+        "GuardedHTTPSConnection",
+        (http.client.HTTPSConnection,),
+        {"__init__": functools.partialmethod(_init, _base=http.client.HTTPSConnection)},
+    )
+
+    class GuardedHTTPHandler(urllib.request.HTTPHandler):
+        def http_open(self, req):
+            return self.do_open(http_conn, req)
+
+    class GuardedHTTPSHandler(urllib.request.HTTPSHandler):
+        def https_open(self, req):
+            return self.do_open(https_conn, req)
+
+    return GuardedHTTPHandler(), GuardedHTTPSHandler()
+
+
+def build_http_only_opener(
+    *, _env=None, _resolve=socket.getaddrinfo
+) -> urllib.request.OpenerDirector:
     """HTTP/HTTPS-only opener: no redirect handler, no file/ftp/proxy handlers.
 
     Public and shared rather than private to this module, because keel makes
@@ -222,10 +322,23 @@ def build_http_only_opener() -> urllib.request.OpenerDirector:
     sets drift apart. #811 hardened the second one; #810 squashed a stale base
     over it and restored plain ``urlopen`` for six days without anything noticing
     (#934). One opener, one owner, one place to audit the handler list.
+
+    The handlers also guard **where a name resolves** (#969). `config`'s
+    endpoint check classifies the host as written, so a hostname carries no
+    address and reaches what its literal spelling could not — `10.0.0.5` is
+    refused while a name resolving to it is not. The address is checked and the
+    connection pinned to what was checked, because re-resolving afterwards is
+    the vulnerability rather than a detail of it.
+
+    `_env` and `_resolve` are injectable so a rebinding resolver can be tested
+    offline; both callers use the defaults.
     """
+    http_handler, https_handler = _guarded_handlers(
+        env=os.environ if _env is None else _env, resolve=_resolve
+    )
     opener = urllib.request.OpenerDirector()
-    opener.add_handler(urllib.request.HTTPHandler())
-    opener.add_handler(urllib.request.HTTPSHandler())
+    opener.add_handler(http_handler)
+    opener.add_handler(https_handler)
     opener.add_handler(urllib.request.HTTPErrorProcessor())
     opener.add_handler(urllib.request.HTTPDefaultErrorHandler())
     return opener
