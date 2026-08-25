@@ -2446,6 +2446,7 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
         issue_comments=artifacts["issue_comments"],
         pr_reviews=artifacts["pr_reviews"],
         pr_body=artifacts["pr_body"],
+        pr_title=artifacts.get("pr_title", ""),
         pr_labels=artifacts["pr_labels"],
         head_sha=artifacts["head_sha"],
         ledger_record=ledger_record,
@@ -3465,6 +3466,7 @@ def _verify_merge_evidence(
         issue_comments=artifacts["issue_comments"],
         pr_reviews=artifacts["pr_reviews"],
         pr_body=artifacts["pr_body"],
+        pr_title=artifacts.get("pr_title", ""),
         pr_labels=artifacts["pr_labels"],
         head_sha=artifacts["head_sha"],
         enforced=enforced,
@@ -3514,6 +3516,7 @@ def _load_evidence_artifacts(
     config: cfg.ProjectConfig,
 ) -> dict[str, object]:
     pr_body = _read_optional_text(args.pr_body_file)
+    pr_title = ""
     pr_comments = _read_optional_json_list(args.pr_comments_json)
     issue_comments = _read_optional_json_list(args.issue_comments_json)
     pr_reviews = _read_optional_json_list(args.pr_reviews_json)
@@ -3537,6 +3540,7 @@ def _load_evidence_artifacts(
     if args.dry_run:
         return {
             "pr_body": pr_body,
+        "pr_title": pr_title,
             "pr_comments": [],
             "issue_comments": [],
             "pr_reviews": [],
@@ -3551,6 +3555,9 @@ def _load_evidence_artifacts(
         owner_repo = _owner_repo(config)
         pr = _gh_json(["repos", owner_repo, "pulls", str(args.pr)], cwd=args.root)
         pr_body = pr.get("body") if isinstance(pr.get("body"), str) else ""
+        # Free: the same object. Used only by the verdict-substance check, which
+        # compares a verdict's prose against the title it might be restating (#926).
+        pr_title = pr.get("title") if isinstance(pr.get("title"), str) else ""
         head = pr.get("head") if isinstance(pr.get("head"), dict) else {}
         head_sha = head.get("sha") if isinstance(head.get("sha"), str) else None
         head_ref = head.get("ref") if isinstance(head.get("ref"), str) else None
@@ -3573,6 +3580,7 @@ def _load_evidence_artifacts(
         issue_number = _linked_issue_from_body(pr_body)
     return {
         "pr_body": pr_body,
+        "pr_title": pr_title,
         "pr_comments": pr_comments,
         "issue_comments": issue_comments,
         "pr_reviews": pr_reviews,

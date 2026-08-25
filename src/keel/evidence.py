@@ -253,6 +253,7 @@ def verify(
     issue_comments: list[dict[str, Any]] | None = None,
     pr_reviews: list[dict[str, Any]] | None = None,
     pr_body: str | None = None,
+    pr_title: str = "",
     pr_labels: Sequence[str] | None = None,
     head_sha: str | None = None,
     ledger_record: dict[str, Any] | None = None,
@@ -334,6 +335,13 @@ def verify(
     )
     if distinct is not None:
         findings = [*findings, distinct]
+    substance = _verdict_substance_findings(
+        [*(pr_comments or []), *(pr_reviews or [])],
+        head_sha=head_sha,
+        enforced=enforced,
+        pr_title=pr_title,
+    )
+    findings = [*findings, *substance]
     attribution = _attribution_finding(
         pr_labels=pr_labels,
         enforced=enforced and not dry_run,
@@ -374,6 +382,37 @@ def verify(
 def _require_distinct_vendors(review_contract: dict[str, Any]) -> bool:
     reviewers = review_contract.get("reviewers")
     return bool(reviewers.get("require_distinct_vendors")) if isinstance(reviewers, dict) else False
+
+
+def _verdict_substance_findings(
+    items: list[dict[str, Any]],
+    *,
+    head_sha: str | None,
+    enforced: bool,
+    pr_title: str,
+) -> list[dict[str, Any]]:
+    """One finding per verdict refused for naming nothing concrete (#926).
+
+    Reported rather than dropped. A verdict silently not counted surfaces as
+    "missing required evidence: review-verdict-2", which sends the operator
+    looking for a comment that is sitting right there — the reason has to say
+    the verdict was read and found to be a receipt.
+
+    ``minor`` when the gate is not enforced, mirroring the other content
+    findings: an advisory run should say what it saw without failing.
+    """
+    _, rejected = _review_evidence_keys_and_rejections(
+        items, head_sha=head_sha, enforced=enforced, pr_title=pr_title
+    )
+    return [
+        {
+            "id": "review-verdict-insubstantial",
+            "severity": "major" if enforced else "minor",
+            "kind": "review",
+            "message": f"{key}: {reason}.",
+        }
+        for key, reason in sorted(rejected)
+    ]
 
 
 def _distinct_vendor_finding(
@@ -644,6 +683,7 @@ def count_review_verdicts(
     *,
     head_sha: str | None = None,
     enforced: bool = True,
+    pr_title: str = "",
 ) -> int:
     """Count distinct trusted review-verdict reviewers for a PR.
 
@@ -656,6 +696,7 @@ def count_review_verdicts(
         [*(pr_comments or []), *(pr_reviews or [])],
         head_sha=head_sha,
         enforced=enforced,
+        pr_title=pr_title,
     )
     return len(keys)
 
@@ -665,8 +706,30 @@ def _review_evidence_keys(
     *,
     head_sha: str | None = None,
     enforced: bool = True,
+    pr_title: str = "",
 ) -> set[str]:
+    keys, _ = _review_evidence_keys_and_rejections(
+        items, head_sha=head_sha, enforced=enforced, pr_title=pr_title
+    )
+    return keys
+
+
+def _review_evidence_keys_and_rejections(
+    items: list[dict[str, Any]],
+    *,
+    head_sha: str | None = None,
+    enforced: bool = True,
+    pr_title: str = "",
+) -> tuple[set[str], list[tuple[str, str]]]:
+    """Accepted reviewer keys, and the (key, reason) pairs refused for substance.
+
+    Rejections are returned rather than dropped so the gate can *hold with a
+    reason* — a verdict silently not counted would surface as "missing
+    review-verdict-2", which sends the operator looking for a comment that is
+    right there (#926).
+    """
     keys: set[str] = set()
+    rejected: list[tuple[str, str]] = []
     for item in items:
         if not _is_trusted_source(item, enforced=enforced):
             continue
@@ -675,8 +738,16 @@ def _review_evidence_keys(
             continue
         if not _matches_head(item, body, head_sha):
             continue
-        keys.add(_reviewer_key(item, body))
-    return keys
+        key = _reviewer_key(item, body)
+        ok, reason = verdict_substance(body, pr_title=pr_title)
+        if not ok:
+            rejected.append((key, reason))
+            continue
+        keys.add(key)
+    # A reviewer who posted a thin verdict and then a real one is accepted: the
+    # later comment is the review, and holding on the earlier one would make
+    # correcting yourself impossible.
+    return keys, [(key, why) for key, why in rejected if key not in keys]
 
 
 def _review_vendor_provenance(
@@ -897,6 +968,91 @@ def _attribution_finding(
         "kind": "attribution",
         "message": message,
     }
+
+
+#: A concrete thing a review can point at: a path, a ``path:line``, a backticked
+#: symbol, or a dotted/called identifier. Presence of *structure*, never a
+#: judgement about whether the review was good — the same line ai-jury's
+#: ``emitted_findings_block()`` draws.
+_VERDICT_ANCHORS = (
+    re.compile(r"[\w./-]+\.[A-Za-z0-9]{1,5}:\d+"),          # path/to/file.py:42
+    re.compile(r"[\w-]+/[\w./-]+\.[A-Za-z0-9]{1,5}\b"),      # src/keel/thing.py
+    re.compile(r"`[^`\n]{2,}`"),                              # `a_symbol`, `--a-flag`
+    re.compile(r"\b\w+\.\w+\(\)"),                           # module.function()
+)
+
+#: The escape hatch the issue insists on: a genuinely clean review must stay
+#: expressible. "Checked X, Y and Z; found nothing" is a real review outcome and
+#: must not be forced to invent an anchor.
+_VERDICT_CHECKED_CLAUSE = re.compile(
+    r"\bchecked\b[^.\n]{8,}", re.IGNORECASE
+)
+
+#: Below this share of novel words, the prose is the PR title said again. The
+#: observed shape was `Reviewed <title>: <generic affirmation>` — 75 of 75
+#: verdicts across 25 PRs (#926).
+_VERDICT_NOVELTY_FLOOR = 0.35
+
+_WORD = re.compile(r"[a-z0-9]+")
+
+
+def _verdict_prose(body: str) -> str:
+    """The verdict's own words: header block, markers and HTML comments removed."""
+    lines = body.splitlines()
+    start = 0
+    for index, raw in enumerate(lines):
+        if not raw.strip():
+            start = index + 1
+            break
+    kept = [
+        line for line in lines[start:]
+        if line.strip() and not line.strip().startswith("<!--")
+        and REVIEW_VERDICT_MARKER not in line
+    ]
+    return "\n".join(kept)
+
+
+def verdict_substance(body: str, *, pr_title: str = "") -> tuple[bool, str]:
+    """Whether a verdict engages with the diff at all. ``(ok, reason)``.
+
+    The evidence gate verified that verdicts *exist* with the right marker, head
+    SHA and distinct reviewer ids — never that any of them looked at anything. A
+    verdict engaging with nothing was indistinguishable from one that caught a
+    blocker, and the record showed what that permits: 75 of 75 verdicts `pass`,
+    all opening `Reviewed <PR title>: <affirmation>`, across 25 PRs that produced
+    no review-driven commit between them (#926).
+
+    Two mechanical requirements, both content-agnostic beyond structure:
+
+    * **An anchor.** A path, a ``path:line``, a backticked symbol, or a called
+      identifier — or an explicit "checked …" clause, because a genuinely clean
+      review must stay expressible and forcing it to invent a file reference
+      would make the check worse than nothing.
+    * **Novelty against the title.** Prose that is substantially the PR title
+      restated is the observed shape, and it survives the anchor test whenever
+      the title happens to contain a path.
+
+    This says nothing about whether a review was *good*. It cannot, and trying
+    would make the gate a critic. It distinguishes a review from a receipt.
+    """
+    prose = _verdict_prose(body)
+    if not prose.strip():
+        return False, "verdict has no prose beyond its header"
+
+    anchored = any(pattern.search(prose) for pattern in _VERDICT_ANCHORS)
+    if not anchored and not _VERDICT_CHECKED_CLAUSE.search(prose):
+        return False, (
+            "verdict names nothing concrete — no file, line, symbol, or "
+            "'checked …' clause, so it cannot be told apart from a receipt"
+        )
+
+    title_words = set(_WORD.findall(pr_title.lower()))
+    prose_words = _WORD.findall(prose.lower())
+    if title_words and prose_words:
+        novel = [word for word in prose_words if word not in title_words]
+        if len(novel) / len(prose_words) < _VERDICT_NOVELTY_FLOOR:
+            return False, "verdict is substantially the pull request title restated"
+    return True, ""
 
 
 def _reviewer_key(item: dict[str, Any], body: str) -> str:

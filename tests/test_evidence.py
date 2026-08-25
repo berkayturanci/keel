@@ -79,7 +79,7 @@ class TestEvidenceContract(unittest.TestCase):
             _review_contract(reviewers=1, jury=True, no_jury=True),
             pr_comments=[
                 _comment(closure.COMMENT_MARKER),
-                _comment("keel.review-verdict.v1\nLGTM"),
+                _comment("keel.review-verdict.v1\nLGTM\n\nsrc/keel/evidence.py: ok."),
             ],
             issue_comments=[_comment(closure.COMMENT_MARKER)],
         )
@@ -92,8 +92,10 @@ class TestCountReviewVerdicts(unittest.TestCase):
     def test_counts_distinct_trusted_reviewers(self):
         count = evidence.count_review_verdicts(
             pr_comments=[
-                _trusted_comment("keel.review-verdict.v1\nLGTM", reviewer="agent-a"),
-                _trusted_comment("keel.review-verdict.v1\nLGTM", reviewer="agent-b"),
+                _trusted_comment("keel.review-verdict.v1\nLGTM"
+                    "\n\nsrc/keel/evidence.py: ok.", reviewer="agent-a"),
+                _trusted_comment("keel.review-verdict.v1\nLGTM"
+                    "\n\nsrc/keel/evidence.py: ok.", reviewer="agent-b"),
                 # idempotent re-post by agent-a collapses to one verdict
                 _trusted_comment("keel.review-verdict.v1\nLGTM again", reviewer="agent-a"),
             ],
@@ -104,10 +106,11 @@ class TestCountReviewVerdicts(unittest.TestCase):
     def test_ignores_untrusted_and_non_verdicts(self):
         count = evidence.count_review_verdicts(
             pr_comments=[
-                _untrusted_comment("keel.review-verdict.v1\nLGTM"),
+                _untrusted_comment("keel.review-verdict.v1\nLGTM\n\nsrc/keel/evidence.py: ok."),
                 _comment("just a chat comment"),
             ],
-            pr_reviews=[_comment("keel.review-verdict.v1\nLGTM\nreviewer: r1")],
+            pr_reviews=[_comment("keel.review-verdict.v1\nLGTM\nreviewer: r1"
+                "\n\nsrc/keel/evidence.py: ok.")],
         )
 
         self.assertEqual(count, 1)
@@ -120,7 +123,7 @@ class TestEvidenceVerify(unittest.TestCase):
     def test_missing_closure_blocks(self):
         report = evidence.verify(
             _review_contract(reviewers=1),
-            pr_comments=[_comment("keel.review-verdict.v1\nLGTM")],
+            pr_comments=[_comment("keel.review-verdict.v1\nLGTM\n\nsrc/keel/evidence.py: ok.")],
             issue_comments=[],
         )
 
@@ -132,7 +135,7 @@ class TestEvidenceVerify(unittest.TestCase):
             _review_contract(reviewers=2),
             pr_comments=[
                 _comment(closure.COMMENT_MARKER),
-                _comment("keel.review-verdict.v1\nLGTM"),
+                _comment("keel.review-verdict.v1\nLGTM\n\nsrc/keel/evidence.py: ok."),
             ],
             issue_comments=[_comment(closure.COMMENT_MARKER)],
         )
@@ -145,7 +148,7 @@ class TestEvidenceVerify(unittest.TestCase):
             _review_contract(reviewers=1, jury=True),
             pr_comments=[
                 _comment(closure.COMMENT_MARKER),
-                _comment("keel.review-verdict.v1\nLGTM"),
+                _comment("keel.review-verdict.v1\nLGTM\n\nsrc/keel/evidence.py: ok."),
             ],
             issue_comments=[_comment(closure.COMMENT_MARKER)],
         )
@@ -158,7 +161,7 @@ class TestEvidenceVerify(unittest.TestCase):
             _review_contract(reviewers=1, jury=True),
             pr_comments=[
                 _comment(closure.COMMENT_MARKER),
-                _comment("keel.review-verdict.v1\nLGTM"),
+                _comment("keel.review-verdict.v1\nLGTM\n\nsrc/keel/evidence.py: ok."),
             ],
             issue_comments=[_comment(closure.COMMENT_MARKER)],
             deferrals=("jury-verdict",),
@@ -179,7 +182,8 @@ class TestEvidenceVerify(unittest.TestCase):
     def test_pr_body_chat_summary_and_assessment_are_not_evidence(self):
         report = evidence.verify(
             _review_contract(reviewers=1),
-            pr_body=f"{closure.COMMENT_MARKER}\nkeel.review-verdict.v1\nLGTM",
+            pr_body=f"{closure.COMMENT_MARKER}\nkeel.review-verdict.v1\nLGTM"
+                "\n\nsrc/keel/evidence.py: ok.",
             pr_comments=[
                 _comment("### \U0001f6a2 keel ship\nLGTM reviewer verdict"),
                 _comment("chat summary: reviewer says LGTM"),
@@ -197,7 +201,8 @@ class TestEvidenceVerify(unittest.TestCase):
             _review_contract(reviewers=1),
             pr_comments=[
                 _comment(closure.COMMENT_MARKER),
-                _comment("keel.review-verdict.v1\nReviewer LGTM; --no-jury was checked."),
+                _comment("keel.review-verdict.v1\nReviewer LGTM; --no-jury was checked."
+                    "\n\nsrc/keel/ship.py: ok."),
             ],
             issue_comments=[_comment(closure.COMMENT_MARKER)],
         )
@@ -225,9 +230,11 @@ class TestEvidenceVerify(unittest.TestCase):
             _review_contract(reviewers=2),
             pr_comments=[
                 _comment(closure.COMMENT_MARKER),
-                _comment("keel.review-verdict.v1\nreviewer: alpha\nLGTM"),
+                _comment("keel.review-verdict.v1\nreviewer: alpha\nLGTM"
+                    "\n\nsrc/keel/evidence.py: ok."),
                 _comment("keel.review-verdict.v1\nreviewer: alpha\nLGTM again"),
-                _comment("keel.review-verdict.v1\nreviewer: beta\nLGTM"),
+                _comment("keel.review-verdict.v1\nreviewer: beta\nLGTM"
+                    "\n\nsrc/keel/evidence.py: ok."),
             ],
             issue_comments=[_comment(closure.COMMENT_MARKER)],
         )
@@ -241,7 +248,7 @@ class TestEvidenceVerify(unittest.TestCase):
             pr_comments=[
                 _comment(closure.COMMENT_MARKER),
                 {
-                    "body": "keel.review-verdict.v1\nLGTM",
+                    "body": "keel.review-verdict.v1\nLGTM\n\nsrc/keel/evidence.py: ok.",
                     "user": {"login": "reviewer-one"},
                     "author_association": "MEMBER",
                 },
@@ -257,15 +264,18 @@ class TestEvidenceVerify(unittest.TestCase):
             _review_contract(reviewers=2, jury=True),
             pr_comments=[
                 _comment(closure.COMMENT_MARKER),
-                _comment("keel.review-verdict.v1\nreviewer: alpha\nhead: old\nLGTM"),
-                _comment("keel.review-verdict.v1\nreviewer: beta\nhead: abc123\nLGTM"),
+                _comment("keel.review-verdict.v1\nreviewer: alpha\nhead: old\nLGTM"
+                    "\n\nsrc/keel/evidence.py: ok."),
+                _comment("keel.review-verdict.v1\nreviewer: beta\nhead: abc123\nLGTM"
+                    "\n\nsrc/keel/evidence.py: ok."),
                 _comment("keel.jury-verdict.v1\nhead: old\nAI Jury LGTM"),
                 _comment("keel.jury-verdict.v1\nhead: abc123\nAI Jury LGTM"),
             ],
             issue_comments=[_comment(closure.COMMENT_MARKER)],
             pr_reviews=[
                 {
-                    "body": "keel.review-verdict.v1\nreviewer: gamma\nLGTM",
+                    "body": "keel.review-verdict.v1\nreviewer: gamma\nLGTM"
+                        "\n\nsrc/keel/evidence.py: ok.",
                     "commit_id": "abc123",
                     "author_association": "MEMBER",
                 },
@@ -282,7 +292,8 @@ class TestEvidenceVerify(unittest.TestCase):
             _review_contract(reviewers=1, jury=True),
             pr_comments=[
                 _comment(closure.COMMENT_MARKER),
-                _comment("keel.review-verdict.v1\nreviewer: alpha\nLGTM"),
+                _comment("keel.review-verdict.v1\nreviewer: alpha\nLGTM"
+                    "\n\nsrc/keel/evidence.py: ok."),
                 _comment("keel.jury-verdict.v1\nAI Jury LGTM"),
             ],
             issue_comments=[_comment(closure.COMMENT_MARKER)],
@@ -299,7 +310,8 @@ class TestEvidenceVerify(unittest.TestCase):
             _review_contract(reviewers=1, jury=True),
             pr_comments=[
                 _untrusted_comment(closure.COMMENT_MARKER),
-                _untrusted_comment("keel.review-verdict.v1\nreviewer: forged\nhead: abc123\nLGTM"),
+                _untrusted_comment("keel.review-verdict.v1\nreviewer: forged\nhead: abc123\nLGTM"
+                    "\n\nsrc/keel/evidence.py: ok."),
                 _untrusted_comment("keel.jury-verdict.v1\nhead: abc123\nAI Jury LGTM"),
             ],
             issue_comments=[_untrusted_comment(closure.COMMENT_MARKER)],
@@ -323,7 +335,8 @@ class TestEvidenceVerify(unittest.TestCase):
             _review_contract(reviewers=1, jury=True),
             pr_comments=[
                 _trusted_comment(closure.COMMENT_MARKER),
-                _trusted_comment("keel.review-verdict.v1\nreviewer: alpha\nhead: abc123\nLGTM"),
+                _trusted_comment("keel.review-verdict.v1\nreviewer: alpha\nhead: abc123\nLGTM"
+                    "\n\nsrc/keel/evidence.py: ok."),
                 _trusted_comment("keel.jury-verdict.v1\nhead: abc123\nAI Jury LGTM"),
             ],
             issue_comments=[_trusted_comment(closure.COMMENT_MARKER)],
@@ -341,7 +354,8 @@ class TestEvidenceVerify(unittest.TestCase):
             _review_contract(reviewers=1),
             pr_comments=[
                 _trusted_comment(_closure_with_run_context()),
-                _trusted_comment("keel.review-verdict.v1\nreviewer: alpha\nLGTM"),
+                _trusted_comment("keel.review-verdict.v1\nreviewer: alpha\nLGTM"
+                    "\n\nsrc/keel/evidence.py: ok."),
             ],
             issue_comments=[_trusted_comment(_closure_with_run_context())],
         )
@@ -354,7 +368,8 @@ class TestEvidenceVerify(unittest.TestCase):
             _review_contract(reviewers=1),
             pr_comments=[
                 _trusted_comment(_closure_with_run_context(host="unknown") + "\n### Capture\n"),
-                _trusted_comment("keel.review-verdict.v1\nreviewer: alpha\nLGTM"),
+                _trusted_comment("keel.review-verdict.v1\nreviewer: alpha\nLGTM"
+                    "\n\nsrc/keel/evidence.py: ok."),
             ],
             issue_comments=[_trusted_comment(_closure_with_run_context(transport="unknown"))],
         )
@@ -374,7 +389,8 @@ class TestEvidenceVerify(unittest.TestCase):
             _review_contract(reviewers=1),
             pr_comments=[
                 _trusted_comment(empty),
-                _trusted_comment("keel.review-verdict.v1\nreviewer: alpha\nLGTM"),
+                _trusted_comment("keel.review-verdict.v1\nreviewer: alpha\nLGTM"
+                    "\n\nsrc/keel/evidence.py: ok."),
             ],
             issue_comments=[_trusted_comment(_closure_with_run_context())],
         )
@@ -404,7 +420,7 @@ class TestEvidenceVerify(unittest.TestCase):
 
     def test_explicit_untrusted_bot_comment_markers_are_not_evidence(self):
         bot_comment = {
-            "body": "keel.review-verdict.v1\nhead: abc123\nLGTM",
+            "body": "keel.review-verdict.v1\nhead: abc123\nLGTM\n\nsrc/keel/evidence.py: ok.",
             "author_association": "NONE",
             "user": {"login": "github-actions[bot]", "type": "Bot"},
         }
@@ -422,7 +438,8 @@ class TestEvidenceVerify(unittest.TestCase):
 
     def test_missing_author_association_fails_closed_when_enforced(self):
         missing_association = {
-            "body": "keel.review-verdict.v1\nreviewer: fixture\nhead: abc123\nLGTM",
+            "body": "keel.review-verdict.v1\nreviewer: fixture\nhead: abc123\nLGTM"
+                "\n\nsrc/keel/evidence.py: ok.",
             "user": {"login": "fixture-agent"},
         }
         report = evidence.verify(
@@ -441,7 +458,8 @@ class TestEvidenceVerify(unittest.TestCase):
             _review_contract(reviewers=1),
             pr_comments=[
                 {"body": closure.COMMENT_MARKER},
-                {"body": "keel.review-verdict.v1\nreviewer: fixture\nLGTM"},
+                {"body": "keel.review-verdict.v1\nreviewer: fixture\nLGTM"
+                    "\n\nsrc/keel/evidence.py: ok."},
             ],
             issue_comments=[{"body": closure.COMMENT_MARKER}],
             enforced=False,
@@ -487,7 +505,8 @@ class TestGateActive(unittest.TestCase):
         decision = evidence.gate_decision(
             [],
             "keel:ship",
-            pr_comments=[_trusted_comment("keel.review-verdict.v1\nLGTM")],
+            pr_comments=[_trusted_comment("keel.review-verdict.v1\nLGTM"
+                "\n\nsrc/keel/evidence.py: ok.")],
         )
 
         self.assertTrue(decision["enforced"])
@@ -596,7 +615,7 @@ class TestEvidenceEnforcement(unittest.TestCase):
     def test_verify_enforced_default_is_unchanged(self):
         report = evidence.verify(
             _review_contract(reviewers=1),
-            pr_comments=[_comment("keel.review-verdict.v1\nLGTM")],
+            pr_comments=[_comment("keel.review-verdict.v1\nLGTM\n\nsrc/keel/evidence.py: ok.")],
             issue_comments=[],
         )
 
@@ -777,7 +796,7 @@ class TestClosureFidelity(unittest.TestCase):
         self.assertEqual(report["status"], "pass")
 
 
-def _verdict(reviewer, *, head="abc123", vendor=None, model=None):
+def _verdict(reviewer, *, head="abc123", vendor=None, model=None, scope=None):
     from keel import artifacts
     return _comment(
         artifacts.render_review_verdict(
@@ -785,6 +804,11 @@ def _verdict(reviewer, *, head="abc123", vendor=None, model=None):
             head_sha=head,
             vendor=vendor,
             model=model,
+            # The renderer's generic default scope does not satisfy the substance
+            # gate, by design: "Full changed-file diff and relevant contracts"
+            # names nothing (#926). A fixture standing in for a real verdict has
+            # to look like one.
+            scope=scope or "src/keel/evidence.py and tests/test_evidence.py",
         )
     )
 
@@ -920,13 +944,17 @@ class TestRequireDistinctVendors(unittest.TestCase):
             [
                 _untrusted_comment(
                     "keel.review-verdict.v1\nreviewer: u\nvendor: claude\nLGTM"
+                        "\n\nsrc/keel/evidence.py: ok."
                 ),
-                _comment("keel.review-verdict.v1\nreviewer: a\nhead: old\nvendor: x\nLGTM"),
+                _comment("keel.review-verdict.v1\nreviewer: a\nhead: old\nvendor: x\nLGTM"
+                    "\n\nsrc/keel/evidence.py: ok."),
                 _comment(
                     "keel.review-verdict.v1\nreviewer: b\nhead: abc123\nvendor: claude\nLGTM"
+                        "\n\nsrc/keel/evidence.py: ok."
                 ),
                 _comment(
                     "keel.review-verdict.v1\nreviewer: b\nhead: abc123\nvendor: codex\nLGTM"
+                        "\n\nsrc/keel/evidence.py: ok."
                 ),
             ],
             head_sha="abc123",
@@ -935,7 +963,8 @@ class TestRequireDistinctVendors(unittest.TestCase):
 
     def test_provenance_map_records_missing_vendor_as_none(self):
         provenance = evidence._review_vendor_provenance(
-            [_comment("keel.review-verdict.v1\nreviewer: a\nhead: abc123\nLGTM")],
+            [_comment("keel.review-verdict.v1\nreviewer: a\nhead: abc123\nLGTM"
+                "\n\nsrc/keel/evidence.py: ok.")],
             head_sha="abc123",
         )
         self.assertEqual(provenance, {"reviewer:a": None})
@@ -952,7 +981,8 @@ def _satisfied_evidence_kwargs():
     return {
         "pr_comments": [
             _trusted_comment(_closure_with_run_context()),
-            _trusted_comment("keel.review-verdict.v1\nreviewer: alpha\nLGTM"),
+            _trusted_comment("keel.review-verdict.v1\nreviewer: alpha\nLGTM"
+                "\n\nsrc/keel/evidence.py: ok."),
         ],
         "issue_comments": [_trusted_comment(_closure_with_run_context())],
     }
@@ -1061,7 +1091,8 @@ class TestAttributionVerifyWiring(unittest.TestCase):
             ledger_record=record,
             pr_comments=[
                 _trusted_comment(body),
-                _trusted_comment("keel.review-verdict.v1\nreviewer: alpha\nLGTM"),
+                _trusted_comment("keel.review-verdict.v1\nreviewer: alpha\nLGTM"
+                    "\n\nsrc/keel/evidence.py: ok."),
             ],
             issue_comments=[_trusted_comment(body)],
         )
@@ -1079,7 +1110,8 @@ class TestAttributionVerifyWiring(unittest.TestCase):
             ledger_record=record,
             pr_comments=[
                 _trusted_comment(body),
-                _trusted_comment("keel.review-verdict.v1\nreviewer: alpha\nLGTM"),
+                _trusted_comment("keel.review-verdict.v1\nreviewer: alpha\nLGTM"
+                    "\n\nsrc/keel/evidence.py: ok."),
             ],
             issue_comments=[_trusted_comment(body)],
         )
@@ -1405,7 +1437,8 @@ class TestEvidenceThreeWayStatus(unittest.TestCase):
             _review_contract(reviewers=1, jury=False),
             pr_comments=[
                 _trusted_comment(closure.COMMENT_MARKER),
-                _trusted_comment("keel.review-verdict.v1\nreviewer: alpha\nLGTM"),
+                _trusted_comment("keel.review-verdict.v1\nreviewer: alpha\nLGTM"
+                    "\n\nsrc/keel/evidence.py: ok."),
             ],
             issue_comments=[_trusted_comment(closure.COMMENT_MARKER)],
             pr_labels=["agent:codex"],
@@ -1419,7 +1452,8 @@ class TestEvidenceThreeWayStatus(unittest.TestCase):
             _review_contract(reviewers=1, jury=False),
             pr_comments=[
                 _trusted_comment(closure.COMMENT_MARKER),
-                _trusted_comment("keel.review-verdict.v1\nreviewer: alpha\nLGTM"),
+                _trusted_comment("keel.review-verdict.v1\nreviewer: alpha\nLGTM"
+                    "\n\nsrc/keel/evidence.py: ok."),
             ],
             issue_comments=[_trusted_comment(closure.COMMENT_MARKER)],
             pr_labels=[],  # Missing agent attribution label triggers blocking finding
@@ -1434,7 +1468,8 @@ class TestEvidenceThreeWayStatus(unittest.TestCase):
             _review_contract(reviewers=1, jury=False),
             pr_comments=[
                 _trusted_comment(tampered_body),
-                _trusted_comment("keel.review-verdict.v1\nreviewer: alpha\nLGTM"),
+                _trusted_comment("keel.review-verdict.v1\nreviewer: alpha\nLGTM"
+                    "\n\nsrc/keel/evidence.py: ok."),
             ],
             issue_comments=[_trusted_comment(tampered_body)],
             pr_labels=["agent:codex"],

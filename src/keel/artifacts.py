@@ -145,6 +145,15 @@ def render_review_verdict(
     verification can enforce vendor distinctness across required verdicts. The
     fields use the same vendor/model conventions as ``keel.provenance`` and are
     omitted entirely when not supplied, so the default rendering is unchanged.
+
+    **Pass a real ``scope`` or real ``findings``.** The defaults — "Full
+    changed-file diff and relevant contracts" and "none" — name nothing, and
+    :func:`keel.evidence.verdict_substance` refuses a verdict that names nothing
+    (#926). That is deliberate: 75 of 75 verdicts across 25 pull requests were
+    this template with the defaults left in, and the gate could not tell them
+    apart from a review that caught a blocker. Give the scope a path, a symbol,
+    or a "checked X, Y and Z" clause — a genuinely clean review stays
+    expressible, it just has to say what it looked at.
     """
     lines = [
         evidence.REVIEW_VERDICT_MARKER,

@@ -1897,7 +1897,8 @@ class TestShip(unittest.TestCase):
             endpoint = argv[-1]
             if endpoint.endswith("/issues/160/comments"):
                 return _proc(json.dumps([[
-                    {"body": "keel.review-verdict.v1\nreviewer: a\nLGTM",
+                    {"body": "keel.review-verdict.v1\nreviewer: a\nLGTM"
+                        "\n\nsrc/keel/evidence.py: ok.",
                      "author_association": "MEMBER"},
                 ]]))
             if endpoint.endswith("/pulls/160/reviews"):
@@ -1953,14 +1954,16 @@ class TestShip(unittest.TestCase):
             body = root / "body.md"
             _write_json_fixture(pr_comments, [
                 _trusted_comment("<!-- keel.closure-comment.v1 -->"),
-                _trusted_comment("keel.review-verdict.v1\nReviewer A LGTM"),
+                _trusted_comment("keel.review-verdict.v1\nReviewer A LGTM"
+                    "\n\nsrc/keel/evidence.py: ok."),
                 _trusted_comment("keel.jury-verdict.v1\nAI Jury LGTM"),
             ])
             _write_json_fixture(issue_comments, [
                 _trusted_comment("<!-- keel.closure-comment.v1 -->"),
             ])
             _write_json_fixture(reviews, [
-                _trusted_comment("keel.review-verdict.v1\nReviewer B LGTM"),
+                _trusted_comment("keel.review-verdict.v1\nReviewer B LGTM"
+                    "\n\nsrc/keel/evidence.py: ok."),
             ])
             body.write_text("Closes #212", encoding="utf-8")
             rc, out, _ = run([
@@ -1994,7 +1997,8 @@ class TestShip(unittest.TestCase):
             body = root / "body.md"
             _write_json_fixture(pr_comments, [
                 _trusted_comment("<!-- keel.closure-comment.v1 -->"),
-                _trusted_comment("keel.review-verdict.v1\nreviewer: a\nLGTM"),
+                _trusted_comment("keel.review-verdict.v1\nreviewer: a\nLGTM"
+                    "\n\nsrc/keel/evidence.py: ok."),
             ])
             _write_json_fixture(issue_comments, [
                 _trusted_comment("<!-- keel.closure-comment.v1 -->"),
@@ -2033,6 +2037,7 @@ class TestShip(unittest.TestCase):
                 _trusted_comment("<!-- keel.closure-comment.v1 -->"),
                 _trusted_comment(
                     "keel.review-verdict.v1\nreviewer: a\nvendor: claude\nLGTM"
+                        "\n\nsrc/keel/evidence.py: ok."
                 ),
             ])
             _write_json_fixture(issue_comments, [
@@ -2041,6 +2046,7 @@ class TestShip(unittest.TestCase):
             _write_json_fixture(reviews, [
                 _trusted_comment(
                     f"keel.review-verdict.v1\nreviewer: b\nvendor: {vendor_b}\nLGTM"
+                        "\n\nsrc/keel/evidence.py: ok."
                 ),
             ])
             argv = [
@@ -2233,7 +2239,7 @@ class TestShip(unittest.TestCase):
             reviews.write_text("[]", encoding="utf-8")
             body.write_text(
                 "Closes #212\n<!-- keel.closure-comment.v1 -->\n"
-                "keel.review-verdict.v1\nLGTM",
+                "keel.review-verdict.v1\nLGTM\n\nsrc/keel/evidence.py: ok.",
                 encoding="utf-8",
             )
             rc, out, _ = run([
@@ -2347,7 +2353,8 @@ class TestShip(unittest.TestCase):
             reviews = root / "reviews.json"
             _write_json_fixture(pr_comments, [
                 _trusted_comment("<!-- keel.closure-comment.v1 -->"),
-                _trusted_comment("keel.review-verdict.v1\nreviewer: a\nLGTM"),
+                _trusted_comment("keel.review-verdict.v1\nreviewer: a\nLGTM"
+                    "\n\nsrc/keel/evidence.py: ok."),
             ])
             _write_json_fixture(issue_comments, [
                 _trusted_comment("<!-- keel.closure-comment.v1 -->"),
@@ -2376,7 +2383,8 @@ class TestShip(unittest.TestCase):
             reviews = root / "reviews.json"
             _write_json_fixture(pr_comments, [
                 _trusted_comment("<!-- keel.closure-comment.v1 -->"),
-                _trusted_comment("keel.review-verdict.v1\nreviewer: a\nLGTM"),
+                _trusted_comment("keel.review-verdict.v1\nreviewer: a\nLGTM"
+                    "\n\nsrc/keel/evidence.py: ok."),
             ])
             _write_json_fixture(issue_comments, [
                 _trusted_comment("<!-- keel.closure-comment.v1 -->"),
@@ -2497,7 +2505,8 @@ class TestShip(unittest.TestCase):
             # No closure comments anywhere: they are an s11 artifact, and this is
             # the gate that authorizes the s10 merge that precedes s11.
             _write_json_fixture(pr_comments, [
-                _trusted_comment("keel.review-verdict.v1\nReviewer A LGTM"),
+                _trusted_comment("keel.review-verdict.v1\nReviewer A LGTM"
+                    "\n\nsrc/keel/evidence.py: ok."),
             ])
             body.write_text("Closes #212", encoding="utf-8")
             rc, out, _ = run([
@@ -2566,8 +2575,10 @@ class TestShip(unittest.TestCase):
             body = root / "body.md"
             _write_json_fixture(pr_comments, [
                 _trusted_comment("<!-- keel.closure-comment.v1 -->"),
-                _trusted_comment("keel.review-verdict.v1\nreviewer: a\nLGTM"),
-                _trusted_comment("keel.review-verdict.v1\nreviewer: b\nLGTM"),
+                _trusted_comment("keel.review-verdict.v1\nreviewer: a\nLGTM"
+                    "\n\nsrc/keel/evidence.py: ok."),
+                _trusted_comment("keel.review-verdict.v1\nreviewer: b\nLGTM"
+                    "\n\nsrc/keel/evidence.py: ok."),
             ])
             _write_json_fixture(issue_comments, [
                 _trusted_comment("<!-- keel.closure-comment.v1 -->"),
@@ -2669,12 +2680,14 @@ class TestShip(unittest.TestCase):
             if endpoint.endswith("/issues/300/comments"):
                 return _proc(json.dumps([
                     _trusted_comment("<!-- keel.closure-comment.v1 -->"),
-                    _trusted_comment("keel.review-verdict.v1\nreviewer: a\nhead: abc123\nLGTM"),
+                    _trusted_comment("keel.review-verdict.v1\nreviewer: a\nhead: abc123\nLGTM"
+                        "\n\nsrc/keel/evidence.py: ok."),
                 ]))
             if endpoint.endswith("/pulls/300/reviews"):
                 return _proc(json.dumps([
                     {
-                        "body": "keel.review-verdict.v1\nreviewer: b\nLGTM",
+                        "body": "keel.review-verdict.v1\nreviewer: b\nLGTM"
+                            "\n\nsrc/keel/evidence.py: ok.",
                         "commit_id": "abc123",
                         "author_association": "MEMBER",
                     },
@@ -2719,8 +2732,10 @@ class TestShip(unittest.TestCase):
             if endpoint.endswith("/issues/300/comments"):
                 return _proc(json.dumps([
                     _trusted_comment("<!-- keel.closure-comment.v1 -->"),
-                    _trusted_comment("keel.review-verdict.v1\nreviewer: a\nhead: abc123\nLGTM"),
-                    _trusted_comment("keel.review-verdict.v1\nreviewer: b\nhead: abc123\nLGTM"),
+                    _trusted_comment("keel.review-verdict.v1\nreviewer: a\nhead: abc123\nLGTM"
+                        "\n\nsrc/keel/evidence.py: ok."),
+                    _trusted_comment("keel.review-verdict.v1\nreviewer: b\nhead: abc123\nLGTM"
+                        "\n\nsrc/keel/evidence.py: ok."),
                 ]))
             if endpoint.endswith("/pulls/300/reviews"):
                 return _proc("[]")
@@ -2755,9 +2770,12 @@ class TestShip(unittest.TestCase):
             body = root / "body.md"
             _write_json_fixture(pr_comments, [
                 _trusted_comment("<!-- keel.closure-comment.v1 -->"),
-                _trusted_comment("keel.review-verdict.v1\nreviewer: a\nhead: abc123\nLGTM"),
-                _trusted_comment("keel.review-verdict.v1\nreviewer: b\nhead: abc123\nLGTM"),
-                _trusted_comment("keel.review-verdict.v1\nreviewer: c\nhead: abc123\nLGTM"),
+                _trusted_comment("keel.review-verdict.v1\nreviewer: a\nhead: abc123\nLGTM"
+                    "\n\nsrc/keel/evidence.py: ok."),
+                _trusted_comment("keel.review-verdict.v1\nreviewer: b\nhead: abc123\nLGTM"
+                    "\n\nsrc/keel/evidence.py: ok."),
+                _trusted_comment("keel.review-verdict.v1\nreviewer: c\nhead: abc123\nLGTM"
+                    "\n\nsrc/keel/evidence.py: ok."),
                 _trusted_comment("keel.jury-verdict.v1\nhead: abc123\nAI Jury LGTM"),
             ])
             _write_json_fixture(issue_comments, [
@@ -2803,8 +2821,10 @@ class TestShip(unittest.TestCase):
             if endpoint.endswith("/issues/300/comments"):
                 return _proc(json.dumps([
                     _trusted_comment("<!-- keel.closure-comment.v1 -->"),
-                    _trusted_comment("keel.review-verdict.v1\nReviewer A LGTM"),
-                    _trusted_comment("keel.review-verdict.v1\nReviewer B LGTM"),
+                    _trusted_comment("keel.review-verdict.v1\nReviewer A LGTM"
+                        "\n\nsrc/keel/evidence.py: ok."),
+                    _trusted_comment("keel.review-verdict.v1\nReviewer B LGTM"
+                        "\n\nsrc/keel/evidence.py: ok."),
                 ]))
             if endpoint.endswith("/pulls/300/reviews"):
                 return _proc("[]")
@@ -5571,7 +5591,8 @@ class TestCoreMerge(unittest.TestCase):
             "pr_body": "Closes #265",
             "pr_comments": [
                 {
-                    "body": "<!-- keel.review-verdict.v1 -->\nreviewer: a\nhead: abc\nLGTM",
+                    "body": "<!-- keel.review-verdict.v1 -->\nreviewer: a\nhead: abc\nLGTM"
+                        "\n\nsrc/keel/cli.py: ok.",
                     "author_association": "OWNER",
                 },
                 {
