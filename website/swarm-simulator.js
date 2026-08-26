@@ -221,7 +221,7 @@
       '    </div>',
       '    <div class="sim-controls">',
       '      <button type="button" class="sim-btn sim-btn-primary" id="sim-toggle-btn">' + btnLabel + '</button>',
-      '      <button type="button" class="sim-btn sim-btn-secondary" id="sim-reset-btn">⟳ Reset</button>',
+      '      <button type="button" class="sim-btn sim-btn-secondary" id="sim-reset-btn"><span aria-hidden="true">⟳</span> Reset</button>',
       '      <div class="sim-speed-box">',
       '        <span>Speed:</span>',
       '        <button type="button" class="sim-speed-btn ' + (state.speed === 1 ? 'active' : '') + '" data-speed="1">1x</button>',
