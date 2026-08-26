@@ -246,7 +246,7 @@ class TestHomebrewPromise(unittest.TestCase):
         self.assertIsNotNone(declared, "formula has no top-level sha256")
         try:
             with urllib.request.urlopen(url.group(0), timeout=60) as response:
-                payload = response.read()
+                payload = response.read(50 * 1024 * 1024)
         except urllib.error.HTTPError as exc:
             if exc.code == 404:
                 # A release PR bumps the declared version and, because
@@ -297,7 +297,7 @@ class TestHomebrewPromise(unittest.TestCase):
             request.add_header("Authorization", f"Bearer {token}")
         try:
             with urllib.request.urlopen(request, timeout=20) as response:
-                published = response.read().decode("utf-8")
+                published = response.read(50 * 1024 * 1024).decode("utf-8")
         except urllib.error.HTTPError as exc:
             if exc.code == 404:
                 self.fail(f"{HOMEBREW_TAP} has no Formula/keel.rb; brew install would fail")
