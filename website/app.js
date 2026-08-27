@@ -153,18 +153,24 @@
 
   /* ---- Copy buttons ------------------------------------------------ */
   function flashCopy(btn) {
-    if (btn.classList.contains("done")) return;
     var label = btn.querySelector("span");
-    var prev = label ? label.textContent : "";
-    var prevAria = btn.getAttribute("aria-label");
     btn.classList.add("done");
     if (label) label.textContent = "copied";
     btn.setAttribute("aria-label", "copied");
     var sr = document.getElementById("sr-live-region");
-    if (sr) { sr.textContent = "Copied to clipboard"; setTimeout(function() { sr.textContent = ""; }, 3000); }
-    setTimeout(function () { btn.classList.remove("done"); if (label) label.textContent = prev; if (prevAria) btn.setAttribute("aria-label", prevAria); else btn.removeAttribute("aria-label"); }, 1400);
+    if (sr) { sr.textContent = "Copied to clipboard"; clearTimeout(sr._timer); sr._timer = setTimeout(function() { sr.textContent = ""; }, 3000); }
+    clearTimeout(btn._timer);
+    btn._timer = setTimeout(function () {
+      btn.classList.remove("done");
+      if (label) label.textContent = btn.dataset.origText || "";
+      if (btn.dataset.origAria) btn.setAttribute("aria-label", btn.dataset.origAria);
+      else btn.removeAttribute("aria-label");
+    }, 1400);
   }
   document.querySelectorAll("[data-copy]").forEach(function (btn) {
+    var label = btn.querySelector("span");
+    if (label && !btn.dataset.origText) btn.dataset.origText = label.textContent;
+    if (btn.hasAttribute("aria-label") && !btn.dataset.origAria) btn.dataset.origAria = btn.getAttribute("aria-label");
     btn.addEventListener("click", function () {
       var txt = btn.getAttribute("data-copy");
       if (btn.dataset.copyTarget) { var t = document.querySelector(btn.dataset.copyTarget); if (t) txt = t.textContent; }
