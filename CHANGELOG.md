@@ -33,6 +33,9 @@ All notable changes to keel are documented here. The format follows
   - Both issues are pinned as **tables** of accepted/refused names and hosts — every row measured against the code as it stood, each `ACCEPTED` row a hole — so a future partial implementation fails rather than closes. Existing tests that accepted an arbitrary well-formed variable name are updated with the reason.
 
 ### Fixed
+- **Decorative Reset Glyph Announced To Screen Readers** (keel#980, reapplied): the simulator's reset button rendered `⟳ Reset`, so assistive technology read the arrow as an unnamed symbol before the useful word.
+  - Now `<span aria-hidden="true">⟳</span> Reset` — the glyph is suppressed and the accessible name survives. Hiding the button itself, rather than the inner span, would have removed the control from assistive technology entirely.
+  - Reapplied from current `main` rather than merged: the original branch had been cut from an older base and, against `main`, its diff was 64 lines of pure deletion — it would have removed #982's Homebrew formula guard without touching the glyph at all.
 - **Duplicate Changelog Sections In Three Released Versions** (#975): `1.12.0`, `1.10.0` and `1.6.4` each repeated a section, shipped that way across seven releases to PyPI's description and the GitHub Release notes.
   - Nothing was lost — entries were inserted above the previous top section, so those blocks grew alternating headings and a reader looking for "what changed" found two lists of the same kind.
   - Consolidated across every version block. The entry count is identical before and after (283 lines beginning `- `), which is the check that separates a merge from a deletion; the diff alone does not.
