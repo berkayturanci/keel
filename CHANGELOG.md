@@ -6,7 +6,12 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.19.2] - 2026-08-27
+
 ### Fixed
+- **The Formula Named 1.19.1 While Carrying 1.19.0's Digest** (#982): the tap downloads the url, hashes it, compares — and refused to publish, so `brew upgrade` could not see the release. Restored to these notes: the entry was deleted by #979, a security change cut from a base predating #982, which silently reverted part of it while its own description mentioned only a read size limit.
+  - `make release-bump` moves the url and cannot know the digest — the tag archive does not exist until the tag is pushed — so the two are correct at different moments by construction.
+  - The guards survive in `tests/test_release_docs.py` (offline: the url must name the current `__version__`) and `tests/test_external_promises.py` (online, wired with `KEEL_CHECK_EXTERNAL=1`: download the artifact and re-hash it). #979 removed a duplicate of these, not the guards themselves — checked before writing this down rather than assumed from the diff's shape.
 - **The Last Step In The Formula Chain Was Still A Person** (#986): #984 made the release open a pull request with the post-tag digest instead of printing it. Opening it is not the goal — the tap only recovers when it *merges*, and until then it keeps failing on a schedule with the release itself long since green.
   - The pull request is now armed to land on its own once CI has re-verified the digest against the published artifact. `main` requires status checks and no approvals, so nothing is bypassed: the wait removed is the one between "green" and "someone noticed".
   - Best-effort. If the repository has auto-merge disabled the step prints a notice and the pull request waits for a person, exactly as before.
