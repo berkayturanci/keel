@@ -24,7 +24,6 @@ class TestHomebrewFormula(unittest.TestCase):
         self.assertIn("def install", content)
         self.assertIn("test do", content)
 
-
     def test_the_formula_url_names_the_current_version(self):
         """`release-bump` moves this url; nothing moved the digest with it.
 
@@ -61,9 +60,12 @@ class TestHomebrewFormula(unittest.TestCase):
         except urllib.error.HTTPError as exc:
             if exc.code == 404:
                 self.fail(f"the formula points at {url}, which does not exist")
-            self.skipTest(f"cannot fetch the artifact: {exc}")
+            # `raise`, though skipTest raises on its own: it makes the control
+            # flow explicit to a reader and to CodeQL, which otherwise reads
+            # `payload` below as possibly unbound.
+            raise self.skipTest(f"cannot fetch the artifact: {exc}") from exc
         except (urllib.error.URLError, OSError) as exc:
-            self.skipTest(f"cannot fetch the artifact: {exc}")
+            raise self.skipTest(f"cannot fetch the artifact: {exc}") from exc
 
         self.assertEqual(
             hashlib.sha256(payload).hexdigest(),
