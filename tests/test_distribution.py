@@ -1,9 +1,13 @@
 """Unit tests for distribution assets (Homebrew tap formula and curl installer)."""
 
+import hashlib
 import os
+import re
 import subprocess
 import sys
 import unittest
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -19,6 +23,55 @@ class TestHomebrewFormula(unittest.TestCase):
         self.assertIn('depends_on "python@3.12"', content)
         self.assertIn("def install", content)
         self.assertIn("test do", content)
+
+    def test_the_formula_url_names_the_current_version(self):
+        """`release-bump` moves this url; nothing moved the digest with it.
+
+        Offline half of the guard. It cannot see a stale digest — 64 hex
+        characters look alike — but it does catch a formula left behind by a
+        release entirely.
+        """
+        from keel import __version__
+
+        formula = (ROOT / "Formula" / "keel.rb").read_text(encoding="utf-8")
+        url = re.search(r'url "(https://\S+)"', formula).group(1)
+        self.assertIn(
+            f"v{__version__}.tar.gz",
+            url,
+            f"the formula points at {url}, not at v{__version__}",
+        )
+
+    def test_the_url_hashes_to_the_declared_digest(self):
+        """The check `brew install` performs, run before a user does.
+
+        Network-gated like the rest of `external promises`. A 404 **fails**
+        rather than skips: a url pointing at a tag that does not exist is
+        exactly the failure this exists for, and skipping would pass it.
+        """
+        if os.environ.get("KEEL_CHECK_EXTERNAL") != "1":
+            self.skipTest("set KEEL_CHECK_EXTERNAL=1 to fetch the artifact")
+
+        formula = (ROOT / "Formula" / "keel.rb").read_text(encoding="utf-8")
+        url = re.search(r'url "(https://\S+)"', formula).group(1)
+        digest = re.search(r'sha256 "([0-9a-f]{64})"', formula).group(1)
+        try:
+            with urllib.request.urlopen(url, timeout=60) as response:
+                payload = response.read()
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                self.fail(f"the formula points at {url}, which does not exist")
+            # `raise`, though skipTest raises on its own: it makes the control
+            # flow explicit to a reader and to CodeQL, which otherwise reads
+            # `payload` below as possibly unbound.
+            raise self.skipTest(f"cannot fetch the artifact: {exc}") from exc
+        except (urllib.error.URLError, OSError) as exc:
+            raise self.skipTest(f"cannot fetch the artifact: {exc}") from exc
+
+        self.assertEqual(
+            hashlib.sha256(payload).hexdigest(),
+            digest,
+            "brew install would refuse: the declared digest is not this artifact's",
+        )
 
 
 class TestStandaloneInstaller(unittest.TestCase):
