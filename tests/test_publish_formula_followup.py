@@ -49,9 +49,7 @@ def code_of(run: str) -> str:
     inside a quoted string, and mangling those would make the assertions below
     depend on quoting rather than on behaviour.
     """
-    return "\n".join(
-        line for line in run.splitlines() if not line.strip().startswith("#")
-    )
+    return "\n".join(line for line in run.splitlines() if not line.strip().startswith("#"))
 
 
 class TheFormulaStepOpensAPullRequest(unittest.TestCase):
@@ -60,9 +58,7 @@ class TheFormulaStepOpensAPullRequest(unittest.TestCase):
         workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
         cls.job = workflow["jobs"][JOB]
         steps = [
-            s
-            for s in cls.job["steps"]
-            if MARKER in (s.get("run") or "") and EDITS in s["run"]
+            s for s in cls.job["steps"] if MARKER in (s.get("run") or "") and EDITS in s["run"]
         ]
         assert len(steps) == 1, f"expected one formula step, found {len(steps)}"
         cls.step = steps[0]
@@ -79,8 +75,15 @@ class TheFormulaStepOpensAPullRequest(unittest.TestCase):
         )
 
     def test_the_digest_is_written_not_merely_reported(self):
-        """The 1.19.1 failure: the workflow knew the digest and only printed it."""
-        self.assertIn("sed -i", self.code, "the step does not edit the formula at all")
+        """The 1.19.1 failure: the workflow knew the digest and only printed it.
+
+        Asserted on a `sed` that edits the *sha256* specifically. A bare
+        `assertIn("sed -i")` passes with the digest edit deleted, because the
+        step also rewrites the url and the test line — which is exactly the
+        half that stays correct on its own when the digest goes stale.
+        """
+        edits = [line for line in self.code.splitlines() if "sed -i" in line and "sha256" in line]
+        self.assertTrue(edits, "nothing in the step writes the sha256")
 
     def test_a_pull_request_is_opened(self):
         self.assertIn("gh pr create", self.code)
