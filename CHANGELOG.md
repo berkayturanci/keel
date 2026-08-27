@@ -6,14 +6,6 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
-### Fixed
-- **The Homebrew Tap Refused Every Sync Since 1.19.1** (#981): the tap's scheduled job has failed roughly every 30 minutes since the release, which is the mail arriving each morning.
-  - `Formula/keel.rb` named `v1.19.1` in its url while carrying `v1.19.0`'s digest. The tap guard downloads the url, hashes it, and refuses to publish on a mismatch — correctly. So `brew upgrade` could not see 1.19.1.
-  - `make release-bump` moves the url but cannot know the digest: the tag archive does not exist until the tag is pushed. Every prior release set it afterwards in a separate `fix(homebrew): set the X.Y.Z formula checksum now the tag exists` PR (#910, #852, #841). That step was skipped for 1.19.1.
-  - Two guards, because one cannot do it. Offline: the url must name the current `__version__` — cheap, and catches a formula left behind entirely. Online, in the existing `external promises` job: download the url and compare digests, which is the check `brew install` itself performs.
-  - A 404 **fails** rather than skips. A url pointing at a tag that does not exist is precisely the failure this exists for, and a test that skipped when it could not fetch would pass on it.
-  - Mutation-tested against the real mistake: restoring 1.19.0's digest fails, leaving the url at the old version fails, pointing at a nonexistent tag fails.
-
 ## [1.19.1] - 2026-08-25
 
 ### Performance
