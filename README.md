@@ -266,6 +266,7 @@ If a step's gate fails, keel blocks its own merge — the same backbone every co
 - [`docs/keel/comparison.md`](docs/keel/comparison.md) — competitive landscape (Mergify, GitHub merge queue, Qodo/PR-Agent, CodeRabbit, Sweep, OpenHands, Danger, …) + ranked borrow-ideas
 - [`docs/keel/github-actions.md`](docs/keel/github-actions.md) — run keel live on GitHub's free runner (the `keel-ship` workflow)
 - [`docs/keel/release.md`](docs/keel/release.md) — PyPI/TestPyPI release runbook and package smoke test
+- [`docs/keel/homebrew-release-chain.md`](docs/keel/homebrew-release-chain.md) — how a release reaches `brew install`, every guard on the way, and what has already gone wrong
 - [`docs/proposals/keel-architecture.md`](docs/proposals/keel-architecture.md) — full design
 - [`docs/proposals/api-token-delegate.md`](docs/proposals/api-token-delegate.md) — hosted-API (API-token) implementer/reviewer delegate design (#548)
 

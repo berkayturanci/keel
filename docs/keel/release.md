@@ -1,5 +1,10 @@
 # Release Runbook
 
+> This is the *what*. For the *why* — the reason the formula's url and digest
+> cannot both be correct at the same moment, which guard catches which
+> failure, and what has already gone wrong five ways — see
+> [The Homebrew release chain](homebrew-release-chain.md).
+
 This runbook keeps keel's PyPI release path repeatable and auditable.
 
 ## Package Identity
