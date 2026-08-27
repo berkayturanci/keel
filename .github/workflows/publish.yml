@@ -18,6 +18,7 @@ jobs:
     permissions:
       id-token: write       # PyPI trusted publishing (OIDC) + provenance attestation
       contents: write       # create the GitHub Release and upload assets
+      pull-requests: write # open the formula-digest follow-up (#984)
       attestations: write   # build-provenance attestations
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -116,9 +117,12 @@ jobs:
     needs: build-n-publish
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    permissions:
+      contents: write      # push the digest branch
+      pull-requests: write # open the follow-up PR (#984)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - name: Report the formula's post-tag digest
+      - name: Set the formula's post-tag digest, or open the PR that does
         # The url is bumped in the release commit — test_release_docs pins it to
         # the declared version — but the digest describes the tarball GitHub
         # builds *from the tag*, created from the commit that release PR
@@ -136,6 +140,9 @@ jobs:
         #
         # So report the value the formula needs and let the release run say
         # whether the *release* succeeded. Nothing downstream is weakened.
+        env:
+          # `gh pr create` for the digest follow-up; scoped to this repo.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           url=$(grep -m1 -oE 'https://github.com/[^"]+\.tar\.gz' Formula/keel.rb)
@@ -145,11 +152,51 @@ jobs:
           echo "url:  $url"
           echo "want: $want"
           echo "got:  $got"
-          if [ "$want" != "$got" ]; then
-            echo "::notice::Formula/keel.rb still carries the previous release's digest, as it must until this tag exists. Set it to ${got} and merge; the tap syncs within ~30 minutes and refuses anything that does not hash to its own url."
-          else
+          if [ "$want" = "$got" ]; then
             echo "formula digest already matches the tag"
+            exit 0
           fi
+          
+          # The tag exists by the time this runs, so the digest is knowable *now*.
+          # This used to emit a ::notice:: and leave the follow-up to a human — which
+          # is what was forgotten for 1.19.1, after which the tap refused every sync
+          # for a day (#981). A notice nobody is required to act on is not a safeguard.
+          #
+          # A pull request, not a push: main is protected, and a direct push is how
+          # the sibling repo's equivalent step failed silently for a whole release.
+          branch="chore/formula-digest-${GITHUB_REF_NAME}"
+          sed -i.bak "s|^  sha256 \"[0-9a-f]\{64\}\"|  sha256 \"${got}\"|" Formula/keel.rb
+          rm -f Formula/keel.rb.bak
+          
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add Formula/keel.rb
+          git commit -m "chore(homebrew): set the ${GITHUB_REF_NAME} formula checksum" \
+            -m "release-bump moves the url to the new tag but cannot know its digest: the archive does not exist until the tag is pushed. Opened automatically." \
+            -m "no issue"
+          
+          if ! git push origin "$branch"; then
+            echo "::error title=Formula follow-up not pushed::Set sha256 to ${got} in Formula/keel.rb by hand, or the tap will refuse to sync."
+            exit 0
+          fi
+          
+          gh pr create --base main --head "$branch" \
+            --title "chore(homebrew): set the ${GITHUB_REF_NAME} formula checksum" \
+            --body "Opened automatically by publish.yml after ${GITHUB_REF_NAME}.
+          
+          \`make release-bump\` moves the formula url to the new tag but cannot know its digest — the archive does not exist until the tag is pushed. Until this lands the tap refuses to sync and \`brew upgrade\` cannot see the release.
+          
+          | | |
+          |---|---|
+          | url | \`${url}\` |
+          | declared | \`${want}\` |
+          | actual | \`${got}\` |
+          
+          The digest is read from the published artifact, not constructed. \`external promises\` re-downloads and re-hashes it on this PR, so CI confirms the value independently before it merges.
+          
+          no issue — release follow-up." \
+            || echo "::notice::a pull request for $branch already exists"
 
       - name: Confirm the tap will pick this up
         # No push from here, and no token. GITHUB_TOKEN is scoped to this repo, so

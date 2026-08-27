@@ -6,6 +6,13 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **A Release Left Its Own Formula Stale And Asked Someone To Fix It** (#984): the Homebrew formula names the sdist url and sha256 of the release being cut, and neither is knowable until the tag exists. `publish.yml` computed the correct digest after tagging and then emitted a `::notice::` with it, leaving the edit to a human.
+  - Nobody made that edit for 1.19.1. The tap pulls from `main` on a schedule, found a 1.19.0 digest under a 1.19.1 url, and refused every sync for a day — one failure email per hour, in a different repository, long after the release itself had gone green.
+  - The workflow now applies the digest and opens a pull request with it. A pull request is the only write to a protected `main` that can succeed, and unlike a notice it is a thing on a list rather than a line in a log nobody reads after a successful release.
+  - The sibling repository failed the same week from the opposite direction — it *did* try to commit, with `git push origin HEAD:main || true`, and branch protection swallowed the refusal. Both repos now take the same route.
+  - `tests/test_publish_formula_followup.py` pins the shape: the step must edit the formula, must open a pull request, must not push to `main`, and its job must carry `pull-requests: write` — a permission that sits forty lines from the step that needs it and fails only after the tag has been cut. Asserted over the step's code with comment lines removed first: the surrounding prose discusses the direct push it no longer performs, and a plain grep matches that discussion happily.
+
 ## [1.19.1] - 2026-08-25
 
 ### Performance
