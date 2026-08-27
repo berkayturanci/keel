@@ -7,6 +7,10 @@ All notable changes to keel are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **The Last Step In The Formula Chain Was Still A Person** (#986): #984 made the release open a pull request with the post-tag digest instead of printing it. Opening it is not the goal — the tap only recovers when it *merges*, and until then it keeps failing on a schedule with the release itself long since green.
+  - The pull request is now armed to land on its own once CI has re-verified the digest against the published artifact. `main` requires status checks and no approvals, so nothing is bypassed: the wait removed is the one between "green" and "someone noticed".
+  - Best-effort. If the repository has auto-merge disabled the step prints a notice and the pull request waits for a person, exactly as before.
+  - Asserted separately from `gh pr create`, since the two are one line apart and deleting the second leaves a change that still reads as complete.
 - **A Release Left Its Own Formula Stale And Asked Someone To Fix It** (#984): the Homebrew formula names the sdist url and sha256 of the release being cut, and neither is knowable until the tag exists. `publish.yml` computed the correct digest after tagging and then emitted a `::notice::` with it, leaving the edit to a human.
   - Nobody made that edit for 1.19.1. The tap pulls from `main` on a schedule, found a 1.19.0 digest under a 1.19.1 url, and refused every sync for a day — one failure email per hour, in a different repository, long after the release itself had gone green.
   - The workflow now applies the digest and opens a pull request with it. A pull request is the only write to a protected `main` that can succeed, and unlike a notice it is a thing on a list rather than a line in a log nobody reads after a successful release.
