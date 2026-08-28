@@ -343,7 +343,8 @@ class TestPublishedVersion(unittest.TestCase):
             with urllib.request.urlopen(
                 "https://pypi.org/pypi/keel-workflow/json", timeout=20
             ) as response:
-                published = set(json.load(response)["releases"])
+                payload = json.loads(response.read(50 * 1024 * 1024).decode("utf-8"))
+                published = set(payload["releases"])
         except OSError as exc:
             _could_not_look(self, "the versions published on PyPI", exc)
 
