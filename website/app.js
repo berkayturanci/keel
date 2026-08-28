@@ -152,25 +152,33 @@
   }
 
   /* ---- Copy buttons ------------------------------------------------ */
-  function flashCopy(btn) {
-    if (btn.classList.contains("done")) return;
-    var label = btn.querySelector("span");
-    var prev = label ? label.textContent : "";
-    var prevAria = btn.getAttribute("aria-label");
-    btn.classList.add("done");
-    if (label) label.textContent = "copied";
-    btn.setAttribute("aria-label", "copied");
-    var sr = document.getElementById("sr-live-region");
-    if (sr) { sr.textContent = "Copied to clipboard"; setTimeout(function() { sr.textContent = ""; }, 3000); }
-    setTimeout(function () { btn.classList.remove("done"); if (label) label.textContent = prev; if (prevAria) btn.setAttribute("aria-label", prevAria); else btn.removeAttribute("aria-label"); }, 1400);
-  }
   document.querySelectorAll("[data-copy]").forEach(function (btn) {
+    var label = btn.querySelector("span");
+    var origText = label ? label.textContent : "";
+    var origAria = btn.getAttribute("aria-label");
+    var flashTimer = null;
+
+    function flashCopy() {
+      btn.classList.add("done");
+      if (label) label.textContent = "copied";
+      btn.setAttribute("aria-label", "copied");
+      var sr = document.getElementById("sr-live-region");
+      if (sr) { sr.textContent = "Copied to clipboard"; setTimeout(function() { sr.textContent = ""; }, 3000); }
+      clearTimeout(flashTimer);
+      flashTimer = setTimeout(function () {
+        btn.classList.remove("done");
+        if (label) label.textContent = origText;
+        if (origAria) btn.setAttribute("aria-label", origAria);
+        else btn.removeAttribute("aria-label");
+      }, 1400);
+    }
+
     btn.addEventListener("click", function () {
       var txt = btn.getAttribute("data-copy");
       if (btn.dataset.copyTarget) { var t = document.querySelector(btn.dataset.copyTarget); if (t) txt = t.textContent; }
-      (navigator.clipboard ? navigator.clipboard.writeText(txt) : Promise.reject()).then(function () { flashCopy(btn); }, function () {
+      (navigator.clipboard ? navigator.clipboard.writeText(txt) : Promise.reject()).then(function () { flashCopy(); }, function () {
         var ta = document.createElement("textarea"); ta.value = txt; document.body.appendChild(ta); ta.select();
-        try { document.execCommand("copy"); flashCopy(btn); } catch (e) {} document.body.removeChild(ta);
+        try { document.execCommand("copy"); flashCopy(); } catch (e) {} document.body.removeChild(ta);
       });
     });
   });

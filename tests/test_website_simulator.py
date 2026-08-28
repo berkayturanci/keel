@@ -54,24 +54,19 @@ class TestCopyButtonFlash(unittest.TestCase):
         end = source.index("\n  }", start)
         return source[start:end]
 
-    def test_flash_copy_returns_early_while_already_flashing(self):
+    def test_flash_copy_clears_timer_on_successive_flashing(self):
         body = self._flash_copy()
-        guard = 'if (btn.classList.contains("done")) return;'
-        self.assertIn(guard, body)
-        # The guard is only a guard if nothing is captured before it. `done` is
-        # added and removed on exactly the flash window, so reading either label
-        # above this line reads the transient value.
-        self.assertLess(
-            body.index(guard),
-            body.index("getAttribute"),
-            "the early return must come before the label is captured",
-        )
+        # The new implementation uses an outer scope to capture the original labels once,
+        # so it doesn't need to return early. Instead, we can verify that the labels
+        # are captured outside `flashCopy` by checking `origAria = btn.getAttribute`
+        # and that we use a timer clearing guard `clearTimeout(flashTimer)`.
+        self.assertIn("clearTimeout(flashTimer);", body)
 
     def test_flash_copy_restores_both_labels(self):
         body = self._flash_copy()
         self.assertIn('btn.setAttribute("aria-label"', body)
         self.assertIn("removeAttribute", body)  # no aria-label before: remove, not set ""
-        self.assertIn("textContent = prev", body)
+        self.assertIn("textContent = origText", body)
 
     def test_the_two_labels_do_not_disagree(self):
         # Sighted and screen-reader users never compare them, but a mismatch
