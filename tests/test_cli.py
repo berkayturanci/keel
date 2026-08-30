@@ -7271,7 +7271,7 @@ class TestCoreMerge(unittest.TestCase):
                     "enforced": True,
                     "verification": {"status": "pass", "missing": []},
                 },
-            ),
+            ) as evidence_mock,
             patch("keel.cli.ledger.read_records", return_value=[]),
             patch("keel.cli.ledger.gates_pass_for_head", return_value=(True, {"run_id": "RUN-1"})),
             patch("keel.cli.github.merge_pr") as merge_mock,
@@ -7282,6 +7282,7 @@ class TestCoreMerge(unittest.TestCase):
         self.assertFalse(json.loads(out)["merged"])
         self.assertTrue(json.loads(out)["gates_sha"]["matched"])
         merge_mock.assert_not_called()
+        self.assertEqual(evidence_mock.call_args.kwargs["phase"], cli.evidence.PHASE_PRE_MERGE)
 
     def test_merge_executes_and_reports_gh_merge_failure(self):
         fake_report = _merge_capability_report()

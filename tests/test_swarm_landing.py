@@ -1566,11 +1566,14 @@ class TestSwarmLandCLI(unittest.TestCase):
         # pass: verification green AND local tip == reviewed head
         with (
             lookup_and_rev('[{"number": 7, "state": "OPEN"}]', SHA + "\n"),
-            mock.patch.object(cli_mod, "_verify_merge_evidence", return_value=verified),
+            mock.patch.object(
+                cli_mod, "_verify_merge_evidence", return_value=verified
+            ) as verify_mock,
         ):
             ok, reason = check("swarm/x/c1")[:2]
         self.assertTrue(ok)
         self.assertEqual(reason, f"PR #7: evidence verified at {'a' * 12}")
+        self.assertEqual(verify_mock.call_args.kwargs["phase"], cli_mod.evidence.PHASE_PRE_MERGE)
 
     def test_swarm_land_evidence_checker_real_verification_contract(self):
         """PYLON-9's blocker: mocking _verify_merge_evidence in every arm hid a
