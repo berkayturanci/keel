@@ -7803,6 +7803,52 @@ class TestCoreMerge(unittest.TestCase):
         self.assertTrue(report["enforced"])
         self.assertEqual(report["verification"]["status"], "pass")
 
+    def test_verify_merge_evidence_does_not_require_post_merge_closure(self):
+        config = cli.cfg.load_config(PROJECTS / "keel.yaml")
+        args = Namespace(
+            pr=123,
+            issue=265,
+            root=str(REPO_ROOT),
+            reviewers=1,
+            review_comments="summary",
+            jury=False,
+            no_jury=True,
+            jury_advisory=False,
+            gate_label=None,
+            waiver_label=None,
+        )
+        artifact = {
+            "pr_body": "Closes #265",
+            "pr_comments": [
+                {
+                    "body": "<!-- keel.review-verdict.v1 -->\n"
+                    "reviewer: a\nhead: abc\nLGTM\n"
+                    "Checked src/keel/cli.py _verify_merge_evidence and found no issues.",
+                    "author_association": "OWNER",
+                }
+            ],
+            "issue_comments": [],
+            "pr_reviews": [],
+            "issue": 265,
+            "head_sha": "abc",
+            "changed_files": ["src/keel/cli.py"],
+            "pr_labels": ["keel:ship", "agent:claude"],
+        }
+        with patch("keel.cli._load_evidence_artifacts", return_value=artifact):
+            report = cli._verify_merge_evidence(args, config)
+
+        self.assertEqual(report["verification"]["phase"], "pre-merge")
+        self.assertEqual(report["verification"]["status"], "pass")
+        self.assertEqual(report["verification"]["missing"], [])
+        self.assertNotIn(
+            "closure-comment-pr",
+            [item["id"] for item in report["verification"]["results"]],
+        )
+        self.assertNotIn(
+            "closure-comment-issue",
+            [item["id"] for item in report["verification"]["results"]],
+        )
+
     def test_capture_reconcile_plans_missing_marker_actions(self):
         import tempfile
 

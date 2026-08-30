@@ -3559,6 +3559,7 @@ def _verify_merge_evidence(
         pr_labels=artifacts["pr_labels"],
         head_sha=artifacts["head_sha"],
         enforced=enforced,
+        phase=evidence.PHASE_PRE_MERGE,
     )
     return {
         "gate_label": gate_label,
