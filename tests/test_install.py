@@ -349,6 +349,11 @@ class TestInstallAll(unittest.TestCase):
                     self.assertIn("Changes Made", text)
                     self.assertIn("Testing", text)
                     self.assertIn("Docs Impact", text)
+                    self.assertIn(
+                        "keel evidence-verify .keel/project.yaml --root . --pr <PR> "
+                        "--phase pre-merge",
+                        text,
+                    )
                     self.assertIn("MUST POST", text)
                     self.assertIn("operator-driven, delegated, every tier", text)
                     self.assertIn("TIER-1 single-reviewer path", text)

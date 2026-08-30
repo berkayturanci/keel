@@ -7837,16 +7837,26 @@ class TestCoreMerge(unittest.TestCase):
         with patch("keel.cli._load_evidence_artifacts", return_value=artifact):
             report = cli._verify_merge_evidence(args, config)
 
-        self.assertEqual(report["verification"]["phase"], "pre-merge")
-        self.assertEqual(report["verification"]["status"], "pass")
-        self.assertEqual(report["verification"]["missing"], [])
+        self.assertEqual(report["verification"]["phase"], "all")
+        self.assertEqual(report["verification"]["status"], "waiting")
+        self.assertIn("closure-comment-pr", report["verification"]["missing"])
+        self.assertIn("closure-comment-issue", report["verification"]["missing"])
+
+        with patch("keel.cli._load_evidence_artifacts", return_value=artifact):
+            pre_merge_report = cli._verify_merge_evidence(
+                args, config, phase=cli.evidence.PHASE_PRE_MERGE
+            )
+
+        self.assertEqual(pre_merge_report["verification"]["phase"], "pre-merge")
+        self.assertEqual(pre_merge_report["verification"]["status"], "pass")
+        self.assertEqual(pre_merge_report["verification"]["missing"], [])
         self.assertNotIn(
             "closure-comment-pr",
-            [item["id"] for item in report["verification"]["results"]],
+            [item["id"] for item in pre_merge_report["verification"]["results"]],
         )
         self.assertNotIn(
             "closure-comment-issue",
-            [item["id"] for item in report["verification"]["results"]],
+            [item["id"] for item in pre_merge_report["verification"]["results"]],
         )
 
     def test_capture_reconcile_plans_missing_marker_actions(self):

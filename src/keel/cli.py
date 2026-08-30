@@ -857,7 +857,9 @@ def _cmd_merge(args: argparse.Namespace) -> int:
         if ci_state not in ("pass", "no-checks"):
             return _finish_merge(args, payload, f"CI is {ci_state}", code=1)
 
-        evidence_payload = _verify_merge_evidence(args, config)
+        evidence_payload = _verify_merge_evidence(
+            args, config, phase=evidence.PHASE_PRE_MERGE
+        )
         payload["evidence"] = evidence_payload
         if ci_state == "no-checks":
             # ship.md's rule, now enforced in core rather than by adapter prose: an
@@ -2196,6 +2198,7 @@ def _cmd_review(args: argparse.Namespace) -> int:
                 waiver_label=None,
             ),
             config,
+            phase=evidence.PHASE_ALL,
         )
 
     result_payload = {
@@ -3493,6 +3496,8 @@ def _ci_rollup_state(rollup: list[object]) -> dict[str, object]:
 def _verify_merge_evidence(
     args: argparse.Namespace,
     config: cfg.ProjectConfig,
+    *,
+    phase: str = evidence.PHASE_ALL,
 ) -> dict[str, object]:
     evidence_args = argparse.Namespace(
         pr=args.pr,
@@ -3559,7 +3564,7 @@ def _verify_merge_evidence(
         pr_labels=artifacts["pr_labels"],
         head_sha=artifacts["head_sha"],
         enforced=enforced,
-        phase=evidence.PHASE_PRE_MERGE,
+        phase=phase,
     )
     return {
         "gate_label": gate_label,
@@ -4800,7 +4805,9 @@ def _swarm_land_evidence_checker(
             root=args.root,
         )
         try:
-            payload = _verify_merge_evidence(evidence_ns, config)
+            payload = _verify_merge_evidence(
+                evidence_ns, config, phase=evidence.PHASE_PRE_MERGE
+            )
         # SystemExit too: the namespace is hand-built, and argparse-style
         # validation raises it — that would abort the whole wave mid-flight
         # instead of holding one cluster.

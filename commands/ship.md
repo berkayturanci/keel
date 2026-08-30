@@ -682,7 +682,7 @@ gates-pass check must run deterministically inside core, not as adapter prose.
 
 - **Evidence gate — do this first, on every path (audit GAP-REV):** before *any*
   merge — including a raw `gh`/REST merge you might be tempted to use — run
-  `keel evidence-verify .keel/project.yaml --root . --pr <PR>` and confirm it
+  `keel evidence-verify .keel/project.yaml --root . --pr <PR> --phase pre-merge` and confirm it
   **exits 0**. It fails when the s7 review verdict (a posted PR comment/review
   carrying `keel.review-verdict.v1` for the **current head**) is not on the PR. A
   prior session's summary, a chat-only review, the rich PR body, and the `keel
@@ -893,4 +893,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=plugin command=ship keel_version=1.19.2 source_sha256=0a34c895c3019802280cada81c766d01f8440fa30138218f12da68c0c12339a3 generated_sha256=0a34c895c3019802280cada81c766d01f8440fa30138218f12da68c0c12339a3 -->
+<!-- keel-generated: surface=plugin command=ship keel_version=1.19.2 source_sha256=d0db22394daaa8f1f92578c071fbc61943ffaead84bca1b0dca844aefbd43a47 generated_sha256=d0db22394daaa8f1f92578c071fbc61943ffaead84bca1b0dca844aefbd43a47 -->
