@@ -857,9 +857,7 @@ def _cmd_merge(args: argparse.Namespace) -> int:
         if ci_state not in ("pass", "no-checks"):
             return _finish_merge(args, payload, f"CI is {ci_state}", code=1)
 
-        evidence_payload = _verify_merge_evidence(
-            args, config, phase=evidence.PHASE_PRE_MERGE
-        )
+        evidence_payload = _verify_merge_evidence(args, config, phase=evidence.PHASE_PRE_MERGE)
         payload["evidence"] = evidence_payload
         if ci_state == "no-checks":
             # ship.md's rule, now enforced in core rather than by adapter prose: an
@@ -4805,9 +4803,7 @@ def _swarm_land_evidence_checker(
             root=args.root,
         )
         try:
-            payload = _verify_merge_evidence(
-                evidence_ns, config, phase=evidence.PHASE_PRE_MERGE
-            )
+            payload = _verify_merge_evidence(evidence_ns, config, phase=evidence.PHASE_PRE_MERGE)
         # SystemExit too: the namespace is hand-built, and argparse-style
         # validation raises it — that would abort the whole wave mid-flight
         # instead of holding one cluster.
