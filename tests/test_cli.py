@@ -3604,6 +3604,11 @@ class TestShip(unittest.TestCase):
         data = json.loads(out)
         self.assertEqual(data["verification"]["phase"], "pre-merge")
         self.assertEqual(data["verification"]["status"], "pass")
+        self.assertEqual(data["contract"]["phase"], "pre-merge")
+        self.assertEqual(
+            [item["id"] for item in data["contract"]["active_required"]],
+            ["review-verdict-1"],
+        )
         self.assertEqual(
             [item["id"] for item in data["verification"]["results"]],
             ["review-verdict-1"],

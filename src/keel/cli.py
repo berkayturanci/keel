@@ -2535,6 +2535,7 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
             dry_run=args.dry_run,
             enforced=enforced,
             deferrals=tuple(args.deferral or ()),
+            phase=args.phase,
         ),
         "gate_label": gate_label,
         "waiver_label": waiver_label,
