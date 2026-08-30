@@ -359,8 +359,6 @@ def scopes_have_conflict(scope_a: IssueScope, scope_b: IssueScope) -> bool:
         for fb in scope_b.predicted_files:
             if not fb:
                 continue
-            if fa == fb:
-                continue
             if fa == "*" or fb == "*":
                 return True
 
