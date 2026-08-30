@@ -128,27 +128,57 @@ class TestSwarmScopeExtraction(unittest.TestCase):
 
     def test_scopes_have_conflict(self):
         from keel.swarm import IssueScope, scopes_have_conflict
+
         # Hit `if not fa:`
-        self.assertFalse(scopes_have_conflict(IssueScope(1, predicted_files=("",)),
-            IssueScope(2, predicted_files=("*",))))
+        self.assertFalse(
+            scopes_have_conflict(
+                IssueScope(1, predicted_files=("",)), IssueScope(2, predicted_files=("*",))
+            )
+        )
         # Hit `if not fb:`
-        self.assertFalse(scopes_have_conflict(IssueScope(1, predicted_files=("*",)),
-            IssueScope(2, predicted_files=("",))))
+        self.assertFalse(
+            scopes_have_conflict(
+                IssueScope(1, predicted_files=("*",)), IssueScope(2, predicted_files=("",))
+            )
+        )
         # Hit `if fa == "*" or fb == "*":`
-        self.assertTrue(scopes_have_conflict(IssueScope(1, predicted_files=("*",)),
-            IssueScope(2, predicted_files=("b",))))
-        self.assertTrue(scopes_have_conflict(IssueScope(1, predicted_files=("a",)),
-            IssueScope(2, predicted_files=("*",))))
+        self.assertTrue(
+            scopes_have_conflict(
+                IssueScope(1, predicted_files=("*",)), IssueScope(2, predicted_files=("b",))
+            )
+        )
+        self.assertTrue(
+            scopes_have_conflict(
+                IssueScope(1, predicted_files=("a",)), IssueScope(2, predicted_files=("*",))
+            )
+        )
         # Hit fb.startswith(a_dir)
-        self.assertTrue(scopes_have_conflict(IssueScope(1, predicted_files=("src/keel",)),
-            IssueScope(2, predicted_files=("src/keel/cli.py",))))
-        self.assertTrue(scopes_have_conflict(IssueScope(1, predicted_files=("src/keel/cli.py",)),
-            IssueScope(2, predicted_files=("src/keel",))))
+        self.assertTrue(
+            scopes_have_conflict(
+                IssueScope(1, predicted_files=("src/keel",)),
+                IssueScope(2, predicted_files=("src/keel/cli.py",)),
+            )
+        )
+        self.assertTrue(
+            scopes_have_conflict(
+                IssueScope(1, predicted_files=("src/keel/cli.py",)),
+                IssueScope(2, predicted_files=("src/keel",)),
+            )
+        )
         # Hit fnmatch
-        self.assertTrue(scopes_have_conflict(IssueScope(1, predicted_files=("src/*.py",)),
-            IssueScope(2, predicted_files=("src/main.py",))))
-        self.assertTrue(scopes_have_conflict(IssueScope(1, predicted_files=("src/main.py",)),
-            IssueScope(2, predicted_files=("src/*.py",))))
+        self.assertTrue(
+            scopes_have_conflict(
+                IssueScope(1, predicted_files=("src/*.py",)),
+                IssueScope(2, predicted_files=("src/main.py",)),
+            )
+        )
+        self.assertTrue(
+            scopes_have_conflict(
+                IssueScope(1, predicted_files=("src/main.py",)),
+                IssueScope(2, predicted_files=("src/*.py",)),
+            )
+        )
+
 
 class TestSwarmPathIntersections(unittest.TestCase):
     def test_paths_intersect(self):
