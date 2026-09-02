@@ -152,6 +152,18 @@ class TestSwarmScopeExtraction(unittest.TestCase):
             with self.subTest(a=files_a, b=files_b):
                 self.assertEqual(scopes_have_conflict(a, b), bool(scopes_intersect(a, b)))
 
+    def test_build_swarm_plan_keeps_duplicate_issue_numbers_apart(self):
+        # Two scopes with one issue number are still two scopes. Pre-normalizing into
+        # a dict keyed by number compared the second's files for both, which moved
+        # issue 7 into issue 5's wave (review of #1006).
+        scopes = [
+            IssueScope(5, predicted_files=("a.py",)),
+            IssueScope(5, predicted_files=("b.py",)),
+            IssueScope(7, predicted_files=("a.py",)),
+        ]
+        plan = build_swarm_plan(scopes, swarm_id="dup")
+        self.assertEqual(plan.conflict_map, {5: (7,), 7: (5,)})
+
     def test_scopes_have_conflict_finds_a_shared_path_without_the_pair_loop(self):
         a = IssueScope(1, predicted_files=("docs/*", "src/keel/cli.py"))
         b = IssueScope(2, predicted_files=("website/app.js", "src/keel/cli.py"))

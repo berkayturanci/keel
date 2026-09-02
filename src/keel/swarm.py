@@ -403,13 +403,17 @@ def build_swarm_plan(
 
     # Compute pairwise conflict graph
     conflict_map: dict[int, list[int]] = {s.issue: [] for s in sorted_scopes}
-    # Normalize every scope once, outside the O(N²) pair loop. The matcher itself is
-    # cheap; what the loop used to pay for was ``_normalize_path`` on both sides of
-    # every one of the |A|·|B| path pairs, for every pair of issues.
-    normalized = {s.issue: _normalized_files(s) for s in sorted_scopes}
+    # Normalize every scope once, outside the O(N²) pair loop: the loop used to pay
+    # for ``_normalize_path`` on both sides of every one of the |A|·|B| path pairs,
+    # for every pair of issues — about half the per-pair cost. Kept as a list aligned
+    # with ``sorted_scopes``, not a dict by issue number: two scopes carrying the same
+    # issue number are two scopes, and keying by number would silently compare one
+    # of them with the other's files.
+    normalized = [_normalized_files(s) for s in sorted_scopes]
     for i, sa in enumerate(sorted_scopes):
-        for sb in sorted_scopes[i + 1 :]:
-            if _normalized_scopes_conflict(normalized[sa.issue], normalized[sb.issue]):
+        for j in range(i + 1, len(sorted_scopes)):
+            sb = sorted_scopes[j]
+            if _normalized_scopes_conflict(normalized[i], normalized[j]):
                 conflict_map[sa.issue].append(sb.issue)
                 conflict_map[sb.issue].append(sa.issue)
 
