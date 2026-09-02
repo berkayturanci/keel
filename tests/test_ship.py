@@ -308,6 +308,13 @@ class TestAssess(unittest.TestCase):
         self.assertEqual(ship.blocking_sources(verdict), ("jury", "lint"))
         self.assertEqual(ship.block_reason(verdict), "blocking findings from gate(s): jury, lint")
 
+    def test_a_colon_in_an_extension_gate_id_is_kept_whole(self):
+        # Nothing validates extension ids beyond non-empty, so `sec:scan` is a legal
+        # blocking gate; splitting every source on ':' would name a gate `sec` that
+        # does not exist (narrowed review of #1008).
+        verdict = summarize([Finding("major", "gate 'sec:scan' failed", "sec:scan")])
+        self.assertEqual(ship.blocking_sources(verdict), ("sec:scan",))
+
     def test_a_blocked_verdict_with_no_attributable_source_keeps_the_old_reason(self):
         verdict = summarize([Finding("major", "boom", "")])
         self.assertTrue(verdict.blocked)

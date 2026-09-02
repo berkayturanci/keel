@@ -250,22 +250,27 @@ class MergeDecision:
     reason: str
 
 
+#: The built-in jury gate writes ``jury:<reviewer>`` (and ``jury:consensus`` /
+#: ``jury:incomplete-run`` / …) as a finding's source: one gate with several voices.
+_JURY_SOURCE_PREFIX = "jury:"
+
+
 def _gate_id(source: str) -> str:
     """The gate a finding's ``source`` belongs to.
 
-    Command gates write their ``spec.id``; the built-in jury gate writes
-    ``jury:<reviewer>`` (and ``jury:consensus`` / ``jury:incomplete-run`` / …), which is
-    one gate with several voices. The gate is what the operator can act on, so the
-    reviewer suffix is dropped — otherwise a gating jury reads as three failed gates.
+    Command gates write their ``spec.id`` verbatim, and nothing forbids a colon in an
+    extension's id, so only the jury's own ``jury:`` prefix is collapsed — splitting
+    every source on ``:`` would turn an operator's ``sec:scan`` gate into ``sec``.
     """
-    return source.split(":", 1)[0]
+    return "jury" if source.startswith(_JURY_SOURCE_PREFIX) else source
 
 
 def blocking_sources(verdict: Verdict) -> tuple[str, ...]:
     """The distinct gates whose findings block this verdict, sorted.
 
-    Ship's verdict is built from gate outcomes, so every finding's ``source`` is a gate
-    id or a ``<gate>:<detail>`` form of one (see :func:`_gate_id`).
+    Ship's verdict is built from gate outcomes, so a finding's ``source`` is the gate's
+    id, except for the jury's ``jury:<voice>`` sources, which :func:`_gate_id` folds
+    back to the one gate they belong to.
     """
     return tuple(
         sorted(
