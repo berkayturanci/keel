@@ -6,17 +6,11 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
-### Fixed
-- **The Simulator's Play/Pause Glyphs Were Read Aloud** (#997): the toggle button's `⏸` / `▶` glyphs are decorative, and a screen reader announced them ("black right-pointing triangle, Run Swarm Simulation"). They are now wrapped in `<span aria-hidden="true">`, the same pattern the sibling reset button uses (#983), so the accessible name is the verb: Pause, Resume, Run Swarm Simulation.
-
-## [1.19.3] - 2026-09-02
-
 ### Added
-- **The Homebrew release chain, written down** (#991): `docs/keel/homebrew-release-chain.md`. The runbook now records the tag-to-tap sequence, every guard, the known failure modes, and the remaining repository settings that require attention.
-
-### Fixed
-- **Merge Evidence Is Verified in the Wrong Phase** (#999): `keel merge` now verifies only pre-merge evidence before landing, while `keel review --verify` continues to enforce post-merge closure requirements. The packaged Claude/plugin/shared-skill adapters and regression tests use the same phase contract.
-- **The v1.19.2 Homebrew Formula Checksum Was Updated After Tagging** (#989): synchronized `Formula/keel.rb` with the published v1.19.2 archive so the source tree and release artifact agree.
+- **The Homebrew release chain, written down** (#991): `docs/keel/homebrew-release-chain.md`. Between 25 and 27 August this chain failed three ways here and four in the sibling repository, and each was diagnosed from scratch because nothing recorded how the pieces fit.
+  - Covers the contradiction the whole design is arranged around — the formula's url and digest cannot both be correct at the same moment — every guard and where it lives, which are online and where they are wired in, what has already gone wrong and what each fix added, the two repository settings that still require a manual step, and a symptom-to-cause table for the next failure.
+  - Records what the tap refuses and why: `sync-formula.yml` downloads the artifact and hashes it, so it holds the correct value and declines to use it. That policy is why a stale digest here stops `brew upgrade` for everyone, and it is what #990 questions.
+  - Linked from the README and from `docs/keel/release.md`, which is the *what* to this document's *why*.
 
 ## [1.19.2] - 2026-08-27
 

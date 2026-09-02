@@ -195,7 +195,7 @@
     var issueList = preset.issues;
 
     // Header & stats
-    var btnLabel = state.running ? "<span aria-hidden=\"true\">⏸</span> Pause" : (state.step > 0 ? "<span aria-hidden=\"true\">▶</span> Resume" : "<span aria-hidden=\"true\">▶</span> Run Swarm Simulation");
+    var btnLabel = state.running ? "⏸ Pause" : (state.step > 0 ? "▶ Resume" : "▶ Run Swarm Simulation");
     var lockClass = state.lock.indexOf("LOCKED") >= 0 ? "lock-active" : "lock-idle";
 
     var html = [
