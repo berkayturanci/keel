@@ -293,6 +293,21 @@ class TestAssess(unittest.TestCase):
             "blocking findings from gate(s): build, lint",
         )
 
+    def test_jury_findings_name_the_jury_gate_once_not_each_reviewer(self):
+        # The built-in jury gate writes `jury:<reviewer>` and `jury:consensus` as the
+        # source (src/keel/jury.py). One gate with several voices must not render as
+        # three failed gates — the gate is what the operator can act on.
+        verdict = summarize(
+            [
+                Finding("major", "reviewer a: boom", "jury:reviewer-a"),
+                Finding("critical", "reviewer b: boom", "jury:reviewer-b"),
+                Finding("major", "consensus: boom", "jury:consensus"),
+                Finding("major", "gate 'lint' failed", "lint"),
+            ]
+        )
+        self.assertEqual(ship.blocking_sources(verdict), ("jury", "lint"))
+        self.assertEqual(ship.block_reason(verdict), "blocking findings from gate(s): jury, lint")
+
     def test_a_blocked_verdict_with_no_attributable_source_keeps_the_old_reason(self):
         verdict = summarize([Finding("major", "boom", "")])
         self.assertTrue(verdict.blocked)

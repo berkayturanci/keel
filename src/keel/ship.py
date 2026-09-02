@@ -250,16 +250,27 @@ class MergeDecision:
     reason: str
 
 
-def blocking_sources(verdict: Verdict) -> tuple[str, ...]:
-    """The distinct sources of a verdict's blocking findings, sorted.
+def _gate_id(source: str) -> str:
+    """The gate a finding's ``source`` belongs to.
 
-    Ship's verdict is built from gate outcomes, so a source is the id of the gate whose
-    failure produced the finding (``gates.run_gates`` writes ``spec.id`` there).
+    Command gates write their ``spec.id``; the built-in jury gate writes
+    ``jury:<reviewer>`` (and ``jury:consensus`` / ``jury:incomplete-run`` / …), which is
+    one gate with several voices. The gate is what the operator can act on, so the
+    reviewer suffix is dropped — otherwise a gating jury reads as three failed gates.
+    """
+    return source.split(":", 1)[0]
+
+
+def blocking_sources(verdict: Verdict) -> tuple[str, ...]:
+    """The distinct gates whose findings block this verdict, sorted.
+
+    Ship's verdict is built from gate outcomes, so every finding's ``source`` is a gate
+    id or a ``<gate>:<detail>`` form of one (see :func:`_gate_id`).
     """
     return tuple(
         sorted(
             {
-                finding.source
+                _gate_id(finding.source)
                 for finding in verdict.findings
                 if finding.source and decision_for(finding.severity) == "block"
             }
