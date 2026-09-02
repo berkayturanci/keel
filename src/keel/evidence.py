@@ -144,11 +144,13 @@ def contract_as_dict(
     dry_run: bool = False,
     enforced: bool = True,
     deferrals: tuple[str, ...] = (),
+    phase: str = PHASE_ALL,
 ) -> dict[str, Any]:
     """Return the required evidence set derived from review/jury flags."""
     return {
         "schema_version": SCHEMA_VERSION,
         "enforced": enforced,
+        "phase": phase,
         "source": "review_merge_contract + closure_comment",
         "dry_run_disables_gating": True,
         "fail_closed": True,
@@ -173,7 +175,9 @@ def contract_as_dict(
         ],
         "active_required": [
             item.as_dict()
-            for item in required_items(review_contract, dry_run=dry_run, enforced=enforced)
+            for item in required_items(
+                review_contract, dry_run=dry_run, enforced=enforced, phase=phase
+            )
         ],
     }
 

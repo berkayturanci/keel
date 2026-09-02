@@ -349,6 +349,11 @@ class TestInstallAll(unittest.TestCase):
                     self.assertIn("Changes Made", text)
                     self.assertIn("Testing", text)
                     self.assertIn("Docs Impact", text)
+                    self.assertIn(
+                        "keel evidence-verify .keel/project.yaml --root . --pr <PR> "
+                        "--phase pre-merge",
+                        text,
+                    )
                     self.assertIn("MUST POST", text)
                     self.assertIn("operator-driven, delegated, every tier", text)
                     self.assertIn("TIER-1 single-reviewer path", text)
@@ -607,6 +612,17 @@ class TestClaudeCodePlugin(unittest.TestCase):
         )
         self.assertEqual(committed, sorted(files), "extra/missing committed plugin command files")
         self.assertEqual(offenders, [], "run `make plugin` to regenerate the plugin command files")
+
+    def test_committed_claude_and_skill_files_match_generator(self):
+        """Drift guard: committed install surfaces must match their generator."""
+        expected = install._expected_files()
+        for surface in ("claude", "skills"):
+            for name, (rel, _command, _source, generated) in expected[surface].items():
+                with self.subTest(surface=surface, name=name):
+                    path = REPO_ROOT / rel
+                    self.assertTrue(path.exists(), f"missing: {rel}")
+                    body, _marker = install._split_marker(path.read_text(encoding="utf-8"))
+                    self.assertEqual(body, generated.rstrip() + "\n")
 
     def test_install_plugin_is_idempotent_and_force_rewrites(self):
         with tempfile.TemporaryDirectory() as d:

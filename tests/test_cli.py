@@ -3604,6 +3604,11 @@ class TestShip(unittest.TestCase):
         data = json.loads(out)
         self.assertEqual(data["verification"]["phase"], "pre-merge")
         self.assertEqual(data["verification"]["status"], "pass")
+        self.assertEqual(data["contract"]["phase"], "pre-merge")
+        self.assertEqual(
+            [item["id"] for item in data["contract"]["active_required"]],
+            ["review-verdict-1"],
+        )
         self.assertEqual(
             [item["id"] for item in data["verification"]["results"]],
             ["review-verdict-1"],
@@ -7271,7 +7276,7 @@ class TestCoreMerge(unittest.TestCase):
                     "enforced": True,
                     "verification": {"status": "pass", "missing": []},
                 },
-            ),
+            ) as evidence_mock,
             patch("keel.cli.ledger.read_records", return_value=[]),
             patch("keel.cli.ledger.gates_pass_for_head", return_value=(True, {"run_id": "RUN-1"})),
             patch("keel.cli.github.merge_pr") as merge_mock,
@@ -7282,6 +7287,7 @@ class TestCoreMerge(unittest.TestCase):
         self.assertFalse(json.loads(out)["merged"])
         self.assertTrue(json.loads(out)["gates_sha"]["matched"])
         merge_mock.assert_not_called()
+        self.assertEqual(evidence_mock.call_args.kwargs["phase"], cli.evidence.PHASE_PRE_MERGE)
 
     def test_merge_executes_and_reports_gh_merge_failure(self):
         fake_report = _merge_capability_report()
@@ -7802,6 +7808,62 @@ class TestCoreMerge(unittest.TestCase):
 
         self.assertTrue(report["enforced"])
         self.assertEqual(report["verification"]["status"], "pass")
+
+    def test_verify_merge_evidence_does_not_require_post_merge_closure(self):
+        config = cli.cfg.load_config(PROJECTS / "keel.yaml")
+        args = Namespace(
+            pr=123,
+            issue=265,
+            root=str(REPO_ROOT),
+            reviewers=1,
+            review_comments="summary",
+            jury=False,
+            no_jury=True,
+            jury_advisory=False,
+            gate_label=None,
+            waiver_label=None,
+        )
+        artifact = {
+            "pr_body": "Closes #265",
+            "pr_comments": [
+                {
+                    "body": "<!-- keel.review-verdict.v1 -->\n"
+                    "reviewer: a\nhead: abc\nLGTM\n"
+                    "Checked src/keel/cli.py _verify_merge_evidence and found no issues.",
+                    "author_association": "OWNER",
+                }
+            ],
+            "issue_comments": [],
+            "pr_reviews": [],
+            "issue": 265,
+            "head_sha": "abc",
+            "changed_files": ["src/keel/cli.py"],
+            "pr_labels": ["keel:ship", "agent:claude"],
+        }
+        with patch("keel.cli._load_evidence_artifacts", return_value=artifact):
+            report = cli._verify_merge_evidence(args, config)
+
+        self.assertEqual(report["verification"]["phase"], "all")
+        self.assertEqual(report["verification"]["status"], "waiting")
+        self.assertIn("closure-comment-pr", report["verification"]["missing"])
+        self.assertIn("closure-comment-issue", report["verification"]["missing"])
+
+        with patch("keel.cli._load_evidence_artifacts", return_value=artifact):
+            pre_merge_report = cli._verify_merge_evidence(
+                args, config, phase=cli.evidence.PHASE_PRE_MERGE
+            )
+
+        self.assertEqual(pre_merge_report["verification"]["phase"], "pre-merge")
+        self.assertEqual(pre_merge_report["verification"]["status"], "pass")
+        self.assertEqual(pre_merge_report["verification"]["missing"], [])
+        self.assertNotIn(
+            "closure-comment-pr",
+            [item["id"] for item in pre_merge_report["verification"]["results"]],
+        )
+        self.assertNotIn(
+            "closure-comment-issue",
+            [item["id"] for item in pre_merge_report["verification"]["results"]],
+        )
 
     def test_capture_reconcile_plans_missing_marker_actions(self):
         import tempfile
