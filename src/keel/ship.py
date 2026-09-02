@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from . import classify
-from .findings import Verdict
+from .findings import Verdict, decision_for
 from .window import is_merge_open
 
 #: Hard cap on review→fix rounds (matches ship's budget).
@@ -250,6 +250,37 @@ class MergeDecision:
     reason: str
 
 
+def blocking_sources(verdict: Verdict) -> tuple[str, ...]:
+    """The distinct sources of a verdict's blocking findings, sorted.
+
+    Ship's verdict is built from gate outcomes, so a source is the id of the gate whose
+    failure produced the finding (``gates.run_gates`` writes ``spec.id`` there).
+    """
+    return tuple(
+        sorted(
+            {
+                finding.source
+                for finding in verdict.findings
+                if finding.source and decision_for(finding.severity) == "block"
+            }
+        )
+    )
+
+
+def block_reason(verdict: Verdict) -> str:
+    """The reason a blocked verdict gives, naming what blocked it when it can.
+
+    "blocking findings present" is true and useless next to a reviewer verdict that says
+    "none blocking": the findings it means are the ones a failed ``on_fail: block`` gate
+    produced, and the line was the one place the operator looked that did not say which
+    gate (#1007). A verdict blocked with no attributable source keeps the old wording.
+    """
+    sources = blocking_sources(verdict)
+    if not sources:
+        return "blocking findings present"
+    return f"blocking findings from gate(s): {', '.join(sources)}"
+
+
 def decide_merge(
     verdict: Verdict,
     *,
@@ -271,7 +302,7 @@ def decide_merge(
     ``keel merge`` will then refuse, with the operator given no reason why.
     """
     if verdict.blocked:
-        return MergeDecision("block", "blocking findings present")
+        return MergeDecision("block", block_reason(verdict))
     if unrun_blocking_gates:
         listed = ", ".join(unrun_blocking_gates)
         return MergeDecision(

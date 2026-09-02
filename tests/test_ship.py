@@ -273,7 +273,34 @@ class TestAssess(unittest.TestCase):
             changed_files=["x.py"], gate_verdict=BLOCKED, unrun_blocking_gates=("security-review",)
         )
         self.assertEqual(blocked.merge.action, "block")
-        self.assertEqual(blocked.merge.reason, "blocking findings present")
+        self.assertEqual(blocked.merge.reason, "blocking findings from gate(s): a")
+
+    def test_the_block_reason_names_the_gates_whose_findings_block(self):
+        # "blocking findings present" next to a reviewer's "none blocking" read as a
+        # contradiction (#1007): the findings were a failed lint gate's, and the one
+        # line the operator reads did not say so.
+        verdict = summarize(
+            [
+                Finding("major", "gate 'lint' failed", "lint"),
+                Finding("critical", "gate 'build' failed", "build"),
+                Finding("major", "again", "lint"),  # deduplicated
+                Finding("minor", "style", "bandit"),  # not blocking: not named
+            ]
+        )
+        self.assertEqual(ship.blocking_sources(verdict), ("build", "lint"))
+        self.assertEqual(
+            ship.decide_merge(verdict, window_open=True).reason,
+            "blocking findings from gate(s): build, lint",
+        )
+
+    def test_a_blocked_verdict_with_no_attributable_source_keeps_the_old_reason(self):
+        verdict = summarize([Finding("major", "boom", "")])
+        self.assertTrue(verdict.blocked)
+        self.assertEqual(ship.blocking_sources(verdict), ())
+        self.assertEqual(ship.block_reason(verdict), "blocking findings present")
+
+    def test_a_clean_verdict_has_no_blocking_sources(self):
+        self.assertEqual(ship.blocking_sources(SOFT), ())
 
     def test_docs_only_tier1(self):
         a = ship.assess(
