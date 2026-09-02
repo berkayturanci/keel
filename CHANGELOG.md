@@ -6,6 +6,9 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **The Simulator's Play/Pause Glyphs Were Read Aloud** (#997): the toggle button's `⏸` / `▶` glyphs are decorative, and a screen reader announced them ("black right-pointing triangle, Run Swarm Simulation"). They are now wrapped in `<span aria-hidden="true">`, the same pattern the sibling reset button uses (#983), so the accessible name is the verb: Pause, Resume, Run Swarm Simulation.
+
 ### Added
 - **The Homebrew release chain, written down** (#991): `docs/keel/homebrew-release-chain.md`. Between 25 and 27 August this chain failed three ways here and four in the sibling repository, and each was diagnosed from scratch because nothing recorded how the pieces fit.
   - Covers the contradiction the whole design is arranged around — the formula's url and digest cannot both be correct at the same moment — every guard and where it lives, which are online and where they are wired in, what has already gone wrong and what each fix added, the two repository settings that still require a manual step, and a symptom-to-cause table for the next failure.
