@@ -27,6 +27,7 @@ from keel.swarm import (
     render_swarm_status_dashboard,
     resolve_swarm_state_dir,
     save_swarm_state,
+    scopes_have_conflict,
     scopes_intersect,
 )
 
@@ -125,6 +126,39 @@ class TestSwarmScopeExtraction(unittest.TestCase):
             109, title="Custom role", labels=["role:custom"], config=cfg_nocore
         )
         self.assertEqual(scope_nocore.role, "custom")
+
+    def test_scopes_have_conflict_agrees_with_scopes_intersect(self):
+        # One matcher, one normalizer: the boolean must never disagree with the tuple
+        # it short-circuits — including on paths nobody normalized first, and on the
+        # empty string, which the matcher rejects on either side.
+        cases = [
+            (("src/keel/swarm.py",), ("src/keel/swarm.py",)),
+            (("src/keel/swarm.py",), ("website/content.js",)),
+            (("src/keel",), ("src/keel/cli.py",)),
+            (("src/keel/cli.py",), ("src/keel",)),
+            (("src/*.py",), ("src/main.py",)),
+            (("src/main.py",), ("src/*.py",)),
+            (("*",), ("b",)),
+            (("a",), ("*",)),
+            (("docs/",), ("docs/assets/hero.svg",)),
+            (("./src/keel/cli.py`",), ("/src/keel/",)),  # raw, never normalized
+            (("", "*"), ("",)),
+            (("",), ("",)),  # identical, but "" is never a conflict — not even with itself
+            ((), ("src/keel/cli.py",)),
+        ]
+        for files_a, files_b in cases:
+            a = IssueScope(1, predicted_files=files_a)
+            b = IssueScope(2, predicted_files=files_b)
+            with self.subTest(a=files_a, b=files_b):
+                self.assertEqual(scopes_have_conflict(a, b), bool(scopes_intersect(a, b)))
+
+    def test_scopes_have_conflict_finds_a_shared_path_without_the_pair_loop(self):
+        a = IssueScope(1, predicted_files=("docs/*", "src/keel/cli.py"))
+        b = IssueScope(2, predicted_files=("website/app.js", "src/keel/cli.py"))
+        self.assertTrue(scopes_have_conflict(a, b))
+        self.assertTrue(scopes_have_conflict(a, IssueScope(3, predicted_files=("docs/x.md",))))
+        c = IssueScope(4, predicted_files=("website/app.js",))
+        self.assertFalse(scopes_have_conflict(a, c))
 
 
 class TestSwarmPathIntersections(unittest.TestCase):

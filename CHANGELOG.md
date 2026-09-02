@@ -6,6 +6,10 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **The swarm conflict graph stops paying for path normalization O(N²) times** (#1000): `build_swarm_plan` now normalizes each issue's predicted paths once and asks a boolean `scopes_have_conflict` that returns at the first overlap, instead of collecting and sorting every overlap per pair. 200 issues × 10 paths: 3.3 s → 0.11 s, identical plan.
+  - One matcher. The rules `paths_intersect` applies now live in a single normalized helper that both it and the plan call, so the boolean cannot drift from the tuple it short-circuits — the first cut of this change carried its own copy of the rules without the normalization step, and disagreed with `scopes_intersect` on un-normalized paths and on the empty string. Pinned by a test that asserts the two agree across those cases.
+
 ## [1.19.3] - 2026-09-02
 
 ### Added
