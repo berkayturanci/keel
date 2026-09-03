@@ -53,7 +53,7 @@ def _capable_report():
 
 def _write(value) -> str:
     path = Path(_TMP.name) / f"reviews-{next(_TMP_COUNTER)}.json"
-    path.write_text(json.dumps(value))
+    path.write_text(json.dumps(value), encoding="utf-8")
     return str(path)
 
 
