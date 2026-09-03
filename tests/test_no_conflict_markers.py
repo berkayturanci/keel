@@ -105,8 +105,7 @@ class NoConflictMarkersInTree(unittest.TestCase):
         self.assertEqual(
             offenders,
             [],
-            "unresolved merge-conflict markers in the tree (path, line, content): "
-            f"{offenders}",
+            f"unresolved merge-conflict markers in the tree (path, line, content): {offenders}",
         )
 
     def test_the_swarm_landing_fixture_is_the_reason_the_skip_list_exists(self):
