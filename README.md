@@ -70,7 +70,14 @@ Changing the backbone is a keel-core change. Projects only ever touch layers 2�
   (`--delegate anthropic-api:MODEL` / `openai-api:MODEL` / `google-api:MODEL`) drive the implement/review steps
   with only `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/`GEMINI_API_KEY` in the environment — no agent CLI
   installed. Connect any OpenAI-compatible provider (OpenRouter, DeepSeek, Groq, local vLLM/Ollama) or custom CLI
-  via `knobs.delegate_profiles` ([design](docs/proposals/api-token-delegate.md)).
+  via `knobs.delegate_profiles` ([design](docs/proposals/api-token-delegate.md)), or keep operator-owned
+  entries out of the repository entirely in the machine-level
+  [provider registry](docs/keel/configuration.md#provider-registry) (`~/.keel/providers.yaml`).
+- **Know which providers this machine can actually dispatch to** — `keel doctor --providers [--json]`
+  probes every provider keel supports (agent CLIs, hosted APIs, local Ollama models, delegate profiles
+  and registry entries) and reports `available` / `reason` / transport / capabilities / model list for
+  each. Probes are time-boxed and fail-soft, and print key *names* only, never values
+  ([reference](docs/keel/runtime-capabilities.md#probing-providers-keel-doctor---providers)).
 - **Auditable evidence chain & compliance** — every PR merged through Keel carries a
   tamper-evident, commit-SHA-bound record of reviewer verdicts, test results, and model
   attributions ([guide](docs/keel/evidence.md)). Approvals are locked to the exact HEAD commit,

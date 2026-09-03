@@ -195,6 +195,7 @@ def detect(
             "environment",
         ),
         _api_token_capability(env),
+        *_provider_capabilities(env=env, which=which),
         Capability(
             "production-adjacent",
             _truthy(env.get("KEEL_PRODUCTION_ADJACENT")),
@@ -257,6 +258,56 @@ def _api_token_capability(env: Mapping[str, str]) -> Capability:
         else "no vendor API key (ANTHROPIC_API_KEY/OPENAI_API_KEY/GEMINI_API_KEY)"
     )
     return Capability("api-token", bool(names), detail, "environment")
+
+
+def _provider_capabilities(
+    *,
+    env: Mapping[str, str],
+    which: Callable[[str], str | None],
+) -> tuple[Capability, Capability]:
+    """``providers`` + ``review-vendors``: can this machine dispatch, and to how many?
+
+    ``providers`` is "at least one **tool-capable** implementer is available" — an
+    agent CLI that can run the git/PR steps itself. A hosted-API or local-model
+    delegate does not satisfy it: those run under keel's no-tools contract, where the
+    orchestrator performs every mutation.
+
+    ``review-vendors`` is "a cross-vendor review panel is possible here": at least
+    :data:`keel.providers.REVIEW_VENDOR_MINIMUM` **distinct** vendors are available
+    across all three transports. Two reviewers from one vendor is one opinion twice.
+
+    Deliberately the *cheap* half of the probe — ``detect`` runs on every command, so
+    this is PATH lookups and env-var names only, no subprocess and no network.
+    ``keel doctor --providers`` is the deep probe (versions, model listings, the local
+    Ollama server), and it is the only place that pays for them.
+    """
+    from . import agents, providers
+    from .api_delegate import env_key_name
+
+    tool_capable = tuple(vendor for vendor in agents.CLI_VENDORS if which(vendor))
+    local = tuple(vendor for vendor in agents.LOCAL_VENDORS if which(vendor))
+    hosted = tuple(
+        vendor
+        for vendor in agents.API_VENDORS
+        if (name := env_key_name(vendor)) and env.get(name, "").strip()
+    )
+    vendors = tool_capable + local + hosted
+    return (
+        Capability(
+            "providers",
+            bool(tool_capable),
+            ", ".join(tool_capable)
+            if tool_capable
+            else f"no tool-capable agent CLI on PATH ({', '.join(agents.CLI_VENDORS)})",
+            "PATH",
+        ),
+        Capability(
+            "review-vendors",
+            len(vendors) >= providers.REVIEW_VENDOR_MINIMUM,
+            f"{len(vendors)} distinct vendor(s)" + (f": {', '.join(vendors)}" if vendors else ""),
+            "derived",
+        ),
+    )
 
 
 def _can_write(root: Path) -> bool:

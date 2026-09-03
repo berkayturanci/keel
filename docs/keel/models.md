@@ -29,6 +29,7 @@
 7. [Generic CLI Profiles (Aider, Cursor Agent, Custom Scripts)](#5-generic-cli-profiles)
 8. [Multi-Model & Ensemble Review Posture](#6-multi-model--ensemble-review-posture)
 9. [Summary Comparison Table](#summary-comparison-table)
+10. [Which of these work on your machine](#which-of-these-work-on-your-machine)
 
 ---
 
@@ -347,3 +348,26 @@ When [`ai-jury`](https://github.com/berkayturanci/ai-jury) is installed, Keel ga
 | **Local Ollama** | `ollama:MODEL` | HTTP (local) | Local `ollama` daemon | `--delegate ollama:qwen2.5-coder:32b` |
 | **Agent CLI** | `claude`, `codex`, `agy` | Subprocess | Installed CLI in PATH | `--delegate claude` |
 | **Generic CLI** | `knobs.delegate_profiles` (`cli`) | Subprocess | Tool binary in PATH | `--delegate aider` |
+
+---
+
+## Which of these work on your machine
+
+Everything above is what keel *supports*. What is usable **here** is a property of the
+machine and the person, and `keel doctor --providers` is the command that answers it:
+
+```bash
+keel doctor --providers          # a table: available / reason / transport / capabilities
+keel doctor --providers --json   # providers[], registry_path, warnings
+```
+
+It probes every built-in vendor, every `knobs.delegate_profiles` entry, and every entry of
+the machine-level [provider registry](configuration.md#provider-registry) — agent CLIs by
+`PATH` plus `--version`, hosted APIs by key *presence* (names only; no request is made),
+Ollama by its local `/api/tags`, which also lists the served models. Probes are time-boxed
+and fail-soft; an unavailable provider always says why.
+
+Keys and endpoints you do not want in a committed `project.yaml` belong in
+`~/.keel/providers.yaml` (or `$KEEL_PROVIDERS`), which is operator-owned and never
+committed. Project profiles win on a name clash, and the clash is reported rather than
+silently applied.

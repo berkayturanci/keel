@@ -1180,7 +1180,9 @@ The output also includes the selected GitHub transport and any degraded GitHub o
 capabilities. See [`runtime-capabilities.md`](runtime-capabilities.md) and
 [`github-transport.md`](github-transport.md).
 
-## `keel doctor [project.yaml] [--root DIR] [--offline] [--strict] [--json]`
+<a id="keel-doctor"></a>
+
+## `keel doctor [project.yaml] [--root DIR] [--offline] [--providers] [--strict] [--json]`
 
 Run a read-only diagnostic pass over the installed keel and its adapter surfaces. No
 mutation: `doctor` only reads versions, markers, and on-disk state, then classifies each
@@ -1191,6 +1193,8 @@ keel doctor                                   # CLI + adapter health only
 keel doctor --root . --json                   # machine-readable report
 keel doctor .keel/project.yaml --root .        # also check core_version + state paths
 keel doctor .keel/project.yaml --offline --strict
+keel doctor --providers                       # which delegates are usable on this machine
+keel doctor --providers --json                # providers[], registry_path, warnings
 ```
 
 The checks are:
@@ -1224,6 +1228,34 @@ The checks are:
   `requires-python` (3.11) or without PyYAML is a `warn` that names the interpreter — a
   `make test` that dies with a hundred syntax errors is a 3.9 on PATH, not a regression in
   the tree.
+- **`providers`** — only with `--providers`. Probes every provider keel can dispatch to:
+  the built-in vendors (`claude`, `codex`, `agy`, `ollama`, `anthropic-api`, `openai-api`,
+  `google-api`), every `knobs.delegate_profiles` entry when a config path is given, and every
+  entry of the machine-level [provider registry](configuration.md#provider-registry). `ok`
+  when at least one is available; `warn` when the registry is malformed or nothing is usable;
+  **`fail`** on a registry name clash. Omitted entirely without the flag, so the default run
+  stays as cheap as it was.
+
+`--providers` prints a table under the checks — one row per provider with its transport
+(`cli` · `api` · `local`), where the entry came from (`builtin` · `profile` · `registry`), its
+capabilities (`tools`, `read-only`, `model`), a reason, and any models the provider lists for
+itself (`agy models`, Ollama's `/api/tags`). With `--json` the same document is merged into
+the report at the top level as `providers`, `registry_path`, `registry_present`, `warnings`
+and `errors`.
+
+```text
+keel providers — 2 of 7 available
+  registry: /home/op/.keel/providers.yaml (not present)
+  yes  claude             cli    builtin  tools,read-only,model  /usr/local/bin/claude (2.1.0)
+   no  codex              cli    builtin  tools,read-only,model  codex not found on PATH
+   no  anthropic-api      api    builtin  model                  ANTHROPIC_API_KEY is not set in the environment
+```
+
+Every probe is time-boxed and fail-soft, and **secrets are never printed** — a hosted-API row
+names the environment variable, never its value. Only the hardcoded loopback Ollama URL is
+dialed; an endpoint named by config or by the registry is checked for key presence only. See
+[`runtime-capabilities.md`](runtime-capabilities.md#probing-providers-keel-doctor---providers)
+for the per-transport rules.
 
 By default `doctor` is advisory and exits `0` (unless the command itself errors, e.g. a
 missing or invalid config). Pass `--strict` to exit non-zero when any check is `fail`.
