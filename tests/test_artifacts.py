@@ -2,7 +2,7 @@
 
 import unittest
 
-from keel import artifacts, evidence
+from keel import agents, artifacts, evidence
 
 
 class TestArtifactContract(unittest.TestCase):
@@ -579,6 +579,89 @@ class TestStepHandoffRenderer(unittest.TestCase):
         self.assertIn("- **Status:** complete", body)
         self.assertIn("  - review-verdict-1", body)
         self.assertIn("  - review-verdict-2", body)
+
+
+class TestShipProvenanceRenderer(unittest.TestCase):
+    """The stamp a live run posts on its own PR (#1013)."""
+
+    def _body(self, **kwargs):
+        kwargs.setdefault("run_id", "run-1")
+        kwargs.setdefault("issue", 1013)
+        kwargs.setdefault("head_sha", "0c4589650d0f129271ca84779442d1046ceb8482")
+        kwargs.setdefault(
+            "implementer_attribution", agents.attribution("agy", "gemini-3.8-flash-high")
+        )
+        return artifacts.render_ship_provenance(**kwargs)
+
+    def test_carries_the_marker_the_gate_arms_on(self):
+        body = self._body()
+
+        self.assertTrue(body.startswith(evidence.SHIP_PROVENANCE_MARKER))
+        self.assertIn(evidence.SHIP_PROVENANCE_MARKER, body)
+
+    def test_records_run_issue_and_head(self):
+        body = self._body()
+
+        self.assertIn("run-id: run-1", body)
+        self.assertIn("issue: #1013", body)
+        self.assertIn("head: 0c4589650d0f129271ca84779442d1046ceb8482", body)
+
+    def test_labels_are_the_ones_core_produced(self):
+        body = self._body()
+
+        self.assertIn("agent-label: agent:agy", body)
+        self.assertIn("model-label: model:gemini-3", body)
+        self.assertIn("system: agy:gemini-3.8-flash-high", body)
+
+    def test_the_rendered_body_arms_the_gate(self):
+        # The artifact and the arming rule must agree, or the run stamps a comment
+        # nothing reads.
+        decision = evidence.gate_decision(
+            [],
+            "keel:ship",
+            head_ref="fix/2467-slug",
+            pr_comments=[{"body": self._body(), "author_association": "MEMBER"}],
+        )
+
+        self.assertTrue(decision["enforced"])
+        self.assertEqual(decision["reason"], "ship-provenance-comment")
+
+    def test_a_profile_run_names_the_profile(self):
+        record = agents.attribution("cli", "composer-1")
+        record["delegate_profile"] = "cursor"
+        body = self._body(implementer_attribution=record)
+
+        self.assertIn("agent-label: agent:cli", body)
+        self.assertIn("delegate-profile: cursor", body)
+
+    def test_a_plain_run_omits_the_profile_line(self):
+        self.assertNotIn("delegate-profile:", self._body())
+
+    def test_unknown_fields_degrade_rather_than_crash(self):
+        body = artifacts.render_ship_provenance()
+
+        self.assertIn("run-id: not recorded", body)
+        self.assertIn("issue: not recorded", body)
+        self.assertIn("head: <head-sha>", body)
+        self.assertIn("agent-label: not recorded", body)
+
+    def test_a_non_dict_attribution_is_treated_as_absent(self):
+        body = self._body(implementer_attribution="agent:agy")
+
+        self.assertIn("agent-label: not recorded", body)
+
+    def test_a_vendor_only_run_records_no_model(self):
+        body = self._body(implementer_attribution=agents.attribution("codex"))
+
+        self.assertIn("model-label: not recorded", body)
+
+    def test_is_not_mistaken_for_a_ship_assessment_comment(self):
+        # `_is_ship_assessment` matches "keel ship —"; the provenance body must not
+        # trip it, or the arming reason would be ambiguous.
+        self.assertFalse(evidence._is_ship_assessment(self._body()))
+
+    def test_deterministic(self):
+        self.assertEqual(self._body(), self._body())
 
 
 if __name__ == "__main__":

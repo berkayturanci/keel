@@ -14,7 +14,19 @@ from argparse import Namespace
 from pathlib import Path
 from unittest.mock import patch
 
-from keel import capture, cli, install, ledger, model, runtime, ship, stepverifier
+from keel import (
+    agents,
+    artifacts,
+    capture,
+    cli,
+    evidence,
+    install,
+    ledger,
+    model,
+    runtime,
+    ship,
+    stepverifier,
+)
 from keel.runner import CommandResult
 
 # Module-level scratch directory backing the path-returning helpers below.
@@ -1463,6 +1475,162 @@ class TestShip(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("run context   : warning: missing host_agent", out)
 
+    def _append_ledger_run(self, root, *, implementer, run_id):
+        return run(
+            [
+                "ship",
+                _write_config_with_ledger("'true'"),
+                "--root",
+                root,
+                "--live",
+                "--json",
+                "--append-ledger",
+                "--run-id",
+                run_id,
+                "--issue",
+                "1013",
+                "--pull-request",
+                "2652",
+                "--capture-status",
+                "skipped",
+                "--capture-reason",
+                "no capture hook configured",
+                "--implementer",
+                implementer,
+                "--host-agent",
+                "claude",
+                "--approve-scope",
+                "filesystem,git,github",
+                "--operator",
+                "tester",
+            ]
+        )
+
+    def test_append_ledger_warns_on_a_vendor_keel_never_produces(self):
+        # The live run recorded `gemini:` where keel's vocabulary says `agy` (#1013).
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = self._append_ledger_run(
+                d, implementer="gemini:gemini-3.8-flash-high", run_id="RUN-1013-BAD"
+            )
+
+        self.assertEqual(rc, 0)
+        warnings = json.loads(out)["result"]["run_ledger"]["warnings"]
+        self.assertTrue(any("implementer vendor 'gemini'" in w for w in warnings), warnings)
+
+    def test_the_unknown_vendor_warning_does_not_block_the_append(self):
+        # A warning, not a refusal: the live ledger already carries such records, and
+        # a missing record is worse evidence than a flagged one.
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            _, out, _ = self._append_ledger_run(
+                d, implementer="gemini:gemini-3.8-flash-high", run_id="RUN-1013-BAD2"
+            )
+
+        self.assertTrue(json.loads(out)["result"]["run_ledger"]["appended"])
+
+    def test_a_known_vendor_produces_no_warning(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            _, out, _ = self._append_ledger_run(
+                d, implementer="agy:gemini-3.8-flash-high", run_id="RUN-1013-OK"
+            )
+
+        self.assertEqual(json.loads(out)["result"]["run_ledger"]["warnings"], [])
+
+    def test_the_unknown_vendor_warning_reaches_human_output(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(
+                [
+                    "ship",
+                    _write_config_with_ledger("'true'"),
+                    "--root",
+                    d,
+                    "--live",
+                    "--append-ledger",
+                    "--run-id",
+                    "RUN-1013-HUMAN",
+                    "--issue",
+                    "1013",
+                    "--pull-request",
+                    "2653",
+                    "--capture-status",
+                    "skipped",
+                    "--capture-reason",
+                    "no capture hook configured",
+                    "--implementer",
+                    "gemini:gemini-3.8-flash-high",
+                    "--host-agent",
+                    "claude",
+                    "--approve-scope",
+                    "filesystem,git,github",
+                    "--operator",
+                    "tester",
+                ]
+            )
+
+        self.assertEqual(rc, 0)
+        self.assertIn("warning: implementer vendor 'gemini'", out)
+
+    def test_no_implementer_recorded_produces_no_vocabulary_warning(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            _, out, _ = self._append_ledger_run(d, implementer="  ", run_id="RUN-1013-BLANK")
+
+        self.assertEqual(json.loads(out)["result"]["run_ledger"]["warnings"], [])
+
+    def test_dry_run_skips_the_vocabulary_warning(self):
+        # Nothing is written, so there is nothing to flag.
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            _, out, _ = run(
+                [
+                    "ship",
+                    _write_config_with_ledger("'true'"),
+                    "--root",
+                    d,
+                    "--json",
+                    "--implementer",
+                    "gemini:gemini-3.8-flash-high",
+                ]
+            )
+
+        self.assertEqual(json.loads(out)["result"]["run_ledger"]["warnings"], [])
+
+    def test_ship_json_exposes_the_ship_provenance_artifact_body(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            _, out, _ = self._append_ledger_run(
+                d, implementer="agy:gemini-3.8-flash-high", run_id="RUN-1013-PROV"
+            )
+
+        body = json.loads(out)["result"]["artifact_bodies"]["ship_provenance"]
+        self.assertIn("keel.ship-provenance.v1", body)
+        self.assertIn("run-id: RUN-1013-PROV", body)
+        self.assertIn("issue: #1013", body)
+        # Derived from the ledger record's actors.implementer, through agents — the
+        # whole point is that this body cannot disagree with `keel attribution`.
+        self.assertIn("agent-label: agent:agy", body)
+        self.assertIn("model-label: model:gemini-3", body)
+
+    def test_ship_json_provenance_degrades_without_an_implementer(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            _, out, _ = run(["ship", _write_config_with_ledger("'true'"), "--root", d, "--json"])
+
+        body = json.loads(out)["result"]["artifact_bodies"]["ship_provenance"]
+        self.assertIn("keel.ship-provenance.v1", body)
+        self.assertIn("agent-label: not recorded", body)
+
     def test_ship_json_uses_learning_policy_in_ledger_record(self):
         import tempfile
 
@@ -2830,6 +2998,116 @@ class TestShip(unittest.TestCase):
         self.assertTrue(data["enforced"])
         self.assertEqual(data["verification"]["status"], "pass")
         self.assertEqual(data["verification"]["counts"]["review_verdict"], 2)
+
+    def _live_1013_fixtures(self, root, *, provenance, labels):
+        """The observed state of the live PRs #2652/#2653 (issue #1013).
+
+        Branch `fix/2467-slug` (no `issue-<N>`), no posted reviewer verdicts, and a
+        ledger recording `gemini:gemini-3.8-flash-high` while the PR carries
+        `agent:gemini` / `model:gemini`.
+        """
+        pr_comments = root / "pr-comments.json"
+        issue_comments = root / "issue-comments.json"
+        reviews = root / "reviews.json"
+        body = root / "body.md"
+        ledger_jsonl = root / "ledger.jsonl"
+        comments = []
+        if provenance:
+            comments.append(
+                _trusted_comment(
+                    artifacts.render_ship_provenance(
+                        run_id="RUN-2467",
+                        issue=2467,
+                        head_sha=SHA_HEAD,
+                        implementer_attribution=agents.attribution(
+                            "gemini", "gemini-3.8-flash-high"
+                        ),
+                    )
+                )
+            )
+        _write_json_fixture(pr_comments, comments)
+        _write_json_fixture(issue_comments, [])
+        reviews.write_text("[]", encoding="utf-8")
+        body.write_text("Closes #2467", encoding="utf-8")
+        record = {
+            "schema_version": "keel.run-ledger.v1",
+            "record_type": "ship_run",
+            "run_id": "RUN-2467",
+            "pull_request": {"number": 2652},
+            "issue": {"number": 2467},
+            "actors": {
+                "implementer": "gemini:gemini-3.8-flash-high",
+                "reviewers": [],
+                "tester": None,
+            },
+        }
+        ledger_jsonl.write_text(json.dumps(record) + "\n", encoding="utf-8")
+        argv = [
+            "evidence-verify",
+            str(PROJECTS / "example-android.yaml"),
+            "--root",
+            str(REPO_ROOT),
+            "--pr",
+            "2652",
+            "--head-ref",
+            "fix/2467-slug",
+            "--reviewers",
+            "1",
+            "--pr-comments-json",
+            str(pr_comments),
+            "--issue-comments-json",
+            str(issue_comments),
+            "--pr-reviews-json",
+            str(reviews),
+            "--pr-body-file",
+            str(body),
+            "--ledger-jsonl",
+            str(ledger_jsonl),
+            "--json",
+        ]
+        for label in labels:
+            argv.extend(["--pr-label", label])
+        return argv
+
+    def test_live_1013_pr_is_ungated_without_the_provenance_comment(self):
+        # The reported regression, replayed: the gate designed to require review
+        # disarmed itself exactly when review had not happened.
+        with tempfile.TemporaryDirectory() as d:
+            argv = self._live_1013_fixtures(
+                Path(d), provenance=False, labels=["agent:gemini", "model:gemini"]
+            )
+            _, out, _ = run(argv)
+
+        data = json.loads(out)
+        self.assertFalse(data["enforced"])
+        self.assertEqual(data["gate"]["reason"], "no-ship-provenance")
+
+    def test_live_1013_pr_is_gated_once_the_provenance_comment_exists(self):
+        with tempfile.TemporaryDirectory() as d:
+            argv = self._live_1013_fixtures(
+                Path(d), provenance=True, labels=["agent:gemini", "model:gemini"]
+            )
+            rc, out, _ = run(argv)
+
+        data = json.loads(out)
+        self.assertTrue(data["enforced"])
+        self.assertEqual(data["gate"]["reason"], "ship-provenance-comment")
+        self.assertEqual(rc, 1)
+
+    def test_live_1013_labels_raise_the_attribution_vocabulary_finding(self):
+        with tempfile.TemporaryDirectory() as d:
+            argv = self._live_1013_fixtures(
+                Path(d), provenance=True, labels=["agent:gemini", "model:gemini"]
+            )
+            _, out, _ = run(argv)
+
+        data = json.loads(out)
+        finding = next(
+            f for f in data["verification"]["findings"] if f["id"] == "attribution-vocabulary"
+        )
+        self.assertEqual(finding["severity"], "major")
+        self.assertIn("model:gemini-3", finding["message"])
+        self.assertEqual(data["verification"]["status"], "fail")
 
     def test_evidence_verify_missing_attribution_label_fails_when_gated(self):
         with tempfile.TemporaryDirectory() as d:
@@ -11187,6 +11465,59 @@ class TestPostComment(unittest.TestCase):
         self.assertIn("no such config", err_missing)
         self.assertEqual(rc_bad, 1)
         self.assertIn("missing required", err_bad)
+
+    def test_post_comment_accepts_the_ship_provenance_artifact(self):
+        # The renderer and the post-comment marker map must agree, or the sanctioned
+        # write path refuses the artifact the run is required to post (#1013).
+        body = _body_file(
+            artifacts.render_ship_provenance(
+                run_id="RUN-1013",
+                issue=1013,
+                head_sha=SHA_HEAD,
+                implementer_attribution=agents.attribution("agy", "gemini-3.8-flash-high"),
+            )
+        )
+        with (
+            patch("keel.cli.runtime.detect", return_value=_merge_capability_report()),
+            patch("keel.cli.run_argv", side_effect=lambda argv, **_kw: _proc("[]")),
+        ):
+            rc, out, err = run(
+                [
+                    "post-comment",
+                    str(PROJECTS / "keel.yaml"),
+                    "--target",
+                    "pr:2652",
+                    "--artifact",
+                    "ship-provenance",
+                    "--body-file",
+                    body,
+                    "--dry-run",
+                    "--json",
+                ]
+            )
+
+        self.assertEqual(rc, 0, err)
+        payload = json.loads(out)
+        self.assertEqual(payload["artifact"], "ship-provenance")
+        self.assertEqual(payload["marker"], evidence.SHIP_PROVENANCE_MARKER)
+
+    def test_post_comment_rejects_a_ship_provenance_body_without_its_marker(self):
+        body = _body_file("run-id: RUN-1013\nagent-label: agent:agy\n")
+        rc, _, err = run(
+            [
+                "post-comment",
+                str(PROJECTS / "keel.yaml"),
+                "--target",
+                "pr:2652",
+                "--artifact",
+                "ship-provenance",
+                "--body-file",
+                body,
+            ]
+        )
+
+        self.assertEqual(rc, 1)
+        self.assertIn("keel.ship-provenance.v1", err)
 
     def test_post_comment_rejects_invalid_target_and_unreadable_body(self):
         body = _body_file("<!-- keel.issue-update.v1 -->\n")

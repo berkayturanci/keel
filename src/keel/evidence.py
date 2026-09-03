@@ -18,8 +18,15 @@ from . import agents, closure
 
 SCHEMA_VERSION = "keel.evidence.v1"
 AGENT_LABEL_PREFIX = "agent:"
+MODEL_LABEL_PREFIX = "model:"
 REVIEW_VERDICT_MARKER = "keel.review-verdict.v1"
 JURY_VERDICT_MARKER = "keel.jury-verdict.v1"
+#: The comment a live ship run posts on its PR right after creating it (#1013). It is
+#: the *primary* arming signal for the evidence gate: unlike the branch name it is
+#: written by the run itself, so a run that named its branch something else — or whose
+#: ledger lives in a per-run worktree CI cannot read — still identifies as a keel ship
+#: run. See :func:`gate_decision` for the full arming order.
+SHIP_PROVENANCE_MARKER = "keel.ship-provenance.v1"
 SHIP_ASSESSMENT_HEADING = "### \U0001f6a2 keel ship"
 DEFAULT_WAIVER_LABEL = "keel:evidence-waived"
 TRUSTED_AUTHOR_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
@@ -91,12 +98,32 @@ def gate_decision(
     Ship provenance arms the gate by default. The only disarm path is an explicit
     waiver label applied by an operator; the legacy gate label remains an
     additional arming signal for already-installed workflows.
+
+    The signals are consulted in this order, and the order is part of the contract
+    (documented in ``docs/keel/evidence.md``):
+
+    1. ``operator-waiver-label`` — the one sanctioned disarm, checked first so an
+       explicit waiver is never shadowed by an arming signal.
+    2. ``gate-label`` — the legacy opt-in label.
+    3. ``ship-provenance-comment`` — a trusted PR comment carrying
+       :data:`SHIP_PROVENANCE_MARKER`, which a live ship run posts as soon as the PR
+       exists. **Ahead of the branch regex on purpose** (#1013): the marker is written
+       by the run, the branch name is written by whoever typed it, and a ship run that
+       named its branch ``fix/2467-slug`` used to read as a non-keel PR.
+    4. ``ship-branch`` — the legacy branch-name fallback for runs that predate the
+       marker. Kept, but it is no longer the signal keel relies on.
+    5. ``ship-assessment-comment`` / ``review-verdict-marker`` / ``ship-run-ledger`` —
+       the remaining after-the-fact traces, unchanged.
+
+    Nothing was removed: every path that armed the gate before still arms it.
     """
     label_set = set(labels or ())
     if waiver_label and waiver_label in label_set:
         return _gate_decision(False, "operator-waiver-label", waiver_label, waived=True)
     if gate_active(labels, gate_label):
         return _gate_decision(True, "gate-label", gate_label)
+    if _has_trusted_ship_provenance(pr_comments or []):
+        return _gate_decision(True, "ship-provenance-comment", SHIP_PROVENANCE_MARKER)
     if head_ref and _SHIP_BRANCH_RE.search(head_ref):
         return _gate_decision(True, "ship-branch", head_ref)
     if _has_trusted_ship_assessment(pr_comments or []):
@@ -122,6 +149,19 @@ def _gate_decision(
         "reason": reason,
         "source": source,
     }
+
+
+def _has_trusted_ship_provenance(items: list[dict[str, Any]]) -> bool:
+    """True when a trusted PR comment carries the ship-provenance marker.
+
+    Trust is the same fail-closed ``author_association`` check every other evidence
+    source uses: an anonymous drive-by comment must not be able to arm — or, more to
+    the point, to *look* like it armed — the gate.
+    """
+    return any(
+        _is_trusted_source(item, enforced=True) and SHIP_PROVENANCE_MARKER in _body(item)
+        for item in items
+    )
 
 
 def _has_trusted_ship_assessment(items: list[dict[str, Any]]) -> bool:
@@ -287,7 +327,10 @@ def verify(
     When the gate is active, ``pr_labels`` are additionally checked for the
     mandatory ``agent:<vendor>`` attribution label (and cross-checked against the
     ledger implementer vendor when a record is present); see
-    :func:`attribution_check`.
+    :func:`attribution_check`. The labels are separately checked against keel's own
+    vocabulary — what :func:`keel.agents.attribution` produces from the ledger's
+    ``actors.implementer`` — by :func:`attribution_vocabulary_check`, which catches a
+    hand-composed label that happens to agree with a hand-written ledger value.
     """
     del pr_body  # Explicitly not accepted as evidence.
     items = required_items(review_contract, dry_run=dry_run, enforced=enforced, phase=phase)
@@ -354,6 +397,13 @@ def verify(
     )
     if attribution is not None:
         findings = [*findings, attribution]
+    vocabulary = _attribution_vocabulary_finding(
+        pr_labels=pr_labels,
+        enforced=enforced and not dry_run,
+        ledger_record=ledger_record,
+    )
+    if vocabulary is not None:
+        findings = [*findings, vocabulary]
     unarmed = _unarmed_finding(
         enforced=enforced,
         dry_run=dry_run,
@@ -830,6 +880,18 @@ def distinct_vendor_check(
     return {"ok": True, "reason": None, "duplicated": [], "missing_provenance": missing}
 
 
+def _label_values(labels: Sequence[str] | None, prefix: str) -> list[str]:
+    """Lower-cased values of every ``<prefix><value>`` label, blanks dropped."""
+    values: list[str] = []
+    for label in labels or ():
+        if not isinstance(label, str) or not label.startswith(prefix):
+            continue
+        value = label[len(prefix) :].strip().lower()
+        if value:
+            values.append(value)
+    return values
+
+
 def agent_label_vendors(labels: Sequence[str] | None) -> list[str]:
     """Return the lower-cased vendor slugs from every ``agent:<vendor>`` label.
 
@@ -837,14 +899,32 @@ def agent_label_vendors(labels: Sequence[str] | None) -> list[str]:
     duplicates are kept so callers can reason about the raw label set; this is a
     pure helper with no I/O.
     """
-    vendors: list[str] = []
-    for label in labels or ():
-        if not isinstance(label, str) or not label.startswith(AGENT_LABEL_PREFIX):
-            continue
-        vendor = label[len(AGENT_LABEL_PREFIX) :].strip().lower()
-        if vendor:
-            vendors.append(vendor)
-    return vendors
+    return _label_values(labels, AGENT_LABEL_PREFIX)
+
+
+def model_label_bases(labels: Sequence[str] | None) -> list[str]:
+    """Return the lower-cased base slugs from every ``model:<base>`` label.
+
+    The mirror of :func:`agent_label_vendors` for the second half of keel's
+    attribution vocabulary. Same conventions: blanks dropped, order and duplicates
+    preserved, no I/O.
+    """
+    return _label_values(labels, MODEL_LABEL_PREFIX)
+
+
+def ledger_implementer(ledger_record: dict[str, Any] | None) -> str | None:
+    """Return the raw ``actors.implementer`` string from a ship_run record, or ``None``.
+
+    The full ``vendor`` / ``vendor:model`` value, not just the vendor half — the
+    vocabulary check needs the model too. Blank/absent reads as ``None``. Pure.
+    """
+    if not isinstance(ledger_record, dict):
+        return None
+    actors = ledger_record.get("actors")
+    implementer = actors.get("implementer") if isinstance(actors, dict) else None
+    if not isinstance(implementer, str) or not implementer.strip():
+        return None
+    return implementer.strip()
 
 
 def ledger_implementer_vendor(ledger_record: dict[str, Any] | None) -> str | None:
@@ -855,13 +935,10 @@ def ledger_implementer_vendor(ledger_record: dict[str, Any] | None) -> str | Non
     ``:``. Returns ``None`` when no record, no implementer, or a blank implementer
     is recorded so the cross-check can degrade to presence-only. Pure — no I/O.
     """
-    if not isinstance(ledger_record, dict):
+    implementer = ledger_implementer(ledger_record)
+    if implementer is None:
         return None
-    actors = ledger_record.get("actors")
-    implementer = actors.get("implementer") if isinstance(actors, dict) else None
-    if not isinstance(implementer, str) or not implementer.strip():
-        return None
-    vendor, _ = agents.split_delegate(implementer.strip())
+    vendor, _ = agents.split_delegate(implementer)
     vendor = vendor.strip().lower()
     return vendor or None
 
@@ -909,6 +986,111 @@ def attribution_check(
     }
 
 
+def attribution_vocabulary_check(
+    labels: Sequence[str] | None,
+    *,
+    implementer: str | None,
+) -> dict[str, Any]:
+    """Check a PR's attribution labels against keel's own vocabulary (#1013).
+
+    :func:`attribution_check` compares the label's *vendor* with the ledger's
+    *vendor*. That is a comparison of two hand-written strings: when the host wrote
+    ``agent:gemini`` on the PR **and** ``gemini:gemini-3.8-flash-high`` into the
+    ledger, the two agreed and the gate passed — while keel's own vocabulary for that
+    run is ``agent:agy`` / ``model:gemini-3``. This check closes that hole by deriving
+    the expected labels from :func:`keel.agents.attribution` instead of comparing the
+    prose to itself.
+
+    Only labels the PR actually carries are judged: a missing ``agent:`` label is
+    :func:`attribution_check`'s ``missing-label`` finding and is not repeated here,
+    and a ledger implementer with no model (``claude``) yields no expected
+    ``model:`` label, so ``model:`` labels are left alone in that case.
+
+    Returns ``{ok, checked, reason, expected, actual, implementer}``. ``checked`` is
+    ``False`` when there was nothing to compare against — no ledger record, no
+    recorded implementer — so a caller can tell "agrees" from "could not tell".
+    Pure — no I/O.
+    """
+    expected = agents.attribution_from_implementer(implementer)
+    actual = {
+        "agent_labels": agent_label_vendors(labels),
+        "model_labels": model_label_bases(labels),
+    }
+    if expected is None:
+        return {
+            "ok": True,
+            "checked": False,
+            "reason": "no-implementer",
+            "expected": None,
+            "actual": actual,
+            "implementer": None,
+        }
+    recorded = implementer.strip() if isinstance(implementer, str) else None
+    result = {
+        "ok": True,
+        "checked": True,
+        "reason": None,
+        "expected": dict(expected),
+        "actual": actual,
+        "implementer": recorded,
+    }
+    expected_agent = expected["agent_label"][len(AGENT_LABEL_PREFIX) :]
+    expected_model = expected["model_label"]
+    if actual["agent_labels"] and expected_agent not in actual["agent_labels"]:
+        result["ok"] = False
+        result["reason"] = "agent-label"
+        return result
+    if expected_model is not None:
+        base = expected_model[len(MODEL_LABEL_PREFIX) :]
+        if actual["model_labels"] and base not in actual["model_labels"]:
+            result["ok"] = False
+            result["reason"] = "model-label"
+    return result
+
+
+def _attribution_vocabulary_finding(
+    *,
+    pr_labels: Sequence[str] | None,
+    enforced: bool,
+    ledger_record: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Return the blocking ``attribution-vocabulary`` finding, or ``None``.
+
+    Skips — never fails — when the gate is inactive, when labels were not fetched, or
+    when no ledger record named an implementer: the check needs a recorded implementer
+    to derive the expected labels from, and refusing a PR because keel could not read
+    its own ledger would be a fail-closed rule with nothing behind it.
+    """
+    if not enforced or pr_labels is None:
+        return None
+    result = attribution_vocabulary_check(
+        pr_labels,
+        implementer=ledger_implementer(ledger_record),
+    )
+    if result["ok"]:
+        return None
+    expected = result["expected"]
+    labels = ", ".join(
+        label for label in (expected["agent_label"], expected["model_label"]) if label
+    )
+    observed = ", ".join(
+        [
+            *(f"{AGENT_LABEL_PREFIX}{value}" for value in result["actual"]["agent_labels"]),
+            *(f"{MODEL_LABEL_PREFIX}{value}" for value in result["actual"]["model_labels"]),
+        ]
+    )
+    return {
+        "id": "attribution-vocabulary",
+        "severity": "major",
+        "kind": "attribution",
+        "message": (
+            f"PR attribution labels ({observed}) are not keel's vocabulary for ledger "
+            f"implementer {result['implementer']!r}. Expected: {labels}. "
+            "Obtain labels from `keel attribution` instead of composing them by hand."
+        ),
+    }
+
+
 def _unarmed_finding(
     *,
     enforced: bool,
@@ -933,8 +1115,9 @@ def _unarmed_finding(
         "kind": "arming",
         "message": (
             "Evidence gate is not armed, so no requirements were checked. Arm it via ship "
-            "provenance (ship branch, posted review verdict, ship-run ledger, or the gate "
-            "label), or disarm deliberately with the operator waiver label."
+            "provenance (the keel.ship-provenance.v1 comment a live run posts on its PR, a "
+            "ship branch, a posted review verdict, the ship-run ledger, or the gate label), "
+            "or disarm deliberately with the operator waiver label."
         ),
     }
 

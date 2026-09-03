@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from . import (
+    agents,
     artifacts,
     capture,
     checkpoint,
@@ -843,6 +844,8 @@ def ship_result_as_dict(
     issue_number = None
     pr_number = None
     head_sha = None
+    run_id = None
+    implementer_attribution = None
     if isinstance(run_ledger, dict):
         record = run_ledger.get("record")
         if isinstance(record, dict):
@@ -853,6 +856,14 @@ def ship_result_as_dict(
             pr_number = pull_request.get("number") if isinstance(pull_request, dict) else None
             head_sha = record.get("head_sha")
             head_sha = head_sha if isinstance(head_sha, str) else None
+            run_id = record.get("run_id")
+            run_id = run_id if isinstance(run_id, str) else None
+            # Derived from the record, never from a caller-supplied string: the
+            # provenance comment and the evidence cross-check must read the same
+            # implementer through the same helper (#1013).
+            implementer_attribution = agents.attribution_from_implementer(
+                evidence.ledger_implementer(record)
+            )
     finding_dicts = [_finding_as_dict(finding) for finding in verdict.findings]
     testing = _testing_summary(outcomes)
     artifact_bodies = {
@@ -895,6 +906,12 @@ def ship_result_as_dict(
             status="not-run",
             mode="advisory",
             summary="Extension result summary goes here.",
+        ),
+        "ship_provenance": artifacts.render_ship_provenance(
+            run_id=run_id,
+            issue=issue_number,
+            head_sha=head_sha,
+            implementer_attribution=implementer_attribution,
         ),
     }
     return {
