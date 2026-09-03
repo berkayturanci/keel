@@ -131,6 +131,17 @@ A header naming **two different markers** does not say which artifact it is: tha
 from every count and reported as an advisory `malformed-evidence-comment` finding (`minor` — it never
 blocks on its own), rather than being counted for both or silently dropped.
 
+The **ship-assessment comment** is anchored the same way (#1035). Its heading, `### 🚢 keel ship`, is a
+Markdown heading rather than a versioned `keel.*.v1` marker, so it cannot join the marker set — but it is read as
+an *exclusion* by both verdict classifiers, and as a whole-body test it let a reviewer disarm their own verdict by
+quoting the heading while describing what they reviewed ("the `### 🚢 keel ship` comment claims the gates
+passed, but…"). The verdict was then uncounted and `evidence-verify` reported `missing: review-verdict-N` for a
+comment sitting right there on the pull request. A comment is now an assessment only when its header line **leads
+with** that heading or with the CLI's own `keel ship —` banner. Both forms are what a real assessment starts
+with — the workflow writes the heading first, a raw paste of the summary leads with the banner — so the
+`ship-assessment-comment` arming signal and the two exclusions keep sharing one test and nothing that armed the
+gate through a genuine assessment stops arming it.
+
 The wrapper is matched **literally, never with a regex**. Keel does not parse HTML — it recognises the
 one wrapper `closure.render_closure_comment` writes and refuses everything else. A pattern that treats
 `-->` as *the* comment terminator is wrong about HTML, because a browser also ends a comment at `--!>`,
