@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from typing import Any
 
 from . import providerprobe, wizard
@@ -40,8 +40,15 @@ NO_PROVIDERS = (
 
 
 def _default_ask(prompt: str, default: str) -> str:  # pragma: no cover - interactive I/O
-    raw = input(f"{prompt}\n  answer [{default}]: ").strip()
-    return raw or default
+    """Read one answer. A blank line is returned **as** a blank line, not as the default.
+
+    :func:`keel.wizard.run` needs to tell "I accept the default" from "I chose the value
+    that happens to be the default": the first writes no flag and leaves the option to
+    `knobs.team` and the risk tier, the second is an explicit override. Substituting the
+    default here — as `cli._ask` does for the scaffolder's free-text questions — would
+    collapse the two.
+    """
+    return input(f"{prompt}\n  answer [{default}]: ").strip()
 
 
 def _default_isatty() -> bool:  # pragma: no cover - reads the real stdin/stdout
@@ -114,7 +121,14 @@ def run_option_wizard(
 
 
 def _jury_answer(args: argparse.Namespace, policy: Any) -> str:
-    """Where the jury question starts: the flags, then ``knobs.team.jury.mode``, then off."""
+    """Where the jury question starts: the flags, then ``knobs.team.jury.mode``.
+
+    The fallback is the policy's mode and then :data:`keel.wizard.JURY_OFF` — but that
+    last one is only the value the *question* opens on, never a decision. An unanswered
+    jury question writes no flag at all (:meth:`keel.wizard.Resolution.flags`), so a run
+    whose tier would convene the jury still does. Treating the fallback as an answer is
+    what made a quick-start run on a tier-3 change pass `--no-jury`.
+    """
     if getattr(args, "jury_advisory", False):
         return "advisory"
     if getattr(args, "jury", False):
@@ -127,21 +141,34 @@ def _jury_answer(args: argparse.Namespace, policy: Any) -> str:
 def apply_resolution(args: argparse.Namespace, resolution: wizard.Resolution) -> None:
     """Write the resolved answers back onto the parsed flags.
 
+    **Only what the operator actually answered.** Every option also has a resolved
+    default, and writing those defaults back is not neutral: the run wizard's bench is
+    derived at a nominal tier (the real one is classified at s1, after the wizard) and
+    the jury default is "whatever the flags and `knobs.team` already say". Materialising
+    them turned a quick-start run on a tier-3 change into `--reviewers 2 --no-jury` —
+    one reviewer and the gating jury gone, which is the opposite of what a wizard that
+    was told to take every default is for. An unanswered option is left exactly as
+    parsed, so the command resolves it as it would have without `--wizard`.
+
     Only attributes the command actually has are set. ``keel work-block`` takes
     ``--reviewers``/``--review-comments`` and hands the rest down to each child
     ``keel ship``, so its implementer and jury choices are *echoed* for the adapter to
     pass on rather than silently written onto a namespace with nowhere to put them.
     """
     seats = resolution.review if isinstance(resolution.review, tuple) else ()
-    updates: Mapping[str, Any] = {
-        "delegate": wizard.seat_token(resolution.implement),
-        "review_delegate": [wizard.seat_token(seat) for seat in seats],
-        "reviewers": len(seats) or None,
-        "review_comments": resolution.review_comments,
-        "jury": resolution.jury == "gating",
-        "no_jury": resolution.jury == wizard.JURY_OFF,
-        "jury_advisory": resolution.jury == "advisory",
-    }
+    answered = resolution.answered
+    updates: dict[str, Any] = {}
+    if {"implement.provider", "implement.model"} & answered:
+        updates["delegate"] = wizard.seat_token(resolution.implement)
+    if "review" in answered and seats:
+        updates["review_delegate"] = [wizard.seat_token(seat) for seat in seats]
+        updates["reviewers"] = len(seats)
+    if "review_comments" in answered:
+        updates["review_comments"] = resolution.review_comments
+    if "jury" in answered:
+        updates["jury"] = resolution.jury == "gating"
+        updates["no_jury"] = resolution.jury == wizard.JURY_OFF
+        updates["jury_advisory"] = resolution.jury == "advisory"
     for name, value in updates.items():
         if hasattr(args, name):
             setattr(args, name, value)

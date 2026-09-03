@@ -14,8 +14,8 @@ import contextlib
 import io
 import unittest
 
+from keel import cli, scaffold, team, wizard, wizardrun
 from keel import config as cfg
-from keel import scaffold, team, wizard, wizardrun
 
 
 def _row(
@@ -276,11 +276,46 @@ class TestWalk(unittest.TestCase):
         self.assertIn("--jury", resolution.flags())
 
     def test_an_answer_seated_outside_the_offer_falls_back_to_the_default(self):
+        """Every seat is guarded, not just the implementer (#1018 round 2, finding 4).
+
+        `normalize` closes the interactive and `--wizard-answer` paths, but an answer
+        seated straight onto `State` reaches the walk unfiltered — and the module
+        promises the offer holds "even through an injected seam".
+        """
+        base = {"mode": wizard.CUSTOMIZE}
+        implementer = wizard.State(
+            catalog=_catalog(), answers={**base, "implement.provider": "ghost"}
+        )
+        self.assertEqual(implementer.resolve().implement.provider, "claude")
+
+        gate = wizard.State(catalog=_catalog(), answers={**base, "gate.provider": "ghost"})
+        self.assertIsNone(gate.resolve().gate)
+
+        bench = wizard.State(catalog=_catalog(), answers={**base, "review": "ghost"})
+        self.assertEqual([seat.provider for seat in bench.resolve().review], ["ollama", "claude"])
+
+        mixed = wizard.State(catalog=_catalog(), answers={**base, "review": "ghost,claude"})
+        self.assertEqual([seat.provider for seat in mixed.resolve().review], ["claude"])
+
+    def test_a_gate_seated_as_the_implementer_is_refused(self):
+        """`keel validate` refuses a gate that is the seat which wrote the change."""
         state = wizard.State(
             catalog=_catalog(),
-            answers={"mode": wizard.CUSTOMIZE, "implement.provider": "ghost"},
+            answers={
+                "mode": wizard.CUSTOMIZE,
+                "implement.provider": "claude",
+                "gate.provider": "claude",
+            },
         )
-        self.assertEqual(state.resolve().implement.provider, "claude")
+        self.assertIsNone(state.resolve().gate)
+
+    def test_a_panel_seated_beside_a_jury_that_cannot_gate_is_refused(self):
+        for mode in ("advisory", wizard.JURY_OFF):
+            state = wizard.State(
+                catalog=_catalog(),
+                answers={"mode": wizard.CUSTOMIZE, "jury": mode, "review": team.JURY_PANEL},
+            )
+            self.assertNotEqual(state.resolve().review, team.JURY_PANEL)
 
     def test_an_empty_catalog_cannot_be_walked(self):
         with self.assertRaises(wizard.WizardError):
@@ -352,9 +387,17 @@ class TestDefaultsComeFromThePolicy(unittest.TestCase):
             ["ollama", "claude"],
         )
 
-    def test_a_tier_whose_policy_is_the_jury_stays_the_jury(self):
+    def test_a_tier_whose_policy_is_the_jury_stays_the_jury_while_it_gates(self):
+        policy = self._policy({"review": {"by_tier": {"2": "jury"}}, "jury": {"mode": "gating"}})
+        state = wizard.start(_catalog(), policy=policy, jury="gating")
+        self.assertEqual(state.resolve().review, team.JURY_PANEL)
+
+    def test_a_jury_that_cannot_gate_never_leaves_a_panel_as_the_bench(self):
+        """`team._review_issues` refuses an advisory jury beside a jury panel."""
         policy = self._policy({"review": {"by_tier": {"2": "jury"}}})
-        self.assertEqual(wizard.start(_catalog(), policy=policy).resolve().review, team.JURY_PANEL)
+        for mode in ("advisory", wizard.JURY_OFF):
+            state = wizard.start(_catalog(), policy=policy, jury=mode)
+            self.assertNotEqual(state.resolve().review, team.JURY_PANEL)
 
     def test_the_default_review_applies_where_no_tier_names_one(self):
         policy = self._policy({"review": {"default": [{"provider": "ollama"}]}})
@@ -402,7 +445,13 @@ class TestResolution(unittest.TestCase):
         return state.resolve()
 
     def test_flags_are_the_literal_ship_grammar(self):
-        resolution = self._resolution(mode=wizard.CUSTOMIZE, review="claude")
+        resolution = self._resolution(
+            mode=wizard.CUSTOMIZE,
+            implement__provider="claude",
+            review="claude",
+            review_comments="inline",
+            jury=wizard.JURY_OFF,
+        )
         self.assertEqual(
             resolution.flags(),
             (
@@ -418,10 +467,20 @@ class TestResolution(unittest.TestCase):
             ),
         )
 
+    def test_only_an_answered_question_produces_a_flag(self):
+        """A resolved default is not a decision; writing it back overrides the policy."""
+        self.assertEqual(self._resolution().flags(), ())
+        self.assertEqual(self._resolution(mode=wizard.CUSTOMIZE).flags(), ())
+        one = self._resolution(mode=wizard.CUSTOMIZE, jury="gating")
+        self.assertEqual(one.flags(), ("--jury",))
+
     def test_the_jury_mode_picks_exactly_one_jury_flag(self):
         for mode, flag in (("gating", "--jury"), ("advisory", "--jury-advisory")):
             resolution = self._resolution(mode=wizard.CUSTOMIZE, jury=mode)
-            self.assertIn(flag, resolution.flags())
+            self.assertEqual(resolution.flags(), (flag,))
+
+    def test_an_all_defaults_echo_says_nothing_is_overridden(self):
+        self.assertIn("(none — every option kept its default", wizard.render(self._resolution()))
 
     def test_the_echo_names_the_seats_behind_the_flags(self):
         catalog = wizard.Catalog.from_report(
@@ -435,6 +494,8 @@ class TestResolution(unittest.TestCase):
         self.assertIn("effort=high", rendered)
         self.assertIn("gate=claude (distinct from the implementer)", rendered)
         self.assertIn("review=claude,agy", rendered)
+        # The bench was never answered, so it is reported but not forced onto the run.
+        self.assertNotIn("--reviewers", rendered.splitlines()[0])
 
     def test_the_echo_names_a_jury_panel_and_every_tier(self):
         state = (
@@ -463,14 +524,14 @@ class TestResolution(unittest.TestCase):
         state = (
             wizard.start(_catalog(), scope=wizard.SCOPE_CONFIG)
             .with_answer("mode", wizard.CUSTOMIZE)
-            .with_answer("jury", "advisory")
+            .with_answer("jury", "gating")
             .with_answer("review.1", team.JURY_PANEL)
         )
         payload = state.resolve().as_dict()
         self.assertEqual(payload["review_by_tier"]["1"], team.JURY_PANEL)
         self.assertEqual(payload["review"], [])
         self.assertEqual(payload["team"]["review"]["by_tier"]["1"], team.JURY_PANEL)
-        self.assertEqual(payload["team"]["jury"], {"mode": "advisory", "min_vendors": 2})
+        self.assertEqual(payload["team"]["jury"], {"mode": "gating", "min_vendors": 2})
 
 
 class TestCommittablePolicy(unittest.TestCase):
@@ -512,7 +573,7 @@ class TestTeamBlockRoundTrips(unittest.TestCase):
             ("implement.model", "gemini-3.8-flash"),
             ("implement.effort", "high"),
             ("gate.provider", "claude"),
-            ("jury", "advisory"),
+            ("jury", "gating"),
             ("review.1", "claude"),
             ("review.2", "claude,agy"),
             ("review.3", "jury"),
@@ -523,7 +584,7 @@ class TestTeamBlockRoundTrips(unittest.TestCase):
         self.assertEqual(policy.implement, team.Seat("agy", "gemini-3.8-flash", "high"))
         self.assertEqual(policy.gate.distinct_from, team.IMPLEMENTER)
         self.assertEqual(policy.review_by_tier["3"], team.JURY_PANEL)
-        self.assertEqual(policy.jury_mode, "advisory")
+        self.assertEqual(policy.jury_mode, "gating")
         self.assertEqual(policy.fix, team.Seat(provider=team.IMPLEMENTER))
         self.assertEqual(
             team.team_issues(block, source="knobs.team"),
@@ -567,16 +628,66 @@ class TestApplyAnswers(unittest.TestCase):
         self.assertIn("is not on offer here", errors[0])
         self.assertEqual(state.resolve().implement.provider, "claude")
 
-    def test_an_answer_for_a_question_this_scope_never_asks_is_reported(self):
+    def test_a_real_key_this_run_never_reaches_says_so(self):
         _, errors = wizard.apply_answers(
             wizard.start(_catalog()), {"mode": wizard.CUSTOMIZE, "review.3": "claude"}
         )
-        self.assertEqual(errors, ("review.3: not a question this wizard asks",))
+        self.assertEqual(len(errors), 1)
+        self.assertIn("a real wizard question, but this run never reaches it", errors[0])
+        self.assertIn("`keel init --wizard` question", errors[0])
 
-    def test_answers_stop_at_the_end_of_the_question_list(self):
-        state, errors = wizard.apply_answers(wizard.start(_catalog()), {"nonsense": "x"})
-        self.assertEqual(errors, ("nonsense: not a question this wizard asks",))
+    def test_a_misspelled_key_is_a_different_message_from_an_unreachable_one(self):
+        _, errors = wizard.apply_answers(wizard.start(_catalog()), {"nonsense": "x"})
+        self.assertEqual(len(errors), 1)
+        self.assertIn("not a question this wizard asks", errors[0])
+        self.assertIn("valid keys are", errors[0])
+
+    def test_the_config_scope_names_the_per_tier_keys(self):
+        _, errors = wizard.apply_answers(
+            wizard.start(_catalog(), scope=wizard.SCOPE_CONFIG), {"review": "claude"}
+        )
+        self.assertIn("answer review.1 / review.2 / review.3", errors[0])
+
+    def test_an_unreachable_model_or_effort_key_says_which(self):
+        _, model_errors = wizard.apply_answers(
+            wizard.start(_catalog()), {"implement.provider": "claude", "implement.model": "x"}
+        )
+        self.assertIn("lists no models", model_errors[0])
+        _, effort_errors = wizard.apply_answers(
+            wizard.start(_catalog()), {"implement.provider": "claude", "implement.effort": "high"}
+        )
+        self.assertIn("no spelling for reasoning effort", effort_errors[0])
+
+    def test_any_answer_but_mode_implies_customize(self):
+        """Otherwise quick-start ends the walk and every other answer is 'not asked'."""
+        state, errors = wizard.apply_answers(
+            wizard.start(_catalog()), {"implement.provider": "ollama"}
+        )
+        self.assertEqual(errors, ())
+        self.assertEqual(state.resolve().implement.provider, "ollama")
+
+    def test_an_explicit_quick_start_still_means_ignore_the_rest(self):
+        state, errors = wizard.apply_answers(
+            wizard.start(_catalog()),
+            {"mode": wizard.QUICK_START, "implement.provider": "ollama"},
+        )
+        self.assertIn("never reaches it", errors[0])
         self.assertTrue(state.resolve().quick_start)
+        self.assertEqual(state.resolve().flags(), ())
+
+    def test_every_question_the_planner_can_ask_is_a_declared_key(self):
+        """`QUESTION_KEYS` is what tells a typo from an unreachable branch."""
+        seen = set()
+        for scope in wizard.SCOPES:
+            for provider in ("claude", "ollama"):
+                state = wizard.start(_catalog(), scope=scope)
+                state = state.with_answer("mode", wizard.CUSTOMIZE)
+                state = state.with_answer("implement.provider", provider)
+                for jury in wizard.JURY_ANSWERS:
+                    for question in state.with_answer("jury", jury).questions():
+                        seen.add(question.key)
+        self.assertTrue(seen)
+        self.assertEqual(seen - set(wizard.QUESTION_KEYS), set())
 
 
 class TestRun(unittest.TestCase):
@@ -750,32 +861,188 @@ class TestRunOptionWizard(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("wizard: knobs.team names 'codex', which is not usable here", out)
 
-    def test_the_jury_question_starts_from_the_flags_then_the_policy(self):
+    def test_the_jury_question_opens_on_the_flags_then_the_policy(self):
+        """It is where the *question* starts, never an answer written back."""
         policy = team.parse_team({"jury": {"mode": "advisory"}})
-        args = _ship_args()
-        _drive(args, _Config(policy), _ask=_scripted())
-        self.assertTrue(args.jury_advisory)
-        for flag, expected in (
+        for flag, opens_on in (
+            (None, "advisory"),
             ("jury", "gating"),
             ("no_jury", wizard.JURY_OFF),
             ("jury_advisory", "advisory"),
         ):
-            args = _ship_args(**{flag: True})
-            _drive(args, _Config(policy), _ask=_scripted())
-            self.assertEqual(args.jury, expected == "gating")
-            self.assertEqual(args.no_jury, expected == wizard.JURY_OFF)
-            self.assertEqual(args.jury_advisory, expected == "advisory")
+            args = _ship_args(**({flag: True} if flag else {}))
+            asked = {}
+
+            def ask(prompt, default, _asked=asked):
+                head = prompt.splitlines()[0]
+                _asked.setdefault(head, default)
+                # Customize to reach the jury question; accept every default after it.
+                return wizard.CUSTOMIZE if head.startswith("Start style") else ""
+
+            before = (args.jury, args.no_jury, args.jury_advisory)
+            _drive(args, _Config(policy), _ask=ask)
+            self.assertEqual(asked["Cross-vendor jury — the cross-vendor panel"], opens_on)
+            # Nothing was answered, so the parsed jury flags are untouched.
+            self.assertEqual((args.jury, args.no_jury, args.jury_advisory), before)
+
+    def test_an_answered_jury_question_does_write_its_flag(self):
+        args = _ship_args()
+        _drive(args, _ask=_scripted(wizard.CUSTOMIZE, "", "", "gating"))
+        self.assertEqual((args.jury, args.no_jury, args.jury_advisory), (True, False, False))
 
     def test_a_command_without_the_delegate_flags_only_gets_what_it_has(self):
         args = argparse.Namespace(
             wizard=True, wizard_answer=[], json=False, review_comments="inline", reviewers=None
         )
-        code, out, _ = _drive(args, command="work-block", _ask=_scripted())
+        code, out, _ = _drive(
+            args,
+            command="work-block",
+            _ask=_scripted(wizard.CUSTOMIZE, "ollama", "", "", "", "claude"),
+        )
         self.assertEqual(code, 0)
         self.assertIn("keel work-block --wizard — resolved", out)
-        self.assertIn("--delegate claude", out)
-        self.assertEqual(args.reviewers, 2)
+        # Echoed for the child ship handoffs, not written onto a namespace without it.
+        self.assertIn("--delegate ollama", out)
+        self.assertEqual(args.reviewers, 1)
         self.assertFalse(hasattr(args, "delegate"))
+
+
+class TestQuickStartChangesNothing(unittest.TestCase):
+    """The docstring's promise, asserted against the real resolver (#1018 round 2).
+
+    A wizard told to take every default must resolve the *same* team as a run with no
+    `--wizard` at all. It did not: `apply_resolution` materialised every resolved value
+    as a flag, so quick-start on a tier-3 change wrote `--reviewers 2` (the run bench is
+    derived at a nominal tier, because the real one is not classified until s1) and
+    `--no-jury` (the jury question's opening value when `knobs.team` names no mode) —
+    dropping a reviewer and the gating jury from the strictest tier keel has.
+    """
+
+    #: Deliberately names no tier-3 bench and no jury mode, so both come from the
+    #: risk tier — the two values the wizard was overwriting with `--reviewers 2`
+    #: and `--no-jury`.
+    POLICY = {
+        "implement": {"default": {"provider": "claude"}},
+        "review": {"by_tier": {"1": [{"provider": "claude"}]}},
+    }
+
+    def _assignment(self, args, tier):
+        config = cfg.parse_config(
+            {
+                "extends": "keel",
+                "core_version": "^1.0",
+                "repo": "tmp",
+                "base_branch": "main",
+                "gates": ["build"],
+                "knobs": {"build_gate_cmd": "true", "team": self.POLICY},
+            },
+            source="fixture",
+        )
+        return config, cli._review_assignment(config, args, tier=tier)
+
+    def test_quick_start_leaves_a_tier_3_contract_identical_to_no_wizard(self):
+        plain = _ship_args(wizard=False)
+        _, without = self._assignment(plain, 3)
+
+        wizarded = _ship_args()
+        config, _ = self._assignment(_ship_args(wizard=False), 3)
+        code, out, _ = _drive(wizarded, config, _ask=_scripted())  # every answer blank
+        self.assertEqual(code, 0)
+        self.assertIn("(none — every option kept its default", out)
+
+        _, with_wizard = self._assignment(wizarded, 3)
+        self.assertEqual(with_wizard, without)
+        self.assertEqual(with_wizard["reviewer_count"], 3)
+        self.assertEqual(
+            (wizarded.reviewers, wizarded.delegate, wizarded.no_jury),
+            (plain.reviewers, plain.delegate, plain.no_jury),
+        )
+
+    def test_the_same_holds_for_an_explicit_quick_start_answer(self):
+        wizarded = _ship_args(wizard_answer=["mode=quick-start"])
+        config, without = self._assignment(_ship_args(wizard=False), 3)
+        _drive(wizarded, config, _isatty=lambda: False)
+        _, with_wizard = self._assignment(wizarded, 3)
+        self.assertEqual(with_wizard, without)
+
+    def test_an_answered_bench_is_still_an_override(self):
+        """The fix must not make the wizard unable to decide anything."""
+        wizarded = _ship_args(wizard_answer=["mode=customize", "review=claude"])
+        config, _ = self._assignment(_ship_args(wizard=False), 3)
+        _drive(wizarded, config, _isatty=lambda: False)
+        _, assignment = self._assignment(wizarded, 3)
+        self.assertEqual(wizarded.reviewers, 1)
+        self.assertEqual(assignment["reviewer_count"], 1)
+
+
+class TestEveryReachableConfigValidates(unittest.TestCase):
+    """Sweep the config-scope answer space; every output must pass `keel validate`.
+
+    The round-2 review found six invalid outputs this way — all of them `jury.mode:
+    advisory` beside a `review.by_tier` of `jury`, the pair `team._review_issues`
+    refuses. A wizard that can write a config keel then refuses to load is worse than
+    no wizard, so the guarantee is asserted over the whole space rather than spot-checked.
+    """
+
+    CATALOG = wizard.Catalog.from_report(
+        {
+            "providers": [
+                _row("claude"),
+                _row("agy", models=("gemini-3.8-flash",)),
+                _row("ollama", transport="local", models=("qwen2.5-coder",), tools=False),
+            ]
+        }
+    )
+
+    def _sweep(self):
+        """Every combination of the answers that can change the written block."""
+        providers = ("claude", "agy", "ollama")
+        benches = ("claude", "agy", "claude,agy", team.JURY_PANEL)
+        for provider in providers:
+            for jury in wizard.JURY_ANSWERS:
+                for bench in benches:
+                    for gate in (wizard.NONE, "claude"):
+                        yield {
+                            "mode": wizard.CUSTOMIZE,
+                            "implement.provider": provider,
+                            "implement.model": "gemini-3.8-flash"
+                            if provider == "agy"
+                            else "qwen2.5-coder",
+                            "implement.effort": "high",
+                            "gate.provider": gate,
+                            "jury": jury,
+                            "review.1": bench,
+                            "review.2": bench,
+                            "review.3": bench,
+                        }
+
+    def test_every_answer_set_produces_a_config_keel_validate_accepts(self):
+        cases = 0
+        for answers in self._sweep():
+            state = wizard.start(self.CATALOG, scope=wizard.SCOPE_CONFIG)
+            # Seated directly, so the sweep also covers answers that never went
+            # through `normalize` — the path finding (4) is about.
+            for key, value in answers.items():
+                state = state.with_answer(key, value)
+            block = state.resolve().team_block()
+            cases += 1
+            with self.subTest(**answers):
+                self.assertEqual(team.team_issues(block, source="knobs.team"), [])
+                text = scaffold.render_config(repo="demo", team=block)
+                data = cfg.yaml.load(text)
+                self.assertEqual(cfg.validate_data(data), [])
+                cfg.parse_config(data, source="sweep")
+        self.assertGreaterEqual(cases, 72)
+
+    def test_the_sweep_would_notice_the_pair_it_exists_to_catch(self):
+        """Vacuity guard: advisory + a jury panel really is refused by validation."""
+        bad = {
+            "implement": {"default": {"provider": "claude"}},
+            "review": {"by_tier": {"3": team.JURY_PANEL}},
+            "jury": {"mode": "advisory", "min_vendors": 2},
+            "fix": {"provider": team.IMPLEMENTER},
+        }
+        self.assertTrue(team.team_issues(bad, source="knobs.team"))
 
 
 class TestScaffoldTeamStep(unittest.TestCase):

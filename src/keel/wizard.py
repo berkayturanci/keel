@@ -77,9 +77,33 @@ JURY_ANSWERS = (*team.JURY_MODES, JURY_OFF)
 #: How review findings are posted, matching ``keel ship --review-comments``.
 REVIEW_COMMENT_MODES = ("inline", "summary")
 
+#: The tier a **run** wizard derives its offered bench at. `keel ship` classifies the
+#: real tier at s1, after the wizard has run, so the offer has to name some tier; this
+#: is the one an empty changeset already classifies as. It is only ever a *default* —
+#: an unanswered bench question emits no `--reviewers`, so the run still gets the bench
+#: its real tier earns (see :meth:`Resolution.flags`).
+RUN_BENCH_TIER = "2"
+
 #: Reviewer seats a tier gets when nothing else says otherwise — one at tier 1, two at
 #: tier 2, three at tier 3, clamped to the providers that are actually available.
 DEFAULT_BENCH = {"1": 1, "2": 2, "3": 3}
+
+#: Every key the planner can ask under any scope or branch. Used to tell a misspelled
+#: ``--wizard-answer`` from a correctly spelled one this run never reaches.
+#: ``tests/test_wizard.py`` walks the planner and fails if a question escapes this list.
+QUESTION_KEYS = (
+    "mode",
+    "implement.provider",
+    "implement.model",
+    "implement.effort",
+    "gate.provider",
+    "jury",
+    "review",
+    "review.1",
+    "review.2",
+    "review.3",
+    "review_comments",
+)
 
 #: Re-asks a single question gets before the planner stops arguing and takes the
 #: default. A wizard that can loop forever on a stubborn ``ask`` seam is a hang, and a
@@ -290,18 +314,41 @@ class State:
     review_comments: str = "inline"
     jury: str = JURY_OFF
     delegate: str | None = None
+    #: Questions the operator answered with a value of their own.
     answers: Mapping[str, str] = field(default_factory=dict)
+    #: Questions the operator was asked and accepted the default for. Deliberately
+    #: **not** the same thing as an answer: an accepted default means "do what this
+    #: command would have done anyway", and :meth:`Resolution.flags` must not then
+    #: materialise that default as an explicit flag. Writing back a default the
+    #: operator never chose is how a quick-start run on a tier-3 change ended up
+    #: passing `--reviewers 2 --no-jury` and quietly dropping a reviewer and the
+    #: gating jury.
+    defaulted: frozenset[str] = frozenset()
+
+    def _replace(self, **changes: Any) -> State:
+        base = {
+            "catalog": self.catalog,
+            "policy": self.policy,
+            "scope": self.scope,
+            "review_comments": self.review_comments,
+            "jury": self.jury,
+            "delegate": self.delegate,
+            "answers": self.answers,
+            "defaulted": self.defaulted,
+        }
+        return State(**{**base, **changes})
 
     def with_answer(self, key: str, value: str) -> State:
-        return State(
-            catalog=self.catalog,
-            policy=self.policy,
-            scope=self.scope,
-            review_comments=self.review_comments,
-            jury=self.jury,
-            delegate=self.delegate,
-            answers={**self.answers, key: value},
-        )
+        """Record a value the operator chose. This one *does* become a flag."""
+        return self._replace(answers={**self.answers, key: value})
+
+    def with_default(self, key: str) -> State:
+        """Record that the operator accepted this question's default: no flag."""
+        return self._replace(defaulted=self.defaulted | {key})
+
+    def settled(self, key: str) -> bool:
+        """Has this question been put to the operator and disposed of?"""
+        return key in self.answers or key in self.defaulted
 
     def questions(self) -> tuple[Question, ...]:
         """Every question this scope asks, given the answers so far."""
@@ -310,7 +357,7 @@ class State:
     def next_question(self) -> Question | None:
         """The first question still unanswered, or ``None`` when the wizard is done."""
         for question in self.questions():
-            if question.key not in self.answers:
+            if not self.settled(question.key):
                 return question
         return None
 
@@ -368,20 +415,38 @@ class Resolution:
     jury: str = JURY_OFF
     review_comments: str = "inline"
     quick_start: bool = True
+    #: Question keys the operator answered with a value of their own. Everything else
+    #: resolved to a default, and a default is *not* a decision: see :meth:`flags`.
+    answered: frozenset[str] = frozenset()
 
     def flags(self) -> tuple[str, ...]:
-        """The literal ``keel ship`` / ``keel work-block`` flag set, in a stable order."""
-        flags = ["--delegate", seat_token(self.implement)]
-        if isinstance(self.review, tuple) and self.review:
+        """The literal ``keel ship`` / ``keel work-block`` flag set, in a stable order.
+
+        **Only an answered question produces a flag.** Every value below also has a
+        resolved default, and materialising those defaults as flags is not neutral —
+        it overrides the very policy they were read from. The reviewer bench a run
+        wizard shows is derived at a nominal tier because the real one is not
+        classified until s1, and the jury default is "whatever the flags and
+        `knobs.team` already say"; writing either back turned a quick-start run on a
+        tier-3 change into `--reviewers 2 --no-jury`, dropping a reviewer and the
+        gating jury. An unanswered question therefore emits nothing at all and the
+        command resolves it exactly as it would have without `--wizard`.
+        """
+        flags: list[str] = []
+        if {"implement.provider", "implement.model"} & self.answered:
+            flags += ["--delegate", seat_token(self.implement)]
+        if "review" in self.answered and isinstance(self.review, tuple) and self.review:
             flags += ["--reviewers", str(len(self.review))]
             for seat in self.review:
                 flags += ["--review-delegate", seat_token(seat)]
-        flags += ["--review-comments", self.review_comments]
-        flags += {
-            "gating": ["--jury"],
-            "advisory": ["--jury-advisory"],
-            JURY_OFF: ["--no-jury"],
-        }[self.jury]
+        if "review_comments" in self.answered:
+            flags += ["--review-comments", self.review_comments]
+        if "jury" in self.answered:
+            flags += {
+                "gating": ["--jury"],
+                "advisory": ["--jury-advisory"],
+                JURY_OFF: ["--no-jury"],
+            }[self.jury]
         return tuple(flags)
 
     def team_block(self) -> dict[str, Any]:
@@ -462,17 +527,33 @@ def _default_gate(state: State, implementer: str) -> Seat | None:
     return gate
 
 
-def _default_bench(state: State, tier: str, implementer: str) -> tuple[Seat, ...] | str:
-    """The reviewer bench for ``tier``: the policy's, filtered to what is available."""
+def _default_bench(
+    state: State,
+    tier: str,
+    implementer: str,
+    *,
+    panel_allowed: bool,
+) -> tuple[Seat, ...] | str:
+    """The reviewer bench for ``tier``: the policy's, filtered to what is available.
+
+    A policy that makes the panel the review keeps it — but only while the jury can
+    gate. Offering `jury` as the *default* beside an advisory jury would hand the
+    operator a pre-filled answer `keel validate` refuses.
+    """
     configured = state.policy.review_by_tier.get(tier)
     if configured is None:
         configured = state.policy.review
     if configured == team.JURY_PANEL:
-        return team.JURY_PANEL
+        return team.JURY_PANEL if panel_allowed else _spread_bench(state, tier, implementer)
     if isinstance(configured, tuple):
         seats = tuple(seat for seat in configured if state.catalog.has(seat.provider))
         if seats:
             return seats
+    return _spread_bench(state, tier, implementer)
+
+
+def _spread_bench(state: State, tier: str, implementer: str) -> tuple[Seat, ...]:
+    """The tier-sized bench this machine can staff, preferring seats off the implementer."""
     count = min(DEFAULT_BENCH[tier], len(state.catalog.candidates))
     spread = state.catalog.spread()
     preferred = [c for c in spread if c.name != implementer] + [
@@ -487,10 +568,40 @@ def _bench_answer(bench: tuple[Seat, ...] | str) -> str:
     return ",".join(seat.provider for seat in bench)
 
 
-def _seats_from(value: str, models: Mapping[str, str | None]) -> tuple[Seat, ...] | str:
+def _offerable_gate(state: State, name: str, implementer: str) -> bool:
+    """Is ``name`` a gate this catalogue offers, and not the implementer's own seat?"""
+    return state.catalog.has(name) and name != implementer
+
+
+def _seats_from(
+    value: str,
+    models: Mapping[str, str | None],
+    *,
+    catalog: Catalog,
+    fallback: tuple[Seat, ...] | str,
+    panel_allowed: bool,
+) -> tuple[Seat, ...] | str:
+    """Reviewer seats from a bench answer, dropping anything this machine cannot run.
+
+    The third guard of the same shape as the implementer's and the gate's: `normalize`
+    already refuses an off-offer token, but an answer seated straight onto `State`
+    reaches here unfiltered, and a bench naming a provider the probe never found is a
+    reviewer slot nobody can staff. An answer that filters down to nothing falls back
+    to the bench this question offered as its default.
+
+    ``panel_allowed`` carries the same rule structurally rather than only through the
+    offered choices: a jury panel is a review **only when the jury gates**, because
+    `team._review_issues` refuses "the panel is the review" beside an advisory jury —
+    that tier would have no host reviewers and an advisory verdict requires nothing.
+    """
     if value == team.JURY_PANEL:
-        return team.JURY_PANEL
-    return tuple(Seat(provider=name, model=models.get(name)) for name in value.split(","))
+        return team.JURY_PANEL if panel_allowed else fallback
+    seats = tuple(
+        Seat(provider=name, model=models.get(name))
+        for name in value.split(",")
+        if catalog.has(name)
+    )
+    return seats or fallback
 
 
 def _policy_models(policy: team.TeamPolicy) -> dict[str, str | None]:
@@ -533,6 +644,7 @@ def _walk(state: State) -> tuple[tuple[Question, ...], Resolution]:
             "to see why; the wizard has nothing it could offer"
         )
     questions: list[Question] = []
+    answered: set[str] = set()
     asking = True
 
     def ask(
@@ -556,7 +668,9 @@ def _walk(state: State) -> tuple[tuple[Question, ...], Resolution]:
         )
         if asking:
             questions.append(question)
-            return state.answers.get(key, default)
+            if key in state.answers:
+                answered.add(key)
+                return state.answers[key]
         return default
 
     mode = ask(
@@ -633,6 +747,11 @@ def _walk(state: State) -> tuple[tuple[Question, ...], Resolution]:
         gate_default.provider if gate_default is not None else NONE,
         help="one mandatory second opinion, never the seat that wrote the change",
     )
+    if gate_answer != NONE and not _offerable_gate(state, gate_answer, provider):
+        # Same guard as the implementer's, for the same reason: an answer seated
+        # directly on `State` bypasses `normalize`, and a gate naming an unusable
+        # provider — or the implementer itself — is one `keel validate` refuses.
+        gate_answer = gate_default.provider if gate_default is not None else NONE
     gate = (
         None if gate_answer == NONE else Seat(provider=gate_answer, distinct_from=team.IMPLEMENTER)
     )
@@ -649,8 +768,14 @@ def _walk(state: State) -> tuple[tuple[Question, ...], Resolution]:
         help="the cross-vendor panel",
     )
 
+    panel_allowed = jury == "gating"
     bench_choices = _provider_choices(state.catalog)
-    if jury != JURY_OFF:
+    if panel_allowed:
+        # Only a *gating* jury may be the review. "The panel is the review" plus "the
+        # panel does not gate" leaves that tier with nothing enforceable — no host
+        # reviewer slots to fall back on, and an advisory verdict is not required
+        # evidence — which `team._review_issues` refuses outright. Offering it for
+        # `advisory` let the wizard write the one combination `keel validate` rejects.
         bench_choices = (
             Choice(team.JURY_PANEL, "the cross-vendor panel *is* the review"),
             *bench_choices,
@@ -660,31 +785,39 @@ def _walk(state: State) -> tuple[tuple[Question, ...], Resolution]:
     review: tuple[Seat, ...] | str = ()
     review_by_tier: dict[str, tuple[Seat, ...] | str] = {}
     if state.scope == SCOPE_RUN:
+        run_bench = _default_bench(state, RUN_BENCH_TIER, provider, panel_allowed=panel_allowed)
         review = _seats_from(
             ask(
                 "review",
                 "Reviewers for this run",
                 bench_choices,
-                _bench_answer(_default_bench(state, "2", provider)),
-                help="one seat per reviewer slot (A, B, C)",
+                _bench_answer(run_bench),
+                help="one seat per slot (A, B, C); leave it to keep the tier's own bench",
                 multi=True,
                 max_values=max_seats,
             ),
             seat_models,
+            catalog=state.catalog,
+            fallback=run_bench,
+            panel_allowed=panel_allowed,
         )
     else:
         for tier in team.TIERS:
+            tier_bench = _default_bench(state, tier, provider, panel_allowed=panel_allowed)
             review_by_tier[tier] = _seats_from(
                 ask(
                     f"review.{tier}",
                     f"Reviewers for tier {tier}",
                     bench_choices,
-                    _bench_answer(_default_bench(state, tier, provider)),
+                    _bench_answer(tier_bench),
                     help=f"knobs.team.review.by_tier.{quoted(tier)}",
                     multi=True,
                     max_values=max_seats,
                 ),
                 seat_models,
+                catalog=state.catalog,
+                fallback=tier_bench,
+                panel_allowed=panel_allowed,
             )
 
     review_comments = ask(
@@ -706,6 +839,7 @@ def _walk(state: State) -> tuple[tuple[Question, ...], Resolution]:
         jury=jury,
         review_comments=review_comments,
         quick_start=mode == QUICK_START,
+        answered=frozenset(answered),
     )
     return tuple(questions), resolution
 
@@ -719,27 +853,73 @@ def apply_answers(state: State, answers: Mapping[str, str]) -> tuple[State, tupl
     """Feed recorded answers in, without prompting. Returns the state and any errors.
 
     This is the non-interactive path: ``--wizard-answer key=value`` on the command
-    line, or a replayed run. An answer for a question this scope never asks — or one
-    naming a provider the probe did not offer — is reported and *not* applied, which
-    is the same wall the interactive path puts up.
+    line, or a replayed run. An answer naming a provider the probe did not offer is
+    reported and *not* applied — the same wall the interactive path puts up.
+
+    Supplying any answer other than ``mode`` implies ``mode=customize``. Without that
+    the first question's own default (quick-start) ends the walk before the second
+    question exists, so **every** other answer was rejected as "not a question this
+    wizard asks" — a flag that could only ever set `mode`. An explicit ``mode`` in the
+    answers still wins, including an explicit ``mode=quick-start``, which then really
+    does mean "ignore the rest".
     """
     errors: list[str] = []
     remaining = dict(answers)
+    if remaining and "mode" not in remaining:
+        remaining["mode"] = CUSTOMIZE
     while remaining:
         question = state.next_question()
         if question is None:
             break
         if question.key not in remaining:
-            state = state.with_answer(question.key, question.default)
+            # Asked, not answered: it keeps its default and produces no flag.
+            state = state.with_default(question.key)
             continue
         value, error = question.normalize(remaining.pop(question.key))
         if error is not None:
             errors.append(error)
-            value = question.default
+            state = state.with_default(question.key)
+            continue
         state = state.with_answer(question.key, value)
-    for key in sorted(remaining):
-        errors.append(f"{key}: not a question this wizard asks")
+    errors.extend(_unused_answer_issues(state, remaining))
     return state, tuple(errors)
+
+
+def _unused_answer_issues(state: State, remaining: Mapping[str, str]) -> list[str]:
+    """Why each leftover answer was never consumed — a typo, or an unreachable branch.
+
+    The two are different problems with different fixes, and one message for both sent
+    an operator hunting for a misspelling in a key that was spelled perfectly and simply
+    never asked (``review.3`` in a run, ``implement.model`` for a provider that lists
+    none). Say which.
+    """
+    issues = []
+    for key in sorted(remaining):
+        if key not in QUESTION_KEYS:
+            issues.append(
+                f"{key}: not a question this wizard asks; valid keys are {', '.join(QUESTION_KEYS)}"
+            )
+        else:
+            issues.append(
+                f"{key}: a real wizard question, but this run never reaches it — "
+                f"{_unreachable_reason(state, key)}"
+            )
+    return issues
+
+
+def _unreachable_reason(state: State, key: str) -> str:
+    if state.scope == SCOPE_RUN and key.startswith("review."):
+        return (
+            f"{key} is a `keel init --wizard` question (one bench per risk tier); a run "
+            "asks `review` once, because its tier is not classified until s1"
+        )
+    if state.scope == SCOPE_CONFIG and key == "review":
+        return "a config names one bench per tier, so answer review.1 / review.2 / review.3"
+    if key == "implement.model":
+        return "the chosen implementer lists no models for keel to offer"
+    return (
+        "the chosen implementer has no spelling for reasoning effort, or needs a model chosen first"
+    )
 
 
 def run(
@@ -749,31 +929,45 @@ def run(
 ) -> State:
     """Ask every remaining question through ``ask``. Pure given its seams.
 
-    ``ask(prompt, default)`` returns the operator's raw answer (blank ⇒ the default),
-    exactly the seam :func:`keel.scaffold.wizard` already uses. An answer outside the
-    question's choices is refused through ``notify`` and asked again, at most
-    :data:`MAX_ATTEMPTS` times — after that the default stands, because a wizard that
-    argues forever is the hang ``--wizard`` promises never to be.
+    ``ask(prompt, default)`` returns the operator's answer. **A blank return means "I
+    accept the default"** — recorded as a default, not as an answer, so it produces no
+    flag and the command resolves that option exactly as it would have without
+    ``--wizard``. An answer outside the question's choices is refused through
+    ``notify`` and asked again, at most :data:`MAX_ATTEMPTS` times — after that the
+    default stands, because a wizard that argues forever is the hang ``--wizard``
+    promises never to be.
     """
     question = state.next_question()
     while question is not None:
-        value = question.default
+        chosen: str | None = None
         for _ in range(MAX_ATTEMPTS):
-            candidate, error = question.normalize(ask(question.text(), question.default))
+            raw = ask(question.text(), question.default)
+            if not (raw or "").strip():
+                break
+            candidate, error = question.normalize(raw)
             if error is None:
-                value = candidate
+                chosen = candidate
                 break
             notify(error)
         else:
             notify(f"{question.key}: keeping the default {question.default!r}")
-        state = state.with_answer(question.key, value)
+        state = (
+            state.with_default(question.key)
+            if chosen is None
+            else state.with_answer(question.key, chosen)
+        )
         question = state.next_question()
     return state
 
 
 def render(resolution: Resolution) -> str:
     """The operator-facing echo: the resolved flag set, then the seats behind it."""
-    lines = [f"  flags : {' '.join(resolution.flags())}"]
+    flags = resolution.flags()
+    lines = [
+        f"  flags : {' '.join(flags)}"
+        if flags
+        else "  flags : (none — every option kept its default, so nothing is overridden)"
+    ]
     seats = [f"implement={seat_token(resolution.implement)}"]
     if resolution.implement.effort:
         seats.append(f"effort={resolution.implement.effort}")

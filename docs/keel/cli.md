@@ -1758,10 +1758,25 @@ the single source of truth for what is usable here — **a provider the probe di
 is never offered and cannot be selected**, whether it is typed at the prompt or handed in
 with `--wizard-answer`.
 
-Every default comes from [`knobs.team`](configuration.md#team) and from the flags already
-on the command line, so a wizard run that answers nothing reproduces exactly what the
-command would have done. A configured seat this machine cannot reach is named once and
-then degrades to one it can.
+**A default is not a decision.** Only a question you actually answer becomes a flag; an
+unanswered one emits nothing and the command resolves it exactly as it would have without
+`--wizard`. That is what makes quick-start safe: the reviewer bench the wizard offers is
+derived at a nominal tier (the real one is not classified until s1, after the wizard has
+run) and the jury question opens on whatever the flags and `knobs.team` already say, so
+writing those back would *override* the policy they were read from — a quick-start run on
+a tier-3 change would silently pass `--reviewers 2 --no-jury`. Pressing Enter keeps the
+default and passes no flag; typing a value is an explicit override.
+
+**What the run wizard cannot express.** The probe lists providers keel can *dispatch* to,
+so a `subagent:<name>` seat is not among them: on a project whose `knobs.team` names one,
+the implementer question shows the first dispatchable provider as its default. Accept it
+(Enter) and the policy still decides s4 — including `implement.by_role` and any
+`subagent:` seat. Answer it and you get `--delegate`, which is a per-run override: it wins
+over `knobs.team.implement` outright, so `implement.by_role` and `--role` no longer apply.
+Answer the implementer question only when you mean to replace the policy's seat for this
+run.
+
+A configured seat this machine cannot reach is named once and then degrades to one it can.
 
 **Interactivity guard.** With no terminal and no recorded answers the wizard is a *logged
 no-op*: it prints `wizard: non-interactive context …` and the command proceeds with the
@@ -1772,6 +1787,29 @@ nothing usable is the same logged no-op.
 without prompting, on a terminal or not — which is what makes a wizard run reproducible.
 A malformed pair, or one naming a choice the wizard does not offer, exits 1 before any
 gate runs rather than silently running a team nobody asked for.
+
+Supplying any answer other than `mode` implies `mode=customize`, because the first
+question's own default (quick-start) would otherwise end the walk before the second
+question exists. Pass `mode=quick-start` explicitly when you really do mean "ignore the
+rest":
+
+```bash
+# One reviewer from claude, summary posting, everything else left to knobs.team + the tier
+keel ship .keel/project.yaml --root . --wizard \
+  --wizard-answer 'implement.provider=ollama;implement.model=qwen2.5-coder' \
+  --wizard-answer 'review=claude' --wizard-answer 'review_comments=summary'
+```
+
+```text
+keel ship --wizard — resolved
+  flags : --delegate ollama:qwen2.5-coder --reviewers 1 --review-delegate claude --review-comments summary
+  seats : implement=ollama:qwen2.5-coder · review=claude
+```
+
+Note what is *absent*: no `--jury`/`--no-jury`, because the jury question was not answered,
+so the tier and `knobs.team` still decide it. An answer naming a key this run never reaches
+(`review.3` in a run, `implement.model` for a provider that lists none) says so
+specifically, rather than being reported as a misspelling.
 
 The questions are `mode` (quick-start vs customize), `implement.provider`,
 `implement.model`, `implement.effort`, `gate.provider`, `jury`, `review` (the bench for
@@ -1987,7 +2025,11 @@ Two rules the step will not let you break, because `keel validate` would not eit
   with `distinct_from: implementer` — a gate review from the vendor that wrote the change
   is not a second opinion;
 - reasoning effort is only asked for a provider that has a spelling for it, and only once
-  a model is chosen for a vendor that spells effort as a model *suffix* (`agy`).
+  a model is chosen for a vendor that spells effort as a model *suffix* (`agy`);
+- the `jury` bench is offered only when the jury is set to **gating**. "The panel is the
+  review" beside an advisory jury leaves that tier with nothing enforceable — no host
+  reviewer slots, and an advisory verdict is not required evidence — which validation
+  refuses outright.
 
 On a machine where the probe finds nothing usable the step is skipped and no `team` block
 is written at all — an absent block is not an empty one, and leaves `config_hash` exactly

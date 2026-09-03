@@ -1461,8 +1461,8 @@ keel ship <project.yaml> [--root DIR] [--pr N] [--hotfix] [--dry-run] [--live]
 | `--tier` | `plan` | — | Risk tier the review contract and team assignment are resolved against before a diff exists. |
 | `--profile` | `standard` \| `compound` | `standard` | Workflow profile in the contract. |
 | `--compound` | flag | off | Alias for `--profile compound`. |
-| `--wizard` | flag | off | Interactive pre-s1 picker for the implementer/gate/reviewer seats, built from the `keel doctor --providers` probe. Only providers the probe found usable are offered. With no terminal and no `--wizard-answer` it is a logged no-op and the parsed flags stand. |
-| `--wizard-answer KEY=VALUE` | repeatable, or `;`-separated | none | Pre-answer wizard questions without prompting (`mode`, `implement.provider`, `implement.model`, `implement.effort`, `gate.provider`, `jury`, `review`, `review_comments`). A malformed pair, or one naming a choice the wizard does not offer, exits 1 before any gate runs. |
+| `--wizard` | flag | off | Interactive pre-s1 picker for the implementer/gate/reviewer seats, built from the `keel doctor --providers` probe. Only providers the probe found usable are offered. **Only an answered question becomes a flag** — an unanswered one is left to `knobs.team` and the risk tier, so quick-start changes nothing. With no terminal and no `--wizard-answer` it is a logged no-op and the parsed flags stand. |
+| `--wizard-answer KEY=VALUE` | repeatable, or `;`-separated | none | Pre-answer wizard questions without prompting (`mode`, `implement.provider`, `implement.model`, `implement.effort`, `gate.provider`, `jury`, `review`, `review_comments`). Supplying any key but `mode` implies `mode=customize`; pass `mode=quick-start` explicitly to take every default. A malformed pair, or one naming a choice the wizard does not offer, exits 1 before any gate runs. |
 | `--json` | flag | off | `{contract, result}` with `result.artifact_bodies` (canonical PR body, issue update, review/jury verdict templates, extension result, ship-provenance stamp). |
 
 ### Details
@@ -1997,7 +1997,13 @@ literally. A provider the probe did not find is never offered and cannot be sele
 first question is the Quick-start vs Customize fast path, every question shows its default
 first with a one-line description, and the defaults come from `knobs.team` plus the flags
 already on the command line. `--wizard-answer KEY=VALUE` replays a recorded run without
-prompting. See [`cli.md`](cli.md#ship-wizard).
+prompting; supplying any key but `mode` implies `mode=customize`. Only a question the
+operator actually answered becomes a flag, so a quick-start run passes none and every
+option stays with `knobs.team` and the risk tier. The run picker cannot express a
+`subagent:` seat (the probe lists only dispatchable providers), so answering the
+implementer question emits `--delegate`, which overrides `knobs.team.implement` and with
+it `implement.by_role`; accepting the default leaves the policy in charge. See
+[`cli.md`](cli.md#ship-wizard).
 
 ### Examples
 

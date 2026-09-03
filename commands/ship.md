@@ -1100,9 +1100,22 @@ keel ship <project.yaml> --root . --wizard [--wizard-answer key=value]...
 Core owns the offered choices, and they come from one source: the provider probe behind
 `keel doctor --providers`. **A provider that probe did not mark available is never offered
 and cannot be selected** — so the wizard cannot propose a CLI the operator has not
-installed, which is exactly what an improvised list did. Defaults come from `knobs.team`
-and from the flags already on the command line; a configured seat this machine cannot
-reach is named once and degrades to one it can.
+installed, which is exactly what an improvised list did.
+
+**Only an answered question becomes a flag.** Every option also has a default, read from
+`knobs.team` and the flags already on the command line, and core deliberately does *not*
+write those back: the offered reviewer bench is derived at a nominal tier (the real one is
+classified at s5, after the wizard) and the jury default is whatever the tier and
+`knobs.team` already say, so materialising them would override the policy they came from.
+Quick-start therefore emits **no flags at all** — pass none on, and let s1–s10 resolve the
+run exactly as they would have.
+
+The probe lists only providers keel can *dispatch* to, so a `subagent:` seat is never
+among them: on a project whose `knobs.team` names one, the implementer question shows the
+first dispatchable provider as its default. An operator who accepts it leaves `knobs.team`
+in charge of s4 — including `implement.by_role` and the `subagent:` seat. An operator who
+answers it gets `--delegate`, a per-run override that wins over `knobs.team.implement` and
+takes `implement.by_role` (and `--role`) out of the picture. Say so if they answer it.
 
 **Hard interactivity guard:** never enter the wizard in any non-interactive context (watch
 mode, overnight/background/headless runs); there it degrades to a logged no-op and proceeds
@@ -1128,9 +1141,10 @@ keel ship --wizard — resolved
 
 The `seats` line carries what has no `keel ship` flag: the implementer's reasoning effort
 (pass it to `keel delegate run --effort` at s4) and the gate seat (dispatch it as the s7
-gate review, as `assignment.gate` already directs). A malformed or unofferable
-`--wizard-answer` exits 1 before any gate runs — surface that to the operator rather than
-retrying with a guess.
+gate review, as `assignment.gate` already directs). A `flags` line reading `(none — every
+option kept its default …)` is the normal quick-start outcome, not a failure: pass no
+flags and proceed. A malformed or unofferable `--wizard-answer` exits 1 before any gate
+runs — surface that to the operator rather than retrying with a guess.
 
 ## Invariants (always)
 
@@ -1144,4 +1158,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=plugin command=ship keel_version=1.19.3 source_sha256=0b605a9c4e084aff1140f2318671293b8d1451a6dfb25ee18ec6a50687fdf6b4 generated_sha256=0b605a9c4e084aff1140f2318671293b8d1451a6dfb25ee18ec6a50687fdf6b4 -->
+<!-- keel-generated: surface=plugin command=ship keel_version=1.19.3 source_sha256=c242228f14de0d2b1a43dab9ab3043e165d3eb9044f22c12c6bbc9d1e6ac5678 generated_sha256=c242228f14de0d2b1a43dab9ab3043e165d3eb9044f22c12c6bbc9d1e6ac5678 -->
