@@ -67,14 +67,46 @@ Label an issue on GitHub to route implementation automatically:
 * `delegate:anthropic-api` + `delegate-model:claude-3-7-sonnet-20250219`
 * `delegate:openrouter` + `delegate-model:meta-llama/llama-3.3-70b-instruct`
 
-### 3. Project Configuration Defaults (`project.yaml`)
-Map specific issue roles/platforms to default agents in `.keel/project.yaml`:
+### 3. Project Team Policy (`project.yaml`)
+`knobs.team` is where a project states its whole team — implementer per issue role, one
+mandatory gate reviewer from a different vendor, reviewer seats per risk tier, and the
+jury:
+
 ```yaml
 knobs:
-  implementer_agents:
-    core: backend-developer     # maps to host agent or profile
-    frontend: anthropic-api:claude-3-7-sonnet-20250219
-    docs: google-api:gemini-2.5-flash
+  team:
+    implement:
+      default: { provider: claude }
+      by_role:
+        core: { provider: agy, model: gemini-3.8-flash-high, effort: high }
+        frontend: { provider: anthropic-api, model: claude-3-7-sonnet-20250219 }
+        docs: { provider: "subagent:docs-writer" }   # a host subagent, not a vendor
+    gate: { provider: codex, distinct_from: implementer }
+    review:
+      by_tier:
+        "2": [{ provider: claude }, { provider: codex }]
+        "3": jury
+    jury: { mode: gating, min_vendors: 2 }
+```
+
+A `provider` is resolved by the same registry `keel delegate run` uses, and
+`subagent:<name>` is the explicit spelling for a host (Claude-class) subagent. Full
+reference: [`configuration.md#team`](configuration.md#team).
+
+The older `knobs.implementer_agents` still works and is mapped onto
+`team.implement.by_role`, but it is **deprecated**: its values were documented as vendor
+strings here and as Claude subagent names in `ship.md` s4, and nothing said which.
+
+Both documented spellings keep working, and keel now says which is which: a value whose
+head names a provider it can resolve **is** that provider (with the model after the colon);
+anything else is the host subagent, and keel prefixes it for you.
+
+```yaml
+knobs:
+  implementer_agents:                                 # deprecated — prefer team.implement.by_role
+    core: backend-developer                           # -> subagent:backend-developer
+    frontend: anthropic-api:claude-3-7-sonnet-20250219  # -> anthropic-api, model claude-3-7-…
+    docs: google-api:gemini-2.5-flash                 # -> google-api, model gemini-2.5-flash
 ```
 
 ---

@@ -917,5 +917,34 @@ class ParsersTest(unittest.TestCase):
         self.assertIsNone(delegate.parse_ollama_response(["nope"]))
 
 
+class TestEffortVendors(unittest.TestCase):
+    """`EFFORT_VENDORS` is config-facing, `_apply_effort` is run-facing; keep them one fact.
+
+    `keel.team.team_issues` rejects a `knobs.team` seat that pairs an `effort` with a
+    provider that cannot honour it. That refusal is only correct while the tuple it reads
+    agrees with the dispatcher — so the dispatcher is asked, per vendor, rather than the
+    tuple being trusted.
+    """
+
+    VENDORS = (
+        *agents.BUILTIN_DELEGATE_VENDORS,
+        OPENAI_COMPATIBLE,
+        "cli",
+        "local",
+    )
+
+    def test_the_tuple_matches_what_apply_effort_actually_applies(self):
+        for vendor in self.VENDORS:
+            with self.subTest(vendor=vendor):
+                applied = delegate._apply_effort(vendor, "cli", "high", "some-model").applied
+                self.assertIs(applied, delegate.supports_effort(vendor))
+
+    def test_an_unsupported_vendor_warns_instead_of_silently_defaulting(self):
+        effort = delegate._apply_effort("claude", "cli", "high", "opus")
+
+        self.assertFalse(effort.applied)
+        self.assertTrue(effort.warnings)
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

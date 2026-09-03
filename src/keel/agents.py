@@ -13,6 +13,7 @@ All functions here are pure and deterministic — no subprocess, no network.
 
 from __future__ import annotations
 
+from . import team
 from .config import DELEGATE_PROFILE_VENDORS, DelegateProfile, ProjectConfig
 
 #: Default host agent when nothing else is resolved.
@@ -105,6 +106,22 @@ def resolve_agent(
     if role and role in config.knobs.implementer_agents:
         return config.knobs.implementer_agents[role]
     return host_agent
+
+
+def provider_names(config: ProjectConfig) -> frozenset[str]:
+    """Every provider name this project can select without a machine-level registry."""
+    return frozenset({*BUILTIN_DELEGATE_VENDORS, *config.knobs.delegate_profiles})
+
+
+def legacy_team_seats(config: ProjectConfig) -> dict[str, team.Seat]:
+    """``knobs.implementer_agents`` read as ``team.implement.by_role`` seats (#1014).
+
+    The deprecated knob stays accepted; this is where its values acquire the meaning the
+    schema never stated. A value that names a provider this project can select is that
+    provider; anything else is the Claude subagent ``ship.md`` s4 always treated it as,
+    and gets the explicit ``subagent:`` prefix.
+    """
+    return team.legacy_seats(config.knobs.implementer_agents, provider_names=provider_names(config))
 
 
 #: Transports that run a model on the operator's own hardware. Named separately

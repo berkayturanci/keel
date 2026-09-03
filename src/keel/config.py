@@ -19,6 +19,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from . import jsonschema_min
+from . import team as team_policy
 from . import yaml_helper as yaml
 from .capabilities import validate_names
 
@@ -219,7 +220,11 @@ class Knobs:
 
     build_gate_cmd: str
     lint_cmd: str | None = None
+    #: **Deprecated** by ``team.implement.by_role`` (#1014); still accepted and mapped
+    #: onto it by :func:`keel.team.legacy_seats`.
     implementer_agents: dict[str, str] = field(default_factory=dict)
+    #: Who implements, who gates, who reviews, and when the jury is the panel.
+    team: team_policy.TeamPolicy = field(default_factory=team_policy.TeamPolicy)
     #: Profile name -> generic delegate vendor config. Never shadows a built-in vendor
     #: (``claude``/``codex``/``agy``/``ollama``/``*-api``); that is a validation error.
     delegate_profiles: dict[str, DelegateProfile] = field(default_factory=dict)
@@ -231,7 +236,11 @@ class Knobs:
     required_capabilities: tuple[str, ...] = ()
     optional_capabilities: tuple[str, ...] = ()
     evidence_gate_label: str = "keel:ship"
-    evidence_require_distinct_vendors: bool = False
+    #: Tri-state on purpose. ``None`` is *unset*, which is what lets the effective value
+    #: come from the resolved risk tier (:func:`keel.team.require_distinct_vendors`):
+    #: from tier-2 up a review panel that is one vendor twice is one opinion twice. An
+    #: explicit ``false`` still wins — the exception lives in a file a reviewer can read.
+    evidence_require_distinct_vendors: bool | None = None
     #: Swarm landings enforce the same per-PR review-evidence contract as ship
     #: s10. Turning this off is the explicit, logged opt-out #828 requires: the
     #: exception lives in config where a reviewer can see it, never in a
@@ -287,6 +296,7 @@ def _build(data: dict) -> ProjectConfig:
         build_gate_cmd=k["build_gate_cmd"],
         lint_cmd=k.get("lint_cmd"),
         implementer_agents=dict(k.get("implementer_agents", {})),
+        team=team_policy.parse_team(k.get("team")),
         delegate_profiles={
             name: DelegateProfile(
                 vendor=profile["vendor"],
@@ -315,7 +325,11 @@ def _build(data: dict) -> ProjectConfig:
         required_capabilities=tuple(k.get("required_capabilities", [])),
         optional_capabilities=tuple(k.get("optional_capabilities", [])),
         evidence_gate_label=k.get("evidence_gate_label", "keel:ship"),
-        evidence_require_distinct_vendors=bool(k.get("evidence_require_distinct_vendors", False)),
+        evidence_require_distinct_vendors=(
+            None
+            if k.get("evidence_require_distinct_vendors") is None
+            else bool(k["evidence_require_distinct_vendors"])
+        ),
         swarm_review_evidence=bool(k.get("swarm_review_evidence", True)),
         gate_timeout_s=int(k.get("gate_timeout_s", DEFAULT_GATE_TIMEOUT_S)),
         jury_timeout_s=int(k.get("jury_timeout_s", DEFAULT_JURY_TIMEOUT_S)),
@@ -369,6 +383,14 @@ def parse_config(data: Any, *, source: str = "<dict>", schema: dict | None = Non
             _validate_delegate_profiles(
                 knobs.get("delegate_profiles", {}),
                 source=f"{source}: knobs.delegate_profiles",
+            )
+        )
+        errors.extend(
+            team_policy.team_issues(
+                knobs.get("team"),
+                source=f"{source}: knobs.team",
+                profiles=_profile_vendors(knobs.get("delegate_profiles", {})),
+                implementer_agents=_role_agents(knobs.get("implementer_agents", {})),
             )
         )
     if isinstance(data, dict) and isinstance(data.get("policy_pack"), dict):
@@ -563,6 +585,35 @@ def endpoint_issues(endpoint: Any, *, where: str, env=None) -> list[str]:
             "file — for a model server on your own network"
         ]
     return []
+
+
+def _role_agents(role_agents: Any) -> dict[str, str]:
+    """``knobs.implementer_agents`` reduced to its well-formed ``str -> str`` entries."""
+    if not isinstance(role_agents, dict):
+        return {}
+    return {
+        role: agent
+        for role, agent in role_agents.items()
+        if isinstance(role, str) and isinstance(agent, str)
+    }
+
+
+def _profile_vendors(profiles: Any) -> dict[str, str]:
+    """``{profile name: vendor}`` for the well-formed entries of ``delegate_profiles``.
+
+    Deliberately forgiving: a malformed profile is already reported by
+    :func:`_validate_delegate_profiles`, and ``knobs.team`` must not add a second,
+    confusing "unknown provider" error for the same typo.
+    """
+    if not isinstance(profiles, dict):
+        return {}
+    return {
+        name: profile["vendor"]
+        for name, profile in profiles.items()
+        if isinstance(name, str)
+        and isinstance(profile, dict)
+        and isinstance(profile.get("vendor"), str)
+    }
 
 
 def _validate_delegate_profiles(profiles: Any, *, source: str) -> list[str]:
@@ -770,8 +821,10 @@ def _canonical(config: ProjectConfig) -> dict:
             "implementer_agents": dict(sorted(config.knobs.implementer_agents.items())),
             # Omitted entirely when empty: emitting "delegate_profiles": {} would rotate
             # config_hash for every project that has never configured one, which is the
-            # normal treatment for an added optional field.
+            # normal treatment for an added optional field. `team` is omitted on the same
+            # rule, which is what makes "config_hash changes iff team changes" true.
             **delegate_profiles_dict(config),
+            **team_policy.canonical(config.knobs.team),
             "tier3_globs": list(config.knobs.tier3_globs),
             "ci_workflows": dict(sorted(config.knobs.ci_workflows.items())),
             "docs_gate_paths": list(config.knobs.docs_gate_paths),
@@ -780,7 +833,11 @@ def _canonical(config: ProjectConfig) -> dict:
             "required_capabilities": list(config.knobs.required_capabilities),
             "optional_capabilities": list(config.knobs.optional_capabilities),
             "evidence_gate_label": config.knobs.evidence_gate_label,
-            "evidence_require_distinct_vendors": config.knobs.evidence_require_distinct_vendors,
+            # bool(), not the tri-state: an unset knob has always hashed as False, and
+            # adding the "unset" spelling must not rotate config_hash for every project.
+            "evidence_require_distinct_vendors": bool(
+                config.knobs.evidence_require_distinct_vendors
+            ),
             "swarm_review_evidence": config.knobs.swarm_review_evidence,
             "gate_timeout_s": config.knobs.gate_timeout_s,
             "jury_timeout_s": config.knobs.jury_timeout_s,
