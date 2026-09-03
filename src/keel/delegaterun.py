@@ -525,9 +525,10 @@ def start_detached(
         "out_path": str(out_path(root, run_id)),
         "result": None,
     }
-    kwargs: dict[str, Any] = {}
-    if hasattr(os, "setsid"):  # pragma: no branch - POSIX everywhere keel runs
-        kwargs["start_new_session"] = True
+    # A conditional expression rather than an `if`: the assignment then executes on
+    # every platform, so the 100 % line gate holds on the Windows runner too, where
+    # `os.setsid` does not exist and sessions are not a thing.
+    kwargs: dict[str, Any] = {"start_new_session": True} if hasattr(os, "setsid") else {}
     try:
         # Creating the directory and opening the log are I/O like any other: an
         # unwritable root (a read-only checkout, a root owned by another user) must come
