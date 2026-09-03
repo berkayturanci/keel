@@ -5586,6 +5586,22 @@ def _capability_requirement(
     return runtime.build_capability_requirement(command, config, loaded, pr=pr)
 
 
+def _swarm_overrides(args: argparse.Namespace) -> swarm.AssignmentOverrides:
+    """The per-run staffing every swarm subcommand resolves its clusters with.
+
+    Read the same way in all three, so ``swarm-plan`` shows the team ``swarm-run`` will
+    actually dispatch and ``swarm-land`` verifies the same one.
+    """
+    return swarm.AssignmentOverrides(
+        delegate=getattr(args, "delegate", None),
+        review_delegates=tuple(getattr(args, "review_delegate", None) or ()),
+        effort=getattr(args, "effort", None),
+        team_profile=getattr(args, "team_profile", None),
+        reviewers=getattr(args, "reviewers", None),
+        host_agent=getattr(args, "host_agent", None) or agents.HOST_DEFAULT,
+    )
+
+
 def _cmd_swarm_plan(args: argparse.Namespace) -> int:
     try:
         config = cfg.load_config(args.path)
@@ -5639,7 +5655,9 @@ def _cmd_swarm_plan(args: argparse.Namespace) -> int:
             )
         )
 
-    plan = swarm.build_swarm_plan(scopes, swarm_id=args.swarm_id, config=config)
+    plan = swarm.build_swarm_plan(
+        scopes, swarm_id=args.swarm_id, config=config, overrides=_swarm_overrides(args)
+    )
 
     if args.json:
         print(json.dumps(plan.to_dict(), indent=2))
@@ -5734,7 +5752,9 @@ def _cmd_swarm_run(args: argparse.Namespace) -> int:
             )
         )
 
-    plan = swarm.build_swarm_plan(scopes, swarm_id=args.swarm_id, config=config)
+    plan = swarm.build_swarm_plan(
+        scopes, swarm_id=args.swarm_id, config=config, overrides=_swarm_overrides(args)
+    )
 
     from . import swarm_runtime
 
@@ -5945,7 +5965,9 @@ def _cmd_swarm_land(args: argparse.Namespace) -> int:
             )
         )
 
-    plan = swarm.build_swarm_plan(scopes, swarm_id=swarm_id, config=config)
+    plan = swarm.build_swarm_plan(
+        scopes, swarm_id=swarm_id, config=config, overrides=_swarm_overrides(args)
+    )
 
     from . import swarm_landing
 
@@ -7560,6 +7582,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="reviewer override for ship handoff contracts",
     )
+    _add_staffing_args(p_work_block)
     p_work_block.add_argument(
         "--target", default=None, help="target text to include in the work-block contract"
     )
@@ -7619,6 +7642,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="reviewer override for ship handoff contracts",
     )
+    _add_staffing_args(p_overnight)
     p_overnight.add_argument(
         "--target", default=None, help="target text to include in the overnight contract"
     )
@@ -8008,6 +8032,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--issue-label", action="append", default=[], help="issue label; repeat or comma-separate"
     )
     p_sp.add_argument("--swarm-id", default=None, help="custom swarm ID")
+    _add_staffing_args(p_sp, reviewers=True)
     p_sp.add_argument("--tree", action="store_true", help="render visual ASCII/Unicode DAG tree")
     p_sp.add_argument("--json", action="store_true", help="emit structured JSON")
     p_sp.set_defaults(func=_cmd_swarm_plan)
@@ -8050,6 +8075,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--issue-label", action="append", default=[], help="issue label; repeat or comma-separate"
     )
     p_sr.add_argument("--swarm-id", default=None, help="custom swarm ID")
+    _add_staffing_args(p_sr, reviewers=True)
     p_sr.add_argument(
         "--max-workers", type=_positive_int, default=4, help="maximum parallel workers (default: 4)"
     )
@@ -8089,6 +8115,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--issue-label", action="append", default=[], help="issue label; repeat or comma-separate"
     )
     p_sl.add_argument("--swarm-id", default=None, help="custom swarm ID")
+    _add_staffing_args(p_sl, reviewers=True)
     p_sl.add_argument("--live", action="store_true", help="run live mutating git landing")
     p_sl.add_argument("--json", action="store_true", help="emit structured JSON")
     p_sl.set_defaults(func=_cmd_swarm_land)
@@ -8150,6 +8177,48 @@ def _add_jury_flags(parser: argparse.ArgumentParser, *, noun: str, advisory_help
     parser.add_argument("--jury", action="store_true", help=f"enable {noun}")
     parser.add_argument("--no-jury", action="store_true", help=f"disable {noun}")
     parser.add_argument("--jury-advisory", action="store_true", help=advisory_help)
+
+
+def _add_staffing_args(parser: argparse.ArgumentParser, *, reviewers: bool = False) -> None:
+    """The staffing flags a batch runner accepts and hands to every child ship (#1017).
+
+    One definition for every batch command, because these are propagated verbatim: a
+    command that spelled ``--team`` differently would hand its children a flag the child
+    does not have, and the failure would look like the child ignoring the operator.
+    """
+    parser.add_argument(
+        "--delegate",
+        default=None,
+        help="per-run implementer override (provider or provider:model) for every child ship",
+    )
+    parser.add_argument(
+        "--review-delegate",
+        action="append",
+        default=[],
+        metavar="PROVIDER",
+        help="per-run reviewer override, positional per slot; repeatable",
+    )
+    parser.add_argument(
+        "--effort",
+        choices=delegate.EFFORTS,
+        default=None,
+        help="reasoning effort for the implementer seat, when the seat does not name one",
+    )
+    parser.add_argument(
+        "--team",
+        dest="team_profile",
+        default=None,
+        metavar="PROFILE",
+        help="knobs.team.profiles entry that staffs this batch; outranks team.by_difficulty",
+    )
+    if reviewers:
+        parser.add_argument(
+            "--reviewers",
+            type=int,
+            choices=(1, 2, 3),
+            default=None,
+            help="override the risk-derived reviewer count for every child ship",
+        )
 
 
 def _add_ship_parser(parser: argparse.ArgumentParser, *, command: str) -> None:

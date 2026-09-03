@@ -1,6 +1,6 @@
 ---
 description: Multi-agent swarm coordinator — cluster backlog issues, execute parallel waves in isolated worktrees, and land orthogonal batches with self-healing rebase.
-argument-hint: "[issue numbers...] [--plan-only] [--tree] [--visual]"
+argument-hint: "[issue numbers...] [--plan-only] [--tree] [--visual] [--delegate <provider>] [--review-delegate <provider>] [--effort <low|medium|high>] [--team <profile>]"
 allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Bash(jury:*), Read, Edit, Write, Agent
 ---
 
@@ -34,6 +34,22 @@ into topologically ordered execution waves, execute disjoint clusters in paralle
 git worktrees, and land batches cleanly via orthogonal fast-forward merges or adaptive
 self-healing funnel rebases.
 
+## Who does what — CTO, team lead, worker
+
+Three levels, and each one only does its own job:
+
+- **You are the CTO.** You cluster the backlog, launch one lead per cluster, and land the
+  waves. You do not implement, review, or drive a child ship yourself.
+- **One team lead per cluster.** A lead is a subagent you spawn for exactly one cluster. It
+  runs that cluster's `/keel:ship` runs with the providers the cluster's `assignment` names,
+  and it reports through the cluster's worker status record — the same records
+  `keel swarm-status` renders, so a lead needs no reporting channel of its own.
+- **Workers are the child ship runs** the lead drives, one per issue in its cluster.
+
+The hierarchy is not a suggestion about tone: a lead that reports up through anything other
+than the worker record is invisible to the board, and a CTO that implements has no one left
+to land the wave.
+
 ## Step 0 — Resolve config + swarm contract
 
 ```bash
@@ -50,18 +66,31 @@ the required `--approve-scope` values. Pass
 `operator_consent.delegated_agent_scope` into every child `/keel:ship` handoff. Children
 may use only `approved_mutation_scopes`; scope expansion blocks or escalates.
 
-## Step 1 — Deterministic static dependency analysis & clustering
+## Step 1 — Deterministic static dependency analysis, scoring & staffing
 
-Run static dependency analysis and scope prediction across the target issue set:
+Run static dependency analysis, scope prediction, difficulty scoring and per-cluster
+staffing across the target issue set:
 
 ```bash
 keel swarm-plan .keel/project.yaml --issues <n,n,n> --tree --json
 ```
 
+Pass the operator's staffing flags straight through — `--delegate`, `--review-delegate`,
+`--effort`, `--team <profile>` and `--reviewers` — so the plan shows the team the run will
+actually dispatch rather than the default one.
+
 - Inspect the generated waves, disjoint clusters, conflict edges, and direct landing eligibility.
+- Each cluster carries a `difficulty` (`band`, `score`, `tier` and the `signals` that
+  produced them) and an `assignment` (`lead`, `implementer`, `effort`, `reviewers`,
+  `review_panel`, `gate`, `fix`). Both are resolved by core from `knobs.team` plus
+  `knobs.team.by_difficulty`; do not re-derive either, and do not substitute a provider of
+  your own choosing for one the assignment names.
+- Read `assignment.warnings` before launching anything. A `--team` profile that names no
+  configured bench, or a gate that is its own implementer, is reported there and nowhere
+  else.
 - If `--plan-only` was requested, render the ASCII DAG tree and exit.
 
-## Step 2 — Isolated multi-worktree execution runtime
+## Step 2 — Launch one lead per cluster
 
 Launch parallel workers per cluster in dedicated git worktrees under `.keel/worktrees/swarm/`:
 
@@ -69,9 +98,19 @@ Launch parallel workers per cluster in dedicated git worktrees under `.keel/work
 keel swarm-run .keel/project.yaml --root . --issues <n,n,n> --live
 ```
 
-- Each cluster worker drives standard `keel ship` backbone steps (`s0`–`s12`) in its isolated worktree.
+- Spawn **one team lead subagent per cluster**, briefed with that cluster's `assignment`
+  and `difficulty` verbatim. The lead runs the cluster's issues through the standard
+  `keel ship` backbone steps (`s0`–`s12`) in the cluster's isolated worktree.
+- The lead passes its cluster's team to every child ship it starts:
+  `--delegate <assignment.implementer>`, one `--review-delegate` per staffed reviewer slot,
+  and `--role <assignment.role>`. `keel swarm-run` already appends these for the runs it
+  starts itself; a lead driving ships by hand must append the same flags, or the child
+  re-resolves from config alone and quietly runs a different team.
+- A lead never re-scores its cluster and never re-staffs it. If the work turns out heavier
+  than the band said, it reports that through the worker record and the CTO re-plans.
 - If runtime file modification divergence is detected, dynamic rebalancing partitions overlapping branches to the next wave tier.
-- Track live worker states with `keel swarm-status`.
+- Track live worker states with `keel swarm-status` — the board's `Lead` and `Band` columns
+  are how the operator sees which lead owns which cluster and why it drew its provider.
 
 ## Step 3 — Orthogonal batch landing & drift self-healing
 
@@ -103,10 +142,12 @@ keel-visual swarm .keel/project.yaml --root . --serve --port 8766
 
 Compile the overall multi-agent swarm outcome:
 - Total issues planned, clustered, and executed.
+- Per cluster: its difficulty band and score, its lead, and the implementer/reviewer seats
+  that ran it — plus any `assignment.warnings` that were raised and what was done about them.
 - Worker success/failure breakdown.
 - Landing mode used (Direct Batch vs Adaptive Funnel) and rebase self-healing stats.
 - Final multi-agent jury deliberation consensus and compound learning synthesis.
 - Record final completion:
   `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
 
-<!-- keel-generated: surface=claude command=swarm keel_version=1.19.3 source_sha256=7fc3850cb93df674e5481d7bc80f9f19572ed386a779ee5c0cfad34ad90a0550 generated_sha256=7fc3850cb93df674e5481d7bc80f9f19572ed386a779ee5c0cfad34ad90a0550 -->
+<!-- keel-generated: surface=claude command=swarm keel_version=1.19.3 source_sha256=59fe137ba554f65db429ca4b45485e4a4ff134184b61a1ccfdb3265b2413faba generated_sha256=59fe137ba554f65db429ca4b45485e4a4ff134184b61a1ccfdb3265b2413faba -->
