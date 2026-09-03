@@ -277,3 +277,33 @@ class TestFirstLocation(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RunArgvStdinTest(unittest.TestCase):
+    """``stdin_text`` — how a delegate prompt reaches a CLI without touching argv (#1012)."""
+
+    @staticmethod
+    def _capture():
+        captured = {}
+
+        def fake_run(argv, **kwargs):
+            captured["argv"] = argv
+            captured.update(kwargs)
+            return _Proc(0, "ok")
+
+        return captured, fake_run
+
+    def test_stdin_stays_closed_when_no_text_is_given(self):
+        captured, fake_run = self._capture()
+        runner.run_argv(["git", "status"], _run=fake_run)
+        self.assertEqual(captured["stdin"], subprocess.DEVNULL)
+        self.assertIsNone(captured["input"])
+
+    def test_text_is_fed_on_stdin_and_never_appended_to_the_argv(self):
+        captured, fake_run = self._capture()
+        result = runner.run_argv(["claude", "-p"], stdin_text="the brief", _run=fake_run)
+        self.assertEqual(captured["input"], "the brief")
+        # `subprocess.run` substitutes a PIPE itself when `stdin` is None beside `input`.
+        self.assertIsNone(captured["stdin"])
+        self.assertEqual(captured["argv"], ["claude", "-p"])
+        self.assertTrue(result.ok)

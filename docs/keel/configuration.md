@@ -271,7 +271,11 @@ the reviewer role. `args` typically carries the implementer's write-enabling fla
 `cursor-agent`'s `--force` approves edits non-interactively — so a reviewer invoked with
 them can edit the checkout. Set `review_args` to a read-only invocation for any profile
 you use as a reviewer. keel validates neither list; this is operator-configured, not
-enforced.
+enforced — but it does **report** it: `keel delegate run --role review` returns
+`read_only_backed: false` plus a warning naming the profile when `review_args` is unset,
+which is the signal an orchestrator refuses on. `review_args: []` is not the same as
+omitting the key: an empty list says "no flags needed to review" and counts as configured,
+while `null`/absent falls back to `args`.
 
 **Quote a profile name that YAML would not read as a string.** A bare `on:`, `yes:`,
 `2:` or `~:` key parses as a boolean, integer or null, not a name — `keel validate`
@@ -348,10 +352,20 @@ sits in.
 | `effort` | | vendor-specific reasoning-effort selector, carried through to dispatch |
 | `review_args` | | flags for the reviewer role; their presence is what the probe reports as `read_only_mode` |
 
-**Precedence: project profile > registry > built-in.** A project's `knobs.delegate_profiles`
-entry keeps working and wins, so a repository can pin the provider its team shares. Below it,
-the registry adds entries the project never has to know about. Built-ins are resolved first
-by name and can never be redefined by either.
+**A registry entry's `review_args` is present or it is not — there is no third state.**
+A *profile* distinguishes them, because `role_args` falls back to `args`: `review_args: []`
+there means "this CLI needs no flags to review", a deliberate choice keel counts as a
+configured read-only invocation, while omitting the key entirely means the reviewer
+silently receives the implementer's `args`. A registry entry has no `args` to fall back
+to, so an empty or absent `review_args` is the same thing — nothing configured — and
+`keel delegate run --role review|gate|chair` reports `read_only_backed: false` with a
+warning for it. See [`cli.md`](cli.md#keel-delegate).
+
+**Precedence: built-in > project profile > registry.** A built-in vendor always wins and can
+never be redefined — not by a committed profile, not by a file in your home directory. Below
+the built-ins a project's `knobs.delegate_profiles` entry wins, so a repository can pin the
+provider its team shares; below that the registry adds entries the project never has to know
+about. `keel delegate run` resolves in exactly this order.
 
 **A clash is an error naming both sources, not a silent override.** A registry entry named
 after a built-in vendor (`claude`, `codex`, `agy`, `ollama`, `*-api`) or after one of this

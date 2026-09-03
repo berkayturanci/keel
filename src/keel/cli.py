@@ -35,6 +35,8 @@ from . import (
     consent,
     consentverify,
     contracts,
+    delegate,
+    delegaterun,
     doctor,
     dryrunverify,
     evidence,
@@ -67,6 +69,7 @@ from . import (
 from . import config as cfg
 from . import findings as fnd
 from . import orchestrator as orch
+from . import providers as providers_mod
 from .extensions import ExtensionError, load_extensions
 from .gates import GateSpec
 from .model import DEFAULT_GATE_TIMEOUT_S, DEFAULT_JURY_TIMEOUT_S
@@ -4557,6 +4560,200 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     return 0
 
 
+def _delegate_config(args: argparse.Namespace):
+    """The project config a delegate run needs, or ``None``.
+
+    Only ``knobs.delegate_profiles`` matters here, so an absent or unreadable config is
+    not fatal: the built-in vendors and the machine-level registry still resolve. A
+    profile name simply will not be found, and the run fails with ``unknown-provider``
+    naming what *is* known — which is the message an operator can act on.
+    """
+    path = args.path or str(Path(args.root) / ".keel" / "project.yaml")
+    try:
+        return cfg.load_config(path)
+    except (FileNotFoundError, cfg.ConfigError):
+        return None
+
+
+def _delegate_plan(args: argparse.Namespace):
+    """``(plan, failure)`` — exactly one of the two is ``None``."""
+    registry = providers_mod.load_registry(args.registry)
+    try:
+        resolution = delegate.resolve_provider(_delegate_config(args), registry, args.provider)
+        plan = delegate.plan_run(
+            resolution.provider,
+            args.role,
+            args.prompt_file,
+            args.cwd,
+            args.timeout,
+            args.effort,
+            args.model or resolution.model,
+            profile=resolution.profile,
+        )
+    except delegate.DelegateError as exc:
+        failure = delegaterun.planning_failure(
+            args.provider, args.role, code=exc.code, message=exc.message
+        )
+        return None, failure
+    return plan, None
+
+
+def _delegate_child_argv(args: argparse.Namespace, run_id: str) -> list[str]:
+    """The command line the detached child runs — this same command, plus ``--_child``.
+
+    ``sys.executable -m keel`` rather than a bare ``keel``: the child must be the *same*
+    keel the parent is running, which for a source checkout or a virtualenv is not
+    whatever the PATH resolves to.
+    """
+    argv = [
+        sys.executable,
+        "-m",
+        "keel",
+        "delegate",
+        "run",
+        "--provider",
+        args.provider,
+        "--role",
+        args.role,
+        "--prompt-file",
+        args.prompt_file,
+        "--root",
+        args.root,
+        "--run-id",
+        run_id,
+        "--timeout",
+        str(args.timeout),
+        "--_child",
+    ]
+    for flag, value in (
+        ("--cwd", args.cwd),
+        ("--effort", args.effort),
+        ("--model", args.model),
+        ("--project", args.path),
+        ("--registry", args.registry),
+    ):
+        if value:
+            argv += [flag, str(value)]
+    return argv
+
+
+def _cmd_delegate_run(args: argparse.Namespace) -> int:
+    # Checked before anything runs: --_child names the state file the finished result is
+    # written to, so without --run-id the delegate would do its whole (billable) job and
+    # then raise on the way to recording it.
+    if args.child and not args.run_id:
+        print(
+            json.dumps(
+                _delegate_bad_run_id(args, "--_child requires --run-id"),
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 1
+    plan, failure = _delegate_plan(args)
+    if failure is not None:
+        print(json.dumps(failure, indent=2, sort_keys=True))
+        return 1
+    if args.detach:
+        run_id = args.run_id or delegaterun.new_run_id()
+        try:
+            delegaterun.check_run_id(run_id)
+        except delegaterun.RunIdError as exc:
+            print(json.dumps(_delegate_bad_run_id(args, str(exc)), indent=2, sort_keys=True))
+            return 1
+        record = delegaterun.start_detached(
+            _delegate_child_argv(args, run_id),
+            root=args.root,
+            run_id=run_id,
+            timeout=args.timeout,
+            provider=args.provider,
+            role=args.role,
+        )
+        print(json.dumps(record, indent=2, sort_keys=True))
+        return 0 if record["status"] == "running" else 1
+    result = delegaterun.execute(plan)
+    if args.child:
+        # The parent already wrote the `running` record; this is the authoritative
+        # overwrite that `keel delegate wait` is blocking on.
+        delegaterun.finish_detached(args.root, args.run_id, result)
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0 if result["ok"] else 1
+
+
+def _delegate_bad_run_id(args: argparse.Namespace, message: str) -> dict:
+    return delegaterun.planning_failure(
+        args.provider, args.role, code="bad-run-id", message=message
+    )
+
+
+def _cmd_delegate_wait(args: argparse.Namespace) -> int:
+    result, error = delegaterun.wait(args.root, args.run_id, timeout=args.timeout)
+    if error == "lost":
+        # The run vanished; `wait` recorded why in the state file, so print that document
+        # rather than a second, thinner story about the same event.
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return 1
+    if error is not None:
+        print(
+            json.dumps(
+                {
+                    "schema_version": delegaterun.SCHEMA_VERSION,
+                    "ok": False,
+                    "run_id": args.run_id,
+                    "error_code": error,
+                    "error": (
+                        f"no delegate run {args.run_id!r} under {delegaterun.state_dir(args.root)}"
+                        if error == "unknown-run"
+                        else f"run {args.run_id!r} did not finish within {args.timeout}s"
+                    ),
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 1
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0 if isinstance(result, dict) and result.get("ok") else 1
+
+
+def _cmd_delegate_status(args: argparse.Namespace) -> int:
+    # Status reaps too, on the same liveness + deadline test `wait` uses. Otherwise the
+    # one view an operator opens *because* they are not waiting is the one that keeps
+    # reporting a killed child as running.
+    delegaterun.reap_abandoned(args.root)
+    records = delegaterun.list_runs(args.root)
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "schema_version": delegaterun.SCHEMA_VERSION,
+                    "state_dir": str(delegaterun.state_dir(args.root)),
+                    "runs": records,
+                    "total": len(records),
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
+    if not records:
+        print(f"no delegate runs under {delegaterun.state_dir(args.root)}")
+        return 0
+    for record in records:
+        result = record.get("result") or {}
+        if record.get("status") == "done":
+            verdict = " ok" if result.get("ok") else " failed"
+        elif record.get("status") == "crashed":
+            verdict = f" {result.get('error_code', 'lost')}"
+        else:
+            verdict = ""
+        print(
+            f"{record.get('run_id')}  {record.get('status')}{verdict}  "
+            f"pid={record.get('pid')}  started={record.get('started_at')}"
+        )
+    return 0
+
+
 def _cmd_install_adapter(args: argparse.Namespace) -> int:
     if args.agent == "plugin":
         installed, skipped = install.install_plugin(args.root, force=args.force)
@@ -6882,6 +7079,82 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_doctor.add_argument("--json", action="store_true", help="emit structured JSON")
     p_doctor.set_defaults(func=_cmd_doctor)
+
+    p_delegate = sub.add_parser(
+        "delegate",
+        help="dispatch a delegate run (one executor for every transport)",
+    )
+    p_delegate_sub = p_delegate.add_subparsers(dest="delegate_command", metavar="<subcommand>")
+
+    p_dr = p_delegate_sub.add_parser("run", help="run one delegate and print the JSON contract")
+    p_dr.add_argument(
+        "--provider",
+        required=True,
+        help="provider token: a name, or vendor:model (e.g. agy:gemini-3.8-flash, "
+        "anthropic-api:claude-opus-4-5, a delegate_profiles entry, a registry entry)",
+    )
+    p_dr.add_argument(
+        "--role",
+        required=True,
+        choices=delegate.ROLES,
+        help="review/gate/chair run read-only; implement/fix run tool-enabled",
+    )
+    p_dr.add_argument("--prompt-file", required=True, help="file holding the delegate's brief")
+    p_dr.add_argument("--cwd", default=None, help="working directory for the delegate")
+    p_dr.add_argument(
+        "--timeout",
+        type=_positive_int,
+        default=delegate.DEFAULT_TIMEOUT_S,
+        help=f"wall-clock seconds (default {delegate.DEFAULT_TIMEOUT_S})",
+    )
+    p_dr.add_argument(
+        "--effort",
+        choices=delegate.EFFORTS,
+        default=None,
+        help="reasoning effort, mapped per vendor; a vendor that cannot express it "
+        "reports effort_applied: false with a warning",
+    )
+    p_dr.add_argument("--model", default=None, help="model override (wins over provider:model)")
+    p_dr.add_argument("--root", default=".", help="project root holding .keel/state/")
+    p_dr.add_argument(
+        "--project", dest="path", default=None, help="project.yaml holding delegate_profiles"
+    )
+    p_dr.add_argument(
+        "--registry", default=None, help="provider registry path (default $KEEL_PROVIDERS)"
+    )
+    p_dr.add_argument("--run-id", default=None, help="stable id for a detached run")
+    p_dr.add_argument(
+        "--detach",
+        action="store_true",
+        help="start the run in the background and return immediately; collect it with "
+        "keel delegate wait <run-id>",
+    )
+    p_dr.add_argument(
+        "--json",
+        action="store_true",
+        help="accepted for symmetry; the run contract is JSON either way",
+    )
+    p_dr.add_argument("--_child", dest="child", action="store_true", help=argparse.SUPPRESS)
+    p_dr.set_defaults(func=_cmd_delegate_run)
+
+    p_dw = p_delegate_sub.add_parser("wait", help="block until a detached run finishes")
+    p_dw.add_argument("run_id", help="the run id printed by --detach")
+    p_dw.add_argument("--root", default=".", help="project root holding .keel/state/")
+    p_dw.add_argument(
+        "--timeout",
+        type=_positive_int,
+        default=None,
+        help="give up after N seconds (default: wait indefinitely)",
+    )
+    p_dw.add_argument(
+        "--json", action="store_true", help="accepted for symmetry; the result is JSON either way"
+    )
+    p_dw.set_defaults(func=_cmd_delegate_wait)
+
+    p_ds = p_delegate_sub.add_parser("status", help="list detached delegate runs")
+    p_ds.add_argument("--root", default=".", help="project root holding .keel/state/")
+    p_ds.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_ds.set_defaults(func=_cmd_delegate_status)
 
     p_proj = sub.add_parser(
         "project-commands", help="list project-provided commands declared by policy"

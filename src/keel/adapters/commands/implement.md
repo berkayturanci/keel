@@ -100,11 +100,29 @@ Resolve the implementer agent from `implementer_agents` keyed by the issue's
 **role/platform label**, overridden by `--delegate`, defaulting to the **host
 agent**. Do not hardcode an agent name — the mapping is config. The same value
 set as `/keel:ship` applies, including the hosted-API delegates
-(`anthropic-api:MODEL` / `openai-api:MODEL` / `google-api:MODEL`) and configured
-`knobs.delegate_profiles` — those follow the ship.md s4
-no-tools contract (orchestrator does every git/PR step; the delegate produces
-only a diff via one API call, keyed by `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/`GEMINI_API_KEY`;
-`secrets` consent scope required; refused on tier-3; never retry HTTP 429).
+(`anthropic-api:MODEL` / `openai-api:MODEL` / `google-api:MODEL`), local models
+and configured `knobs.delegate_profiles`.
+
+**Dispatch every non-host implementer with `keel delegate run`** — the one executor
+for every transport — and never hand-build an invocation:
+
+```bash
+keel delegate run --provider "$DELEGATE" --role implement \
+  --prompt-file "$BRIEF" --cwd "$WORKTREE" --timeout 3600 --project .keel/project.yaml
+```
+
+Parse the JSON contract it prints (`ok`, `text`, `error_code`, `attribution`,
+`effort_applied`, `read_only_backed`, `warnings`) rather than re-deriving any of it;
+the ship.md s4 section is the canonical description of that document. For a run that
+will outlive your turn, add `--detach --run-id "$RUN_ID"` and collect it with
+`keel delegate wait "$RUN_ID" --timeout <s>` — never a sleep-and-poll loop. Always
+pass `--timeout` to both: the one on `run` is stamped into the run record as its
+deadline, so a child that is killed outright is reported `lost` rather than left
+`running` forever. The policy around the
+call is unchanged and stays here, not in the command: the no-tools contract for a
+provider that cannot run tools (orchestrator does every git/PR step; the delegate
+produces only a diff), the `secrets` consent scope before any key is read, refusal
+on tier-3, at most two retries on a bad diff, and never retry `rate-limit`.
 
 Project-specific routing nuances (e.g. a particular file-pattern that demands a
 specialized tool or a record-and-validate script for snapshot/baseline tests)

@@ -11,25 +11,26 @@
 
 1. [Architecture & Roles](#architecture--roles)
 2. [How to Select Models](#how-to-select-models)
-3. [Hosted API Delegates (Zero-CLI)](#1-hosted-api-delegates-zero-cli)
+3. [One Executor: `keel delegate run`](#one-executor-keel-delegate-run)
+4. [Hosted API Delegates (Zero-CLI)](#1-hosted-api-delegates-zero-cli)
    - [Anthropic (Claude)](#anthropic-claude)
    - [OpenAI (GPT / o-series)](#openai-gpt--o-series)
    - [Google (Gemini)](#google-gemini)
-4. [OpenAI-Compatible Profiles (OpenRouter, DeepSeek, Groq, local LLMs)](#2-openai-compatible-profiles)
+5. [OpenAI-Compatible Profiles (OpenRouter, DeepSeek, Groq, local LLMs)](#2-openai-compatible-profiles)
    - [OpenRouter (Universal Model Gateway)](#openrouter)
    - [DeepSeek Official API](#deepseek-official-api)
    - [Groq](#groq)
    - [Together AI](#together-ai)
    - [Local vLLM / LM Studio / LiteLLM Proxy](#local-vllm--lm-studio--litellm)
-5. [Local Offline Models (Ollama)](#3-local-offline-models-ollama)
-6. [Agent CLIs (Subprocess)](#4-agent-clis-subprocess)
+6. [Local Offline Models (Ollama)](#3-local-offline-models-ollama)
+7. [Agent CLIs (Subprocess)](#4-agent-clis-subprocess)
    - [Claude Code (`claude`)](#claude-code)
    - [Codex (`codex`)](#codex)
    - [Antigravity (`agy`)](#antigravity)
-7. [Generic CLI Profiles (Aider, Cursor Agent, Custom Scripts)](#5-generic-cli-profiles)
-8. [Multi-Model & Ensemble Review Posture](#6-multi-model--ensemble-review-posture)
-9. [Summary Comparison Table](#summary-comparison-table)
-10. [Which of these work on your machine](#which-of-these-work-on-your-machine)
+8. [Generic CLI Profiles (Aider, Cursor Agent, Custom Scripts)](#5-generic-cli-profiles)
+9. [Multi-Model & Ensemble Review Posture](#6-multi-model--ensemble-review-posture)
+10. [Summary Comparison Table](#summary-comparison-table)
+11. [Which of these work on your machine](#which-of-these-work-on-your-machine)
 
 ---
 
@@ -75,6 +76,57 @@ knobs:
     frontend: anthropic-api:claude-3-7-sonnet-20250219
     docs: google-api:gemini-2.5-flash
 ```
+
+---
+
+## One Executor: `keel delegate run`
+
+Whatever you select above, **one command performs the dispatch**. `keel delegate run`
+resolves the provider, picks the vendor's flags for the role, delivers the prompt off the
+process list, translates `--effort` into the vendor's own spelling, and prints one JSON
+document. The `/keel:*` adapters call it; nothing hand-builds a vendor invocation any
+more, which is what stopped the argv shapes drifting between adapters.
+
+```bash
+# tool-enabled implementer, any transport
+keel delegate run --provider agy:gemini-3.8-flash --role implement \
+  --prompt-file brief.md --cwd ../wt-1012 --timeout 3600
+
+# read-only reviewer — the role picks the vendor's read-only invocation
+keel delegate run --provider anthropic-api:claude-opus-4-5 --role review \
+  --prompt-file rubric.md --effort high
+
+# a long run that outlives the caller
+keel delegate run --provider codex --role implement --prompt-file brief.md \
+  --timeout 3600 --detach --run-id impl-1012 --root .
+keel delegate wait impl-1012 --root . --timeout 3600
+```
+
+* `--provider` takes the same token as `--delegate`: a name or `name:model`, resolved
+  **built-in vendor > project profile > machine registry**. A built-in always wins and can
+  never be redefined by config or by a file in `$HOME`.
+* Model ids are validated against where they land: the strict `[A-Za-z0-9._-]` rule where
+  the model reaches a command line or `google-api`'s URL path, and `[A-Za-z0-9._:/-]` where
+  it is only a JSON body field — which is why `ollama:qwen2.5-coder:32b` and
+  `openrouter:deepseek/deepseek-r1` work.
+* `--role review|gate|chair` runs read-only; `--role implement|fix` runs tool-enabled. For
+  the three built-in CLIs the read-only invocation carries no write-enabling flag, asserted
+  per vendor in keel's tests. keel cannot enforce read-only for an arbitrary binary, so the
+  result reports `read_only` **and** `read_only_backed` — branch on the second: a profile
+  with `args` and no `review_args` reviews with the *implementer's* flags.
+* `--effort low|medium|high` becomes an `agy` model suffix, a `codex`
+  `model_reasoning_effort` override, Anthropic `thinking`, OpenAI `reasoning_effort`, or
+  Gemini `thinkingConfig` — and `effort_applied: false` plus a warning where the vendor
+  cannot express it. A provider entry's own `effort:` is the default when `--effort` is
+  absent.
+* Failures are fail-soft: `ok: false` with an `error_code`
+  (`missing-binary`, `nonzero-exit`, `timeout`, `rate-limit`, `no-key`, `lost`, …), never a
+  traceback. The retry, fall-back and tier rules stay with the caller.
+* Pass `--timeout` to both `run` and `wait` on a detached run: the first becomes the run's
+  own deadline, which is what lets a killed child be reported `lost` instead of sitting at
+  `running` forever.
+
+Full flag and contract reference: [`cli.md`](cli.md#keel-delegate).
 
 ---
 
@@ -257,6 +309,9 @@ ollama pull qwen2.5-coder:32b
 
 # Use DeepSeek-R1 locally for review
 /keel:ship 42 --review-delegate ollama:deepseek-r1:14b
+
+# The same dispatch, directly: one POST to the local /api/generate
+keel delegate run --provider ollama:qwen2.5-coder:32b --role implement --prompt-file brief.md
 ```
 
 ---
@@ -284,6 +339,18 @@ If you have official agent CLI tools installed and authenticated on your machine
 * **Prerequisites**: Antigravity CLI (`agy`) in PATH.
 ```bash
 /keel:ship 42 --delegate agy
+```
+
+For all three, the invocation is core's: `keel delegate run` selects the vendor's
+read-only mode for `--role review|gate|chair` and its write-enabled mode for
+`--role implement|fix`, and the prompt travels on the CLI's standard input rather than its
+argv — a prompt carries the diff, and an argv is world-readable in `ps`. A read-only
+`claude` runs under a tool **allow-list** and no permission bypass; `codex` under its
+`read-only` sandbox; `agy` under `--sandbox`, which is the only read-only mechanism it
+documents and the reason it still needs the non-interactive permission flag.
+
+```bash
+keel delegate run --provider claude --role review --prompt-file rubric.md
 ```
 
 ---
@@ -339,15 +406,15 @@ When [`ai-jury`](https://github.com/berkayturanci/ai-jury) is installed, Keel ga
 
 ## Summary Comparison Table
 
-| Category | Identifier / Vendor | Transport | Setup Requirement | Example Usage |
+| Category | Identifier / Vendor | Transport | Setup Requirement | `keel delegate run --provider …` |
 |---|---|---|---|---|
-| **Hosted Anthropic** | `anthropic-api:MODEL` | HTTP (stdlib) | `ANTHROPIC_API_KEY` | `--delegate anthropic-api:claude-3-7-sonnet-20250219` |
-| **Hosted OpenAI** | `openai-api:MODEL` | HTTP (stdlib) | `OPENAI_API_KEY` | `--delegate openai-api:gpt-4o` |
-| **Hosted Google** | `google-api:MODEL` | HTTP (stdlib) | `GEMINI_API_KEY` | `--delegate google-api:gemini-2.5-pro` |
-| **OpenAI-Compatible** | `knobs.delegate_profiles` | HTTP (stdlib) | Custom endpoint + env key | `--delegate openrouter:deepseek/deepseek-r1` |
-| **Local Ollama** | `ollama:MODEL` | HTTP (local) | Local `ollama` daemon | `--delegate ollama:qwen2.5-coder:32b` |
-| **Agent CLI** | `claude`, `codex`, `agy` | Subprocess | Installed CLI in PATH | `--delegate claude` |
-| **Generic CLI** | `knobs.delegate_profiles` (`cli`) | Subprocess | Tool binary in PATH | `--delegate aider` |
+| **Hosted Anthropic** | `anthropic-api:MODEL` | HTTP (stdlib) | `ANTHROPIC_API_KEY` | `anthropic-api:claude-3-7-sonnet-20250219` |
+| **Hosted OpenAI** | `openai-api:MODEL` | HTTP (stdlib) | `OPENAI_API_KEY` | `openai-api:gpt-4o` |
+| **Hosted Google** | `google-api:MODEL` | HTTP (stdlib) | `GEMINI_API_KEY` | `google-api:gemini-2.5-pro` |
+| **OpenAI-Compatible** | `knobs.delegate_profiles` | HTTP (stdlib) | Custom endpoint + env key | `openrouter:deepseek/deepseek-r1` |
+| **Local Ollama** | `ollama:MODEL` | HTTP (local) | Local `ollama` daemon | `ollama:qwen2.5-coder:32b` |
+| **Agent CLI** | `claude`, `codex`, `agy` | Subprocess | Installed CLI in PATH | `claude` |
+| **Generic CLI** | `knobs.delegate_profiles` (`cli`) | Subprocess | Tool binary in PATH | `aider` |
 
 ---
 

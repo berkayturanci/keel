@@ -1,7 +1,13 @@
 # Proposal: API-token-driven implementer/reviewer delegate
 
 - **Issue:** [#548](https://github.com/berkayturanci/keel/issues/548)
-- **Status:** proposed (phase 1 of 2 — design; implementation follows on approval)
+- **Status:** implemented. `api_delegate` shipped with #548; the **caller** it was written
+  for shipped with [#1012](https://github.com/berkayturanci/keel/issues/1012) —
+  `keel delegate run` is the one executor for every transport, and this module is what it
+  calls for `anthropic-api`, `openai-api`, `google-api` and `openai-compatible`. Between
+  the two, the module had no caller in core at all: the only importer was `keel doctor`'s
+  PyPI opener, and every hosted delegate described below was performed by a host agent
+  writing the HTTP call by hand. That gap is closed.
 - **Decision drivers:** `AGENTS.md` invariants (pure-core/thin-I/O split, single runtime
   dependency, fail-soft, attribution), the existing `ollama:MODEL` delegate contract in
   `ship.md` s4, and the stdlib-only hosted-API adapter precedent already shipped in
