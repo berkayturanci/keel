@@ -1925,7 +1925,10 @@ and `keel ship --json`:
 | `assignment.review_panel` | `reviewers`, or `jury` when the panel *is* the review (then `reviewers.count == 0` and the jury gates) |
 | `assignment.jury` | `mode`, `min_vendors`, `panel_is_review` |
 | `assignment.fix` | who applies review findings; carries `alias: "implementer"` when it resolved through that reserved name |
-| `assignment.warnings` | flags or seats that were **not** dispatched, and unhonoured `distinct_from` |
+| `assignment.lead` | seat that coordinates a batch of ships — a swarm cluster, a work block — and that its workers report through; the host agent when `knobs.team.lead` is unset |
+| `assignment.effort` | the implementer seat's effective reasoning effort: `--effort` > the seat's own > the bench's |
+| `assignment.difficulty` / `assignment.team_profile` / `assignment.bench` | the difficulty band and `--team` profile this assignment was resolved for, and the config paths of the benches that applied |
+| `assignment.warnings` | flags or seats that were **not** dispatched, an unhonoured `distinct_from`, and a `--team` name matching no configured profile |
 
 The bench is a pure function of **config + tier + role + `--reviewers` +
 `--review-delegate`**, and of nothing else — in particular not of the jury flags. It has to
@@ -1938,6 +1941,27 @@ would make the gate demand verdicts the ship run told the adapter never to produ
 `keel plan` takes `--tier` (plus `--role` / `--delegate` / `--review-delegate`) to render
 the assignment for a tier before a diff exists; `keel ship` resolves it against the tier it
 classified from the real diff.
+
+### Staffing a batch: `--team`, `--effort` and the difficulty bench
+
+`work-block`, `overnight`, `swarm-plan`, `swarm-run` and `swarm-land` accept the same
+staffing flags and hand every one that was set to each child ship.
+
+| flag | values | default | effect |
+| --- | --- | --- | --- |
+| `--delegate` | provider or `provider:model` | `knobs.team` | Implementer for every child of the batch. |
+| `--review-delegate` | provider, repeatable | `knobs.team` | One reviewer slot each, positional. |
+| `--effort` | `low` \| `medium` \| `high` | seat, then bench | Reasoning effort for the implementer seat. Outranks an effort the seat names. |
+| `--team` | a `knobs.team.profiles` name | none | Staffs the batch from that bench. Outranks `team.by_difficulty`; an unknown name lands in `assignment.warnings`. |
+| `--reviewers` | `1` \| `2` \| `3` | tier-derived | Reviewer count for every child. |
+
+`swarm-plan --json` additionally publishes a per-cluster `difficulty` — `band`
+(`easy`/`standard`/`hard`), `score`, `tier`, `file_count`, `dependency_depth` and the
+`signals` that produced the score — which selects a
+[`knobs.team.by_difficulty`](configuration.md#teamlead-teamby_difficulty-and-teamprofiles--staffing-a-batch)
+bench. `work-block`/`overnight` publish
+`session_contract.work_block.delegation` with the `effective` values and the exact
+`child_args` to append to each `/keel:ship` handoff.
 
 ### `--review-comments inline|summary`
 

@@ -22,6 +22,24 @@ Keel Swarm is built on three core pillars:
 3. **Deterministic Conflict Resolution**: Rather than naively merging branches or relying on LLMs
    to resolve arbitrary git merge conflicts, Swarm statically models predicted scopes, enforces
    worktree isolation, and applies dual-mode landing (Direct Batch vs Adaptive Funnel).
+4. **One Resolver For Who Runs What**: Swarm does not have its own idea of who implements.
+   Every cluster is staffed by `keel.team.resolve_assignment` — the same function `keel ship`
+   and `keel plan` call — with that cluster's role, risk tier and difficulty band. A cluster's
+   lead can therefore hand its assignment straight to `keel ship` and the child resolves the
+   same team from the same config.
+
+### The org chart: CTO → team lead → worker
+
+| Level | Who | Does | Never does |
+| :--- | :--- | :--- | :--- |
+| **CTO** | the `/keel:swarm` coordinator | clusters the backlog, launches one lead per cluster, lands the waves | implement, review, drive a child ship |
+| **Team lead** | one subagent per cluster | runs that cluster's `/keel:ship` runs with the providers its `assignment` names; reports through the cluster's worker status record | re-score or re-staff its own cluster |
+| **Worker** | one child `keel ship` run per issue | the standard `s0`–`s12` backbone in the cluster's worktree | reach outside its predicted scope |
+
+The hierarchy is load-bearing, not stylistic: a lead that reports anywhere other than the
+worker record is invisible to `keel swarm-status`, and a CTO that implements has no one left
+to land the wave. `keel swarm-status` shows each worker's **lead** and **band**, which is how
+an operator sees the chain at a glance.
 
 ```
                       ┌────────────────────────────────────────┐
@@ -77,6 +95,54 @@ and build a conflict matrix:
 keel swarm-plan .keel/project.yaml --issues 714,715,716,717,720,721 --tree
 ```
 
+### Difficulty Scoring & Per-Cluster Staffing
+
+Every cluster comes out of the planner **scored** and **staffed**, and both appear in
+`--json`:
+
+```json
+"difficulty": { "band": "hard", "score": 9, "tier": 3, "file_count": 4,
+                "dependency_depth": 0,
+                "signals": [{"name": "tier-3", "points": 4}, {"name": "files:4", "points": 2},
+                            {"name": "priority:high", "points": 1}, {"name": "size:l", "points": 2}] },
+"assignment": { "lead": {...}, "implementer": {...}, "effort": "high",
+                "reviewers": [...], "review_panel": "reviewers", "warnings": [] }
+```
+
+A **difficulty band** answers *how much work is this*, which is a different question from the
+risk tier's *how dangerous is this change*. A one-line fix to a tier-3 glob is dangerous and
+trivial; a twelve-file docs migration is safe and long. The score is a pure function of four
+inputs that already exist — no model is asked, and the same backlog always scores the same:
+
+| Input | Points |
+| :--- | :--- |
+| resolved risk tier (from `knobs.tier3_globs`) | tier-1 `0`, tier-2 `2`, tier-3 `4` |
+| predicted file count | `≥2` → `1`, `≥4` → `2`, `≥8` → `3` |
+| `priority:` label | `priority:high` `1`, `priority:critical` `2` |
+| `size:` label | `size:m` `1`, `size:l` `2`, `size:xl` `3` |
+| dependency depth (issues in earlier waves this cluster conflicts with) | `1` each, capped at `3` |
+
+Bands: `0–2` **easy**, `3–5` **standard**, `6+` **hard**. Only signals worth non-zero points
+are recorded, so a surprising band can be read back rather than guessed at.
+
+The band selects a bench from
+[`knobs.team.by_difficulty`](configuration.md#teamlead-teamby_difficulty-and-teamprofiles--staffing-a-batch);
+`--team <profile>` selects one by name and outranks it; `--delegate`, `--review-delegate` and
+`--effort` outrank both. **Scoring and staffing run after the partition and never feed back
+into it** — changing `team.by_difficulty` changes who runs a cluster and cannot change which
+wave it lands in, which is what makes the two independently reviewable.
+
+```yaml
+knobs:
+  team:
+    by_difficulty:
+      easy: { implement: { provider: ollama, model: qwen2.5-coder } }
+      hard:
+        lead:      { provider: claude, model: opus }
+        implement: { provider: codex, effort: high }
+        review:    jury
+```
+
 ### Scope Prediction Heuristics
 - **Explicit Labels & Roles**: Issues with `role:docs` or `role:frontend` map to deterministic globs
   (e.g. `docs/**`, `website/**`).
@@ -123,15 +189,18 @@ keel swarm-run .keel/project.yaml --root . --issues 714,715,716,717 --live
 
 ### Worktree Lifecycle & Isolation
 1. **Creation**: Dedicated worktrees are branched from `origin/main` (e.g. `swarm/cluster-1`).
-2. **Execution**: The worker dispatches the configured implementer (`backend-developer`, `claude`, `gemini`)
-   to execute steps `s0` through `s9`.
+2. **Execution**: One **team lead** per cluster dispatches the implementer its `assignment`
+   named, to execute steps `s0` through `s9`. The lead appends the cluster's team to every
+   child ship — `--delegate <implementer>`, one `--review-delegate` per staffed reviewer slot,
+   and `--role` — so the child cannot quietly re-resolve a different team from config alone.
 3. **Dynamic Rebalancing**: If a worker modifies files outside its predicted scope that overlap with another
    active cluster, the rebalancer detects the drift, halts conflicting execution in the current wave,
    and reschedules the cluster to the next wave tier.
 4. **Cleanup**: On completion or error, worktrees are pruned cleanly without leaving orphaned locks.
 
 ### Live Status Dashboard (`keel swarm-status`)
-Inspect active workers, current execution steps, and cluster health in real time:
+Inspect active workers, their lead and difficulty band, current execution steps, and cluster
+health in real time:
 
 ```bash
 keel swarm-status .keel/project.yaml --root .
@@ -217,6 +286,8 @@ Swarm coordinates AI Jury deliberation and Compound Learning across all parallel
 | Feature / Capability | Keel Swarm | CrewAI | AutoGen | MetaGPT | Devin / OpenHands |
 | :--- | :---: | :---: | :---: | :---: | :---: |
 | **Deterministic Static Analysis** | **Yes (`swarm-plan`)** | No (LLM prompt loop) | No | No (SOP templates) | No |
+| **Deterministic Difficulty Scoring** | **Yes (pure, signal-attributed)** | No | No | No | No |
+| **Declared Org Chart (CTO/lead/worker)** | **Yes (`knobs.team`, one resolver)** | Role prompts | Conversational | SOP roles | Single agent |
 | **Fixed Backbone Machine** | **Yes (`s0`–`s12` immutable)** | No | No | No | No |
 | **Isolated Git Worktrees** | **Yes (`.keel/worktrees/`)** | No (shared workspace) | No | No (file overwrite) | Docker container |
 | **Dual-Mode Batch Landing** | **Yes (Direct + Funnel)** | No | No | No | PR per run |
@@ -236,3 +307,5 @@ Swarm coordinates AI Jury deliberation and Compound Learning across all parallel
 | **Concurrent Merge Race Condition** | `merge_lock` file mutex | Atomic `mkdir`-based lock with timeout retry; guarantees single-writer landing. |
 | **Worker Subprocess Crash / OOM** | Subprocess exit status monitoring | Fail-soft error capture in `SwarmRunState`; remaining parallel workers continue unimpeded. |
 | **Stale State Discovery** | SHA-256 fingerprint validation | Fallback to reconstructed safe plan; corrupt JSON files fail soft to empty state. |
+| **A cluster scored lighter than it turns out to be** | The lead's own progress against the plan | The lead reports through its worker record and the CTO re-plans; a lead never re-staffs itself, so the run's team stays the one the plan published. |
+| **`--team` names a bench that is not configured** | `assignment.warnings` at plan time | The run falls back to the configured policy and says so; the name is never silently ignored. |

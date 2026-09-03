@@ -1275,7 +1275,7 @@ Dry-run mode never runs gates, commits, pushes, opens PRs, or writes reports. Li
 only a preflight contract; adapters perform approved session closeout work after checking
 consent and GitHub transport support.
 
-## `keel work-block <project.yaml> [issues…] [--root DIR] [--queue SELECTOR] [--max N] [--hours H] [--review-comments inline|summary] [--reviewers 1|2|3] [--target TEXT] [--dry-run] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--json] [--wizard] [--wizard-answer KEY=VALUE]...`
+## `keel work-block <project.yaml> [issues…] [--root DIR] [--queue SELECTOR] [--max N] [--hours H] [--review-comments inline|summary] [--reviewers 1|2|3] [--delegate PROVIDER] [--review-delegate PROVIDER] [--effort low|medium|high] [--team PROFILE] [--target TEXT] [--dry-run] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--json] [--wizard] [--wizard-answer KEY=VALUE]...`
 
 Render the standalone daytime multi-issue work-block contract. The core owns the generic
 `keel.work-block.v1` queue primitive: explicit issue numbers (processed in the order given)
@@ -1302,11 +1302,23 @@ reporting buckets each issue as shipped, PR-open-not-merged, deferred, blocked, 
 needs-input. Stop conditions include queue exhaustion, the max/time budget, an operator
 pause, a consent gap, a non-ready or blocking finding, and merge-window close.
 
+
+**Staffing the children (#1017).** `--delegate <provider[:model]>`, `--review-delegate
+<provider>` (repeatable, positional per reviewer slot), `--effort low|medium|high`,
+`--team <profile>` and `--reviewers` are resolved once for the block and handed to **every**
+child `/keel:ship`. The contract publishes both halves under
+`session_contract.work_block.delegation`: `effective` (what the operator passed) and
+`child_args` (the exact flag list to append to each handoff). `contract.assignment` shows
+what those values resolve to against `knobs.team` — `lead`, `implementer`, `effort`,
+`reviewers`, `review_panel`. `--team` names a [`knobs.team.profiles`](configuration.md#team)
+bench; an unknown name lands in `assignment.warnings` rather than being ignored. The adapter
+records the effective values in the session report.
+
 Dry-run mode never spawns ship runs, creates PRs, merges, or writes reports. Live mode is
 only a preflight contract; adapters hand the approved consent scope to each ship delegate and
 keep merge-window and merge-lock enforcement shared with `keel ship`.
 
-## `keel overnight <project.yaml> [hours] [--max N] [--review-comments inline|summary] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--json]`
+## `keel overnight <project.yaml> [hours] [--max N] [--review-comments inline|summary] [--reviewers 1|2|3] [--delegate PROVIDER] [--review-delegate PROVIDER] [--effort low|medium|high] [--team PROFILE] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--json]`
 
 Render the standalone overnight-session contract. The core owns the generic unattended
 session shape: merge-window mode from `keel window`, ship handoff, per-issue worktree
@@ -1317,6 +1329,9 @@ or morning report destinations, stop conditions, and the shared deferral queue.
 keel overnight .keel/project.yaml 8 --max 3 --json
 keel overnight .keel/project.yaml --live --consent-mode standing --json
 ```
+
+It takes the same staffing flags as `keel work-block`, with the same
+`session_contract.work_block.delegation` record and the same session-report requirement.
 
 Dry-run mode never spawns ship runs, creates PRs, merges, or writes reports. Live mode is
 only a preflight contract; adapters hand approved consent scope to ship/implementer
@@ -2406,10 +2421,11 @@ behavior, and issue/PR targeting, then delegates to the installed keel adapter. 
 files carry a `keel-generated` marker on the `legacy-*` surfaces so adapter updates and local
 compatibility shims remain distinguishable.
 
-## `keel swarm-plan <project.yaml> [--issues N,N,…] [--issue N] [--declared-file PATH] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--swarm-id ID] [--tree] [--json]`
+## `keel swarm-plan <project.yaml> [--issues N,N,…] [--issue N] [--declared-file PATH] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--swarm-id ID] [--tree] [--delegate PROVIDER] [--review-delegate PROVIDER] [--effort low|medium|high] [--team PROFILE] [--reviewers 1|2|3] [--json]`
 
 Perform deterministic static dependency analysis, scope prediction, conflict matrix calculation,
-and wave tier partitioning across a list of backlog issues without mutating git or spawning workers.
+wave tier partitioning, **difficulty scoring and per-cluster staffing** across a list of backlog
+issues without mutating git or spawning workers.
 
 The issues are named by flag, not as positionals: `--issues` takes one comma-separated list and
 `--issue` is repeatable. Planning is pure — it reads no repository state — so `swarm-plan` has no
@@ -2418,21 +2434,39 @@ The issues are named by flag, not as positionals: `--issues` takes one comma-sep
 ```bash
 keel swarm-plan .keel/project.yaml --issues 714,715,716,717 --tree
 keel swarm-plan .keel/project.yaml --issue 714 --issue 715 --json
+keel swarm-plan .keel/project.yaml --issues 714,715 --team night-shift --effort high --json
 ```
 
 Use `--tree` to render an interactive ASCII DAG execution diagram directly in your terminal.
 
+Every cluster in `--json` carries two extra records (#1017):
+
+- **`difficulty`** — `band` (`easy`/`standard`/`hard`), `score`, the resolved risk `tier`,
+  `file_count`, `dependency_depth`, and the `signals` that produced the score. It is a pure
+  function of the risk tier from `knobs.tier3_globs`, the predicted file count, `priority:*`
+  and `size:*` labels, and how much already-scheduled work the cluster depends on.
+- **`assignment`** — the same record `keel ship --json` renders, resolved per cluster with
+  *this* cluster's role, tier and difficulty band: `lead`, `implementer`, `effort`, `gate`,
+  `reviewers[]`, `review_panel`, `fix`, and `warnings`. Seats come from
+  [`knobs.team`](configuration.md#team) plus `knobs.team.by_difficulty`, with `--team
+  <profile>` and the per-run flags above layered on top.
+
+Scoring and staffing run **after** the partition and never feed back into it: changing
+`team.by_difficulty` (or passing `--team`) changes who runs a cluster and cannot change which
+wave it lands in.
+
 ## `keel swarm-status <project.yaml> [--root DIR] [--swarm-id ID] [--json]`
 
 Inspect live worker progress, wave execution status, and cluster health across active or recent
-multi-agent swarm runs:
+multi-agent swarm runs. Each row names the worker's **lead** and the difficulty **band** it was
+staffed from, so the board answers *who is running this, and why that provider*:
 
 ```bash
 keel swarm-status .keel/project.yaml --root .
 keel swarm-status .keel/project.yaml --root . --swarm-id swarm-2026-08-15 --json
 ```
 
-## `keel swarm-run <project.yaml> [--root DIR] [--issues N,N,…] [--issue N] [--swarm-id ID] [--max-workers N] [--live] [--tree] [--json]`
+## `keel swarm-run <project.yaml> [--root DIR] [--issues N,N,…] [--issue N] [--swarm-id ID] [--max-workers N] [--live] [--tree] [--delegate PROVIDER] [--review-delegate PROVIDER] [--effort low|medium|high] [--team PROFILE] [--reviewers 1|2|3] [--json]`
 
 Launch parallel workers per cluster in dedicated git worktrees under `.keel/worktrees/swarm/`:
 
@@ -2441,12 +2475,22 @@ keel swarm-run .keel/project.yaml --root . --issues 714,715,716,717
 keel swarm-run .keel/project.yaml --root . --issues 714,715,716,717 --live --max-workers 2
 ```
 
-Each worker runs the standard `keel ship` backbone machine in its isolated worktree. Issues are
-named by `--issues` / `--issue`, as for `swarm-plan`. Rebalancing across waves is decided by the
-plan, not by a flag: when runtime file-modification divergence is detected the conflicting worker
-is partitioned to a later wave.
+Each worker runs the standard `keel ship` backbone machine in its isolated worktree, launched
+with its cluster's resolved team: the implementer seat becomes `--delegate`, each staffed
+reviewer slot a `--review-delegate`, the cluster's role `--role`, and the bench it was staffed
+from `--effort` / `--team`. Passing the last two means **the child inherits the cluster's
+difficulty bench** and re-resolves to the same seats rather than deriving a different team from
+config alone; a `--delegate` on the same line still wins, so the parent can override what the
+bench chose. A seat that is a host `subagent:` rather than a provider is left to the adapter,
+which is the layer that can spawn one. A role label outside `[A-Za-z0-9][A-Za-z0-9._-]*` is
+dropped rather than passed — it would be read as a flag by the child — and the reason is
+recorded in `assignment.warnings`.
 
-## `keel swarm-land <project.yaml> [--root DIR] [--wave N] [--issues N,N,…] [--issue N] [--swarm-id ID] [--live] [--json]`
+Issues are named by `--issues` / `--issue`, as for `swarm-plan`. Rebalancing across waves is
+decided by the plan, not by a flag: when runtime file-modification divergence is detected the
+conflicting worker is partitioned to a later wave.
+
+## `keel swarm-land <project.yaml> [--root DIR] [--wave N] [--issues N,N,…] [--issue N] [--swarm-id ID] [--live] [--delegate PROVIDER] [--review-delegate PROVIDER] [--effort low|medium|high] [--team PROFILE] [--reviewers 1|2|3] [--json]`
 
 Land passing cluster branches from completed execution waves into `main` under atomic `merge_lock`:
 
