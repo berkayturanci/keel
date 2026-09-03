@@ -68,8 +68,16 @@ def current_version(root: Path) -> str:
 #: 0.6.0 through the 0.7.0 and 0.8.0 releases (#796). Both files are listed here
 #: so the pair moves together; the test in test_release_docs.py is what makes a
 #: future omission fail rather than ship.
-#: ``(path, regex)`` — the regex captures the version and nothing else, so the
-#: rewrite cannot touch prose that happens to contain the same digits.
+#: ``(path, regex)``, where the regex is a **three-group sandwich**:
+#: ``(prefix)(version)(suffix)``. ``bump_visual`` substitutes ``\g<1>{new}\g<3>``,
+#: so group 2 is the version and the two anchors around it are what keep the
+#: rewrite off prose that happens to contain the same digits — the pattern matches
+#: more than the version, and replaces only the middle.
+#:
+#: That shape is a contract, not an implementation detail: ``release_check.py``
+#: reads this same list rather than restating it, and takes group 2 as the version.
+#: A two-group pattern added here would make the guard compare the wrong substring,
+#: so it asserts the group count (``VISUAL_PATTERN_GROUPS``) instead of trusting it.
 VISUAL_EDITS = (
     ("keel-visual/pyproject.toml", re.compile(r'(?m)^(version = ")([^"]+)(")')),
     (

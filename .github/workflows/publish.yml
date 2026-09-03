@@ -54,14 +54,15 @@ jobs:
             --require-hashes \
             -r .github/requirements/publish-tools.txt
 
-      # Reproducible builds. Without a fixed timestamp `python -m build` stamps the
-      # current time into the archives, so two runs over the *same* tree produce
-      # different bytes and therefore different SHA256s. That is not cosmetic here:
-      # PyPI keeps the first upload (`skip-existing: true`) while a re-run at the
-      # same tag would otherwise publish a GitHub Release describing artifacts PyPI
-      # never served, and the verify job below would report a digest mismatch on a
-      # perfectly healthy release. Pinned to the tagged commit's own commit time, so
-      # the value is a property of the tag rather than of when the runner started.
+      # Reproducible builds, step 1 of 2. Without a fixed timestamp `python -m build`
+      # stamps the current time into the archives, so two runs over the *same* tree
+      # produce different bytes and different SHA256s. That is not cosmetic: PyPI
+      # keeps the first upload (`skip-existing: true`), so a re-run at the same tag
+      # would publish a GitHub Release describing artifacts PyPI never served, and
+      # the verify job below would report a digest mismatch on a healthy release.
+      #
+      # Pinned to the tagged commit's own commit time, so the value is a property of
+      # the tag rather than of when the runner started.
       - name: Pin SOURCE_DATE_EPOCH to the tagged commit
         run: |
           set -euo pipefail
@@ -71,6 +72,43 @@ jobs:
 
       - name: Build package distributions
         run: python -m build --no-isolation --sdist --wheel --outdir dist/
+
+      # Reproducible builds, step 2 of 2. SOURCE_DATE_EPOCH is necessary and not
+      # sufficient: with the pinned setuptools 84.0.0 the wheel comes out
+      # byte-identical but the sdist does not — its root directory member takes wall
+      # clock through a PAX record, the gzip header carries its own mtime, and every
+      # member carries the runner's uid/gid. scripts/normalize_sdist.py rewrites that
+      # envelope (see its docstring for the measured digests). Runs before the SBOM,
+      # the checksums, the attestation and the upload, so every downstream step sees
+      # the archive that will actually be published.
+      - name: Normalize the sdist for reproducibility
+        run: python scripts/normalize_sdist.py dist/*.tar.gz
+
+      # And then prove it, on this toolchain, on every release. A reproducibility
+      # claim that is only ever asserted in a comment is how the sdist gap survived
+      # the first round of this work: the wheel was checked, matched, and the sdist
+      # was assumed to behave the same way. Build a second time into a scratch
+      # directory and require both artifacts to hash identically.
+      - name: Verify the build is reproducible
+        run: |
+          set -euo pipefail
+          python -m build --no-isolation --sdist --wheel --outdir "${RUNNER_TEMP}/rebuild"
+          python scripts/normalize_sdist.py "${RUNNER_TEMP}"/rebuild/*.tar.gz
+          failed=0
+          for original in dist/*; do
+            name="$(basename "$original")"
+            a="$(sha256sum "$original" | cut -d" " -f1)"
+            b="$(sha256sum "${RUNNER_TEMP}/rebuild/${name}" | cut -d" " -f1)"
+            echo "${name}"
+            echo "  build 1: ${a}"
+            echo "  build 2: ${b}"
+            if [ "$a" != "$b" ]; then
+              echo "::error title=Build is not reproducible::${name} differs between two builds of the same tree; a re-run at this tag would publish a checksum file describing artifacts PyPI never served"
+              failed=1
+            fi
+          done
+          rm -rf "${RUNNER_TEMP}/rebuild"
+          [ "$failed" -eq 0 ]
 
       # CycloneDX software bill of materials for the built package. Written into
       # release/ (NOT dist/) so the PyPI upload sees only the wheel + sdist —
@@ -213,9 +251,11 @@ jobs:
             echo "== the published artifacts, against PyPI's own digests =="
             # PyPI is the primary record. `digests.sha256` is what the index computed
             # over the bytes it stores and will serve forever, and `skip-existing:
-            # true` means no later run can change them — unlike a rebuilt artifact,
-            # which is a different file for the same release (builds only became
-            # byte-reproducible once the build job pinned SOURCE_DATE_EPOCH).
+            # true` means no later run can change them. That is a stronger guarantee
+            # than "the build reproduces": the build job pins SOURCE_DATE_EPOCH,
+            # normalizes the sdist envelope and proves both artifacts rebuild
+            # identically, but this comparison holds even if some future toolchain
+            # change breaks that, because it never compares against a rebuild.
             #
             # Fetched from the document's own urls[] rather than resolved by pip:
             # `pip download --no-binary=:all:` prepares the sdist's metadata, pulling

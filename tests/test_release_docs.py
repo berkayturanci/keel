@@ -496,18 +496,27 @@ class TestThePublishWorkflowRunsTheGuards(unittest.TestCase):
             "the guards must run before anything is built or uploaded",
         )
 
-    def test_the_build_is_reproducible(self):
-        """Two builds of one tree used to produce four different digests.
+    def test_the_build_job_pins_the_timestamp_normalizes_and_proves_it(self):
+        """Named for what it checks: the *wiring* of the reproducibility guard.
 
-        Without a pinned timestamp `python -m build` stamps the current time into
-        the archives, so a workflow re-run at the same tag produced *different
-        bytes for the same release*. PyPI keeps the first upload; the GitHub
-        Release was overwritten with the rebuild's digests. The two records of one
-        release then disagreed by construction, and `verify` would have reported a
-        digest mismatch — and filed a `release-broken` issue — on a healthy
-        release.
+        It does not assert that the build reproduces — that is a property of the
+        pinned toolchain, provable only by running it, and the proof lives where
+        it belongs: the build job builds twice on every release and fails if the
+        digests differ. Asserting it here would need `python -m build` installed,
+        take tens of seconds, and be the one test in this suite that is neither
+        hermetic nor offline.
+
+        The first cut of this test was called `test_the_build_is_reproducible`
+        while asserting only that `SOURCE_DATE_EPOCH` appeared before
+        `python -m build` — and the review that followed showed the build was
+        *not* reproducible: with setuptools 84.0.0 the wheel is byte-identical and
+        the sdist is not. A test named for a property it does not check is how
+        that went unnoticed.
+
+        The mechanism itself is tested in `tests/test_normalize_sdist.py`.
         """
         build = self.document["jobs"]["build-n-publish"]
+        steps = [step.get("name", "") for step in build["steps"]]
         script = "\n".join(step.get("run", "") for step in build["steps"])
 
         self.assertIn("SOURCE_DATE_EPOCH", script)
@@ -519,6 +528,41 @@ class TestThePublishWorkflowRunsTheGuards(unittest.TestCase):
         # From the tagged commit, not from the clock: a value that changes per run
         # is not a fix, it is the same bug with more steps.
         self.assertIn("git log -1 --pretty=%ct", script)
+        # The epoch is not sufficient — the sdist envelope has to be rewritten too.
+        self.assertIn("scripts/normalize_sdist.py dist/*.tar.gz", script)
+        # ...and everything downstream must see the normalized archive, so it runs
+        # before the SBOM, the checksums, the attestation and both uploads.
+        order = {name: index for index, name in enumerate(steps)}
+        for later in (
+            "Generate CycloneDX SBOM",
+            "Generate checksums",
+            "Attest build provenance",
+            "Publish package to PyPI",
+            "Create GitHub Release and Upload Packages",
+        ):
+            with self.subTest(step=later):
+                self.assertLess(order["Normalize the sdist for reproducibility"], order[later])
+
+    def test_the_release_proves_its_own_reproducibility(self):
+        """The claim is enforced on the real toolchain, on every release."""
+        build = self.document["jobs"]["build-n-publish"]
+        verify = next(
+            step
+            for step in build["steps"]
+            if step.get("name") == "Verify the build is reproducible"
+        )
+
+        # Build twice, normalize the rebuild the same way, compare both artifacts.
+        self.assertIn("python -m build", verify["run"])
+        self.assertIn("scripts/normalize_sdist.py", verify["run"])
+        self.assertIn("sha256sum", verify["run"])
+        self.assertIn("Build is not reproducible", verify["run"])
+        # It must actually fail the job. A loop that reports and exits 0 is a
+        # comment with extra steps.
+        self.assertIn('[ "$failed" -eq 0 ]', verify["run"])
+        # And it must compare every artifact, not just the wheel — the wheel was
+        # already reproducible; the sdist is what was not.
+        self.assertIn("for original in dist/*; do", verify["run"])
 
     def test_the_release_upload_does_not_replace_published_assets(self):
         """First upload wins on both sides, matching PyPI's `skip-existing`."""

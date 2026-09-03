@@ -255,20 +255,47 @@ The workflow must produce:
 
 ### Reproducible builds
 
-The build job exports `SOURCE_DATE_EPOCH` from the **tagged commit's own commit time**
-(`git log -1 --pretty=%ct`) before `python -m build`. Without it, `build` stamps the
-current time into the archives, so two runs over the same tree produce different bytes and
-different SHA256 digests.
+Two builds of the same tree must produce the same bytes. PyPI keeps the first upload of a
+file forever (`skip-existing: true`), so if they do not, a workflow re-run at the same tag
+publishes a GitHub Release describing artifacts PyPI never served — and the verify job
+reports a digest mismatch, and files a `release-broken` issue, against a perfectly healthy
+release. The residual case is narrow and real: publish succeeds, `Create GitHub Release`
+fails, the re-run rebuilds and uploads `SHA256SUMS` *for the first time*, so the
+"was this asset replaced?" tolerance correctly says no and the mismatch hard-fails with
+the wrong diagnosis.
 
-That is not cosmetic. PyPI keeps the first upload (`skip-existing: true`), so a workflow
-re-run at the same tag would publish a GitHub Release describing artifacts PyPI never
-served — and the verify job would report a digest mismatch, and file a `release-broken`
-issue, against a perfectly healthy release. The release upload carries
-`overwrite_files: false` for the same reason: **first upload wins on both sides**, so the
-two records of one release cannot drift apart.
+It takes three things, and the first two are not enough:
 
-Pin the epoch to the tag, not to the clock: a value that changes per run is the same bug
-with more steps.
+1. **`SOURCE_DATE_EPOCH`**, exported from the **tagged commit's own commit time**
+   (`git log -1 --pretty=%ct`) before `python -m build`. Pin it to the tag, not the clock:
+   a value that changes per run is the same bug with more steps.
+
+2. **`scripts/normalize_sdist.py`**, run on `dist/*.tar.gz` immediately after the build.
+   `SOURCE_DATE_EPOCH` is necessary and *not sufficient*: with the pinned setuptools
+   84.0.0 the wheel comes out byte-identical but the sdist does not. Measured on this
+   toolchain — same tree, same epoch, two builds:
+
+   | artifact | build 1 | build 2 |
+   |---|---|---|
+   | `keel_workflow-1.19.3-py3-none-any.whl` | `74409e71…` | `74409e71…` |
+   | `keel_workflow-1.19.3.tar.gz` | `ccbe9a67…` | `7cf93d4e…` |
+
+   Every *file* member correctly takes the epoch. What does not: the **root directory
+   member**, stamped with wall clock as a PAX `mtime` record with sub-second precision
+   (`1788437700.5630772` vs `1788437703.3743458`); the **gzip header's** own mtime; and
+   every member's **uid/gid/uname/gname**, which describe the runner rather than the
+   release. The script rewrites that envelope — members sorted, `USTAR` format (which
+   cannot express a PAX record at all), mtimes pinned, ownership zeroed, modes reduced to
+   the executable bit, gzip written with `mtime=0`. Stdlib only, so it adds nothing to the
+   hash-locked toolchain, and it touches no byte a consumer unpacks.
+
+3. **A proof, on every release.** The build job then builds a *second* time into a scratch
+   directory, normalizes that too, and fails if either digest differs. A reproducibility
+   claim asserted only in a comment is how the sdist gap survived the first round of this
+   work: the wheel was checked, matched, and the sdist was assumed to behave the same way.
+
+The release upload also carries `overwrite_files: false`, matching PyPI's `skip-existing`:
+**first upload wins on both sides**, so the two records of one release cannot drift apart.
 
 ## Post-Publish Verification
 
