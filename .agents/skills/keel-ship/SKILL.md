@@ -199,6 +199,12 @@ capture.
   `standard`; `--compound` is an alias for `--profile compound`. The compound profile swaps
   the `s4`/`s7`/`s9`/`s11` steps to compound behavior (see the **Compound profile** section)
   without forking the backbone. Composes with every other flag (e.g. `--compound --jury`).
+- `--tdd` — select the **test-first s4 profile** for this run (the per-project spelling is
+  `knobs.implement_mode: tdd`). s4 runs in two phases and s8 gains the `tdd-order` gate;
+  see **Test-first s4** below. There is no `--no-tdd`: a project that configured the
+  contract has said the contract is the policy, and a flag that switched it off would
+  make it advisory. Read the resolved profile from `contract.implement_mode` of
+  `keel plan`/`keel ship --json` (`mode`, `source`, `phases`, `gate`) — never re-derive it.
 - `--delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL|google-api:MODEL|PROFILE>` — the
   **implementer**. Per-run override of any issue role/delegate label. `ollama:` and the
   `*-api:` values require a non-empty model. The `*-api:` values are the **hosted-API
@@ -550,6 +556,45 @@ and when no declared scope was recorded `scope-verify` is an advisory pass. An o
 accept creep for a single run with `--deferral scope-waived`. This gate is the primary
 defence against branch contamination — it catches scope creep before review spends budget.
 
+#### Test-first s4 (`implement_mode: tdd` / `--tdd`)
+
+`tdd` is an **s4 profile**, exactly as `compound` is a workflow profile: the backbone step
+ids do not change, and every other step behaves identically. What changes is that s4 runs
+**twice against the same provider** — two `keel delegate run` calls, one commit each:
+
+| phase | brief | diff | gates |
+|---|---|---|---|
+| `tests` | *Derive the failing tests from the issue's acceptance criteria. Do not implement anything.* | **test paths only** (`policy_pack.test_groups.*.test_paths`, else `.paths`) | expected **red** — that is the phase's proof |
+| `implementation` | *Make those tests pass without weakening them.* | the change | must end **green** |
+
+Rules for the two phases:
+
+- **Same provider for both.** The point is that the implementer wrote the tests it then
+  had to satisfy; handing phase B to a different seat loses that.
+- **One commit per phase, in order.** Phase A's commit must touch nothing outside the
+  project's test paths, and phase B must actually touch an implementation path. Squashing
+  the two locally, or amending A after B, destroys the evidence the gate reads.
+- **Phase A's red gates are not a failure.** Do not run the fix loop against them, and do
+  not let a red phase-A gate run trigger a fall-back to `HOST_AGENT`. Run the gates after
+  phase B.
+- **Never weaken a test to make it pass.** If a criterion turns out to be wrong, say so in
+  the PR body under `Testing` and change the *test* in a commit of its own with the reason
+  — do not quietly delete an assertion in the implementation commit.
+- **Everything else about s4 is unchanged**: the same dispatch table, the same retry and
+  fall-back policy, the same attribution, the same declared-scope self-check.
+
+At **s8** the pure `tdd-order` gate then verifies what actually happened, from the commit
+list and the path policy alone: the first non-merge commit on the branch touches only test
+paths, a later commit touches an implementation path, and the gate run is green. It is
+`on_fail: block` like `build`; its message names the offending paths, the test globs it
+matched against, or the missing half. A project whose `test_groups` declare no paths fails
+the gate closed rather than passing vacuously — declare
+`policy_pack.test_groups.<group>.test_paths` before asking for the profile.
+
+Both phases are recorded: the ledger's `run_context.implement_mode` is `tdd` and
+`run_context.implement_phases` carries one record per phase with its commit, and the
+rendered closure comment says **`Implement: TDD (tests <sha> → implementation <sha>)`**.
+
 ### s5 classify
 `keel ship .keel/project.yaml --root .` prints, deterministically: the **risk tier** (from
 `tier3_globs` against the diff) → reviewer count, the window state, the gate results, and
@@ -813,6 +858,9 @@ reviewer's **returned findings**, not the comment shape, so it is mode-independe
 runs the project gates (`build_gate_cmd`,
 `lint_cmd`, plus the `tester` Lego — the manual-test list, which may loop back to the
 implementer defensively without spending review budget unless it surfaces a blocking fix).
+Under `implement_mode: tdd` (or `--tdd`, which `run-gates` also accepts) this run also
+carries the pure **`tdd-order`** gate — see **Test-first s4** — evaluated after the other
+gates because its verdict includes theirs.
 An **`agentic` gate reports `NOT-RUN` here** — this command does not dispatch those, you
 do. `NOT-RUN` is not a pass: a gate declared `on_fail: block` that shows `NOT-RUN` blocks
 the merge decision and refuses to certify the run, so `keel merge` will reject the head.
@@ -1226,4 +1274,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=skills command=ship keel_version=1.19.3 source_sha256=ec0f563002562d42a8acc82647043de9287e926928f21c06e156ffacd6126baf generated_sha256=3b0785c81c4a9e371af41b78558e18540107cfb33aee5b1e41cd83884342574f -->
+<!-- keel-generated: surface=skills command=ship keel_version=1.19.3 source_sha256=3d8a873aa3a644f13e0261ce71815f2ee080fcd2e03a1c8a81df8ec00ed0642f generated_sha256=798752f05404d9cd3cc5041b1de57f6e955d127fe047a5a17cbc4a543b020425 -->

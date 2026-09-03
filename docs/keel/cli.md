@@ -1343,7 +1343,7 @@ keel plan — example-flutter
     ...
 ```
 
-## `keel run-gates <project.yaml> [--root DIR] [--concurrency N] [--run-id ID] [--command CMD] [--phase PHASE] [--issue N] [--pull-request N]`
+## `keel run-gates <project.yaml> [--root DIR] [--concurrency N] [--tdd] [--run-id ID] [--command CMD] [--phase PHASE] [--issue N] [--pull-request N]`
 
 Run the project's **command gates** (the `command`/`build`/`lint` Lego) under `--root DIR`
 (default `.`) and report each as a structured finding. Agentic gates (review, design
@@ -1366,6 +1366,10 @@ outcome — `TIMEOUT` rather than `FAIL` — so a slow host does not read as a b
 It **still blocks**: a hanging command is a real defect. The limit is
 [`knobs.gate_timeout_s`](configuration.md#gate_timeout_s) (default 600s), overridable for
 one slower gate with `timeout:` frontmatter on a `command` extension.
+
+Under `implement_mode: tdd` — or with `--tdd` for one run — the gate list also carries the
+pure **`tdd-order`** gate, evaluated after all the others because its verdict includes
+theirs. See [`knobs.implement_mode`](configuration.md#implement_mode).
 
 There are four outcome labels, and the difference between the last two matters:
 
@@ -1758,7 +1762,7 @@ keel window .keel/project.yaml
 # merge window OPEN  [Europe/Istanbul 07:00-01:30]
 ```
 
-## `keel ship <project.yaml> [--root DIR] [--pr N] [--compound|--profile standard|compound] [--role LABEL] [--delegate PROVIDER] [--review-delegate PROVIDER]... [--dry-run] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--target TARGET] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--review-comments inline|summary] [--reviewers 1|2|3] [--jury|--no-jury] [--jury-advisory] [--json] [--wizard] [--wizard-answer KEY=VALUE]...`
+## `keel ship <project.yaml> [--root DIR] [--pr N] [--compound|--profile standard|compound] [--tdd] [--role LABEL] [--delegate PROVIDER] [--review-delegate PROVIDER]... [--dry-run] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--target TARGET] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--review-comments inline|summary] [--reviewers 1|2|3] [--jury|--no-jury] [--jury-advisory] [--json] [--wizard] [--wizard-answer KEY=VALUE]...`
 
 Run the **deterministic slice of a ship** against the current checkout and print the
 assessment: how many files changed vs. the base branch, the **risk tier** (→ reviewer
@@ -1997,6 +2001,29 @@ keel plan .keel/project.yaml --root . --command ship --profile compound --json
 Omit the flag (or pass `--profile standard`) for the standard delivery path; use
 `--compound` when the operator wants the compound-engineering flavor while retaining the same
 CI, review, merge-window, merge-lock, closeout, and capture safety gates.
+
+### `--tdd` (test-first s4 profile)
+
+`--tdd` selects the **test-first s4 profile** for a single run; `knobs.implement_mode: tdd`
+is the per-project spelling of the same thing (see
+[configuration](configuration.md#implement_mode)). Like `--compound` it is a *profile*, not
+a separate command: the backbone step ids are unchanged, s4 simply runs in two phases — a
+test-only commit carrying the failing tests derived from the issue's acceptance criteria,
+then the implementation that turns them green — and s8 gains the pure, blocking
+`tdd-order` gate that verifies that commit order actually happened.
+
+```bash
+keel ship .keel/project.yaml --root . --tdd --dry-run --json
+# contract.implement_mode == {"mode": "tdd", "tdd": true, "source": "flag:--tdd",
+#                             "phases": ["tests", "implementation"], "gate": "tdd-order"}
+```
+
+The same block is rendered by `keel plan --tdd`, and `keel run-gates --tdd` adds the gate
+on its own. There is no `--no-tdd`: a project that configured the contract has said the
+contract is the policy, and a flag that switched it off from a command line would make it
+advisory. A `--live --append-ledger` run records `run_context.implement_mode: "tdd"` and one
+`run_context.implement_phases` entry per phase with its commit, which the closure comment
+renders as `Implement: TDD (tests <sha> → implementation <sha>)`.
 
 ## `keel implement <project.yaml> <issue> [--root DIR] [--delegate AGENT] [--dry-run] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--json]`
 

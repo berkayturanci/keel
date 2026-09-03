@@ -137,6 +137,10 @@ policy_pack:
     unit:
       command: "make test"
       paths: ["src/**", "tests/**"]
+      # Where the tests themselves live, as distinct from the paths that make this group
+      # relevant. Read by the `implement_mode: tdd` `tdd-order` gate, which would be
+      # vacuous if `src/**` counted as a test path.
+      test_paths: ["tests/**"]
       required_capabilities: ["shell"]
     package-validate:
       command: "make validate"

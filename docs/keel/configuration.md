@@ -146,6 +146,7 @@ contracts, but executable project behavior remains in extension files or project
 | `evidence_gate_label` | string | | Legacy PR label that also arms the required pre-merge evidence gate (default `keel:ship`); ship provenance now arms the gate by default |
 | `evidence_require_distinct_vendors` | boolean | | requires each required review verdict to carry vendor provenance, and no two to share a vendor. **Unset resolves from the risk tier — on from TIER-2 up**; set it to `false` to opt out |
 | `swarm_review_evidence` | boolean | | Swarm landings enforce the same per-PR review-evidence contract as ship s10 (default `true`); `false` is the explicit, logged opt-out |
+| `implement_mode` | `default` \| `tdd` | | the s4 implement profile: one pass (default), or test-first in two phases with the blocking `tdd-order` gate at s8 |
 | `gate_timeout_s` | integer ≥ 1 | | wall-clock seconds a command gate may run before it is killed (default `600`) |
 | `jury_timeout_s` | integer ≥ 1 | | wall-clock seconds the `jury` built-in may run before it is killed (default `600`) |
 
@@ -628,6 +629,66 @@ on any review vendor. A missing `vendor:` on a required verdict, or two verdicts
 vendor, fails verification with a blocking `review-vendor-distinctness` finding. Override
 per run with `keel evidence-verify --require-distinct-vendors`.
 
+#### `implement_mode`
+
+The **s4 implement profile**. `default` is the single implement pass keel has always run.
+`tdd` asks for the change to be written test-first, and then *verifies* that it was:
+
+```yaml
+knobs:
+  build_gate_cmd: "make test"
+  implement_mode: tdd
+
+policy_pack:
+  name: my-project
+  test_groups:
+    unit:
+      command: "make test"
+      paths: ["src/**", "tests/**"]   # what makes the group relevant
+      test_paths: ["tests/**"]        # where the tests actually live
+```
+
+In `tdd` mode s4 runs **two phases against the same provider**, one `keel delegate run`
+call and one commit each:
+
+| phase | what the implementer is asked for | diff | gates |
+|---|---|---|---|
+| `tests` | the failing tests derived from the issue's acceptance criteria | test paths only | expected **red** |
+| `implementation` | the change that turns them green, without weakening a test | the change | must end **green** |
+
+At **s8** the run then carries one extra gate, `tdd-order`. It is `on_fail: block`, and it
+is a **pure function of the commit list and the path policy** — keel reads the branch
+through a single `git log` and decides in `keel.tdd`, with no other I/O. It passes when:
+
+1. the branch history is readable at all (an unreadable one blocks — it is not an empty branch);
+2. the first non-merge commit touches at least one path, and **only** test paths;
+3. a later commit touches a non-test path — the implementation the tests were written for;
+4. the rest of the gate run is green.
+
+Otherwise it blocks and names what to fix: the offending paths in the first commit, the
+test globs it matched against, or the missing half of s4. Merge commits are skipped rather
+than judged — a merge from the base branch carries every path the base moved.
+
+**Where the test paths come from.** The union of `policy_pack.test_groups.*.test_paths`,
+falling back to a group's `paths` when it declares no `test_paths`, and **once any group
+declares `test_paths`, only the declared ones count**. Group `paths` are *selectors* —
+the paths that make the group relevant — and on a real project they routinely include the
+implementation surface (keel's own `unit` group selects `src/**` as well as `tests/**`).
+Read as test paths they would make the gate vacuous. A project that declares no path at
+all fails the gate **closed**, with a message naming the key to add: a gate that cannot
+look must not pass.
+
+`--tdd` selects the profile for a single run of `keel ship`, `keel plan` or
+`keel run-gates`. There is no `--no-tdd`: a project that configured the contract has said
+the contract is the policy, and a flag that switched it off from a command line would make
+it advisory. The resolved profile is published as `contract.implement_mode` by
+`keel plan`/`keel ship --json` (`mode`, `source`, `phases`, `gate`), the ledger records
+`run_context.implement_mode` plus one `run_context.implement_phases` entry per phase, and
+the closure comment says `Implement: TDD (tests <sha> → implementation <sha>)`.
+
+Backbone step ids are unchanged: `tdd` is an s4 profile the way `compound` is a workflow
+profile. Setting it to `default` (or leaving it out) does not change `config_hash`.
+
 #### `gate_timeout_s`
 
 Wall-clock seconds a **command gate** may run before keel kills it. Defaults to `600`
@@ -924,6 +985,7 @@ Map from test group name to a test command contract. Each group requires `comman
 |---|---|---|---|
 | `command` | string | ✅ | runnable project test/audit command |
 | `paths` | string[] | | path selectors that make the group relevant |
+| `test_paths` | string[] | | where this group's **tests** live, when that differs from `paths`. Read by the [`implement_mode: tdd`](#implement_mode) `tdd-order` gate |
 | `reports` | string[] | | report paths or destinations produced by the command |
 | `required_capabilities` | string[] | | capabilities needed before the command can run |
 | `optional_capabilities` | string[] | | capabilities that may degrade when unavailable |
