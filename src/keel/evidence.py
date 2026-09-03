@@ -4,6 +4,10 @@ The ship adapter is agentic, but the artifacts it must leave behind are not:
 reviewer verdict comments/reviews, the optional jury verdict, and the stable
 closure comment marker. This module keeps the check pure so CI can enforce it
 without trusting prose in an agent prompt.
+
+Classification is **header-anchored**: :func:`marker_in_header` decides what a
+comment is from its first non-empty line and nothing else, so a marker a reviewer
+quotes in prose is content rather than a classification signal (#1026).
 """
 
 from __future__ import annotations
@@ -27,10 +31,28 @@ JURY_VERDICT_MARKER = "keel.jury-verdict.v1"
 #: ledger lives in a per-run worktree CI cannot read — still identifies as a keel ship
 #: run. See :func:`gate_decision` for the full arming order.
 SHIP_PROVENANCE_MARKER = "keel.ship-provenance.v1"
+#: The marker the ship adapter tells a host to post when a finding is deferred rather
+#: than fixed. keel core never counts a deferral as evidence; it is listed among the
+#: classification markers so a deferral comment reads as *one* artifact instead of
+#: being classified by whichever marker its prose happens to name.
+DEFERRAL_MARKER = "keel.deferral.v1"
 SHIP_ASSESSMENT_HEADING = "### \U0001f6a2 keel ship"
 DEFAULT_WAIVER_LABEL = "keel:evidence-waived"
 TRUSTED_AUTHOR_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 TRUSTED_SHIP_ASSESSMENT_BOTS = frozenset({"github-actions", "github-actions[bot]"})
+
+#: Every marker that *classifies* an evidence comment. Order is the order findings
+#: report them in, so a malformed-header message is byte-stable.
+CLASSIFICATION_MARKERS: tuple[str, ...] = (
+    REVIEW_VERDICT_MARKER,
+    JURY_VERDICT_MARKER,
+    SHIP_PROVENANCE_MARKER,
+    closure.CLOSURE_SCHEMA_VERSION,
+    DEFERRAL_MARKER,
+)
+
+#: The finding raised for a comment whose header names more than one marker.
+MALFORMED_MARKER_FINDING = "malformed-evidence-comment"
 
 _FIELD_RE = re.compile(
     r"^\s*(?P<key>reviewer|head|vendor|model|vendors)\s*:\s*(?P<value>\S+)\s*$",
@@ -38,6 +60,13 @@ _FIELD_RE = re.compile(
 )
 _HEADER_LINE_RE = re.compile(r"^[A-Za-z0-9_-]+\s*:")
 _SHIP_BRANCH_RE = re.compile(r"^(feature|fix|chore|docs|test)/issue-\d+(?:-|$)")
+#: The optional wrapper a marker line may wear. Every keel renderer emits its marker
+#: as the whole first line, in one of exactly two shapes: bare
+#: (``artifacts.render_review_verdict`` / ``render_jury_verdict`` /
+#: ``render_ship_provenance``) or wrapped in an HTML comment so it renders invisibly
+#: (``closure.render_closure_comment``). Dropping the delimiters reduces both shapes
+#: to the same token, and keeps a two-marker header readable as two tokens.
+_HTML_COMMENT_DELIMITERS = re.compile(r"<!--|-->")
 
 STATUS_PASS = "pass"
 STATUS_WAITING = "waiting"
@@ -159,7 +188,8 @@ def _has_trusted_ship_provenance(items: list[dict[str, Any]]) -> bool:
     the point, to *look* like it armed — the gate.
     """
     return any(
-        _is_trusted_source(item, enforced=True) and SHIP_PROVENANCE_MARKER in _body(item)
+        _is_trusted_source(item, enforced=True)
+        and marker_in_header(_body(item)) == SHIP_PROVENANCE_MARKER
         for item in items
     )
 
@@ -324,6 +354,11 @@ def verify(
     only counts when its content matches the canonical render of that record
     (closure-comment fidelity). Without a record the marker-only behavior holds.
 
+    Every comment is classified by :func:`marker_in_header` — the marker on its
+    header line, never one quoted in its prose. A header naming two markers is
+    malformed: it is excluded from every count and reported as an advisory
+    ``malformed-evidence-comment`` finding.
+
     When the gate is active, ``pr_labels`` are additionally checked for the
     mandatory ``agent:<vendor>`` attribution label (and cross-checked against the
     ledger implementer vendor when a record is present); see
@@ -390,6 +425,13 @@ def verify(
         pr_title=pr_title,
     )
     findings = [*findings, *substance]
+    findings = [
+        *findings,
+        *_malformed_marker_findings(
+            [*(pr_comments or []), *(issue_comments or []), *(pr_reviews or [])],
+            enforced=enforced,
+        ),
+    ]
     attribution = _attribution_finding(
         pr_labels=pr_labels,
         enforced=enforced and not dry_run,
@@ -468,6 +510,43 @@ def _verdict_substance_findings(
         }
         for key, reason in sorted(rejected)
     ]
+
+
+def _malformed_marker_findings(
+    items: list[dict[str, Any]],
+    *,
+    enforced: bool,
+) -> list[dict[str, Any]]:
+    """One finding per trusted comment whose header names more than one marker.
+
+    Such a header does not say which artifact the comment is, so
+    :func:`marker_in_header` refuses to classify it and the comment counts toward
+    nothing. Excluding it silently would reproduce the failure #926 named — a
+    comment sitting right there on the PR, reported as missing evidence — so the
+    exclusion is stated instead of inferred.
+
+    ``minor``, never blocking: the comment is malformed, not fraudulent, and the
+    requirement it failed to satisfy already fails on its own.
+    """
+    findings: list[dict[str, Any]] = []
+    for item in items:
+        if not _is_trusted_source(item, enforced=enforced):
+            continue
+        markers = header_markers(_body(item))
+        if len(markers) < 2:
+            continue
+        findings.append(
+            {
+                "id": MALFORMED_MARKER_FINDING,
+                "severity": "minor",
+                "kind": "evidence",
+                "message": (
+                    "Comment header carries more than one keel marker "
+                    f"({', '.join(markers)}); it is excluded from evidence."
+                ),
+            }
+        )
+    return findings
 
 
 def _distinct_vendor_finding(
@@ -599,8 +678,60 @@ def _body(item: dict[str, Any]) -> str:
     return body if isinstance(body, str) else ""
 
 
+def _header_tokens(body: str) -> tuple[str, ...]:
+    """Whitespace tokens of ``body``'s header line, HTML-comment delimiters removed.
+
+    The header line is the first *non-empty* line: leading blank lines are
+    skipped rather than treated as the end, for the same reason :func:`_fields`
+    skips them — a GitHub comment body routinely begins with a newline.
+    Everything after that line is prose.
+    """
+    for raw_line in (body or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        return tuple(_HTML_COMMENT_DELIMITERS.sub(" ", line).split())
+    return ()
+
+
+def header_markers(body: str) -> tuple[str, ...]:
+    """Return the distinct :data:`CLASSIFICATION_MARKERS` ``body``'s header carries.
+
+    The header line must consist of markers and nothing else — that is exactly
+    what every renderer emits, and it is what separates a marker line from a
+    sentence that happens to name one. So this is empty for an ordinary comment
+    (including one whose first line *mentions* a marker in prose), one entry for
+    a well-formed artifact, and two or more for a malformed one, which
+    :func:`marker_in_header` refuses to classify and
+    :func:`_malformed_marker_findings` reports.
+    """
+    tokens = _header_tokens(body)
+    if not tokens or any(token not in CLASSIFICATION_MARKERS for token in tokens):
+        return ()
+    return tuple(marker for marker in CLASSIFICATION_MARKERS if marker in tokens)
+
+
+def marker_in_header(body: str) -> str | None:
+    """Return the single keel marker ``body`` is anchored to, or ``None`` (#1026).
+
+    **The header block is the only place a marker classifies a comment.** A marker
+    further down is prose — a reviewer writing "I checked the jury-verdict marker
+    handling" is quoting a string, not filing a jury verdict. Testing
+    ``MARKER in body`` could not tell the two apart: two `keel.review-verdict.v1`
+    comments whose scope mentioned ``keel.jury-verdict.v1`` were counted as
+    ``jury_verdict: 2, review_verdict: 0``, and the review that happened was
+    invisible to the gate.
+
+    ``None`` for a comment that carries no marker *and* for one whose header
+    carries several: a header naming two artifacts does not say which one it is,
+    so it is excluded rather than counted for either.
+    """
+    markers = header_markers(body)
+    return markers[0] if len(markers) == 1 else None
+
+
 def _has_closure_marker(body: str) -> bool:
-    return closure.COMMENT_MARKER in body
+    return marker_in_header(body) == closure.CLOSURE_SCHEMA_VERSION
 
 
 #: The idempotency marker ``keel post-comment`` appends to a posted body so a re-post
@@ -1299,10 +1430,11 @@ def _fields(body: str) -> dict[str, str]:
                 break
             continue
         started = True
-        if (
-            (line.startswith("<!--") and line.endswith("-->"))
-            or REVIEW_VERDICT_MARKER in line
-            or JURY_VERDICT_MARKER in line
+        # A marker-only line is the artifact's own header, not a field: skip it and
+        # keep reading. A line that merely *mentions* a marker is prose, and prose
+        # ends the block — the #932 boundary this parser exists to hold.
+        if (line.startswith("<!--") and line.endswith("-->")) or all(
+            token in CLASSIFICATION_MARKERS for token in line.split()
         ):
             continue
         match = _FIELD_RE.match(line)
@@ -1316,16 +1448,22 @@ def _fields(body: str) -> dict[str, str]:
 
 
 def _is_review_verdict_body(body: str) -> bool:
-    if not body or _is_ship_assessment(body) or _has_closure_marker(body):
+    """Whether ``body`` is a review verdict, decided by its header alone (#1026).
+
+    The jury and closure exclusions are no longer separate substring tests:
+    :func:`marker_in_header` yields at most one marker, so a body anchored to the
+    jury or closure marker simply is not a review verdict, and a review verdict
+    that *mentions* either one in its prose still is.
+    """
+    if _is_ship_assessment(body):
         return False
-    if JURY_VERDICT_MARKER in body:
-        return False
-    return REVIEW_VERDICT_MARKER in body
+    return marker_in_header(body) == REVIEW_VERDICT_MARKER
 
 
 def _has_trusted_review_marker(items: list[dict[str, Any]]) -> bool:
     return any(
-        _is_trusted_source(item, enforced=True) and REVIEW_VERDICT_MARKER in _body(item)
+        _is_trusted_source(item, enforced=True)
+        and marker_in_header(_body(item)) == REVIEW_VERDICT_MARKER
         for item in items
     )
 
@@ -1381,6 +1519,6 @@ def _is_jury_verdict(
     if not _is_trusted_source(item, enforced=enforced):
         return False
     body = _body(item)
-    if not body or _is_ship_assessment(body) or _has_closure_marker(body):
+    if _is_ship_assessment(body):
         return False
-    return JURY_VERDICT_MARKER in body and _matches_head(item, body, head_sha)
+    return marker_in_header(body) == JURY_VERDICT_MARKER and _matches_head(item, body, head_sha)
