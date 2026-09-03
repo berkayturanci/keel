@@ -100,9 +100,21 @@ def run_command(
 
 
 def run_argv(
-    argv: list[str], *, cwd: str | None = None, timeout: int = 120, _run=subprocess.run
+    argv: list[str],
+    *,
+    cwd: str | None = None,
+    timeout: int = 120,
+    stdin_text: str | None = None,
+    _run=subprocess.run,
 ) -> CommandResult:
-    """Run an argv list (no shell). Fail-soft on timeout/OS error. Used by git/gh wrappers."""
+    """Run an argv list (no shell). Fail-soft on timeout/OS error. Used by git/gh wrappers.
+
+    ``stdin_text`` feeds the child on standard input instead of closing it. Every delegate
+    CLI keel dispatches to takes its prompt that way (:mod:`keel.delegate`): a prompt
+    carries the diff and the brief, and an argv is world-readable in ``ps`` for the life of
+    the process. The default stays ``DEVNULL`` — a gate left waiting for input in an
+    unattended run is a hang, not a prompt.
+    """
     try:
         proc = _run(
             argv,
@@ -110,7 +122,13 @@ def run_argv(
             capture_output=True,
             text=True,
             timeout=timeout,
-            stdin=subprocess.DEVNULL,
+            input=stdin_text,
+            # Written out rather than assembled into a **kwargs dict: #879's sweep in
+            # tests/test_missing_pins.py reads every spawn site's keywords out of the
+            # AST, and a site that hides `stdin` behind a splat is a site the rule
+            # cannot see. `subprocess.run` accepts `stdin=None` beside `input` and
+            # substitutes a PIPE itself.
+            stdin=None if stdin_text is not None else subprocess.DEVNULL,
         )
     except subprocess.TimeoutExpired:
         return CommandResult(False, 124, f"timed out after {timeout}s", timed_out=True)

@@ -565,3 +565,50 @@ class TestGenerate(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestExtraPayload(unittest.TestCase):
+    """The optional effort fragment `keel delegate run --effort` merges in (#1012)."""
+
+    def test_merge_payload_is_recursive_so_a_nested_fragment_keeps_its_siblings(self):
+        merged = api_delegate.merge_payload(
+            {"generationConfig": {"maxOutputTokens": 16384}, "contents": ["x"]},
+            {"generationConfig": {"thinkingConfig": {"thinkingBudget": 8192}}},
+        )
+        self.assertEqual(merged["generationConfig"]["maxOutputTokens"], 16384)
+        self.assertEqual(merged["generationConfig"]["thinkingConfig"]["thinkingBudget"], 8192)
+        self.assertEqual(merged["contents"], ["x"])
+
+    def test_a_scalar_fragment_replaces_rather_than_merges(self):
+        self.assertEqual(
+            api_delegate.merge_payload({"max_tokens": 1, "model": "a"}, {"max_tokens": 2}),
+            {"max_tokens": 2, "model": "a"},
+        )
+
+    def test_merge_payload_never_mutates_its_input(self):
+        base = {"generationConfig": {"maxOutputTokens": 1}}
+        api_delegate.merge_payload(base, {"generationConfig": {"thinkingConfig": {}}})
+        self.assertEqual(base, {"generationConfig": {"maxOutputTokens": 1}})
+
+    def test_no_fragment_leaves_the_body_exactly_as_it_was(self):
+        opener_without = FakeOpener(FakeResponse(_anthropic_body()))
+        api_delegate.generate("anthropic-api", "m", "p", _env=ENV, _opener=opener_without)
+        opener_with = FakeOpener(FakeResponse(_anthropic_body()))
+        api_delegate.generate(
+            "anthropic-api", "m", "p", extra_payload=None, _env=ENV, _opener=opener_with
+        )
+        self.assertEqual(opener_without.requests[0][0].data, opener_with.requests[0][0].data)
+
+    def test_a_fragment_reaches_the_request_body(self):
+        opener = FakeOpener(FakeResponse(_openai_body()))
+        api_delegate.generate(
+            "openai-api",
+            "gpt-5.5",
+            "p",
+            extra_payload={"reasoning_effort": "high"},
+            _env=ENV,
+            _opener=opener,
+        )
+        sent = json.loads(opener.requests[0][0].data.decode("utf-8"))
+        self.assertEqual(sent["reasoning_effort"], "high")
+        self.assertEqual(sent["model"], "gpt-5.5")

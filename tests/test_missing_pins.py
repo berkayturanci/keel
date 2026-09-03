@@ -51,6 +51,11 @@ class SwarmWorkersNeverInheritStdin(unittest.TestCase):
         injected ``_run`` seam whose default is ``subprocess.run``. Matching only
         the first covers exactly one site today, which the vacuity guard below
         caught on the first attempt.
+
+        ``Popen`` and the ``_popen`` seam join them with #1012's detached delegate
+        (:func:`keel.delegaterun.start_detached`): the hang a background child inheriting
+        the operator's terminal produces is the same one, and a rule that stopped at
+        ``run`` would have watched the new spawn site go by.
         """
         for path in sorted((REPO_ROOT / "src" / "keel").rglob("*.py")):
             tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -59,10 +64,10 @@ class SwarmWorkersNeverInheritStdin(unittest.TestCase):
                     continue
                 func = node.func
                 direct = (
-                    getattr(func, "attr", None) == "run"
+                    getattr(func, "attr", None) in ("run", "Popen")
                     and getattr(getattr(func, "value", None), "id", None) == "subprocess"
                 )
-                seam = isinstance(func, ast.Name) and func.id == "_run"
+                seam = isinstance(func, ast.Name) and func.id in ("_run", "_popen")
                 if direct or seam:
                     yield path, node
 
