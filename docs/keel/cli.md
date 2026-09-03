@@ -1218,19 +1218,24 @@ capabilities. See [`runtime-capabilities.md`](runtime-capabilities.md) and
 
 <a id="keel-doctor"></a>
 
-## `keel doctor [project.yaml] [--root DIR] [--offline] [--providers] [--strict] [--json]`
+## `keel doctor [project.yaml] [--root DIR] [--offline] [--providers] [--strict] [--fix] [--approve-scope SCOPE] [--operator NAME] [--consent-mode MODE] [--json]`
 
-Run a read-only diagnostic pass over the installed keel and its adapter surfaces. No
-mutation: `doctor` only reads versions, markers, and on-disk state, then classifies each
-check as `ok` / `warn` / `fail`. The roll-up `status` is the worst of all checks.
+Run a diagnostic pass over the installed keel and its adapter surfaces. Read-only unless
+you pass `--fix`: `doctor` reads versions, markers, on-disk state and (with a config) the
+repository's labels, then classifies each check as `ok` / `skipped` / `warn` / `fail`. A
+check that *could not look* — no config, no `gh`, `--offline` — reports `skipped` rather
+than claiming `ok`, and never moves the roll-up. The roll-up `status` is the worst of the
+checks that did look.
 
 ```bash
 keel doctor                                   # CLI + adapter health only
 keel doctor --root . --json                   # machine-readable report
-keel doctor .keel/project.yaml --root .        # also check core_version + state paths
+keel doctor .keel/project.yaml --root .        # also check core_version, state paths, labels
 keel doctor .keel/project.yaml --offline --strict
 keel doctor --providers                       # which delegates are usable on this machine
 keel doctor --providers --json                # providers[], registry_path, warnings
+keel doctor projects/keel.yaml --fix \
+  --approve-scope github --operator you       # create the missing labels
 ```
 
 The checks are:
@@ -1264,6 +1269,21 @@ The checks are:
   `requires-python` (3.11) or without PyYAML is a `warn` that names the interpreter — a
   `make test` that dies with a hundred syntax errors is a 3.9 on PATH, not a regression in
   the tree.
+- **`policy_labels`** — whether the labels this project declares actually exist on its
+  repository. `ship` and `triage` apply `status:*` / `priority:*` / `role:*` and the
+  `agent:*` / `model:*` attribution pair **by name**, and GitHub rejects a label that was
+  never created — keel's own repository ran for months with every one of those labels
+  missing and nothing reported it (#1021). The declared set is
+  [`policy_pack.labels.*`](configuration.md#policy_packlabels) (a bare entry is qualified
+  with its group, so `role: ["core"]` means `role:core`), `policy_pack.scan.issue_labels.*`,
+  and the attribution vocabulary: `agent:<vendor>` for every built-in vendor plus each
+  `knobs.delegate_profiles` entry's vendor, and `model:<base>` for a model a profile pins.
+  A `model:*` minted from `--delegate vendor:model` or a `delegate-model:` issue label is
+  unbounded and cannot be enumerated ahead of time, so the check does not try.
+  Missing labels are a `warn` that prints the exact `gh label create` commands under the
+  check; **never a `fail`**. Only runs when a config path names an `owner`/`repo`, and one
+  `gh label list` is all it costs — `--offline`, no `gh` on PATH, or an unauthenticated or
+  unreachable GitHub each report `skipped` with the reason.
 - **`providers`** — only with `--providers`. Probes every provider keel can dispatch to:
   the built-in vendors (`claude`, `codex`, `agy`, `ollama`, `anthropic-api`, `openai-api`,
   `google-api`), every `knobs.delegate_profiles` entry when a config path is given, and every
@@ -1293,8 +1313,25 @@ dialed; an endpoint named by config or by the registry is checked for key presen
 [`runtime-capabilities.md`](runtime-capabilities.md#probing-providers-keel-doctor---providers)
 for the per-transport rules.
 
+`--fix` creates the labels `policy_labels` reported as missing — the one mutation `doctor`
+performs, and it runs the same `gh label create` commands the warning printed. It is gated
+like every other live keel mutation: the `labels` side effect needs the **`github`** consent
+scope, so `--approve-scope github --operator <name>` (or a standing `KEEL_APPROVE_SCOPE` +
+`KEEL_OPERATOR`, or `automation.approved_scopes` in config) must approve it, and without
+that the command refuses and exits non-zero without creating anything. Each label is
+reported as it is created; a label that fails is named and the command exits non-zero
+without stopping the rest.
+
+```text
+  WARN  policy_labels     2 of 18 declared label(s) missing on you/app: agent:agy, role:core
+        $ gh label create agent:agy --repo you/app
+        $ gh label create role:core --repo you/app
+```
+
 By default `doctor` is advisory and exits `0` (unless the command itself errors, e.g. a
-missing or invalid config). Pass `--strict` to exit non-zero when any check is `fail`.
+missing or invalid config, or `--fix` was refused or failed). Pass `--strict` to exit
+non-zero when any check is `fail` — a `skipped` or `warn` check never does that, which is
+why an unreachable GitHub cannot turn a label check into a red run.
 
 <a id="keel-delegate"></a>
 

@@ -627,6 +627,12 @@ Map from label group to allowed label names. Common groups include `status`, `pr
 `role`, `type`, or command-specific groups. Triage, ship, regression, and closeout flows
 can use these vocabularies instead of hardcoding labels in command bodies.
 
+An entry may carry its group (`status: ["status:done"]`) or not (`role: ["core"]`); both
+name the label `status:done` / `role:core`. Declaring a label does not create it, and
+GitHub rejects a label that does not exist — [`keel doctor`](cli.md#keel-doctor)'s
+`policy_labels` check reports the declared labels missing from the repository, and
+`keel doctor <config> --fix` creates them.
+
 ### `policy_pack.status_transitions`
 
 Map from lifecycle transition name to the label or state target. Examples include
