@@ -261,11 +261,15 @@ def render_ship_provenance(
     lines.extend(
         [
             "",
-            "Provenance stamp for a keel run: this pull request came out of the backbone, "
-            "so the evidence gate applies to it.",
+            (
+                "Provenance stamp for a keel run: this pull request came out of the backbone, "
+                "so the evidence gate applies to it."
+            ),
             "",
-            "The attribution labels above come from `keel attribution` — apply them to the "
-            "PR verbatim rather than composing them by hand.",
+            (
+                "The attribution labels above come from `keel attribution` — apply them to the "
+                "PR verbatim rather than composing them by hand."
+            ),
         ]
     )
     return "\n".join(lines) + "\n"

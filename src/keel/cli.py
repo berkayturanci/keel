@@ -3842,9 +3842,11 @@ def _implementer_vocabulary_warnings(
     if vendor in known:
         return []
     return [
-        f"implementer vendor {vendor!r} is not one of keel's delegate vendors "
-        f"({', '.join(sorted(known))}); the PR's agent:/model: labels will not match "
-        "what `keel attribution` produces"
+        (
+            f"implementer vendor {vendor!r} is not one of keel's delegate vendors "
+            f"({', '.join(sorted(known))}); the PR's agent:/model: labels will not match "
+            "what `keel attribution` produces"
+        )
     ]
 
 
