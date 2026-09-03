@@ -68,6 +68,19 @@ DEFAULT_MIN_VENDORS = 2
 #: the run. Mirrors :data:`keel.agents.HOST_DEFAULT`, which cannot be imported here.
 HOST_DEFAULT = "claude"
 
+#: Vendors that spell reasoning effort as a **model suffix** rather than as its own
+#: argument (``gemini-3.8-flash-high``). An effort on such a seat with no ``model``
+#: beside it has nothing to attach to, so :func:`team_issues` rejects the pair — and
+#: :mod:`keel.wizard` reads the same tuple rather than re-deriving the rule, so the
+#: wizard cannot offer an effort it would then be told to take back.
+EFFORT_MODEL_SUFFIX_VENDORS = ("agy",)
+
+
+def effort_needs_model(vendor: str | None) -> bool:
+    """True when an ``effort`` on this vendor's seat requires a ``model`` beside it."""
+    return vendor in EFFORT_MODEL_SUFFIX_VENDORS
+
+
 #: Risk tier at which a cross-vendor review panel stops being optional: from tier-2 up,
 #: ``evidence_require_distinct_vendors`` defaults to true (an explicit ``false`` in
 #: config still wins). One vendor reviewing twice is one opinion twice.
@@ -623,7 +636,7 @@ def team_issues(
                 f"reasoning effort, so effort {seat.effort!r} would be silently dropped "
                 "— drop the field, or name a provider that can honour it"
             )
-        elif vendor == "agy" and seat.model is None:
+        elif effort_needs_model(vendor) and seat.model is None:
             errors.append(
                 f"{where}: agy spells reasoning effort as a model suffix "
                 f"(e.g. gemini-3.8-flash-high), so effort {seat.effort!r} needs a "
