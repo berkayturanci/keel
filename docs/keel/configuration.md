@@ -295,6 +295,74 @@ trust level as `build_gate_cmd` — it is never taken from PR content or agent o
 For full model options and provider configurations, see the [Supported AI Models & Providers Guide](models.md).
 Design and proposals: [`docs/proposals/generic-delegate-vendors.md`](../proposals/generic-delegate-vendors.md).
 
+<a id="provider-registry"></a>
+**The machine-level provider registry (`~/.keel/providers.yaml`).** Which providers are
+usable is a property of the **machine and the person**, not of the project: one operator has
+`claude`/`codex`/`agy` logged in and no API key, another has only `XAI_API_KEY`. Those facts
+do not belong in a file everyone on the team commits. The registry is where an operator
+keeps them:
+
+```yaml
+# ~/.keel/providers.yaml — never committed; override the path with KEEL_PROVIDERS
+providers:
+  cursor:
+    transport: cli                 # cli | api | local
+    command: cursor-agent
+    review_args: ["-p"]            # a read-only invocation for the reviewer role
+    model: composer-2.5
+    model_arg: --model             # default "--model"
+    effort: high                   # vendor-specific reasoning-effort selector
+  vllm:
+    transport: api
+    endpoint: http://127.0.0.1:8000/v1/chat/completions
+    api_key_env: VLLM_API_KEY      # the NAME, never the key
+```
+
+| field | required | description |
+|---|---|---|
+| `transport` | ✅ | `cli` (a local binary), `api` (an OpenAI-shaped hosted endpoint), `local` (a model served on this machine) |
+| `command` | ✅ for `cli` / `local` | the executable keel runs |
+| `endpoint` | ✅ for `api` | the OpenAI-shaped chat-completions URL, under the same loopback-by-default rules as a profile's |
+| `api_key_env` | ✅ for `api` | the **name** of the env var holding the key |
+| `model` | | default model for this entry |
+| `model_arg` | | flag the model is passed on, as `<model_arg> <model>` (default `--model`) |
+| `effort` | | vendor-specific reasoning-effort selector, carried through to dispatch |
+| `review_args` | | flags for the reviewer role; their presence is what the probe reports as `read_only_mode` |
+
+**Precedence: project profile > registry > built-in.** A project's `knobs.delegate_profiles`
+entry keeps working and wins, so a repository can pin the provider its team shares. Below it,
+the registry adds entries the project never has to know about. Built-ins are resolved first
+by name and can never be redefined by either.
+
+**A clash is an error naming both sources, not a silent override.** A registry entry named
+after a built-in vendor (`claude`, `codex`, `agy`, `ollama`, `*-api`) or after one of this
+project's profiles is refused: it is dropped from the plan and reported by
+`keel doctor --providers` as a `fail` that names the registry path *and* the
+`knobs.delegate_profiles.<name>` it collided with. This mirrors the built-in shadowing rule
+above — the operator is told which file to edit instead of discovering mid-run that their
+entry did nothing. The check lives in `doctor` rather than `keel validate` on purpose:
+`keel validate` must stay a function of the committed config alone, so its result cannot
+depend on whose home directory it runs in.
+
+**A broken registry never breaks a run.** A missing file means no machine-level providers —
+the state of every machine that has not opted in. A malformed document, an unknown
+transport, a `cli` entry with no `command`, an `api` entry with no key name: each is a
+warning on the entry, keel keeps the entries that parse, and nothing raises.
+
+**`api_key_env` here is not held to the project allowlist.** The
+[allowlist above](#which-env-vars-may-hold-a-delegate-key) exists because `project.yaml` is
+committed and reviewed by people other than its author — the threat model is a config an
+attacker influenced through a pull request. This file is not committed and not shared: it
+sits in your home directory at the same trust level as your shell profile, and an operator
+whose only key is `XAI_API_KEY` should not have to rename it. The **denylist still applies**:
+a high-privilege system credential (`GITHUB_TOKEN`, `AWS_*`, `SSH_AUTH_SOCK`, …) may never
+become an `Authorization` header, wherever the entry was written.
+
+Nothing here affects `config_hash`: a project that references no machine-level provider
+hashes exactly as it did before, and the registry is never part of the hash.
+
+Inspect the whole picture with [`keel doctor --providers`](cli.md#keel-doctor).
+
 #### `tier3_globs`
 
 Path globs that mark a diff as high risk. `keel ship` uses them to choose the strongest
