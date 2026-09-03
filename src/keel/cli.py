@@ -10,9 +10,11 @@ Subcommands
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import re
+import shutil
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -4273,6 +4275,129 @@ def _doctor_checkout_root(root: str) -> str | None:
     return str(candidate) if marker.is_file() else None
 
 
+#: what a candidate interpreter is asked about itself — one JSON line on stdout,
+#: so nothing has to be parsed out of a version banner.
+_PYTHON_PROBE = (
+    "import json, sys\n"
+    "try:\n"
+    "    import yaml  # noqa: F401\n"
+    "    has_yaml = True\n"
+    "except Exception:\n"
+    "    has_yaml = False\n"
+    'print(json.dumps({"version": ".".join(map(str, sys.version_info[:3])),'
+    ' "yaml": has_yaml}))\n'
+)
+#: seconds for one interpreter probe / resolver run — both are local and instant.
+_PYTHON_PROBE_TIMEOUT_S = 30
+
+
+def _short(text: str, limit: int = 160) -> str:
+    """Collapse tool output to one short line for a check's summary."""
+    return " ".join(text.split())[:limit]
+
+
+def _no_interpreter(source: str, reason: str) -> dict[str, object]:
+    """The build gate has no interpreter to run on — facts for the pure check."""
+    return {
+        "interpreter": None,
+        "source": source,
+        "version": None,
+        "yaml": False,
+        "reason": reason,
+    }
+
+
+def _kw(_run):
+    """Pass ``_run`` through only when provided (so the default subprocess is used otherwise)."""
+    return {"_run": _run} if _run is not None else {}
+
+
+def _probe_python(interpreter: str, source: str, *, _run=None) -> dict[str, object]:
+    """Ask ``interpreter`` for its version and whether PyYAML imports there."""
+    if interpreter == sys.executable:
+        # No subprocess for the interpreter already running this command.
+        return {
+            "interpreter": interpreter,
+            "source": source,
+            "version": ".".join(str(part) for part in sys.version_info[:3]),
+            "yaml": importlib.util.find_spec("yaml") is not None,
+            "reason": "",
+        }
+    result = run_argv(
+        [interpreter, "-c", _PYTHON_PROBE], timeout=_PYTHON_PROBE_TIMEOUT_S, **_kw(_run)
+    )
+    try:
+        payload = json.loads(result.stdout) if result.ok else {}
+        version = str(payload["version"])
+        has_yaml = bool(payload["yaml"])
+    except (ValueError, KeyError, TypeError):
+        return {
+            "interpreter": interpreter,
+            "source": source,
+            "version": None,
+            "yaml": False,
+            "reason": f"probing {interpreter} failed: {_short(result.output)}",
+        }
+    return {
+        "interpreter": interpreter,
+        "source": source,
+        "version": version,
+        "yaml": has_yaml,
+        "reason": "",
+    }
+
+
+def _doctor_python_toolchain(
+    root: str,
+    config: cfg.ProjectConfig | None,
+    *,
+    _run=None,
+    _which=None,
+    _env=None,
+) -> dict[str, object]:
+    """Which interpreter will the configured build gate actually run on?
+
+    Thin I/O for the ``python_toolchain`` check — the classifier in
+    :mod:`keel.doctor` only reads the facts this gathers.
+
+    A gate that is not ``make`` runs in this process's world, so the answer is
+    ``sys.executable``. A ``make`` gate runs whatever the Makefile resolves: an
+    exported ``PY`` when the operator set one, else this repository's
+    ``scripts/find_python.sh``, else — a project whose Makefile has no resolver —
+    plain ``python3`` off PATH, which is exactly the interpreter #1022 is about.
+
+    Every boundary is injectable (``_run`` is the subprocess seam threaded into
+    :func:`~keel.runner.run_argv`, ``_which`` the PATH lookup, ``_env`` the
+    environment), so the check is unit-tested offline against stub interpreters.
+    """
+    which = shutil.which if _which is None else _which
+    env = os.environ if _env is None else _env
+    gate = config.knobs.build_gate_cmd if config is not None else ""
+    if gate.split()[:1] != ["make"]:
+        return _probe_python(sys.executable, "sys.executable", _run=_run)
+    override = env.get("PY", "").strip()
+    if override:
+        return _probe_python(override, "PY (environment)", _run=_run)
+    resolver = Path(root) / "scripts" / "find_python.sh"
+    if not resolver.is_file():
+        fallback = which("python3")
+        if not fallback:
+            return _no_interpreter("python3 on PATH", "no python3 on PATH for the make build gate")
+        return _probe_python(fallback, "python3 on PATH", _run=_run)
+    # Through `sh` rather than executed directly: a `.sh` is not a program on
+    # every platform, and the resolver is a POSIX script by design.
+    result = run_argv(
+        ["/bin/sh", str(resolver)], cwd=root, timeout=_PYTHON_PROBE_TIMEOUT_S, **_kw(_run)
+    )
+    lines = result.stdout.strip().splitlines()
+    if not result.ok or not lines:
+        return _no_interpreter(
+            "scripts/find_python.sh",
+            f"scripts/find_python.sh resolved none: {_short(result.output)}",
+        )
+    return _probe_python(lines[-1].strip(), "scripts/find_python.sh", _run=_run)
+
+
 def _cmd_doctor(args: argparse.Namespace) -> int:
     config = None
     core_version = None
@@ -4299,6 +4424,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         state_paths=state_paths,
         module_path=str(Path(__file__).resolve().parent),
         checkout_root=_doctor_checkout_root(args.root),
+        python_toolchain=_doctor_python_toolchain(args.root, config),
     )
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))

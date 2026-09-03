@@ -3,10 +3,12 @@
 import contextlib
 import io
 import json
+import sys
 import tempfile
 import unittest
 import urllib.request
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from keel import __version__, api_delegate, cli, doctor, install
@@ -405,6 +407,7 @@ class TestDoctorCli(unittest.TestCase):
                 "orphan_adapters",
                 "core_version",
                 "state_paths",
+                "python_toolchain",
             },
         )
         # --offline => latest unknown.
@@ -585,6 +588,327 @@ class TestDoctorCheckoutRoot(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             (Path(d) / "src" / "keel" / "__init__.py").mkdir(parents=True)
             self.assertIsNone(cli._doctor_checkout_root(d))
+
+
+class TestPythonToolchainCheck(unittest.TestCase):
+    """The pure classifier: is the build gate's interpreter one keel can run on?"""
+
+    def _run_check(self, **toolchain):
+        base = {
+            "interpreter": "/opt/py312/bin/python",
+            "source": "scripts/find_python.sh",
+            "version": "3.12.4",
+            "yaml": True,
+            "reason": "",
+        }
+        base.update(toolchain)
+        return _check(_doctor(python_toolchain=base), "python_toolchain")
+
+    def test_not_probed_is_ok(self):
+        check = _check(_doctor(), "python_toolchain")
+        self.assertEqual(check["status"], "ok")
+        self.assertIn("not probed", check["summary"])
+        self.assertEqual(check["detail"], {})
+
+    def test_supported_interpreter_with_pyyaml_is_ok(self):
+        check = self._run_check()
+        self.assertEqual(check["status"], "ok")
+        self.assertIn("/opt/py312/bin/python", check["summary"])
+        self.assertIn("3.12.4", check["summary"])
+
+    def test_detail_carries_the_gathered_facts(self):
+        check = self._run_check(source="PY (environment)")
+        self.assertEqual(check["detail"]["source"], "PY (environment)")
+        self.assertEqual(check["detail"]["interpreter"], "/opt/py312/bin/python")
+        self.assertTrue(check["detail"]["yaml"])
+
+    def test_no_interpreter_warns_with_the_reason(self):
+        check = self._run_check(interpreter=None, reason="scripts/find_python.sh resolved none")
+        self.assertEqual(check["status"], "warn")
+        self.assertIn("no usable interpreter", check["summary"])
+        self.assertIn("resolved none", check["summary"])
+
+    def test_no_interpreter_and_no_reason_still_says_something(self):
+        check = self._run_check(interpreter=None, reason="")
+        self.assertEqual(check["status"], "warn")
+        self.assertIn("no interpreter resolved", check["summary"])
+
+    def test_unreadable_version_warns(self):
+        check = self._run_check(version=None, reason="probing /opt/py312/bin/python failed: boom")
+        self.assertEqual(check["status"], "warn")
+        self.assertIn("version is unknown", check["summary"])
+        self.assertIn("boom", check["summary"])
+
+    def test_non_string_version_warns(self):
+        check = self._run_check(version=312)
+        self.assertEqual(check["status"], "warn")
+        self.assertIn("version is unknown", check["summary"])
+
+    def test_unparseable_version_warns(self):
+        check = self._run_check(version="3.13.0rc1")
+        self.assertEqual(check["status"], "warn")
+        self.assertIn("version is unknown", check["summary"])
+
+    def test_below_the_minimum_warns_and_names_it(self):
+        # The #1022 case: Xcode's python3 on macOS.
+        check = self._run_check(interpreter="/usr/bin/python3", version="3.9.6")
+        self.assertEqual(check["status"], "warn")
+        self.assertIn("/usr/bin/python3", check["summary"])
+        self.assertIn("below the required 3.11", check["summary"])
+
+    def test_missing_pyyaml_warns(self):
+        check = self._run_check(yaml=False)
+        self.assertEqual(check["status"], "warn")
+        self.assertIn("PyYAML is not importable", check["summary"])
+
+    def test_old_interpreter_without_pyyaml_reports_both(self):
+        check = self._run_check(version="3.9.6", yaml=False)
+        self.assertIn("below the required 3.11", check["summary"])
+        self.assertIn("PyYAML is not importable", check["summary"])
+
+    def test_never_escalates_to_fail(self):
+        # keel cannot know a red gate is *this* problem — advisory only.
+        report = _doctor(
+            python_toolchain={
+                "interpreter": "/usr/bin/python3",
+                "source": "python3 on PATH",
+                "version": "3.9.6",
+                "yaml": False,
+                "reason": "",
+            }
+        )
+        self.assertEqual(report["counts"]["fail"], 0)
+        self.assertEqual(report["status"], "warn")
+
+    def test_the_minimum_matches_requires_python(self):
+        pyproject = (Path(__file__).resolve().parent.parent / "pyproject.toml").read_text(
+            encoding="utf-8"
+        )
+        minimum = ".".join(str(part) for part in doctor.MIN_PYTHON)
+        self.assertIn(f'requires-python = ">={minimum}"', pyproject)
+
+
+class _Proc:
+    """Stand-in for what ``subprocess.run`` hands back to ``run_argv``."""
+
+    def __init__(self, *, stdout="", stderr="", returncode=0):
+        self.stdout = stdout
+        self.stderr = stderr
+        self.returncode = returncode
+
+
+def _fake_run(*results):
+    """A ``subprocess.run`` seam that replays ``results`` and records its calls."""
+    calls = []
+
+    def fake(argv, **kwargs):
+        calls.append({"argv": list(argv), **kwargs})
+        return results[len(calls) - 1]
+
+    return fake, calls
+
+
+def _ok(stdout):
+    return _Proc(stdout=stdout)
+
+
+def _failed(output, code=2):
+    return _Proc(stderr=output, returncode=code)
+
+
+def _config(build_gate_cmd):
+    return SimpleNamespace(knobs=SimpleNamespace(build_gate_cmd=build_gate_cmd))
+
+
+PROBE_OK = _ok('{"version": "3.12.4", "yaml": true}')
+
+
+class TestDoctorPythonToolchain(unittest.TestCase):
+    """Thin I/O: which interpreter will the configured build gate run on?"""
+
+    def test_a_non_make_gate_reports_this_interpreter(self):
+        # Nothing to resolve: the gate runs in this process's world.
+        fake_run, calls = _fake_run()
+        facts = cli._doctor_python_toolchain(
+            ".", _config("./gradlew test"), _run=fake_run, _which=lambda _: None, _env={}
+        )
+        self.assertEqual(facts["interpreter"], sys.executable)
+        self.assertEqual(facts["source"], "sys.executable")
+        self.assertEqual(facts["version"], ".".join(str(p) for p in sys.version_info[:3]))
+        self.assertTrue(facts["yaml"])
+        self.assertEqual(calls, [])  # no subprocess for ourselves
+
+    def test_no_config_reports_this_interpreter(self):
+        fake_run, _ = _fake_run()
+        facts = cli._doctor_python_toolchain(
+            ".", None, _run=fake_run, _which=lambda _: None, _env={}
+        )
+        self.assertEqual(facts["interpreter"], sys.executable)
+
+    def test_an_exported_py_wins_over_the_resolver(self):
+        # `PY=` is what the Makefile honours first, so doctor must report it.
+        fake_run, calls = _fake_run(PROBE_OK)
+        with tempfile.TemporaryDirectory() as d:
+            _write_resolver(d)
+            facts = cli._doctor_python_toolchain(
+                d,
+                _config("make test"),
+                _run=fake_run,
+                _which=lambda _: None,
+                _env={"PY": " /opt/py312/bin/python "},
+            )
+        self.assertEqual(facts["interpreter"], "/opt/py312/bin/python")
+        self.assertEqual(facts["source"], "PY (environment)")
+        self.assertEqual(facts["version"], "3.12.4")
+        self.assertEqual(calls[0]["argv"][0], "/opt/py312/bin/python")
+
+    def test_an_empty_py_is_not_an_override(self):
+        fake_run, calls = _fake_run(_ok("/opt/py313/bin/python\n"), PROBE_OK)
+        with tempfile.TemporaryDirectory() as d:
+            _write_resolver(d)
+            facts = cli._doctor_python_toolchain(
+                d, _config("make test"), _run=fake_run, _which=lambda _: None, _env={"PY": "  "}
+            )
+        self.assertEqual(facts["source"], "scripts/find_python.sh")
+        self.assertEqual(facts["interpreter"], "/opt/py313/bin/python")
+
+    def test_a_make_gate_asks_the_resolver(self):
+        fake_run, calls = _fake_run(_ok("/opt/py313/bin/python\n"), PROBE_OK)
+        with tempfile.TemporaryDirectory() as d:
+            resolver = _write_resolver(d)
+            facts = cli._doctor_python_toolchain(
+                d, _config("make test"), _run=fake_run, _which=lambda _: None, _env={}
+            )
+        self.assertEqual(calls[0]["argv"], ["/bin/sh", str(resolver)])
+        self.assertEqual(facts["interpreter"], "/opt/py313/bin/python")
+        self.assertEqual(facts["source"], "scripts/find_python.sh")
+
+    def test_a_resolver_that_finds_nothing_warns_with_its_message(self):
+        fake_run, _ = _fake_run(_failed("find_python: no Python >= 3.11 with PyYAML found"))
+        with tempfile.TemporaryDirectory() as d:
+            _write_resolver(d)
+            facts = cli._doctor_python_toolchain(
+                d, _config("make test"), _run=fake_run, _which=lambda _: None, _env={}
+            )
+        self.assertIsNone(facts["interpreter"])
+        self.assertIn("no Python >= 3.11", facts["reason"])
+        self.assertFalse(facts["yaml"])
+
+    def test_a_silent_resolver_is_not_an_interpreter(self):
+        fake_run, _ = _fake_run(_ok("   \n"))
+        with tempfile.TemporaryDirectory() as d:
+            _write_resolver(d)
+            facts = cli._doctor_python_toolchain(
+                d, _config("make test"), _run=fake_run, _which=lambda _: None, _env={}
+            )
+        self.assertIsNone(facts["interpreter"])
+
+    def test_a_project_without_the_resolver_falls_back_to_python3(self):
+        # Someone else's `make test` runs whatever their Makefile picks — `python3`.
+        fake_run, calls = _fake_run(PROBE_OK)
+        with tempfile.TemporaryDirectory() as d:
+            facts = cli._doctor_python_toolchain(
+                d,
+                _config("make -C build test"),
+                _run=fake_run,
+                _which=lambda name: f"/usr/bin/{name}",
+                _env={},
+            )
+        self.assertEqual(facts["interpreter"], "/usr/bin/python3")
+        self.assertEqual(facts["source"], "python3 on PATH")
+        self.assertEqual(calls[0]["argv"][0], "/usr/bin/python3")
+
+    def test_no_python3_at_all_warns(self):
+        fake_run, _ = _fake_run()
+        with tempfile.TemporaryDirectory() as d:
+            facts = cli._doctor_python_toolchain(
+                d, _config("make test"), _run=fake_run, _which=lambda _: None, _env={}
+            )
+        self.assertIsNone(facts["interpreter"])
+        self.assertIn("no python3 on PATH", facts["reason"])
+
+    def test_an_interpreter_that_cannot_be_probed_reports_the_failure(self):
+        fake_run, _ = _fake_run(_failed("bad interpreter: Permission denied", code=126))
+        facts = cli._doctor_python_toolchain(
+            ".",
+            _config("make test"),
+            _run=fake_run,
+            _which=lambda _: None,
+            _env={"PY": "/opt/broken/python"},
+        )
+        self.assertEqual(facts["interpreter"], "/opt/broken/python")
+        self.assertIsNone(facts["version"])
+        self.assertIn("Permission denied", facts["reason"])
+
+    def test_unreadable_probe_output_is_not_a_crash(self):
+        fake_run, _ = _fake_run(_ok("not json"))
+        facts = cli._doctor_python_toolchain(
+            ".",
+            _config("make test"),
+            _run=fake_run,
+            _which=lambda _: None,
+            _env={"PY": "/opt/py312/bin/python"},
+        )
+        self.assertIsNone(facts["version"])
+        self.assertIn("failed", facts["reason"])
+
+    def test_probe_output_missing_a_field_is_not_a_crash(self):
+        fake_run, _ = _fake_run(_ok('{"version": "3.12.4"}'))
+        facts = cli._doctor_python_toolchain(
+            ".",
+            _config("make test"),
+            _run=fake_run,
+            _which=lambda _: None,
+            _env={"PY": "/opt/py312/bin/python"},
+        )
+        self.assertIsNone(facts["version"])
+
+    def test_probe_output_of_the_wrong_shape_is_not_a_crash(self):
+        fake_run, _ = _fake_run(_ok("[1, 2]"))
+        facts = cli._doctor_python_toolchain(
+            ".",
+            _config("make test"),
+            _run=fake_run,
+            _which=lambda _: None,
+            _env={"PY": "/opt/py312/bin/python"},
+        )
+        self.assertIsNone(facts["version"])
+
+    def test_a_missing_pyyaml_is_reported_not_hidden(self):
+        fake_run, _ = _fake_run(_ok('{"version": "3.12.4", "yaml": false}'))
+        facts = cli._doctor_python_toolchain(
+            ".",
+            _config("make test"),
+            _run=fake_run,
+            _which=lambda _: None,
+            _env={"PY": "/opt/py312/bin/python"},
+        )
+        self.assertFalse(facts["yaml"])
+
+    def test_long_tool_output_is_trimmed_into_one_line(self):
+        self.assertEqual(cli._short("a\n  b\tc  "), "a b c")
+        self.assertEqual(len(cli._short("x " * 500)), 160)
+
+    def test_the_cli_wires_the_check_up(self):
+        # End to end through `keel doctor` with the real seams: the sample
+        # project's gate is not `make`, so the answer is this interpreter and
+        # nothing is spawned.
+        with tempfile.TemporaryDirectory() as d:
+            install.install_all(d)
+            rc, out, _err = run(["doctor", str(SAMPLE_PROJECT), "--root", d, "--offline", "--json"])
+        self.assertEqual(rc, 0)
+        check = _check(json.loads(out), "python_toolchain")
+        self.assertEqual(check["status"], "ok")
+        self.assertEqual(check["detail"]["interpreter"], sys.executable)
+        self.assertEqual(check["detail"]["source"], "sys.executable")
+
+
+def _write_resolver(root):
+    """Place a stand-in ``scripts/find_python.sh`` under ``root`` (never executed)."""
+    resolver = Path(root) / "scripts" / "find_python.sh"
+    resolver.parent.mkdir(parents=True, exist_ok=True)
+    resolver.write_text("#!/usr/bin/env sh\nexit 0\n", encoding="utf-8")
+    return resolver
 
 
 if __name__ == "__main__":
