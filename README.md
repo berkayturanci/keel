@@ -231,9 +231,9 @@ flows are additive. The plugin's command files under `commands/` are generated f
 `keel install-adapter plugin`, and a test fails on any drift. The `pip install keel-workflow`
 + `keel install-adapter` path is unchanged.
 
-**16 shipped commands** — `ship` (flagship, with a `--compound` profile flag), `implement`,
+**17 shipped commands** — `ship` (flagship, with a `--compound` profile flag), `implement`,
 `review-cycle`, `review-all-day`, `pr-loop`, `regression`, `triage`, `morning`, `work-block`,
-`overnight`, `wrap`, `ci-check`, `coverage`, `deps-audit`, `flake-audit`, `stale-prs`.
+`overnight`, `swarm`, `wrap`, `ci-check`, `coverage`, `deps-audit`, `flake-audit`, `stale-prs`.
 Each is described in
 [`docs/keel/commands.md`](docs/keel/commands.md). The `keel` CLI does the deterministic work;
 the adapters are the agentic flows (per-round review, inline comments, delegation).

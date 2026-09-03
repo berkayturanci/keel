@@ -132,31 +132,55 @@ class TestEveryKnobIsDocumented(unittest.TestCase):
         )
 
 
-class TestTheSiteStatesTheRealCommandCount(unittest.TestCase):
-    """The site said 16 in five places and 17 in five others.
+class TestTheStatedCommandCountIsReal(unittest.TestCase):
+    """The count is spelled out in eighteen places and derived in none of them.
 
-    Derived from `src/keel/adapters/commands/`, the same source
-    `TestCommandCountClaims` uses for the README, so the next command to land
-    fails here instead of shipping a site that disagrees with itself.
+    Round 1 found 16 in five places and 17 in five others. Round 3's review found
+    three more the first sweep had not enumerated — `coverage.html`'s sidebar badge,
+    the README's "16 shipped commands", `keel-visual.md`'s see-also line — plus two
+    in files nobody had looked at (`website/README.md`, `keel-visual/README.md`).
+    That is the argument for listing every site *and* prose spot here rather than
+    trusting a hand-kept list in a handoff note: `website/README.md` had one, it
+    said "three static 16 spots", and it was wrong on both halves.
+
+    Paths are repo-relative because the claim is not a website-only property.
+    Historical `CHANGELOG.md` entries are deliberately absent: 16 was true when
+    they were written, and a changelog that is edited to stay current is not one.
+
+    `test_documented_commands.TestCommandCountClaims` covers one of these spots
+    already. The overlap is kept on purpose: this list is meant to be the single
+    register of *every* place the count appears, and a register with a hole in it
+    where another test happens to look is the shape that let three spots survive
+    round 1.
     """
 
-    #: Every place the site spells the count. A glob would sweep SVG path data
+    #: Every place the count is spelled out. A glob would sweep SVG `height="16"`
     #: and viewBox numbers, so the shapes are written out.
     _CLAIMS = (
-        ("llms.txt", re.compile(r"> (\d+) `/keel` commands")),
-        ("docs.html", re.compile(r"all (\d+) /keel commands")),
-        ("docs.html", re.compile(r"extension slots, (\d+) /keel commands")),
-        ("docs.html", re.compile(r'Workflow commands <span class="badge">(\d+)</span>')),
-        ("index.html", re.compile(r"extension slots, (\d+) /keel commands")),
-        ("index.html", re.compile(r'Workflow commands <span class="badge">(\d+)</span>')),
-        ("index.html", re.compile(r"(\d+) /keel commands, stdlib-first")),
-        ("index.html", re.compile(r"All (\d+) <code>/keel:")),
-        ("index.html", re.compile(r"(\d+) workflows · /keel:")),
-        ("coverage.html", re.compile(r"extension slots, (\d+) /keel commands")),
-        ("content.js", re.compile(r"All (\d+) /keel:")),
-        ("content.js", re.compile(r"keel ships <b>(\d+)</b> agentic workflow commands")),
-        ("content.js", re.compile(r"Every one of the <b>(\d+)</b> commands")),
-        ("home.js", re.compile(r"all (\d+) commands")),
+        ("website/llms.txt", re.compile(r"> (\d+) `/keel` commands")),
+        ("website/docs.html", re.compile(r"all (\d+) /keel commands")),
+        ("website/docs.html", re.compile(r"extension slots, (\d+) /keel commands")),
+        ("website/docs.html", re.compile(r'Workflow commands <span class="badge">(\d+)</span>')),
+        ("website/index.html", re.compile(r"extension slots, (\d+) /keel commands")),
+        ("website/index.html", re.compile(r'Workflow commands <span class="badge">(\d+)</span>')),
+        ("website/index.html", re.compile(r"(\d+) /keel commands, stdlib-first")),
+        ("website/index.html", re.compile(r"All (\d+) <code>/keel:")),
+        ("website/index.html", re.compile(r"(\d+) workflows · /keel:")),
+        ("website/index.html", re.compile(r"<b>(\d+)<span class=\"u\"> cmds</span>")),
+        ("website/coverage.html", re.compile(r"extension slots, (\d+) /keel commands")),
+        (
+            "website/coverage.html",
+            re.compile(r'Workflow commands <span class="badge">(\d+)</span>'),
+        ),
+        ("website/content.js", re.compile(r"All (\d+) /keel:")),
+        ("website/content.js", re.compile(r"keel ships <b>(\d+)</b> agentic workflow commands")),
+        ("website/content.js", re.compile(r"Every one of the <b>(\d+)</b> commands")),
+        ("website/home.js", re.compile(r"all (\d+) commands")),
+        ("website/README.md", re.compile(r"Workflow commands \((\d+), each with an animated")),
+        ("README.md", re.compile(r"any of the (\d+) command flows")),
+        ("README.md", re.compile(r"\*\*(\d+) shipped commands\*\*")),
+        ("docs/keel/keel-visual.md", re.compile(r"the (\d+) `/keel:<command>` workflows")),
+        ("keel-visual/README.md", re.compile(r"\*\*all (\d+) keel commands\*\*")),
     )
 
     def test_the_adapters_are_findable(self):
@@ -166,21 +190,64 @@ class TestTheSiteStatesTheRealCommandCount(unittest.TestCase):
         expected = str(len(_adapter_commands()))
         wrong: dict[str, list[str]] = {}
         for name, pattern in self._CLAIMS:
-            text = (SITE / name).read_text(encoding="utf-8")
+            text = (REPO_ROOT / name).read_text(encoding="utf-8")
             found = pattern.findall(text)
             # A claim that vanished is drift too: the pattern is the record of
             # where the count is stated, so an empty match means the sentence
             # was rewritten and this list needs the new shape.
-            self.assertTrue(found, f"website/{name} no longer states {pattern.pattern!r}")
+            self.assertTrue(found, f"{name} no longer states {pattern.pattern!r}")
             bad = [n for n in found if n != expected]
             if bad:
-                wrong.setdefault(f"website/{name}", []).extend(bad)
+                wrong.setdefault(name, []).extend(bad)
         self.assertEqual(
             {},
             wrong,
-            f"the site states a /keel command count that is not {expected} "
+            f"a documented /keel command count is not {expected} "
             f"(src/keel/adapters/commands/): {wrong}",
         )
+
+
+class TestTheEnumeratedCommandsAreTheShippedOnes(unittest.TestCase):
+    """Two files do not just count the commands — they list them, and both were short.
+
+    `README.md` promised "16 shipped commands" and named sixteen, omitting `swarm`;
+    `keel-visual/README.md` promised "all 16 keel commands" and named the same sixteen.
+    A count check would have caught the number and left the list one command short,
+    which is the more misleading half: a reader takes an enumeration as exhaustive.
+
+    So the list is compared to the shipped set, not to its own length.
+    """
+
+    #: ``(path, the phrase that opens the list, the phrase that closes it)``. The
+    #: openers carry no digit on purpose: the count is
+    #: :class:`TestTheStatedCommandCountIsReal`'s job, and an anchor that moved
+    #: with it would report a *missing list* whenever only the number was wrong.
+    _ENUMERATIONS = (
+        ("README.md", "shipped commands**", "Each is described in"),
+        ("keel-visual/README.md", "`--command` accepts **all", "Each renders its own"),
+    )
+
+    def test_every_enumeration_names_every_shipped_command(self):
+        shipped = {path.stem for path in _adapter_commands()}
+        self.assertGreater(len(shipped), 10)
+        for name, opening, closing in self._ENUMERATIONS:
+            with self.subTest(file=name):
+                text = (REPO_ROOT / name).read_text(encoding="utf-8")
+                # `assertTrue`, not `assertIn`: a failing `assertIn` on a file this
+                # size prints the whole README as the diff.
+                self.assertTrue(
+                    opening in text and closing in text,
+                    f"{name} no longer delimits its command list with {opening!r} … {closing!r}",
+                )
+                block = text.split(opening, 1)[1].split(closing, 1)[0]
+                named = set(re.findall(r"[a-z][a-z0-9-]+", block))
+                missing = sorted(shipped - named)
+                self.assertEqual(
+                    [],
+                    missing,
+                    f"{name} enumerates the shipped commands and omits {missing} — "
+                    "a reader reads a list like this as exhaustive",
+                )
 
 
 class TestTheSiteStatesTheRealBackboneShape(unittest.TestCase):

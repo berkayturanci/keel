@@ -151,4 +151,4 @@ nothing errors.
 
 - [`keel-visual/README.md`](../../keel-visual/README.md) — full reference + screenshots
 - [`cli.md`](cli.md) — the `keel activity` CLI (and every other `keel` command)
-- [`commands.md`](commands.md) — the 16 `/keel:<command>` workflows it can render
+- [`commands.md`](commands.md) — the 17 `/keel:<command>` workflows it can render

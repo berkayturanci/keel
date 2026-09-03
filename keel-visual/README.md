@@ -63,9 +63,9 @@ Two scope limits follow from "it reads the records":
 
 ## Every command, not just ship
 
-`--command` accepts **all 16 keel commands** (ci-check, coverage, deps-audit,
+`--command` accepts **all 17 keel commands** (ci-check, coverage, deps-audit,
 flake-audit, implement, morning, overnight, pr-loop, regression, review-all-day,
-review-cycle, ship, stale-prs, triage, work-block, wrap). Each renders its own
+review-cycle, ship, stale-prs, swarm, triage, work-block, wrap). Each renders its own
 flow — e.g. `overnight` shows `config → preflight → queue → work-block loop →
 report`; `triage` shows `find → tier → classify → rank → apply → summary`.
 
