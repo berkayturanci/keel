@@ -1436,15 +1436,26 @@ keel delegate wait impl-1012 --root . --timeout 3600
 
 The state file `.keel/state/delegate/<run-id>.json` is **authoritative** — `{run_id,
 provider, role, started_at, timeout, deadline_at, status: running|done|crashed, result}`,
-alongside `<run-id>.out` for the child's stdout and stderr and `<run-id>.pid` for its pid.
-The parent writes the `running` record **before** spawning, so a `wait` issued immediately
-afterwards always finds a file, and then never touches it again: the pid goes to its own
-file. Two writers, one file each. A guarded read-check-write from the parent would still
-have been a race — the child's terminal record can land between the read and the write,
-putting `running` back over the result the caller is waiting for — and separate files
-close the window entirely. Because the *result* only ever comes from the record, it
-survives the caller exiting, the session ending, and a reboot. `.keel/state/` is
-gitignored, so nothing here is ever committed.
+alongside three sidecars: `<run-id>.out` (the child's stdout and stderr), `<run-id>.pid`
+and `<run-id>.crashed`.
+
+**The record is written by the child alone.** The parent writes it once, *before*
+spawning — so a `wait` issued immediately afterwards always finds a file — and never
+touches it again; the pid goes to its own file, and a reaper that concludes a run is gone
+writes the crash marker rather than editing the record. Every one of those would otherwise
+have been a read-check-write on a file another process can replace at any instant, which
+no guard fixes: the child's terminal record can land between the read and the write, and
+`running` goes back over the result the caller is waiting for. Reads compose the four
+files, with the child's own `done` always winning over a crash marker — a marker says
+"this looked abandoned", a `done` record says "the delegate answered". Because the
+*result* only ever comes from the record, it survives the caller exiting, the session
+ending, and a reboot. `.keel/state/` is gitignored, so nothing here is ever committed.
+
+Reusing a `--run-id` is fine — an orchestrator naming a run after its issue will reuse it
+on a retry. The pid and crash markers are cleared as the new record is written, so a
+reused id inherits nothing: without that, the previous run's dead pid would pair with the
+new record and the next `keel delegate status` would reap a run that started milliseconds
+ago.
 
 **Always pass `--timeout` to `run`.** It is stamped into the record as `deadline_at`
 (plus a grace window for the child's final write). Together with a liveness check on the

@@ -127,6 +127,21 @@ def pid_path(root: str | Path, run_id: str) -> Path:
     return state_dir(root) / f"{check_run_id(run_id)}.pid"
 
 
+def crashed_path(root: str | Path, run_id: str) -> Path:
+    """Path of the marker saying a run can no longer finish. A **sidecar**, like the pid.
+
+    This is the last read-check-write removed. Marking a crash by editing the record
+    meant a reader could load a ``running`` document, decide the run was gone, and write
+    ``crashed`` back over a ``done`` the child had produced in between — the same lost
+    update the pid file exists to avoid, on the same file, from a third direction. With
+    the marker beside the record the invariant becomes simple enough to state in one
+    line: **the record is written by the child alone.** The parent writes the pid, a
+    reaper writes this, and :func:`run_record` composes the three — with the child's own
+    terminal status always winning, because it is the only one that saw the result.
+    """
+    return state_dir(root) / f"{check_run_id(run_id)}.crashed"
+
+
 def write_pid(root: str | Path, run_id: str, pid: int) -> None:
     """Record a detached child's pid. Best-effort: a run without one is bounded by its
     ``deadline_at`` instead, so failing to write it must not fail the spawn."""
@@ -142,16 +157,49 @@ def read_pid(root: str | Path, run_id: str) -> int | None:
         return None
 
 
-def run_record(root: str | Path, run_id: str) -> dict[str, Any] | None:
-    """A run's record as a **reader** wants it: the child's document plus the pid.
+def clear_sidecars(root: str | Path, run_id: str) -> None:
+    """Delete a run id's pid and crash markers. Called before a spawn reuses the id.
 
-    ``pid`` is assembled here rather than stored, so nothing that writes the record has
-    to carry it and no writer can clobber the other's half.
+    A reused ``--run-id`` is not exotic — an orchestrator naming a run after the issue it
+    is implementing will reuse it on the retry. Left behind, the previous run's pid file
+    pairs the *new* record with a **dead** pid, and `keel delegate status` (which reaps)
+    lands on a run that started milliseconds ago and marks it crashed; a stale crash
+    marker does the same thing without even needing the race. Both are cleared while the
+    new record is still being set up, before anything can observe the pair.
+    """
+    for path in (pid_path(root, run_id), crashed_path(root, run_id)):
+        with contextlib.suppress(OSError):
+            path.unlink(missing_ok=True)
+
+
+def read_crash(root: str | Path, run_id: str) -> dict[str, Any] | None:
+    """The crash marker for a run, or ``None`` when there is none."""
+    try:
+        data = json.loads(crashed_path(root, run_id).read_text(encoding="utf-8"))
+    except (OSError, ValueError, RunIdError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def run_record(root: str | Path, run_id: str) -> dict[str, Any] | None:
+    """A run's record as a **reader** wants it: the child's document plus the sidecars.
+
+    Composed rather than stored, so no writer has to carry another writer's half. The
+    child's own terminal status wins over a crash marker: a marker only ever says "this
+    looked abandoned", while a ``done`` record says "the delegate answered", and the
+    second is the stronger claim even when the marker was written later.
     """
     record = load_state(root, run_id)
     if record is None:
         return None
     record["pid"] = read_pid(root, run_id)
+    crash = read_crash(root, run_id)
+    if crash is not None and record.get("status") == "running":
+        record["status"] = "crashed"
+        record["finished_at"] = crash.get("finished_at")
+        record["result"] = _detached_failure(
+            record, code="lost", message=crash.get("reason", "the run recorded no result")
+        )
     return record
 
 
@@ -487,6 +535,9 @@ def start_detached(
         # PermissionError traceback out of `keel delegate run --detach`.
         state_dir(root).mkdir(parents=True, exist_ok=True)
         write_state(root, record)
+        # Same reason the log is opened "w": a reused run id must inherit nothing from
+        # the run before it. See `clear_sidecars`.
+        clear_sidecars(root, run_id)
         handle = out_path(root, run_id).open("w", encoding="utf-8")
     except OSError as exc:
         return _failed_spawn_record(root, record, exc)
@@ -641,17 +692,19 @@ def _mark_crashed(
     *,
     clock: Callable[[], datetime.datetime],
 ) -> dict[str, Any] | None:
-    """Record that a run vanished — re-read immediately before writing, so a child's own
-    result always wins. The window is a load and a comparison rather than the whole
-    liveness probe that decided the run was gone."""
-    record = load_state(root, run_id)
-    if record is None or record.get("status") != "running":
-        return record if record is None else run_record(root, run_id)
-    record["status"] = "crashed"
-    record["finished_at"] = _now_iso(clock)
-    record["result"] = _detached_failure(record, code="lost", message=reason)
-    write_state(root, record)
-    return record
+    """Note that a run vanished, in its own file, and return the composed record.
+
+    No read, no check, no write-back: the marker goes to :func:`crashed_path` and
+    :func:`run_record` decides what it means. So a child that wrote ``done`` while the
+    liveness probe was running still reports ``done`` — the marker is simply ignored —
+    and nothing can be lost, because nothing is overwritten.
+    """
+    with contextlib.suppress(OSError):
+        workspace.write_text_atomic(
+            crashed_path(root, run_id),
+            json.dumps({"reason": reason, "finished_at": _now_iso(clock)}, indent=2),
+        )
+    return run_record(root, run_id)
 
 
 def reap_abandoned(

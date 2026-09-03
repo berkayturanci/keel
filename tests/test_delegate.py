@@ -855,6 +855,7 @@ class ResolutionOrderIsStatedOnceTest(unittest.TestCase):
         "src/keel/providers.py",
         "src/keel/delegate.py",
         "docs/keel/configuration.md",
+        "docs/keel/cli.md",
         "docs/keel/models.md",
         "src/keel/adapters/commands/ship.md",
     )

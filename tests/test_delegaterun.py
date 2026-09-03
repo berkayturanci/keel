@@ -515,6 +515,10 @@ class DetachLifecycleTest(unittest.TestCase):
 _ALIVE = staticmethod(lambda _pid: True)
 
 
+def _utc():
+    return datetime.datetime.now(datetime.UTC)
+
+
 def _at(offset_seconds):
     """A UTC clock fixed ``offset_seconds`` from now — for deadline arithmetic."""
     moment = datetime.datetime.now(datetime.UTC) + datetime.timedelta(seconds=offset_seconds)
@@ -578,7 +582,8 @@ class WaitTest(unittest.TestCase):
             self.assertIsNone(result)
             self.assertEqual(error, "timeout")
             # The run may still be alive, so nothing is marked.
-            self.assertEqual(delegaterun.load_state(root, "r1")["status"], "running")
+            self.assertEqual(delegaterun.run_record(root, "r1")["status"], "running")
+            self.assertIsNone(delegaterun.read_crash(root, "r1"))
 
     def test_a_killed_child_is_marked_crashed_instead_of_blocking_forever(self):
         """The SIGKILL case: without liveness, `wait` with no --timeout never returns.
@@ -595,8 +600,10 @@ class WaitTest(unittest.TestCase):
             self.assertEqual(error, "lost")
             self.assertEqual(result["error_code"], "lost")
             self.assertIn("pid 4242", result["error"])
-            record = delegaterun.load_state(root, "r1")
-            self.assertEqual(record["status"], "crashed")
+            # The crash is noted beside the record, never written into it: the record
+            # keeps exactly one writer, the child.
+            self.assertEqual(delegaterun.load_state(root, "r1")["status"], "running")
+            self.assertEqual(delegaterun.run_record(root, "r1")["status"], "crashed")
             # `status` must stop claiming it is running.
             self.assertEqual(delegaterun.list_runs(root)[0]["status"], "crashed")
 
@@ -625,7 +632,7 @@ class WaitTest(unittest.TestCase):
             result, error = delegaterun.wait(root, "r1", _sleep=lambda _s: None, _alive=dead)
             self.assertIsNone(error)
             self.assertEqual(result["text"], "landed")
-            self.assertEqual(delegaterun.load_state(root, "r1")["status"], "done")
+            self.assertEqual(delegaterun.run_record(root, "r1")["status"], "done")
 
     def test_a_run_past_its_own_deadline_is_lost_even_with_no_pid_and_no_timeout(self):
         with tempfile.TemporaryDirectory() as root:
@@ -781,6 +788,102 @@ class LostUpdateTest(unittest.TestCase):
             self.assertIsNone(delegaterun.run_record(root, "absent"))
 
 
+class RunIdReuseTest(unittest.TestCase):
+    """A reused `--run-id` must inherit nothing from the run before it.
+
+    Naming a run after the issue it implements is the obvious thing an orchestrator
+    does, so the retry reuses the id. The previous run's `.pid` file then pairs the new
+    record with a dead pid, and `keel delegate status` — which reaps — marks a run that
+    started milliseconds ago as crashed and lost.
+    """
+
+    def test_a_reused_run_id_does_not_inherit_the_previous_runs_pid(self):
+        with tempfile.TemporaryDirectory() as root:
+            delegaterun.start_detached([], root=root, run_id="issue-1012", _popen=_FakePopen(11))
+            delegaterun.wait(root, "issue-1012", _sleep=lambda _s: None, _alive=lambda _p: False)
+            self.assertEqual(delegaterun.run_record(root, "issue-1012")["status"], "crashed")
+
+            record = delegaterun.start_detached(
+                [], root=root, run_id="issue-1012", _popen=_FakePopen(22)
+            )
+            self.assertEqual(record["status"], "running")
+            self.assertEqual(delegaterun.read_pid(root, "issue-1012"), 22)
+            self.assertIsNone(delegaterun.read_crash(root, "issue-1012"))
+            self.assertEqual(delegaterun.run_record(root, "issue-1012")["status"], "running")
+
+    def test_a_reaper_racing_the_respawn_cannot_kill_the_new_run(self):
+        """The window the fix closes: the stale pid is gone before the record exists.
+
+        `clear_sidecars` runs between `write_state` and the spawn, so a reaper that lands
+        anywhere in the setup sees either the old record with the old pid, or the new
+        record with no pid at all — never the new record paired with the dead old one.
+        """
+        with tempfile.TemporaryDirectory() as root:
+            delegaterun.start_detached([], root=root, run_id="reused", _popen=_FakePopen(11))
+            seen = {}
+
+            class _ReapingPopen(_FakePopen):
+                def __call__(self, argv, **kwargs):
+                    seen["reaped"] = delegaterun.reap_abandoned(root, _alive=lambda _p: False)
+                    return super().__call__(argv, **kwargs)
+
+            delegaterun.start_detached([], root=root, run_id="reused", _popen=_ReapingPopen(22))
+            self.assertEqual(seen["reaped"], [])
+            self.assertEqual(delegaterun.run_record(root, "reused")["status"], "running")
+
+    def test_a_stale_crash_marker_alone_would_have_been_enough(self):
+        with tempfile.TemporaryDirectory() as root:
+            delegaterun.state_dir(root).mkdir(parents=True)
+            delegaterun.crashed_path(root, "reused").write_text('{"reason": "old"}', "utf-8")
+            delegaterun.start_detached([], root=root, run_id="reused", _popen=_FakePopen())
+            self.assertEqual(delegaterun.run_record(root, "reused")["status"], "running")
+
+    def test_clearing_sidecars_survives_an_unlink_that_fails(self):
+        with tempfile.TemporaryDirectory() as root:
+            with patch.object(delegaterun.Path, "unlink", side_effect=PermissionError):
+                delegaterun.clear_sidecars(root, "r1")
+
+
+class CrashMarkerTest(unittest.TestCase):
+    def test_a_child_that_answered_wins_over_a_crash_marker(self):
+        """A marker only says "this looked abandoned"; a `done` record says the delegate
+        answered. Composing rather than overwriting is what makes the stronger claim win
+        even when the marker was written later."""
+        with tempfile.TemporaryDirectory() as root:
+            delegaterun.start_detached([], root=root, run_id="r1", _popen=_FakePopen())
+            delegaterun.finish_detached(root, "r1", {"ok": True, "text": "answered"})
+            delegaterun._mark_crashed(root, "r1", "looked gone", clock=_utc)
+            record = delegaterun.run_record(root, "r1")
+            self.assertEqual(record["status"], "done")
+            self.assertEqual(record["result"]["text"], "answered")
+
+    def test_an_unreadable_crash_marker_reads_as_no_marker(self):
+        with tempfile.TemporaryDirectory() as root:
+            delegaterun.state_dir(root).mkdir(parents=True)
+            delegaterun.crashed_path(root, "r1").write_text("{oops", encoding="utf-8")
+            self.assertIsNone(delegaterun.read_crash(root, "r1"))
+            delegaterun.crashed_path(root, "r1").write_text('["not a dict"]', encoding="utf-8")
+            self.assertIsNone(delegaterun.read_crash(root, "r1"))
+            self.assertIsNone(delegaterun.read_crash(root, "../escape"))
+            self.assertIsNone(delegaterun.read_crash(root, "absent"))
+
+    def test_a_marker_that_cannot_be_written_still_returns_the_record(self):
+        with tempfile.TemporaryDirectory() as root:
+            delegaterun.start_detached([], root=root, run_id="r1", _popen=_FakePopen())
+            with patch.object(delegaterun.workspace, "write_text_atomic", side_effect=OSError):
+                record = delegaterun._mark_crashed(root, "r1", "gone", clock=_utc)
+            self.assertEqual(record["status"], "running")
+
+    def test_a_marker_without_a_reason_still_composes_a_contract(self):
+        with tempfile.TemporaryDirectory() as root:
+            delegaterun.start_detached([], root=root, run_id="r1", _popen=_FakePopen())
+            delegaterun.crashed_path(root, "r1").write_text("{}", encoding="utf-8")
+            record = delegaterun.run_record(root, "r1")
+            self.assertEqual(record["status"], "crashed")
+            self.assertEqual(record["result"]["error_code"], "lost")
+            self.assertIn("no result", record["result"]["error"])
+
+
 class ReapTest(unittest.TestCase):
     def _start(self, root, run_id):
         return delegaterun.start_detached([], root=root, run_id=run_id, _popen=_FakePopen())
@@ -801,7 +904,7 @@ class ReapTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             self._start(root, "alive")
             self.assertEqual(delegaterun.reap_abandoned(root, _alive=_ALIVE), [])
-            self.assertEqual(delegaterun.load_state(root, "alive")["status"], "running")
+            self.assertEqual(delegaterun.run_record(root, "alive")["status"], "running")
 
     def test_reaping_an_empty_root_is_a_no_op(self):
         with tempfile.TemporaryDirectory() as root:
