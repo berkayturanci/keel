@@ -11519,6 +11519,47 @@ class TestPostComment(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("keel.ship-provenance.v1", err)
 
+    def test_body_file_fixtures_are_written_as_utf8(self):
+        # Pins the helper's contract against the encoding `post-comment` reads with.
+        # Without this the next non-ASCII body silently breaks only on Windows.
+        body = artifacts.render_ship_provenance(
+            run_id="RUN-1013",
+            issue=1013,
+            head_sha=SHA_HEAD,
+            implementer_attribution=agents.attribution("agy", "gemini-3.8-flash-high"),
+        )
+        self.assertIn("\u2014", body)  # an em dash, i.e. the fixture is a real test
+        self.assertEqual(Path(_body_file(body)).read_bytes(), body.encode("utf-8"))
+
+    def test_post_comment_rejects_a_body_file_that_is_not_utf8(self):
+        # An operator whose shell wrote the rendered body in the locale encoding used
+        # to get a bare UnicodeDecodeError traceback out of keel; the marker check
+        # below never ran. Report it the way every other unreadable body is reported.
+        path = Path(_TMP.name) / f"cp1252-{next(_TMP_COUNTER)}.md"
+        path.write_bytes(
+            artifacts.render_ship_provenance(
+                run_id="RUN-1013",
+                issue=1013,
+                head_sha=SHA_HEAD,
+                implementer_attribution=agents.attribution("agy", "gemini-3.8-flash-high"),
+            ).encode("cp1252")
+        )
+        rc, _, err = run(
+            [
+                "post-comment",
+                str(PROJECTS / "keel.yaml"),
+                "--target",
+                "pr:2652",
+                "--artifact",
+                "ship-provenance",
+                "--body-file",
+                str(path),
+            ]
+        )
+
+        self.assertEqual(rc, 1)
+        self.assertIn("is not valid UTF-8", err)
+
     def test_post_comment_rejects_invalid_target_and_unreadable_body(self):
         body = _body_file("<!-- keel.issue-update.v1 -->\n")
         rc_target, _, err_target = run(
@@ -11917,8 +11958,20 @@ def _merge_capability_report():
 
 
 def _body_file(text: str) -> str:
+    """Write a rendered artifact body exactly as `keel post-comment` will read it.
+
+    **`encoding="utf-8"` is load-bearing, not decoration.** `post-comment` reads
+    `--body-file` with an explicit `encoding="utf-8"`, while `write_text` with no
+    encoding uses the *locale* encoding — UTF-8 on Linux/macOS, cp1252 on a default
+    Windows runner. Every body passed here used to be ASCII, so the two agreed by
+    luck. The ship-provenance body carries an em dash, and the mismatch surfaced as
+    `UnicodeDecodeError: 'utf-8' codec can't decode byte 0x97 in position 369` on all
+    three Windows jobs — 0x97 being cp1252's em dash, at 359 bytes plus the 10 CRLF
+    translations before it. Closure comments already carry `—`, `→`, `⚓`, so this was
+    a live landmine rather than a new one.
+    """
     path = Path(_TMP.name) / f"body-{next(_TMP_COUNTER)}.md"
-    path.write_text(text)
+    path.write_text(text, encoding="utf-8")
     return str(path)
 
 

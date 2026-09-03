@@ -2406,6 +2406,17 @@ def _cmd_post_comment(args: argparse.Namespace) -> int:
     except OSError as exc:
         print(f"cannot read --body-file {args.body_file}: {exc}", file=sys.stderr)
         return 1
+    except UnicodeDecodeError:
+        # Not an OSError, so without this it escaped as a traceback. keel's artifact
+        # bodies are UTF-8 (closure comments carry "—", "→", "⚓"), but a shell that
+        # redirected `keel ship --json` output on a non-UTF-8 locale writes something
+        # else. Say so, rather than crashing before the marker check even runs.
+        print(
+            f"--body-file {args.body_file} is not valid UTF-8; "
+            "re-render the artifact body as UTF-8",
+            file=sys.stderr,
+        )
+        return 1
     if marker not in body:
         print(
             f"body for artifact {args.artifact} must contain marker {marker}",
