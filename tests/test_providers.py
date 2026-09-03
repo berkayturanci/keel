@@ -17,6 +17,12 @@ from keel import api_delegate, providerprobe, providers
 from keel import config as cfg
 from keel.runner import CommandResult
 
+#: The registry path the fixtures use, rendered the way the loader renders it.
+#: `Registry.path` is `str(Path(...))`, which is `\\registry\\providers.yaml` on
+#: Windows — asserting the POSIX spelling passed on three platforms and failed on the
+#: fourth, which is exactly the kind of drift a literal in a test buys.
+REGISTRY_PATH = str(Path("/registry/providers.yaml"))
+
 
 def _config(profiles=None, **knobs):
     return cfg.ProjectConfig(
@@ -29,9 +35,7 @@ def _config(profiles=None, **knobs):
 
 def _registry(text, *, env=None):
     """Parse ``text`` as a registry document through the real loader (injected read)."""
-    return providers.load_registry(
-        "/registry/providers.yaml", env=env or {}, _read=lambda _path: text
-    )
+    return providers.load_registry(REGISTRY_PATH, env=env or {}, _read=lambda _path: text)
 
 
 def _which(*present):
@@ -276,6 +280,34 @@ class TestRegistryEntries(unittest.TestCase):
         allowed = _registry(document, env={cfg.ALLOW_REMOTE_ENDPOINT_ENV: "1"})
         self.assertEqual(allowed.names(), ("groq",))
 
+    def test_the_remote_refusal_names_the_environment_opt_in(self):
+        # The endpoint rules are the project profile's, and their wording ("not in
+        # this file") reads oddly in a home-directory registry — so the registry adds
+        # its own line naming the variable and where it has to be set.
+        registry = _registry(
+            "providers:\n"
+            "  mine:\n"
+            "    transport: api\n"
+            "    endpoint: https://gateway.example.com/v1/chat/completions\n"
+            "    api_key_env: KEEL_DELEGATE_KEY_MINE\n"
+        )
+        joined = "\n".join(registry.warnings)
+        self.assertIn(cfg.ALLOW_REMOTE_ENDPOINT_ENV, joined)
+        self.assertIn("not registered", joined)
+        self.assertIn("exported in your shell", joined)
+
+    def test_a_key_name_problem_does_not_blame_the_remote_opt_in(self):
+        registry = _registry(
+            "providers:\n"
+            "  loopback:\n"
+            "    transport: api\n"
+            "    endpoint: http://127.0.0.1:8000/v1/chat/completions\n"
+            "    api_key_env: GITHUB_TOKEN\n"
+        )
+        joined = "\n".join(registry.warnings)
+        self.assertIn("high-privilege system credential", joined)
+        self.assertNotIn(cfg.ALLOW_REMOTE_ENDPOINT_ENV, joined)
+
     def test_a_high_privilege_credential_may_not_be_a_provider_key(self):
         registry = _registry(
             "providers:\n"
@@ -380,14 +412,14 @@ class TestClashesAndPlan(unittest.TestCase):
         registry = _registry("providers:\n  codex:\n    transport: cli\n    command: codex\n")
         errors = providers.registry_clashes(registry, None)
         self.assertEqual(len(errors), 1)
-        self.assertIn("/registry/providers.yaml", errors[0])
+        self.assertIn(REGISTRY_PATH, errors[0])
         self.assertIn("built-in delegate vendor 'codex'", errors[0])
 
     def test_a_clash_with_a_project_profile_names_both_sources(self):
         registry = _registry("providers:\n  cursor:\n    transport: cli\n    command: other\n")
         config = _config({"cursor": cfg.DelegateProfile(vendor="cli", command="cursor-agent")})
         (error,) = providers.registry_clashes(registry, config)
-        self.assertIn("/registry/providers.yaml", error)
+        self.assertIn(REGISTRY_PATH, error)
         self.assertIn("knobs.delegate_profiles.cursor", error)
         self.assertIn("project profile wins", error)
 
@@ -745,7 +777,7 @@ class TestReport(unittest.TestCase):
         )
         report = providerprobe.collect(
             _config(),
-            registry_path="/registry/providers.yaml",
+            registry_path=REGISTRY_PATH,
             _which=_which("claude", "aider"),
             _run=_runner(
                 {
@@ -757,7 +789,7 @@ class TestReport(unittest.TestCase):
             _opener=_FakeOpener(error=OSError("refused")),
             _read=lambda _path: document,
         )
-        self.assertEqual(report["registry_path"], "/registry/providers.yaml")
+        self.assertEqual(report["registry_path"], REGISTRY_PATH)
         self.assertTrue(report["registry_present"])
         self.assertEqual(report["available"], 2)
         self.assertEqual(report["total"], len(providers.builtin_providers()) + 1)

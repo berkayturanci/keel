@@ -318,10 +318,22 @@ def _parse_entry(
     if transport == "api":
         endpoint = _text(entry.get("endpoint"))
         issues = cfg.endpoint_issues(endpoint, where=where, env=env)
+        remote_gate = any(cfg.ALLOW_REMOTE_ENDPOINT_ENV in issue for issue in issues)
         key_env = _text(entry.get("api_key_env"))
         issues.extend(_api_key_env_issues(key_env, where=where))
         if issues:
             warnings.extend(issues)
+            if remote_gate:
+                # Say it in the registry's own voice. The endpoint rules are the
+                # project profile's, and their message says "not in this file" — which
+                # in a home-directory registry reads as though some *other* file could
+                # grant it. None can: the opt-in is environment-only precisely because
+                # a file must not be able to widen its own reach.
+                warnings.append(
+                    f"{where}: not registered. Reaching your own remote endpoint needs "
+                    f"{cfg.ALLOW_REMOTE_ENDPOINT_ENV}=1 exported in your shell — no "
+                    "registry entry can grant itself that"
+                )
             return None, warnings
         return (
             Provider(vendor=OPENAI_COMPATIBLE, endpoint=endpoint, api_key_env=key_env, **fields),

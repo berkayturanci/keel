@@ -316,7 +316,26 @@ providers:
     transport: api
     endpoint: http://127.0.0.1:8000/v1/chat/completions
     api_key_env: VLLM_API_KEY      # the NAME, never the key
+  my-gateway:
+    transport: api                 # non-loopback: needs the env opt-in below
+    endpoint: https://gateway.example.com/v1/chat/completions
+    api_key_env: KEEL_DELEGATE_KEY_GATEWAY
 ```
+
+**A registry `api` endpoint is held to the same loopback-only default as a project
+profile's**, so a remote one of your own — the `XAI_API_KEY`-style case this registry
+exists for — is refused until you export the opt-in:
+
+```bash
+export KEEL_ALLOW_REMOTE_ENDPOINT=1     # any non-loopback endpoint, registry included
+export KEEL_ALLOW_INTERNAL_ENDPOINT=1   # additionally, for 10./172.16./192.168. hosts
+```
+
+Until then the entry is **skipped with a warning naming that variable**, and every other
+entry still registers. The opt-in stays in the environment rather than in the file for the
+same reason it does for `project.yaml`: a file must not be able to widen its own reach —
+so no registry entry can grant itself a remote endpoint, however trusted the directory it
+sits in.
 
 | field | required | description |
 |---|---|---|
