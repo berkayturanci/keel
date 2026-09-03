@@ -305,10 +305,12 @@ def extract_issue_scope(
     )
 
 
-def paths_intersect(path_a: str, path_b: str) -> bool:
-    """True if path_a and path_b refer to the same file or overlapping glob/directory."""
-    a = _normalize_path(path_a)
-    b = _normalize_path(path_b)
+def _normalized_paths_intersect(a: str, b: str) -> bool:
+    """:func:`paths_intersect` for two paths already passed through ``_normalize_path``.
+
+    The matching rules live here and nowhere else. ``paths_intersect`` normalizes and
+    delegates; the swarm plan normalizes each scope once and calls this directly.
+    """
     if not a or not b:
         return False
     if a == b:
@@ -328,6 +330,11 @@ def paths_intersect(path_a: str, path_b: str) -> bool:
     return False
 
 
+def paths_intersect(path_a: str, path_b: str) -> bool:
+    """True if path_a and path_b refer to the same file or overlapping glob/directory."""
+    return _normalized_paths_intersect(_normalize_path(path_a), _normalize_path(path_b))
+
+
 def scopes_intersect(scope_a: IssueScope, scope_b: IssueScope) -> tuple[str, ...]:
     """Return common overlapping paths between two issue scopes."""
     overlaps: set[str] = set()
@@ -336,6 +343,39 @@ def scopes_intersect(scope_a: IssueScope, scope_b: IssueScope) -> tuple[str, ...
             if paths_intersect(fa, fb):
                 overlaps.add(fa if len(fa) <= len(fb) else fb)
     return tuple(sorted(overlaps))
+
+
+def _normalized_files(scope: IssueScope) -> tuple[str, ...]:
+    """The scope's predicted paths as the matcher sees them, normalized once."""
+    return tuple(_normalize_path(f) for f in scope.predicted_files)
+
+
+def _normalized_scopes_conflict(files_a: tuple[str, ...], files_b: tuple[str, ...]) -> bool:
+    """:func:`scopes_have_conflict` over paths already normalized by ``_normalized_files``."""
+    # Fast path: an identical path is a conflict under the ``a == b`` rule, and a set
+    # intersection finds one without the pairwise loop. The empty string is dropped
+    # because the matcher rejects it on either side — ``("",)`` vs ``("",)`` is not a
+    # conflict, and must not become one here.
+    common = set(files_a) & set(files_b)
+    common.discard("")
+    if common:
+        return True
+    for fa in files_a:
+        for fb in files_b:
+            if _normalized_paths_intersect(fa, fb):
+                return True
+    return False
+
+
+def scopes_have_conflict(scope_a: IssueScope, scope_b: IssueScope) -> bool:
+    """True if any predicted path of one scope overlaps any path of the other.
+
+    Equivalent to ``bool(scopes_intersect(scope_a, scope_b))`` — the same matcher and
+    the same normalization — but returns at the first overlap instead of collecting
+    and sorting them all. ``build_swarm_plan`` asks this O(N²) times and only needs
+    the boolean.
+    """
+    return _normalized_scopes_conflict(_normalized_files(scope_a), _normalized_files(scope_b))
 
 
 def build_swarm_plan(
@@ -363,9 +403,17 @@ def build_swarm_plan(
 
     # Compute pairwise conflict graph
     conflict_map: dict[int, list[int]] = {s.issue: [] for s in sorted_scopes}
+    # Normalize every scope once, outside the O(N²) pair loop: the loop used to pay
+    # for ``_normalize_path`` on both sides of every one of the |A|·|B| path pairs,
+    # for every pair of issues — about half the per-pair cost. Kept as a list aligned
+    # with ``sorted_scopes``, not a dict by issue number: two scopes carrying the same
+    # issue number are two scopes, and keying by number would silently compare one
+    # of them with the other's files.
+    normalized = [_normalized_files(s) for s in sorted_scopes]
     for i, sa in enumerate(sorted_scopes):
-        for sb in sorted_scopes[i + 1 :]:
-            if scopes_intersect(sa, sb):
+        for j in range(i + 1, len(sorted_scopes)):
+            sb = sorted_scopes[j]
+            if _normalized_scopes_conflict(normalized[i], normalized[j]):
                 conflict_map[sa.issue].append(sb.issue)
                 conflict_map[sb.issue].append(sa.issue)
 
