@@ -822,12 +822,11 @@ class RunIdReuseTest(unittest.TestCase):
             delegaterun.start_detached([], root=root, run_id="reused", _popen=_FakePopen(11))
             seen = {}
 
-            class _ReapingPopen(_FakePopen):
-                def __call__(self, argv, **kwargs):
-                    seen["reaped"] = delegaterun.reap_abandoned(root, _alive=lambda _p: False)
-                    return super().__call__(argv, **kwargs)
+            def reaping_popen(argv, **kwargs):
+                seen["reaped"] = delegaterun.reap_abandoned(root, _alive=lambda _p: False)
+                return _FakeChild(22)
 
-            delegaterun.start_detached([], root=root, run_id="reused", _popen=_ReapingPopen(22))
+            delegaterun.start_detached([], root=root, run_id="reused", _popen=reaping_popen)
             self.assertEqual(seen["reaped"], [])
             self.assertEqual(delegaterun.run_record(root, "reused")["status"], "running")
 
