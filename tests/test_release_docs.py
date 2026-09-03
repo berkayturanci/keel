@@ -6,6 +6,7 @@ import re
 import sys
 import tomllib
 import unittest
+import unittest.mock
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -387,6 +388,60 @@ class TestTheReleaseGuardsRunBeforeAnythingIsUploaded(unittest.TestCase):
             self.assertEqual(len(problems), 1, problems)
             self.assertIn("carries no version marker", problems[0])
 
+    def test_two_markers_in_one_file_are_two_markers(self):
+        """Keyed by (path, pattern), not by path.
+
+        Under path-only keying the second entry for a file overwrote the first, so
+        a file carrying one correct and one stale version reported a single value
+        and agreed with itself — the guard passing on precisely the state it
+        exists to catch. `VISUAL_EDITS` names two files today; nothing stops it
+        naming one file twice.
+        """
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            marker = root / "keel-visual" / "src" / "keel_visual" / "__init__.py"
+            marker.parent.mkdir(parents=True)
+            marker.write_text('__version__ = "0.8.0"\nLEGACY_VERSION = "0.6.0"\n', encoding="utf-8")
+            relative = "keel-visual/src/keel_visual/__init__.py"
+            edits = (
+                (relative, re.compile(r'(?m)^(__version__ = ")([^"]+)(")')),
+                (relative, re.compile(r'(?m)^(LEGACY_VERSION = ")([^"]+)(")')),
+            )
+
+            with unittest.mock.patch.object(release_check, "VISUAL_EDITS", edits):
+                problems = release_check.check_visual_markers(root).problems
+
+            self.assertEqual(len(problems), 1, problems)
+            self.assertIn("0.8.0", problems[0])
+            self.assertIn("0.6.0", problems[0])
+
+    def test_a_marker_pattern_that_breaks_the_group_convention_is_refused(self):
+        """`VISUAL_EDITS` substitutes `\\g<1>{new}\\g<3>`, so group 2 is the version.
+
+        This module reads that same list rather than restating it, which is only
+        sound while the convention holds. A two-group pattern added there would
+        make the guard compare the wrong substring, or raise mid-release — so it
+        is checked, not assumed.
+        """
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            marker = root / "keel-visual" / "pyproject.toml"
+            marker.parent.mkdir(parents=True)
+            marker.write_text('version = "0.8.0"\n', encoding="utf-8")
+            edits = (("keel-visual/pyproject.toml", re.compile(r'(?m)^version = "([^"]+)"')),)
+
+            with unittest.mock.patch.object(release_check, "VISUAL_EDITS", edits):
+                problems = release_check.check_visual_markers(root).problems
+
+            self.assertEqual(len(problems), 1, problems)
+            self.assertIn("1 groups", problems[0])
+            self.assertIn("(prefix)(version)(suffix)", problems[0])
+
+    def test_the_real_marker_patterns_keep_the_group_convention(self):
+        for relative, pattern in release_check.VISUAL_EDITS:
+            with self.subTest(path=relative):
+                self.assertEqual(pattern.groups, release_check.VISUAL_PATTERN_GROUPS)
+
     def test_the_tag_must_name_the_declared_version(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -418,6 +473,20 @@ class TestThePublishWorkflowRunsTheGuards(unittest.TestCase):
 
     def setUp(self):
         self.workflow = (REPO_ROOT / ".github/workflows/publish.yml").read_text(encoding="utf-8")
+        self.document = yaml.safe_load(self.workflow)
+
+    def _verify_script(self) -> str:
+        return "\n".join(step.get("run", "") for step in self.document["jobs"]["verify"]["steps"])
+
+    @staticmethod
+    def _code(script: str) -> str:
+        """The script with comment lines removed.
+
+        The same precaution `test_publish_formula_followup.py` takes: these steps
+        explain in prose what they no longer do, and a plain `assertNotIn` matches
+        that explanation happily — passing, or failing, on a comment.
+        """
+        return "\n".join(line for line in script.splitlines() if not line.lstrip().startswith("#"))
 
     def test_the_release_guards_run_before_the_build(self):
         self.assertIn("scripts/release_check.py --tag", self.workflow)
@@ -427,36 +496,162 @@ class TestThePublishWorkflowRunsTheGuards(unittest.TestCase):
             "the guards must run before anything is built or uploaded",
         )
 
+    def test_the_build_is_reproducible(self):
+        """Two builds of one tree used to produce four different digests.
+
+        Without a pinned timestamp `python -m build` stamps the current time into
+        the archives, so a workflow re-run at the same tag produced *different
+        bytes for the same release*. PyPI keeps the first upload; the GitHub
+        Release was overwritten with the rebuild's digests. The two records of one
+        release then disagreed by construction, and `verify` would have reported a
+        digest mismatch — and filed a `release-broken` issue — on a healthy
+        release.
+        """
+        build = self.document["jobs"]["build-n-publish"]
+        script = "\n".join(step.get("run", "") for step in build["steps"])
+
+        self.assertIn("SOURCE_DATE_EPOCH", script)
+        self.assertLess(
+            script.index("SOURCE_DATE_EPOCH"),
+            script.index("python -m build"),
+            "the timestamp must be pinned before the build reads it",
+        )
+        # From the tagged commit, not from the clock: a value that changes per run
+        # is not a fix, it is the same bug with more steps.
+        self.assertIn("git log -1 --pretty=%ct", script)
+
+    def test_the_release_upload_does_not_replace_published_assets(self):
+        """First upload wins on both sides, matching PyPI's `skip-existing`."""
+        upload = [
+            step
+            for step in self.document["jobs"]["build-n-publish"]["steps"]
+            if step.get("uses", "").startswith("softprops/action-gh-release@")
+        ]
+
+        self.assertEqual(len(upload), 1)
+        self.assertIs(upload[0]["with"]["overwrite_files"], False)
+
     def test_the_verify_job_runs_after_the_publish_job(self):
-        document = yaml.safe_load(self.workflow)
-        verify = document["jobs"]["verify"]
+        verify = self.document["jobs"]["verify"]
 
         self.assertEqual(verify["needs"], "build-n-publish")
         # Minimal permissions: read the release assets, file the report. Nothing
         # in this job publishes, so nothing here grants `contents: write`.
         self.assertEqual(verify["permissions"], {"contents": "read", "issues": "write"})
 
-    def test_the_verify_job_does_every_check_the_runbook_promises(self):
-        steps = "\n".join(
-            step.get("run", "") for step in yaml.safe_load(self.workflow)["jobs"]["verify"]["steps"]
-        )
+    def test_the_primary_digest_comparison_is_against_pypis_own_record(self):
+        """PyPI is the source of truth for what was published, not the release.
 
-        # The smoke test that was documented for several releases while no
-        # workflow ran it — `grep -rn release_smoke .github/workflows/` found
-        # nothing, which is what #1024 opened on.
-        self.assertIn("scripts/release_smoke.py --requirement", steps)
-        self.assertIn("keel version", steps)
-        self.assertIn("keel doctor", steps)
-        self.assertIn("pip download --no-deps", steps)
-        self.assertIn("--no-binary=:all:", steps)  # the sdist; pip prefers the wheel
-        self.assertIn("gh release download", steps)
-        self.assertIn("SHA256SUMS", steps)
-        self.assertIn("sha256sum", steps)
-        # Bounded, not open-ended: a job that waits forever reports nothing.
-        self.assertIn("for attempt in $(seq 1 20); do", steps)
+        `skip-existing: true` means the files PyPI serves cannot be replaced by a
+        later run, and `digests.sha256` in its JSON document is what it computed
+        over those bytes. The GitHub Release's SHA256SUMS is a second record of
+        the same thing, and a rebuilt one can disagree with it.
+        """
+        script = self._verify_script()
+
+        self.assertIn("https://pypi.org/pypi/keel-workflow/${version}/json", script)
+        self.assertIn(".digests.sha256", script)
+        self.assertIn("sha256sum", script)
+
+    def test_the_artifacts_are_fetched_without_an_unpinned_build_isolation(self):
+        """`pip download --no-binary=:all:` builds the sdist's metadata.
+
+        That pulls an unpinned setuptools into an isolated build env, on a
+        release-verification path, to learn a filename the JSON document already
+        states. The urls[] entries carry the download URL directly.
+        """
+        code = self._code(self._verify_script())
+
+        self.assertNotIn("pip download", code)
+        self.assertNotIn("--no-binary", code)
+        self.assertIn(".urls[]", code)
+
+    def test_both_distributions_must_be_served_before_anything_is_compared(self):
+        """A wheel is indexed before the sdist; waiting on "something" is not enough."""
+        script = self._verify_script()
+
+        self.assertIn('[.urls[].packagetype] | unique | join(",")', script)
+        self.assertIn('= "bdist_wheel,sdist"', script)
+        # And the loop must still refuse to pass having compared one artifact.
+        self.assertIn('if [ "$checked" -ne 2 ]; then', script)
+
+    def test_the_index_wait_is_bounded_by_a_readable_number(self):
+        """Assert the bound, not the loop's spelling."""
+        env = self.document["jobs"]["verify"]["env"]
+        attempts = int(env["PYPI_WAIT_ATTEMPTS"])
+        seconds = int(env["PYPI_WAIT_SECONDS"])
+
+        self.assertGreater(attempts, 1, "one attempt is not a retry")
+        self.assertGreaterEqual(
+            attempts * seconds, 60, "too short to outlast normal index propagation"
+        )
+        self.assertLessEqual(
+            attempts * seconds, 900, "a job that waits this long reports nothing in time"
+        )
+        # The numbers are load-bearing rather than decorative: the loop reads them.
+        script = self._verify_script()
+        self.assertIn('for attempt in $(seq 1 "$PYPI_WAIT_ATTEMPTS"); do', script)
+        self.assertIn('sleep "$PYPI_WAIT_SECONDS"', script)
+
+    def test_the_installed_package_must_report_the_tag(self):
+        """A wheel built from the wrong commit installs and runs perfectly."""
+        script = self._verify_script()
+
+        self.assertIn('if [ "$installed" != "keel ${version}" ]; then', script)
+        self.assertIn("Version mismatch", script)
+
+    def test_doctor_is_log_only_and_says_so(self):
+        """Advisory by design: doctor warns about adapters that are correctly absent."""
+        script = self._verify_script()
+
+        self.assertIn("keel doctor", script)
+        self.assertNotIn("doctor --strict", script)
+        self.assertIn("log-only", script)
+
+    def test_the_secondary_comparison_tolerates_a_rebuilt_checksum_file(self):
+        """A release cut before the two fixes above can carry rebuilt digests.
+
+        That is a defect in the release's bookkeeping, not evidence that the
+        package PyPI serves is wrong — PyPI's own digest is checked first. So it
+        warns rather than filing a `release-broken` issue against a healthy
+        release.
+        """
+        script = self._verify_script()
+
+        self.assertIn("gh release download", script)
+        self.assertIn("SHA256SUMS", script)
+        self.assertIn('if [ "$replaced" -eq 1 ]; then', script)
+        self.assertIn("::warning title=SHA256SUMS was replaced after its first upload", script)
+        # An artifact PyPI serves that the release never listed is still an error.
+        self.assertIn("::error title=Not in SHA256SUMS", script)
+
+    def test_the_tolerance_asks_whether_the_asset_was_replaced_not_how_old_it_is(self):
+        """The obvious rule would downgrade every genuine mismatch to a warning.
+
+        On the healthy v1.19.3 release PyPI uploaded at 07:28:47 and the GitHub
+        Release assets at 07:28:58, because the release is created after the
+        publish step in the same run. So "the SHA256SUMS asset is newer than the
+        PyPI upload" is true of *every* normal release, and keying the tolerance on
+        it would suppress the digest mismatch this job exists to report.
+
+        GitHub bumps an asset's `updatedAt` only when it is replaced; on a first
+        upload `createdAt == updatedAt`. That is the exact question, and it needs
+        no threshold.
+        """
+        code = self._code(self._verify_script())
+
+        self.assertIn('select(.name == "SHA256SUMS") | "\\(.createdAt) \\(.updatedAt)"', code)
+        self.assertIn('if [ "$sums_updated" -gt "$sums_created" ]; then', code)
+        # The rejected rule must not be what actually runs.
+        self.assertNotIn("upload_time_iso_8601] | sort", code)
+
+    def test_the_smoke_test_the_runbook_documented_actually_runs(self):
+        # `grep -rn release_smoke .github/workflows/` found nothing, which is what
+        # #1024 opened on.
+        self.assertIn("scripts/release_smoke.py --requirement", self._verify_script())
 
     def test_a_failed_verify_files_a_deduped_release_broken_issue(self):
-        steps = yaml.safe_load(self.workflow)["jobs"]["verify"]["steps"]
+        steps = self.document["jobs"]["verify"]["steps"]
         failure_steps = [step for step in steps if step.get("if") == "failure()"]
 
         self.assertEqual(len(failure_steps), 1)
@@ -469,6 +664,21 @@ class TestThePublishWorkflowRunsTheGuards(unittest.TestCase):
         # The log tail is the whole point — an issue saying only "it failed"
         # sends the reader back to the run it was supposed to replace.
         self.assertIn('tail -n 100 "$LOG"', run)
+
+    def test_the_log_tail_is_masked_before_it_reaches_a_public_issue(self):
+        """The constraint is stated in the step that writes the log, and enforced here."""
+        steps = self.document["jobs"]["verify"]["steps"]
+        failure_run = next(step["run"] for step in steps if step.get("if") == "failure()")
+        verify_step = next(step for step in steps if "cross-check" in step.get("name", ""))
+
+        self.assertIn("gh[pousr]|github_pat", failure_run)
+        self.assertIn("redacted", failure_run)
+        # And the step that writes the log carries the rule it must keep. Read from
+        # the raw file: this one lives in a YAML comment above `run:`, which is
+        # where a rule about the step as a whole belongs and which the parsed
+        # document does not preserve.
+        self.assertIn("nothing secret may reach $LOG", self.workflow)
+        self.assertIn("cross-check the published digests", verify_step["name"])
 
 
 class TestTheRunbookCannotGoStale(unittest.TestCase):

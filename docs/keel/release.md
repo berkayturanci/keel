@@ -253,19 +253,59 @@ The workflow must produce:
 - build-provenance attestation
 - GitHub Release
 
+### Reproducible builds
+
+The build job exports `SOURCE_DATE_EPOCH` from the **tagged commit's own commit time**
+(`git log -1 --pretty=%ct`) before `python -m build`. Without it, `build` stamps the
+current time into the archives, so two runs over the same tree produce different bytes and
+different SHA256 digests.
+
+That is not cosmetic. PyPI keeps the first upload (`skip-existing: true`), so a workflow
+re-run at the same tag would publish a GitHub Release describing artifacts PyPI never
+served — and the verify job would report a digest mismatch, and file a `release-broken`
+issue, against a perfectly healthy release. The release upload carries
+`overwrite_files: false` for the same reason: **first upload wins on both sides**, so the
+two records of one release cannot drift apart.
+
+Pin the epoch to the tag, not to the clock: a value that changes per run is the same bug
+with more steps.
+
 ## Post-Publish Verification
 
 **This is automatic.** `publish.yml`'s `verify` job runs after the publish job, on the tag,
 and does all of it (#1024):
 
-- waits for the PyPI index to serve the new version — bounded, five minutes, then fails;
-- installs `keel-workflow==<version>` from PyPI into a clean virtualenv and runs
-  `keel version` and `keel doctor`;
+- waits until PyPI's release document (`https://pypi.org/pypi/keel-workflow/<version>/json`)
+  lists **both** distributions — a wheel is indexed before the sdist, and a check that
+  proceeds on "something is served" verifies half a release. Bounded at five minutes
+  (`PYPI_WAIT_ATTEMPTS` × `PYPI_WAIT_SECONDS` in the job's `env:`), then it fails;
+- downloads each artifact from that document's own `urls[]` and checks the bytes against
+  the `digests.sha256` PyPI computed on upload. **This is the primary comparison**, because
+  PyPI is the record of what was actually published: `skip-existing: true` means no later
+  run can replace those files. Fetching from `urls[]` also avoids `pip download
+  --no-binary=:all:`, which prepares the sdist's metadata and so pulls an unpinned
+  setuptools into an isolated build environment to learn a filename the document states;
+- installs `keel-workflow==<version>` from PyPI into a clean virtualenv and requires
+  `keel version` to print the tag's version — a wheel built from the wrong commit installs
+  and runs perfectly while reporting a different one. `keel doctor` runs log-only
+  (deliberately not `--strict`: outside a keel checkout it correctly warns that no adapter
+  surfaces are present, which is not a release defect);
 - runs `python scripts/release_smoke.py --requirement "keel-workflow==<version>"` — the
   smoke test this runbook documented for several releases while no workflow ran it;
-- downloads the published wheel *and* source distribution with `pip download --no-deps`,
-  and compares their SHA256 against the `SHA256SUMS` asset on the GitHub Release. The log
-  prints both digests per artifact, so the comparison is readable rather than asserted.
+- compares the same artifacts against the GitHub Release's `SHA256SUMS` as a **secondary**
+  check. The log prints both digests per artifact, so the comparison is readable rather
+  than asserted. It tolerates exactly one history: a release whose `SHA256SUMS` asset was
+  **replaced after its first upload** — a re-run that rebuilt the artifacts — warns instead
+  of failing, because PyPI's own digest already matched and it is the checksum file, not
+  the package, that describes something else.
+
+  The discriminator is the asset's own `createdAt` vs `updatedAt`, not its age relative to
+  the PyPI upload. On the healthy v1.19.3 release PyPI uploaded at 07:28:47 and the release
+  assets at 07:28:58 — the release is created after the publish step of the same run — so
+  "the asset is newer than the PyPI upload" is true of *every* normal release and would
+  downgrade every genuine mismatch to a warning. GitHub bumps `updatedAt` only when an
+  asset is replaced, so on a first upload the two are equal and the question needs no
+  threshold.
 
 If any of it fails the job fails **and** opens (or comments on) an issue titled
 `release-broken: v<version>` carrying the last 100 lines of the verify log. A red job in a

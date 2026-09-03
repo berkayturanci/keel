@@ -170,6 +170,16 @@ def check_surfaces(root: Path) -> Check:
     return Check("release surfaces", problems)
 
 
+#: ``release_bump.VISUAL_EDITS`` writes its replacements as ``\g<1>{new}\g<3>``,
+#: so every pattern in it is a three-group sandwich — prefix, version, suffix —
+#: and the version is group 2. That convention is what lets this module read the
+#: same list the bumper writes through instead of restating it, and it is checked
+#: rather than assumed: a two-group pattern added there would otherwise make this
+#: guard compare the wrong substring, or raise inside a release.
+VISUAL_VERSION_GROUP = 2
+VISUAL_PATTERN_GROUPS = 3
+
+
 def check_visual_markers(root: Path) -> Check:
     """``keel-visual``'s two version markers must agree with each other.
 
@@ -181,11 +191,21 @@ def check_visual_markers(root: Path) -> Check:
 
     The files and the patterns come from ``release_bump.VISUAL_EDITS``, the list
     the bumper rewrites, so a marker added there is guarded here without a second
-    edit.
+    edit. See :data:`VISUAL_PATTERN_GROUPS` for the shape that list must keep.
     """
-    seen: dict[str, str] = {}
+    # Keyed by (path, pattern): two markers in one file are two markers. Keying by
+    # path alone silently collapsed them, so a file carrying both a correct and a
+    # stale version would have reported whichever came last and agreed with itself.
+    seen: dict[tuple[str, str], str] = {}
     problems = []
     for relative, pattern in VISUAL_EDITS:
+        if pattern.groups != VISUAL_PATTERN_GROUPS:
+            problems.append(
+                f"{relative}'s pattern has {pattern.groups} groups, not "
+                f"{VISUAL_PATTERN_GROUPS}; release_bump.VISUAL_EDITS must keep the "
+                "(prefix)(version)(suffix) shape its own substitution relies on"
+            )
+            continue
         path = root / relative
         if not path.exists():
             problems.append(f"{relative} is a keel-visual version marker but does not exist")
@@ -194,9 +214,11 @@ def check_visual_markers(root: Path) -> Check:
         if not match:
             problems.append(f"{relative} carries no version marker")
             continue
-        seen[relative] = match.group(2)
+        seen[(relative, pattern.pattern)] = match.group(VISUAL_VERSION_GROUP)
     if len(set(seen.values())) > 1:
-        detail = ", ".join(f"{relative}={version}" for relative, version in sorted(seen.items()))
+        detail = ", ".join(
+            f"{relative}={version}" for (relative, _pattern), version in sorted(seen.items())
+        )
         problems.append(
             f"keel-visual's version markers disagree ({detail}); "
             "`python scripts/release_bump.py <version> --package keel-visual` repairs it"

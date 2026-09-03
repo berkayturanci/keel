@@ -54,6 +54,21 @@ jobs:
             --require-hashes \
             -r .github/requirements/publish-tools.txt
 
+      # Reproducible builds. Without a fixed timestamp `python -m build` stamps the
+      # current time into the archives, so two runs over the *same* tree produce
+      # different bytes and therefore different SHA256s. That is not cosmetic here:
+      # PyPI keeps the first upload (`skip-existing: true`) while a re-run at the
+      # same tag would otherwise publish a GitHub Release describing artifacts PyPI
+      # never served, and the verify job below would report a digest mismatch on a
+      # perfectly healthy release. Pinned to the tagged commit's own commit time, so
+      # the value is a property of the tag rather than of when the runner started.
+      - name: Pin SOURCE_DATE_EPOCH to the tagged commit
+        run: |
+          set -euo pipefail
+          epoch="$(git log -1 --pretty=%ct)"
+          echo "SOURCE_DATE_EPOCH=${epoch}" >> "$GITHUB_ENV"
+          echo "SOURCE_DATE_EPOCH=${epoch} ($(date -u -d "@${epoch}" +%FT%TZ))"
+
       - name: Build package distributions
         run: python -m build --no-isolation --sdist --wheel --outdir dist/
 
@@ -117,6 +132,12 @@ jobs:
           draft: false
           prerelease: false
           generate_release_notes: true
+          # First upload wins, matching PyPI's `skip-existing: true` above. The
+          # action overwrites by default, so a workflow re-run at the same tag used
+          # to replace SHA256SUMS with digests of a *rebuilt* artifact while PyPI
+          # kept the original — the two records of one release then disagreed by
+          # construction. Both sides now refuse to replace what was published.
+          overwrite_files: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -138,6 +159,10 @@ jobs:
     env:
       TAG: ${{ github.ref_name }}
       LOG: ${{ github.workspace }}/verify.log
+      # The bound on the index wait, named rather than inlined so a test can assert
+      # the number instead of matching the loop's text. 20 x 15s = five minutes.
+      PYPI_WAIT_ATTEMPTS: "20"
+      PYPI_WAIT_SECONDS: "15"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
@@ -146,11 +171,16 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Install from PyPI, smoke it, and cross-check the artifact digests
+      - name: Install from PyPI, smoke it, and cross-check the published digests
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        # Everything in one step, teed to a log the failure handler below quotes.
-        # `set -o pipefail` keeps the tee from swallowing a non-zero exit.
+        # One step, teed to a log whose tail the failure handler below posts into an
+        # issue. `set -o pipefail` keeps the tee from swallowing a non-zero exit.
+        #
+        # CONSTRAINT: nothing secret may reach $LOG — a public issue quotes its tail
+        # verbatim. No secret is expanded into this step's script; GH_TOKEN is read
+        # from the environment by `gh` and never echoed. The tail is additionally
+        # passed through a token-shaped mask before it is posted (see below).
         run: |
           set -euo pipefail
           {
@@ -158,42 +188,111 @@ jobs:
             version="${TAG#v}"
             req="keel-workflow==${version}"
             pypi="${RUNNER_TEMP}/pypi"
+            meta="${RUNNER_TEMP}/pypi.json"
             mkdir -p "$pypi"
 
-            echo "== waiting for the PyPI index to serve ${req} =="
-            # Bounded on purpose: the index is normally current within seconds, and
-            # a job that waits forever reports nothing. 20 x 15s = five minutes.
-            for attempt in $(seq 1 20); do
-              if python -m pip download --no-deps --dest "$pypi" "$req"; then
-                echo "the wheel was served on attempt ${attempt}"
+            echo "== waiting for PyPI to serve both distributions of ${version} =="
+            # "Something is served" is not the condition worth waiting for: the wheel
+            # is indexed before the sdist, and the digest cross-check below would then
+            # compare one artifact and pass having verified half a release. Wait until
+            # the release's own JSON document lists both package types.
+            for attempt in $(seq 1 "$PYPI_WAIT_ATTEMPTS"); do
+              if curl -fsSL "https://pypi.org/pypi/keel-workflow/${version}/json" -o "$meta" \
+                && [ "$(jq -r '[.urls[].packagetype] | unique | join(",")' "$meta")" = "bdist_wheel,sdist" ]; then
+                echo "both distributions listed on attempt ${attempt}"
                 break
               fi
-              if [ "$attempt" -eq 20 ]; then
-                echo "::error title=PyPI never served ${req}::not on the index after five minutes"
+              if [ "$attempt" -eq "$PYPI_WAIT_ATTEMPTS" ]; then
+                echo "::error title=PyPI never served both distributions::${req} did not have a wheel and an sdist on the index within the bounded wait"
                 exit 1
               fi
-              sleep 15
+              sleep "$PYPI_WAIT_SECONDS"
             done
-            # pip prefers the wheel, so ask for the source distribution explicitly.
-            python -m pip download --no-deps --no-binary=:all: --dest "$pypi" "$req"
-            ls -l "$pypi"
+            jq -r '.urls[] | "  \(.packagetype)  \(.filename)  uploaded \(.upload_time_iso_8601)"' "$meta"
 
-            echo "== clean venv: install, keel version, keel doctor =="
+            echo "== the published artifacts, against PyPI's own digests =="
+            # PyPI is the primary record. `digests.sha256` is what the index computed
+            # over the bytes it stores and will serve forever, and `skip-existing:
+            # true` means no later run can change them — unlike a rebuilt artifact,
+            # which is a different file for the same release (builds only became
+            # byte-reproducible once the build job pinned SOURCE_DATE_EPOCH).
+            #
+            # Fetched from the document's own urls[] rather than resolved by pip:
+            # `pip download --no-binary=:all:` prepares the sdist's metadata, pulling
+            # an unpinned setuptools into an isolated build env to learn a filename
+            # this document already states.
+            checked=0
+            while read -r name url want; do
+              curl -fsSL "$url" -o "${pypi}/${name}"
+              got="$(sha256sum "${pypi}/${name}" | cut -d" " -f1)"
+              echo "${name}"
+              echo "  pypi declares: ${want}"
+              echo "  bytes hash to: ${got}"
+              if [ "$want" != "$got" ]; then
+                echo "::error title=Corrupt artifact::${name} does not hash to the digest PyPI declares for it"
+                exit 1
+              fi
+              checked=$((checked + 1))
+            done < <(jq -r '.urls[] | "\(.filename) \(.url) \(.digests.sha256)"' "$meta")
+            # Always two. Zero would mean the loop compared nothing and the step
+            # passed for that reason.
+            if [ "$checked" -ne 2 ]; then
+              echo "::error title=Nothing compared::expected 2 artifacts, hashed ${checked}"
+              exit 1
+            fi
+
+            echo "== clean venv: install, keel version =="
             python -m venv "${RUNNER_TEMP}/verify-venv"
             "${RUNNER_TEMP}/verify-venv/bin/pip" install --disable-pip-version-check "$req"
-            "${RUNNER_TEMP}/verify-venv/bin/keel" version
-            # Run doctor from a scratch directory: its checkout_binding check asks
-            # whether the importable keel resolves inside the current checkout, and
-            # here it deliberately does not — the package under test came from PyPI.
+            installed="$("${RUNNER_TEMP}/verify-venv/bin/keel" version)"
+            echo "keel version -> ${installed}"
+            # The tag is the claim; this is the package's answer to it. A wheel built
+            # from the wrong commit installs and runs perfectly while reporting a
+            # different version, which nothing else here would notice.
+            if [ "$installed" != "keel ${version}" ]; then
+              echo "::error title=Version mismatch::the package PyPI serves for ${TAG} reports '${installed}', not 'keel ${version}'"
+              exit 1
+            fi
+
+            echo "== keel doctor (log-only: advisory by design, see below) =="
+            # Deliberately not `--strict`. doctor's checks are advisory here: run
+            # against a PyPI install from outside a keel checkout it correctly warns
+            # that no adapter surfaces are present, which is not a release defect.
+            # Its output is in the log for a human reading a failure, and it cannot
+            # fail this job on its own.
             (cd "${RUNNER_TEMP}" && "${RUNNER_TEMP}/verify-venv/bin/keel" doctor)
 
             echo "== release_smoke.py against the published package =="
             python scripts/release_smoke.py --requirement "$req"
 
-            echo "== PyPI digests vs the GitHub Release SHA256SUMS =="
+            echo "== secondary: the GitHub Release SHA256SUMS =="
+            # Secondary, and tolerant of exactly one history. Both sides now refuse to
+            # replace a published file — PyPI via `skip-existing`, the release upload
+            # via `overwrite_files: false` — so these must agree. A release cut before
+            # those settings could have had SHA256SUMS overwritten by a re-run that
+            # rebuilt the artifacts. That is a defect in the release's bookkeeping,
+            # not evidence that the package PyPI serves is wrong (PyPI's own digests
+            # matched above), so it warns instead of failing.
+            #
+            # The discriminator is the asset's own createdAt vs updatedAt, NOT its
+            # age relative to the PyPI upload. Measured on the healthy v1.19.3
+            # release: PyPI uploaded at 07:28:47 and the release assets at 07:28:58,
+            # so "the asset is newer than the PyPI upload" is true of *every* normal
+            # release — a rule keyed on that would downgrade every genuine mismatch
+            # to a warning, which is worse than the bug it was meant to fix. GitHub
+            # bumps updatedAt only when an asset is *replaced*; on a first upload the
+            # two timestamps are equal, so this asks the exact question.
             gh release download "$TAG" --pattern SHA256SUMS --dir "${RUNNER_TEMP}/ghrel" --clobber
             cat "${RUNNER_TEMP}/ghrel/SHA256SUMS"
-            checked=0
+            sums="$(gh release view "$TAG" --json assets \
+              --jq '.assets[] | select(.name == "SHA256SUMS") | "\(.createdAt) \(.updatedAt)"')"
+            sums_created="$(date -u -d "$(echo "$sums" | cut -d" " -f1)" +%s)"
+            sums_updated="$(date -u -d "$(echo "$sums" | cut -d" " -f2)" +%s)"
+            replaced=0
+            if [ "$sums_updated" -gt "$sums_created" ]; then
+              replaced=1
+            fi
+            echo "SHA256SUMS uploaded ${sums% *}, last updated ${sums#* } (replaced: ${replaced})"
             for artifact in "$pypi"/*; do
               name="$(basename "$artifact")"
               want="$(awk -v n="$name" '$2 == n { print $1 }' "${RUNNER_TEMP}/ghrel/SHA256SUMS")"
@@ -205,18 +304,16 @@ jobs:
                 echo "::error title=Not in SHA256SUMS::${name} is on PyPI but the release lists no digest for it"
                 exit 1
               fi
-              if [ "$want" != "$got" ]; then
-                echo "::error title=Digest mismatch::${name} on PyPI is not the artifact this release published"
-                exit 1
+              if [ "$want" = "$got" ]; then
+                continue
               fi
-              checked=$((checked + 1))
-            done
-            # Always two: a wheel and an sdist. Zero would mean the loop compared
-            # nothing and the step passed for that reason.
-            if [ "$checked" -ne 2 ]; then
-              echo "::error title=Nothing compared::expected 2 artifacts, hashed ${checked}"
+              if [ "$replaced" -eq 1 ]; then
+                echo "::warning title=SHA256SUMS was replaced after its first upload::${name} differs, and this release's checksum file was overwritten after it was first published — a re-run that rebuilt the artifacts. PyPI's own digest matched, so the package is intact; it is the release's checksum file that describes something else."
+                continue
+              fi
+              echo "::error title=Digest mismatch::${name} on PyPI is not the artifact this release published"
               exit 1
-            fi
+            done
             echo "== verified ${req} =="
           } 2>&1 | tee "$LOG"
 
@@ -232,11 +329,24 @@ jobs:
           set -euo pipefail
           title="release-broken: ${TAG}"
           run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+          # This tail goes verbatim into a public issue. The verify step above
+          # carries the constraint that nothing secret may reach $LOG, and nothing
+          # there writes one. Masking token shapes anyway: the runner redacts
+          # registered secrets in its own log but not inside a file it is asked to
+          # read back, and a future edit to that step should not be one careless
+          # `echo` away from publishing a credential. (There is no repo-wide
+          # redaction helper for workflows — `src/keel/redaction.py` is the capture
+          # artifact policy, a different surface with a different contract.)
+          logtail="$(tail -n 100 "$LOG" 2>/dev/null || echo '(no log captured)')"
+          logtail="$(printf '%s\n' "$logtail" \
+            | sed -E 's/(gh[pousr]|github_pat)_[A-Za-z0-9_]{20,}/***redacted***/g')"
+
           body="$(printf '%s\n\n%s\n\n%s\n\n```\n%s\n```\n' \
             "Post-publish verification failed for \`${TAG}\`. PyPI files are immutable: fix forward with a new version, and yank ${TAG} if the published artifact is wrong (docs/keel/release.md, Rollback And Re-Run Notes)." \
             "Run: ${run_url}" \
-            "Last 100 lines of the verify log:" \
-            "$(tail -n 100 "$LOG" 2>/dev/null || echo '(no log captured)')")"
+            "Last 100 lines of the verify log (token shapes masked):" \
+            "$logtail")"
 
           existing="$(gh issue list --state open --search "\"${title}\" in:title" \
             --json number,title \
