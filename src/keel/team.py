@@ -61,6 +61,13 @@ TIERS = ("1", "2", "3")
 #: ``advisory`` reports and never gates.
 JURY_MODES = ("gating", "advisory")
 
+#: ``by_difficulty`` bands, lightest first. A band names the bench that staffs work of
+#: that weight; :func:`keel.swarm.score_difficulty` decides which band a cluster is, and
+#: the same resolver seats it. Unlike a tier — which is *how risky the change is* and is
+#: read off the files it touches — a band is *how much work it is*, which is what decides
+#: whether the strong implementer is worth spending on it (#1017).
+DIFFICULTY_BANDS = ("easy", "standard", "hard")
+
 #: Distinct vendors a jury needs before its verdict can gate, when the policy is silent.
 DEFAULT_MIN_VENDORS = 2
 
@@ -132,6 +139,24 @@ class Seat:
 
 
 @dataclass(frozen=True)
+class Bench:
+    """A named bench: who leads it, who implements on it, who reviews, at what effort.
+
+    One type, two tables. ``team.by_difficulty`` picks a bench from a cluster's *scored
+    difficulty*; ``team.profiles`` lets an operator pick one by name (``--team``). They
+    are the same thing — "staff this piece of work from this bench" — so they resolve
+    through one code path rather than two that can disagree.
+    """
+
+    lead: Seat | None = None
+    implement: Seat | None = None
+    #: Reviewer seats, or the literal ``"jury"``; ``None`` leaves the tier's policy alone.
+    review: tuple[Seat, ...] | str | None = None
+    #: Effort for this bench's implementer, when the seat does not name one itself.
+    effort: str | None = None
+
+
+@dataclass(frozen=True)
 class TeamPolicy:
     """A parsed ``knobs.team`` block. ``configured`` is False when there is none."""
 
@@ -146,6 +171,31 @@ class TeamPolicy:
     jury_mode: str | None = None
     jury_min_vendors: int | None = None
     fix: Seat | None = None
+    #: The seat that coordinates a batch of ships — the team lead a swarm cluster or a
+    #: work block reports through. Defaults to the host agent driving the run.
+    lead: Seat | None = None
+    #: Difficulty band (:data:`DIFFICULTY_BANDS`) -> the bench that staffs work of that
+    #: weight.
+    by_difficulty: Mapping[str, Bench] = field(default_factory=dict)
+    #: Operator-selectable benches (``--team <profile>``).
+    profiles: Mapping[str, Bench] = field(default_factory=dict)
+
+    def benches_for(
+        self, *, difficulty: str | None = None, profile: str | None = None
+    ) -> tuple[tuple[Bench, str], ...]:
+        """Benches that apply to this run, most specific first, each with its config path.
+
+        A named ``--team`` profile is an operator saying *this bench, for this batch*, so
+        it outranks the band the scorer derived. They are not exclusive: each field
+        resolves down the list on its own, so a profile that names only reviewers still
+        lets the band's implementer stand instead of silently dropping it.
+        """
+        found: list[tuple[Bench, str]] = []
+        if profile is not None and profile in self.profiles:
+            found.append((self.profiles[profile], f"team.profiles.{profile}"))
+        if difficulty is not None and difficulty in self.by_difficulty:
+            found.append((self.by_difficulty[difficulty], f"team.by_difficulty.{difficulty}"))
+        return tuple(found)
 
     def review_for(self, tier: int | None) -> tuple[tuple[Seat, ...] | str | None, str | None]:
         """Reviewer seats (or ``"jury"``) for ``tier``, plus the config path they came from."""
@@ -192,6 +242,38 @@ def _seats(raw: Any) -> tuple[Seat, ...] | str | None:
     return seats
 
 
+def _bench(raw: Any) -> Bench | None:
+    """One ``by_difficulty``/``profiles`` entry -> a :class:`Bench`, or ``None``.
+
+    An entry that names nothing at all is ``None`` rather than an empty bench, so an
+    accidental ``hard: {}`` does not read as *a bench that overrides everything with
+    nothing* — it reads as absent, and the role/tier policy stands.
+    """
+    if not isinstance(raw, Mapping):
+        return None
+    bench = Bench(
+        lead=_seat(raw.get("lead")),
+        implement=_seat(raw.get("implement")),
+        review=_seats(raw.get("review")) if "review" in raw else None,
+        effort=_text(raw.get("effort")),
+    )
+    if bench == Bench():
+        return None
+    return bench
+
+
+def _benches(raw: Any) -> dict[str, Bench]:
+    """A ``by_difficulty``/``profiles`` mapping -> named benches, in a stable order."""
+    if not isinstance(raw, Mapping):
+        return {}
+    benches: dict[str, Bench] = {}
+    for name in sorted(raw, key=str):
+        bench = _bench(raw[name])
+        if isinstance(name, str) and bench is not None:
+            benches[name] = bench
+    return benches
+
+
 def parse_team(raw: Any) -> TeamPolicy:
     """Parse a ``knobs.team`` block (``None``/malformed -> an unconfigured policy)."""
     if not isinstance(raw, Mapping):
@@ -223,6 +305,9 @@ def parse_team(raw: Any) -> TeamPolicy:
         jury_mode=_text(jury.get("mode")),
         jury_min_vendors=min_vendors if isinstance(min_vendors, int) else None,
         fix=_seat(raw.get("fix")),
+        lead=_seat(raw.get("lead")),
+        by_difficulty=_benches(raw.get("by_difficulty")),
+        profiles=_benches(raw.get("profiles")),
     )
 
 
@@ -230,6 +315,23 @@ def _seat_canonical(seat: Seat) -> dict[str, Any]:
     record = {"provider": seat.provider, "model": seat.model, "effort": seat.effort}
     if seat.distinct_from is not None:
         record["distinct_from"] = seat.distinct_from
+    return record
+
+
+def _bench_canonical(bench: Bench) -> dict[str, Any]:
+    record: dict[str, Any] = {}
+    if bench.lead is not None:
+        record["lead"] = _seat_canonical(bench.lead)
+    if bench.implement is not None:
+        record["implement"] = _seat_canonical(bench.implement)
+    if bench.review is not None:
+        record["review"] = (
+            bench.review
+            if isinstance(bench.review, str)
+            else [_seat_canonical(seat) for seat in bench.review]
+        )
+    if bench.effort is not None:
+        record["effort"] = bench.effort
     return record
 
 
@@ -278,6 +380,11 @@ def canonical(policy: TeamPolicy) -> dict[str, Any]:
         team["jury"] = jury
     if policy.fix is not None:
         team["fix"] = _seat_canonical(policy.fix)
+    if policy.lead is not None:
+        team["lead"] = _seat_canonical(policy.lead)
+    for key, benches in (("by_difficulty", policy.by_difficulty), ("profiles", policy.profiles)):
+        if benches:
+            team[key] = {name: _bench_canonical(b) for name, b in sorted(benches.items())}
     return {"team": team}
 
 
@@ -334,8 +441,18 @@ def _implement_seat(
     role: str | None,
     legacy: Mapping[str, Seat] | None,
     host_agent: str,
+    benches: Sequence[tuple[Bench, str]] = (),
 ) -> tuple[Seat, str]:
-    """The implementer and the config path it came from (policy > legacy > host)."""
+    """The implementer and the config path it came from (bench > policy > legacy > host).
+
+    A bench outranks ``by_role`` because it is the more specific statement: the role says
+    *what part of the system this is*, the bench says *what this particular piece of work
+    costs*, and "the hard ones go to the strong implementer" is only expressible if the
+    second wins. ``--delegate`` still outranks both — that is the caller's job, above.
+    """
+    for bench, source in benches:
+        if bench.implement is not None:
+            return bench.implement, f"{source}.implement"
     if role is not None and role in policy.implement_by_role:
         return policy.implement_by_role[role], f"team.implement.by_role.{role}"
     if policy.implement is not None:
@@ -354,6 +471,7 @@ def _review_seats(
     host_agent: str,
     jury_disabled: bool = False,
     jury_advisory: bool = False,
+    benches: Sequence[tuple[Bench, str]] = (),
 ) -> tuple[tuple[Seat, ...], str, str, list[str]]:
     """Reviewer seats, the panel, the source, and any warnings.
 
@@ -376,6 +494,10 @@ def _review_seats(
     verdict required for the same reason.
     """
     configured, source = policy.review_for(tier)
+    for bench, bench_source in benches:
+        if bench.review is not None:
+            configured, source = bench.review, f"{bench_source}.review"
+            break
     warnings: list[str] = []
     if configured == JURY_PANEL:
         if reviewer_override is not None:
@@ -456,6 +578,50 @@ def slot_labels(count: int) -> tuple[str, ...]:
     return tuple(chr(ord("A") + index) for index in range(max(0, count)))
 
 
+def _effective_effort(
+    seat: Seat, *, bench_effort: str | None, flag_effort: str | None
+) -> str | None:
+    """The effort this seat actually runs at: ``--effort`` > the seat's own > the bench's.
+
+    The flag wins because it is the operator speaking about *this run*; the seat wins over
+    the bench because a seat that names a provider **and** an effort is one statement, and
+    the bench's ``effort`` is the default for seats that did not bother.
+    """
+    return flag_effort or seat.effort or bench_effort
+
+
+def _seat_at_effort(seat: Seat, effort: str | None) -> Seat:
+    """``seat`` running at ``effort`` — the same object when nothing changes."""
+    if effort == seat.effort:
+        return seat
+    return Seat(
+        provider=seat.provider,
+        model=seat.model,
+        effort=effort,
+        distinct_from=seat.distinct_from,
+    )
+
+
+def _lead_seat(
+    policy: TeamPolicy,
+    *,
+    benches: Sequence[tuple[Bench, str]],
+    host_agent: str,
+) -> tuple[Seat, str]:
+    """Who coordinates this batch of work: bench > ``team.lead`` > the host agent.
+
+    Always a seat, never ``None``: an unconfigured project still has a lead — the agent
+    driving the run — and a swarm coordinator that had to special-case "no lead" would
+    grow a second answer to a question this one already answers.
+    """
+    for bench, source in benches:
+        if bench.lead is not None:
+            return bench.lead, f"{source}.lead"
+    if policy.lead is not None:
+        return policy.lead, "team.lead"
+    return Seat(provider=host_agent), "host"
+
+
 def resolve_assignment(
     policy: TeamPolicy,
     *,
@@ -469,6 +635,9 @@ def resolve_assignment(
     legacy: Mapping[str, Seat] | None = None,
     jury_disabled: bool = False,
     jury_advisory: bool = False,
+    difficulty: str | None = None,
+    team_profile: str | None = None,
+    effort: str | None = None,
 ) -> dict[str, Any]:
     """Who runs this ship: implementer, gate, reviewer slots, jury, fix.
 
@@ -479,12 +648,25 @@ def resolve_assignment(
     slot B — so a two-vendor panel is expressible from the command line without a config
     change. A flag past the last slot is reported in ``warnings`` rather than silently
     dropped or silently growing the panel.
+
+    ``difficulty`` and ``team_profile`` select a :class:`Bench` (see
+    :meth:`TeamPolicy.benches_for`), which is how a batch runner says *this cluster is
+    hard, give it the strong implementer at high effort; the easy ones go to the cheap
+    model*. They are inputs to this one resolver rather than a second one beside it, so
+    ``keel ship``, ``keel plan`` and ``keel swarm-plan`` cannot disagree about who runs a
+    given issue.
     """
+    benches = policy.benches_for(difficulty=difficulty, profile=team_profile)
     implementer, implementer_source = _implement_seat(
-        policy, role=role, legacy=legacy, host_agent=host_agent
+        policy, role=role, legacy=legacy, host_agent=host_agent, benches=benches
     )
     if delegate:
         implementer, implementer_source = seat_from_token(delegate), "flag:--delegate"
+    bench_effort = next((b.effort for b, _ in benches if b.effort is not None), None)
+    implementer = _seat_at_effort(
+        implementer, _effective_effort(implementer, bench_effort=bench_effort, flag_effort=effort)
+    )
+    lead, lead_source = _lead_seat(policy, benches=benches, host_agent=host_agent)
     seats, panel, review_source, warnings = _review_seats(
         policy,
         tier=tier,
@@ -493,7 +675,14 @@ def resolve_assignment(
         host_agent=host_agent,
         jury_disabled=jury_disabled,
         jury_advisory=jury_advisory,
+        benches=benches,
     )
+    if team_profile is not None and team_profile not in policy.profiles:
+        warnings.append(
+            f"--team {team_profile!r} names no knobs.team.profiles entry; this run is "
+            f"staffed from the configured policy instead. Known: "
+            f"{', '.join(sorted(policy.profiles)) or 'none'}"
+        )
     labels = slot_labels(len(seats))
     sources = [review_source] * len(seats)
     overrides = [token for token in review_delegates if (token or "").strip()]
@@ -527,7 +716,12 @@ def resolve_assignment(
         "configured": policy.configured,
         "role": role,
         "tier": tier,
+        "difficulty": difficulty,
+        "team_profile": team_profile,
+        "bench": [source for _bench, source in benches],
+        "lead": lead.as_dict(source=lead_source),
         "implementer": implementer.as_dict(source=implementer_source),
+        "effort": implementer.effort,
         "gate": gate_record,
         "review_panel": panel,
         "reviewers": [
@@ -578,6 +772,24 @@ def _seat_paths(policy: TeamPolicy) -> list[tuple[str, Seat]]:
             paths.extend((f"review.by_tier.{tier}[{i}]", seat) for i, seat in enumerate(value))
     if policy.fix is not None:
         paths.append(("fix", policy.fix))
+    if policy.lead is not None:
+        paths.append(("lead", policy.lead))
+    paths.extend(_bench_seat_paths("by_difficulty", policy.by_difficulty))
+    paths.extend(_bench_seat_paths("profiles", policy.profiles))
+    return paths
+
+
+def _bench_seat_paths(key: str, benches: Mapping[str, Bench]) -> list[tuple[str, Seat]]:
+    """Every seat of every bench in one table, with its config path."""
+    paths: list[tuple[str, Seat]] = []
+    for name, bench in sorted(benches.items()):
+        where = f"{key}.{name}"
+        if bench.lead is not None:
+            paths.append((f"{where}.lead", bench.lead))
+        if bench.implement is not None:
+            paths.append((f"{where}.implement", bench.implement))
+        if isinstance(bench.review, tuple):
+            paths.extend((f"{where}.review[{i}]", seat) for i, seat in enumerate(bench.review))
     return paths
 
 
@@ -621,6 +833,7 @@ def team_issues(
     policy = parse_team(raw)
     errors: list[str] = []
     errors.extend(_tier_key_issues(raw, source=source))
+    errors.extend(_band_key_issues(raw, source=source))
     for path, seat in _seat_paths(policy):
         where = f"{source}.{path}"
         vendor = _seat_vendor(seat, path=path, known=known, where=where, errors=errors)
@@ -699,6 +912,24 @@ def _tier_key_issues(raw: Mapping[str, Any], *, source: str) -> list[str]:
     return errors
 
 
+def _band_key_issues(raw: Mapping[str, Any], *, source: str) -> list[str]:
+    """``by_difficulty`` keys must be difficulty bands the scorer can produce.
+
+    A typo here is silent otherwise: ``medium:`` beside ``easy:``/``hard:`` never matches
+    anything the scorer emits, so the bench an operator wrote is simply never staffed and
+    the run looks like the table was ignored.
+    """
+    by_difficulty = raw.get("by_difficulty")
+    if not isinstance(by_difficulty, Mapping):
+        return []
+    return [
+        f"{source}.by_difficulty: {key!r} is not a difficulty band; valid: "
+        f"{', '.join(DIFFICULTY_BANDS)}"
+        for key in by_difficulty
+        if key not in DIFFICULTY_BANDS
+    ]
+
+
 def _gate_issues(
     policy: TeamPolicy,
     *,
@@ -719,7 +950,7 @@ def _gate_issues(
     implementers = {
         seat.name: f"{source}.{path}"
         for path, seat in _seat_paths(policy)
-        if path.startswith("implement")
+        if path.startswith("implement") or path.endswith(".implement")
     }
     # A role the policy does not name still resolves through the deprecated knob, so a
     # gate matching one of those seats is the same defect wearing an older spelling.
@@ -743,6 +974,12 @@ def _review_issues(policy: TeamPolicy, *, source: str) -> list[str]:
     ]
     if policy.review is not None:
         entries.append(("review.default", policy.review))  # seats or the jury literal
+    for key, benches in (("by_difficulty", policy.by_difficulty), ("profiles", policy.profiles)):
+        entries.extend(
+            (f"{key}.{name}.review", bench.review)
+            for name, bench in sorted(benches.items())
+            if bench.review is not None
+        )
     for path, value in entries:
         if isinstance(value, str) and value != JURY_PANEL:
             errors.append(

@@ -201,6 +201,216 @@
                 "model": { "type": ["string", "null"], "description": "Model this seat runs on." },
                 "effort": { "enum": ["low", "medium", "high"], "description": "Reasoning effort in keel's vendor-neutral vocabulary." }
               }
+            },
+            "lead": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["provider"],
+              "description": "Default team lead: the seat that coordinates a batch of ships (a swarm cluster, a work block) and that its workers report through. Defaults to the host agent driving the run.",
+              "properties": {
+                "provider": { "type": "string", "minLength": 1, "description": "Provider filling this seat." },
+                "model": { "type": ["string", "null"], "description": "Model this seat runs on." },
+                "effort": { "enum": ["low", "medium", "high"], "description": "Reasoning effort in keel's vendor-neutral vocabulary." }
+              }
+            },
+            "by_difficulty": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "Difficulty band -> the bench that staffs work of that weight. A band is how much work an issue is (keel swarm-plan scores it from risk tier, predicted file count, priority/size labels and dependency depth); a risk tier is how dangerous the change is. This is what lets one batch say 'the hard cluster gets the strong implementer at high effort, the easy ones go to the cheap model'.",
+              "properties": {
+                "easy": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "description": "Bench for the lightest work.",
+                  "properties": {
+                    "lead": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["provider"],
+                      "description": "Team lead for this bench: the seat that runs the batch and reports its workers.",
+                      "properties": {
+                        "provider": { "type": "string", "minLength": 1, "description": "Provider filling this seat." },
+                        "model": { "type": ["string", "null"], "description": "Model this seat runs on." },
+                        "effort": { "enum": ["low", "medium", "high"], "description": "Reasoning effort in keel's vendor-neutral vocabulary." }
+                      }
+                    },
+                    "implement": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["provider"],
+                      "description": "Implementer for work staffed from this bench. Outranks implement.by_role, which says which part of the system the work is in rather than what it costs.",
+                      "properties": {
+                        "provider": { "type": "string", "minLength": 1, "description": "Provider filling this seat." },
+                        "model": { "type": ["string", "null"], "description": "Model this seat runs on." },
+                        "effort": { "enum": ["low", "medium", "high"], "description": "Reasoning effort in keel's vendor-neutral vocabulary." }
+                      }
+                    },
+                    "review": {
+                      "type": ["array", "string"],
+                      "minItems": 1,
+                      "pattern": "^jury$",
+                      "description": "Reviewer seats for work staffed from this bench, or 'jury' for the cross-vendor panel. Overrides review.by_tier for this work.",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["provider"],
+                        "description": "Provider filling this reviewer slot.",
+                        "properties": {
+                          "provider": { "type": "string", "minLength": 1, "description": "Provider filling this seat." },
+                          "model": { "type": ["string", "null"], "description": "Model this seat runs on." },
+                          "effort": { "enum": ["low", "medium", "high"], "description": "Reasoning effort in keel's vendor-neutral vocabulary." }
+                        }
+                      }
+                    },
+                    "effort": { "enum": ["low", "medium", "high"], "description": "Reasoning effort for this bench's implementer when the seat does not name one itself." }
+                  }
+                },
+                "standard": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "description": "Bench for ordinary work.",
+                  "properties": {
+                    "lead": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["provider"],
+                      "description": "Team lead for this bench: the seat that runs the batch and reports its workers.",
+                      "properties": {
+                        "provider": { "type": "string", "minLength": 1, "description": "Provider filling this seat." },
+                        "model": { "type": ["string", "null"], "description": "Model this seat runs on." },
+                        "effort": { "enum": ["low", "medium", "high"], "description": "Reasoning effort in keel's vendor-neutral vocabulary." }
+                      }
+                    },
+                    "implement": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["provider"],
+                      "description": "Implementer for work staffed from this bench. Outranks implement.by_role, which says which part of the system the work is in rather than what it costs.",
+                      "properties": {
+                        "provider": { "type": "string", "minLength": 1, "description": "Provider filling this seat." },
+                        "model": { "type": ["string", "null"], "description": "Model this seat runs on." },
+                        "effort": { "enum": ["low", "medium", "high"], "description": "Reasoning effort in keel's vendor-neutral vocabulary." }
+                      }
+                    },
+                    "review": {
+                      "type": ["array", "string"],
+                      "minItems": 1,
+                      "pattern": "^jury$",
+                      "description": "Reviewer seats for work staffed from this bench, or 'jury' for the cross-vendor panel. Overrides review.by_tier for this work.",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["provider"],
+                        "description": "Provider filling this reviewer slot.",
+                        "properties": {
+                          "provider": { "type": "string", "minLength": 1, "description": "Provider filling this seat." },
+                          "model": { "type": ["string", "null"], "description": "Model this seat runs on." },
+                          "effort": { "enum": ["low", "medium", "high"], "description": "Reasoning effort in keel's vendor-neutral vocabulary." }
+                        }
+                      }
+                    },
+                    "effort": { "enum": ["low", "medium", "high"], "description": "Reasoning effort for this bench's implementer when the seat does not name one itself." }
+                  }
+                },
+                "hard": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "description": "Bench for the heaviest work.",
+                  "properties": {
+                    "lead": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["provider"],
+                      "description": "Team lead for this bench: the seat that runs the batch and reports its workers.",
+                      "properties": {
+                        "provider": { "type": "string", "minLength": 1, "description": "Provider filling this seat." },
+                        "model": { "type": ["string", "null"], "description": "Model this seat runs on." },
+                        "effort": { "enum": ["low", "medium", "high"], "description": "Reasoning effort in keel's vendor-neutral vocabulary." }
+                      }
+                    },
+                    "implement": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["provider"],
+                      "description": "Implementer for work staffed from this bench. Outranks implement.by_role, which says which part of the system the work is in rather than what it costs.",
+                      "properties": {
+                        "provider": { "type": "string", "minLength": 1, "description": "Provider filling this seat." },
+                        "model": { "type": ["string", "null"], "description": "Model this seat runs on." },
+                        "effort": { "enum": ["low", "medium", "high"], "description": "Reasoning effort in keel's vendor-neutral vocabulary." }
+                      }
+                    },
+                    "review": {
+                      "type": ["array", "string"],
+                      "minItems": 1,
+                      "pattern": "^jury$",
+                      "description": "Reviewer seats for work staffed from this bench, or 'jury' for the cross-vendor panel. Overrides review.by_tier for this work.",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["provider"],
+                        "description": "Provider filling this reviewer slot.",
+                        "properties": {
+                          "provider": { "type": "string", "minLength": 1, "description": "Provider filling this seat." },
+                          "model": { "type": ["string", "null"], "description": "Model this seat runs on." },
+                          "effort": { "enum": ["low", "medium", "high"], "description": "Reasoning effort in keel's vendor-neutral vocabulary." }
+                        }
+                      }
+                    },
+                    "effort": { "enum": ["low", "medium", "high"], "description": "Reasoning effort for this bench's implementer when the seat does not name one itself." }
+                  }
+                }
+              }
+            },
+            "profiles": {
+              "type": "object",
+              "description": "Named benches an operator selects with --team <profile> on work-block, overnight and swarm. Outranks by_difficulty: it is the operator naming the bench for this batch.",
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": false,
+                "description": "One selectable bench.",
+                "properties": {
+                  "lead": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["provider"],
+                    "description": "Team lead for this bench: the seat that runs the batch and reports its workers.",
+                    "properties": {
+                      "provider": { "type": "string", "minLength": 1, "description": "Provider filling this seat." },
+                      "model": { "type": ["string", "null"], "description": "Model this seat runs on." },
+                      "effort": { "enum": ["low", "medium", "high"], "description": "Reasoning effort in keel's vendor-neutral vocabulary." }
+                    }
+                  },
+                  "implement": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["provider"],
+                    "description": "Implementer for work staffed from this bench. Outranks implement.by_role, which says which part of the system the work is in rather than what it costs.",
+                    "properties": {
+                      "provider": { "type": "string", "minLength": 1, "description": "Provider filling this seat." },
+                      "model": { "type": ["string", "null"], "description": "Model this seat runs on." },
+                      "effort": { "enum": ["low", "medium", "high"], "description": "Reasoning effort in keel's vendor-neutral vocabulary." }
+                    }
+                  },
+                  "review": {
+                    "type": ["array", "string"],
+                    "minItems": 1,
+                    "pattern": "^jury$",
+                    "description": "Reviewer seats for work staffed from this bench, or 'jury' for the cross-vendor panel. Overrides review.by_tier for this work.",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["provider"],
+                      "description": "Provider filling this reviewer slot.",
+                      "properties": {
+                        "provider": { "type": "string", "minLength": 1, "description": "Provider filling this seat." },
+                        "model": { "type": ["string", "null"], "description": "Model this seat runs on." },
+                        "effort": { "enum": ["low", "medium", "high"], "description": "Reasoning effort in keel's vendor-neutral vocabulary." }
+                      }
+                    }
+                  },
+                  "effort": { "enum": ["low", "medium", "high"], "description": "Reasoning effort for this bench's implementer when the seat does not name one itself." }
+                }
+              }
             }
           }
         },
