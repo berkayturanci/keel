@@ -911,5 +911,234 @@ def _write_resolver(root):
     return resolver
 
 
+class TestProvidersCheck(unittest.TestCase):
+    """The `providers` check classifies an already-probed report (#1011)."""
+
+    @staticmethod
+    def _payload(**overrides):
+        base = {
+            "providers": [],
+            "registry_path": "/home/op/.keel/providers.yaml",
+            "registry_present": False,
+            "warnings": [],
+            "errors": [],
+            "available": 2,
+            "total": 7,
+        }
+        base.update(overrides)
+        return base
+
+    def test_absent_by_default_so_the_existing_checks_are_untouched(self):
+        report = _doctor()
+        self.assertNotIn("providers", {c["name"] for c in report["checks"]})
+        self.assertNotIn("providers", report)
+
+    def test_available_providers_are_ok_and_counted(self):
+        check = _check(_doctor(providers=self._payload()), "providers")
+        self.assertEqual(check["status"], "ok")
+        self.assertEqual(check["summary"], "2 of 7 provider(s) available")
+        self.assertEqual(check["detail"]["registry_present"], False)
+
+    def test_a_name_clash_is_a_fail_that_names_both_sources(self):
+        payload = self._payload(
+            errors=[
+                "~/.keel/providers.yaml: provider 'cursor' clashes with the project "
+                "profile knobs.delegate_profiles.cursor; the project profile wins"
+            ]
+        )
+        check = _check(_doctor(providers=payload), "providers")
+        self.assertEqual(check["status"], "fail")
+        self.assertIn("knobs.delegate_profiles.cursor", check["summary"])
+        self.assertEqual(_doctor(providers=payload)["status"], "fail")
+
+    def test_a_malformed_registry_is_a_warn_not_a_fail(self):
+        payload = self._payload(warnings=["providers.yaml: unknown transport 'telepathy'"])
+        check = _check(_doctor(providers=payload), "providers")
+        self.assertEqual(check["status"], "warn")
+        self.assertIn("telepathy", check["summary"])
+
+    def test_a_machine_with_no_usable_delegate_warns(self):
+        check = _check(_doctor(providers=self._payload(available=0)), "providers")
+        self.assertEqual(check["status"], "warn")
+        self.assertIn("no delegate is usable", check["summary"])
+
+    def test_the_document_is_merged_at_the_top_level(self):
+        rows = [{"name": "claude", "available": True}]
+        report = _doctor(providers=self._payload(providers=rows, warnings=["w"], errors=[]))
+        self.assertEqual(report["providers"], rows)
+        self.assertEqual(report["registry_path"], "/home/op/.keel/providers.yaml")
+        self.assertEqual(report["warnings"], ["w"])
+        self.assertEqual(report["errors"], [])
+
+
+class TestRenderProviders(unittest.TestCase):
+    def _row(self, **overrides):
+        row = {
+            "name": "claude",
+            "transport": "cli",
+            "source": "builtin",
+            "available": True,
+            "reason": "/bin/claude (2.1.0)",
+            "models": [],
+            "capabilities": {"tools": True, "read_only_mode": True, "model_selection": True},
+        }
+        row.update(overrides)
+        return row
+
+    def test_table_names_transport_source_capabilities_and_reason(self):
+        payload = {
+            "providers": [
+                self._row(),
+                self._row(
+                    name="ollama",
+                    transport="local",
+                    available=False,
+                    reason="unreachable",
+                    capabilities={
+                        "tools": False,
+                        "read_only_mode": False,
+                        "model_selection": False,
+                    },
+                ),
+            ],
+            "registry_path": "/home/op/.keel/providers.yaml",
+            "registry_present": True,
+            "available": 1,
+            "total": 2,
+            "warnings": ["bad entry"],
+            "errors": ["name clash"],
+        }
+        text = doctor.render_providers(payload)
+        self.assertIn("keel providers — 1 of 2 available", text)
+        self.assertIn("/home/op/.keel/providers.yaml (present)", text)
+        self.assertIn("yes  claude", text)
+        self.assertIn("tools,read-only,model", text)
+        self.assertIn(" no  ollama", text)
+        self.assertIn("warn  bad entry", text)
+        self.assertIn("FAIL  name clash", text)
+
+    def test_a_provider_with_no_capabilities_renders_a_dash(self):
+        payload = {"providers": [self._row(capabilities={})], "available": 1, "total": 1}
+        self.assertIn(" -  ", doctor.render_providers(payload))
+        self.assertIn("(none) (not present)", doctor.render_providers(payload))
+
+    def test_a_long_model_list_is_summarised(self):
+        models = [f"m{i}" for i in range(9)]
+        payload = {"providers": [self._row(name="agy", models=models)], "available": 1, "total": 1}
+        text = doctor.render_providers(payload)
+        self.assertIn("models: m0, m1, m2, m3, m4, m5, +3 more", text)
+
+    def test_a_short_model_list_is_shown_whole(self):
+        payload = {"providers": [self._row(models=["a", "b"])], "available": 1, "total": 1}
+        self.assertIn("models: a, b\n", doctor.render_providers(payload) + "\n")
+        self.assertNotIn("more", doctor.render_providers(payload))
+
+
+class TestDoctorProvidersCli(unittest.TestCase):
+    """`keel doctor --providers` wires the probe in without touching this machine."""
+
+    def setUp(self):
+        self._real_fetch = cli._fetch_latest_pypi_version
+        cli._fetch_latest_pypi_version = lambda **kw: __version__
+
+    def tearDown(self):
+        cli._fetch_latest_pypi_version = self._real_fetch
+
+    @staticmethod
+    def _collect(**overrides):
+        payload = {
+            "schema_version": "keel.providers.v1",
+            "providers": [
+                {
+                    "name": "claude",
+                    "transport": "cli",
+                    "source": "builtin",
+                    "available": True,
+                    "reason": "/bin/claude (2.1.0)",
+                    "models": [],
+                    "capabilities": {
+                        "tools": True,
+                        "read_only_mode": True,
+                        "model_selection": True,
+                    },
+                },
+                {
+                    "name": "codex",
+                    "transport": "cli",
+                    "source": "builtin",
+                    "available": False,
+                    "reason": "codex not found on PATH",
+                    "models": [],
+                    "capabilities": {
+                        "tools": True,
+                        "read_only_mode": True,
+                        "model_selection": True,
+                    },
+                },
+            ],
+            "registry_path": "/home/op/.keel/providers.yaml",
+            "registry_present": False,
+            "warnings": [],
+            "errors": [],
+            "available": 1,
+            "total": 2,
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_no_probe_runs_without_the_flag(self):
+        with tempfile.TemporaryDirectory() as d:
+            with patch.object(cli.providerprobe, "collect") as collect:
+                rc, out, _ = run(["doctor", "--root", d, "--offline", "--json"])
+        collect.assert_not_called()
+        self.assertEqual(rc, 0)
+        self.assertNotIn("providers", json.loads(out))
+
+    def test_json_lists_every_provider_with_a_reason(self):
+        with tempfile.TemporaryDirectory() as d:
+            with patch.object(cli.providerprobe, "collect", return_value=self._collect()):
+                rc, out, _ = run(["doctor", "--root", d, "--offline", "--providers", "--json"])
+        report = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertEqual([p["name"] for p in report["providers"]], ["claude", "codex"])
+        self.assertTrue(report["providers"][0]["available"])
+        self.assertEqual(report["providers"][1]["reason"], "codex not found on PATH")
+        self.assertEqual(report["registry_path"], "/home/op/.keel/providers.yaml")
+        self.assertEqual(report["warnings"], [])
+        self.assertEqual(_check(report, "providers")["status"], "ok")
+
+    def test_human_output_prints_the_table_under_the_checks(self):
+        with tempfile.TemporaryDirectory() as d:
+            with patch.object(cli.providerprobe, "collect", return_value=self._collect()):
+                rc, out, _ = run(["doctor", "--root", d, "--offline", "--providers"])
+        self.assertEqual(rc, 0)
+        self.assertIn("keel doctor", out)
+        self.assertIn("keel providers — 1 of 2 available", out)
+        self.assertIn("codex not found on PATH", out)
+
+    def test_a_registry_name_clash_fails_under_strict(self):
+        payload = self._collect(errors=["providers.yaml: provider 'codex' shadows the built-in"])
+        with tempfile.TemporaryDirectory() as d:
+            with patch.object(cli.providerprobe, "collect", return_value=payload):
+                rc, out, _ = run(["doctor", "--root", d, "--offline", "--providers", "--strict"])
+        self.assertEqual(rc, 1)
+        self.assertIn("shadows the built-in", out)
+
+    def test_the_probe_sees_the_loaded_project_config(self):
+        seen = {}
+
+        def fake_collect(config):
+            seen["config"] = config
+            return self._collect()
+
+        with tempfile.TemporaryDirectory() as d:
+            with patch.object(cli.providerprobe, "collect", fake_collect):
+                rc, _, _ = run(
+                    ["doctor", str(SAMPLE_PROJECT), "--root", d, "--offline", "--providers"]
+                )
+        self.assertEqual(rc, 0)
+        self.assertIsNotNone(seen["config"])
+
+
 if __name__ == "__main__":
     unittest.main()

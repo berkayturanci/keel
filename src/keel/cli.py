@@ -49,6 +49,7 @@ from . import (
     lock,
     mergeverify,
     project_commands,
+    providerprobe,
     review,
     runcontrols,
     runtime,
@@ -4415,6 +4416,10 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         state_paths = _doctor_state_paths(args.root, config)
 
     latest = None if args.offline else _fetch_latest_pypi_version()
+    # Probed only under --providers: one PATH lookup and one `--version` call per CLI
+    # vendor, plus a single loopback request for Ollama. Cheap enough to ask for,
+    # too expensive to run on every `keel doctor`.
+    providers = providerprobe.collect(config) if args.providers else None
     report = doctor.run_doctor(
         installed_version=__version__,
         latest_version=latest,
@@ -4425,11 +4430,15 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         module_path=str(Path(__file__).resolve().parent),
         checkout_root=_doctor_checkout_root(args.root),
         python_toolchain=_doctor_python_toolchain(args.root, config),
+        providers=providers,
     )
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))
     else:
         print(doctor.render_report(report))
+        if providers is not None:
+            print()
+            print(doctor.render_providers(providers))
     if args.strict and report["status"] == "fail":
         return 1
     return 0
@@ -6731,6 +6740,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--strict",
         action="store_true",
         help="exit non-zero when any check fails (default: advisory, exit 0)",
+    )
+    p_doctor.add_argument(
+        "--providers",
+        action="store_true",
+        help="probe every provider keel can dispatch to (agent CLIs, hosted APIs, "
+        "local models, delegate profiles, and ~/.keel/providers.yaml)",
     )
     p_doctor.add_argument("--json", action="store_true", help="emit structured JSON")
     p_doctor.set_defaults(func=_cmd_doctor)

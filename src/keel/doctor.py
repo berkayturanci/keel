@@ -21,6 +21,8 @@ Checks
                      paths (advisory; missing == empty history, not a defect).
 ``python_toolchain`` the interpreter the build gate will actually run on, its
                      version, and whether PyYAML imports there (advisory).
+``providers``        which delegates are usable on this machine — only when
+                     ``--providers`` asked for the probe (#1011).
 """
 
 from __future__ import annotations
@@ -375,6 +377,44 @@ def _check_checkout_binding(module_path: str | None, checkout_root: str | None) 
     )
 
 
+def _check_providers(payload: dict[str, object]) -> CheckResult:
+    """Classify an already-probed provider report (#1011).
+
+    Pure, like every other check: :mod:`keel.providerprobe` did the PATH lookups,
+    the ``--version`` calls and the one loopback HTTP request, and hands the facts in.
+
+    A name clash is a **fail**: a registry entry that shadows a built-in vendor or a
+    project profile is a configuration error the operator has to resolve, and the
+    entry is not being used meanwhile. A malformed registry, or a machine where no
+    provider at all is usable, is a ``warn`` — keel still runs on its host agent.
+    """
+    available = int(payload.get("available", 0) or 0)
+    total = int(payload.get("total", 0) or 0)
+    errors = list(payload.get("errors") or [])
+    warnings = list(payload.get("warnings") or [])
+    detail = {
+        "available": available,
+        "total": total,
+        "registry_path": payload.get("registry_path"),
+        "registry_present": payload.get("registry_present", False),
+        "errors": errors,
+        "warnings": warnings,
+    }
+    summary = f"{available} of {total} provider(s) available"
+    if errors:
+        return CheckResult("providers", _FAIL, f"{summary}; {errors[0]}", detail)
+    if warnings:
+        return CheckResult("providers", _WARN, f"{summary}; {warnings[0]}", detail)
+    if not available:
+        return CheckResult(
+            "providers",
+            _WARN,
+            f"{summary} — no delegate is usable on this machine",
+            detail,
+        )
+    return CheckResult("providers", _OK, summary, detail)
+
+
 def run_doctor(
     *,
     installed_version: str,
@@ -386,6 +426,7 @@ def run_doctor(
     module_path: str | None = None,
     checkout_root: str | None = None,
     python_toolchain: dict[str, object] | None = None,
+    providers: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Run all diagnostic checks over already-gathered facts (pure, deterministic).
 
@@ -403,17 +444,28 @@ def run_doctor(
         _check_state_paths(state_paths),
         _check_python_toolchain(python_toolchain),
     ]
+    # Only when asked for: the provider probe shells out once per CLI vendor and makes
+    # one loopback request, which the default run must not pay for on every invocation.
+    if providers is not None:
+        checks.append(_check_providers(providers))
     worst = max((c.status for c in checks), key=lambda s: _RANK[s])
     counts = {_OK: 0, _WARN: 0, _FAIL: 0}
     for check in checks:
         counts[check.status] += 1
-    return {
+    report: dict[str, object] = {
         "schema_version": SCHEMA_VERSION,
         "installed_version": installed_version,
         "status": worst,
         "counts": counts,
         "checks": [c.as_dict() for c in checks],
     }
+    if providers is not None:
+        # Merged at the top level rather than nested: the provider document is the
+        # thing `--providers` was asked for, and `{providers, registry_path,
+        # warnings}` is the shape #1011 specifies for it.
+        for key in ("providers", "registry_path", "registry_present", "warnings", "errors"):
+            report[key] = providers.get(key)
+    return report
 
 
 def render_report(report: dict[str, object]) -> str:
@@ -424,4 +476,51 @@ def render_report(report: dict[str, object]) -> str:
         lines.append(f"  {state:>4}  {check['name']:<16}  {check['summary']}")
     counts = report["counts"]
     lines.append(f"  summary       : {counts[_OK]} ok, {counts[_WARN]} warn, {counts[_FAIL]} fail")
+    return "\n".join(lines)
+
+
+#: Compact capability flags in the provider table, in a fixed order.
+_CAPABILITY_FLAGS = (
+    ("tools", "tools"),
+    ("read_only_mode", "read-only"),
+    ("model_selection", "model"),
+)
+
+#: Models listed per provider row before the rest are summarised as a count.
+_MODELS_SHOWN = 6
+
+
+def render_providers(payload: dict[str, object]) -> str:
+    """Render the provider probe as an aligned human table (pure).
+
+    One row per provider in probe order — built-ins, then project profiles, then the
+    machine-level registry — each naming the transport, where the entry came from, and
+    a reason an operator can act on. Registry warnings and name-clash errors follow the
+    table rather than replacing it: a broken entry must not hide the providers that do
+    work.
+    """
+    rows = list(payload.get("providers") or [])
+    registry = payload.get("registry_path") or "(none)"
+    state = "present" if payload.get("registry_present") else "not present"
+    lines = [
+        f"keel providers — {payload.get('available', 0)} of {payload.get('total', 0)} available",
+        f"  registry: {registry} ({state})",
+    ]
+    for row in rows:
+        flags = row.get("capabilities") or {}
+        marks = ",".join(label for key, label in _CAPABILITY_FLAGS if flags.get(key)) or "-"
+        state = "yes" if row.get("available") else "no"
+        lines.append(
+            f"  {state:>3}  {str(row.get('name')):<18} {str(row.get('transport')):<6} "
+            f"{str(row.get('source')):<8} {marks:<22} {row.get('reason')}"
+        )
+        models = list(row.get("models") or [])
+        if models:
+            shown = ", ".join(models[:_MODELS_SHOWN])
+            extra = f", +{len(models) - _MODELS_SHOWN} more" if len(models) > _MODELS_SHOWN else ""
+            lines.append(f"       models: {shown}{extra}")
+    for warning in payload.get("warnings") or []:
+        lines.append(f"  warn  {warning}")
+    for error in payload.get("errors") or []:
+        lines.append(f"  FAIL  {error}")
     return "\n".join(lines)
