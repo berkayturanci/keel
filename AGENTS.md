@@ -57,6 +57,11 @@ make validate   # validate every projects/*.yaml against the bundled schema
 make site       # build the coverage report into website/ and serve at :8000
 ```
 
+`make test` resolves a compatible interpreter itself (`scripts/find_python.sh`: the repo
+venv, then the newest `python3.x` on PATH that is ≥ 3.11 and can import yaml) instead of
+assuming `python3` is one; `PY=/path/to/python make test` still overrides it, and
+`make doctor-python` prints what it resolved.
+
 Run a single module's tests: `PYTHONPATH=src python3 -m unittest tests.test_<module> -v`.
 Run the CLI the same way: `PYTHONPATH=src python3 -m keel …`. That prefix is what makes it
 *your* working tree; without it the command either fails outright or, when a global editable

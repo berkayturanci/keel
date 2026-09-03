@@ -19,6 +19,8 @@ Checks
                      installed CLI version.
 ``state_paths``      existence/validity of the configured ledger + checkpoint
                      paths (advisory; missing == empty history, not a defect).
+``python_toolchain`` the interpreter the build gate will actually run on, its
+                     version, and whether PyYAML imports there (advisory).
 """
 
 from __future__ import annotations
@@ -37,6 +39,8 @@ _RANK = {_OK: 0, _WARN: 1, _FAIL: 2}
 
 #: a release version: ``MAJOR.MINOR.PATCH`` with optional further dotted parts.
 _VERSION_RE = re.compile(r"^\d+(?:\.\d+)*$")
+#: the lowest Python keel supports — ``requires-python`` in ``pyproject.toml``.
+MIN_PYTHON = (3, 11)
 #: a ``core_version`` constraint: an optional operator (``^`` / ``~`` / ``>=`` /
 #: ``==``) followed by a dotted version. A bare version means exact match.
 _CONSTRAINT_RE = re.compile(r"^(?P<op>\^|~|>=|<=|>|<|==|=)?\s*(?P<version>\d+(?:\.\d+)*)$")
@@ -265,6 +269,63 @@ def _check_state_paths(state_paths: list[dict[str, object]]) -> CheckResult:
     )
 
 
+def _check_python_toolchain(toolchain: dict[str, object] | None) -> CheckResult:
+    """Will the build gate's interpreter satisfy ``requires-python`` + PyYAML?
+
+    The facts (which interpreter the gate resolves to, its version, whether
+    ``yaml`` imports there) are gathered by the caller — this only classifies
+    them. Never a ``fail``: keel cannot know that a red gate is *this* problem,
+    only that the interpreter behind it would produce one. A ``warn`` names the
+    interpreter, so a `make test` that dies with a hundred syntax errors reads
+    as a 3.9 on PATH rather than as a regression in the tree (#1022).
+    """
+    if toolchain is None:
+        return CheckResult(
+            "python_toolchain",
+            _OK,
+            "build-gate interpreter not probed",
+            {},
+        )
+    detail = dict(toolchain)
+    interpreter = toolchain.get("interpreter")
+    reason = str(toolchain.get("reason") or "no interpreter resolved")
+    if not interpreter:
+        return CheckResult(
+            "python_toolchain",
+            _WARN,
+            f"the build gate has no usable interpreter — {reason}",
+            detail,
+        )
+    version = toolchain.get("version")
+    parsed = _parse_version(version) if isinstance(version, str) else None
+    if parsed is None:
+        return CheckResult(
+            "python_toolchain",
+            _WARN,
+            f"the build gate runs on {interpreter}, whose version is unknown — {reason}",
+            detail,
+        )
+    minimum = ".".join(str(part) for part in MIN_PYTHON)
+    problems = []
+    if parsed < MIN_PYTHON:
+        problems.append(f"Python {version} is below the required {minimum}")
+    if not toolchain.get("yaml"):
+        problems.append("PyYAML is not importable there")
+    if problems:
+        return CheckResult(
+            "python_toolchain",
+            _WARN,
+            f"the build gate would run on {interpreter}: {'; '.join(problems)}",
+            detail,
+        )
+    return CheckResult(
+        "python_toolchain",
+        _OK,
+        f"the build gate runs on {interpreter} (Python {version}, PyYAML present)",
+        detail,
+    )
+
+
 def _within(child: str, parent: str) -> bool:
     """Is ``child`` ``parent`` itself, or nested inside it? Pure path-part comparison."""
     parent_parts = PurePath(parent).parts
@@ -324,6 +385,7 @@ def run_doctor(
     state_paths: list[dict[str, object]],
     module_path: str | None = None,
     checkout_root: str | None = None,
+    python_toolchain: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Run all diagnostic checks over already-gathered facts (pure, deterministic).
 
@@ -339,6 +401,7 @@ def run_doctor(
         _check_orphan_adapters(orphans),
         _check_core_version(installed_version, core_version),
         _check_state_paths(state_paths),
+        _check_python_toolchain(python_toolchain),
     ]
     worst = max((c.status for c in checks), key=lambda s: _RANK[s])
     counts = {_OK: 0, _WARN: 0, _FAIL: 0}

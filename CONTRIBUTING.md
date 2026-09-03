@@ -38,6 +38,12 @@ By participating you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
    make coverage    # coverage gate (fail_under in pyproject)
    make validate    # validate every projects/*.yaml
    ```
+   These targets resolve their own interpreter (`scripts/find_python.sh`: the repo venv,
+   then the newest `python3.x` on PATH that is ≥ 3.11 and can import yaml) rather than
+   assuming `python3` is one — on macOS it is Xcode's 3.9, where the suite fails with a
+   hundred syntax errors that look like a regression. `PY=/path/to/python make test`
+   overrides the resolver; `make doctor-python` prints what it picked, and
+   `keel doctor` reports the same interpreter under its `python_toolchain` check.
 4. The pure core is held at **100% line + branch coverage**. New core logic needs tests.
 5. Update docs (`docs/keel/`, README) and `CHANGELOG.md` (`[Unreleased]`) when behaviour
    changes. If you change the `/keel:<command>` adapters, re-install with

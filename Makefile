@@ -13,10 +13,28 @@
 #                  bump the version everywhere a release must touch (pyproject, __init__,
 #                  Claude + Codex plugin manifests, pinned-install refs) and regenerate all
 #                  adapter surfaces
+#   make doctor-python
+#                  print the interpreter these targets resolved, and its version
 
-PY ?= python3
+# PY — the interpreter every target below runs on.
+#
+# `PY=/path/to/python make test`, or an exported PY (what CI's setup-python step
+# effectively provides), always wins: the resolver only runs when PY is unset.
+# Otherwise scripts/find_python.sh picks the first interpreter that is >= 3.11
+# *and* can import yaml, instead of assuming `python3` is one — on macOS that is
+# Xcode's 3.9, where `make test` fails with ~110 import errors that read like a
+# regression rather than a missing toolchain (#1022).
+ifeq ($(origin PY),undefined)
+PY := $(shell scripts/find_python.sh)
+ifeq ($(strip $(PY)),)
+# The resolver already printed the one-line install hint on stderr. Failing here
+# is deferred to the first target that actually expands PY, so `make clean` and
+# `make lint` still work on a machine with no usable interpreter.
+PY = $(error no usable Python — see the find_python message above, or set PY=/path/to/python)
+endif
+endif
 
-.PHONY: test lint coverage validate site adapters plugin release-bump clean
+.PHONY: test lint coverage validate site adapters plugin release-bump doctor-python clean
 
 test:
 	PYTHONPATH=src $(PY) -m unittest discover -s tests -v
@@ -49,6 +67,10 @@ release-bump:
 	$(MAKE) plugin
 	$(MAKE) adapters
 	@echo "release-bump done. Add a CHANGELOG.md entry for $(VERSION), run the gates, then follow docs/keel/release.md to tag."
+
+doctor-python:
+	@echo "interpreter : $(PY)"
+	@$(PY) -c 'import sys, yaml; print("version     :", sys.version.split()[0]); print("pyyaml      :", yaml.__version__)'
 
 clean:
 	rm -rf .coverage htmlcov **/__pycache__ src/**/__pycache__
