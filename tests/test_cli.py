@@ -11520,8 +11520,19 @@ class TestPostComment(unittest.TestCase):
         self.assertIn("keel.ship-provenance.v1", err)
 
     def test_body_file_fixtures_are_written_as_utf8(self):
-        # Pins the helper's contract against the encoding `post-comment` reads with.
-        # Without this the next non-ASCII body silently breaks only on Windows.
+        """The fixture must come back as the text it went in as, decoded as UTF-8.
+
+        Asserted the way the rest of this suite compares file content — decoded
+        text, never raw bytes. A byte-for-byte assertion also pins the *line
+        endings*, which is a different question and one Windows answers
+        differently: a text-mode write translates "\n" to "\r\n" whatever the
+        encoding. The CLI is unaffected because its text-mode read translates
+        them back, so pinning them here only manufactures a platform failure.
+
+        What does matter is the encoding, so that is pinned separately below and
+        newline-agnostically: the em dash must be UTF-8's three-byte sequence and
+        never cp1252's single 0x97 — the byte that broke the Windows jobs.
+        """
         body = artifacts.render_ship_provenance(
             run_id="RUN-1013",
             issue=1013,
@@ -11529,7 +11540,12 @@ class TestPostComment(unittest.TestCase):
             implementer_attribution=agents.attribution("agy", "gemini-3.8-flash-high"),
         )
         self.assertIn("\u2014", body)  # an em dash, i.e. the fixture is a real test
-        self.assertEqual(Path(_body_file(body)).read_bytes(), body.encode("utf-8"))
+        path = Path(_body_file(body))
+
+        self.assertEqual(path.read_text(encoding="utf-8"), body)
+        raw = path.read_bytes()
+        self.assertIn("\u2014".encode(), raw)
+        self.assertNotIn(b"\x97", raw)
 
     def test_post_comment_rejects_a_body_file_that_is_not_utf8(self):
         # An operator whose shell wrote the rendered body in the locale encoding used
