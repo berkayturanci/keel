@@ -26,7 +26,7 @@
       category: "assistants",
       badge: "AI Code Editor",
       desc: "Integrated via knobs.delegate_profiles, background task sync, and AGENTS.md rules.",
-      cmd: "keel ship .keel/project.yaml --delegate cursor",
+      cmd: "keel implement .keel/project.yaml 101 --delegate cursor",
       logo: "logos/cursor.svg"
     },
     {
@@ -71,7 +71,7 @@
       category: "assistants",
       badge: "Terminal Agent",
       desc: "Interactive terminal pair programmer mapped to Keel's s4 implement via generic CLI delegates.",
-      cmd: "keel ship .keel/project.yaml --delegate aider",
+      cmd: "keel implement .keel/project.yaml 101 --delegate aider",
       logo: "logos/aider.svg"
     },
     {
@@ -80,7 +80,7 @@
       category: "assistants",
       badge: "Open Assistant",
       desc: "Open-source coding assistant integrated via standard POSIX CLI delegate profiles.",
-      cmd: "keel ship .keel/project.yaml --delegate opencode",
+      cmd: "keel implement .keel/project.yaml 101 --delegate opencode",
       logo: "logos/opencode.svg"
     },
     {
@@ -89,7 +89,7 @@
       category: "assistants",
       badge: "AI Code Editor",
       desc: "Adaptive AI editor companion configured via delegate profiles and Keel deterministic gates.",
-      cmd: "keel ship .keel/project.yaml --delegate trae",
+      cmd: "keel implement .keel/project.yaml 101 --delegate trae",
       logo: "logos/trae.jpg"
     },
     {
@@ -98,7 +98,7 @@
       category: "assistants",
       badge: "AI Assistant",
       desc: "Copilot workspace and coding actions verified against deterministic Keel pre-merge evidence gates.",
-      cmd: "keel evidence-verify .keel/project.yaml --phase pre-merge",
+      cmd: "keel evidence-verify .keel/project.yaml --pr 101 --phase pre-merge",
       logo: "logos/githubcopilot.svg"
     },
     {
@@ -107,7 +107,7 @@
       category: "assistants",
       badge: "AI Assistant",
       desc: "Moonshot Kimi coding assistant integration for large-context codebase analysis and implementation.",
-      cmd: "keel ship .keel/project.yaml --delegate kimi",
+      cmd: "keel implement .keel/project.yaml 101 --delegate kimi",
       logo: "logos/kimi-cli.png"
     },
     {
@@ -163,7 +163,7 @@
       category: "backends",
       badge: "Local Backend",
       desc: "100% on-device, offline model execution with zero API cost and private repository isolation.",
-      cmd: "keel ship .keel/project.yaml --delegate ollama:deepseek-r1",
+      cmd: "keel delegate run --provider ollama:deepseek-r1 --role implement --prompt-file task.md",
       logo: "logos/ollama.svg"
     },
     {
@@ -190,7 +190,7 @@
       category: "backends",
       badge: "Unified Routing",
       desc: "Dynamic multi-model fallback and lowest-latency routing with token cost analytics.",
-      cmd: "keel cost-report .keel/project.yaml --json",
+      cmd: "keel cost-report --root . --json",
       logo: "logos/openrouter.svg"
     },
 
@@ -200,8 +200,8 @@
       name: "Addy Osmani Agent Skills",
       category: "skills",
       badge: "Skill Library",
-      desc: "Production-grade engineering workflows: TDD, spec-driven design, security audits & progressive disclosure.",
-      cmd: "knobs.skills: ['addyosmani:tdd-workflow']",
+      desc: "Third-party skill libraries live beside keel's own keel-&lt;command&gt; skills in .agents/skills/, which every non-Claude agent reads.",
+      cmd: "keel install-adapter skills --root .",
       logo: "logos/addyosmani.png"
     },
     {
@@ -293,7 +293,7 @@
       category: "platforms",
       badge: "Python Ecosystem",
       desc: "Standard Python distribution supporting isolated virtual environments and global CLI usage.",
-      cmd: "pipx install keel",
+      cmd: "pipx install keel-workflow",
       logo: "logos/pypi.svg"
     },
     {
