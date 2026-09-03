@@ -68,6 +68,12 @@ class CommandResult:
     stdout: str = ""
     #: Captured standard error alone.
     stderr: str = ""
+    #: True when the command could **not be started** — the ``OSError`` path, which for a
+    #: delegate almost always means "that binary is not installed". Distinct from exit
+    #: 127, which a command that *did* run can also return: `run_argv` reports both as
+    #: code 127, so classifying on the code alone cannot tell "no such binary" from "the
+    #: tool ran and said 127". Every caller that needs the difference reads this flag.
+    spawn_failed: bool = False
 
 
 def _result(proc) -> CommandResult:
@@ -95,7 +101,7 @@ def run_command(
     except subprocess.TimeoutExpired:
         return CommandResult(False, 124, f"timed out after {timeout}s", timed_out=True)
     except OSError as exc:
-        return CommandResult(False, 127, str(exc), stderr=str(exc))
+        return CommandResult(False, 127, str(exc), stderr=str(exc), spawn_failed=True)
     return _result(proc)
 
 
@@ -133,7 +139,7 @@ def run_argv(
     except subprocess.TimeoutExpired:
         return CommandResult(False, 124, f"timed out after {timeout}s", timed_out=True)
     except OSError as exc:
-        return CommandResult(False, 127, str(exc), stderr=str(exc))
+        return CommandResult(False, 127, str(exc), stderr=str(exc), spawn_failed=True)
     return _result(proc)
 
 

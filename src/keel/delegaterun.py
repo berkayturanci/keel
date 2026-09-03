@@ -57,10 +57,6 @@ _RUN_ID_OK = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123
 #: Cap on a single HTTP response body, matching :mod:`keel.api_delegate`.
 _MAX_RESPONSE_BYTES = 50 * 1024 * 1024
 
-#: Exit code :func:`keel.runner.run_argv` reports for an OS-level spawn failure — which,
-#: for a delegate, is overwhelmingly "the CLI is not installed".
-_SPAWN_FAILURE_CODE = 127
-
 #: Substrings that mark a quota refusal in a CLI's own output. A hosted API answers 429
 #: and :mod:`keel.api_delegate` classifies it; a CLI exits nonzero with prose, and the
 #: caller's no-retry-on-quota rule needs the same ``rate-limit`` code either way.
@@ -160,6 +156,10 @@ def result_document(
         "error_code": error_code,
         "error": error,
         "attribution": dict(plan.attribution),
+        "read_only": plan.read_only,
+        # Reported beside `read_only` so a caller can refuse rather than discover
+        # afterwards that its "reviewer" held the implementer's write flags.
+        "read_only_backed": plan.read_only_backed,
         "effort_applied": plan.effort_applied,
         "warnings": list(plan.warnings),
     }
@@ -214,7 +214,14 @@ def execute(
 
 
 def _run_argv(plan: RunPlan, prompt: str, finish, *, run) -> dict[str, Any]:
-    """The ``cli`` and ``profile`` transports: one subprocess, prompt on stdin."""
+    """The ``cli`` and ``profile`` transports: one subprocess, prompt on stdin.
+
+    The delegate's answer is **stdout alone**. ``CommandResult.output`` glues stderr onto
+    it, and every agent CLI writes progress, warnings and login notices there — so reading
+    the concatenation lets a run that produced no answer come back ``ok: true`` with the
+    noise as its "output", which downstream is a diff to apply or a review to post. The
+    concatenation stays for the diagnostic tail of a *failure*, where both halves help.
+    """
     argv = list(plan.argv)
     if plan.stdin_mode == delegate.STDIN_STREAM_JSON:
         stdin_text: str | None = delegate.stream_json_frame(prompt)
@@ -227,7 +234,7 @@ def _run_argv(plan: RunPlan, prompt: str, finish, *, run) -> dict[str, Any]:
         argv.append(prompt)
         stdin_text = None
     result = run(argv, cwd=plan.cwd, timeout=plan.timeout, stdin_text=stdin_text)
-    raw = result.stdout or result.output
+    raw = result.stdout
     text = delegate.parse_stream_json(raw) if plan.stdin_mode == delegate.STDIN_STREAM_JSON else raw
     if result.timed_out:
         return finish(
@@ -238,7 +245,9 @@ def _run_argv(plan: RunPlan, prompt: str, finish, *, run) -> dict[str, Any]:
             error=f"{argv[0]} timed out after {plan.timeout}s",
             text=text,
         )
-    if result.code == _SPAWN_FAILURE_CODE and not raw:
+    if getattr(result, "spawn_failed", False):
+        # The runner's own OSError signal, not exit 127: a command that really ran can
+        # exit 127 too, and reading the code alone made this branch unreachable.
         return finish(
             ok=False,
             exit_code=result.code,
@@ -365,21 +374,37 @@ def list_runs(root: str | Path = ".") -> list[dict[str, Any]]:
     return records
 
 
+#: Extra wall-clock seconds a detached run gets beyond its own ``--timeout`` before
+#: ``wait`` calls it abandoned. The child enforces the timeout itself and then has to
+#: write its result; the grace is the room for that last write.
+DEADLINE_GRACE_S = 60
+
+
 def start_detached(
     argv: list[str],
     *,
     root: str | Path,
     run_id: str,
     cwd: str | None = None,
+    timeout: int | None = None,
+    provider: str | None = None,
+    role: str | None = None,
     _popen=None,
     _clock: Callable[[], datetime.datetime] = _utc_now,
 ) -> dict[str, Any]:
     """Spawn ``argv`` as a background child and record it. Never raises.
 
-    The **parent** writes the initial ``running`` record because only the parent knows the
-    pid, and a ``wait`` issued immediately afterwards must find a file rather than race
-    the child's first write. The child overwrites it with ``status: done`` plus the result
-    when it finishes (:func:`finish_detached`).
+    The record is written **before** the spawn, so a ``wait`` issued immediately
+    afterwards always finds a file, and the pid is merged in afterwards by a *guarded*
+    update. That order is the fix for a lost update: the child can finish and write its
+    terminal ``done`` record between the spawn and the parent's next write, and a blind
+    second write from the parent would erase the result the caller is waiting for. The
+    merge re-reads and leaves any non-``running`` record alone.
+
+    ``deadline_at`` is stamped from the run's own ``--timeout`` plus
+    :data:`DEADLINE_GRACE_S`. It is what stops a ``wait`` with no ``--timeout`` of its own
+    from blocking forever when the child dies without recording anything — a
+    ``SIGKILL``, an OOM kill, a reboot.
 
     The child gets its own session where the platform has one, so killing the caller's
     process group does not take the delegate with it — surviving the caller is the whole
@@ -393,11 +418,20 @@ def start_detached(
     check_run_id(run_id)
     directory = state_dir(root)
     directory.mkdir(parents=True, exist_ok=True)
+    started = _clock()
     record: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "run_id": run_id,
+        "provider": provider,
+        "role": role,
         "pid": None,
-        "started_at": _now_iso(_clock),
+        "started_at": started.isoformat(),
+        "timeout": timeout,
+        "deadline_at": (
+            None
+            if timeout is None
+            else (started + datetime.timedelta(seconds=timeout + DEADLINE_GRACE_S)).isoformat()
+        ),
         "status": "running",
         "argv": list(argv),
         "out_path": str(out_path(root, run_id)),
@@ -410,9 +444,10 @@ def start_detached(
         handle = out_path(root, run_id).open("w", encoding="utf-8")
     except OSError as exc:
         record["status"] = "done"
-        record["result"] = _spawn_failure(run_id, exc)
+        record["result"] = _spawn_failure(record, exc)
         write_state(root, record)
         return record
+    write_state(root, record)
     try:
         # argv is keel's own re-invocation (sys.executable -m keel), never a shell.
         child = _popen(
@@ -425,22 +460,62 @@ def start_detached(
         )
     except OSError as exc:
         record["status"] = "done"
-        record["result"] = _spawn_failure(run_id, exc)
-    else:
-        record["pid"] = child.pid
+        record["result"] = _spawn_failure(record, exc)
+        write_state(root, record)
+        return record
     finally:
         handle.close()
+    record["pid"] = child.pid
+    return _merge_while_running(root, run_id, {"pid": child.pid}) or record
+
+
+def _merge_while_running(
+    root: str | Path, run_id: str, fields: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Merge ``fields`` into a run's record **only while it is still running**.
+
+    The guard is the whole point: a terminal record written by the child must never be
+    overwritten by a late housekeeping write from the parent.
+    """
+    record = load_state(root, run_id)
+    if record is None or record.get("status") != "running":
+        return record
+    record.update(fields)
     write_state(root, record)
     return record
 
 
-def _spawn_failure(run_id: str, exc: OSError) -> dict[str, Any]:
+def _spawn_failure(record: dict[str, Any], exc: OSError) -> dict[str, Any]:
+    return _detached_failure(record, code="spawn-failed", message=str(exc))
+
+
+def _detached_failure(record: dict[str, Any], *, code: str, message: str) -> dict[str, Any]:
+    """A full return contract for a detached run that never produced one itself.
+
+    Same keys as :func:`result_document`, so ``keel delegate wait`` hands back one shape
+    whether the delegate answered, failed, or vanished.
+    """
     return {
         "schema_version": SCHEMA_VERSION,
         "ok": False,
-        "run_id": run_id,
-        "error_code": "spawn-failed",
-        "error": str(exc),
+        "provider": record.get("provider"),
+        "vendor": None,
+        "model": None,
+        "role": record.get("role"),
+        "transport": None,
+        "text": "",
+        "exit_code": None,
+        "duration_s": 0.0,
+        "timed_out": code == "lost",
+        "error_code": code,
+        "error": message,
+        "attribution": {},
+        "read_only": None,
+        "read_only_backed": False,
+        "effort_applied": False,
+        "warnings": [],
+        "run_id": record.get("run_id"),
+        "out_path": record.get("out_path"),
     }
 
 
@@ -470,6 +545,74 @@ def finish_detached(
 DEFAULT_POLL_S = 0.5
 
 
+def process_is_alive(pid: int) -> bool:
+    """Is ``pid`` still a process we can see? Best-effort, never raises.
+
+    ``os.kill(pid, 0)`` sends no signal; it asks the kernel whether the pid exists and
+    whether we may signal it. ``PermissionError`` therefore means **alive** (it exists and
+    belongs to someone else), which is the opposite of what a bare ``except`` would say.
+
+    Two honest limits, both bounded by the run's own ``deadline_at`` rather than papered
+    over: a child not yet reaped by its parent is a zombie and still answers "alive", and
+    a recycled pid can answer "alive" for an unrelated process. Neither can make ``wait``
+    return a wrong *result* — only make it wait longer before giving up.
+    """
+    if not hasattr(os, "kill"):  # pragma: no cover - POSIX everywhere keel runs
+        return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except (PermissionError, OSError):
+        return True
+    return True
+
+
+def _abandoned(
+    record: dict[str, Any],
+    *,
+    alive: Callable[[int], bool],
+    clock: Callable[[], datetime.datetime],
+) -> str | None:
+    """Why this still-``running`` record can never finish, or ``None`` while it might."""
+    pid = record.get("pid")
+    if isinstance(pid, int) and not alive(pid):
+        return (
+            f"the delegate process (pid {pid}) is gone and recorded no result; "
+            f"its output is in {record.get('out_path')}"
+        )
+    deadline = record.get("deadline_at")
+    if isinstance(deadline, str) and deadline:
+        try:
+            when = datetime.datetime.fromisoformat(deadline)
+        except ValueError:
+            return None
+        if clock() >= when:
+            return (
+                f"the run passed its own deadline ({deadline}) without recording a "
+                f"result; its output is in {record.get('out_path')}"
+            )
+    return None
+
+
+def _mark_crashed(
+    root: str | Path,
+    run_id: str,
+    reason: str,
+    *,
+    clock: Callable[[], datetime.datetime],
+) -> dict[str, Any] | None:
+    """Record that a run vanished — guarded, so a child's own result always wins."""
+    record = load_state(root, run_id)
+    if record is None or record.get("status") != "running":
+        return record
+    record["status"] = "crashed"
+    record["finished_at"] = _now_iso(clock)
+    record["result"] = _detached_failure(record, code="lost", message=reason)
+    write_state(root, record)
+    return record
+
+
 def wait(
     root: str | Path,
     run_id: str,
@@ -478,21 +621,49 @@ def wait(
     poll: float = DEFAULT_POLL_S,
     _sleep: Callable[[float], None] = time.sleep,
     _now: Callable[[], float] = time.monotonic,
+    _clock: Callable[[], datetime.datetime] = _utc_now,
+    _alive: Callable[[int], bool] | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     """Block until ``run_id`` finishes. Returns ``(result, error_code)``.
 
-    Fails closed on an unknown id: an orchestrator that mistypes a run id, or asks about a
-    run from another checkout, must get ``unknown-run`` rather than a wait that can only
-    end in a timeout. The state file is the authority — the pid is not consulted, so a
-    result survives the process that produced it, a new session, and a reboot.
+    The state file is the authority — a *result* is only ever read from it, so it survives
+    the process that produced it, a new session, and a reboot.
+
+    Three ways this returns without a result, and all three are bounded:
+
+    * ``unknown-run`` — fails closed and immediately. An orchestrator that mistypes a run
+      id, or asks about a run from another checkout, must not get a wait that can only end
+      in a timeout.
+    * ``lost`` — the child is gone, or the run passed the deadline stamped at spawn, and
+      nothing was recorded. Without this a ``SIGKILL``ed child left ``running`` forever
+      and a ``wait`` with no ``--timeout`` blocked indefinitely. The record is marked
+      ``crashed`` so ``keel delegate status`` stops claiming it is running.
+    * ``timeout`` — the caller's own ``--timeout`` elapsed first. The run may still be
+      alive; nothing is marked.
+
+    A dead pid is re-checked against the file before being called lost, because the child
+    exits *after* writing its result and the two are observed in the other order often
+    enough to matter.
     """
     deadline = None if timeout is None else _now() + timeout
+    alive = process_is_alive if _alive is None else _alive
     while True:
         record = load_state(root, run_id)
         if record is None:
             return None, "unknown-run"
-        if record.get("status") == "done":
+        status = record.get("status")
+        if status == "done":
             return record.get("result"), None
+        if status == "crashed":
+            return record.get("result"), "lost"
+        reason = _abandoned(record, alive=alive, clock=_clock)
+        if reason is not None:
+            record = _mark_crashed(root, run_id, reason, clock=_clock)
+            if record is None:
+                return None, "unknown-run"
+            if record.get("status") == "done":
+                return record.get("result"), None
+            return record.get("result"), "lost"
         if deadline is not None and _now() >= deadline:
             return None, "timeout"
         _sleep(poll)
@@ -526,6 +697,8 @@ def planning_failure(
         "error_code": code,
         "error": message,
         "attribution": {},
+        "read_only": None,
+        "read_only_backed": False,
         "effort_applied": False,
         "warnings": [],
     }

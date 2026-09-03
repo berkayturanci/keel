@@ -91,9 +91,15 @@ OLLAMA_GENERATE_URL = "http://127.0.0.1:11434/api/generate"
 #: rather than ``--print=<prompt>``.
 AGY_STREAM_ARGS = ("--input-format", "stream-json", "--output-format", "stream-json")
 
-#: Tools a read-only ``claude`` invocation refuses. Anything that can write a file, edit a
-#: notebook, or shell out.
-CLAUDE_DISALLOWED_TOOLS = "Edit,Write,NotebookEdit,Bash"
+#: The only tools a read-only ``claude`` invocation may use. An **allow-list**: a denylist
+#: of write tools has to be extended every time the CLI grows one, and is wrong in the
+#: window before someone notices. Reading a diff needs no more than these four.
+CLAUDE_ALLOWED_TOOLS = "Read,Grep,Glob,LS"
+
+#: How ``codex`` spells reasoning effort. Not a flag on the shipped CLI (0.152.1) — it is
+#: a config override, and an unknown key is rejected under ``--strict-config``, which is
+#: how this spelling was verified rather than assumed.
+CODEX_EFFORT_CONFIG = "model_reasoning_effort"
 
 #: ``anthropic-api`` extended-thinking budget per effort level, in tokens.
 ANTHROPIC_THINKING_BUDGET = {"low": 2048, "medium": 8192, "high": 32768}
@@ -150,6 +156,8 @@ class Effort:
     budget: int | None
     applied: bool
     warnings: tuple[str, ...]
+    #: Extra argv fragment, for a vendor that spells effort on its command line.
+    argv: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -170,9 +178,15 @@ class RunPlan:
     request: dict[str, Any] | None = None
     #: ``text`` | ``stream-json`` | ``None`` (append the prompt as the last argv element).
     stdin_mode: str | None = None
-    #: True when the role's policy is read-only. For a profile this is the operator's
-    #: ``review_args``, not a guarantee keel can enforce — see the module docstring.
+    #: True when the role's policy is read-only.
     read_only: bool = False
+    #: True when something actually **backs** that policy: a built-in CLI's documented
+    #: read-only invocation, an operator's ``review_args``, or a transport with no tools
+    #: at all. False means the role says read-only and nothing enforces it — the caller
+    #: must decide whether to run at all. Split from :attr:`read_only` because a single
+    #: flag cannot distinguish "reviewer" from "reviewer holding the implementer's write
+    #: flags", and the second is the one that edits the checkout.
+    read_only_backed: bool = False
     effort: str | None = None
     effort_applied: bool = False
     warnings: tuple[str, ...] = ()
@@ -193,6 +207,7 @@ class RunPlan:
             "request": dict(self.request) if self.request is not None else None,
             "stdin_mode": self.stdin_mode,
             "read_only": self.read_only,
+            "read_only_backed": self.read_only_backed,
             "effort": self.effort,
             "effort_applied": self.effort_applied,
             "warnings": list(self.warnings),
@@ -205,41 +220,106 @@ def resolve_provider(
     registry: providers_mod.Registry | None,
     token: str,
 ) -> Resolution:
-    """Resolve ``name`` / ``vendor:model`` against profiles, the registry, the built-ins.
+    """Resolve ``name`` / ``vendor:model`` against the built-ins, profiles, the registry.
 
-    Precedence is **project profile > registry > built-in**, the order
-    :func:`keel.providers.plan_probes` documents. For every valid configuration the two
-    agree by construction: ``plan_probes`` drops a registry entry whose name is already
-    taken, and :func:`keel.providers.registry_clashes` reports it as an error, so a name
-    resolves to exactly one provider. The explicit ordering here is what makes the stated
-    precedence true rather than incidental if a clashing entry ever reaches dispatch.
+    Precedence is **built-in > project profile > registry**. A built-in vendor always
+    wins and can never be redefined — the invariant
+    :func:`keel.agents.resolve_delegate_profile` states and
+    :func:`keel.config.parse_config` enforces up front, and the same rule
+    :func:`keel.providers.registry_clashes` applies to a machine-level entry. Resolving a
+    profile or a registry entry first would make ``claude`` mean whatever a file in
+    ``$HOME`` said it meant, which is exactly the shadowing those two checks exist to
+    refuse; dispatch must not be the one place the rule is inverted.
 
-    The model half of the token is validated by :func:`keel.agents.is_safe_model_token`
-    before anything else looks at it: it can arrive from a ``delegate-model:`` issue
-    label, which is a lower-trust source than the operator-authored command beside it, and
-    it ends up on an argv or in a URL path. Refused, never escaped.
+    The model half of the token is validated before anything else looks at it: it can
+    arrive from a ``delegate-model:`` issue label, which is a lower-trust source than the
+    operator-authored command beside it. **Which** rule applies depends on where the model
+    lands — see :func:`model_token_issue`.
     """
     name, model = agents.split_delegate((token or "").strip())
     if not name:
         raise DelegateError("bad-provider", "--provider is empty; pass name or vendor:model")
-    if model is not None and not agents.is_safe_model_token(model):
-        raise DelegateError(
-            "bad-model",
-            f"model {model!r} is not a safe token ([A-Za-z0-9._-], no leading dash)",
-        )
     profiles = {} if config is None else config.knobs.delegate_profiles
-    if name in profiles:
-        provider = _profile_provider(config, name)
-        return Resolution(provider, profiles[name], model)
     registry = providers_mod.Registry(path="") if registry is None else registry
-    for entry in registry.providers:
-        if entry.name == name:
-            return Resolution(entry, None, model)
+    resolution = _lookup(name, config, profiles, registry)
+    if resolution is None:
+        known = ", ".join(sorted({*profiles, *registry.names(), *agents.BUILTIN_DELEGATE_VENDORS}))
+        raise DelegateError("unknown-provider", f"unknown provider {name!r}; known: {known}")
+    _check_model(resolution.provider, model)
+    return Resolution(resolution.provider, resolution.profile, model)
+
+
+def _lookup(name, config, profiles, registry: providers_mod.Registry) -> Resolution | None:
+    """The provider ``name`` means, in precedence order. ``None`` when nothing claims it."""
     for entry in providers_mod.builtin_providers():
         if entry.name == name:
-            return Resolution(entry, None, model)
-    known = ", ".join(sorted({*profiles, *registry.names(), *agents.BUILTIN_DELEGATE_VENDORS}))
-    raise DelegateError("unknown-provider", f"unknown provider {name!r}; known: {known}")
+            return Resolution(entry, None, None)
+    if name in profiles:
+        return Resolution(_profile_provider(config, name), profiles[name], None)
+    for entry in registry.providers:
+        if entry.name == name:
+            return Resolution(entry, None, None)
+    return None
+
+
+#: Characters a model may contain when it travels in a **JSON request body**. Wider than
+#: :func:`keel.agents.is_safe_model_token` by ``:`` and ``/`` because real ids need both —
+#: an Ollama tag (``qwen2.5-coder:32b``) and a gateway's namespaced id
+#: (``deepseek/deepseek-r1``). Neither character can do anything in a JSON string value:
+#: the body is built by :func:`json.dumps`, so there is no argv to split and no URL path
+#: to retarget. A leading dash and ``..`` stay refused so the same token can never be
+#: mistaken for a flag or a path if it is later logged, echoed, or reused.
+_BODY_MODEL_OK = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:/-")
+
+
+def is_safe_body_model_token(model: str | None) -> bool:
+    """True when ``model`` is safe as a JSON body field (``ollama``/hosted/compatible)."""
+    if not model or model.startswith("-") or ".." in model:
+        return False
+    return _BODY_MODEL_OK.issuperset(model)
+
+
+def model_reaches_argv(provider: providers_mod.Provider) -> bool:
+    """Does this provider's model end up on a command line or in a URL path?
+
+    Two places demand the strict ``[A-Za-z0-9._-]`` token, and only two: a **subprocess
+    argv** (``cli``/``profile``), where a stray character could read as another flag; and
+    ``google-api``'s **URL path**, the one vendor that interpolates the model into its
+    endpoint, where a ``/`` or a ``?`` could retarget the request or smuggle query
+    parameters onto a URL that also carries an API key header.
+
+    Everywhere else the model is a JSON string value, and applying the argv rule there is
+    not caution but breakage: it refuses ``ollama:qwen2.5-coder:32b`` and
+    ``openrouter:deepseek/deepseek-r1``, two ids this repository's own documentation tells
+    operators to use.
+    """
+    return _transport_of(provider) in ("cli", "profile") or provider.vendor == "google-api"
+
+
+def model_token_issue(provider: providers_mod.Provider, model: str | None) -> str | None:
+    """Why ``model`` may not be used with ``provider``, or ``None`` when it may."""
+    if model is None:
+        return None
+    if model_reaches_argv(provider):
+        if not agents.is_safe_model_token(model):
+            return (
+                f"model {model!r} is not a safe token for {provider.name!r}: it reaches a "
+                "command line or a URL path, so only [A-Za-z0-9._-] with no leading dash "
+                "is accepted"
+            )
+        return None
+    if not is_safe_body_model_token(model):
+        return (
+            f"model {model!r} is not a safe token for {provider.name!r}: a request-body "
+            "model accepts [A-Za-z0-9._:/-] with no leading dash and no '..'"
+        )
+    return None
+
+
+def _check_model(provider: providers_mod.Provider, model: str | None) -> None:
+    issue = model_token_issue(provider, model)
+    if issue is not None:
+        raise DelegateError("bad-model", issue)
 
 
 def _profile_provider(config, name: str) -> providers_mod.Provider:
@@ -281,22 +361,23 @@ def plan_run(
     if not prompt_path:
         raise DelegateError("no-prompt", "--prompt-file is required")
     effective = model or provider.model
-    if effective is not None and not agents.is_safe_model_token(effective):
-        raise DelegateError(
-            "bad-model",
-            f"model {effective!r} is not a safe token ([A-Za-z0-9._-], no leading dash)",
-        )
+    _check_model(provider, effective)
     read_only = role in READ_ONLY_ROLES
     transport = _transport_of(provider)
+    effort, warnings = _effective_effort(provider, effort)
     applied = _apply_effort(provider.vendor, transport, effort, effective)
-    effective, warnings = applied.model, applied.warnings
+    effective = applied.model
+    warnings = warnings + applied.warnings
     argv: tuple[str, ...] = ()
     request: dict[str, Any] | None = None
     stdin_mode: str | None = None
+    backed = read_only
     if transport == "cli":
-        argv, stdin_mode = _builtin_argv(provider, read_only=read_only, model=effective)
+        argv, stdin_mode = _builtin_argv(
+            provider, read_only=read_only, model=effective, effort_args=applied.argv
+        )
     elif transport == "profile":
-        argv, stdin_mode, profile_warnings = _profile_argv(
+        argv, stdin_mode, backed, profile_warnings = _profile_argv(
             provider, profile, read_only=read_only, model=effective
         )
         warnings = warnings + profile_warnings
@@ -315,10 +396,32 @@ def plan_run(
         request=request,
         stdin_mode=stdin_mode,
         read_only=read_only,
+        read_only_backed=backed,
         effort=effort,
         effort_applied=applied.applied,
         warnings=warnings,
         attribution=_attribution(provider, profile, effective),
+    )
+
+
+def _effective_effort(
+    provider: providers_mod.Provider, effort: str | None
+) -> tuple[str | None, tuple[str, ...]]:
+    """``--effort`` if given, else the provider's own configured default.
+
+    ``Provider.effort`` exists so an operator can say "this entry is my high-effort seat"
+    once, in the registry or the profile, instead of on every dispatch. A per-run
+    ``--effort`` still wins. An unrecognised configured value is a **warning, not an
+    error**: the registry is fail-soft everywhere else in #1011, and a typo in a file in
+    ``$HOME`` should not make every run of an otherwise usable provider fail.
+    """
+    if effort is not None or not provider.effort:
+        return effort, ()
+    if provider.effort in EFFORTS:
+        return provider.effort, ()
+    return None, (
+        f"{provider.name}: ignoring configured effort {provider.effort!r}; "
+        f"valid: {', '.join(EFFORTS)}",
     )
 
 
@@ -345,8 +448,29 @@ def _builtin_argv(
     *,
     read_only: bool,
     model: str | None,
+    effort_args: tuple[str, ...] = (),
 ) -> tuple[tuple[str, ...], str]:
-    """The argv + stdin framing for one of the three built-in agent CLIs."""
+    """The argv + stdin framing for one of the three built-in agent CLIs.
+
+    **claude's read-only invocation is an allow-list, and carries no permission bypass.**
+    The first cut paired ``--disallowed-tools Edit,Write,NotebookEdit,Bash`` with
+    ``--dangerously-skip-permissions``, on the reasoning that a denylist wins over the
+    bypass. That is a denylist of four names against a tool surface that grows with every
+    release — ``WebFetch``, an MCP server's tools, whatever ships next — and it hands the
+    bypass to everything it failed to enumerate. ``--allowed-tools`` inverts the default:
+    anything not named is refused, so a new tool is refused on the day it appears rather
+    than on the day someone remembers this list. With no tool outside the read set
+    reachable there is nothing left for a permission prompt to ask about, so the bypass is
+    dropped as well. Flag spelling verified against ``claude --help``
+    (``--allowedTools, --allowed-tools <tools...>``).
+
+    ``agy`` keeps ``--sandbox`` plus ``--dangerously-skip-permissions``: it exposes no
+    allow-list, the sandbox is the only read-only mechanism it documents, and without the
+    skip flag an unattended reviewer stops at an approval prompt. This is the same pairing
+    ai-jury's ``privilege.enforce_read_only`` uses for the vendor, and the reason
+    :attr:`RunPlan.read_only_backed` reports what backs the promise rather than asserting
+    that writes are impossible.
+    """
     command = provider.command or provider.name
     if provider.name == "claude":
         argv = [command, "-p"]
@@ -355,14 +479,16 @@ def _builtin_argv(
         if model:
             argv += ["--model", model]
         if read_only:
-            argv += ["--disallowed-tools", CLAUDE_DISALLOWED_TOOLS]
-        argv += ["--dangerously-skip-permissions"]
+            argv += ["--allowed-tools", CLAUDE_ALLOWED_TOOLS]
+        else:
+            argv += ["--dangerously-skip-permissions"]
         return tuple(argv), STDIN_TEXT
     if provider.name == "codex":
         sandbox = "read-only" if read_only else "workspace-write"
         argv = [command, "exec", "-s", sandbox, "--skip-git-repo-check"]
         if model:
             argv += ["-m", model]
+        argv += list(effort_args)
         return tuple(argv), STDIN_TEXT
     # agy — the only remaining built-in CLI vendor (agents.CLI_VENDORS).
     argv = [command]
@@ -380,29 +506,49 @@ def _profile_argv(
     *,
     read_only: bool,
     model: str | None,
-) -> tuple[tuple[str, ...], str | None, tuple[str, ...]]:
-    """The argv + framing for an operator-configured binary (profile or registry entry)."""
+) -> tuple[tuple[str, ...], str | None, bool, tuple[str, ...]]:
+    """The argv + framing + read-only backing for an operator-configured binary.
+
+    The dangerous case is a profile that has ``args`` and no ``review_args``:
+    :meth:`keel.config.DelegateProfile.role_args` **falls back to ``args``**, which is the
+    implementer's flag set — ``aider``'s ``--yes-always``, ``cursor-agent``'s ``--force``.
+    A reviewer invoked with those can edit the checkout it was asked to read.
+
+    So the question asked here is *"did the operator configure a read-only invocation?"* —
+    ``profile.review_args is None`` — and **not** *"is the argv empty?"*. The first cut
+    asked the second, so exactly the dangerous case produced a full implementer argv,
+    ``read_only: true``, and no warning at all: the fallback made ``role_args`` non-empty,
+    which read as "configured". A profile whose ``review_args`` is an explicit empty list
+    is a deliberate choice — "this CLI needs no flags to be a reviewer" — and is backed.
+    """
     command = provider.command
     if not command:
         raise DelegateError("bad-provider", f"provider {provider.name!r} names no command")
     if profile is not None:
         role_args = profile.role_args(review=read_only)
+        configured = profile.review_args is not None
         prompt_mode = profile.prompt_mode
     else:
+        # A registry entry has no implementer `args` to fall back to, so an empty tuple
+        # here really is "nothing configured" rather than a fallback in disguise.
         role_args = provider.review_args if read_only else ()
+        configured = bool(provider.review_args)
         prompt_mode = DEFAULT_PROMPT_MODE
     argv = [command, *role_args]
     if model and provider.model_arg:
         argv += [provider.model_arg, model]
     warnings: tuple[str, ...] = ()
-    if read_only and not role_args:
+    backed = read_only and configured
+    if read_only and not configured:
+        shared = " it is running with the implementer's own args" if role_args else ""
         warnings = (
-            f"{provider.name}: no read-only invocation is configured (review_args), so the "
-            f"{provider.name!r} command runs with its default permissions — keel cannot "
-            "enforce read-only for an arbitrary CLI; re-check the worktree afterwards",
+            f"{provider.name}: no read-only invocation is configured (review_args), so"
+            f"{shared or ' the command runs with its default permissions'} — keel cannot "
+            "enforce read-only for an arbitrary CLI. Set review_args, treat this "
+            "reviewer's output as advisory, and re-check the worktree is clean afterwards",
         )
     stdin_mode = STDIN_TEXT if prompt_mode == DEFAULT_PROMPT_MODE else None
-    return tuple(argv), stdin_mode, warnings
+    return tuple(argv), stdin_mode, backed, warnings
 
 
 def _request(
@@ -457,6 +603,11 @@ def _apply_effort(vendor: str, transport: str, effort: str | None, model: str | 
         return Effort(model, {}, None, False, ())
     if vendor == "agy":
         return _agy_effort(effort, model)
+    if vendor == "codex":
+        # A config override rather than a flag: `codex exec` takes `-c key=value`, and
+        # `model_reasoning_effort` is the key it recognises (verified by round-tripping a
+        # real and a bogus key through `--strict-config`).
+        return Effort(model, {}, None, True, (), ("-c", f"{CODEX_EFFORT_CONFIG}={effort}"))
     if vendor == "anthropic-api":
         budget = ANTHROPIC_THINKING_BUDGET[effort]
         payload = {"thinking": {"type": "enabled", "budget_tokens": budget}}

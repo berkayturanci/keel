@@ -4638,6 +4638,18 @@ def _delegate_child_argv(args: argparse.Namespace, run_id: str) -> list[str]:
 
 
 def _cmd_delegate_run(args: argparse.Namespace) -> int:
+    # Checked before anything runs: --_child names the state file the finished result is
+    # written to, so without --run-id the delegate would do its whole (billable) job and
+    # then raise on the way to recording it.
+    if args.child and not args.run_id:
+        print(
+            json.dumps(
+                _delegate_bad_run_id(args, "--_child requires --run-id"),
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 1
     plan, failure = _delegate_plan(args)
     if failure is not None:
         print(json.dumps(failure, indent=2, sort_keys=True))
@@ -4650,7 +4662,12 @@ def _cmd_delegate_run(args: argparse.Namespace) -> int:
             print(json.dumps(_delegate_bad_run_id(args, str(exc)), indent=2, sort_keys=True))
             return 1
         record = delegaterun.start_detached(
-            _delegate_child_argv(args, run_id), root=args.root, run_id=run_id
+            _delegate_child_argv(args, run_id),
+            root=args.root,
+            run_id=run_id,
+            timeout=args.timeout,
+            provider=args.provider,
+            role=args.role,
         )
         print(json.dumps(record, indent=2, sort_keys=True))
         return 0 if record["status"] == "running" else 1
@@ -4671,6 +4688,11 @@ def _delegate_bad_run_id(args: argparse.Namespace, message: str) -> dict:
 
 def _cmd_delegate_wait(args: argparse.Namespace) -> int:
     result, error = delegaterun.wait(args.root, args.run_id, timeout=args.timeout)
+    if error == "lost":
+        # The run vanished; `wait` recorded why in the state file, so print that document
+        # rather than a second, thinner story about the same event.
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return 1
     if error is not None:
         print(
             json.dumps(
@@ -4715,9 +4737,12 @@ def _cmd_delegate_status(args: argparse.Namespace) -> int:
         return 0
     for record in records:
         result = record.get("result") or {}
-        verdict = (
-            "" if record.get("status") != "done" else (" ok" if result.get("ok") else " failed")
-        )
+        if record.get("status") == "done":
+            verdict = " ok" if result.get("ok") else " failed"
+        elif record.get("status") == "crashed":
+            verdict = f" {result.get('error_code', 'lost')}"
+        else:
+            verdict = ""
         print(
             f"{record.get('run_id')}  {record.get('status')}{verdict}  "
             f"pid={record.get('pid')}  started={record.get('started_at')}"

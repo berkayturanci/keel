@@ -82,6 +82,20 @@ class ResolveProviderTest(unittest.TestCase):
         self.assertEqual(resolution.provider.source, "registry")
         self.assertIsNone(resolution.profile)
 
+    def test_the_right_registry_entry_is_picked_out_of_several(self):
+        registry = providers.parse_registry(
+            {
+                "providers": {
+                    "aider": {"transport": "cli", "command": "aider"},
+                    "zed": {"transport": "cli", "command": "zed-agent"},
+                }
+            },
+            path="/registry.yaml",
+        )
+        self.assertEqual(
+            delegate.resolve_provider(None, registry, "zed").provider.command, "zed-agent"
+        )
+
     def test_a_registry_that_does_not_claim_the_name_leaves_the_builtin_alone(self):
         registry = providers.parse_registry(
             {"providers": {"aider": {"transport": "cli", "command": "aider"}}},
@@ -100,27 +114,50 @@ class ResolveProviderTest(unittest.TestCase):
         resolution = delegate.resolve_provider(config, None, "cursor")
         self.assertEqual(resolution.provider.command, "cursor-agent")
 
-    def test_precedence_is_project_profile_then_registry_then_builtin(self):
+    def test_precedence_is_builtin_then_project_profile_then_registry(self):
+        """A built-in vendor can never be redefined — not by config, not from $HOME.
+
+        `config.parse_config` refuses a profile that shadows a built-in and
+        `providers.registry_clashes` refuses a registry entry that does, so dispatch must
+        not be the one place where `claude` means whatever a file in the operator's home
+        directory said it meant.
+        """
         registry = providers.parse_registry(
             {
                 "providers": {
                     "claude": {"transport": "cli", "command": "registry-claude"},
                     "cursor": {"transport": "cli", "command": "registry-cursor"},
+                    "aider": {"transport": "cli", "command": "registry-aider"},
                 }
             },
             path="/registry.yaml",
         )
         config = _config({"cursor": cfg.DelegateProfile(vendor="cli", command="profile-cursor")})
-        # profile beats registry …
+        # the built-in wins over both …
+        claude = delegate.resolve_provider(config, registry, "claude").provider
+        self.assertEqual(claude.command, "claude")
+        self.assertEqual(claude.source, "builtin")
+        # … the project profile wins over the registry …
         self.assertEqual(
             delegate.resolve_provider(config, registry, "cursor").provider.command,
             "profile-cursor",
         )
-        # … and registry beats the built-in of the same name.
+        # … and the registry is reached only when nothing above claims the name.
         self.assertEqual(
-            delegate.resolve_provider(config, registry, "claude").provider.command,
-            "registry-claude",
+            delegate.resolve_provider(config, registry, "aider").provider.command,
+            "registry-aider",
         )
+
+    def test_a_shadowing_registry_entry_cannot_redirect_a_builtin_vendor(self):
+        registry = providers.parse_registry(
+            {"providers": {"codex": {"transport": "cli", "command": "/tmp/evil"}}},
+            path="/registry.yaml",
+        )
+        plan = delegate.plan_run(
+            delegate.resolve_provider(None, registry, "codex").provider, "review", PROMPT
+        )
+        self.assertEqual(plan.argv[0], "codex")
+        self.assertNotIn("/tmp/evil", plan.argv)
 
 
 class RoleAndInputValidationTest(unittest.TestCase):
@@ -166,7 +203,7 @@ class RoleAndInputValidationTest(unittest.TestCase):
 class BuiltinCliArgvTest(unittest.TestCase):
     """Every built-in CLI vendor × every role."""
 
-    def test_claude_read_only_roles_disallow_every_write_tool(self):
+    def test_claude_read_only_roles_allow_only_the_read_tools(self):
         for role in delegate.READ_ONLY_ROLES:
             with self.subTest(role=role):
                 plan = _plan("claude", role, model="opus-4.5")
@@ -182,11 +219,11 @@ class BuiltinCliArgvTest(unittest.TestCase):
                         "text",
                         "--model",
                         "opus-4.5",
-                        "--disallowed-tools",
-                        delegate.CLAUDE_DISALLOWED_TOOLS,
-                        "--dangerously-skip-permissions",
+                        "--allowed-tools",
+                        delegate.CLAUDE_ALLOWED_TOOLS,
                     ),
                 )
+                self.assertTrue(plan.read_only_backed)
 
     def test_claude_tool_roles_drop_the_denylist(self):
         for role in ("implement", "fix"):
@@ -255,26 +292,31 @@ class ReadOnlyIsNeverWriteEnablingTest(unittest.TestCase):
     than as a diff against the implementer argv: a future flag added to both would slip
     past the second and not past the first.
 
-    ``claude``'s read-only invocation does carry ``--dangerously-skip-permissions``, and
-    that is deliberate. The flag suppresses the interactive approval prompt — without it
-    an unattended reviewer hangs — while ``--disallowed-tools`` is what removes the write
-    tools, and a tool denylist wins over a permission bypass in claude's own precedence.
-    The bypass grants nothing that was not already denied.
+    ``claude`` no longer carries ``--dangerously-skip-permissions`` in a read-only run at
+    all: with an allow-list of four read tools there is nothing left for a permission
+    prompt to ask about, so the bypass buys nothing and is dropped. ``agy`` still does,
+    because ``--sandbox`` is the only read-only mechanism it documents and an unattended
+    reviewer otherwise stops at an approval prompt — which is why the plan reports
+    ``read_only_backed`` rather than claiming writes are impossible.
     """
 
     #: Flags that hand a reviewer the ability to change the checkout. None may appear.
     _NEVER = (
         "workspace-write",
         "danger-full-access",
-        "--allowedTools",
-        "--allowed-tools",
         "--force",
         "--yolo",
+        "--yes-always",
         "--write",
+        "--auto-edit",
     )
 
+    #: Vendors for which even the permission bypass must be absent. ``agy`` is excused
+    #: with a documented reason; nothing else is.
+    _NO_BYPASS = ("claude", "codex")
+
     _REQUIRED = {
-        "claude": ("--disallowed-tools", delegate.CLAUDE_DISALLOWED_TOOLS),
+        "claude": ("--allowed-tools", delegate.CLAUDE_ALLOWED_TOOLS),
         "codex": ("-s", "read-only"),
         "agy": ("--sandbox",),
     }
@@ -288,6 +330,23 @@ class ReadOnlyIsNeverWriteEnablingTest(unittest.TestCase):
                         self.assertNotIn(flag, argv)
                     for required in self._REQUIRED[vendor]:
                         self.assertIn(required, argv)
+                    if vendor in self._NO_BYPASS:
+                        self.assertNotIn("--dangerously-skip-permissions", argv)
+
+    def test_every_read_only_builtin_run_reports_its_read_only_as_backed(self):
+        for vendor in agents.CLI_VENDORS:
+            for role in delegate.READ_ONLY_ROLES:
+                with self.subTest(vendor=vendor, role=role):
+                    plan = _plan(vendor, role)
+                    self.assertTrue(plan.read_only)
+                    self.assertTrue(plan.read_only_backed)
+
+    def test_a_tool_enabled_run_is_never_reported_as_backed(self):
+        for vendor in agents.CLI_VENDORS:
+            with self.subTest(vendor=vendor):
+                plan = _plan(vendor, "implement")
+                self.assertFalse(plan.read_only)
+                self.assertFalse(plan.read_only_backed)
 
     def test_every_builtin_vendor_has_a_documented_read_only_flag(self):
         # The planner's per-vendor mechanism must not drift from what #1011 advertises
@@ -329,14 +388,57 @@ class ProfileArgvTest(unittest.TestCase):
         )
         plan = self._resolve(profile, "review")
         self.assertEqual(plan.argv, ("cursor-agent", "-p", "--read-only"))
+        self.assertTrue(plan.read_only_backed)
         self.assertEqual(plan.warnings, ())
 
     def test_a_reviewer_run_without_review_args_warns_that_nothing_backs_read_only(self):
         profile = cfg.DelegateProfile(vendor="cli", command="cursor-agent")
         plan = self._resolve(profile, "gate")
         self.assertTrue(plan.read_only)
+        self.assertFalse(plan.read_only_backed)
         self.assertEqual(len(plan.warnings), 1)
         self.assertIn("read-only", plan.warnings[0])
+
+    def test_a_profile_with_implementer_args_and_no_review_args_is_not_backed(self):
+        """The fail-open case, and the reason `read_only_backed` exists.
+
+        `DelegateProfile.role_args(review=True)` falls back to `args` when `review_args`
+        is None — so this profile plans a review with aider's *write-enabling* flags. The
+        first cut gated the warning on `not role_args`, and the fallback made that
+        non-empty: the run came back `read_only: true`, argv `--yes-always`, and no
+        warning at all. The question is whether the operator configured a read-only
+        invocation, never whether the resulting argv happens to be empty.
+        """
+        profile = cfg.DelegateProfile(
+            vendor="cli", command="aider", args=("--yes-always", "--no-check-update")
+        )
+        for role in delegate.READ_ONLY_ROLES:
+            with self.subTest(role=role):
+                plan = self._resolve(profile, role)
+                self.assertTrue(plan.read_only)
+                self.assertFalse(plan.read_only_backed)
+                self.assertIn("--yes-always", plan.argv)
+                self.assertEqual(len(plan.warnings), 1)
+                self.assertIn("implementer's own args", plan.warnings[0])
+
+    def test_an_explicitly_empty_review_args_is_a_configured_choice_and_is_backed(self):
+        profile = cfg.DelegateProfile(
+            vendor="cli", command="aider", args=("--yes-always",), review_args=()
+        )
+        plan = self._resolve(profile, "review")
+        self.assertEqual(plan.argv, ("aider",))
+        self.assertTrue(plan.read_only_backed)
+        self.assertEqual(plan.warnings, ())
+
+    def test_a_registry_entry_without_review_args_is_not_backed_either(self):
+        registry = providers.parse_registry(
+            {"providers": {"aider": {"transport": "cli", "command": "aider"}}},
+            path="/registry.yaml",
+        )
+        resolution = delegate.resolve_provider(None, registry, "aider")
+        plan = delegate.plan_run(resolution.provider, "review", PROMPT)
+        self.assertFalse(plan.read_only_backed)
+        self.assertEqual(len(plan.warnings), 1)
 
     def test_prompt_mode_arg_asks_the_executor_for_no_stdin(self):
         profile = cfg.DelegateProfile(vendor="cli", command="cursor-agent", prompt_mode="arg")
@@ -366,6 +468,7 @@ class ProfileArgvTest(unittest.TestCase):
         plan = delegate.plan_run(resolution.provider, "review", PROMPT)
         self.assertEqual(plan.transport, "profile")
         self.assertEqual(plan.argv, ("aider", "--dry-run"))
+        self.assertTrue(plan.read_only_backed)
         self.assertEqual(plan.attribution["delegate_profile"], "aider")
 
     def test_a_registry_local_entry_runs_its_command_rather_than_dialing_an_address(self):
@@ -481,10 +584,34 @@ class EffortTest(unittest.TestCase):
                 )
                 self.assertGreater(plan.request["max_tokens"], budget)
 
+    def test_codex_spells_effort_as_a_config_override(self):
+        for level in delegate.EFFORTS:
+            with self.subTest(effort=level):
+                plan = _plan("codex", "review", effort=level)
+                self.assertTrue(plan.effort_applied)
+                self.assertEqual(plan.warnings, ())
+                self.assertEqual(plan.argv[-2:], ("-c", f"{delegate.CODEX_EFFORT_CONFIG}={level}"))
+
+    def test_codex_effort_survives_beside_a_model_and_the_read_only_sandbox(self):
+        plan = _plan("codex", "review", effort="high", model="gpt-5.5")
+        self.assertEqual(
+            plan.argv,
+            (
+                "codex",
+                "exec",
+                "-s",
+                "read-only",
+                "--skip-git-repo-check",
+                "-m",
+                "gpt-5.5",
+                "-c",
+                f"{delegate.CODEX_EFFORT_CONFIG}=high",
+            ),
+        )
+
     def test_vendors_that_cannot_express_effort_say_so_instead_of_ignoring_it(self):
         for name, kwargs in (
             ("claude", {}),
-            ("codex", {}),
             ("ollama", {"model": "qwen2.5"}),
         ):
             with self.subTest(provider=name):
@@ -545,6 +672,167 @@ class RunPlanShapeTest(unittest.TestCase):
             with self.subTest(provider=name):
                 plan = _plan(name, "review", model="m1")
                 self.assertIn(plan.transport, delegate.TRANSPORTS)
+
+
+class ModelTokenRulesTest(unittest.TestCase):
+    """Which model tokens are accepted depends on **where the model lands**.
+
+    The strict `[A-Za-z0-9._-]` rule exists for an argv and for `google-api`'s URL path.
+    Applying it everywhere refused `ollama:qwen2.5-coder:32b` and
+    `openrouter:deepseek/deepseek-r1` — ids this repository's own `docs/keel/models.md`
+    tells operators to use — so the command was unusable for two whole transports.
+    """
+
+    #: Every model id this repo's docs put in front of an operator.
+    DOCUMENTED = (
+        ("ollama:qwen2.5-coder:32b", "qwen2.5-coder:32b"),
+        ("ollama:deepseek-r1:14b", "deepseek-r1:14b"),
+        ("ollama:qwen2.5", "qwen2.5"),
+        ("anthropic-api:claude-3-7-sonnet-20250219", "claude-3-7-sonnet-20250219"),
+        ("openai-api:gpt-4o", "gpt-4o"),
+        ("google-api:gemini-2.5-pro", "gemini-2.5-pro"),
+    )
+
+    def test_every_documented_builtin_example_resolves(self):
+        for token, expected in self.DOCUMENTED:
+            with self.subTest(token=token):
+                resolution = delegate.resolve_provider(None, None, token)
+                self.assertEqual(resolution.model, expected)
+                plan = delegate.plan_run(resolution.provider, "implement", PROMPT, model=expected)
+                self.assertEqual(plan.model, expected)
+
+    def _openai_compatible(self):
+        profile = cfg.DelegateProfile(
+            vendor=OPENAI_COMPATIBLE,
+            endpoint="http://localhost:8000/v1/chat/completions",
+            api_key_env="OPENROUTER_API_KEY",
+        )
+        return _config({"openrouter": profile})
+
+    def test_every_documented_openai_compatible_example_resolves(self):
+        config = self._openai_compatible()
+        for model in (
+            "deepseek/deepseek-r1",
+            "qwen/qwen-2.5-coder-32b-instruct",
+            "meta-llama/llama-3.3-70b-instruct",
+        ):
+            with self.subTest(model=model):
+                resolution = delegate.resolve_provider(config, None, f"openrouter:{model}")
+                self.assertEqual(resolution.model, model)
+                plan = delegate.plan_run(
+                    resolution.provider,
+                    "implement",
+                    PROMPT,
+                    model=model,
+                    profile=resolution.profile,
+                )
+                self.assertEqual(plan.request["model"], model)
+
+    def test_a_body_model_still_refuses_a_leading_dash_and_traversal(self):
+        for bad in ("-r1", "a/../../b", "qwen 2.5", "qwen;rm -rf /", "qwen$(id)"):
+            with self.subTest(model=bad):
+                self.assertFalse(delegate.is_safe_body_model_token(bad))
+        self.assertFalse(delegate.is_safe_body_model_token(None))
+        self.assertFalse(delegate.is_safe_body_model_token(""))
+
+    def test_a_slash_is_refused_where_the_model_reaches_an_argv(self):
+        for name in ("claude", "codex", "agy"):
+            with self.subTest(provider=name):
+                self.assertTrue(delegate.model_reaches_argv(_builtin(name)))
+                with self.assertRaises(delegate.DelegateError) as caught:
+                    delegate.resolve_provider(None, None, f"{name}:vendor/model")
+                self.assertEqual(caught.exception.code, "bad-model")
+
+    def test_a_slash_is_refused_for_google_api_whose_model_is_in_the_url_path(self):
+        self.assertTrue(delegate.model_reaches_argv(_builtin("google-api")))
+        with self.assertRaises(delegate.DelegateError) as caught:
+            delegate.resolve_provider(None, None, "google-api:models/gemini-3-pro")
+        self.assertEqual(caught.exception.code, "bad-model")
+
+    def test_a_slash_is_accepted_where_the_model_is_only_a_json_body_field(self):
+        for name in ("anthropic-api", "openai-api", "ollama"):
+            with self.subTest(provider=name):
+                self.assertFalse(delegate.model_reaches_argv(_builtin(name)))
+
+    def test_a_body_model_that_breaks_the_wider_rule_is_still_refused_at_resolve(self):
+        for token in ("ollama:-r1", "anthropic-api:a/../../b", "openai-api:gpt 4o"):
+            with self.subTest(token=token):
+                with self.assertRaises(delegate.DelegateError) as caught:
+                    delegate.resolve_provider(None, None, token)
+                self.assertEqual(caught.exception.code, "bad-model")
+                self.assertIn("request-body", caught.exception.message)
+
+    def test_a_profile_model_reaching_an_argv_keeps_the_strict_rule(self):
+        config = _config({"aider": cfg.DelegateProfile(vendor="cli", command="aider")})
+        with self.assertRaises(delegate.DelegateError) as caught:
+            delegate.resolve_provider(config, None, "aider:vendor/model")
+        self.assertEqual(caught.exception.code, "bad-model")
+
+    def test_a_configured_model_is_validated_too_not_just_the_token(self):
+        provider = providers.Provider(
+            name="x", vendor="cli", transport="cli", command="x", model="bad model"
+        )
+        with self.assertRaises(delegate.DelegateError) as caught:
+            delegate.plan_run(provider, "implement", PROMPT)
+        self.assertEqual(caught.exception.code, "bad-model")
+
+
+class ProviderConfiguredEffortTest(unittest.TestCase):
+    """`Provider.effort` is the per-entry default #1011 carried through for dispatch.
+
+    It went unread, so an operator who wrote `effort: high` on their registry seat got the
+    vendor's default on every run and nothing said otherwise.
+    """
+
+    def _registry(self, effort):
+        return providers.parse_registry(
+            {
+                "providers": {
+                    "seat": {
+                        "transport": "api",
+                        "endpoint": "http://localhost:8000/v1/chat/completions",
+                        "api_key_env": "OPENROUTER_API_KEY",
+                        "model": "deepseek/deepseek-r1",
+                        "effort": effort,
+                    }
+                }
+            },
+            path="/registry.yaml",
+        )
+
+    def _plan(self, configured, **kwargs):
+        resolution = delegate.resolve_provider(None, self._registry(configured), "seat")
+        self.assertEqual(resolution.provider.effort, configured)
+        return delegate.plan_run(resolution.provider, "review", PROMPT, **kwargs)
+
+    def test_a_configured_effort_is_the_default_when_none_is_passed(self):
+        plan = self._plan("high")
+        self.assertEqual(plan.effort, "high")
+        self.assertTrue(plan.effort_applied)
+        self.assertEqual(plan.request["extra_payload"], {"reasoning_effort": "high"})
+
+    def test_a_per_run_effort_wins_over_the_configured_one(self):
+        plan = self._plan("high", effort="low")
+        self.assertEqual(plan.effort, "low")
+        self.assertEqual(plan.request["extra_payload"], {"reasoning_effort": "low"})
+
+    def test_an_unrecognised_configured_effort_warns_rather_than_failing_the_run(self):
+        plan = self._plan("maximum")
+        self.assertIsNone(plan.effort)
+        self.assertFalse(plan.effort_applied)
+        self.assertEqual(plan.request["extra_payload"], {})
+        self.assertIn("ignoring configured effort", plan.warnings[0])
+
+    def test_a_configured_effort_reaches_an_argv_vendor_too(self):
+        # A registry entry cannot name a built-in vendor, so this is the record shape
+        # rather than a resolvable name: what matters is that the default is consumed
+        # wherever the vendor can express it.
+        provider = providers.Provider(
+            name="agy", vendor="agy", transport="cli", command="agy", effort="high"
+        )
+        plan = delegate.plan_run(provider, "review", PROMPT, model="gemini-3")
+        self.assertEqual(plan.model, "gemini-3-high")
+        self.assertTrue(plan.effort_applied)
 
 
 class ParsersTest(unittest.TestCase):

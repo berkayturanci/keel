@@ -7,7 +7,9 @@ spawns a process, opens a socket, or waits on wall-clock time.
 
 from __future__ import annotations
 
+import datetime
 import json
+import os
 import tempfile
 import unittest
 import urllib.error
@@ -15,7 +17,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from keel import config as cfg
-from keel import delegate, delegaterun, providers
+from keel import delegate, delegaterun, providers, runner
 from keel.api_delegate import OPENAI_COMPATIBLE
 from keel.runner import CommandResult
 
@@ -159,11 +161,25 @@ class CliExecutionTest(unittest.TestCase):
         self.assertIn("boom", result["error"])
 
     def test_a_missing_binary_is_named_as_such(self):
-        run = _Recorder(CommandResult(False, 127, "", stderr=""))
-        result = delegaterun.execute(_plan("agy"), _run=run, _read=_read)
-        self.assertEqual(result["error_code"], "missing-binary")
+        """Built through the real runner, because the shape is the whole point.
 
-    def test_a_cli_that_exits_127_with_output_is_a_plain_nonzero_exit(self):
+        `run_argv`'s OSError path returns code 127 *with the message in `output`*, so the
+        first cut's "code 127 and no output" test could never fire on a real run — the
+        branch was unreachable and a hand-built CommandResult hid that. The classifier now
+        reads the runner's own `spawn_failed` signal.
+        """
+
+        def explode(*_args, **_kwargs):
+            raise FileNotFoundError(2, "No such file or directory: 'agy'")
+
+        real = runner.run_argv(["agy"], _run=explode)
+        self.assertTrue(real.spawn_failed)
+        self.assertEqual(real.code, 127)
+        result = delegaterun.execute(_plan("agy"), _run=_Recorder(real), _read=_read)
+        self.assertEqual(result["error_code"], "missing-binary")
+        self.assertIn("agy", result["error"])
+
+    def test_a_cli_that_ran_and_exited_127_is_a_plain_nonzero_exit(self):
         run = _Recorder(
             CommandResult(False, 127, "command not understood", stdout="command not understood")
         )
@@ -193,6 +209,37 @@ class CliExecutionTest(unittest.TestCase):
         )
         result = delegaterun.execute(_plan("claude"), _run=run, _read=_read)
         self.assertEqual(result["text"], "the review")
+
+    def test_stderr_noise_on_an_empty_stdout_is_not_the_delegates_answer(self):
+        """Exit 0 + nothing on stdout + chatter on stderr must not read as a success.
+
+        `result.stdout or result.output` fell back to the concatenation, so a CLI that
+        printed a login notice and produced no answer came back `ok: true` with the notice
+        as its `text` — downstream, a diff to apply or a verdict to post.
+        """
+        noise = "Warning: config deprecated\nUsing cached credentials\n"
+        run = _Recorder(CommandResult(True, 0, noise, stdout="", stderr=noise))
+        result = delegaterun.execute(_plan("claude"), _run=run, _read=_read)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error_code"], "empty-output")
+        self.assertEqual(result["text"], "")
+
+    def test_a_failure_tail_still_shows_both_streams(self):
+        run = _Recorder(
+            CommandResult(
+                False, 2, "partial\nboom: bad flag", stdout="partial\n", stderr="boom: bad flag"
+            )
+        )
+        result = delegaterun.execute(_plan("claude"), _run=run, _read=_read)
+        self.assertIn("boom: bad flag", result["error"])
+        self.assertEqual(result["text"], "partial\n")
+
+    def test_an_agy_stream_with_no_result_frame_never_borrows_stderr(self):
+        run = _Recorder(
+            CommandResult(True, 0, "agy: starting\n", stdout="", stderr="agy: starting\n")
+        )
+        result = delegaterun.execute(_plan("agy"), _run=run, _read=_read)
+        self.assertEqual(result["error_code"], "empty-output")
 
 
 class PromptTest(unittest.TestCase):
@@ -446,18 +493,35 @@ class DetachLifecycleTest(unittest.TestCase):
             self.assertIsNone(delegaterun.load_state(root, "absent"))
 
 
+#: A liveness probe that says the child is still running, for the tests that are not
+#: about liveness. The fake pids the detach tests use do not exist, so the real probe
+#: would (correctly) call every one of them lost.
+_ALIVE = staticmethod(lambda _pid: True)
+
+
+def _at(offset_seconds):
+    """A UTC clock fixed ``offset_seconds`` from now — for deadline arithmetic."""
+    moment = datetime.datetime.now(datetime.UTC) + datetime.timedelta(seconds=offset_seconds)
+    return lambda: moment
+
+
 class WaitTest(unittest.TestCase):
+    def _start(self, root, run_id="r1", **kwargs):
+        return delegaterun.start_detached(
+            [], root=root, run_id=run_id, _popen=_FakePopen(), **kwargs
+        )
+
     def test_wait_returns_the_result_once_the_child_has_finished(self):
         with tempfile.TemporaryDirectory() as root:
-            delegaterun.start_detached([], root=root, run_id="r1", _popen=_FakePopen())
+            self._start(root)
             delegaterun.finish_detached(root, "r1", {"ok": True, "text": "done"})
-            result, error = delegaterun.wait(root, "r1", _sleep=lambda _s: None)
+            result, error = delegaterun.wait(root, "r1", _sleep=lambda _s: None, _alive=_ALIVE)
             self.assertIsNone(error)
             self.assertEqual(result["text"], "done")
 
     def test_wait_polls_until_the_state_file_says_done(self):
         with tempfile.TemporaryDirectory() as root:
-            delegaterun.start_detached([], root=root, run_id="r1", _popen=_FakePopen())
+            self._start(root)
             sleeps = []
 
             def sleep(seconds):
@@ -466,7 +530,13 @@ class WaitTest(unittest.TestCase):
                     delegaterun.finish_detached(root, "r1", {"ok": True})
 
             result, error = delegaterun.wait(
-                root, "r1", timeout=100, poll=0.25, _sleep=sleep, _now=_clock(0.0)
+                root,
+                "r1",
+                timeout=100,
+                poll=0.25,
+                _sleep=sleep,
+                _now=_clock(0.0),
+                _alive=_ALIVE,
             )
             self.assertIsNone(error)
             self.assertTrue(result["ok"])
@@ -478,14 +548,184 @@ class WaitTest(unittest.TestCase):
             self.assertIsNone(result)
             self.assertEqual(error, "unknown-run")
 
-    def test_wait_gives_up_at_the_timeout(self):
+    def test_wait_gives_up_at_the_callers_timeout(self):
         with tempfile.TemporaryDirectory() as root:
-            delegaterun.start_detached([], root=root, run_id="r1", _popen=_FakePopen())
+            self._start(root)
             result, error = delegaterun.wait(
-                root, "r1", timeout=5, _sleep=lambda _s: None, _now=_clock(0.0, 1.0, 9.0)
+                root,
+                "r1",
+                timeout=5,
+                _sleep=lambda _s: None,
+                _now=_clock(0.0, 1.0, 9.0),
+                _alive=_ALIVE,
             )
             self.assertIsNone(result)
             self.assertEqual(error, "timeout")
+            # The run may still be alive, so nothing is marked.
+            self.assertEqual(delegaterun.load_state(root, "r1")["status"], "running")
+
+    def test_a_killed_child_is_marked_crashed_instead_of_blocking_forever(self):
+        """The SIGKILL case: without liveness, `wait` with no --timeout never returns.
+
+        The record stays `running` because the only writer that would have changed it is
+        the process that just died, so a caller polling the file waits out the heat death
+        of the universe.
+        """
+        with tempfile.TemporaryDirectory() as root:
+            self._start(root)
+            result, error = delegaterun.wait(
+                root, "r1", _sleep=lambda _s: None, _alive=lambda _pid: False
+            )
+            self.assertEqual(error, "lost")
+            self.assertEqual(result["error_code"], "lost")
+            self.assertIn("pid 4242", result["error"])
+            record = delegaterun.load_state(root, "r1")
+            self.assertEqual(record["status"], "crashed")
+            # `status` must stop claiming it is running.
+            self.assertEqual(delegaterun.list_runs(root)[0]["status"], "crashed")
+
+    def test_a_crashed_record_is_reported_without_re_deciding_it(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._start(root)
+            delegaterun.wait(root, "r1", _sleep=lambda _s: None, _alive=lambda _pid: False)
+            result, error = delegaterun.wait(root, "r1", _sleep=lambda _s: None, _alive=_ALIVE)
+            self.assertEqual(error, "lost")
+            self.assertEqual(result["error_code"], "lost")
+
+    def test_a_child_that_wrote_its_result_just_before_exiting_is_not_called_lost(self):
+        """The exit-before-observe race: the result lands, then the pid disappears.
+
+        A dead pid is re-checked against the file before the run is declared lost,
+        because a delegate necessarily writes its result *before* the process ends and
+        the two are observed in the other order often enough to matter.
+        """
+        with tempfile.TemporaryDirectory() as root:
+            self._start(root)
+
+            def dead(_pid):
+                delegaterun.finish_detached(root, "r1", {"ok": True, "text": "landed"})
+                return False
+
+            result, error = delegaterun.wait(root, "r1", _sleep=lambda _s: None, _alive=dead)
+            self.assertIsNone(error)
+            self.assertEqual(result["text"], "landed")
+            self.assertEqual(delegaterun.load_state(root, "r1")["status"], "done")
+
+    def test_a_run_past_its_own_deadline_is_lost_even_with_no_pid_and_no_timeout(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._start(root, timeout=30)
+            record = delegaterun.load_state(root, "r1")
+            self.assertIsNotNone(record["deadline_at"])
+            result, error = delegaterun.wait(
+                root,
+                "r1",
+                _sleep=lambda _s: None,
+                _alive=_ALIVE,
+                _clock=_at(30 + delegaterun.DEADLINE_GRACE_S + 1),
+            )
+            self.assertEqual(error, "lost")
+            self.assertIn("deadline", result["error"])
+
+    def test_a_run_inside_its_deadline_keeps_waiting(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._start(root, timeout=3600)
+            result, error = delegaterun.wait(
+                root, "r1", timeout=1, _sleep=lambda _s: None, _now=_clock(0.0, 9.0), _alive=_ALIVE
+            )
+            self.assertEqual(error, "timeout")
+            self.assertIsNone(result)
+
+    def test_a_run_started_without_a_timeout_stamps_no_deadline(self):
+        with tempfile.TemporaryDirectory() as root:
+            record = self._start(root)
+            self.assertIsNone(record["deadline_at"])
+            self.assertIsNone(record["timeout"])
+
+    def test_an_unparseable_deadline_is_ignored_rather_than_crashing_the_wait(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._start(root)
+            record = delegaterun.load_state(root, "r1")
+            record["deadline_at"] = "not a timestamp"
+            delegaterun.write_state(root, record)
+            result, error = delegaterun.wait(
+                root, "r1", timeout=1, _sleep=lambda _s: None, _now=_clock(0.0, 9.0), _alive=_ALIVE
+            )
+            self.assertEqual(error, "timeout")
+            self.assertIsNone(result)
+
+    def test_the_run_disappearing_mid_wait_is_reported_as_unknown(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._start(root)
+
+            def dead(_pid):
+                delegaterun.state_path(root, "r1").unlink()
+                return False
+
+            result, error = delegaterun.wait(root, "r1", _sleep=lambda _s: None, _alive=dead)
+            self.assertIsNone(result)
+            self.assertEqual(error, "unknown-run")
+
+
+class LivenessProbeTest(unittest.TestCase):
+    def test_our_own_process_is_alive(self):
+        self.assertTrue(delegaterun.process_is_alive(os.getpid()))
+
+    def test_a_pid_that_cannot_exist_is_dead(self):
+        with patch.object(delegaterun.os, "kill", side_effect=ProcessLookupError):
+            self.assertFalse(delegaterun.process_is_alive(4242))
+
+    def test_a_pid_we_may_not_signal_is_alive_not_dead(self):
+        # PermissionError means "it exists and belongs to someone else" — reading it as
+        # dead would declare a perfectly healthy delegate lost.
+        with patch.object(delegaterun.os, "kill", side_effect=PermissionError):
+            self.assertTrue(delegaterun.process_is_alive(1))
+
+    def test_any_other_os_error_errs_towards_alive(self):
+        with patch.object(delegaterun.os, "kill", side_effect=OSError("EINVAL")):
+            self.assertTrue(delegaterun.process_is_alive(1))
+
+
+class LostUpdateTest(unittest.TestCase):
+    """The parent must never overwrite a terminal record written by its own child."""
+
+    def test_a_child_that_finishes_during_the_spawn_keeps_its_result(self):
+        with tempfile.TemporaryDirectory() as root:
+
+            class _FinishingPopen(_FakePopen):
+                def __call__(self, argv, **kwargs):
+                    # The child races to completion between Popen returning and the
+                    # parent's next write — the window that lost the result.
+                    delegaterun.finish_detached(root, "r1", {"ok": True, "text": "fast"})
+                    return super().__call__(argv, **kwargs)
+
+            delegaterun.start_detached([], root=root, run_id="r1", _popen=_FinishingPopen())
+            record = delegaterun.load_state(root, "r1")
+            self.assertEqual(record["status"], "done")
+            self.assertEqual(record["result"]["text"], "fast")
+
+    def test_the_record_exists_before_the_child_is_spawned(self):
+        with tempfile.TemporaryDirectory() as root:
+            seen = {}
+
+            class _CheckingPopen(_FakePopen):
+                def __call__(self, argv, **kwargs):
+                    seen["record"] = delegaterun.load_state(root, "r1")
+                    return super().__call__(argv, **kwargs)
+
+            delegaterun.start_detached([], root=root, run_id="r1", _popen=_CheckingPopen())
+            self.assertIsNotNone(seen["record"])
+            self.assertEqual(seen["record"]["status"], "running")
+
+    def test_a_guarded_merge_leaves_a_finished_record_alone(self):
+        with tempfile.TemporaryDirectory() as root:
+            delegaterun.finish_detached(root, "r1", {"ok": True})
+            merged = delegaterun._merge_while_running(root, "r1", {"pid": 99})
+            self.assertEqual(merged["status"], "done")
+            self.assertIsNone(merged.get("pid"))
+
+    def test_a_guarded_merge_on_a_missing_record_is_a_no_op(self):
+        with tempfile.TemporaryDirectory() as root:
+            self.assertIsNone(delegaterun._merge_while_running(root, "absent", {"pid": 99}))
 
 
 class DocumentShapeTest(unittest.TestCase):

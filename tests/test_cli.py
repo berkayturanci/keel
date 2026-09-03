@@ -12495,7 +12495,9 @@ class DelegateCommandTest(unittest.TestCase):
         self.assertEqual(kwargs["timeout"], 60)
 
     def test_a_failing_run_exits_one_with_an_error_code_and_no_traceback(self):
-        result = CommandResult(False, 127, "", stderr="")
+        result = CommandResult(
+            False, 127, "no such file: agy", stderr="no such file: agy", spawn_failed=True
+        )
         with patch("keel.runner.run_argv", return_value=result):
             rc, out, _err = run(
                 [
@@ -12753,12 +12755,117 @@ class DelegateCommandTest(unittest.TestCase):
                         "--detach",
                     ]
                 )
-            with patch("keel.delegaterun.time.sleep"):
+            # The fake pid is not a live process, so the liveness probe has to be held
+            # open for this to be a test about the caller's --timeout.
+            with (
+                patch("keel.delegaterun.time.sleep"),
+                patch("keel.delegaterun.process_is_alive", return_value=True),
+            ):
                 rc, out, _err = run(["delegate", "wait", "r4", "--root", root, "--timeout", "1"])
         self.assertEqual(rc, 1)
         document = json.loads(out)
         self.assertEqual(document["error_code"], "timeout")
         self.assertIn("r4", document["error"])
+
+    def test_wait_reports_a_killed_child_as_lost_with_the_full_contract(self):
+        with tempfile.TemporaryDirectory() as root:
+            with patch("keel.delegaterun.subprocess.Popen") as popen:
+                popen.return_value.pid = 424242
+                run(
+                    [
+                        "delegate",
+                        "run",
+                        "--provider",
+                        "claude",
+                        "--role",
+                        "review",
+                        "--prompt-file",
+                        self._prompt(),
+                        "--root",
+                        root,
+                        "--run-id",
+                        "r6",
+                        "--timeout",
+                        "30",
+                        "--detach",
+                    ]
+                )
+            with patch("keel.delegaterun.process_is_alive", return_value=False):
+                rc, out, _err = run(["delegate", "wait", "r6", "--root", root])
+        self.assertEqual(rc, 1)
+        document = json.loads(out)
+        self.assertEqual(document["error_code"], "lost")
+        self.assertEqual(document["provider"], "claude")
+        self.assertEqual(document["role"], "review")
+        self.assertFalse(document["ok"])
+
+    def test_the_detach_record_carries_the_runs_own_deadline(self):
+        with tempfile.TemporaryDirectory() as root:
+            with patch("keel.delegaterun.subprocess.Popen") as popen:
+                popen.return_value.pid = 5
+                _rc, out, _err = run(
+                    [
+                        "delegate",
+                        "run",
+                        "--provider",
+                        "claude",
+                        "--role",
+                        "implement",
+                        "--prompt-file",
+                        self._prompt(),
+                        "--root",
+                        root,
+                        "--run-id",
+                        "r7",
+                        "--timeout",
+                        "900",
+                        "--detach",
+                    ]
+                )
+        record = json.loads(out)
+        self.assertEqual(record["timeout"], 900)
+        self.assertIsNotNone(record["deadline_at"])
+        self.assertEqual(record["provider"], "claude")
+        self.assertEqual(record["role"], "implement")
+
+    def test_the_child_flag_requires_a_run_id_and_refuses_before_running(self):
+        with patch("keel.runner.run_argv") as ran:
+            rc, out, _err = run(
+                [
+                    "delegate",
+                    "run",
+                    "--provider",
+                    "claude",
+                    "--role",
+                    "review",
+                    "--prompt-file",
+                    self._prompt(),
+                    "--_child",
+                ]
+            )
+        self.assertEqual(rc, 1)
+        self.assertEqual(json.loads(out)["error_code"], "bad-run-id")
+        # refused before the delegate was invoked, not after it had already been billed
+        ran.assert_not_called()
+
+    def test_a_review_run_reports_whether_anything_backs_read_only(self):
+        result = CommandResult(True, 0, "verdict", stdout="verdict")
+        with patch("keel.runner.run_argv", return_value=result):
+            _rc, out, _err = run(
+                [
+                    "delegate",
+                    "run",
+                    "--provider",
+                    "claude",
+                    "--role",
+                    "review",
+                    "--prompt-file",
+                    self._prompt(),
+                ]
+            )
+        document = json.loads(out)
+        self.assertTrue(document["read_only"])
+        self.assertTrue(document["read_only_backed"])
 
     def test_wait_on_a_failed_run_prints_its_result_and_exits_one(self):
         with tempfile.TemporaryDirectory() as root:
@@ -12782,6 +12889,7 @@ class DelegateCommandTest(unittest.TestCase):
             rc, out, _err = run(["delegate", "status", "--root", root])
             self.assertEqual(rc, 0)
             self.assertIn("alive  running", out)
+            self.assertNotIn("crashed", out)
             self.assertIn("gone  done ok", out)
             self.assertIn("bad  done failed", out)
 
@@ -12790,6 +12898,19 @@ class DelegateCommandTest(unittest.TestCase):
             document = json.loads(out)
             self.assertEqual(document["total"], 3)
             self.assertTrue(document["state_dir"].endswith("/.keel/state/delegate"))
+
+    def test_status_shows_a_crashed_run_with_its_error_code(self):
+        with tempfile.TemporaryDirectory() as root:
+            from keel import delegaterun
+
+            with patch("keel.delegaterun.subprocess.Popen") as popen:
+                popen.return_value.pid = 99
+                delegaterun.start_detached([], root=root, run_id="ghost")
+            with patch("keel.delegaterun.process_is_alive", return_value=False):
+                delegaterun.wait(root, "ghost", _sleep=lambda _s: None)
+            rc, out, _err = run(["delegate", "status", "--root", root])
+        self.assertEqual(rc, 0)
+        self.assertIn("ghost  crashed lost", out)
 
     def test_status_on_a_root_with_no_runs_says_so(self):
         with tempfile.TemporaryDirectory() as root:
