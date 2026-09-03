@@ -60,13 +60,20 @@ _FIELD_RE = re.compile(
 )
 _HEADER_LINE_RE = re.compile(r"^[A-Za-z0-9_-]+\s*:")
 _SHIP_BRANCH_RE = re.compile(r"^(feature|fix|chore|docs|test)/issue-\d+(?:-|$)")
-#: The optional wrapper a marker line may wear. Every keel renderer emits its marker
-#: as the whole first line, in one of exactly two shapes: bare
+#: The exact wrapper a marker line may wear. Every keel renderer emits its marker as
+#: the whole first line, in one of exactly two shapes: bare
 #: (``artifacts.render_review_verdict`` / ``render_jury_verdict`` /
 #: ``render_ship_provenance``) or wrapped in an HTML comment so it renders invisibly
-#: (``closure.render_closure_comment``). Dropping the delimiters reduces both shapes
-#: to the same token, and keeps a two-marker header readable as two tokens.
-_HTML_COMMENT_DELIMITERS = re.compile(r"<!--|-->")
+#: (``closure.render_closure_comment``).
+#:
+#: These are matched literally, never with a regex. A pattern that treats ``-->`` as
+#: *the* comment terminator is wrong about HTML — a browser also ends a comment at
+#: ``--!>`` — and a classifier that disagrees with the renderer about where a comment
+#: ends is exactly the confusion this module exists to remove (CodeQL
+#: ``py/bad-tag-filter``). keel does not need to parse HTML: it needs to recognise the
+#: one shape it writes, and refuse everything else.
+_HTML_COMMENT_OPEN = "<!--"
+_HTML_COMMENT_CLOSE = "-->"
 
 STATUS_PASS = "pass"
 STATUS_WAITING = "waiting"
@@ -678,34 +685,55 @@ def _body(item: dict[str, Any]) -> str:
     return body if isinstance(body, str) else ""
 
 
-def _header_tokens(body: str) -> tuple[str, ...]:
-    """Whitespace tokens of ``body``'s header line, HTML-comment delimiters removed.
+def _header_line(body: str) -> str:
+    """``body``'s header line: its first *non-empty* line, stripped.
 
-    The header line is the first *non-empty* line: leading blank lines are
-    skipped rather than treated as the end, for the same reason :func:`_fields`
-    skips them — a GitHub comment body routinely begins with a newline.
-    Everything after that line is prose.
+    Leading blank lines are skipped rather than treated as the end, for the same
+    reason :func:`_fields` skips them — a GitHub comment body routinely begins
+    with a newline. Everything after that line is prose.
     """
     for raw_line in (body or "").splitlines():
         line = raw_line.strip()
         if not line:
             continue
-        return tuple(_HTML_COMMENT_DELIMITERS.sub(" ", line).split())
-    return ()
+        return line
+    return ""
+
+
+def _unwrap_html_comment(line: str) -> str:
+    """Strip one literal ``<!-- … -->`` wrapper from ``line``, or return it unchanged.
+
+    Deliberately not a regex and deliberately not an HTML parser: the only
+    wrapper keel has to recognise is the one
+    :func:`keel.closure.render_closure_comment` writes. Anything else — an
+    unterminated ``<!--``, a ``--!>`` close, a second wrapper on the same line —
+    is left intact, so the marker check below sees the delimiters as tokens and
+    refuses to classify the comment. Failing to recognise a hand-rolled wrapper
+    costs a comment its classification; guessing at one would let a body render
+    as an invisible comment while counting as evidence.
+    """
+    if (
+        line.startswith(_HTML_COMMENT_OPEN)
+        and line.endswith(_HTML_COMMENT_CLOSE)
+        and len(line) >= len(_HTML_COMMENT_OPEN) + len(_HTML_COMMENT_CLOSE)
+    ):
+        return line[len(_HTML_COMMENT_OPEN) : -len(_HTML_COMMENT_CLOSE)].strip()
+    return line
 
 
 def header_markers(body: str) -> tuple[str, ...]:
     """Return the distinct :data:`CLASSIFICATION_MARKERS` ``body``'s header carries.
 
-    The header line must consist of markers and nothing else — that is exactly
-    what every renderer emits, and it is what separates a marker line from a
-    sentence that happens to name one. So this is empty for an ordinary comment
-    (including one whose first line *mentions* a marker in prose), one entry for
-    a well-formed artifact, and two or more for a malformed one, which
+    The header line, once unwrapped, must consist of markers and nothing else —
+    that is exactly what every renderer emits, and it is what separates a marker
+    line from a sentence that happens to name one. So this is empty for an
+    ordinary comment (including one whose first line *mentions* a marker in
+    prose, and one wearing a wrapper keel does not write), one entry for a
+    well-formed artifact, and two or more for a malformed one, which
     :func:`marker_in_header` refuses to classify and
     :func:`_malformed_marker_findings` reports.
     """
-    tokens = _header_tokens(body)
+    tokens = _unwrap_html_comment(_header_line(body)).split()
     if not tokens or any(token not in CLASSIFICATION_MARKERS for token in tokens):
         return ()
     return tuple(marker for marker in CLASSIFICATION_MARKERS if marker in tokens)

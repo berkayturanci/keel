@@ -2043,6 +2043,22 @@ class TestMalformedMarkerHeader(unittest.TestCase):
         # minor never blocks: the requirement it failed to satisfy fails on its own.
         self.assertEqual(report["status"], evidence.STATUS_WAITING)
 
+    def test_a_browser_honoured_close_tag_does_not_smuggle_in_a_verdict(self):
+        # `--!>` ends a comment for a browser but not for keel's literal matcher, so
+        # this body renders invisibly *and* must not count. It does not.
+        report = self._report(
+            _trusted_comment(
+                "<!-- keel.review-verdict.v1 --!>\n"
+                "reviewer: a\n"
+                "head: abc123\n"
+                "\n"
+                "src/keel/evidence.py: ok."
+            )
+        )
+
+        self.assertEqual(report["counts"]["review_verdict"], 0)
+        self.assertEqual(report["missing"], ["review-verdict-1"])
+
     def test_an_untrusted_malformed_comment_is_not_reported(self):
         report = self._report(_untrusted_comment(self.TWO_MARKERS))
 
@@ -2098,10 +2114,36 @@ class TestMarkerInHeader(unittest.TestCase):
         self.assertIsNone(
             evidence.marker_in_header("keel.review-verdict.v1 keel.jury-verdict.v1\n")
         )
-        self.assertIsNone(
-            evidence.marker_in_header(
-                "<!-- keel.closure-comment.v1 --> <!-- keel.deferral.v1 -->\n"
-            )
+
+    def test_the_wrapper_is_matched_literally_not_parsed_as_html(self):
+        # CodeQL py/bad-tag-filter: a regex that treats `-->` as *the* comment
+        # terminator is wrong about HTML — a browser also ends a comment at `--!>`.
+        # keel does not need to parse HTML; it needs to recognise the one shape
+        # `closure.render_closure_comment` writes and refuse everything else, so a
+        # body cannot render as an invisible comment while counting as evidence.
+        for header in (
+            "<!-- keel.review-verdict.v1 --!>",  # the `--!>` close a browser honours
+            "<!-- keel.review-verdict.v1 --!>\nreviewer: a\nhead: abc",
+            "<!--! keel.review-verdict.v1 -->",  # bogus opener
+            "<!-- keel.review-verdict.v1",  # unterminated
+            "keel.review-verdict.v1 -->",  # close with no opener
+            "<!-- keel.review-verdict.v1 --> trailing prose",
+            "<!-- keel.closure-comment.v1 --> <!-- keel.deferral.v1 -->",  # two wrappers
+            "<!---->",  # empty wrapper
+            "<!-->",  # overlapping delimiters
+        ):
+            with self.subTest(header=header):
+                self.assertEqual(evidence.header_markers(header), ())
+                self.assertIsNone(evidence.marker_in_header(header))
+
+    def test_the_wrapper_keel_writes_classifies_with_or_without_inner_spaces(self):
+        self.assertEqual(
+            evidence.marker_in_header("<!--keel.review-verdict.v1-->"),
+            evidence.REVIEW_VERDICT_MARKER,
+        )
+        self.assertEqual(
+            evidence.marker_in_header("<!--   keel.review-verdict.v1   -->"),
+            evidence.REVIEW_VERDICT_MARKER,
         )
 
     def test_header_markers_reports_them_in_a_stable_order(self):

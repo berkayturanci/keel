@@ -131,6 +131,15 @@ A header naming **two different markers** does not say which artifact it is: tha
 from every count and reported as an advisory `malformed-evidence-comment` finding (`minor` — it never
 blocks on its own), rather than being counted for both or silently dropped.
 
+The wrapper is matched **literally, never with a regex**. Keel does not parse HTML — it recognises the
+one wrapper `closure.render_closure_comment` writes and refuses everything else. A pattern that treats
+`-->` as *the* comment terminator is wrong about HTML, because a browser also ends a comment at `--!>`,
+and a classifier that disagrees with the renderer about where a comment ends would let a body render
+invisibly on the page while still counting as evidence. So `<!-- keel.review-verdict.v1 --!>`, an
+unterminated `<!--`, two wrappers on one line, or anything trailing the close is left intact and
+therefore does not classify. The cost is that a hand-rolled wrapper loses its classification; the
+alternative is guessing, which is the failure mode.
+
 ---
 
 ## Offline Verification: `keel evidence-verify`
