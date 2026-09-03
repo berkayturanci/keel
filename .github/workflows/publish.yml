@@ -28,6 +28,25 @@ jobs:
         with:
           python-version: "3.13"
 
+      # Refuse a release that does not agree with itself, before anything is built
+      # or uploaded (#1024). PyPI files are immutable, so this is the last phase in
+      # which a CHANGELOG still headed `## [Unreleased]`, a plugin manifest naming
+      # the previous version, or a drifted keel-visual marker is still fixable.
+      # Same guards as `make release-check`; stdlib-only, so it runs before the
+      # hash-locked install below and cannot fail for a dependency's reasons.
+      - name: Check the release surfaces agree
+        env:
+          TAG: ${{ github.ref_name }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "push" ]; then
+            python scripts/release_check.py --tag "$TAG"
+          else
+            # Manual dispatch is the TestPyPI rehearsal: there is no tag to compare.
+            python scripts/release_check.py
+          fi
+
       - name: Install build dependencies
         run: |
           python -m pip install \
@@ -100,6 +119,138 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  verify:
+    # Everything after "the upload succeeded" used to be prose. `release_smoke.py`
+    # was documented in docs/keel/release.md and wired into no workflow at all, and
+    # "confirm the PyPI digests match the GitHub Release" was a sentence in a
+    # runbook. This job is that paragraph, executed (#1024).
+    #
+    # It deliberately checks what PyPI *serves*, not what this run built: the
+    # failure worth catching is a release that built fine and installs wrong.
+    name: Verify the published release
+    needs: build-n-publish
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read   # checkout + `gh release download` of the SHA256SUMS asset
+      issues: write    # open or update `release-broken: <tag>` when this fails
+    env:
+      TAG: ${{ github.ref_name }}
+      LOG: ${{ github.workspace }}/verify.log
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.13"
+
+      - name: Install from PyPI, smoke it, and cross-check the artifact digests
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # Everything in one step, teed to a log the failure handler below quotes.
+        # `set -o pipefail` keeps the tee from swallowing a non-zero exit.
+        run: |
+          set -euo pipefail
+          {
+            set -euo pipefail
+            version="${TAG#v}"
+            req="keel-workflow==${version}"
+            pypi="${RUNNER_TEMP}/pypi"
+            mkdir -p "$pypi"
+
+            echo "== waiting for the PyPI index to serve ${req} =="
+            # Bounded on purpose: the index is normally current within seconds, and
+            # a job that waits forever reports nothing. 20 x 15s = five minutes.
+            for attempt in $(seq 1 20); do
+              if python -m pip download --no-deps --dest "$pypi" "$req"; then
+                echo "the wheel was served on attempt ${attempt}"
+                break
+              fi
+              if [ "$attempt" -eq 20 ]; then
+                echo "::error title=PyPI never served ${req}::not on the index after five minutes"
+                exit 1
+              fi
+              sleep 15
+            done
+            # pip prefers the wheel, so ask for the source distribution explicitly.
+            python -m pip download --no-deps --no-binary=:all: --dest "$pypi" "$req"
+            ls -l "$pypi"
+
+            echo "== clean venv: install, keel version, keel doctor =="
+            python -m venv "${RUNNER_TEMP}/verify-venv"
+            "${RUNNER_TEMP}/verify-venv/bin/pip" install --disable-pip-version-check "$req"
+            "${RUNNER_TEMP}/verify-venv/bin/keel" version
+            # Run doctor from a scratch directory: its checkout_binding check asks
+            # whether the importable keel resolves inside the current checkout, and
+            # here it deliberately does not — the package under test came from PyPI.
+            (cd "${RUNNER_TEMP}" && "${RUNNER_TEMP}/verify-venv/bin/keel" doctor)
+
+            echo "== release_smoke.py against the published package =="
+            python scripts/release_smoke.py --requirement "$req"
+
+            echo "== PyPI digests vs the GitHub Release SHA256SUMS =="
+            gh release download "$TAG" --pattern SHA256SUMS --dir "${RUNNER_TEMP}/ghrel" --clobber
+            cat "${RUNNER_TEMP}/ghrel/SHA256SUMS"
+            checked=0
+            for artifact in "$pypi"/*; do
+              name="$(basename "$artifact")"
+              want="$(awk -v n="$name" '$2 == n { print $1 }' "${RUNNER_TEMP}/ghrel/SHA256SUMS")"
+              got="$(sha256sum "$artifact" | cut -d" " -f1)"
+              echo "${name}"
+              echo "  release: ${want:-<absent>}"
+              echo "  pypi:    ${got}"
+              if [ -z "$want" ]; then
+                echo "::error title=Not in SHA256SUMS::${name} is on PyPI but the release lists no digest for it"
+                exit 1
+              fi
+              if [ "$want" != "$got" ]; then
+                echo "::error title=Digest mismatch::${name} on PyPI is not the artifact this release published"
+                exit 1
+              fi
+              checked=$((checked + 1))
+            done
+            # Always two: a wheel and an sdist. Zero would mean the loop compared
+            # nothing and the step passed for that reason.
+            if [ "$checked" -ne 2 ]; then
+              echo "::error title=Nothing compared::expected 2 artifacts, hashed ${checked}"
+              exit 1
+            fi
+            echo "== verified ${req} =="
+          } 2>&1 | tee "$LOG"
+
+      - name: Open or update the release-broken issue
+        if: failure()
+        # A red job in a workflow nobody opens after a green publish is the same
+        # notice-nobody-acts-on that left the tap failing for a day (#981). A
+        # broken release gets a thing on a list instead, deduped by title so a
+        # re-run comments rather than filing a second one.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          title="release-broken: ${TAG}"
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          body="$(printf '%s\n\n%s\n\n%s\n\n```\n%s\n```\n' \
+            "Post-publish verification failed for \`${TAG}\`. PyPI files are immutable: fix forward with a new version, and yank ${TAG} if the published artifact is wrong (docs/keel/release.md, Rollback And Re-Run Notes)." \
+            "Run: ${run_url}" \
+            "Last 100 lines of the verify log:" \
+            "$(tail -n 100 "$LOG" 2>/dev/null || echo '(no log captured)')")"
+
+          existing="$(gh issue list --state open --search "\"${title}\" in:title" \
+            --json number,title \
+            --jq "map(select(.title == \"${title}\")) | .[0].number // empty")"
+
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+            echo "commented on #${existing}"
+          else
+            # Labels are best effort: a missing label must not swallow the report.
+            gh issue create --title "$title" --body "$body" \
+              --label "type:bug" --label "priority:high" --label "role:core" \
+              || gh issue create --title "$title" --body "$body"
+          fi
 
   publish-formula:
     # This repo is the source of truth for Formula/keel.rb (#774). The tap holds
