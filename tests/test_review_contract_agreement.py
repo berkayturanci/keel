@@ -395,7 +395,16 @@ class TestEveryCommandResolvesTheSameBench(unittest.TestCase):
             (
                 "jury panel",
                 JURY_PANEL_CONFIG,
-                ["closure-comment-pr", "closure-comment-issue", "jury-verdict"],
+                # The panel's ballots are the required review verdicts (#1015); before a
+                # posted verdict declares the panel size that count is the min_vendors
+                # floor. The jury verdict stays, as the consensus record.
+                [
+                    "closure-comment-pr",
+                    "closure-comment-issue",
+                    "review-verdict-1",
+                    "review-verdict-2",
+                    "jury-verdict",
+                ],
             ),
             (
                 "three seats",
@@ -491,11 +500,21 @@ class TestEveryCommandResolvesTheSameBench(unittest.TestCase):
         self.assertEqual(rc, 0, err)
         contract = json.loads(out)["contract"]
         self.assertEqual(contract["assignment"]["review_panel"], "jury")
-        self.assertEqual(contract["review_merge_contract"]["reviewers"]["count"], 0)
+        self.assertEqual(contract["review_merge_contract"]["reviewers"]["count"], 2)
+        self.assertEqual(contract["review_merge_contract"]["reviewers"]["source"], "jury")
         self.assertEqual(contract["review_merge_contract"]["jury"]["mode"], "gating")
         self.assertIn("--no-jury does not apply", contract["assignment"]["warnings"][0])
         required = [item["id"] for item in contract["evidence"]["required"]]
-        self.assertEqual(required, ["closure-comment-pr", "closure-comment-issue", "jury-verdict"])
+        self.assertEqual(
+            required,
+            [
+                "closure-comment-pr",
+                "closure-comment-issue",
+                "review-verdict-1",
+                "review-verdict-2",
+                "jury-verdict",
+            ],
+        )
 
     def test_no_jury_keeps_its_meaning_where_the_panel_is_not_the_review(self):
         config = self._config(THREE_SEAT_CONFIG)

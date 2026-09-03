@@ -559,8 +559,10 @@ passed the tier is not computed, so the tier-3 jury auto-trigger does not apply.
 Mode is **gating** by default (`--jury-advisory` ⇒ advisory-only). A tier whose
 `knobs.team` review policy is `jury` is **always gating and always enabled** — the panel is
 that tier's review, so a per-run flag cannot leave it with no required evidence; the
-ignored flag is reported in `assignment.warnings`. The jury never changes the reviewer
-count, and the reviewer count never changes with a jury flag. Read both from
+ignored flag is reported in `assignment.warnings`. The reviewer count never changes with a
+jury flag, and the jury never changes the reviewer count — except on a panel tier, where
+the reviewers *are* the panel, so `reviewers.count` is the number of ballots owed (the size
+a posted verdict declared, else the `min_vendors` floor). Read both from
 `review_merge_contract` rather than re-deriving them. Log the decision
 (`jury: enabled (reason; mode) / disabled`).
 

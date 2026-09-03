@@ -562,8 +562,10 @@ passed the tier is not computed, so the tier-3 jury auto-trigger does not apply.
 Mode is **gating** by default (`--jury-advisory` ⇒ advisory-only). A tier whose
 `knobs.team` review policy is `jury` is **always gating and always enabled** — the panel is
 that tier's review, so a per-run flag cannot leave it with no required evidence; the
-ignored flag is reported in `assignment.warnings`. The jury never changes the reviewer
-count, and the reviewer count never changes with a jury flag. Read both from
+ignored flag is reported in `assignment.warnings`. The reviewer count never changes with a
+jury flag, and the jury never changes the reviewer count — except on a panel tier, where
+the reviewers *are* the panel, so `reviewers.count` is the number of ballots owed (the size
+a posted verdict declared, else the `min_vendors` floor). Read both from
 `review_merge_contract` rather than re-deriving them. Log the decision
 (`jury: enabled (reason; mode) / disabled`).
 
@@ -1096,4 +1098,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=skills command=ship keel_version=1.19.3 source_sha256=f6fc65d28f7a277b0edad78497f08f76dffdd60a8fe2b2a9c9bbe6e505cf1b25 generated_sha256=77121c94d7c5ff51f71143b9b2ed2534f4a963af12f839f1565d07fbcd31fb30 -->
+<!-- keel-generated: surface=skills command=ship keel_version=1.19.3 source_sha256=d64c0b0dd2670a4d9787365e94de8e7b2ccfd8f2158ecd73c70e653d5558ea2f generated_sha256=11c7d2cb9c5fa59b357013221c87ff427c5c58533ccb2537cd3790f72206acf6 -->
