@@ -283,13 +283,15 @@ both render it as `assignment`, resolved against the same tier the review contra
   panel once and maps its ballots onto the review verdicts (see s7). `reviewers.count` is
   the number of ballots that must be posted: the size a posted jury verdict declared, or
   the jury's `min_vendors` floor before the panel has run.
-- **The bench never moves.** `reviewers.source` on such a tier is always `jury`: neither a
-  jury flag nor the participating-vendor count changes *who* reviews, only whether the
-  panel's verdict gates. You receive the same bench whichever surface you ask, which is the
-  point — `keel review` has no `--no-jury`, and only `evidence-verify`/`keel merge` can see
-  a vendor count. A short panel therefore owes exactly the same ballots; what it loses is
-  the gating of its verdict, and `evidence-verify` reports the thin vendor span rather than
-  swapping in a bench nobody dispatched.
+- **The bench never moves, and neither does the verdict requirement.**
+  `reviewers.source` on such a tier is always `jury`: no jury flag and no
+  participating-vendor count changes *who* reviews, and on a panel tier none of them makes
+  the verdict advisory either — the panel is the whole review, so a short panel may not
+  excuse itself from the consensus record that says it was short. You receive the same
+  contract whichever surface you ask, which is the point: `keel review` has no `--no-jury`,
+  and only `evidence-verify`/`keel merge` can see a vendor count. The thin vendor span is
+  reported as `review-vendor-distinctness` rather than swapping in a bench nobody
+  dispatched.
 
 ## Backbone (do not reorder; the step IDs are fixed)
 
@@ -630,10 +632,23 @@ findings already in keel's severity vocabulary — and that block is what feeds 
 `critical`/`major` block exactly as a host reviewer's findings do. Take the fix loop's input
 from there, not from the panel's prose.
 
-A panel that spans fewer than `jury.minimum_vendors` distinct vendors is downgraded by
-core, exactly as it always was — that is about the **verdict's gating**, not about the
-bench. The bench does not move: report the count (`keel evidence-verify --jury-vendors
-<N>`), post every ballot the panel returned, and let core decide. Do not fall back to host
+**The panel's ballot count governs — post one verdict per ballot, not
+`reviewers.count` verdicts.** That field is a *floor*, not a target: `keel plan` and
+`keel ship` resolve the contract with no pull request in reach, so on a panel tier they can
+only publish `jury.min_vendors`. The number of ballots is known to the run that dispatched
+the panel, which is you. `keel review --from-jury` posts one verdict per ballot in the
+report and declares the real size as `panelists: <N>` on the jury verdict, which is how
+`keel evidence-verify` and `keel merge` then require exactly that many. Never trim the
+bundle to `reviewers.count`: a declared count may only ever raise the requirement, so a
+larger panel is honoured and a short one is still held to the floor.
+
+A panel that spans fewer than `jury.minimum_vendors` distinct vendors is reported by core,
+exactly as it always was — and on a panel tier it changes **nothing** about what is
+required. The bench does not move, the ballots stay required, and the jury verdict stays
+required: a short panel does not get to excuse itself from the consensus record that says
+it was short (the shortfall surfaces as `review-vendor-distinctness` from
+`evidence-verify` instead). Report the count (`keel evidence-verify --jury-vendors <N>`),
+post every ballot the panel returned, and let core decide. Do not fall back to host
 reviewers on your own; a tier's reviewers are what its config says they are.
 
 Before the panel, run the **gate review** when `assignment.gate` is present: the project's
@@ -1098,4 +1113,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=skills command=ship keel_version=1.19.3 source_sha256=d64c0b0dd2670a4d9787365e94de8e7b2ccfd8f2158ecd73c70e653d5558ea2f generated_sha256=11c7d2cb9c5fa59b357013221c87ff427c5c58533ccb2537cd3790f72206acf6 -->
+<!-- keel-generated: surface=skills command=ship keel_version=1.19.3 source_sha256=043d37ef50d24ac2c59c9b478b8a31fab0913e4bc15697e6e44b0ce4f6d7ed1c generated_sha256=5506c336eab1f3d4661eea062bc418140e810fd82d116938a9152373d84a33ee -->

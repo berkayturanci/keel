@@ -191,7 +191,7 @@ class TestEveryCommandResolvesTheSameBench(unittest.TestCase):
         self.assertEqual(data["result"]["assessment"]["tier"], 3)
         return [item["id"] for item in data["contract"]["evidence"]["required"]], data
 
-    def _evidence_required(self, config, *flags):
+    def _evidence_required(self, config, *flags, pr_comments=None):
         rc, out, err = run(
             [
                 "evidence-verify",
@@ -209,7 +209,7 @@ class TestEveryCommandResolvesTheSameBench(unittest.TestCase):
                 "--pr-body-file",
                 str(self.root / "body.md"),
                 "--pr-comments-json",
-                str(self.root / "empty.json"),
+                str(pr_comments or self.root / "empty.json"),
                 "--issue-comments-json",
                 str(self.root / "empty.json"),
                 "--pr-reviews-json",
@@ -472,6 +472,86 @@ class TestEveryCommandResolvesTheSameBench(unittest.TestCase):
 
         self.assertEqual(rc, 1)
         self.assertIn("invalid keel config", err)
+
+    def test_the_posted_panel_count_governs_and_the_contract_publishes_the_floor(self):
+        """The one place the surfaces legitimately differ, pinned rather than assumed.
+
+        `keel plan` / `keel ship` / `keel step-verify` resolve the contract with no
+        pull request in reach — `plan` is offline by construction — so on a panel
+        tier they publish the **floor**: `jury.min_vendors` ballots. Only the
+        surfaces that can read the PR's posted `keel.jury-verdict.v1` learn the
+        panel's real size, and there the declared count governs.
+
+        This is convergent and conservative, never contradictory: the floor can
+        only be raised (`_jury_panel_size` takes the max), so a plan/ship run can
+        under-state what will be required but never over-state it, and every
+        surface that *can* see the panel agrees with every other one. The adapter
+        is told the same thing in s7: post one verdict per ballot the panel
+        returned, not `reviewers.count` verdicts.
+        """
+        config = self._config(JURY_PANEL_CONFIG)
+        verdict = self.root / "jury-comments.json"
+        verdict.write_text(
+            json.dumps(
+                [
+                    {
+                        "body": (
+                            "keel.jury-verdict.v1\nhead: abc\nvendors: 2\npanelists: 3\n\n"
+                            "AI Jury verdict: LGTM.\n"
+                        ),
+                        "author_association": "OWNER",
+                        "user": {"login": "orchestrator"},
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        plan_required, _ = self._plan_required(config)
+        ship_required, _ = self._ship_required(config)
+        with_verdict = self._evidence_required(config, pr_comments=verdict)
+
+        # No panel has been measured here: the contract publishes the floor.
+        floor = ["review-verdict-1", "review-verdict-2"]
+        self.assertEqual([item for item in plan_required if "review-verdict" in item], floor)
+        self.assertEqual([item for item in ship_required if "review-verdict" in item], floor)
+        self.assertEqual(self._step_verify_s7("--project", config, "--tier", "3"), floor)
+        # …and the posted verdict raises it to the panel that actually sat.
+        self.assertEqual(
+            [item for item in with_verdict if "review-verdict" in item],
+            ["review-verdict-1", "review-verdict-2", "review-verdict-3"],
+        )
+        # Convergent, not contradictory: the gate only ever asks for more.
+        self.assertTrue(set(floor) < set(with_verdict))
+
+    def test_a_declared_count_below_the_floor_cannot_lower_the_requirement(self):
+        """`min_vendors` is a floor: a short panel's own verdict may not relax it."""
+        config = self._config(JURY_PANEL_CONFIG)
+        verdict = self.root / "short-jury-comments.json"
+        verdict.write_text(
+            json.dumps(
+                [
+                    {
+                        "body": (
+                            "keel.jury-verdict.v1\nhead: abc\nvendors: 1\npanelists: 1\n\n"
+                            "AI Jury verdict: LGTM.\n"
+                        ),
+                        "author_association": "OWNER",
+                        "user": {"login": "orchestrator"},
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        required = self._evidence_required(config, pr_comments=verdict)
+
+        self.assertEqual(
+            [item for item in required if "review-verdict" in item],
+            ["review-verdict-1", "review-verdict-2"],
+        )
+        # …and the short panel does not drop the verdict it is short on, either.
+        self.assertIn("jury-verdict", required)
 
     def test_no_jury_is_recorded_and_not_applied_on_a_jury_tier(self):
         """`--no-jury` must not remove the only review a jury tier has.

@@ -653,6 +653,14 @@ drops `jury-verdict` from the required set:
 | `1` | advisory | no |
 | `2`+ | gating | yes |
 
+**Except on a tier whose review policy is the panel** (`knobs.team`'s
+`review.by_tier.<n>: jury`), where the downgrade is suppressed entirely and the verdict
+stays required whatever the count. The table above describes a jury sitting *beside* a host
+bench: downgrading is sound there because the bench still reviewed the change. A panel tier
+has no bench behind it, so a short panel excusing itself from its own consensus record would
+leave the run with the one artifact missing that says the panel was short. The shortfall is
+reported instead — as `review-vendor-distinctness` from `evidence-verify`.
+
 `0` is not a special case — it is the run where no agent returned output, which is how the
 contract's "a jury that did not complete cleanly never gates" falls out of the same
 comparison rather than needing its own branch.
@@ -665,7 +673,9 @@ gating — and `--no-jury` is untouched.
 **Where the count comes from when the flag is omitted.** The verifier reads `vendors: <N>`
 from a trusted, head-bound `keel.jury-verdict.v1` comment on the PR. The same comment
 carries `panelists: <N>`, read the same way, which sizes the required reviewer count on a
-tier whose panel *is* the review (see `docs/keel/evidence.md`). That is the only
+tier whose panel *is* the review — as a **floor raised, never lowered**:
+`max(declared, jury.min_vendors)`, so a verdict declaring a short panel cannot shrink what
+the tier owes (see `docs/keel/evidence.md`). That is the only
 channel available to a hosted runner: the run ledger and the jury artifact both live under
 the gitignored `.keel/state/`, so CI can read neither, while PR comments are always
 visible. `keel.artifacts.render_jury_verdict()` emits the field, inferring it from

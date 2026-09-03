@@ -126,16 +126,26 @@ def resolve_jury(
 
     ``participating_vendors`` is the count of distinct vendors that actually took
     part in the panel. Below :data:`MINIMUM_JURY_VENDORS` a gating mode is
-    downgraded to advisory, because a panel that small cannot produce
-    cross-vendor consensus — and a run where no agent returned output is simply
-    zero, so "a jury that did not complete cleanly never gates" needs no separate
-    branch. ``None`` means the panel is not known yet (planning, ``keel plan``,
-    any caller resolving the contract before s8 runs), and leaves the mode alone.
+    downgraded to advisory **unless the panel is the tier's review**, because a
+    panel that small cannot produce cross-vendor consensus — and a run where no
+    agent returned output is simply zero, so "a jury that did not complete cleanly
+    never gates" needs no separate branch. ``None`` means the panel is not known
+    yet (planning, ``keel plan``, any caller resolving the contract before s8
+    runs), and leaves the mode alone.
 
     The downgrade must live here rather than in adapter prose: the evidence gate
     derives its ``jury-verdict`` requirement from this ``mode``, so a mode that
     ignores the real panel makes the gate demand a verdict the jury step would
     decline to treat as gating.
+
+    On a **panel tier** the downgrade is suppressed for the mirror-image reason.
+    There the verdict is not a second opinion beside a host bench — it is the
+    tier's own consensus record, and dropping it because the panel came back
+    short lets a short panel excuse itself from the one artifact that says so.
+    The short panel is still refused, by
+    :func:`keel.evidence.panel_vendor_check`; what it may not do is quietly stop
+    being required. ``downgraded`` reports ``False`` there, and the reason string
+    is left alone, so nothing downstream reads a relaxation that did not happen.
     """
     if panel_is_jury:
         enabled = True
@@ -163,8 +173,16 @@ def resolve_jury(
     # advisory panel there is a tier with nothing required of it.
     advisory = not panel_is_jury and (jury_advisory or policy_mode == "advisory")
     mode = "off" if not enabled else ("advisory" if advisory else "gating")
+    # …and the vendor downgrade is the same door, so it carries the same guard. Round 3
+    # of #1014 closed the flag route only; a panel tier reaching this with one
+    # participating vendor still came out advisory, which drops `jury-verdict` from the
+    # required evidence of a tier whose panel is the *whole* review. That is the short
+    # panel excusing itself from the verdict it came back short on. Elsewhere the
+    # downgrade is right and stays: a jury sitting beside a host bench that did not
+    # convene cross-vendor should not gate, because the bench still reviewed the change.
     downgraded = (
-        mode == "gating"
+        not panel_is_jury
+        and mode == "gating"
         and participating_vendors is not None
         and participating_vendors < minimum_vendors
     )
@@ -212,9 +230,17 @@ def _jury_panel_size(jury_record: dict[str, Any], panel_size: int | None) -> int
     The panel *is* the review there, so its ballots are the required s7 verdicts —
     ``keel review --from-jury`` posts one head-pinned verdict per ballot — and the
     required count is the panel's own size, declared as ``panelists: <N>`` on the
-    posted jury verdict. Before anything has declared it the count rests on the
-    jury's minimum vendor count: a floor rather than nothing, so an unmeasured
-    panel cannot satisfy the gate by being unmeasured.
+    posted jury verdict.
+
+    ``minimum_vendors`` is a **floor, not a fallback**: the answer is
+    ``max(declared, minimum_vendors)``, so a declared count can only ever *raise*
+    the requirement. Taking the declared count verbatim let a verdict lower it —
+    ``panelists: 1`` against a minimum of 2 asked for one ballot, while the
+    unmeasured cases (absent, ``0``, negative) still asked for two, so the one
+    shape that means "the panel came back short" was the one shape that relaxed
+    the gate. The declared count is attacker-adjacent evidence in exactly the way
+    the vendor count is: it is read off a comment, and it must not be able to
+    shrink what the tier owes.
 
     **What this deliberately does not do is move the bench.** Neither a jury flag
     nor the measured participating-vendor count may change *who reviews*, only
@@ -234,9 +260,10 @@ def _jury_panel_size(jury_record: dict[str, Any], panel_size: int | None) -> int
     :func:`keel.evidence.panel_vendor_check` rather than quietly swapped for a
     bench nobody dispatched.
     """
-    if isinstance(panel_size, int) and panel_size > 0:
+    floor = jury_record["minimum_vendors"]
+    if isinstance(panel_size, int) and panel_size > floor:
         return panel_size
-    return jury_record["minimum_vendors"]
+    return floor
 
 
 def resolve_review_contract(

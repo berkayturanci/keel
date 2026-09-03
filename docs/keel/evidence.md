@@ -126,9 +126,22 @@ same reading while the panel's per-reviewer ballots reached no gate at all.
 posted `keel.jury-verdict.v1` declares `panelists: <N>` beside `vendors: <N>`, and
 `evidence.jury_panel_size()` reads it back — the same channel, and for the same reason: the
 run ledger and the jury artifact live under the gitignored `.keel/state/`, so a hosted
-runner can read neither, while PR comments are always visible. Before any verdict declares
-it, the count rests on the jury's `min_vendors` floor rather than on nothing, so an
-unmeasured panel cannot satisfy the gate by being unmeasured.
+runner can read neither, while PR comments are always visible.
+
+`min_vendors` is a **floor, not a fallback**: the required count is
+`max(declared, min_vendors)`, so a declared count can only ever *raise* it. Before any
+verdict declares one, the floor stands on its own — an unmeasured panel cannot satisfy the
+gate by being unmeasured — and a verdict declaring fewer ballots than the floor does not
+lower it either. That asymmetry is deliberate: the count is read off a PR comment, and the
+one shape that means "the panel came back short" must not be the shape that relaxes the
+gate.
+
+It also means the surfaces size the requirement differently, convergently and on purpose.
+`keel plan`, `keel ship` and `keel step-verify` resolve the contract with no pull request in
+reach, so on a panel tier they publish the floor; `keel review`, `keel evidence-verify` and
+`keel merge` read the posted verdict and require the panel that actually sat. Because the
+count only rises, a planning surface can understate what will be required but never
+overstate it, and no two surfaces that can both see the panel disagree.
 
 **Vendor distinctness asks a panel the panel's own question.**
 `evidence_require_distinct_vendors` normally wants one distinct vendor per required verdict,
@@ -138,12 +151,16 @@ seats: every ballot must still declare a vendor, but the panel as a whole must s
 review; three from one vendor is one opinion three times and fails with
 `review-vendor-distinctness`.
 
-**The downgrade never buys fewer eyes.** A panel with fewer than `jury.min_vendors`
-participating vendors is downgraded `gating → advisory` (see
-[cli.md](cli.md#--jury-vendors-n--the-panel-decides-whether-the-jury-gates)) — that is about
-whether the *verdict* gates, and it leaves the review untouched: every ballot the panel owed
-is still required, and the thin vendor span is reported by the check above. The requirement
-shrinks in neither direction, which is what a moving bench could not have promised.
+**A panel tier never downgrades.** Where the jury sits *beside* a host bench, a panel with
+fewer than `jury.min_vendors` participating vendors is downgraded `gating → advisory` and
+its verdict stops being required (see
+[cli.md](cli.md#--jury-vendors-n--the-panel-decides-whether-the-jury-gates)) — sound there,
+because the bench still reviewed the change. Where the panel **is** the review there is no
+bench behind it, so the downgrade is suppressed: the ballots stay required, the jury verdict
+stays required, and `jury.downgraded` reports `false`. A short panel does not get to excuse
+itself from the consensus record that says it was short; the shortfall is what the vendor
+check above reports. The requirement shrinks in no direction at all, which is what a moving
+bench could never have promised.
 
 ### 5. Phase-Separated Verification Contract
 Evidence requirements are split by lifecycle phase:

@@ -236,15 +236,15 @@ class TestTheJuryIsTheReviewPanel(unittest.TestCase):
         self.assertIn("spans 1 distinct vendor(s), below the minimum of 2", finding["message"])
 
     def test_a_short_panel_never_shrinks_the_review_it_owes(self):
-        """The downgrade changes what gates, never who reviews (#1014 round 3, #1015).
+        """A short panel loses nothing from what it owes (#1014 round 3, #1015).
 
-        A panel spanning one vendor is below `min_vendors`, so the jury verdict
-        stops gating — but the bench does not move: the panel is still the review,
-        and all three of its ballots stay required. That is the fail-closed
-        direction without the cross-surface disagreement a moving bench brings,
-        since only the surfaces that can read the posted verdict ever learn the
-        vendor count. The too-few-vendors condition is reported by the vendor
-        check above, not by quietly swapping in a bench nobody dispatched.
+        A panel spanning one vendor is below `min_vendors`. On a tier whose panel
+        is the whole review that changes **nothing** about the requirement: the
+        bench does not move (only the surfaces that read the posted verdict ever
+        learn the vendor count, so a moving bench would split the contract), all
+        three ballots stay required, and the jury verdict stays required too —
+        a short panel may not excuse itself from the consensus record that says
+        it was short. The shortfall is reported by the vendor check above.
         """
         result = self._map_panel(["anthropic", "anthropic", "anthropic"])
 
@@ -256,7 +256,7 @@ class TestTheJuryIsTheReviewPanel(unittest.TestCase):
             ["review-verdict-1", "review-verdict-2", "review-verdict-3"],
         )
         self.assertTrue(all(item["present"] for item in results if item["kind"] == "review"))
-        self.assertNotIn("jury-verdict", [item["id"] for item in results])
+        self.assertIn("jury-verdict", [item["id"] for item in results])
 
     def test_the_panel_is_dispatched_once_not_beside_a_host_bench(self):
         """`keel ship --json` at tier-3: the reviewers are the panel, and only the panel."""
