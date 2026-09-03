@@ -335,13 +335,14 @@ Resolve the implementer: `implementer_agents` by the issue's role label, **overr
   high-risk-path implementer. No new
   consent scope: this is the `shell`/subprocess surface `codex`/`agy` already use, and
   the profile's `command` is operator-authored config exactly like `build_gate_cmd` —
-  never take it from PR content or agent output. Attribution: `agent:<vendor>` (i.e.
-  `agent:cli`) + versionless `model:<base>` for the **effective** model — the per-run
-  `--delegate <profile>:<model>` if given, else the profile's `model` — plus the profile
-  name so the s11 closure says *which* CLI ran, not just `cli`. Record that name under
+  never take it from PR content or agent output. Attribution: run
+  `keel attribution --vendor cli --profile <profile> --config .keel/project.yaml --json`
+  with the **effective** model (`--model` — the per-run `--delegate <profile>:<model>` if
+  given, else the profile's own `model`, which the command falls back to) and use the
+  returned labels verbatim. The record carries the profile name under
   **`delegate_profile`**, never `profile`: the run record's `profile` field already means
   the workflow profile (`standard`/`compound`), and writing the CLI's name there would
-  overwrite it. `agents.profile_attribution()` returns the right shape already.
+  overwrite it. That is what makes the s11 closure say *which* CLI ran, not just `cli`.
   **Write the ledger's `actors.implementer` as the vendor string `cli` (or
   `cli:<effective-model>`), never the profile name.** The evidence gate splits
   `actors.implementer` on the first colon and cross-checks the result against the PR's
@@ -377,8 +378,8 @@ Resolve the implementer: `implementer_agents` by the issue's role label, **overr
   not 401, which keel maps to `auth` so a mistyped key reads as a key problem. Reading the token is `secret_access`, so the run's approved
   scope must include `secrets` — without it, resolve to `HOST_AGENT` before any key is
   read. **Hosted-API implementers are refused on tier-3**, same rule and fallback as
-  local models. Attribution: `agent:<vendor>` (e.g. `agent:anthropic-api`) + versionless
-  `model:<base>`, system `anthropic-api:MODEL`.
+  local models. Attribution: `keel attribution --vendor anthropic-api --model MODEL`,
+  same as every other path — never compose `agent:`/`model:` by hand.
 
 Every implementer (delegated or not) receives the same brief plus:
 - The approved `operator_consent.delegated_agent_scope`. If the implementer attempts work
@@ -408,18 +409,44 @@ slowly), fall back to `HOST_AGENT` and log the reason. A local-model harness tha
 created a worktree must remove it before the host path recreates one at the same path
 (same obligation under `--dry-run` if it created one).
 
-**Attribution (mandatory on every path, even a plain run).** Record and persist a vendor
-label and the full `IMPLEMENTER_SYSTEM` string (vendor + model when known, e.g.
-`codex:<model>`, `ollama:<model>`). When a specific model is known, also add a versionless
-`model:<base>` label. Read a colon by **what is on either side of it**, never by position:
-after a transport prefix (`ollama:`, `*-api:`) the model is on the right, and any other
-colon is the model's own suffix — an Ollama `:tag` — so the model is on the left. Then drop
-a trailing numeric run on non-hyphenated families, e.g. `<word>2.5`→`<word>`; keep
-`<word>-<major>` on hyphenated ones, dropping a `.minor`. Specifying this positionally is
-what labelled every hosted-API run `model:<vendor>` (#955); the label must name the model
-that ran, so two runs on one vendor are distinguishable. Attribution always reflects the **effective** implementer that actually ran —
-never the requested-but-fell-back one — and is written at label-flip time (skipped only
-under `--dry-run`, logged instead).
+**Attribution (mandatory on every path, even a plain run).** **Never compose an
+`agent:` or `model:` label in prose.** Ask core for them:
+
+```bash
+keel attribution --vendor <effective-vendor> --model <effective-model> \
+  --config .keel/project.yaml --json
+```
+
+or read the `attribution` block a delegate result already carries. Apply
+`agent_label` and `model_label` to the PR **verbatim**, and record `system` as the
+`IMPLEMENTER_SYSTEM` string. Whatever transformation turns a model id into a base label
+lives in `keel.agents` and only there — a host that re-derived it wrote `agent:gemini` /
+`model:gemini` for a run keel calls `agent:agy` / `model:gemini-3`, and because the same
+host also wrote the ledger, the cross-check compared its own guess to its own guess and
+passed (#1013). `keel evidence-verify` now refuses a label the CLI could not have
+produced (`attribution-vocabulary`), so a hand-composed label blocks the merge.
+
+Write the ledger's `actors.implementer` as the same `<vendor>` (or `<vendor>:<model>`)
+you passed to `keel attribution` — `keel ship --live --append-ledger` warns when that
+vendor is not one keel knows. Attribution always reflects the **effective** implementer
+that actually ran — never the requested-but-fell-back one — and is written at label-flip
+time (skipped only under `--dry-run`, logged instead).
+
+**Stamp the run's provenance on the PR.** Immediately after the PR exists (before CI, before
+review), post the ship-provenance artifact:
+
+```bash
+keel post-comment .keel/project.yaml --root . --target pr:<PR> \
+  --artifact ship-provenance --body-file <rendered.md> --run-id "$RUN_ID"
+```
+
+Render `<rendered.md>` from `result.artifact_bodies.ship_provenance` of
+`keel ship --json` — do not hand-write it. That comment is what tells
+`keel evidence-verify` this is a keel run: the gate arms on the `keel.ship-provenance.v1`
+marker **ahead of** the branch-name regex, so a run whose branch is not named
+`fix/issue-<N>-…`, or whose ledger lives in a per-run worktree CI cannot read, is still
+gated. Skipping this step is how a PR that was never reviewed reports
+`enforced: false (no-ship-provenance)`.
 
 After the implementer returns, the **orchestrator** runs a **branch-scope validation gate**.
 Persist the implementer's declared `files_changed` into the run-ledger record at append time
@@ -506,7 +533,9 @@ focus slice, and a no-cross-reading instruction. Coverage invariant: when the co
 focus dimensions **merge, never drop** (a 1-reviewer slot covers all dimensions; suitable
 only for narrow tier-1 PRs). Run any `reviewers` Lego extensions. Capture per-reviewer
 **effective** vendor+model for attribution (lock-step parallel arrays so the s11 closure
-can zip them by index). On a missing/erroring delegate vendor, fall back to the host
+can zip them by index) — from `keel attribution --vendor <v> --model <m> --json`, or from
+the delegate result's own `attribution` block, never by composing the labels yourself.
+On a missing/erroring delegate vendor, fall back to the host
 reviewer and log it (record the effective vendor that ran).
 
 **Reviewer stance — brief every reviewer to *refute*, not to approve.** The focus slices
@@ -773,8 +802,10 @@ the failure mode being fixed here, so surface the report in the closure comment 
 only in the run log.
 
 ### s11 capture
-Record the run for `/keel:wrap`: the **effective** implementer + reviewer vendors/models,
-tier, rounds, window decision, and outcome. Post the **closure comment** to **both** the
+Record the run for `/keel:wrap`: the **effective** implementer + reviewer vendors/models
+(as `keel attribution` reported them at s4/s7 — the closure repeats those labels, it does
+not re-derive them), tier, rounds, window decision, and outcome.
+Post the **closure comment** to **both** the
 issue and the PR as distinct comments through `keel post-comment` with
 `--artifact closure-comment` and the same `--run-id`. The PR closure comment MUST be a PR
 conversation comment, not appended to or folded into the PR body, and not represented by
@@ -788,8 +819,8 @@ rendered markdown verbatim so the issue and PR comments mirror the ledger byte-f
 for the PR, the posted closure body must match that record's canonical render (after
 whitespace normalization) on both the PR and the issue, so a stale or edited marker-bearing
 body fails the closure check.
-Use `keel post-comment` for issue-update, review-verdict, jury-verdict, and
-closure-comment artifacts; a malformed body missing its marker must stop the step before
+Use `keel post-comment` for ship-provenance, issue-update, review-verdict, jury-verdict,
+and closure-comment artifacts; a malformed body missing its marker must stop the step before
 any public comment is posted.
 Run any post-merge
 `capture` Lego (e.g. durable-learning capture: classify the merged PR's signal, optionally
