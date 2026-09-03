@@ -206,6 +206,38 @@ def check_reviewer_override(reviewer_override: int | None) -> None:
         raise ValueError("reviewer_override must be one of 1, 2, or 3")
 
 
+def _jury_panel_bench(
+    jury_record: dict[str, Any],
+    *,
+    tier: int | None,
+    reviewer_override: int | None,
+    panel_size: int | None,
+) -> tuple[int, str, str]:
+    """The reviewer bench for a tier whose review policy is the jury panel (#1015).
+
+    Two answers, and which one applies is decided by the mode the jury actually
+    resolved to rather than by the policy that asked for it:
+
+    * **gating** — the panel *is* the review. Its ballots are the required s7
+      verdicts (``keel review --from-jury`` posts one head-pinned verdict per
+      ballot), so the required count is the panel's own size. Until the panel has
+      run, nothing has declared that size; the count then rests on the jury's
+      minimum vendor count, which is a floor rather than nothing, so an undeclared
+      panel cannot satisfy the gate by being unmeasured.
+    * **not gating** — advisory by policy, or downgraded because too few vendors
+      took part. A panel that does not gate is not a review keel may rely on, so
+      the tier's **host reviewers are required again**. That is the fail-closed
+      direction the downgrade rule exists for: fewer participating vendors must
+      never mean fewer eyes.
+    """
+    if jury_record["mode"] != "gating":
+        count = reviewer_override if reviewer_override is not None else reviewer_count(tier or 2)
+        return count, "jury-not-gating", "reviewers"
+    if isinstance(panel_size, int) and panel_size > 0:
+        return panel_size, "jury", team_policy.JURY_PANEL
+    return jury_record["minimum_vendors"], "jury", team_policy.JURY_PANEL
+
+
 def resolve_review_contract(
     *,
     tier: int | None,
@@ -218,6 +250,7 @@ def resolve_review_contract(
     jury_advisory: bool = False,
     require_distinct_vendors: bool | None = None,
     jury_participating_vendors: int | None = None,
+    jury_panel_size: int | None = None,
     assignment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Machine-readable review, jury, test, and merge-gate plan for ship-like flows.
@@ -230,6 +263,11 @@ def resolve_review_contract(
 
     ``require_distinct_vendors`` is tri-state: ``None`` takes the tier-derived default
     (on from tier-2 up), a bool is the project's explicit answer.
+
+    ``jury_panel_size`` is the number of ballots a jury panel actually returned, which
+    only a run that has seen the panel can know (a posted jury verdict declares it; see
+    :func:`keel.evidence.jury_panel_size`). On a tier whose panel *is* the review it
+    becomes the required reviewer count, so the panel sizes its own bench (#1015).
     """
     check_reviewer_override(reviewer_override)
     if review_comments not in POSTING_MODES:
@@ -249,6 +287,26 @@ def resolve_review_contract(
         panel = assignment["review_panel"]
         slots = list(assignment["reviewers"])
         panel_is_jury = bool(assignment["jury"]["panel_is_review"])
+    jury_record = resolve_jury(
+        tier=tier,
+        gates=gates,
+        jury=jury,
+        no_jury=no_jury,
+        jury_advisory=jury_advisory,
+        participating_vendors=jury_participating_vendors,
+        panel_is_jury=panel_is_jury,
+        policy_mode=None if assignment is None else assignment["jury"]["mode"],
+        minimum_vendors=(
+            MINIMUM_JURY_VENDORS if assignment is None else assignment["jury"]["min_vendors"]
+        ),
+    )
+    if panel_is_jury:
+        count, source, panel = _jury_panel_bench(
+            jury_record,
+            tier=tier,
+            reviewer_override=reviewer_override,
+            panel_size=jury_panel_size,
+        )
     pack = policy_pack or {}
     review_policy = pack.get("review", {}) if isinstance(pack.get("review", {}), dict) else {}
     return {
@@ -268,7 +326,10 @@ def resolve_review_contract(
             # for slot B instead of running one vendor N times (#1014). Empty for every
             # caller that resolves no team, which keeps the pre-#1014 contract intact.
             "slots": slots,
-            "focuses": list(reviewer_focuses(count)),
+            # A panel picks its own coverage; keel's A/B/C focus slices describe a bench
+            # keel staffs, and handing them to ai-jury would be keel briefing reviewers it
+            # never dispatched.
+            "focuses": ([] if panel == team_policy.JURY_PANEL else list(reviewer_focuses(count))),
             "project_additions": list(review_policy.get("additions", [])),
             "required_sections": list(review_policy.get("required_sections", [])),
         },
@@ -278,19 +339,7 @@ def resolve_review_contract(
             "per_reviewer_inline_fallback": "summary",
             "summary_mode": review_comments == "summary",
         },
-        "jury": resolve_jury(
-            tier=tier,
-            gates=gates,
-            jury=jury,
-            no_jury=no_jury,
-            jury_advisory=jury_advisory,
-            participating_vendors=jury_participating_vendors,
-            panel_is_jury=panel_is_jury,
-            policy_mode=None if assignment is None else assignment["jury"]["mode"],
-            minimum_vendors=(
-                MINIMUM_JURY_VENDORS if assignment is None else assignment["jury"]["min_vendors"]
-            ),
-        ),
+        "jury": jury_record,
         "finding_policy": {
             "critical": "block",
             "major": "block",

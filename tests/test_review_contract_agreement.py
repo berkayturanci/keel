@@ -246,22 +246,39 @@ class TestEveryCommandResolvesTheSameBench(unittest.TestCase):
         return next(step for step in steps if step["step_id"] == "s7")["required_evidence"]
 
     def test_a_jury_panel_config_requires_the_panel_everywhere(self):
+        """Every surface requires the same panel: its ballots *and* its verdict (#1015).
+
+        The panel is the review, so its ballots are the s7 evidence — one
+        head-pinned `keel.review-verdict.v1` per panelist, posted by
+        `keel review --from-jury` — and the jury verdict stays as the separate
+        consensus record. Until a posted verdict declares the panel size, the
+        required ballot count is the jury's minimum vendor floor, which is the
+        answer that fails closed.
+        """
         config = self._config(JURY_PANEL_CONFIG)
 
         plan_required, plan_contract = self._plan_required(config)
         ship_required, ship_data = self._ship_required(config)
         evidence_required = self._evidence_required(config)
 
-        expected = ["closure-comment-pr", "closure-comment-issue", "jury-verdict"]
+        expected = [
+            "closure-comment-pr",
+            "closure-comment-issue",
+            "review-verdict-1",
+            "review-verdict-2",
+            "jury-verdict",
+        ]
         self.assertEqual(plan_required, expected)
         self.assertEqual(ship_required, expected)
         self.assertEqual(sorted(evidence_required), sorted(expected))
-        # …and no surface asks for a host review verdict that will never be posted.
-        for required in (plan_required, ship_required, evidence_required):
-            self.assertFalse([item for item in required if item.startswith("review-verdict")])
-        self.assertEqual(plan_contract["review_merge_contract"]["reviewers"]["count"], 0)
+        reviewers = plan_contract["review_merge_contract"]["reviewers"]
+        self.assertEqual(reviewers["count"], 2)
+        self.assertEqual(reviewers["source"], "jury")
+        self.assertEqual(reviewers["panel"], "jury")
+        # …and no host reviewer slot is staffed for a panel keel does not run.
+        self.assertEqual(reviewers["slots"], [])
         self.assertEqual(
-            ship_data["result"]["assessment"]["review_merge_contract"]["reviewers"]["count"], 0
+            ship_data["result"]["assessment"]["review_merge_contract"]["reviewers"]["count"], 2
         )
 
     def test_a_three_seat_config_requires_three_verdicts_everywhere(self):
@@ -290,8 +307,9 @@ class TestEveryCommandResolvesTheSameBench(unittest.TestCase):
 
         with_project = self._step_verify_s7("--project", config, "--tier", "3")
 
-        # The panel is the review at this tier, so s7 has no host verdict to require.
-        self.assertEqual(with_project, [])
+        # The panel is the review at this tier, so s7's verdicts are its ballots —
+        # two of them until a posted jury verdict declares a larger panel (#1015).
+        self.assertEqual(with_project, ["review-verdict-1", "review-verdict-2"])
         # Without a project there is no team to read, and the tier-derived bench stands —
         # which is exactly the answer that disagreed with `keel ship` before `--project`.
         self.assertEqual(self._step_verify_s7(), ["review-verdict-1", "review-verdict-2"])
@@ -311,12 +329,21 @@ class TestEveryCommandResolvesTheSameBench(unittest.TestCase):
         self.assertEqual(contract["review_merge_contract"], review)
         self.assertEqual(
             [item["id"] for item in contract["evidence"]["required"]],
-            ["closure-comment-pr", "closure-comment-issue", "jury-verdict"],
+            [
+                "closure-comment-pr",
+                "closure-comment-issue",
+                "review-verdict-1",
+                "review-verdict-2",
+                "jury-verdict",
+            ],
         )
         s7 = next(
             step for step in contract["step_verification"]["steps"] if step["step_id"] == "s7"
         )
-        self.assertFalse([item for item in s7["required_evidence"] if "review-verdict" in item])
+        self.assertEqual(
+            [item for item in s7["required_evidence"] if "review-verdict" in item],
+            ["review-verdict-1", "review-verdict-2"],
+        )
 
     def _review_required_count(self, config, supplied):
         """`keel review` has no jury flags at all — the bench must not need them.

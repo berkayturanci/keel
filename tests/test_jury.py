@@ -264,5 +264,347 @@ class TestIncompleteRun(unittest.TestCase):
         self.assertEqual(seen["timeout"], 2400)
 
 
+# --------------------------------------------------------------------------- #
+# Per-reviewer ballots (#1015): the panel mapped onto s7 review evidence.
+# --------------------------------------------------------------------------- #
+
+BALLOT_REPORT = {
+    "schema_version": "1.1",
+    "findings": [
+        {
+            "severity": "major",
+            "file": "src/keel/review.py",
+            "line": 42,
+            "claim": "the closure path drops the jury post",
+            "reviewer": "alpha",
+        },
+        {
+            "severity": "note",
+            "file": "docs/keel/evidence.md",
+            "line": None,
+            "claim": "stale wording",
+            "reviewer": "beta",
+        },
+    ],
+    "consensus": [
+        {
+            "representative": {
+                "severity": "major",
+                "file": "src/keel/review.py",
+                "line": 42,
+                "claim": "the closure path drops the jury post",
+                "reviewer": "alpha",
+            },
+            "reviewers": ["alpha", "gamma"],
+            "verification_status": "verified",
+        },
+        {
+            "representative": {
+                "severity": "nit",
+                "file": "docs/keel/evidence.md",
+                "line": None,
+                "claim": "stale wording",
+                "reviewer": "beta",
+            },
+            "reviewers": ["beta"],
+            "verification_status": "unsupported",
+        },
+    ],
+    "reviewers": [
+        {
+            "name": "alpha",
+            "vendor": "anthropic",
+            "model": "claude-opus-4",
+            "verdict": "REQUEST_CHANGES",
+            "findings": [0],
+            "round1_ok": True,
+            "verified_count": 1,
+        },
+        {
+            "name": "beta",
+            "vendor": "google",
+            "model": "gemini-3-pro",
+            "verdict": "COMMENT",
+            "findings": [1],
+            "round1_ok": True,
+            "verified_count": 0,
+        },
+        {
+            "name": "gamma",
+            "vendor": "anthropic",
+            "model": "",
+            "verdict": "APPROVE",
+            "findings": [],
+            "round1_ok": True,
+            "verified_count": 1,
+        },
+        {
+            "name": "chair",
+            "role": "chair",
+            "vendor": "openai",
+            "model": "gpt-5",
+            "verdict": "REQUEST_CHANGES",
+        },
+    ],
+}
+
+
+class TestParsePanel(unittest.TestCase):
+    def setUp(self):
+        self.panel = jury.parse_panel(BALLOT_REPORT)
+
+    def test_the_chair_is_not_a_panelist(self):
+        """The chair is the consensus record; it renders as the jury verdict."""
+        self.assertEqual([b.reviewer for b in self.panel.ballots], ["alpha", "beta", "gamma"])
+        self.assertEqual(self.panel.size, 3)
+        self.assertEqual(self.panel.chair.reviewer, "chair")
+        self.assertEqual(self.panel.chair.vendor, "openai")
+
+    def test_vendors_are_distinct_lower_cased_and_ordered(self):
+        self.assertEqual(self.panel.vendors, ("anthropic", "google"))
+
+    def test_a_ballot_carries_its_own_provenance_and_findings(self):
+        alpha = self.panel.ballots[0]
+        self.assertEqual(alpha.vendor, "anthropic")
+        self.assertEqual(alpha.model, "claude-opus-4")
+        self.assertEqual(alpha.verdict, "REQUEST_CHANGES")
+        self.assertEqual(
+            alpha.findings,
+            (
+                {
+                    "severity": "major",
+                    "path": "src/keel/review.py",
+                    "line": 42,
+                    "message": "the closure path drops the jury post",
+                },
+            ),
+        )
+
+    def test_an_empty_model_reads_as_unset(self):
+        """ai-jury writes "" when the CLI default is in force; keel omits the field."""
+        self.assertIsNone(self.panel.ballots[2].model)
+
+    def test_severities_are_mapped_into_keels_vocabulary(self):
+        self.assertEqual(self.panel.ballots[1].findings[0]["severity"], "nit")
+
+    def test_not_a_ballot_report_is_none_not_an_error(self):
+        for value in ({"findings": []}, "not json at all", 5, {"reviewers": "chair"}):
+            with self.subTest(value=value):
+                self.assertIsNone(jury.parse_panel(value))
+
+    def test_a_json_string_with_trailing_noise_still_parses(self):
+        raw = json.dumps(BALLOT_REPORT) + "\n[jury] done\n"
+        self.assertEqual(jury.parse_panel(raw).size, 3)
+
+    def test_a_malformed_ballot_raises_rather_than_vanishing(self):
+        for reviewers in (["nope"], [{"vendor": "anthropic"}], [{"name": "  "}]):
+            with self.subTest(reviewers=reviewers):
+                with self.assertRaises(jury.JuryReportError):
+                    jury.parse_panel({"findings": [], "reviewers": reviewers})
+
+    def test_unresolvable_finding_indexes_are_dropped(self):
+        panel = jury.parse_panel(
+            {
+                "findings": [],
+                "reviewers": [{"name": "a", "verdict": "APPROVE", "findings": [0, "x", True]}],
+            }
+        )
+        self.assertEqual(panel.ballots[0].findings, ())
+
+    def test_a_missing_findings_list_is_no_findings(self):
+        panel = jury.parse_panel({"reviewers": [{"name": "a", "verdict": "APPROVE"}]})
+        self.assertEqual(panel.ballots[0].findings, ())
+        self.assertEqual(panel.ballots[0].verified_count, 0)
+        self.assertTrue(panel.ballots[0].round1_ok)
+
+    def test_a_non_dict_finding_is_dropped(self):
+        panel = jury.parse_panel(
+            {"findings": ["nope"], "reviewers": [{"name": "a", "findings": [0]}]}
+        )
+        self.assertEqual(panel.ballots[0].findings, ())
+
+    def test_a_non_integer_verified_count_reads_as_zero(self):
+        panel = jury.parse_panel({"reviewers": [{"name": "a", "verified_count": "two"}]})
+        self.assertEqual(panel.ballots[0].verified_count, 0)
+
+
+class TestMapVerdict(unittest.TestCase):
+    def test_both_vocabularies_fold_onto_keels(self):
+        cases = {
+            "APPROVE": "LGTM",
+            "READY": "LGTM",
+            "REQUEST_CHANGES": "REQUEST_CHANGES",
+            "REQUEST CHANGES": "REQUEST_CHANGES",
+            "needs-info": "REQUEST_CHANGES",
+            "COMMENT": "COMMENT",
+            "UNCLEAR": "COMMENT",
+            "ABSTAIN": "ABSTAIN",
+            "NO_QUORUM": "ABSTAIN",
+        }
+        for token, expected in cases.items():
+            with self.subTest(token=token):
+                self.assertEqual(jury.map_verdict(token), expected)
+
+    def test_an_empty_verdict_is_an_abstention_never_an_approval(self):
+        self.assertEqual(jury.map_verdict(""), "ABSTAIN")
+
+    def test_an_unknown_token_is_carried_through_not_approved(self):
+        self.assertEqual(jury.map_verdict("mostly fine"), "MOSTLY_FINE")
+
+
+class TestBallotProse(unittest.TestCase):
+    """The scope/testing lines keel synthesises must survive its own gate."""
+
+    def test_a_scope_names_the_files_the_ballot_named(self):
+        scope = jury.ballot_scope(jury.parse_panel(BALLOT_REPORT).ballots[0])
+        self.assertIn("src/keel/review.py", scope)
+        self.assertIn("alpha", scope)
+
+    def test_a_clean_ballot_still_says_what_it_checked(self):
+        scope = jury.ballot_scope(jury.parse_panel(BALLOT_REPORT).ballots[2])
+        self.assertIn("Checked", scope)
+        self.assertIn("named no file", scope)
+
+    def test_a_long_file_list_is_capped_and_counted(self):
+        ballot = jury.Ballot(
+            reviewer="alpha",
+            verdict="COMMENT",
+            findings=tuple(
+                {"severity": "nit", "path": f"src/f{i}.py", "line": None, "message": "m"}
+                for i in range(10)
+            ),
+        )
+        scope = jury.ballot_scope(ballot)
+        self.assertIn("named 10 file(s)", scope)
+        self.assertIn("(+2 more)", scope)
+        self.assertNotIn("src/f9.py", scope)
+
+    def test_a_scope_lists_each_file_once_and_skips_the_pathless(self):
+        """A whole-diff finding names no file; a repeated file is still one file."""
+        ballot = jury.Ballot(
+            reviewer="alpha",
+            verdict="COMMENT",
+            findings=(
+                {"severity": "nit", "path": None, "line": None, "message": "whole diff"},
+                {"severity": "nit", "path": "src/a.py", "line": 1, "message": "one"},
+                {"severity": "nit", "path": "src/a.py", "line": 9, "message": "two"},
+            ),
+        )
+
+        scope = jury.ballot_scope(ballot)
+
+        self.assertIn("named 1 file(s): src/a.py.", scope)
+
+    def test_testing_reports_the_verification_round(self):
+        panel = jury.parse_panel(BALLOT_REPORT)
+        self.assertIn("upheld 1 consensus group(s)", jury.ballot_testing(panel.ballots[0]))
+        self.assertIn("upheld no consensus group", jury.ballot_testing(panel.ballots[1]))
+
+    def test_a_failed_adapter_is_stated_rather_than_hidden(self):
+        ballot = jury.Ballot(reviewer="alpha", verdict="ABSTAIN", round1_ok=False)
+        self.assertIn("adapter reported a failed run", jury.ballot_testing(ballot))
+
+
+class TestReviewsBundle(unittest.TestCase):
+    def test_a_ballot_becomes_a_review_record(self):
+        record = jury.parse_panel(BALLOT_REPORT).reviews()[0]
+
+        self.assertEqual(record["reviewer"], "alpha")
+        self.assertEqual(record["verdict"], "REQUEST_CHANGES")
+        self.assertEqual(record["vendor"], "anthropic")
+        self.assertEqual(record["model"], "claude-opus-4")
+        self.assertEqual(record["findings"][0]["path"], "src/keel/review.py")
+        self.assertIn("Checked", record["scope"])
+        self.assertIn("ai-jury verification", record["testing"])
+
+    def test_every_panelist_gets_exactly_one_record(self):
+        self.assertEqual(len(jury.parse_panel(BALLOT_REPORT).reviews()), 3)
+
+
+class TestVerifiedFindings(unittest.TestCase):
+    """Only what the verification round upheld may gate a merge."""
+
+    def test_only_verified_consensus_groups_feed_the_fix_loop(self):
+        found = jury.verified_findings(jury.parse_panel(BALLOT_REPORT))
+
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0].severity, "major")
+        self.assertEqual(found[0].source, "jury:alpha")
+        self.assertEqual(found[0].path, "src/keel/review.py")
+        self.assertTrue(found[0].anchorable)
+
+    def test_a_group_without_reviewers_is_attributed_to_the_consensus(self):
+        panel = jury.parse_panel(
+            {
+                "reviewers": [{"name": "a"}],
+                "consensus": [
+                    {
+                        "representative": {"severity": "minor", "claim": "x"},
+                        "verification_status": "verified",
+                    },
+                    "not-a-group",
+                    {"representative": "not-a-finding", "verification_status": "verified"},
+                ],
+            }
+        )
+        found = jury.verified_findings(panel)
+
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0].source, "jury:consensus")
+        self.assertFalse(found[0].anchorable)
+
+    def test_non_string_reviewers_are_dropped_from_a_group(self):
+        panel = jury.parse_panel(
+            {
+                "reviewers": [{"name": "a"}],
+                "consensus": [
+                    {
+                        "representative": {"severity": "minor", "claim": "x"},
+                        "reviewers": [5],
+                        "verification_status": "verified",
+                    }
+                ],
+            }
+        )
+        self.assertEqual(jury.verified_findings(panel)[0].source, "jury:consensus")
+
+    def test_a_finding_without_a_claim_still_says_something(self):
+        panel = jury.parse_panel(
+            {
+                "reviewers": [{"name": "a"}],
+                "consensus": [
+                    {"representative": {"severity": "nit"}, "verification_status": "verified"}
+                ],
+            }
+        )
+        self.assertEqual(jury.verified_findings(panel)[0].message, "(jury finding)")
+
+
+class TestJuryVerdictRecord(unittest.TestCase):
+    def test_the_record_declares_the_panel_it_came_from(self):
+        record = jury.jury_verdict(jury.parse_panel(BALLOT_REPORT))
+
+        self.assertEqual(record["verdict"], "REQUEST_CHANGES")
+        self.assertEqual(record["panelists"], 3)
+        self.assertEqual(record["participating_vendors"], 2)
+        self.assertEqual(
+            record["participants"],
+            ["alpha (anthropic)", "beta (google)", "gamma (anthropic)"],
+        )
+        self.assertEqual(
+            record["findings_summary"], ["major: the closure path drops the jury post"]
+        )
+        self.assertIsNone(record["remaining_risks"])
+
+    def test_a_chairless_panel_abstains_rather_than_approving(self):
+        panel = jury.parse_panel({"reviewers": [{"name": "a", "verdict": "APPROVE"}]})
+        record = jury.jury_verdict(panel)
+
+        self.assertEqual(record["verdict"], "ABSTAIN")
+        self.assertEqual(record["participants"], ["a"])
+        self.assertEqual(record["participating_vendors"], 0)
+        self.assertEqual(record["remaining_risks"], "none identified")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -726,15 +726,81 @@ class TestTeamAssignment(unittest.TestCase):
     def test_a_jury_tier_leaves_no_host_reviewers_and_gates_on_the_panel(self):
         contract = ship.resolve_review_contract(tier=3, assignment=self._assignment(3))
 
-        self.assertEqual(contract["reviewers"]["count"], 0)
+        # No host reviewer is staffed — but the panel's ballots are the required
+        # verdicts (#1015), and until the panel has declared its size the count
+        # rests on the jury's minimum vendor floor rather than on nothing.
+        self.assertEqual(contract["reviewers"]["count"], 3)
+        self.assertEqual(contract["reviewers"]["source"], "jury")
         self.assertEqual(contract["reviewers"]["panel"], "jury")
         self.assertEqual(contract["reviewers"]["slots"], [])
         self.assertEqual(contract["reviewers"]["focuses"], [])
-        self.assertEqual(contract["reviewers"]["minimum_lgtm"], 0)
+        self.assertEqual(contract["reviewers"]["minimum_lgtm"], 3)
         self.assertEqual(contract["jury"]["mode"], "gating")
         self.assertTrue(contract["jury"]["enabled"])
         self.assertEqual(contract["jury"]["reason"], "team.review panel")
         self.assertEqual(contract["jury"]["minimum_vendors"], 3)
+
+    def test_the_panel_that_ran_sizes_the_bench_it_has_to_fill(self):
+        """A declared panel size is the required verdict count (#1015)."""
+        contract = ship.resolve_review_contract(
+            tier=3, assignment=self._assignment(3), jury_panel_size=4
+        )
+
+        self.assertEqual(contract["reviewers"]["count"], 4)
+        self.assertEqual(contract["reviewers"]["minimum_lgtm"], 4)
+        self.assertEqual(contract["reviewers"]["panel"], "jury")
+        # keel's A/B/C focus slices brief a bench keel staffs; a panel picks its own.
+        self.assertEqual(contract["reviewers"]["focuses"], [])
+
+    def test_a_panel_size_of_zero_falls_back_to_the_floor(self):
+        """Zero ballots is not zero requirements: an unmeasured panel fails closed."""
+        contract = ship.resolve_review_contract(
+            tier=3, assignment=self._assignment(3), jury_panel_size=0
+        )
+
+        self.assertEqual(contract["reviewers"]["count"], 3)
+
+    def test_a_downgraded_panel_staffs_the_host_reviewers_again(self):
+        """Fewer participating vendors must never mean fewer eyes (#1015)."""
+        contract = ship.resolve_review_contract(
+            tier=3,
+            assignment=self._assignment(3),
+            jury_participating_vendors=1,
+            jury_panel_size=3,
+        )
+
+        self.assertEqual(contract["jury"]["mode"], "advisory")
+        self.assertTrue(contract["jury"]["downgraded"])
+        self.assertEqual(contract["reviewers"]["panel"], "reviewers")
+        self.assertEqual(contract["reviewers"]["count"], ship.reviewer_count(3))
+        self.assertEqual(contract["reviewers"]["source"], "jury-not-gating")
+        self.assertEqual(
+            [focus["slot"] for focus in contract["reviewers"]["focuses"]], ["A", "B", "C"]
+        )
+
+    def test_an_advisory_panel_staffs_the_host_reviewers_too(self):
+        """An advisory panel does not gate, so it is not the review either."""
+        policy = team_policy.parse_team(
+            {"review": {"by_tier": {"3": "jury"}}, "jury": {"mode": "advisory"}}
+        )
+        assignment = team_policy.resolve_assignment(policy, tier=3, default_count=3)
+
+        contract = ship.resolve_review_contract(tier=3, assignment=assignment)
+
+        self.assertEqual(contract["reviewers"]["panel"], "reviewers")
+        self.assertEqual(contract["reviewers"]["count"], 3)
+
+    def test_an_override_still_sizes_a_non_gating_panels_host_bench(self):
+        policy = team_policy.parse_team(
+            {"review": {"by_tier": {"3": "jury"}}, "jury": {"mode": "advisory"}}
+        )
+        assignment = team_policy.resolve_assignment(
+            policy, tier=3, default_count=3, reviewer_override=1
+        )
+
+        contract = ship.resolve_review_contract(tier=3, assignment=assignment, reviewer_override=1)
+
+        self.assertEqual(contract["reviewers"]["count"], 1)
 
     def test_the_panel_enables_the_jury_below_tier_three(self):
         policy = team_policy.parse_team({"review": {"by_tier": {"2": "jury"}}})

@@ -191,25 +191,35 @@ def render_jury_verdict(
     findings_summary: list[str] | tuple[str, ...] = (),
     remaining_risks: str | None = None,
     participating_vendors: int | None = None,
+    panelists: int | None = None,
 ) -> str:
     """Render a head-bound jury verdict comment accepted by evidence verification.
 
     The verdict declares ``vendors: <N>`` — the distinct vendors that actually
-    took part. That line is the only channel by which the panel size reaches a
+    took part. That line is the only channel by which the vendor count reaches a
     CI evidence check: the run ledger and the jury artifact both live under the
     gitignored ``.keel/state/``, so a hosted runner cannot read them, while PR
     comments are always visible. When ``participating_vendors`` is omitted it is
     inferred from ``participants``, so a caller that already lists them does not
     have to count twice.
+
+    ``panelists: <N>`` travels the same channel for the same reason (#1015). When
+    the panel **is** the review, the number of ballots is the reviewer count the
+    evidence gate has to require, and it is knowable only once the panel has run.
+    An undeclared panel size leaves the gate on its floor (the minimum vendor
+    count) rather than requiring nothing, so omitting it fails closed. Omitted,
+    it is inferred from ``participants``.
     """
     people = [
         person.strip() for person in participants if isinstance(person, str) and person.strip()
     ]
     vendors = participating_vendors if participating_vendors is not None else len(people)
+    seats = panelists if panelists is not None else len(people)
     lines = [
         evidence.JURY_VERDICT_MARKER,
         f"head: {_value(head_sha, '<head-sha>')}",
         f"vendors: {vendors}",
+        f"panelists: {seats}",
         "",
         f"AI Jury verdict: {_value(verdict, 'LGTM')}.",
         "",

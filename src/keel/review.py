@@ -178,6 +178,11 @@ def closure_run_id(run_id: str) -> str:
     return f"{run_id}:closure"
 
 
+def jury_run_id(run_id: str) -> str:
+    """Stable run-id sub-key for the jury-verdict artifact."""
+    return f"{run_id}:jury"
+
+
 def build_review_plan(
     reviews: tuple[ReviewItem, ...],
     *,
@@ -188,12 +193,20 @@ def build_review_plan(
     run_id: str,
     tier: int | None,
     closure_record: dict[str, Any] | None = None,
+    jury_record: dict[str, Any] | None = None,
 ) -> ReviewPlan:
     """Validate the bundle against the required count and build the post plan.
 
     Fewer supplied reviews than required fails; exact or more is allowed. Each
     review renders as a head-pinned verdict posted to the PR. A closure record,
     when supplied, renders once and posts to both the PR and the linked issue.
+
+    ``jury_record`` is the panel's consensus record (:func:`keel.jury.jury_verdict`),
+    supplied when the reviews *are* a jury panel's ballots (#1015). It renders the
+    one ``keel.jury-verdict.v1`` comment alongside the per-ballot verdicts, so the
+    panel posts its evidence in a single call and the two halves are pinned to the
+    same head SHA by construction — a jury verdict posted separately from the
+    ballots it summarises is the drift this whole path removes.
     """
     supplied = len(reviews)
     if supplied < required_count:
@@ -223,6 +236,10 @@ def build_review_plan(
                 body=body,
             )
         )
+    if jury_record is not None:
+        posts.append(
+            _jury_post(jury_record, head_sha=head_sha, pull_request=pull_request, run_id=run_id)
+        )
     if closure_record is not None:
         posts.extend(
             _closure_posts(
@@ -241,6 +258,39 @@ def build_review_plan(
         required_count=required_count,
         supplied_count=supplied,
         posts=tuple(posts),
+    )
+
+
+#: Fields :func:`keel.artifacts.render_jury_verdict` accepts from a jury record.
+#: Named rather than splatted: the record comes from a parsed ai-jury report, and
+#: an unexpected key there must be dropped, never forwarded into a renderer.
+_JURY_FIELDS = (
+    "verdict",
+    "participants",
+    "participating_vendors",
+    "panelists",
+    "findings_summary",
+    "remaining_risks",
+)
+
+
+def _jury_post(
+    jury_record: dict[str, Any],
+    *,
+    head_sha: str | None,
+    pull_request: int,
+    run_id: str,
+) -> PostTarget:
+    if not isinstance(jury_record, dict):
+        raise ReviewError("jury record must be a JSON object")
+    fields = {key: jury_record[key] for key in _JURY_FIELDS if key in jury_record}
+    return PostTarget(
+        artifact="jury-verdict",
+        target_kind="pr",
+        target_number=pull_request,
+        run_id=jury_run_id(run_id),
+        marker=evidence.JURY_VERDICT_MARKER,
+        body=artifacts.render_jury_verdict(head_sha=head_sha, **fields),
     )
 
 
