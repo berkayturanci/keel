@@ -208,6 +208,17 @@ emit-only boundary operator consent sits behind (see
 [`operator-consent.md`](operator-consent.md)) — the deterministic core does not perform the
 dispatch, so it cannot certify it happened.
 
+**`fix` is who applies review findings**, and its default is the alias `implementer`: the
+seat s4 actually dispatched, whatever it resolved to. Omitting the block means the same
+thing as writing `fix: { provider: implementer }`; name a provider instead to send every
+fix round to one seat regardless of who implemented.
+
+s9 does not read this key directly — `keel fixloop brief` does, and escalates from it when
+a round fails or the seat is unavailable, along the ladder `fix` → `gate` → the host agent.
+A rung repeating an earlier one is dropped rather than dispatched twice, and the
+three-round review-fix budget is unaffected: the ladder decides who fixes, not how often.
+See [`cli.md`](cli.md) under `keel fixloop brief`.
+
 **Providers.** A `provider` names an entry the same registry `keel delegate run` resolves:
 a built-in vendor (`claude`, `codex`, `agy`, `ollama`, `anthropic-api`, `openai-api`,
 `google-api`), a [`delegate_profiles`](#delegate_profiles) entry, or a machine-level
