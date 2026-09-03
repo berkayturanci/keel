@@ -29,8 +29,8 @@ import unittest
 import unittest.mock
 import urllib.error
 import urllib.request
-from typing import NoReturn
 from pathlib import Path
+from typing import NoReturn
 
 from keel import __version__
 
