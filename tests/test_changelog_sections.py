@@ -44,6 +44,33 @@ KNOWN = {
 }
 
 
+#: Matches an unresolved merge-conflict marker line: seven `<`, `=`, or `>`
+#: characters at the start of the line, followed by a space (the branch label
+#: git appends, e.g. `HEAD` or a ref name) or end of line (the bare `=======`
+#: separator carries no label). Anything shorter or longer than seven — a
+#: quoted six-`<` example, say — is not a marker git itself would emit and is
+#: left alone.
+CONFLICT_MARKER = re.compile(r"^(<{7}|={7}|>{7})( |$)")
+
+
+def conflict_marker_lines(text: str) -> list[tuple[int, str]]:
+    """1-based line numbers and content of unresolved merge-conflict markers.
+
+    Written after #1010: a merge of `origin/main` into a PR branch was
+    committed and pushed with the CHANGELOG conflict unresolved (commit
+    eb7f2ec) — three marker lines bracketing both sides' entries. `versions()`
+    above only recognises `## [` and `### ` lines, so the marker lines matched
+    neither regex, created no duplicate heading, and the existing tests passed
+    4/4 against that exact commit. Nothing else in CI was marker-aware for
+    this file, so it would have shipped to `main` on a green squash-merge.
+    """
+    return [
+        (number, line)
+        for number, line in enumerate(text.splitlines(), start=1)
+        if CONFLICT_MARKER.match(line)
+    ]
+
+
 def versions() -> dict[str, list[str]]:
     """Every `## [version]` block mapped to the `### Section` names inside it."""
     blocks: dict[str, list[str]] = {}
@@ -108,3 +135,60 @@ class EachSectionAppearsOnce(unittest.TestCase):
             [],
             f"released versions carry no sections, so their notes are blank: {empty}",
         )
+
+
+class NoConflictMarkers(unittest.TestCase):
+    """See #1010: nothing else here parses far enough to notice one."""
+
+    def test_changelog_has_no_conflict_markers(self):
+        offenders = conflict_marker_lines(CHANGELOG.read_text(encoding="utf-8"))
+        self.assertEqual(
+            offenders,
+            [],
+            "CHANGELOG.md contains unresolved merge-conflict markers — a merge "
+            f"landed without resolving a conflict in this file: {offenders}",
+        )
+
+    def test_detects_a_three_marker_body_like_eb7f2ec(self):
+        """Reconstructs the shape of commit eb7f2ec: markers at lines 10, 12, 18.
+
+        Built from parts (`"<" * 7`, not a literal run) so this fixture is not
+        itself a conflicted file — it is a regular Python string describing one.
+        """
+        conflicted = "\n".join(
+            [
+                "## [Unreleased]",  # 1
+                "",  # 2
+                "### Added",  # 3
+                "- existing entry one",  # 4
+                "- existing entry two",  # 5
+                "- existing entry three",  # 6
+                "- existing entry four",  # 7
+                "- existing entry five",  # 8
+                "- existing entry six",  # 9
+                "<" * 7 + " HEAD",  # 10
+                "- entry from HEAD",  # 11
+                "=" * 7,  # 12
+                "- entry from origin/main line 1",  # 13
+                "- entry from origin/main line 2",  # 14
+                "- entry from origin/main line 3",  # 15
+                "- entry from origin/main line 4",  # 16
+                "- entry from origin/main line 5",  # 17
+                ">" * 7 + " origin/main",  # 18
+                "",  # 19
+                "### Fixed",  # 20
+            ]
+        )
+        offenders = conflict_marker_lines(conflicted)
+        self.assertEqual(
+            offenders,
+            [
+                (10, "<" * 7 + " HEAD"),
+                (12, "=" * 7),
+                (18, ">" * 7 + " origin/main"),
+            ],
+        )
+
+    def test_a_clean_body_has_no_offenders(self):
+        """No false positives on ordinary changelog prose."""
+        self.assertEqual(conflict_marker_lines("## [Unreleased]\n\n### Added\n- a thing\n"), [])
