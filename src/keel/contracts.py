@@ -32,6 +32,7 @@ from . import (
     runcontrols,
     runtime,
     stepverifier,
+    team,
     workblock,
     workcreation,
 )
@@ -232,6 +233,10 @@ def build_command_contract(
     issue_title: str | None = None,
     issue_body: str | None = None,
     issue_labels: tuple[str, ...] = (),
+    role: str | None = None,
+    delegate: str | None = None,
+    review_delegates: tuple[str, ...] = (),
+    host_agent: str = agents.HOST_DEFAULT,
 ) -> dict[str, Any]:
     """Build the stable adapter contract shared by ``plan --json`` and dry-run commands."""
     declared_side_effects = command_side_effects(command, config, requirement, loaded)
@@ -316,6 +321,21 @@ def build_command_contract(
             "marker": artifacts.TRIAGE_AUDIT_MARKER,
         }
     if command in {"ship", "pr-loop", "review-cycle", "work-block", "overnight"}:
+        # Resolved once and shared: the reviewer bench the contract publishes and the
+        # assignment a host dispatches have to be the same answer, or two agents reading
+        # the same JSON run different teams (#1014).
+        assignment = team.resolve_assignment(
+            config.knobs.team,
+            tier=review_tier,
+            role=role,
+            default_count=ship_decisions.reviewer_count(review_tier or 2),
+            reviewer_override=reviewer_override,
+            delegate=delegate,
+            review_delegates=review_delegates,
+            host_agent=host_agent,
+            legacy=agents.legacy_team_seats(config),
+        )
+        contract["assignment"] = assignment
         contract["review_merge_contract"] = ship_decisions.resolve_review_contract(
             tier=review_tier,
             reviewer_override=reviewer_override,
@@ -325,6 +345,8 @@ def build_command_contract(
             jury=jury,
             no_jury=no_jury,
             jury_advisory=jury_advisory,
+            require_distinct_vendors=config.knobs.evidence_require_distinct_vendors,
+            assignment=assignment,
         )
         if command == "ship":
             contract["evidence"] = evidence.contract_as_dict(
@@ -788,6 +810,7 @@ def project_as_dict(config: cfg.ProjectConfig) -> dict[str, Any]:
             "lint_cmd": config.knobs.lint_cmd,
             "implementer_agents": dict(sorted(config.knobs.implementer_agents.items())),
             **cfg.delegate_profiles_dict(config),
+            **team.canonical(config.knobs.team),
             "tier3_globs": list(config.knobs.tier3_globs),
             "ci_workflows": dict(sorted(config.knobs.ci_workflows.items())),
             "docs_gate_paths": list(config.knobs.docs_gate_paths),
@@ -951,6 +974,7 @@ def ship_result_as_dict(
             "halted": assessment.halted,
             "bypassed_window": assessment.bypassed_window,
             "review_merge_contract": assessment.review_contract,
+            "assignment": assessment.assignment,
         },
     }
 
@@ -1021,7 +1045,11 @@ def standalone_result_as_dict(
             "implementer": {
                 "source": "delegate" if delegate else "project-routing-or-host",
                 "selected": delegate,
-                "routing_keys": sorted(config.knobs.implementer_agents),
+                # Both vocabularies: `team.implement.by_role` is where roles live now,
+                # and a project that has not migrated still routes on the deprecated knob.
+                "routing_keys": sorted(
+                    {*config.knobs.implementer_agents, *config.knobs.team.implement_by_role}
+                ),
             },
             "handoff": {
                 "opens_pr": True,

@@ -185,6 +185,7 @@ class TestBuildCommandContract(unittest.TestCase):
                 halted=False,
                 bypassed_window=False,
                 review_contract={},
+                assignment=None,
                 merge=SimpleNamespace(action="merge", reason="ok"),
             ),
         )
@@ -437,6 +438,7 @@ class TestBuildCommandContract(unittest.TestCase):
         )
         self.assertEqual(work_block["workflow_profile"]["inherits"], "ship")
         self.assertIn("review_merge_contract", work_block)
+        self.assertIn("assignment", work_block)
         self.assertEqual(work_block["run_controls"]["schema_version"], "keel.run-controls.v1")
         self.assertIn("work_block", work_block["session_contract"])
         self.assertEqual(work_block["session_contract"]["work_block"]["mode"], "daytime")
@@ -465,6 +467,7 @@ class TestBuildCommandContract(unittest.TestCase):
         self.assertEqual(overnight["workflow_profile"]["profile"], "session-overnight")
         self.assertEqual(overnight["workflow_profile"]["inherits"], "ship")
         self.assertIn("review_merge_contract", overnight)
+        self.assertIn("assignment", overnight)
         self.assertEqual(overnight["run_controls"]["schema_version"], "keel.run-controls.v1")
         self.assertIn("run_ledger", overnight["session_contract"])
         self.assertEqual(overnight["session_contract"]["work_block"]["mode"], "overnight")
@@ -1269,6 +1272,7 @@ class TestShipResultClosureComment(unittest.TestCase):
             halted=False,
             bypassed_window=False,
             review_contract={},
+            assignment=None,
         )
 
     def _verdict(self):

@@ -117,6 +117,21 @@ THINKING_HEADROOM_TOKENS = 4096
 #: Suffixes agy spells reasoning effort with, e.g. ``gemini-3.8-flash-high``.
 _EFFORT_SUFFIXES = tuple(f"-{level}" for level in EFFORTS)
 
+#: Vendors that have a spelling for reasoning effort. Everything else reaches
+#: :func:`_apply_effort`'s fallback, where an ``--effort`` request becomes a warning plus
+#: ``effort_applied: false``. That is the right answer for a *run* — a flag that did not
+#: take effect must be visible, not fatal — but the wrong one for **config**: a
+#: ``knobs.team`` seat that pairs ``claude`` with ``effort: high`` is a policy stating
+#: something keel can never do, so :func:`keel.team.team_issues` rejects it up front. The
+#: tuple is asserted against ``_apply_effort`` itself by ``tests/test_delegate.py`` so the
+#: two cannot drift.
+EFFORT_VENDORS = ("agy", "codex", "anthropic-api", "openai-api", "google-api", OPENAI_COMPATIBLE)
+
+
+def supports_effort(vendor: str) -> bool:
+    """True when ``vendor`` can express a reasoning-effort request in its own spelling."""
+    return vendor in EFFORT_VENDORS
+
 
 class DelegateError(Exception):
     """A run that cannot be planned. ``code`` is the JSON contract's ``error_code``."""

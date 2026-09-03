@@ -227,6 +227,90 @@ class TestPlan(unittest.TestCase):
         self.assertEqual(review["posting"]["mode"], "summary")
         self.assertEqual(review["jury"]["mode"], "advisory")
 
+    def test_plan_json_renders_the_team_assignment(self):
+        rc, out, _ = run(
+            [
+                "plan",
+                str(PROJECTS / "keel.yaml"),
+                "--root",
+                str(REPO_ROOT),
+                "--command",
+                "ship",
+                "--tier",
+                "2",
+                "--role",
+                "core",
+                "--json",
+            ]
+        )
+
+        self.assertEqual(rc, 0)
+        contract = json.loads(out)["contract"]
+        assignment = contract["assignment"]
+        self.assertTrue(assignment["configured"])
+        self.assertEqual(assignment["implementer"]["kind"], "subagent")
+        self.assertEqual(assignment["implementer"]["source"], "team.implement.by_role.core")
+        self.assertEqual(assignment["gate"]["provider"], "codex")
+        self.assertEqual(
+            [seat["provider"] for seat in assignment["reviewers"]], ["claude", "codex"]
+        )
+        # One resolution, two renderings: the bench a host dispatches and the contract
+        # it publishes are the same seats.
+        self.assertEqual(
+            contract["review_merge_contract"]["reviewers"]["slots"], assignment["reviewers"]
+        )
+
+    def test_plan_json_takes_per_run_delegate_overrides_positionally(self):
+        rc, out, _ = run(
+            [
+                "plan",
+                str(PROJECTS / "keel.yaml"),
+                "--root",
+                str(REPO_ROOT),
+                "--command",
+                "ship",
+                "--tier",
+                "2",
+                "--delegate",
+                "agy:gemini-3.8-flash",
+                "--review-delegate",
+                "anthropic-api",
+                "--json",
+            ]
+        )
+
+        self.assertEqual(rc, 0)
+        assignment = json.loads(out)["contract"]["assignment"]
+        self.assertEqual(assignment["implementer"]["provider"], "agy")
+        self.assertEqual(assignment["implementer"]["model"], "gemini-3.8-flash")
+        self.assertEqual(assignment["reviewers"][0]["provider"], "anthropic-api")
+        self.assertEqual(assignment["reviewers"][0]["source"], "flag:--review-delegate")
+        self.assertEqual(assignment["reviewers"][1]["provider"], "codex")
+
+    def test_plan_json_makes_the_jury_the_panel_at_tier_three(self):
+        rc, out, _ = run(
+            [
+                "plan",
+                str(PROJECTS / "keel.yaml"),
+                "--root",
+                str(REPO_ROOT),
+                "--command",
+                "ship",
+                "--tier",
+                "3",
+                "--json",
+            ]
+        )
+
+        self.assertEqual(rc, 0)
+        contract = json.loads(out)["contract"]
+        self.assertEqual(contract["assignment"]["review_panel"], "jury")
+        self.assertEqual(contract["review_merge_contract"]["reviewers"]["count"], 0)
+        self.assertEqual(contract["review_merge_contract"]["jury"]["mode"], "gating")
+        required = [item["id"] for item in contract["evidence"]["required"]]
+        self.assertIn("jury-verdict", required)
+        self.assertFalse(any(item.startswith("review-verdict") for item in required))
+
     def test_plan_json_exposes_evidence_requirements_from_review_flags(self):
         rc, out, _ = run(
             [
@@ -382,6 +466,24 @@ def _write_config(build_cmd):
     return _write_raw(
         "extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
         f"repo: tmp\ngates: [build]\nknobs:\n  build_gate_cmd: {build_cmd}\n"
+    )
+
+
+def _write_team_config(build_cmd):
+    """A config whose `knobs.team` states the whole team (#1014)."""
+    return _write_raw(
+        "extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
+        f"repo: tmp\ngates: [build]\nknobs:\n  build_gate_cmd: {build_cmd}\n"
+        "  team:\n"
+        "    implement:\n"
+        "      by_role:\n"
+        "        core: {provider: codex}\n"
+        "    gate: {provider: claude, distinct_from: implementer}\n"
+        "    review:\n"
+        "      by_tier:\n"
+        '        "2": [{provider: claude}, {provider: codex}]\n'
+        '        "3": jury\n'
+        "    jury: {mode: gating, min_vendors: 2}\n"
     )
 
 
@@ -955,6 +1057,45 @@ class TestShip(unittest.TestCase):
         self.assertEqual(review["reviewers"]["count"], 1)
         self.assertEqual(review["posting"]["mode"], "summary")
         self.assertEqual(review["jury"]["mode"], "off")
+
+    def test_ship_json_exposes_the_resolved_team_assignment(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(
+                [
+                    "ship",
+                    _write_team_config("'true'"),
+                    "--root",
+                    d,
+                    "--json",
+                    "--role",
+                    "core",
+                    "--review-delegate",
+                    "agy:gemini-3.8-flash",
+                ]
+            )
+
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        assignment = data["result"]["assessment"]["assignment"]
+        self.assertEqual(assignment["implementer"]["provider"], "codex")
+        self.assertEqual(assignment["implementer"]["source"], "team.implement.by_role.core")
+        # The gate is the mandatory second opinion, and it is not the implementer.
+        self.assertEqual(assignment["gate"]["provider"], "claude")
+        self.assertTrue(assignment["gate"]["distinct_ok"])
+        # A non-git root cannot be read, so the diff classifies fail-closed at TIER-3 —
+        # where this project's policy hands the review to the cross-vendor panel.
+        review = data["result"]["assessment"]["review_merge_contract"]
+        self.assertEqual(assignment["tier"], 3)
+        self.assertEqual(assignment["review_panel"], "jury")
+        self.assertEqual(assignment["reviewers"], [])
+        self.assertEqual(review["reviewers"]["count"], 0)
+        self.assertEqual(review["reviewers"]["slots"], [])
+        self.assertEqual(review["jury"]["mode"], "gating")
+        self.assertTrue(review["reviewers"]["require_distinct_vendors"])
+        # The reviewer flag is not silently dropped: there is no slot to put it in.
+        self.assertIn("not dispatched", assignment["warnings"][0])
 
     def test_ship_live_blocks_non_ready_issue_before_gates(self):
         import tempfile
@@ -4125,7 +4266,8 @@ class TestShip(unittest.TestCase):
                         [
                             _trusted_comment("<!-- keel.closure-comment.v1 -->"),
                             _trusted_comment(
-                                "keel.review-verdict.v1\nreviewer: a\nhead: abc123\nLGTM"
+                                "keel.review-verdict.v1\nreviewer: a\nvendor: claude\n"
+                                "head: abc123\nLGTM"
                                 "\n\nsrc/keel/evidence.py: ok."
                             ),
                         ]
@@ -4136,7 +4278,7 @@ class TestShip(unittest.TestCase):
                     json.dumps(
                         [
                             {
-                                "body": "keel.review-verdict.v1\nreviewer: b\nLGTM"
+                                "body": "keel.review-verdict.v1\nreviewer: b\nvendor: codex\nLGTM"
                                 "\n\nsrc/keel/evidence.py: ok.",
                                 "commit_id": "abc123",
                                 "author_association": "MEMBER",
@@ -4205,11 +4347,13 @@ class TestShip(unittest.TestCase):
                         [
                             _trusted_comment("<!-- keel.closure-comment.v1 -->"),
                             _trusted_comment(
-                                "keel.review-verdict.v1\nreviewer: a\nhead: abc123\nLGTM"
+                                "keel.review-verdict.v1\nreviewer: a\nvendor: claude\n"
+                                "head: abc123\nLGTM"
                                 "\n\nsrc/keel/evidence.py: ok."
                             ),
                             _trusted_comment(
-                                "keel.review-verdict.v1\nreviewer: b\nhead: abc123\nLGTM"
+                                "keel.review-verdict.v1\nreviewer: b\nvendor: codex\n"
+                                "head: abc123\nLGTM"
                                 "\n\nsrc/keel/evidence.py: ok."
                             ),
                         ]
@@ -4263,15 +4407,15 @@ class TestShip(unittest.TestCase):
                 [
                     _trusted_comment("<!-- keel.closure-comment.v1 -->"),
                     _trusted_comment(
-                        "keel.review-verdict.v1\nreviewer: a\nhead: abc123\nLGTM"
+                        "keel.review-verdict.v1\nreviewer: a\nvendor: claude\nhead: abc123\nLGTM"
                         "\n\nsrc/keel/evidence.py: ok."
                     ),
                     _trusted_comment(
-                        "keel.review-verdict.v1\nreviewer: b\nhead: abc123\nLGTM"
+                        "keel.review-verdict.v1\nreviewer: b\nvendor: codex\nhead: abc123\nLGTM"
                         "\n\nsrc/keel/evidence.py: ok."
                     ),
                     _trusted_comment(
-                        "keel.review-verdict.v1\nreviewer: c\nhead: abc123\nLGTM"
+                        "keel.review-verdict.v1\nreviewer: c\nvendor: agy\nhead: abc123\nLGTM"
                         "\n\nsrc/keel/evidence.py: ok."
                     ),
                     _trusted_comment("keel.jury-verdict.v1\nhead: abc123\nAI Jury LGTM"),
@@ -4347,11 +4491,11 @@ class TestShip(unittest.TestCase):
                         [
                             _trusted_comment("<!-- keel.closure-comment.v1 -->"),
                             _trusted_comment(
-                                "keel.review-verdict.v1\nReviewer A LGTM"
+                                "keel.review-verdict.v1\nvendor: claude\nReviewer A LGTM"
                                 "\n\nsrc/keel/evidence.py: ok."
                             ),
                             _trusted_comment(
-                                "keel.review-verdict.v1\nReviewer B LGTM"
+                                "keel.review-verdict.v1\nvendor: codex\nReviewer B LGTM"
                                 "\n\nsrc/keel/evidence.py: ok."
                             ),
                         ]
@@ -8063,7 +8207,8 @@ class TestCoreMerge(unittest.TestCase):
             "pr_body": "Closes #265",
             "pr_comments": [
                 {
-                    "body": "<!-- keel.review-verdict.v1 -->\nreviewer: a\nhead: abc\nLGTM"
+                    "body": "<!-- keel.review-verdict.v1 -->\nreviewer: a\n"
+                    "vendor: claude\nhead: abc\nLGTM"
                     "\n\nsrc/keel/cli.py: ok.",
                     "author_association": "OWNER",
                 },
@@ -8106,7 +8251,7 @@ class TestCoreMerge(unittest.TestCase):
             "pr_comments": [
                 {
                     "body": "<!-- keel.review-verdict.v1 -->\n"
-                    "reviewer: a\nhead: abc\nLGTM\n"
+                    "reviewer: a\nvendor: claude\nhead: abc\nLGTM\n"
                     "Checked src/keel/cli.py _verify_merge_evidence and found no issues.",
                     "author_association": "OWNER",
                 }

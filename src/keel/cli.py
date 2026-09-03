@@ -281,6 +281,7 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         operator=approval_operator,
         target=args.target,
         reviewer_override=args.reviewers,
+        review_tier=args.review_tier,
         review_comments=args.review_comments,
         jury=args.jury,
         no_jury=args.no_jury,
@@ -288,6 +289,9 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         issue_title=args.issue_title,
         issue_body=args.issue_body,
         issue_labels=_issue_labels(args),
+        role=args.role,
+        delegate=args.delegate,
+        review_delegates=tuple(args.review_delegate),
     )
     consent_ok, consent_message = consent.assert_operator_consent(contract["operator_consent"])
     if args.json:
@@ -1020,6 +1024,10 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         issue_title=args.issue_title,
         issue_body=args.issue_body,
         issue_labels=_issue_labels(args),
+        role=args.role,
+        delegate=args.delegate,
+        review_delegates=tuple(args.review_delegate),
+        host_agent=args.host_agent or agents.HOST_DEFAULT,
     )
     consent_ok, consent_message = consent.assert_operator_consent(contract["operator_consent"])
     if not consent_ok:
@@ -1175,8 +1183,19 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         jury=args.jury,
         no_jury=args.no_jury,
         jury_advisory=args.jury_advisory,
+        team=config.knobs.team,
+        legacy_agents=agents.legacy_team_seats(config),
+        role=args.role,
+        delegate=args.delegate,
+        review_delegates=tuple(args.review_delegate),
+        host_agent=args.host_agent or agents.HOST_DEFAULT,
+        require_distinct_vendors=config.knobs.evidence_require_distinct_vendors,
     )
     contract["review_merge_contract"] = a.review_contract
+    # The tier is only known once the diff has been read, so the assignment the plan
+    # rendered against an unresolved tier is superseded by the one the assessment
+    # resolved against the real one.
+    contract["assignment"] = a.assignment
     ledger_path = ledger.resolve_path(args.root, config)
     try:
         existing_ledger_records = ledger.read_records(ledger_path)
@@ -2567,8 +2586,12 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
         jury=args.jury,
         no_jury=args.no_jury,
         jury_advisory=args.jury_advisory,
+        # `or None` keeps the knob tri-state: an unset knob and an unset flag resolve
+        # from the tier, while --require-distinct-vendors forces it on.
         require_distinct_vendors=(
-            args.require_distinct_vendors or config.knobs.evidence_require_distinct_vendors
+            True
+            if args.require_distinct_vendors
+            else config.knobs.evidence_require_distinct_vendors
         ),
         # An explicit --jury-vendors wins; otherwise take the count a posted jury
         # verdict declared, so the downgrade works unattended in CI where neither
@@ -5660,6 +5683,33 @@ def build_parser() -> argparse.ArgumentParser:
         help="issue label for intake/readiness; repeat or comma-separate",
     )
     p_plan.add_argument(
+        "--role",
+        default=None,
+        help="issue role label used to resolve knobs.team.implement.by_role",
+    )
+    p_plan.add_argument(
+        "--delegate",
+        default=None,
+        help="per-run implementer override (provider or provider:model); "
+        "wins over knobs.team.implement",
+    )
+    p_plan.add_argument(
+        "--review-delegate",
+        action="append",
+        default=[],
+        metavar="PROVIDER",
+        help="per-run reviewer override, positional per slot: the first flag is slot A, "
+        "the second slot B; repeatable",
+    )
+    p_plan.add_argument(
+        "--tier",
+        dest="review_tier",
+        type=int,
+        choices=(1, 2, 3),
+        default=None,
+        help="risk tier to resolve the review contract and team assignment against",
+    )
+    p_plan.add_argument(
         "--review-comments",
         choices=("inline", "summary"),
         default="inline",
@@ -7713,6 +7763,25 @@ def _add_ship_parser(parser: argparse.ArgumentParser, *, command: str) -> None:
         action="append",
         default=[],
         help="issue label for intake/readiness; repeat or comma-separate",
+    )
+    parser.add_argument(
+        "--role",
+        default=None,
+        help="issue role label used to resolve knobs.team.implement.by_role",
+    )
+    parser.add_argument(
+        "--delegate",
+        default=None,
+        help="per-run implementer override (provider or provider:model); "
+        "wins over knobs.team.implement",
+    )
+    parser.add_argument(
+        "--review-delegate",
+        action="append",
+        default=[],
+        metavar="PROVIDER",
+        help="per-run reviewer override, positional per slot: the first flag is slot A, "
+        "the second slot B; repeatable",
     )
     parser.add_argument(
         "--review-comments",

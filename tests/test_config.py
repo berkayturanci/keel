@@ -1211,5 +1211,161 @@ class TestSwarmReviewEvidenceKnob(unittest.TestCase):
             os.unlink(path)
 
 
+class TestTeamKnob(unittest.TestCase):
+    """`knobs.team` — schema shape, semantic validation, and hash behaviour (#1014)."""
+
+    TEAM = {
+        "implement": {
+            "default": {"provider": "claude"},
+            "by_role": {
+                "core": {"provider": "agy", "model": "gemini-3.8-flash-high", "effort": "high"}
+            },
+        },
+        "gate": {"provider": "codex", "distinct_from": "implementer"},
+        "review": {
+            "by_tier": {
+                "1": [{"provider": "claude"}],
+                "2": [{"provider": "claude"}, {"provider": "codex"}],
+                "3": "jury",
+            }
+        },
+        "jury": {"mode": "gating", "min_vendors": 2},
+        "fix": {"provider": "implementer"},
+    }
+
+    def _with_team(self, team, knobs=None):
+        data = copy.deepcopy(VALID)
+        data["knobs"].update(knobs or {})
+        data["knobs"]["team"] = team
+        return data
+
+    def test_the_deliverable_shape_parses_into_typed_seats(self):
+        config = cfg.parse_config(self._with_team(self.TEAM))
+
+        team = config.knobs.team
+        self.assertTrue(team.configured)
+        self.assertEqual(team.implement_by_role["core"].model, "gemini-3.8-flash-high")
+        self.assertEqual(team.gate.provider, "codex")
+        self.assertEqual(team.review_by_tier["3"], "jury")
+        self.assertEqual(team.jury_mode, "gating")
+
+    def test_a_profile_name_is_a_provider_a_seat_may_use(self):
+        profiles = {
+            "grok-via-openai-compatible": {
+                "vendor": "openai-compatible",
+                "endpoint": "http://127.0.0.1:8000/v1/chat/completions",
+                "api_key_env": "OPENAI_API_KEY",
+            }
+        }
+        team = {
+            "review": {
+                "by_tier": {
+                    "2": [
+                        {"provider": "claude"},
+                        {"provider": "grok-via-openai-compatible", "effort": "high"},
+                    ]
+                }
+            }
+        }
+
+        config = cfg.parse_config(self._with_team(team, {"delegate_profiles": profiles}))
+
+        self.assertEqual(len(config.knobs.team.review_by_tier["2"]), 2)
+
+    def test_a_malformed_profile_does_not_also_read_as_an_unknown_provider(self):
+        profiles = {"cursor": {"vendor": "cli"}}  # missing `command`
+        team = {"implement": {"default": {"provider": "cursor"}}}
+
+        with self.assertRaises(cfg.ConfigError) as ctx:
+            cfg.parse_config(self._with_team(team, {"delegate_profiles": profiles}))
+
+        self.assertTrue(any("requires a non-empty 'command'" in e for e in ctx.exception.errors))
+        self.assertFalse(any("unknown provider" in e for e in ctx.exception.errors))
+
+    def test_validation_rejects_an_unknown_provider(self):
+        with self.assertRaises(cfg.ConfigError) as ctx:
+            cfg.parse_config(self._with_team({"implement": {"default": {"provider": "nope"}}}))
+
+        self.assertTrue(any("unknown provider 'nope'" in e for e in ctx.exception.errors))
+
+    def test_validation_rejects_a_gate_that_is_the_implementer(self):
+        team = {
+            "implement": {"default": {"provider": "claude"}},
+            "gate": {"provider": "claude", "distinct_from": "implementer"},
+        }
+
+        with self.assertRaises(cfg.ConfigError) as ctx:
+            cfg.parse_config(self._with_team(team))
+
+        self.assertTrue(any("is not a second opinion" in e for e in ctx.exception.errors))
+
+    def test_validation_rejects_an_effort_a_provider_cannot_honour(self):
+        team = {"implement": {"default": {"provider": "ollama", "effort": "high"}}}
+
+        with self.assertRaises(cfg.ConfigError) as ctx:
+            cfg.parse_config(self._with_team(team))
+
+        self.assertTrue(any("no spelling for reasoning effort" in e for e in ctx.exception.errors))
+
+    def test_the_schema_owns_the_shape(self):
+        for team, expected in (
+            ({"implementer": {}}, "unknown property 'implementer'"),
+            ({"gate": {"model": "opus"}}, "missing required property 'provider'"),
+            ({"gate": {"provider": "codex", "distinct_from": "reviewer"}}, "must be one of"),
+            ({"fix": {"provider": "codex", "effort": "maximum"}}, "must be one of"),
+            ({"review": {"by_tier": {"4": "jury"}}}, "unknown property '4'"),
+            ({"jury": {"min_vendors": 1}}, "less than minimum 2"),
+        ):
+            with self.subTest(team=team):
+                errors = cfg.validate_data(self._with_team(team))
+                self.assertTrue(any(expected in e for e in errors), errors)
+
+    def test_an_absent_team_does_not_rotate_config_hash(self):
+        baseline = cfg.config_hash(cfg.parse_config(copy.deepcopy(VALID)))
+
+        # An added optional field must not change the hash for a project that never
+        # used it — the same rule `delegate_profiles` follows.
+        self.assertEqual(baseline, cfg.config_hash(cfg.parse_config(copy.deepcopy(VALID))))
+
+    def test_config_hash_changes_when_and_only_when_team_changes(self):
+        base = cfg.config_hash(cfg.parse_config(copy.deepcopy(VALID)))
+        with_team = cfg.config_hash(cfg.parse_config(self._with_team(self.TEAM)))
+        changed = copy.deepcopy(self.TEAM)
+        changed["gate"]["provider"] = "anthropic-api"
+        with_changed = cfg.config_hash(cfg.parse_config(self._with_team(changed)))
+
+        self.assertNotEqual(base, with_team)
+        self.assertNotEqual(with_team, with_changed)
+        self.assertEqual(with_team, cfg.config_hash(cfg.parse_config(self._with_team(self.TEAM))))
+
+    def test_the_team_reaches_the_published_contract(self):
+        config = cfg.parse_config(self._with_team(self.TEAM))
+
+        knobs = contracts.project_as_dict(config)["knobs"]
+
+        self.assertEqual(knobs["team"]["review"]["by_tier"]["3"], "jury")
+        self.assertNotIn("team", contracts.project_as_dict(cfg.parse_config(VALID))["knobs"])
+
+    def test_distinct_vendors_is_tri_state(self):
+        unset = cfg.parse_config(copy.deepcopy(VALID))
+        explicit = copy.deepcopy(VALID)
+        explicit["knobs"]["evidence_require_distinct_vendors"] = False
+
+        self.assertIsNone(unset.knobs.evidence_require_distinct_vendors)
+        self.assertIs(cfg.parse_config(explicit).knobs.evidence_require_distinct_vendors, False)
+        # Unset has always hashed as False; adding the "unset" spelling must not rotate
+        # config_hash for every project that never set the knob.
+        self.assertEqual(cfg.config_hash(unset), cfg.config_hash(cfg.parse_config(explicit)))
+
+    def test_keel_dogfoods_the_knob(self):
+        config = cfg.load_config(DOGFOOD_CONFIG)
+
+        team = config.knobs.team
+        self.assertTrue(team.configured)
+        self.assertEqual(team.implement_by_role["core"].kind, "subagent")
+        self.assertEqual(team.gate.distinct_from, "implementer")
+        self.assertEqual(team.review_by_tier["3"], "jury")
+
+
 if __name__ == "__main__":
     unittest.main()

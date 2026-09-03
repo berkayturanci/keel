@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from . import classify
+from . import team as team_policy
 from .findings import Verdict, decision_for
 from .window import is_merge_open
 
@@ -55,7 +56,14 @@ def reviewer_count(tier: int) -> int:
 
 
 def reviewer_focuses(count: int) -> tuple[dict[str, Any], ...]:
-    """Focus coverage for each reviewer slot. Lower counts merge focus; none are dropped."""
+    """Focus coverage for each reviewer slot. Lower counts merge focus; none are dropped.
+
+    Zero slots is not "one slot with everything merged in": it is a tier whose
+    ``knobs.team`` policy made the jury the review panel (#1014), so there is no host
+    reviewer to carry a focus. The panel's own coverage is the jury's business.
+    """
+    if count <= 0:
+        return ()
     if count <= 1:
         return (
             {
@@ -92,8 +100,18 @@ def resolve_jury(
     no_jury: bool = False,
     jury_advisory: bool = False,
     participating_vendors: int | None = None,
+    panel_is_jury: bool = False,
+    policy_mode: str | None = None,
+    minimum_vendors: int = MINIMUM_JURY_VENDORS,
 ) -> dict[str, Any]:
     """Resolve the cross-vendor jury mode using ship flag precedence.
+
+    ``panel_is_jury`` is a ``knobs.team`` tier whose review policy is ``jury``: the panel
+    *is* the review, so it enables the jury the way tier-3 auto does but for a reason the
+    project stated rather than one keel inferred. ``policy_mode`` is ``team.jury.mode``,
+    which can only ever make an enabled jury *advisory* — a project cannot promote a jury
+    that ``--no-jury`` turned off. ``minimum_vendors`` is ``team.jury.min_vendors``, which
+    may raise :data:`MINIMUM_JURY_VENDORS` but never lowers it (the schema's floor is 2).
 
     ``participating_vendors`` is the count of distinct vendors that actually took
     part in the panel. Below :data:`MINIMUM_JURY_VENDORS` a gating mode is
@@ -114,24 +132,28 @@ def resolve_jury(
     elif jury:
         enabled = True
         reason = "--jury"
+    elif panel_is_jury:
+        enabled = True
+        reason = "team.review panel"
     elif tier == 3:
         enabled = True
         reason = "tier-3 auto"
     else:
         enabled = False
         reason = "default"
-    mode = "off" if not enabled else ("advisory" if jury_advisory else "gating")
+    advisory = jury_advisory or policy_mode == "advisory"
+    mode = "off" if not enabled else ("advisory" if advisory else "gating")
     downgraded = (
         mode == "gating"
         and participating_vendors is not None
-        and participating_vendors < MINIMUM_JURY_VENDORS
+        and participating_vendors < minimum_vendors
     )
     if downgraded:
         mode = "advisory"
         reason = (
             f"{reason}; downgraded to advisory "
             f"({participating_vendors} participating vendor(s), "
-            f"minimum {MINIMUM_JURY_VENDORS})"
+            f"minimum {minimum_vendors})"
         )
     return {
         "enabled": enabled,
@@ -139,7 +161,7 @@ def resolve_jury(
         "reason": reason,
         "configured_gate": "jury" in gates,
         "fail_soft": True,
-        "minimum_vendors": MINIMUM_JURY_VENDORS,
+        "minimum_vendors": minimum_vendors,
         "participating_vendors": participating_vendors,
         "downgraded": downgraded,
         "verified_consensus_gates": enabled and mode == "gating",
@@ -162,20 +184,40 @@ def resolve_review_contract(
     jury: bool = False,
     no_jury: bool = False,
     jury_advisory: bool = False,
-    require_distinct_vendors: bool = False,
+    require_distinct_vendors: bool | None = None,
     jury_participating_vendors: int | None = None,
+    assignment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Machine-readable review, jury, test, and merge-gate plan for ship-like flows."""
+    """Machine-readable review, jury, test, and merge-gate plan for ship-like flows.
+
+    ``assignment`` is the resolved ``knobs.team`` team (:func:`keel.team.resolve_assignment`).
+    When one is supplied it owns the reviewer bench — how many slots there are, who sits in
+    each, and whether the jury is the panel instead — so the contract a host executes and
+    the assignment it renders cannot disagree. Without one the tier-derived counts stand,
+    which is every pre-#1014 caller.
+
+    ``require_distinct_vendors`` is tri-state: ``None`` takes the tier-derived default
+    (on from tier-2 up), a bool is the project's explicit answer.
+    """
     if reviewer_override is not None and reviewer_override not in {1, 2, 3}:
         raise ValueError("reviewer_override must be one of 1, 2, or 3")
     if review_comments not in POSTING_MODES:
         raise ValueError("review_comments must be 'inline' or 'summary'")
-    count = reviewer_override if reviewer_override is not None else reviewer_count(tier or 2)
-    source = (
-        "override"
-        if reviewer_override is not None
-        else ("risk-tier" if tier is not None else "unresolved")
-    )
+    if assignment is None:
+        count = reviewer_override if reviewer_override is not None else reviewer_count(tier or 2)
+        source = (
+            "override"
+            if reviewer_override is not None
+            else ("risk-tier" if tier is not None else "unresolved")
+        )
+        panel, slots = "reviewers", []
+        panel_is_jury = False
+    else:
+        count = assignment["reviewer_count"]
+        source = assignment["reviewer_source"]
+        panel = assignment["review_panel"]
+        slots = list(assignment["reviewers"])
+        panel_is_jury = bool(assignment["jury"]["panel_is_review"])
     pack = policy_pack or {}
     review_policy = pack.get("review", {}) if isinstance(pack.get("review", {}), dict) else {}
     return {
@@ -186,8 +228,15 @@ def resolve_review_contract(
             "independent": True,
             "self_review_counts_toward_lgtm": False,
             "minimum_lgtm": count,
-            "require_distinct_vendors": bool(require_distinct_vendors),
+            "require_distinct_vendors": team_policy.require_distinct_vendors(
+                require_distinct_vendors, tier
+            ),
             "orchestrator_owns_writes": True,
+            "panel": panel,
+            # Per-slot provider/model/effort, so a host dispatches the configured vendor
+            # for slot B instead of running one vendor N times (#1014). Empty for every
+            # caller that resolves no team, which keeps the pre-#1014 contract intact.
+            "slots": slots,
             "focuses": list(reviewer_focuses(count)),
             "project_additions": list(review_policy.get("additions", [])),
             "required_sections": list(review_policy.get("required_sections", [])),
@@ -205,6 +254,11 @@ def resolve_review_contract(
             no_jury=no_jury,
             jury_advisory=jury_advisory,
             participating_vendors=jury_participating_vendors,
+            panel_is_jury=panel_is_jury,
+            policy_mode=None if assignment is None else assignment["jury"]["mode"],
+            minimum_vendors=(
+                MINIMUM_JURY_VENDORS if assignment is None else assignment["jury"]["min_vendors"]
+            ),
         ),
         "finding_policy": {
             "critical": "block",
@@ -422,6 +476,8 @@ class ShipAssessment:
     ci_ran: bool | None = None
     #: Declared ``knobs.ci_workflows`` that produced no check for this head.
     missing_workflows: tuple[str, ...] = ()
+    #: The resolved ``knobs.team`` assignment: who implements, gates, reviews, juries.
+    assignment: dict[str, Any] | None = None
 
 
 def assess(
@@ -449,6 +505,13 @@ def assess(
     jury: bool = False,
     no_jury: bool = False,
     jury_advisory: bool = False,
+    team: team_policy.TeamPolicy | None = None,
+    legacy_agents: dict[str, team_policy.Seat] | None = None,
+    role: str | None = None,
+    delegate: str | None = None,
+    review_delegates: Sequence[str] = (),
+    host_agent: str = team_policy.HOST_DEFAULT,
+    require_distinct_vendors: bool | None = None,
 ) -> ShipAssessment:
     """The whole deterministic ship decision in one place: tier → reviewers, window,
     CI, and the final merge action. Pure — identical inputs give identical output.
@@ -479,7 +542,18 @@ def assess(
             patches=patches,
         )
     )
-    reviewers = reviewer_override if reviewer_override is not None else reviewer_count(tier)
+    assignment = team_policy.resolve_assignment(
+        team if team is not None else team_policy.TeamPolicy(),
+        tier=tier,
+        role=role,
+        default_count=reviewer_count(tier),
+        reviewer_override=reviewer_override,
+        delegate=delegate,
+        review_delegates=review_delegates,
+        host_agent=host_agent,
+        legacy=legacy_agents,
+    )
+    reviewers = assignment["reviewer_count"]
     window_open = (
         is_merge_open(timezone, merge_window, now=now) if (timezone and merge_window) else True
     )
@@ -519,6 +593,8 @@ def assess(
         jury=jury,
         no_jury=no_jury,
         jury_advisory=jury_advisory,
+        require_distinct_vendors=require_distinct_vendors,
+        assignment=assignment,
     )
     return ShipAssessment(
         tier,
@@ -531,4 +607,5 @@ def assess(
         review_contract,
         ran,
         missing,
+        assignment,
     )

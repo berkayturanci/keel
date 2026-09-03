@@ -9,8 +9,35 @@ timezone: Europe/Istanbul
 merge_window: "07:00-01:30"
 
 knobs:
-  implementer_agents:
-    core: backend-developer
+  # keel's own team policy (#1014). This is the dogfood: the same block any project
+  # writes, resolved into the `assignment` that `keel plan`/`keel ship --json` render.
+  # It replaces the old `implementer_agents: {core: backend-developer}` — a value that
+  # was documented as a vendor string in docs/keel/models.md and as a Claude subagent
+  # name in ship.md s4, with nothing saying which. `subagent:` now says it.
+  team:
+    implement:
+      default: { provider: "subagent:backend-developer" }
+      by_role:
+        core: { provider: "subagent:backend-developer" }
+    # Every implementation gets one second opinion from a vendor that did not write it.
+    gate:
+      provider: codex
+      distinct_from: implementer
+    review:
+      by_tier:
+        # Quoted keys: YAML reads a bare `1:` as an integer key, which a JSON schema
+        # cannot describe. keel says so rather than accepting it and meaning something
+        # else.
+        "1": [{ provider: claude }]
+        "2": [{ provider: claude }, { provider: codex }]
+        # Tier-3 reaches past CI. The cross-vendor panel *is* the review there:
+        # reviewers.count == 0 from the host, and the jury verdict is what evidence
+        # requires before the merge.
+        "3": jury
+    jury:
+      mode: gating
+      min_vendors: 2
+    fix: { provider: implementer }
   build_gate_cmd: "make test"
   lint_cmd: "make lint"
   # Tier-3 is for changes that can reach past CI — publish, deploy, write to the

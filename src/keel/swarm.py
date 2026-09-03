@@ -277,9 +277,15 @@ def extract_issue_scope(
             resolved_role = label.removeprefix("area:")
             break
 
-    if config and config.knobs.implementer_agents:
-        if resolved_role not in config.knobs.implementer_agents:
-            resolved_role = "core" if "core" in config.knobs.implementer_agents else resolved_role
+    # Both role vocabularies: `team.implement.by_role` (#1014) is where a role lives now,
+    # and the deprecated `implementer_agents` still routes for a project that has not
+    # migrated. Reading only the old one silently stopped narrowing the role for any
+    # project that adopted `team` — including keel itself.
+    known_roles: set[str] = set()
+    if config:
+        known_roles = {*config.knobs.implementer_agents, *config.knobs.team.implement_by_role}
+    if known_roles and resolved_role not in known_roles:
+        resolved_role = "core" if "core" in known_roles else resolved_role
 
     # Default directory hints based on role or labels if no specific files found
     if not predicted:
