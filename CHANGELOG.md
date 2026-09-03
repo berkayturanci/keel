@@ -6,6 +6,11 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Rollback covers Homebrew and partial publishes** (#1025): `docs/keel/release.md`'s "Rollback And Re-Run Notes" is now a decision table — bad PyPI release only, bad tag or GitHub Release, bad Homebrew formula, and partial publish (PyPI succeeded, a later step failed) — each with exact commands. The Homebrew row spells out what a PyPI yank does *not* do: `brew install keel` builds from the GitHub tag archive, so yanking PyPI leaves it serving the bad tag; retargeting/deleting the tag or shipping a corrective release and waiting out the tap's 30-minute sync are what actually stop it.
+  - `scripts/release_bump.py` gained `visual_divergence()`: a core version bump never touches keel-visual, so if its own two version markers (`keel-visual/pyproject.toml` vs. `keel_visual/__init__.py`) had already drifted apart — the #796 shape — the release used to ship past it unnoticed. It now warns by default and, under a new `--strict` flag, refuses; `make release-bump` passes `--strict`.
+  - Each rollback row still needs one end-to-end rehearsal on a scratch tag with the transcript linked from the doc — marked "rehearsal pending" there and tracked as a follow-up rather than claimed.
+
 ### Fixed
 - **`make test` picks an interpreter instead of assuming one** (#1022): `PY ?= python3` handed the suite to whatever `python3` was on PATH. On macOS that is Xcode's 3.9, where every `X | None` annotation is a syntax error — about 110 import failures that read like a regression in the tree, and a `keel ship` build gate red for the same reason. The fix was tribal knowledge (`PY=<venv>/bin/python make test`).
   - `scripts/find_python.sh` now resolves the interpreter: the repository venv, then `python3.14 … python3.11`, then `python3`, taking the first that satisfies `import sys, yaml; assert sys.version_info >= (3, 11)`. The candidate answers that question itself — a resolver that parsed `--version` could still hand `make test` an interpreter without PyYAML. Nothing found is one line on stderr naming what to install, and exit 2.
