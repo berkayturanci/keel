@@ -1357,14 +1357,43 @@ class TestTeamKnob(unittest.TestCase):
         # config_hash for every project that never set the knob.
         self.assertEqual(cfg.config_hash(unset), cfg.config_hash(cfg.parse_config(explicit)))
 
-    def test_keel_dogfoods_the_knob(self):
-        config = cfg.load_config(DOGFOOD_CONFIG)
+    def test_keels_own_configs_describe_the_team_that_reviews_keel_today(self):
+        """Both dogfood configs, and they must match — `make validate` checks both.
 
-        team = config.knobs.team
-        self.assertTrue(team.configured)
-        self.assertEqual(team.implement_by_role["core"].kind, "subagent")
-        self.assertEqual(team.gate.distinct_from, "implementer")
-        self.assertEqual(team.review_by_tier["3"], "jury")
+        The policy here is not the reference example: it is who actually reviews keel,
+        so it must not gate a merge on a seat or a verdict that does not exist yet. The
+        `"3": jury` shape stays documented in `configuration.md#team` as the intended
+        future (#1015 wires the jury into s7), not as keel's live config.
+        """
+        for path in (DOGFOOD_CONFIG, PROJECTS_DIR / "keel.yaml"):
+            with self.subTest(config=path.name):
+                config = cfg.load_config(path)
+
+                team = config.knobs.team
+                self.assertTrue(team.configured)
+                self.assertEqual(team.implement_by_role["core"].kind, "subagent")
+                self.assertEqual(team.gate.provider, "agy")
+                self.assertEqual(team.gate.distinct_from, "implementer")
+                self.assertEqual(
+                    [seat.provider for seat in team.review_by_tier["2"]], ["claude", "agy"]
+                )
+                self.assertEqual(
+                    [seat.provider for seat in team.review_by_tier["3"]],
+                    ["claude", "agy", "subagent:opus-reviewer"],
+                )
+                # Advisory until the jury actually runs from s7: keel does not get to
+                # make its own merge wait on a panel nobody dispatches.
+                self.assertEqual(team.jury_mode, "advisory")
+                # Explicitly off, not unset: the tier-derived default would demand three
+                # pairwise-distinct vendors from a panel that is anthropic + google +
+                # anthropic. Tier-2 still gets two vendors by construction of the seats.
+                self.assertIs(config.knobs.evidence_require_distinct_vendors, False)
+
+    def test_the_two_dogfood_configs_are_the_same_file(self):
+        self.assertEqual(
+            DOGFOOD_CONFIG.read_text(encoding="utf-8"),
+            (PROJECTS_DIR / "keel.yaml").read_text(encoding="utf-8"),
+        )
 
 
 if __name__ == "__main__":

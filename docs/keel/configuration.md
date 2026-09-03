@@ -214,6 +214,11 @@ tier; and a `review` value that is neither seats nor `jury`. A machine-level
 `~/.keel/providers.yaml` entry is deliberately **not** consulted: validation must give the
 same answer on every machine.
 
+**`"3": jury` is a policy, not a default.** A tier whose review is the panel makes the
+pre-merge evidence gate require a jury verdict, so adopt it only once something actually
+dispatches the jury for that tier — keel's own `projects/keel.yaml` names three reviewer
+seats at tier-3 and keeps `jury.mode: advisory` for exactly that reason.
+
 **Tier keys are quoted strings** (`"1"`, `"2"`, `"3"`). YAML reads a bare `1:` as an
 integer key, which a JSON schema cannot describe; keel says so instead of accepting it and
 meaning something else.

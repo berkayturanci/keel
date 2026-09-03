@@ -250,10 +250,8 @@ class TestPlan(unittest.TestCase):
         self.assertTrue(assignment["configured"])
         self.assertEqual(assignment["implementer"]["kind"], "subagent")
         self.assertEqual(assignment["implementer"]["source"], "team.implement.by_role.core")
-        self.assertEqual(assignment["gate"]["provider"], "codex")
-        self.assertEqual(
-            [seat["provider"] for seat in assignment["reviewers"]], ["claude", "codex"]
-        )
+        self.assertEqual(assignment["gate"]["provider"], "agy")
+        self.assertEqual([seat["provider"] for seat in assignment["reviewers"]], ["claude", "agy"])
         # One resolution, two renderings: the bench a host dispatches and the contract
         # it publishes are the same seats.
         self.assertEqual(
@@ -285,9 +283,17 @@ class TestPlan(unittest.TestCase):
         self.assertEqual(assignment["implementer"]["model"], "gemini-3.8-flash")
         self.assertEqual(assignment["reviewers"][0]["provider"], "anthropic-api")
         self.assertEqual(assignment["reviewers"][0]["source"], "flag:--review-delegate")
-        self.assertEqual(assignment["reviewers"][1]["provider"], "codex")
+        self.assertEqual(assignment["reviewers"][1]["provider"], "agy")
 
-    def test_plan_json_makes_the_jury_the_panel_at_tier_three(self):
+    def test_plan_json_renders_keels_own_tier_three_bench(self):
+        """keel's live policy, not the reference example (#1014 lead decision).
+
+        Three seats — the host lead, the second vendor, and a second Opus subagent —
+        with `evidence_require_distinct_vendors` explicitly off, because
+        `distinct_vendor_check` wants every required verdict to carry a pairwise-distinct
+        vendor and that panel is anthropic + google + anthropic. The jury stays advisory
+        until #1015 dispatches it from s7, so no `jury-verdict` is required.
+        """
         rc, out, _ = run(
             [
                 "plan",
@@ -304,12 +310,18 @@ class TestPlan(unittest.TestCase):
 
         self.assertEqual(rc, 0)
         contract = json.loads(out)["contract"]
-        self.assertEqual(contract["assignment"]["review_panel"], "jury")
-        self.assertEqual(contract["review_merge_contract"]["reviewers"]["count"], 0)
-        self.assertEqual(contract["review_merge_contract"]["jury"]["mode"], "gating")
+        reviewers = contract["review_merge_contract"]["reviewers"]
+        self.assertEqual(contract["assignment"]["review_panel"], "reviewers")
+        self.assertEqual(reviewers["count"], 3)
+        self.assertIs(reviewers["require_distinct_vendors"], False)
+        self.assertEqual(
+            [seat["provider"] for seat in reviewers["slots"]],
+            ["claude", "agy", "subagent:opus-reviewer"],
+        )
+        self.assertEqual(contract["review_merge_contract"]["jury"]["mode"], "advisory")
         required = [item["id"] for item in contract["evidence"]["required"]]
-        self.assertIn("jury-verdict", required)
-        self.assertFalse(any(item.startswith("review-verdict") for item in required))
+        self.assertIn("review-verdict-3", required)
+        self.assertNotIn("jury-verdict", required)
 
     def test_plan_json_exposes_evidence_requirements_from_review_flags(self):
         rc, out, _ = run(

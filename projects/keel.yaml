@@ -19,23 +19,34 @@ knobs:
       default: { provider: "subagent:backend-developer" }
       by_role:
         core: { provider: "subagent:backend-developer" }
-    # Every implementation gets one second opinion from a vendor that did not write it.
+    # Every implementation gets one second opinion from a seat that did not write it.
     gate:
-      provider: codex
+      provider: agy
       distinct_from: implementer
     review:
       by_tier:
         # Quoted keys: YAML reads a bare `1:` as an integer key, which a JSON schema
         # cannot describe. keel says so rather than accepting it and meaning something
         # else.
+        #
+        # These are the seats that actually review keel today. Tier-3 reaches past CI,
+        # so it gets all three: the host lead, the second vendor, and a second Opus
+        # reviewer — spelled `subagent:` because that is what it is, not a vendor keel
+        # dispatches to. `"3": jury` (the cross-vendor panel *as* the review) is the
+        # intended future and is documented in docs/keel/configuration.md#team; it is
+        # not keel's live config until #1015 wires the jury into s7, because a tier-3
+        # policy of `jury` makes the pre-merge evidence gate require a jury verdict
+        # nobody posts yet.
         "1": [{ provider: claude }]
-        "2": [{ provider: claude }, { provider: codex }]
-        # Tier-3 reaches past CI. The cross-vendor panel *is* the review there:
-        # reviewers.count == 0 from the host, and the jury verdict is what evidence
-        # requires before the merge.
-        "3": jury
+        "2": [{ provider: claude }, { provider: agy }]
+        "3":
+          - { provider: claude }
+          - { provider: agy }
+          - { provider: "subagent:opus-reviewer" }
     jury:
-      mode: gating
+      # Advisory, not gating, until #1015 dispatches the jury from s7. keel does not
+      # get to make its own merge wait on a panel that does not run yet.
+      mode: advisory
       min_vendors: 2
     fix: { provider: implementer }
   build_gate_cmd: "make test"
@@ -87,6 +98,14 @@ knobs:
     "CI": "**"
   docs_gate_paths: ["docs/**", "*.md", "README.md"]
   sot_doc: AGENTS.md
+  # Explicitly off, overriding the tier-derived default (#1014), until a third
+  # *vendor* seat is stable. Today's tier-3 panel is claude + agy + a second Opus
+  # subagent, and `evidence.distinct_vendor_check` requires every required verdict to
+  # carry a pairwise-distinct vendor — anthropic + google + anthropic fails that. The
+  # protection it buys at tier-2 is already there by construction: the two tier-2
+  # seats above are two different vendors. Revisit when the third seat is its own
+  # vendor rather than a second Opus.
+  evidence_require_distinct_vendors: false
 
 gates: [build, lint]
 
