@@ -190,7 +190,7 @@ knobs:
       by_tier:
         "1": [{ provider: claude }]
         "2": [{ provider: claude }, { provider: grok-via-openai-compatible }]
-        "3": jury                          # the panel is the review
+        "3": jury                          # the panel is the review (see the caveat below)
     jury: { mode: gating, min_vendors: 2 }
     fix: { provider: implementer }         # who applies review findings
 ```
@@ -226,10 +226,23 @@ tier; and a `review` value that is neither seats nor `jury`. A machine-level
 `~/.keel/providers.yaml` entry is deliberately **not** consulted: validation must give the
 same answer on every machine.
 
-**`"3": jury` is a policy, not a default.** A tier whose review is the panel makes the
-pre-merge evidence gate require a jury verdict, so adopt it only once something actually
-dispatches the jury for that tier — keel's own `projects/keel.yaml` names three reviewer
-seats at tier-3 and keeps `jury.mode: advisory` for exactly that reason.
+**`"3": jury` is a policy, not a default — and keel itself defers it.** A tier whose review
+is the panel makes the pre-merge evidence gate require a **jury verdict**, and nothing else:
+that tier has no host reviewer slots to fall back on. So adopt it only once something
+actually dispatches the jury for that tier. keel's own `projects/keel.yaml` names three
+reviewer seats at tier-3 and keeps `jury.mode: advisory` for exactly that reason — the jury
+is not dispatched from s7 until #1015, and a policy that requires a verdict nobody posts is
+a tier that can never merge.
+
+Two consequences worth stating plainly:
+
+- **No per-run flag can take the panel away.** `--no-jury` and `--jury-advisory` are
+  recorded in `assignment.warnings` and not applied on a panel tier, because removing the
+  panel there would leave the tier with *no* required review evidence at all — a stricter
+  policy producing a weaker gate. Below a panel tier both flags keep their usual meaning.
+- **`jury.mode: advisory` may not be combined with a jury panel.** "The panel is the
+  review" and "the panel does not gate" together mean the tier requires nothing, so
+  `keel validate` refuses the pair.
 
 **Tier keys are quoted strings** (`"1"`, `"2"`, `"3"`). YAML reads a bare `1:` as an
 integer key, which a JSON schema cannot describe; keel says so instead of accepting it and

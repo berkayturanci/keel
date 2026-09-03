@@ -367,15 +367,42 @@ class TestResolveAssignment(unittest.TestCase):
 
         self.assertEqual(assignment["warnings"], [])
 
-    def test_no_jury_staffs_the_tiers_reviewers_instead_of_nobody(self):
+    def test_the_bench_does_not_move_with_the_jury_flags(self):
+        """The bench is config + tier + role + --reviewers/--review-delegate. Nothing else.
+
+        It cannot depend on the jury flags: the six commands that resolve a review
+        contract do not all receive them (`keel review` has no `--no-jury`, and keel's CI
+        passes it to `evidence-verify` on every run and to `ship`/`plan` on none), so a
+        bench that moved with the flag would have two commands demanding different
+        evidence of the same PR.
+        """
         policy = team.parse_team({"review": {"by_tier": {"3": "jury"}}})
+        baseline = team.resolve_assignment(policy, tier=3, default_count=3)
 
-        assignment = team.resolve_assignment(policy, tier=3, default_count=3, jury_disabled=True)
+        for flags in (
+            {"jury_disabled": True},
+            {"jury_advisory": True},
+            {"jury_disabled": True, "jury_advisory": True},
+        ):
+            with self.subTest(**flags):
+                assignment = team.resolve_assignment(policy, tier=3, default_count=3, **flags)
 
-        self.assertEqual(assignment["review_panel"], "reviewers")
-        self.assertEqual(assignment["reviewer_count"], 3)
-        self.assertFalse(assignment["jury"]["panel_is_review"])
-        self.assertIn("--no-jury skips the panel, never the review", assignment["warnings"][0])
+                self.assertEqual(assignment["review_panel"], "jury")
+                self.assertEqual(assignment["reviewer_count"], 0)
+                self.assertTrue(assignment["jury"]["panel_is_review"])
+                self.assertEqual(assignment["reviewers"], baseline["reviewers"])
+                # Recorded, not applied.
+                self.assertIn("does not apply", assignment["warnings"][0])
+                self.assertIn("the panel is the review", assignment["warnings"][0].lower())
+
+    def test_the_jury_flags_say_nothing_on_a_bench_they_do_not_reach(self):
+        policy = team.parse_team({"review": {"by_tier": {"2": [{"provider": "codex"}]}}})
+
+        assignment = team.resolve_assignment(
+            policy, tier=2, default_count=2, jury_disabled=True, jury_advisory=True
+        )
+
+        self.assertEqual(assignment["warnings"], [])
 
     def test_a_surplus_seat_is_reported_rather_than_silently_undispatched(self):
         assignment = team.resolve_assignment(
@@ -576,6 +603,26 @@ class TestTeamIssues(unittest.TestCase):
         errors = self.issues({"jury": {"mode": "blocking"}})
 
         self.assertIn("unknown mode 'blocking'", errors[0])
+
+    def test_an_advisory_jury_may_not_also_be_the_review_panel(self):
+        """Together they mean a tier with nothing required of it.
+
+        The panel is the review, so the tier has no host reviewers; an advisory verdict is
+        not required evidence. A project would be marking a tier strictest and getting the
+        weakest gate it has.
+        """
+        errors = self.issues({"review": {"by_tier": {"3": "jury"}}, "jury": {"mode": "advisory"}})
+
+        self.assertIn("no enforceable review", errors[0])
+        self.assertIn("review.by_tier.3", errors[0])
+
+    def test_an_advisory_jury_is_fine_when_the_panel_is_not_the_review(self):
+        raw = {
+            "review": {"by_tier": {"3": [{"provider": "claude"}]}},
+            "jury": {"mode": "advisory"},
+        }
+
+        self.assertEqual(self.issues(raw), [])
 
 
 if __name__ == "__main__":

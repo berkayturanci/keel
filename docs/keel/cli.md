@@ -1593,8 +1593,14 @@ approval values. Approved live runs include a local
 
 Review and merge-gate parity is exposed through `review_merge_contract` in JSON output.
 `--review-comments` selects inline or summary posting, `--reviewers` overrides the
-resolved reviewer count, and jury precedence is `--no-jury` over `--jury` over a
-`knobs.team` tier whose review policy is `jury` over tier-3 auto-jury over off. `--jury-advisory` keeps an enabled jury report-only. No-jury mode still
+resolved reviewer count, and jury precedence is a `knobs.team` tier whose review policy is
+`jury` over `--no-jury` over `--jury` over tier-3 auto-jury over off. **The jury flags
+never change the reviewer bench**, which is a pure function of config + tier + role +
+`--reviewers` / `--review-delegate`: the six commands that resolve this contract do not all
+receive them (`keel review` has no `--no-jury`), so a bench that moved with a flag would
+make one command require evidence another told the adapter not to produce. On a jury-panel
+tier `--no-jury` / `--jury-advisory` are recorded in `assignment.warnings` and not applied —
+the panel is that tier's only review, so its verdict stays required. `--jury-advisory` keeps an enabled jury report-only. No-jury mode still
 preserves the reviewer, CI, tester, merge-window, merge-lock, closeout, and capture gates.
 
 The resolved [`knobs.team`](configuration.md#team) team is exposed as `assignment` in both

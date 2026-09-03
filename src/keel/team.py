@@ -340,6 +340,7 @@ def _review_seats(
     reviewer_override: int | None,
     host_agent: str,
     jury_disabled: bool = False,
+    jury_advisory: bool = False,
 ) -> tuple[tuple[Seat, ...], str, str, list[str]]:
     """Reviewer seats, the panel, the source, and any warnings.
 
@@ -347,28 +348,37 @@ def _review_seats(
     *is* the review); otherwise ``--reviewers`` wins over the policy's seat count, which
     wins over the tier-derived default.
 
-    ``jury_disabled`` is ``--no-jury``, and it takes the panel back off the jury. Without
-    that, "no jury" on a ``jury`` tier would mean *no review at all* — zero host slots and
-    no panel, so the evidence gate would require no review evidence whatsoever. keel's own
-    contract already promises the opposite in as many words
-    (``test_gates.no_jury_preserves_review_and_test_gates``), and keel's CI passes
-    ``--no-jury`` on every run, so this is the difference between a flag that skips the
-    panel and a flag that skips the review.
+    **The bench is a pure function of config + tier + role + the explicit ``--reviewers``
+    and ``--review-delegate`` overrides, and of nothing else.** In particular it does not
+    depend on the jury flags. It cannot: the six commands that resolve a review contract
+    do not all receive them — ``keel review`` has no ``--no-jury`` at all, and keel's CI
+    passes ``--no-jury`` to ``evidence-verify`` on every run while passing it to neither
+    ``ship`` nor ``plan``. A bench that moved with that flag would have ``plan`` requiring
+    a jury verdict from zero reviewers while ``evidence-verify`` demanded three host
+    verdicts of the same PR, which is the same contract disagreement in a new place.
+
+    So ``jury_disabled`` / ``jury_advisory`` are recorded, never applied: on a tier whose
+    review policy is the panel, the panel **is** the review, and a per-run flag does not
+    get to remove the only review that tier has. :func:`keel.ship.resolve_jury` keeps the
+    verdict required for the same reason.
     """
     configured, source = policy.review_for(tier)
     warnings: list[str] = []
-    if configured == JURY_PANEL and jury_disabled:
-        warnings.append(
-            f"{source} makes the jury the review panel, but the jury is disabled for this "
-            "run; the tier's host reviewers are staffed instead — --no-jury skips the "
-            "panel, never the review"
-        )
-        configured, source = None, None
     if configured == JURY_PANEL:
         if reviewer_override is not None:
             warnings.append(
                 f"--reviewers {reviewer_override} ignored: {source} makes the jury the "
                 "review panel, so there are no host reviewer slots to size"
+            )
+        ignored = [
+            flag
+            for flag, passed in (("--no-jury", jury_disabled), ("--jury-advisory", jury_advisory))
+            if passed
+        ]
+        if ignored:
+            warnings.append(
+                f"{' and '.join(ignored)} does not apply: this tier's review is the jury "
+                f"panel ({source}). The panel is the review, so its verdict stays required"
             )
         return (), JURY_PANEL, source, warnings
     seats = configured if isinstance(configured, tuple) else ()
@@ -383,16 +393,23 @@ def _review_seats(
         seats[index] if index < len(seats) else Seat(provider=host_agent) for index in range(count)
     )
     padded = max(0, count - len(seats))
-    if padded and any(seat.provider == host_agent for seat in seats):
+    if padded > 1 or (padded and any(seat.provider == host_agent for seat in seats)):
+        # Two conditions, because there are two ways the pad duplicates. The host may
+        # already be a configured seat (`[claude, codex]` + `--reviewers 3`), or it may
+        # not be and simply get seated twice (`[codex]` + `--reviewers 3` ->
+        # `[codex, claude, claude]`): the second is a duplicate between two *padded*
+        # slots, which a check against the configured seats alone never sees.
+        #
         # Comparing provider names, not vendors: resolving a name to its vendor needs the
         # registry, which this module deliberately cannot reach. A repeated *name* is
-        # already a repeated vendor, so this catches the case that matters — a bench
-        # `--reviewers 3` grew by re-seating the host that is already slot A, which
-        # `require_distinct_vendors` will then reject at the evidence gate.
+        # already a repeated vendor, and `require_distinct_vendors` rejects it at the
+        # evidence gate long after the run.
+        seated = any(seat.provider == host_agent for seat in seats)
+        where = "which is already seated" if seated else "filling more than one slot"
         warnings.append(
-            f"{padded} reviewer slot(s) padded with the host agent {host_agent!r}, which "
-            "is already seated; those reviewers cannot return distinct vendor provenance "
-            "— name the extra seats in knobs.team.review, or lower --reviewers"
+            f"{padded} reviewer slot(s) padded with the host agent {host_agent!r}, "
+            f"{where}; those reviewers cannot return distinct vendor provenance — name "
+            "the extra seats in knobs.team.review, or lower --reviewers"
         )
     if seats and len(seats) > count:
         warnings.append(
@@ -438,6 +455,7 @@ def resolve_assignment(
     host_agent: str = HOST_DEFAULT,
     legacy: Mapping[str, Seat] | None = None,
     jury_disabled: bool = False,
+    jury_advisory: bool = False,
 ) -> dict[str, Any]:
     """Who runs this ship: implementer, gate, reviewer slots, jury, fix.
 
@@ -461,6 +479,7 @@ def resolve_assignment(
         reviewer_override=reviewer_override,
         host_agent=host_agent,
         jury_disabled=jury_disabled,
+        jury_advisory=jury_advisory,
     )
     labels = slot_labels(len(seats))
     sources = [review_source] * len(seats)
@@ -732,4 +751,17 @@ def _review_issues(policy: TeamPolicy, *, source: str) -> list[str]:
         errors.append(
             f"{source}.jury.mode: unknown mode {policy.jury_mode!r}; valid: {', '.join(JURY_MODES)}"
         )
+    elif policy.jury_mode == "advisory":
+        # "The panel is the review" plus "the panel does not gate" is a tier with no
+        # enforceable review at all: there are no host reviewer slots to fall back on, and
+        # an advisory verdict is not required evidence. Refused here rather than
+        # discovered as a merge that sailed through the tier the project marked strictest.
+        panels = sorted(path for path, value in entries if value == JURY_PANEL)
+        if panels:
+            errors.append(
+                f"{source}.jury.mode: 'advisory' leaves {', '.join(panels)} with no "
+                "enforceable review — that tier has no host reviewers, so an advisory "
+                "panel requires nothing. Use 'gating' for a jury panel, or name reviewer "
+                "seats for that tier"
+            )
     return errors

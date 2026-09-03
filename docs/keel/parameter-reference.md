@@ -1761,7 +1761,7 @@ positionals are all rejected as user error.
 | `--role` | issue role label | role read off the issue | Selects the `knobs.team.implement.by_role` seat. |
 | `--review-comments` | `inline` \| `summary` | `inline` | How reviewer findings post in s7. |
 | `--reviewers` | `1` \| `2` \| `3` | auto (from `knobs.team.review`, else the tier) | Override the resolved reviewer count. On a tier whose `team.review` policy is `jury` it is reported in `assignment.warnings` instead: the panel is the review, and there are no host slots to size. |
-| `--jury` / `--no-jury` / `--jury-advisory` | flags | tier-driven | Cross-vendor jury gate control (s8). |
+| `--jury` / `--no-jury` / `--jury-advisory` | flags | tier-driven | Cross-vendor jury gate control (s8). Precedence: a `knobs.team` jury-panel tier > `--no-jury` > `--jury` > tier-3 auto > off. **None of them changes the reviewer bench**; on a panel tier they are recorded in `assignment.warnings` and not applied, because the panel is that tier's only review. |
 | `--hotfix` | flag | off | Audited merge-window bypass at s10. |
 | `--dry-run` | flag | off | Read-only rehearsal of s0–s8. |
 | `--wizard` | flag | off | Interactive pre-s1 config collector (interactive contexts only). |
@@ -1846,6 +1846,13 @@ and `keel ship --json`:
 | `assignment.jury` | `mode`, `min_vendors`, `panel_is_review` |
 | `assignment.fix` | who applies review findings; carries `alias: "implementer"` when it resolved through that reserved name |
 | `assignment.warnings` | flags or seats that were **not** dispatched, and unhonoured `distinct_from` |
+
+The bench is a pure function of **config + tier + role + `--reviewers` +
+`--review-delegate`**, and of nothing else — in particular not of the jury flags. It has to
+be: `keel ship`, `keel plan`, `keel review`, `keel step-verify`, `keel evidence-verify` and
+`keel merge` all resolve this contract and do not all receive the same flags (`keel review`
+has no `--no-jury` at all), so a bench that moved with one would make the gate demand
+verdicts the ship run told the adapter never to produce.
 
 `keel plan` takes `--tier` (plus `--role` / `--delegate` / `--review-delegate`) to render
 the assignment for a tier before a diff exists; `keel ship` resolves it against the tier it

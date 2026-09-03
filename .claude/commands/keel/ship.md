@@ -217,7 +217,14 @@ capture.
   review policy is `jury` it is reported in `assignment.warnings` and not applied: the
   panel is the review, so there are no host slots to size.
 - `--jury` / `--no-jury` / `--jury-advisory` — control the cross-vendor jury gate (s8).
-  Precedence `--no-jury` > `--jury` > tier-3 auto > off. `--jury-advisory` = report-only.
+  Precedence: a `knobs.team` **jury panel tier** > `--no-jury` > `--jury` > tier-3 auto >
+  off. `--jury-advisory` = report-only. **None of them changes the reviewer bench**, which
+  is a pure function of config + tier + role + `--reviewers` / `--review-delegate` — the
+  commands that read this contract do not all receive the jury flags, so a bench that
+  moved with one would make `keel evidence-verify` demand verdicts `keel ship` told you
+  never to produce. On a tier whose review policy **is** the panel, `--no-jury` and
+  `--jury-advisory` are recorded in `assignment.warnings` and not applied: the panel is
+  the only review that tier has, so its verdict stays required.
 - `--hotfix` — audited merge-window bypass (s10). Use sparingly.
 - `--dry-run` — read-only rehearsal (see `--dry-run` section).
 - `--wizard` — interactive opt-in only; runs the guided pre-s1 config collector (see
@@ -539,9 +546,14 @@ tier-3 jury auto-trigger logic below; log the detected tier and reason
 passed the tier is not computed, so the tier-3 jury auto-trigger does not apply.
 
 **Jury enablement** (always evaluated, even when `--reviewers` was passed; precedence
-`--no-jury` > `--jury` > tier-3 auto > off): tier-3 ⇒ auto-on. Mode is **gating** by
-default (`--jury-advisory` ⇒ advisory-only). The jury never changes the reviewer count.
-Log the decision (`jury: enabled (reason; mode) / disabled`).
+`knobs.team` jury panel > `--no-jury` > `--jury` > tier-3 auto > off): tier-3 ⇒ auto-on.
+Mode is **gating** by default (`--jury-advisory` ⇒ advisory-only). A tier whose
+`knobs.team` review policy is `jury` is **always gating and always enabled** — the panel is
+that tier's review, so a per-run flag cannot leave it with no required evidence; the
+ignored flag is reported in `assignment.warnings`. The jury never changes the reviewer
+count, and the reviewer count never changes with a jury flag. Read both from
+`review_merge_contract` rather than re-deriving them. Log the decision
+(`jury: enabled (reason; mode) / disabled`).
 
 ### Step boundary verification
 At every successful backbone transition, persist the canonical JSON handoff produced from
@@ -1033,4 +1045,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=claude command=ship keel_version=1.19.3 source_sha256=5ee321bbc7d39a623b2db8f43530525c70ef2f9ced059cc1e8305b17c09e107f generated_sha256=5ee321bbc7d39a623b2db8f43530525c70ef2f9ced059cc1e8305b17c09e107f -->
+<!-- keel-generated: surface=claude command=ship keel_version=1.19.3 source_sha256=f6fc65d28f7a277b0edad78497f08f76dffdd60a8fe2b2a9c9bbe6e505cf1b25 generated_sha256=f6fc65d28f7a277b0edad78497f08f76dffdd60a8fe2b2a9c9bbe6e505cf1b25 -->

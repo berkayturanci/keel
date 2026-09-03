@@ -993,7 +993,10 @@ def _review_assignment(
         review_delegates=review_delegates,
         host_agent=getattr(args, "host_agent", None) or agents.HOST_DEFAULT,
         legacy=agents.legacy_team_seats(config),
+        # Recorded, never applied: the bench is a pure function of config + tier +
+        # role + the explicit --reviewers / --review-delegate overrides.
         jury_disabled=bool(getattr(args, "no_jury", False)),
+        jury_advisory=bool(getattr(args, "jury_advisory", False)),
     )
 
 

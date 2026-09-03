@@ -698,9 +698,14 @@ TEAM = team_policy.parse_team(
 class TestTeamAssignment(unittest.TestCase):
     """The resolved `knobs.team` team and the review contract must agree (#1014)."""
 
-    def _assignment(self, tier, **kwargs):
+    def _assignment(self, tier, *, no_jury=False, jury_advisory=False, **kwargs):
         return team_policy.resolve_assignment(
-            TEAM, tier=tier, default_count=ship.reviewer_count(tier), **kwargs
+            TEAM,
+            tier=tier,
+            default_count=ship.reviewer_count(tier),
+            jury_disabled=no_jury,
+            jury_advisory=jury_advisory,
+            **kwargs,
         )
 
     def test_the_contract_takes_its_bench_from_the_assignment(self):
@@ -740,24 +745,53 @@ class TestTeamAssignment(unittest.TestCase):
         self.assertTrue(contract["jury"]["enabled"])
         self.assertEqual(contract["jury"]["reason"], "team.review panel")
 
-    def test_no_jury_still_beats_a_jury_panel(self):
+    def test_the_panel_outranks_every_per_run_jury_flag(self):
+        """At a jury tier the panel *is* the review, so no flag may remove it.
+
+        There are no host reviewer slots to fall back on, so `--no-jury` or
+        `--jury-advisory` there would leave the tier with no required review evidence at
+        all — a stricter policy producing a weaker gate. It is also the only answer the
+        six commands resolving this contract can agree on: `keel review` has no
+        `--no-jury`, and keel's CI passes it to `evidence-verify` and to nothing else.
+        """
+        for flags in (
+            {"no_jury": True},
+            {"jury_advisory": True},
+            {"no_jury": True, "jury_advisory": True},
+        ):
+            with self.subTest(**flags):
+                contract = ship.resolve_review_contract(
+                    tier=3, assignment=self._assignment(3, **flags), **flags
+                )
+
+                self.assertTrue(contract["jury"]["enabled"])
+                self.assertEqual(contract["jury"]["mode"], "gating")
+                self.assertEqual(contract["reviewers"]["count"], 0)
+                self.assertIn("does not apply", contract["jury"]["reason"])
+
+    def test_no_jury_keeps_its_meaning_below_a_panel_tier(self):
         contract = ship.resolve_review_contract(
             tier=3, assignment=self._assignment(3), no_jury=True
         )
+        plain = ship.resolve_review_contract(tier=3, no_jury=True)
 
-        self.assertFalse(contract["jury"]["enabled"])
-        self.assertEqual(contract["jury"]["mode"], "off")
+        # The fixture's tier-3 *is* a panel, so the flag is recorded, not applied…
+        self.assertEqual(contract["jury"]["mode"], "gating")
+        # …while a project without a jury panel keeps the documented precedence.
+        self.assertFalse(plain["jury"]["enabled"])
+        self.assertEqual(plain["jury"]["mode"], "off")
 
-    def test_the_policy_can_soften_an_enabled_jury_to_advisory(self):
-        policy = team_policy.parse_team(
-            {"review": {"by_tier": {"3": "jury"}}, "jury": {"mode": "advisory"}}
-        )
+    def test_the_policy_can_soften_a_jury_it_did_not_make_the_panel(self):
+        policy = team_policy.parse_team({"jury": {"mode": "advisory"}})
         assignment = team_policy.resolve_assignment(policy, tier=3, default_count=3)
 
         contract = ship.resolve_review_contract(tier=3, assignment=assignment)
 
+        # Tier-3 auto-enables the jury; the project's own mode makes it report-only.
         self.assertTrue(contract["jury"]["enabled"])
         self.assertEqual(contract["jury"]["mode"], "advisory")
+        # …and the bench is untouched: there are still three host reviewers behind it.
+        self.assertEqual(contract["reviewers"]["count"], 3)
 
     def test_a_raised_minimum_downgrades_a_panel_that_met_the_old_floor(self):
         contract = ship.resolve_review_contract(

@@ -106,12 +106,23 @@ def resolve_jury(
 ) -> dict[str, Any]:
     """Resolve the cross-vendor jury mode using ship flag precedence.
 
-    ``panel_is_jury`` is a ``knobs.team`` tier whose review policy is ``jury``: the panel
-    *is* the review, so it enables the jury the way tier-3 auto does but for a reason the
-    project stated rather than one keel inferred. ``policy_mode`` is ``team.jury.mode``,
-    which can only ever make an enabled jury *advisory* — a project cannot promote a jury
-    that ``--no-jury`` turned off. ``minimum_vendors`` is ``team.jury.min_vendors``, which
-    may raise :data:`MINIMUM_JURY_VENDORS` but never lowers it (the schema's floor is 2).
+    ``panel_is_jury`` is a ``knobs.team`` tier whose review policy is ``jury``, and it
+    **outranks every per-run jury flag**. At such a tier the panel *is* the review: there
+    are no host reviewer slots, so a flag that turned the jury off or made it advisory
+    would leave that tier with no required review evidence at all — a stricter policy
+    producing a weaker gate. It is also the only answer the six commands that resolve this
+    contract can agree on, because they do not all receive the flags: ``keel review`` has
+    no ``--no-jury``, and keel's CI passes it to ``evidence-verify`` on every run and to
+    ``ship``/``plan`` on none. So on a panel tier the verdict stays required, whatever was
+    typed; the flag is recorded in ``assignment.warnings`` instead of applied. Below that
+    tier ``--no-jury`` keeps its pre-existing meaning and still beats the tier-3 auto-jury.
+
+    ``policy_mode`` is ``team.jury.mode``, which can make an enabled jury *advisory* — a
+    project cannot promote a jury that ``--no-jury`` turned off. Pairing it with a jury
+    *panel* is refused by :func:`keel.team.team_issues`, because "the panel is the review"
+    and "the panel does not gate" together mean the tier has no enforceable review at all.
+    ``minimum_vendors`` is ``team.jury.min_vendors``, which may raise
+    :data:`MINIMUM_JURY_VENDORS` but never lowers it (the schema's floor is 2).
 
     ``participating_vendors`` is the count of distinct vendors that actually took
     part in the panel. Below :data:`MINIMUM_JURY_VENDORS` a gating mode is
@@ -126,22 +137,31 @@ def resolve_jury(
     ignores the real panel makes the gate demand a verdict the jury step would
     decline to treat as gating.
     """
-    if no_jury:
+    if panel_is_jury:
+        enabled = True
+        reason = "team.review panel"
+        ignored = [
+            flag
+            for flag, passed in (("--no-jury", no_jury), ("--jury-advisory", jury_advisory))
+            if passed
+        ]
+        if ignored:
+            reason = f"{reason} ({' and '.join(ignored)} does not apply: the panel is the review)"
+    elif no_jury:
         enabled = False
         reason = "--no-jury"
     elif jury:
         enabled = True
         reason = "--jury"
-    elif panel_is_jury:
-        enabled = True
-        reason = "team.review panel"
     elif tier == 3:
         enabled = True
         reason = "tier-3 auto"
     else:
         enabled = False
         reason = "default"
-    advisory = jury_advisory or policy_mode == "advisory"
+    # A panel tier gates, full stop: it has no host reviewers to fall back on, so an
+    # advisory panel there is a tier with nothing required of it.
+    advisory = not panel_is_jury and (jury_advisory or policy_mode == "advisory")
     mode = "off" if not enabled else ("advisory" if advisory else "gating")
     downgraded = (
         mode == "gating"
@@ -565,6 +585,7 @@ def assess(
         host_agent=host_agent,
         legacy=legacy_agents,
         jury_disabled=no_jury,
+        jury_advisory=jury_advisory,
     )
     reviewers = assignment["reviewer_count"]
     window_open = (

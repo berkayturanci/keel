@@ -82,24 +82,35 @@ class TestEveryCommandResolvesTheSameBench(unittest.TestCase):
         path.write_text(text, encoding="utf-8")
         return str(path)
 
-    def _plan_required(self, config):
+    def _plan_required(self, config, *flags):
         rc, out, err = run(
-            ["plan", config, "--root", str(REPO_ROOT), "--command", "ship", "--tier", "3", "--json"]
+            [
+                "plan",
+                config,
+                "--root",
+                str(REPO_ROOT),
+                "--command",
+                "ship",
+                "--tier",
+                "3",
+                "--json",
+                *flags,
+            ]
         )
         self.assertEqual(rc, 0, err)
         contract = json.loads(out)["contract"]
         return [item["id"] for item in contract["evidence"]["required"]], contract
 
-    def _ship_required(self, config):
+    def _ship_required(self, config, *flags):
         # A non-git root cannot be diffed, which classifies fail-closed at TIER-3 — the
         # tier both other surfaces are pinned to below.
-        rc, out, err = run(["ship", config, "--root", str(self.root), "--json"])
+        rc, out, err = run(["ship", config, "--root", str(self.root), "--json", *flags])
         self.assertEqual(rc, 0, err)
         data = json.loads(out)
         self.assertEqual(data["result"]["assessment"]["tier"], 3)
         return [item["id"] for item in data["contract"]["evidence"]["required"]], data
 
-    def _evidence_required(self, config):
+    def _evidence_required(self, config, *flags):
         rc, out, err = run(
             [
                 "evidence-verify",
@@ -123,6 +134,7 @@ class TestEveryCommandResolvesTheSameBench(unittest.TestCase):
                 "--pr-reviews-json",
                 str(self.root / "empty.json"),
                 "--json",
+                *flags,
             ]
         )
         self.assertIn(rc, (0, 1), err)
@@ -225,6 +237,99 @@ class TestEveryCommandResolvesTheSameBench(unittest.TestCase):
         )
         self.assertFalse([item for item in s7["required_evidence"] if "review-verdict" in item])
 
+    def _review_required_count(self, config, supplied):
+        """`keel review` has no jury flags at all — the bench must not need them.
+
+        It is handed exactly the verdicts the other surfaces say are required: this is the
+        command that *posts* the evidence, so if it under-posts, it refuses (and the
+        assertion below fails) rather than leaving a PR that can never clear its own gate.
+        """
+        reviews = self.root / "reviews.json"
+        reviews.write_text(
+            json.dumps(
+                [
+                    {"reviewer": chr(ord("a") + i), "verdict": "LGTM", "findings": []}
+                    for i in range(supplied)
+                ]
+            ),
+            encoding="utf-8",
+        )
+        rc, out, _ = run(
+            [
+                "review",
+                config,
+                "--root",
+                str(self.root),
+                "--pr",
+                "1",
+                "--reviews",
+                str(reviews),
+                "--changed-file",
+                "src/a.py",
+                "--head-sha",
+                "abc",
+                "--dry-run",
+                "--json",
+            ]
+        )
+        self.assertIn(rc, (0, 1))
+        return json.loads(out)["plan"]["required_count"]
+
+    def test_the_bench_is_identical_across_every_no_jury_state(self):
+        """The cross-product the lead pinned: the flag must not move the contract.
+
+        `keel review` never sees a jury flag, keel's CI passes `--no-jury` to
+        `evidence-verify` on every run and to `ship`/`plan` on none. If the bench moved
+        with the flag, CI would demand three verdicts the ship run told the adapter never
+        to produce.
+        """
+        for name, config_text, expected in (
+            (
+                "jury panel",
+                JURY_PANEL_CONFIG,
+                ["closure-comment-pr", "closure-comment-issue", "jury-verdict"],
+            ),
+            (
+                "three seats",
+                THREE_SEAT_CONFIG,
+                [
+                    "closure-comment-pr",
+                    "closure-comment-issue",
+                    "review-verdict-1",
+                    "review-verdict-2",
+                    "review-verdict-3",
+                ],
+            ),
+        ):
+            config = self._config(config_text)
+            for flags in ((), ("--no-jury",), ("--jury-advisory",)):
+                with self.subTest(config=name, flags=flags):
+                    plan_required, plan_contract = self._plan_required(config, *flags)
+                    ship_required, ship_data = self._ship_required(config, *flags)
+                    evidence_required = self._evidence_required(config, *flags)
+
+                    self.assertEqual(plan_required, expected)
+                    self.assertEqual(ship_required, expected)
+                    self.assertEqual(sorted(evidence_required), sorted(expected))
+                    ship_reviewers = ship_data["result"]["assessment"]["review_merge_contract"][
+                        "reviewers"
+                    ]
+                    self.assertEqual(
+                        plan_contract["review_merge_contract"]["reviewers"]["count"],
+                        ship_reviewers["count"],
+                    )
+                    self.assertEqual(
+                        plan_contract["review_merge_contract"]["reviewers"]["slots"],
+                        ship_reviewers["slots"],
+                    )
+                    # `keel review` takes no jury flag at all, so it is the fixed point
+                    # every flagged run has to match: it posts exactly the verdicts the
+                    # evidence gate will then require.
+                    self.assertEqual(
+                        self._review_required_count(config, ship_reviewers["count"]),
+                        ship_reviewers["count"],
+                    )
+
     def test_step_verify_refuses_an_unreadable_project_rather_than_guessing(self):
         bad = self.root / "broken.yaml"
         bad.write_text("extends: keel\ncore_version: '^1.0'\n", encoding="utf-8")
@@ -251,13 +356,12 @@ class TestEveryCommandResolvesTheSameBench(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("invalid keel config", err)
 
-    def test_no_jury_staffs_the_tiers_reviewers_rather_than_nobody(self):
-        """`--no-jury` skips the panel; it must not skip the review.
+    def test_no_jury_is_recorded_and_not_applied_on_a_jury_tier(self):
+        """`--no-jury` must not remove the only review a jury tier has.
 
-        keel's own CI passes `--no-jury` on every evidence run, so without this a
-        `"3": jury` consumer would have had its tier-3 changes verified against *no*
-        review evidence at all — while `test_gates.no_jury_preserves_review_and_test_gates`
-        in the very same contract says the opposite.
+        Restaffing the tier's host reviewers instead (an earlier attempt at this) made the
+        bench a function of a flag the six review-aware commands do not receive uniformly,
+        which reopened the same disagreement on a new axis.
         """
         config = self._config(JURY_PANEL_CONFIG)
 
@@ -278,12 +382,36 @@ class TestEveryCommandResolvesTheSameBench(unittest.TestCase):
 
         self.assertEqual(rc, 0, err)
         contract = json.loads(out)["contract"]
-        self.assertEqual(contract["assignment"]["review_panel"], "reviewers")
-        self.assertEqual(contract["review_merge_contract"]["reviewers"]["count"], 3)
-        self.assertIn("--no-jury skips the panel", contract["assignment"]["warnings"][0])
+        self.assertEqual(contract["assignment"]["review_panel"], "jury")
+        self.assertEqual(contract["review_merge_contract"]["reviewers"]["count"], 0)
+        self.assertEqual(contract["review_merge_contract"]["jury"]["mode"], "gating")
+        self.assertIn("--no-jury does not apply", contract["assignment"]["warnings"][0])
         required = [item["id"] for item in contract["evidence"]["required"]]
-        self.assertIn("review-verdict-3", required)
-        self.assertNotIn("jury-verdict", required)
+        self.assertEqual(required, ["closure-comment-pr", "closure-comment-issue", "jury-verdict"])
+
+    def test_no_jury_keeps_its_meaning_where_the_panel_is_not_the_review(self):
+        config = self._config(THREE_SEAT_CONFIG)
+
+        rc, out, err = run(
+            [
+                "plan",
+                config,
+                "--root",
+                str(REPO_ROOT),
+                "--command",
+                "ship",
+                "--tier",
+                "3",
+                "--no-jury",
+                "--json",
+            ]
+        )
+
+        self.assertEqual(rc, 0, err)
+        contract = json.loads(out)["contract"]
+        self.assertFalse(contract["review_merge_contract"]["jury"]["enabled"])
+        self.assertEqual(contract["review_merge_contract"]["reviewers"]["count"], 3)
+        self.assertEqual(contract["assignment"]["warnings"], [])
 
 
 class TestNoCallSiteFallsBackToTheTier(unittest.TestCase):
