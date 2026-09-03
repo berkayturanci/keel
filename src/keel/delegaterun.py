@@ -414,7 +414,8 @@ def start_detached(
         write_state(root, record)
         return record
     try:
-        child = _popen(  # nosec B603 - argv is keel's own re-invocation, never shell
+        # argv is keel's own re-invocation (sys.executable -m keel), never a shell.
+        child = _popen(
             list(argv),
             cwd=cwd,
             stdin=subprocess.DEVNULL,
