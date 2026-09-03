@@ -79,6 +79,44 @@ def visual_version(root: Path) -> str:
     return match.group(2)
 
 
+def visual_divergence(root: Path) -> str | None:
+    """Warn when keel-visual's own two version markers disagree.
+
+    ``keel-visual/pyproject.toml`` is the declared ("core") version for the
+    package; ``keel_visual/__init__.py``'s ``__version__`` is a derived marker
+    that only ``bump_visual`` keeps in lockstep with it. A *core* bump
+    (``--package core``, the default) never calls ``bump_visual`` — it does not
+    touch keel-visual at all — so if the pair had already drifted apart (the
+    #796 shape: ``__version__`` left at ``0.6.0`` for two releases while
+    ``pyproject.toml`` moved on to 0.8.0), a plain core release ships right past
+    it, unnoticed, because nothing about bumping core looks at keel-visual.
+
+    Returns ``None`` when the pair agrees, or when keel-visual is not present
+    under ``root`` (a fixture tree, or a checkout without the second package).
+    """
+    if not (root / VISUAL_PYPROJECT).exists():
+        return None
+    try:
+        declared = visual_version(root)
+    except ValueError:
+        return None
+    marker_rel, marker_pattern = VISUAL_EDITS[1]
+    marker_path = root / marker_rel
+    if not marker_path.exists():
+        return None
+    match = marker_pattern.search(marker_path.read_text(encoding="utf-8"))
+    if not match:
+        return None
+    marker = match.group(2)
+    if marker == declared:
+        return None
+    return (
+        f"keel-visual's version markers have diverged from each other: "
+        f"{VISUAL_PYPROJECT} declares {declared}, {marker_rel} carries {marker} — "
+        f"run `scripts/release_bump.py {declared} --package keel-visual` to repair."
+    )
+
+
 def bump_visual(root: Path, new: str) -> tuple[str, list[str]]:
     """Rewrite keel-visual's version to ``new``. Returns ``(old, changed)``.
 
@@ -191,9 +229,30 @@ def main(argv: list[str] | None = None) -> int:
         default="core",
         help="which distribution to bump; keel-visual is on its own version line",
     )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help=(
+            "exit 1 if keel-visual's version markers have diverged from each other "
+            "(default: warn and continue)"
+        ),
+    )
     args = parser.parse_args(argv)
 
     root = Path(args.root)
+
+    if args.package == "core":
+        # A core bump never touches keel-visual, so a pre-existing drift between
+        # its own two markers (#796) would otherwise ship unnoticed. Checked
+        # before any file is written, so a --strict refusal leaves the tree
+        # untouched rather than half-bumped.
+        warning = visual_divergence(root)
+        if warning:
+            print(f"warning: {warning}", file=sys.stderr)
+            if args.strict:
+                print("release-bump failed: keel-visual left behind (--strict)", file=sys.stderr)
+                return 1
+
     try:
         if args.package == "keel-visual":
             old, changed = bump_visual(root, args.version)

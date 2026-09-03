@@ -293,13 +293,143 @@ trust a green CI run alone.
 
 ## Rollback And Re-Run Notes
 
-PyPI files are immutable. If a release is wrong:
+Start from what is actually wrong — each surface fails independently, and the fix for one is
+not the fix for another:
 
-- yank the bad version on PyPI
-- leave the GitHub Release visible with a correction note, or mark it as prerelease if it was
-  not intended for production
-- fix forward with a new version
+| Symptom | Row |
+|---|---|
+| PyPI has a bad wheel/sdist; the GitHub Release and Homebrew are fine | [Bad PyPI release only](#bad-pypi-release-only) |
+| The git tag points at the wrong commit, or the GitHub Release is missing assets | [Bad tag or GitHub Release](#bad-tag-or-github-release) |
+| `brew install keel` builds something wrong even though PyPI and the tag are fine | [Bad Homebrew formula](#bad-homebrew-formula) |
+| PyPI succeeded but a later `publish.yml` step (GitHub Release, formula digest) failed | [Partial publish](#partial-publish-pypi-succeeded-a-later-step-failed) |
 
-The publish workflow uses `skip-existing: true`, so a tag workflow re-run does not overwrite
-already-uploaded distributions. Re-run only after confirming that the existing artifacts are
-the intended ones.
+Ground rules that apply to every row:
+
+- **PyPI files are immutable.** A bad file cannot be overwritten — only yanked (hidden from
+  installs, kept downloadable) and superseded by a new version.
+- **The publish workflow uses `skip-existing: true`.** Re-running the tag workflow never
+  overwrites already-uploaded distributions, so re-running is always safe; it only fills in
+  whatever did not finish. Confirm the existing artifacts are the intended ones before you rely
+  on that.
+- **`brew install keel` builds from the GitHub tag archive**, not from PyPI —
+  `Formula/keel.rb`'s `url` points at
+  `https://github.com/berkayturanci/keel/archive/refs/tags/v<version>.tar.gz`. Yanking the PyPI
+  release does **not** stop Homebrew from serving a bad tag. What does: retargeting or deleting
+  the tag before the tap's next sync, or shipping a corrective release and waiting out the tap's
+  30-minute sync window (see [Complete The Homebrew Formula](#complete-the-homebrew-formula)).
+
+### Bad PyPI release only
+
+The GitHub Release and Homebrew formula are correct; only the PyPI upload is wrong.
+
+1. Yank the bad version — PyPI has no CLI for this; use the web UI: open
+   `https://pypi.org/manage/project/keel-workflow/release/<bad-version>/`, choose **Options →
+   Yank release**, and give a reason. Yanking hides the version from plain `pip install
+   keel-workflow` while leaving it installable by anyone who pins the exact version — it never
+   deletes the files (PyPI files are immutable).
+2. Leave the GitHub Release and Homebrew formula alone — they are not wrong.
+3. Fix forward with a new version:
+
+   ```bash
+   make release-bump VERSION=<next-version>
+   # ...continue the normal flow (tag, push) from "Production Publish" above.
+   ```
+
+Do not delete or retarget the tag for this case — the tag and GitHub Release are fine; only
+PyPI is wrong.
+
+### Bad tag or GitHub Release
+
+The tag points at the wrong commit, or the GitHub Release is missing an asset
+(wheel/sdist/SBOM/`SHA256SUMS`) or its attestation, whether or not PyPI is already correct.
+
+```bash
+# Delete the GitHub Release (keeps nothing dangling behind it)
+gh release delete v<version> --repo berkayturanci/keel --yes
+
+# Delete the tag, both locally and on the remote
+git tag -d v<version>
+git push origin :refs/tags/v<version>
+
+# Re-tag the correct commit and push — this retriggers publish.yml
+git tag -s v<version> -m "v<version>"
+git push origin v<version>
+```
+
+If PyPI already has the correct artifacts for `<version>`, `skip-existing: true` makes the
+re-run's PyPI upload a no-op; only the GitHub Release, formula-digest PR, and provenance
+attestation are (re)created. If PyPI does not yet have this version, the re-run publishes it
+normally.
+
+Do not retarget a tag to a **different commit** once PyPI has already served that version
+(even one later yanked) — a moved tag pointing somewhere PyPI's published digest does not match
+would break the "PyPI digest matches GitHub Release digest" invariant this runbook checks (see
+"Tag Signing Policy" above). Open a new `v<version+1>` instead. Deleting and re-pushing the
+**same** tag against the **same** commit (as above, to retrigger a failed workflow) is fine.
+
+### Bad Homebrew formula
+
+`brew install keel` builds from the GitHub tag archive, so **a PyPI yank does not stop it**.
+Two ways to actually stop a bad formula from serving:
+
+**Retarget or delete the tag** — stops it immediately, before the tap's next 30-minute sync:
+
+```bash
+git tag -d v<version>
+git push origin :refs/tags/v<version>
+# ...then follow "Bad tag or GitHub Release" above to re-tag the correct commit, or leave
+# the formula pointed at the last-known-good tag until a fixed release is ready.
+```
+
+**Ship a corrective release and wait for the tap's sync** — the normal path (see
+[Complete The Homebrew Formula](#complete-the-homebrew-formula)):
+
+```bash
+make release-bump VERSION=<next-version>
+# ...tag and push v<next-version>; publish.yml computes the digest and opens the
+# formula-digest PR against the tap (merge it if auto-merge is off).
+
+# Force the tap to pick it up now instead of waiting up to 30 minutes:
+gh workflow run sync-formula.yml --repo berkayturanci/homebrew-keel
+
+# Confirm what users will actually get:
+gh api repos/berkayturanci/homebrew-keel/contents/Formula/keel.rb --jq '.content' \
+  | base64 -d | grep -E '^  (url|sha256)'
+```
+
+Until the tap syncs, it keeps serving the *previous* release — one release behind still
+installs. The failure mode this project guards against instead is a formula whose `sha256`
+does not match its `url`; the tap refuses to publish that pairing rather than serve it, and
+`brew install` would refuse it too if it somehow got through (#805).
+
+### Partial publish (PyPI succeeded, a later step failed)
+
+PyPI has the correct wheel/sdist for `<version>`, but the GitHub Release, SBOM/attestation, or
+formula-digest step in `publish.yml` failed partway through.
+
+```bash
+# 1. Confirm what actually landed on PyPI:
+python -m pip index versions keel-workflow
+python scripts/release_smoke.py --requirement "keel-workflow==<version>"
+
+# 2. Confirm what the GitHub Release has, if anything:
+gh release view "v<version>" --json assets
+
+# 3. Find the failed run and re-run only the jobs that failed — skip-existing: true makes
+#    the PyPI step a no-op either way, so re-running the whole workflow is also safe:
+gh run list --repo berkayturanci/keel --workflow publish.yml --limit 5
+gh run rerun <run-id> --repo berkayturanci/keel --failed
+
+# 4. If the run itself cannot be re-run (e.g. the workflow file changed since), retrigger
+#    publish.yml by deleting and re-pushing the SAME tag against the SAME commit:
+git tag -d v<version>
+git tag -s v<version> -m "v<version>"
+git push origin v<version> --force
+```
+
+Never delete or re-upload the PyPI artifacts to "start clean" — they are immutable and are the
+good half of this release; only the steps that failed need re-running.
+
+**Rehearsal:** each row above should be rehearsed once end-to-end on a scratch tag before it is
+trusted under pressure, with the transcript linked from this doc. That rehearsal is *rehearsal
+pending* as of this change — tracked as a follow-up in the PR, not claimed here.
