@@ -45,6 +45,9 @@ By participating you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
    overrides the resolver; `make doctor-python` prints what it picked, and
    `keel doctor` reports the same interpreter under its `python_toolchain` check.
 4. The pure core is held at **100% line + branch coverage**. New core logic needs tests.
+   `make test` also fails if any tracked file — `CHANGELOG.md` most often, since it conflicts
+   on nearly every PR — still carries an unresolved `<<<<<<<`/`=======`/`>>>>>>>` marker after
+   a merge or rebase.
 5. Update docs (`docs/keel/`, README) and `CHANGELOG.md` (`[Unreleased]`) when behaviour
    changes. If you change the `/keel:<command>` adapters, re-install with
    `keel install-adapter all --force`.
