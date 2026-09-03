@@ -60,6 +60,20 @@ instead would swap one unknowable digest for another: both are produced by the
 tag. The only moment the pair is knowable is after the tag, which is where the
 render now happens.
 
+### The residual risk this does not remove
+
+The url is a GitHub **auto-generated** tag archive, and GitHub does not
+contractually guarantee those are byte-stable forever — it changed the
+compression used for them in January 2023, moving every affected digest at once.
+So a formula that verified when it was rendered can stop verifying later, with no
+change in this repository and nothing here to fix. That is a smaller and rarer
+failure than the one removed (which happened on *every* release, by
+construction), and it is caught downstream rather than assumed away: the tap
+re-hashes the artifact before every sync and refuses to publish a mismatch, and
+`test_the_tap_serves_an_installable_formula` fails in CI when what the tap serves
+stops hashing to what it declares. The repair, if it ever happens, is a re-run of
+the render for the current tag — not a second write to `main`.
+
 ### Why the vendored resource is still a committed digest
 
 `resource "PyYAML"` keeps a literal url and sha256 in the template, and that is
@@ -169,13 +183,24 @@ another.
 
 | Check | Where | Blocking on `main` |
 |---|---|---|
-| `packaging/homebrew/TAP_REPOINTED` names the tap commit as `tap-sync-formula: <40-hex>` | offline, default suite | **yes** |
-| the tap's live `sync-formula.yml` no longer names the retired path | `KEEL_CHECK_EXTERNAL=1` | runs in CI's `external promises` job |
+| `packaging/homebrew/TAP_REPOINTED` names a tap commit as `tap-sync-formula: <40-hex>` | offline, default suite | **yes** — it runs in `Tests`, which is required |
+| the tap's live `sync-formula.yml` no longer names the retired path | `KEEL_CHECK_EXTERNAL=1` | **no** — it runs in `external promises`, which is not a required status check |
 
-The offline half is a claim in a reviewable form, not proof: nothing offline can
-read another repository. Requiring the tap's commit sha rather than a non-empty
-file is what makes the claim falsifiable. Both it and the marker are single-use
-and can be deleted after a release or two.
+Be exact about that second row, because "it runs in CI" reads as "it blocks" and
+it does not. `main`'s required contexts are the nine test-matrix jobs, `Format
+(ruff)`, CodeQL, the pull-request description lint and the keel evidence check;
+`external promises` is absent from that list and no ruleset adds it. A red
+`external promises` is visible and ignorable.
+
+So the **only** blocking half is the offline marker — and it is a claim in a
+reviewable form, not proof: nothing offline can read another repository, and the
+test accepts any 40 hex characters. Requiring a commit sha rather than a
+non-empty file is what makes the claim falsifiable: a reviewer can open the
+commit it names. Adding `external promises` to `main`'s required status checks
+would turn the claim into an enforced fact — the same fix the sibling recorded in
+ai-jury#673, and an operator decision rather than something a pull request can
+do. Both the marker and the gate are single-use and can be deleted after a
+release or two.
 
 ## The evidence gate keeps no bot exemption
 
@@ -241,7 +266,7 @@ Four patterns run through all of these:
 
 | Symptom | Look here first |
 |---|---|
-| The tap fails on a schedule, hours after a green release | The formula asset's digest against the archive its url names. |
+| The tap fails on a schedule, hours after a green release | The formula asset's digest against the archive its url names. If nothing here changed, consider GitHub having regenerated the tag archive (see "The residual risk"): re-run the render for that tag. |
 | The tap's sync 404s every 30 minutes | Its fetch source. It must be `releases/latest/download/keel.rb`, not a file on `main`. |
 | A release published but attached no `keel.rb` | The render step's log. It refuses rather than reports: an unfetchable archive, a surviving placeholder or a foreign url all fail the job before the release is created. |
 | A pull request shows **no runs at all** for its head | The head commit's message. A CI-skip marker in it — even quoted in prose — suppresses every workflow. |

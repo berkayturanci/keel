@@ -79,13 +79,23 @@ gap. Failing on the 404 would have replaced one red cron with another.
 
 | Check | Where it runs | Blocking on `main`? |
 |---|---|---|
-| `TAP_REPOINTED` names a tap commit as `tap-sync-formula: <40-hex>` | offline, default suite | **yes** — it is in `Tests` |
-| the tap's live `sync-formula.yml` no longer names the retired path | `KEEL_CHECK_EXTERNAL=1` | it runs in CI's `external promises` job |
+| `TAP_REPOINTED` names a tap commit as `tap-sync-formula: <40-hex>` | offline, default suite | **yes** — it is in `Tests`, a required context |
+| the tap's live `sync-formula.yml` no longer names the retired path | `KEEL_CHECK_EXTERNAL=1` | **no** — `external promises` is not a required status check |
 
-The offline half is a **claim in a reviewable form**, not proof: nothing offline
-can read another repository. Requiring the tap commit sha rather than a non-empty
-file is what makes it checkable — a reviewer can open the commit, and a wrong sha
-is falsifiable rather than a shrug. The online half is the real check.
+"It runs in CI" is not "it blocks", and the second row is the case where the two
+come apart. `main` requires the nine test-matrix jobs, `Format (ruff)`, CodeQL,
+the pull-request description lint and the keel evidence check; `external
+promises` is on none of those lists and no ruleset adds it, so a red run there is
+visible and ignorable.
+
+That leaves the offline marker as the **only** blocking half, and it is a **claim
+in a reviewable form** rather than proof: nothing offline can read another
+repository, and the test accepts any 40 hex characters. Requiring a commit sha
+rather than a non-empty file is what makes it checkable — a reviewer can open the
+commit it names, and a wrong sha is falsifiable rather than a shrug. The online
+half is the real check, and making `external promises` a required status check on
+`main` is what would turn the claim into an enforced fact (the sibling reached
+the same conclusion in ai-jury#673). That is the operator's call.
 
 Record it like this:
 

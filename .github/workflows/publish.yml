@@ -132,33 +132,6 @@ jobs:
           sha256sum *.whl *.tar.gz sbom.cdx.json > SHA256SUMS
           cat SHA256SUMS
 
-      # Cryptographic attestation binding the artifacts to this workflow run,
-      # verifiable with `gh attestation verify`.
-      - name: Attest build provenance
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
-        with:
-          subject-path: "dist/*.whl, dist/*.tar.gz"
-
-      # TestPyPI trusted publishing: OIDC, no long-lived API token. Manual dispatch is
-      # the rehearsal path; configure TestPyPI for this repo + workflow before use.
-      - name: Publish package to TestPyPI
-        if: github.event_name == 'workflow_dispatch'
-        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
-        with:
-          repository-url: https://test.pypi.org/legacy/
-          skip-existing: true
-
-      # PyPI trusted publishing: OIDC, no long-lived API token. dist/ holds only
-      # the wheel + sdist (SBOM/checksums live in release/). NOT continue-on-error:
-      # a failed publish must fail the release loudly. `skip-existing` keeps re-runs
-      # idempotent. Requires a one-time trusted-publisher config on PyPI for this
-      # repo + workflow.
-      - name: Publish package to PyPI
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
-        with:
-          skip-existing: true
-
       # The formula, rendered from what the tag actually produced (#1023, #990).
       #
       # A committed Formula/keel.rb had to name a url and a sha256 that cannot
@@ -177,15 +150,33 @@ jobs:
       # This is the one thing the release constructs rather than copies. The
       # counter-argument (#779: a release step that builds something moves its
       # checks into the phase that runs once per tag) is answered by refusing
-      # here rather than reporting — every failure below exits non-zero, and it
-      # runs before the release is created, so a formula that cannot be verified
-      # means no release rather than a bad formula.
+      # here rather than reporting — every failure below exits non-zero.
+      #
+      # POSITION IS LOAD-BEARING. This sits between `Generate checksums` and the
+      # attestation, so it runs *before* anything irreversible: PyPI files are
+      # immutable and `skip-existing: true` means the version cannot be
+      # re-uploaded, so a render failure after the upload would leave a published
+      # version whose formula has to be fixed by cutting another release. Nothing
+      # here needs the upload: the inputs are GITHUB_REF_NAME, GITHUB_REPOSITORY,
+      # the committed template and release/SHA256SUMS. (The sibling renders after
+      # its upload because it must — its url and digest come from what PyPI
+      # reports about the sdist it just accepted. Here the url is the tag
+      # archive, which exists the moment the tag is pushed.)
       - name: Render the Homebrew formula from the tagged archive
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         env:
           # Bounded, and named so a test can assert the number rather than match
           # the loop's text. GitHub builds tag archives on demand; the first
           # request after a push occasionally 404s while the ref propagates.
+          #
+          # 10 x 6s = 60s, a fifth of the sibling's 300s, because the two are
+          # waiting for different things. It waits for PyPI to *index* an upload
+          # — a third-party pipeline whose latency is measured in minutes. This
+          # waits for GitHub to serve an archive of a ref its own API already
+          # accepted, in the same run that pushed it; the only gap is internal
+          # propagation, seconds. A minute of retries is generous for that, and
+          # the failure it must not produce is a long silent hang before the
+          # release: the job already holds the built artifacts by this point.
           ARCHIVE_WAIT_ATTEMPTS: "10"
           ARCHIVE_WAIT_SECONDS: "6"
         run: |
@@ -243,6 +234,33 @@ jobs:
 
           ( cd release && sha256sum keel.rb >> SHA256SUMS )
           cat release/keel.rb
+
+      # Cryptographic attestation binding the artifacts to this workflow run,
+      # verifiable with `gh attestation verify`.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        with:
+          subject-path: "dist/*.whl, dist/*.tar.gz"
+
+      # TestPyPI trusted publishing: OIDC, no long-lived API token. Manual dispatch is
+      # the rehearsal path; configure TestPyPI for this repo + workflow before use.
+      - name: Publish package to TestPyPI
+        if: github.event_name == 'workflow_dispatch'
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
+
+      # PyPI trusted publishing: OIDC, no long-lived API token. dist/ holds only
+      # the wheel + sdist (SBOM/checksums live in release/). NOT continue-on-error:
+      # a failed publish must fail the release loudly. `skip-existing` keeps re-runs
+      # idempotent. Requires a one-time trusted-publisher config on PyPI for this
+      # repo + workflow.
+      - name: Publish package to PyPI
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
+        with:
+          skip-existing: true
 
       - name: Create GitHub Release and Upload Packages
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')

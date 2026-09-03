@@ -170,14 +170,22 @@ class TheFormulaIsRenderedFromWhatTheTagProduced(TheWorkflow):
         files = release[0]["with"]["files"].split()
         self.assertIn("release/keel.rb", files)
 
-    def test_it_runs_before_the_release_is_created(self):
-        """A formula rendered after the upload cannot be attached to it."""
+    def test_it_runs_before_anything_irreversible(self):
+        """Position is load-bearing, and invisible in a diff that only moves it.
+
+        PyPI files are immutable and the upload uses `skip-existing: true`, so a
+        render that failed *after* the upload would leave a published version
+        whose formula can only be repaired by cutting another release — the
+        fix-forward shape this whole change exists to end. Nothing in the render
+        needs the upload: its inputs are the tag, the repository, the committed
+        template and `release/SHA256SUMS`.
+        """
         steps = self.jobs["build-n-publish"]["steps"]
         rendered = next(i for i, s in enumerate(steps) if TEMPLATE in (s.get("run") or ""))
-        released = next(
-            i for i, s in enumerate(steps) if "action-gh-release" in (s.get("uses") or "")
-        )
-        self.assertLess(rendered, released)
+        for uses in ("gh-action-pypi-publish", "action-gh-release"):
+            with self.subTest(after=uses):
+                consumer = next(i for i, s in enumerate(steps) if uses in (s.get("uses") or ""))
+                self.assertLess(rendered, consumer)
 
 
 class TheTapReportCannotFailTheRelease(TheWorkflow):

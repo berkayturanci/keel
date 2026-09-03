@@ -116,6 +116,20 @@ class TestTierThreeCoversWhatCanReachOut(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertTrue(_is_tier3(path, globs))
 
+    def test_the_prose_beside_them_is_not(self):
+        """Tier by extension, not by directory.
+
+        `packaging/homebrew/**` would be the obvious glob and it is wrong: the
+        README and the tap marker sit in that directory and reach nobody's
+        machine, while `classify.DIFF_CLASSIFIED_GLOBS` covers workflow YAML
+        only — so no diff, however cosmetic, could lower them again. A typo fix
+        in a README would need three reviewer verdicts, permanently.
+        """
+        globs = _tier3_globs()
+        for path in ("packaging/homebrew/README.md", "packaging/homebrew/TAP_REPOINTED"):
+            with self.subTest(path=path):
+                self.assertFalse(_is_tier3(path, globs))
+
     def test_the_blanket_workflow_glob_is_gone(self):
         self.assertNotIn(".github/workflows/**", _tier3_globs())
 

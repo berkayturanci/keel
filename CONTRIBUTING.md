@@ -88,8 +88,8 @@ make release-check   # offline; refuses a release that does not agree with itsel
 It compares the declared version against the top released `## [x.y.z]` CHANGELOG section
 (the guard for a CHANGELOG never renamed from `## [Unreleased]`), against every surface
 listed in `scripts/release_surfaces.py` — plugin manifests, pinned-install references, the
-Homebrew formula url, the site fallbacks — and checks `keel-visual`'s two version markers
-agree with each other. `publish.yml` runs the same command before it builds anything, and
-verifies the published package afterwards: a clean-venv install from PyPI, the release
+site fallbacks — and checks `keel-visual`'s two version markers agree with each other.
+`publish.yml` runs the same command before it builds anything, and verifies the
+published package afterwards: a clean-venv install from PyPI, the release
 smoke test, and a SHA256 cross-check against the GitHub Release. See
 [the release runbook](docs/keel/release.md).
