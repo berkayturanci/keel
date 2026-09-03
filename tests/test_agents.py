@@ -119,6 +119,71 @@ class TestAttribution(unittest.TestCase):
         self.assertEqual(a["system"], "ollama:qwen2.5")
 
 
+class TestLiveRunVocabulary(unittest.TestCase):
+    """The exact pair a live run got wrong (#1013).
+
+    A host derived the labels itself and wrote ``agent:gemini`` / ``model:gemini``
+    for a run keel calls ``agent:agy`` / ``model:gemini-3``. Pinning the pair here
+    means the CLI, the provenance artifact and the evidence check all have one
+    answer to agree with.
+    """
+
+    def test_agy_gemini_three_eight(self):
+        a = agents.attribution("agy", "gemini-3.8-flash-high")
+        self.assertEqual(a["agent_label"], "agent:agy")
+        self.assertEqual(a["model_label"], "model:gemini-3")
+        self.assertEqual(a["system"], "agy:gemini-3.8-flash-high")
+
+    def test_the_hand_written_labels_are_not_what_keel_produces(self):
+        a = agents.attribution("agy", "gemini-3.8-flash-high")
+        self.assertNotEqual(a["agent_label"], "agent:gemini")
+        self.assertNotEqual(a["model_label"], "model:gemini")
+
+
+class TestAttributionFromImplementer(unittest.TestCase):
+    def test_vendor_and_model(self):
+        self.assertEqual(
+            agents.attribution_from_implementer("agy:gemini-3.8-flash-high"),
+            {
+                "agent_label": "agent:agy",
+                "model_label": "model:gemini-3",
+                "system": "agy:gemini-3.8-flash-high",
+            },
+        )
+
+    def test_vendor_only(self):
+        record = agents.attribution_from_implementer("codex")
+        self.assertEqual(record["agent_label"], "agent:codex")
+        self.assertIsNone(record["model_label"])
+
+    def test_vendor_is_lowercased(self):
+        record = agents.attribution_from_implementer("  AGY:Gemini-3.8  ")
+        self.assertEqual(record["agent_label"], "agent:agy")
+
+    def test_unset_reads_as_none(self):
+        for value in (None, "", "   ", 17, ":qwen"):
+            with self.subTest(value=value):
+                self.assertIsNone(agents.attribution_from_implementer(value))
+
+
+class TestKnownVendors(unittest.TestCase):
+    def test_builtins_and_profile_vendors_without_config(self):
+        known = agents.known_vendors()
+        for vendor in agents.BUILTIN_DELEGATE_VENDORS:
+            self.assertIn(vendor, known)
+        self.assertIn("cli", known)
+        self.assertIn("openai-compatible", known)
+        self.assertIn(agents.HOST_DEFAULT, known)
+
+    def test_configured_profile_names_are_known(self):
+        known = agents.known_vendors(PROFILE_CONFIG)
+        self.assertIn("cursor", known)
+        self.assertIn("gemini-cli", known)
+
+    def test_a_vendor_keel_never_produces_is_not_known(self):
+        self.assertNotIn("gemini", agents.known_vendors(PROFILE_CONFIG))
+
+
 class TestApiDelegate(unittest.TestCase):
     def test_known_api_vendors(self):
         for vendor in agents.API_VENDORS:

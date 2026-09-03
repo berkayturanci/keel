@@ -2,7 +2,7 @@
 
 import unittest
 
-from keel import closure, evidence, ship
+from keel import agents, artifacts, closure, evidence, ship
 
 
 def _review_contract(
@@ -628,6 +628,112 @@ class TestGateActive(unittest.TestCase):
         self.assertEqual(decision["reason"], "no-ship-provenance")
 
 
+class TestShipProvenanceArming(unittest.TestCase):
+    """The marker a live run posts on its own PR arms the gate (#1013)."""
+
+    def _provenance(self):
+        return artifacts.render_ship_provenance(
+            run_id="run-1",
+            issue=1013,
+            head_sha="0c458965",
+            implementer_attribution=agents.attribution("agy", "gemini-3.8-flash-high"),
+        )
+
+    def test_marker_arms_gate_with_no_other_signal(self):
+        # The live shape: branch named `fix/2467-slug`, no verdicts posted, ledger
+        # in an unreadable per-run worktree. Every legacy signal is absent.
+        decision = evidence.gate_decision(
+            [],
+            "keel:ship",
+            head_ref="fix/2467-slug",
+            pr_comments=[_trusted_comment(self._provenance())],
+            pr_reviews=[],
+            ledger_records=[],
+        )
+
+        self.assertTrue(decision["enforced"])
+        self.assertEqual(decision["reason"], "ship-provenance-comment")
+        self.assertEqual(decision["source"], evidence.SHIP_PROVENANCE_MARKER)
+
+    def test_without_the_marker_that_same_pr_is_ungated(self):
+        # The regression this fixes: identical inputs minus the comment.
+        decision = evidence.gate_decision(
+            [],
+            "keel:ship",
+            head_ref="fix/2467-slug",
+            pr_comments=[],
+            pr_reviews=[],
+            ledger_records=[],
+        )
+
+        self.assertFalse(decision["enforced"])
+        self.assertEqual(decision["reason"], "no-ship-provenance")
+
+    def test_marker_is_consulted_before_the_branch_regex(self):
+        # Both signals present: the reason must name the marker, not the branch.
+        decision = evidence.gate_decision(
+            [],
+            "keel:ship",
+            head_ref="fix/issue-266-hardening",
+            pr_comments=[_trusted_comment(self._provenance())],
+        )
+
+        self.assertEqual(decision["reason"], "ship-provenance-comment")
+
+    def test_the_gate_label_still_wins_over_the_marker(self):
+        decision = evidence.gate_decision(
+            ["keel:ship"],
+            "keel:ship",
+            pr_comments=[_trusted_comment(self._provenance())],
+        )
+
+        self.assertEqual(decision["reason"], "gate-label")
+
+    def test_operator_waiver_still_disarms_over_the_marker(self):
+        decision = evidence.gate_decision(
+            ["keel:evidence-waived"],
+            "keel:ship",
+            pr_comments=[_trusted_comment(self._provenance())],
+        )
+
+        self.assertFalse(decision["enforced"])
+        self.assertTrue(decision["waived"])
+        self.assertEqual(decision["reason"], "operator-waiver-label")
+
+    def test_untrusted_marker_does_not_arm(self):
+        # An outside contributor must not be able to manufacture provenance.
+        decision = evidence.gate_decision(
+            [],
+            "keel:ship",
+            pr_comments=[_untrusted_comment(self._provenance())],
+        )
+
+        self.assertFalse(decision["enforced"])
+        self.assertEqual(decision["reason"], "no-ship-provenance")
+
+    def test_every_legacy_arming_path_still_arms(self):
+        # Nothing was removed when the marker went in front.
+        cases = {
+            "gate-label": {"labels": ["keel:ship"]},
+            "ship-branch": {"head_ref": "fix/issue-266-hardening"},
+            "ship-assessment-comment": {
+                "pr_comments": [_trusted_comment("### \U0001f6a2 keel ship\nstatus: pass")]
+            },
+            "review-verdict-marker": {
+                "pr_comments": [
+                    _trusted_comment("keel.review-verdict.v1\nLGTM\n\nsrc/keel/evidence.py: ok.")
+                ]
+            },
+            "ship-run-ledger": {"ledger_records": [{"run": "ship"}]},
+        }
+        for reason, kwargs in cases.items():
+            with self.subTest(reason=reason):
+                labels = kwargs.pop("labels", [])
+                decision = evidence.gate_decision(labels, "keel:ship", **kwargs)
+                self.assertTrue(decision["enforced"])
+                self.assertEqual(decision["reason"], reason)
+
+
 class TestEvidenceEnforcement(unittest.TestCase):
     def test_verify_not_enforced_passes_with_no_required(self):
         report = evidence.verify(
@@ -1180,6 +1286,206 @@ class TestAttributionVerifyWiring(unittest.TestCase):
             pr_labels=[],
             dry_run=True,
         )
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["findings"], [])
+
+
+#: The live PR state issue #1013 reports: the host wrote both halves itself, so the
+#: label and the ledger agreed with each other and disagreed with keel.
+_LIVE_IMPLEMENTER = "gemini:gemini-3.8-flash-high"
+_LIVE_LABELS = ["agent:gemini", "model:gemini"]
+
+
+class TestLedgerImplementer(unittest.TestCase):
+    def test_returns_the_whole_string(self):
+        self.assertEqual(
+            evidence.ledger_implementer(_ledger_record(_LIVE_IMPLEMENTER)),
+            _LIVE_IMPLEMENTER,
+        )
+
+    def test_strips_surrounding_whitespace(self):
+        self.assertEqual(evidence.ledger_implementer(_ledger_record("  codex  ")), "codex")
+
+    def test_missing_blank_or_malformed_reads_as_none(self):
+        for record in (None, "not-a-dict", {}, {"actors": "codex"}, _ledger_record("  ")):
+            with self.subTest(record=record):
+                self.assertIsNone(evidence.ledger_implementer(record))
+
+
+class TestModelLabelBases(unittest.TestCase):
+    def test_extracts_lowercased_bases(self):
+        self.assertEqual(
+            evidence.model_label_bases(["model:Gemini-3", "agent:agy", "model:gpt-4o"]),
+            ["gemini-3", "gpt-4o"],
+        )
+
+    def test_ignores_blank_and_non_model_labels(self):
+        self.assertEqual(evidence.model_label_bases(["model:", "model: ", 7, None]), [])
+
+    def test_none_labels(self):
+        self.assertEqual(evidence.model_label_bases(None), [])
+
+
+class TestAttributionVocabularyCheck(unittest.TestCase):
+    def test_the_live_labels_are_refused(self):
+        result = evidence.attribution_vocabulary_check(_LIVE_LABELS, implementer=_LIVE_IMPLEMENTER)
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["checked"])
+        self.assertEqual(result["reason"], "model-label")
+        self.assertEqual(result["expected"]["model_label"], "model:gemini-3")
+
+    def test_keels_own_labels_pass(self):
+        result = evidence.attribution_vocabulary_check(
+            ["agent:agy", "model:gemini-3"], implementer="agy:gemini-3.8-flash-high"
+        )
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["checked"])
+
+    def test_a_wrong_agent_label_is_refused(self):
+        result = evidence.attribution_vocabulary_check(
+            ["agent:claude"], implementer="agy:gemini-3.8-flash-high"
+        )
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["reason"], "agent-label")
+
+    def test_a_profile_run_labels_agent_cli(self):
+        # keel writes `cli` (never the profile name) into actors.implementer, so the
+        # expected label for every generic-CLI profile is agent:cli.
+        result = evidence.attribution_vocabulary_check(
+            ["agent:cli", "model:composer-1"], implementer="cli:composer-1"
+        )
+        self.assertTrue(result["ok"])
+        self.assertEqual(
+            evidence.attribution_vocabulary_check([], implementer="cli:composer-1")["expected"][
+                "agent_label"
+            ],
+            "agent:cli",
+        )
+
+    def test_no_implementer_is_not_checked(self):
+        result = evidence.attribution_vocabulary_check(_LIVE_LABELS, implementer=None)
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["checked"])
+        self.assertEqual(result["reason"], "no-implementer")
+        self.assertIsNone(result["expected"])
+
+    def test_absent_labels_are_not_judged(self):
+        # A missing agent: label is attribution_check's missing-label finding; this
+        # check must not repeat it, and it cannot judge a label that is not there.
+        result = evidence.attribution_vocabulary_check([], implementer=_LIVE_IMPLEMENTER)
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["checked"])
+
+    def test_a_model_less_implementer_leaves_model_labels_alone(self):
+        # `claude` records no model, so there is no expected model label to compare.
+        result = evidence.attribution_vocabulary_check(
+            ["agent:claude", "model:whatever"], implementer="claude"
+        )
+        self.assertTrue(result["ok"])
+        self.assertIsNone(result["expected"]["model_label"])
+
+    def test_one_matching_label_among_several_is_enough(self):
+        result = evidence.attribution_vocabulary_check(
+            ["agent:codex", "agent:agy", "model:gemini-3"],
+            implementer="agy:gemini-3.8-flash-high",
+        )
+        self.assertTrue(result["ok"])
+
+
+class TestAttributionVocabularyVerifyWiring(unittest.TestCase):
+    """Replaying the live PR state through ``verify`` (#1013 acceptance)."""
+
+    def _live_record(self):
+        record = _ship_run_record()
+        record["actors"]["implementer"] = _LIVE_IMPLEMENTER
+        return record
+
+    def _report(self, labels, record):
+        body = closure.render_closure_comment(record)
+        return evidence.verify(
+            _review_contract(reviewers=1),
+            pr_labels=labels,
+            ledger_record=record,
+            pr_comments=[
+                _trusted_comment(body),
+                _trusted_comment(
+                    "keel.review-verdict.v1\nreviewer: alpha\nLGTM\n\nsrc/keel/evidence.py: ok."
+                ),
+            ],
+            issue_comments=[_trusted_comment(body)],
+        )
+
+    def test_live_labels_produce_a_blocking_finding(self):
+        report = self._report(_LIVE_LABELS, self._live_record())
+
+        self.assertEqual(report["status"], "fail")
+        finding = next(f for f in report["findings"] if f["id"] == "attribution-vocabulary")
+        self.assertEqual(finding["severity"], "major")
+        self.assertEqual(finding["kind"], "attribution")
+
+    def test_the_finding_names_the_expected_labels(self):
+        report = self._report(_LIVE_LABELS, self._live_record())
+        finding = next(f for f in report["findings"] if f["id"] == "attribution-vocabulary")
+
+        self.assertIn("agent:gemini", finding["message"])
+        self.assertIn("model:gemini-3", finding["message"])
+        self.assertIn("keel attribution", finding["message"])
+
+    def test_the_old_vendor_cross_check_passed_on_this_state(self):
+        # Why the new check is needed at all: agent:gemini *matches* the ledger's
+        # `gemini:` vendor, so the label/ledger cross-check has nothing to say.
+        report = self._report(_LIVE_LABELS, self._live_record())
+
+        self.assertNotIn("attribution-label", [f["id"] for f in report["findings"]])
+
+    def test_keels_own_labels_pass_the_same_replay(self):
+        record = self._live_record()
+        record["actors"]["implementer"] = "agy:gemini-3.8-flash-high"
+        report = self._report(["agent:agy", "model:gemini-3"], record)
+
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["findings"], [])
+
+    def test_no_ledger_record_skips_rather_than_fails(self):
+        report = evidence.verify(
+            _review_contract(reviewers=1),
+            pr_labels=_LIVE_LABELS,
+            ledger_record=None,
+            **_satisfied_evidence_kwargs(),
+        )
+
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["findings"], [])
+
+    def test_labels_not_fetched_skips_the_check(self):
+        report = evidence.verify(
+            _review_contract(reviewers=1),
+            pr_labels=None,
+            ledger_record=self._live_record(),
+            **_satisfied_evidence_kwargs(),
+        )
+
+        self.assertNotIn("attribution-vocabulary", [f["id"] for f in report["findings"]])
+
+    def test_dry_run_skips_the_check(self):
+        report = evidence.verify(
+            _review_contract(reviewers=1),
+            pr_labels=_LIVE_LABELS,
+            ledger_record=self._live_record(),
+            dry_run=True,
+        )
+
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["findings"], [])
+
+    def test_gate_inactive_skips_the_check(self):
+        report = evidence.verify(
+            _review_contract(reviewers=1),
+            pr_labels=_LIVE_LABELS,
+            ledger_record=self._live_record(),
+            enforced=False,
+        )
+
         self.assertEqual(report["status"], "pass")
         self.assertEqual(report["findings"], [])
 

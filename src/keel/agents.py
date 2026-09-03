@@ -13,7 +13,7 @@ All functions here are pure and deterministic — no subprocess, no network.
 
 from __future__ import annotations
 
-from .config import DelegateProfile, ProjectConfig
+from .config import DELEGATE_PROFILE_VENDORS, DelegateProfile, ProjectConfig
 
 #: Default host agent when nothing else is resolved.
 HOST_DEFAULT = "claude"
@@ -44,6 +44,25 @@ def split_delegate(value: str) -> tuple[str, str | None]:
     """Split ``ollama:qwen2.5`` -> ``("ollama", "qwen2.5")``; ``codex`` -> ``("codex", None)``."""
     vendor, sep, model = value.partition(":")
     return vendor, (model if (sep and model) else None)
+
+
+def known_vendors(config: ProjectConfig | None = None) -> frozenset[str]:
+    """Every vendor slug keel's attribution vocabulary can legitimately produce.
+
+    The built-in vendors, the host default, the profile vendors a
+    ``knobs.delegate_profiles`` entry may declare (``cli`` /
+    ``openai-compatible``), and — when a config is supplied — the configured
+    profile *names*, because ``--delegate <name>`` is spelled with the name.
+
+    Callers use this to refuse a vendor keel could never have produced. Without
+    a config the set is the configuration-free vocabulary, which is why the
+    ledger-writing check only warns: a record may predate the current config.
+    """
+    names = {*BUILTIN_DELEGATE_VENDORS, *DELEGATE_PROFILE_VENDORS, HOST_DEFAULT}
+    if config is not None:
+        names.update(config.knobs.delegate_profiles)
+        names.update(profile.vendor for profile in config.knobs.delegate_profiles.values())
+    return frozenset(names)
 
 
 def is_api_delegate(vendor: str) -> bool:
@@ -165,6 +184,24 @@ def attribution(vendor: str, model: str | None = None) -> dict[str, str | None]:
         "model_label": model_label(model) if model else None,
         "system": system,
     }
+
+
+def attribution_from_implementer(implementer: str | None) -> dict[str, str | None] | None:
+    """Attribution for a ledger ``actors.implementer`` value, or ``None`` when unset.
+
+    The ledger records the effective implementer as ``vendor`` or ``vendor:model``
+    (issue #1013 — never the delegate-profile name, which goes in
+    ``delegate_profile``). Splitting it here rather than at each call site is what
+    keeps the PR labels, the provenance comment and the evidence cross-check reading
+    the *same* vocabulary from the *same* string instead of three hand-written ones.
+    """
+    if not isinstance(implementer, str) or not implementer.strip():
+        return None
+    vendor, model = split_delegate(implementer.strip())
+    vendor = vendor.strip().lower()
+    if not vendor:
+        return None
+    return attribution(vendor, model)
 
 
 def profile_attribution(

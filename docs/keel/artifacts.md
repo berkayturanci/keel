@@ -5,6 +5,13 @@ writes deterministically, and **transient scratch** an agentic step stages while
 works. Neither belongs in the consumer's primary checkout. This page documents where
 each lands and how keel keeps them out of your `git status`.
 
+> **Public GitHub comment artifacts** (the marker-bearing bodies keel posts to issues and
+> pull requests — including the `keel.ship-provenance.v1` stamp) are rendered by
+> `keel.artifacts` and documented under
+> [command-contracts.md § Canonical artifact renderers](command-contracts.md#canonical-artifact-renderers)
+> and [cli.md § `keel post-comment`](cli.md). This page covers keel's **on-disk** run
+> artifacts.
+
 ## The `.keel/` directory
 
 Everything keel owns lives under a single project directory, `.keel/`:

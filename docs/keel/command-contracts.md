@@ -395,6 +395,12 @@ Markdown verbatim when available.
   summary, next step, and evidence ids
 - `run_control_halt`: stable `keel.run-control-halt.v1` shape for budget, step-cap, or
   oscillation hard-halt reasons
+- `ship_provenance`: the `keel.ship-provenance.v1` stamp a live run posts on its own PR
+  right after creating it — run id, issue, head, and the implementer's attribution labels
+  as `keel.agents.attribution()` produced them. `keel.evidence.gate_decision()` arms the
+  evidence gate on this marker **ahead of** the legacy branch-name regex, so a ship run is
+  gated regardless of what its branch is called (see [evidence.md](evidence.md)). Post it
+  with `keel post-comment --artifact ship-provenance`.
 
 Project customization changes the content supplied to these renderers through config,
 policy, and extension results; it does not change the artifact shape. PR bodies remain

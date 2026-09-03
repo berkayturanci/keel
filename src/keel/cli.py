@@ -22,6 +22,7 @@ from pathlib import Path
 from . import (
     __version__,
     activity,
+    agents,
     api_delegate,
     artifacts,
     branchscope,
@@ -1254,7 +1255,10 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         "path": str(ledger_path),
         "appended": False,
         "record": ledger_record,
-        "warnings": run_context_warnings,
+        "warnings": [
+            *run_context_warnings,
+            *_implementer_vocabulary_warnings(args, config),
+        ],
     }
     if args.append_ledger and args.live:
         clash = ledger.existing_capture_marker(existing_ledger_records, ledger_record)
@@ -1331,7 +1335,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
             )
         else:
             print(f"  ledger append : {'yes' if ledger_result['appended'] else 'dry-run/no-live'}")
-    for warning in run_context_warnings:
+    for warning in ledger_result["warnings"]:
         print(f"  run context   : warning: {warning}")
     if intake_record["questions"]:
         print(f"  questions     : {len(intake_record['questions'])}")
@@ -2264,6 +2268,71 @@ def _cmd_review_cycle_summary(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_attribution(args: argparse.Namespace) -> int:
+    """Print keel's own attribution labels for a vendor/model pair.
+
+    The one sanctioned way for an adapter to learn what to label a PR with (#1013).
+    Every branch here is a thin wrapper over :mod:`keel.agents`; the labels are never
+    composed in this function, so prose and CLI cannot drift apart.
+    """
+    config = None
+    if args.config is not None:
+        try:
+            config = cfg.load_config(args.config)
+        except FileNotFoundError:
+            print(f"no such config: {args.config}", file=sys.stderr)
+            return 1
+        except cfg.ConfigError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+
+    vendor = args.vendor.strip().lower()
+    if config is not None and vendor not in agents.known_vendors(config):
+        # Only with a config in hand: without one keel cannot know which profiles
+        # this project defines, and the ledger carries values written by older runs.
+        known = ", ".join(sorted(agents.known_vendors(config)))
+        print(
+            f"unknown vendor {args.vendor!r}: not a built-in delegate vendor and not a "
+            f"configured delegate profile. Known: {known}",
+            file=sys.stderr,
+        )
+        return 1
+
+    if args.profile is not None:
+        if config is None:
+            print("--profile requires --config to resolve the delegate profile", file=sys.stderr)
+            return 1
+        profile = agents.resolve_delegate_profile(config, args.profile)
+        if profile is None:
+            print(
+                f"no delegate profile named {args.profile!r} in knobs.delegate_profiles",
+                file=sys.stderr,
+            )
+            return 1
+        if vendor != profile.vendor:
+            # A contradiction, not a preference: one of the two would silently lose,
+            # and attribution exists precisely to stop a guessed value being recorded.
+            print(
+                f"--vendor {args.vendor!r} contradicts profile {args.profile!r} "
+                f"(vendor: {profile.vendor})",
+                file=sys.stderr,
+            )
+            return 1
+        record = agents.profile_attribution(args.profile, profile, args.model)
+    else:
+        record = agents.attribution(vendor, args.model)
+
+    if args.json:
+        print(json.dumps(record, indent=2, sort_keys=True))
+        return 0
+    print(f"agent_label   : {record['agent_label']}")
+    print(f"model_label   : {record['model_label'] or 'not recorded'}")
+    print(f"system        : {record['system']}")
+    if record.get("delegate_profile"):
+        print(f"delegate_profile: {record['delegate_profile']}")
+    return 0
+
+
 _REPORT_RENDERERS = {
     "coverage": artifacts.render_coverage_delta,
     "deps-audit": artifacts.render_deps_audit,
@@ -2336,6 +2405,17 @@ def _cmd_post_comment(args: argparse.Namespace) -> int:
         body = Path(args.body_file).read_text(encoding="utf-8")
     except OSError as exc:
         print(f"cannot read --body-file {args.body_file}: {exc}", file=sys.stderr)
+        return 1
+    except UnicodeDecodeError:
+        # Not an OSError, so without this it escaped as a traceback. keel's artifact
+        # bodies are UTF-8 (closure comments carry "—", "→", "⚓"), but a shell that
+        # redirected `keel ship --json` output on a non-UTF-8 locale writes something
+        # else. Say so, rather than crashing before the marker check even runs.
+        print(
+            f"--body-file {args.body_file} is not valid UTF-8; "
+            "re-render the artifact body as UTF-8",
+            file=sys.stderr,
+        )
         return 1
     if marker not in body:
         print(
@@ -3738,6 +3818,38 @@ def _run_context_warnings(args: argparse.Namespace) -> list[str]:
     return warnings
 
 
+def _implementer_vocabulary_warnings(
+    args: argparse.Namespace,
+    config: cfg.ProjectConfig,
+) -> list[str]:
+    """Warn when ``actors.implementer`` names a vendor keel does not know (#1013).
+
+    A warning, deliberately, not a refusal: the live ledger already carries records
+    written before this check existed (``gemini:``), and hard-failing the append would
+    make the ledger *less* complete than the wrong value it is meant to flag. It is
+    also kept out of :func:`_run_context_warnings` so ``--strict-run-context`` does not
+    quietly promote it to a hard failure. ``evidence-verify``'s
+    ``attribution-vocabulary`` finding is the blocking half of this pair.
+    """
+    if not getattr(args, "live", False) or not getattr(args, "append_ledger", False):
+        return []
+    implementer = getattr(args, "implementer", None)
+    if not _nonblank(implementer):
+        return []
+    vendor, _ = agents.split_delegate(implementer.strip())
+    vendor = vendor.strip().lower()
+    known = agents.known_vendors(config)
+    if vendor in known:
+        return []
+    return [
+        (
+            f"implementer vendor {vendor!r} is not one of keel's delegate vendors "
+            f"({', '.join(sorted(known))}); the PR's agent:/model: labels will not match "
+            "what `keel attribution` produces"
+        )
+    ]
+
+
 def _nonblank(value: object) -> bool:
     return isinstance(value, str) and bool(value.strip())
 
@@ -3752,6 +3864,7 @@ def _comment_artifact_marker(artifact: str) -> str:
         "extension-result": artifacts.EXTENSION_RESULT_MARKER,
         "step-handoff": artifacts.STEP_HANDOFF_MARKER,
         "run-control-halt": artifacts.RUN_CONTROL_HALT_MARKER,
+        "ship-provenance": evidence.SHIP_PROVENANCE_MARKER,
     }
     return markers[artifact]
 
@@ -5733,6 +5846,25 @@ def build_parser() -> argparse.ArgumentParser:
     p_rc.add_argument("--json", action="store_true", help="emit structured JSON")
     p_rc.set_defaults(func=_cmd_runcontrols)
 
+    p_attr = sub.add_parser(
+        "attribution",
+        help="print keel's attribution labels for a delegate vendor/model",
+    )
+    p_attr.add_argument("--vendor", required=True, help="delegate vendor, e.g. agy or codex")
+    p_attr.add_argument("--model", default=None, help="effective model id, when known")
+    p_attr.add_argument(
+        "--profile",
+        default=None,
+        help="knobs.delegate_profiles entry that ran (requires --config)",
+    )
+    p_attr.add_argument(
+        "--config",
+        default=None,
+        help="path to project.yaml; enables vendor/profile validation",
+    )
+    p_attr.add_argument("--json", action="store_true", help="emit the attribution record as JSON")
+    p_attr.set_defaults(func=_cmd_attribution)
+
     p_post = sub.add_parser(
         "post-comment",
         help="post or update a deterministic GitHub issue/PR artifact comment",
@@ -5752,6 +5884,7 @@ def build_parser() -> argparse.ArgumentParser:
             "extension-result",
             "step-handoff",
             "run-control-halt",
+            "ship-provenance",
         ),
         help="artifact contract expected in --body-file",
     )

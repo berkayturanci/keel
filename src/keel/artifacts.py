@@ -47,10 +47,12 @@ def contract_as_dict() -> dict[str, Any]:
             "extension_result": "keel.artifacts.render_extension_result",
             "step_handoff": "keel.artifacts.render_step_handoff",
             "run_control_halt": "keel.artifacts.render_run_control_halt",
+            "ship_provenance": "keel.artifacts.render_ship_provenance",
         },
         "markers": {
             "review_verdict": evidence.REVIEW_VERDICT_MARKER,
             "jury_verdict": evidence.JURY_VERDICT_MARKER,
+            "ship_provenance": evidence.SHIP_PROVENANCE_MARKER,
             "review_cycle_summary": REVIEW_CYCLE_SUMMARY_MARKER,
             "issue_update": ISSUE_UPDATE_MARKER,
             "extension_result": EXTENSION_RESULT_MARKER,
@@ -220,6 +222,56 @@ def render_jury_verdict(
     ]
     lines.extend(f"- {item}" for item in summaries) if summaries else lines.append("- none")
     lines.extend(["", f"Remaining risks: {_value(remaining_risks, 'none identified')}."])
+    return "\n".join(lines) + "\n"
+
+
+def render_ship_provenance(
+    *,
+    run_id: str | None = None,
+    issue: int | None = None,
+    head_sha: str | None = None,
+    implementer_attribution: dict[str, Any] | None = None,
+) -> str:
+    """Render the ship-provenance comment a live run posts on its own PR (#1013).
+
+    This comment is the run stamping *itself*: it says which ship run produced the
+    PR, for which issue, at which head, and — verbatim from
+    :func:`keel.agents.attribution` — what the implementer's attribution labels are.
+    :func:`keel.evidence.gate_decision` arms the evidence gate on the marker ahead of
+    the branch-name regex, so a ship run whose branch is named anything at all still
+    reads as a keel run instead of as an unreviewed drive-by PR.
+
+    ``implementer_attribution`` is the dict :func:`keel.agents.attribution` (or
+    :func:`keel.agents.profile_attribution`) returns. Pass it through unchanged: the
+    whole point of the artifact is that the labels are *core's*, not prose's.
+    """
+    record = implementer_attribution if isinstance(implementer_attribution, dict) else {}
+    lines = [
+        evidence.SHIP_PROVENANCE_MARKER,
+        f"run-id: {_value(run_id, 'not recorded')}",
+        f"issue: {_issue(issue)}",
+        f"head: {_value(head_sha, '<head-sha>')}",
+        f"agent-label: {_value(record.get('agent_label'), 'not recorded')}",
+        f"model-label: {_value(record.get('model_label'), 'not recorded')}",
+        f"system: {_value(record.get('system'), 'not recorded')}",
+    ]
+    profile = record.get("delegate_profile")
+    if isinstance(profile, str) and profile.strip():
+        lines.append(f"delegate-profile: {profile.strip()}")
+    lines.extend(
+        [
+            "",
+            (
+                "Provenance stamp for a keel run: this pull request came out of the backbone, "
+                "so the evidence gate applies to it."
+            ),
+            "",
+            (
+                "The attribution labels above come from `keel attribution` — apply them to the "
+                "PR verbatim rather than composing them by hand."
+            ),
+        ]
+    )
     return "\n".join(lines) + "\n"
 
 

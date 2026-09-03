@@ -463,6 +463,45 @@ keel merge .keel/project.yaml --root . --pr 123 --reviewers 3 --jury \
   --approve-scope filesystem,git,github --operator "$USER" --json
 ```
 
+## `keel attribution`
+
+Print keel's attribution labels for a delegate vendor/model pair. The sanctioned source of
+`agent:` / `model:` labels — adapters must never compose them (issue #1013).
+
+```
+keel attribution --vendor VENDOR [--model MODEL] [--profile NAME] [--config FILE] [--json]
+```
+
+| Flag | Type / values | Default | Effect |
+| --- | --- | --- | --- |
+| `--vendor` | string | **required** | Effective delegate vendor, e.g. `agy`, `codex`, `anthropic-api`, `cli`. |
+| `--model MODEL` | string | `None` | Effective model id. Omitted ⇒ no `model_label`. |
+| `--profile NAME` | string | `None` | `knobs.delegate_profiles` entry that ran; adds `delegate_profile` and supplies the profile's default model. Requires `--config`. |
+| `--config FILE` | file path | `None` | Project config. Enables vendor validation and profile resolution. |
+| `--json` | flag | off | Print the attribution record as JSON instead of the human lines. |
+
+### Details
+
+Human output prints `agent_label`, `model_label` (`not recorded` when there is no model),
+and `system`, plus `delegate_profile` when a profile was named. `--json` prints the record
+itself — the same shape `keel.agents.attribution()` returns and a delegate result's
+`attribution` block carries — so it can be consumed directly.
+
+Vendor validation runs **only** with `--config`: a vendor that is neither a built-in
+delegate vendor (`claude`, `codex`, `agy`, `ollama`, `anthropic-api`, `openai-api`,
+`google-api`) nor a configured `knobs.delegate_profiles` name/vendor exits 1. Without
+`--config` any vendor is accepted, because the run ledger carries values written by earlier
+runs and there is no project config to tell a legacy value from a typo. A `--profile` whose
+`vendor` contradicts `--vendor` is refused rather than silently overridden.
+
+### Examples
+
+```bash
+keel attribution --vendor agy --model gemini-3.8-flash-high --json
+# {"agent_label": "agent:agy", "model_label": "model:gemini-3", "system": "agy:gemini-3.8-flash-high"}
+keel attribution --vendor cli --profile cursor --config .keel/project.yaml --json
+```
+
 ## `keel post-comment`
 
 Post or update a deterministic GitHub issue/PR artifact comment with marker validation
@@ -478,7 +517,7 @@ keel post-comment <project.yaml> --target issue:N|pr:N --artifact ARTIFACT
 | `path` | file path | required | Project config (owner/repo must be set). |
 | `--root DIR` | path | `.` | Root for GitHub operations. |
 | `--target` | `issue:<N>` or `pr:<N>` | **required** | Comment target. Anything else exits 1 (`--target must use issue:<number> or pr:<number>`). |
-| `--artifact` | `closure-comment` \| `issue-update` \| `review-verdict` \| `jury-verdict` \| `extension-result` \| `step-handoff` \| `run-control-halt` | **required** | The artifact contract; selects the marker the body must contain. |
+| `--artifact` | `ship-provenance` \| `closure-comment` \| `issue-update` \| `review-verdict` \| `jury-verdict` \| `review-cycle-summary` \| `extension-result` \| `step-handoff` \| `run-control-halt` | **required** | The artifact contract; selects the marker the body must contain. |
 | `--body-file FILE` | path | **required** | Rendered Markdown to post. |
 | `--run-id ID` | string | `None` | Same-marker, same-run-id comments are *edited* instead of duplicated. |
 | `--dry-run` | flag | off | Report the planned action (`post` or `edit`) without mutating GitHub. |
@@ -488,7 +527,8 @@ keel post-comment <project.yaml> --target issue:N|pr:N --artifact ARTIFACT
 
 Each artifact maps to a stable marker (e.g. `closure-comment` →
 `keel.closure-comment.v1`, `review-verdict` → `keel.review-verdict.v1`,
-`jury-verdict` → `keel.jury-verdict.v1`). The body is rejected before any public write
+`jury-verdict` → `keel.jury-verdict.v1`, `ship-provenance` →
+`keel.ship-provenance.v1`). The body is rejected before any public write
 when (a) it does not contain the required marker, or (b) it looks like a literal
 `@/path` placeholder (a shell-expansion mistake). The run id is matched in the existing
 comment body via a `run-id: <id>` line or a `<!-- keel.run-id: <id> -->` HTML comment;
@@ -1416,7 +1456,7 @@ keel ship <project.yaml> [--root DIR] [--pr N] [--hotfix] [--dry-run] [--live]
 | `--review-comments` / `--reviewers` / jury flags | shared | — | Shape `review_merge_contract`; the jury mode also drives the built-in jury gate's gating-vs-advisory behavior. |
 | `--profile` | `standard` \| `compound` | `standard` | Workflow profile in the contract. |
 | `--compound` | flag | off | Alias for `--profile compound`. |
-| `--json` | flag | off | `{contract, result}` with `result.artifact_bodies` (canonical PR body, issue update, review/jury verdict templates, extension result). |
+| `--json` | flag | off | `{contract, result}` with `result.artifact_bodies` (canonical PR body, issue update, review/jury verdict templates, extension result, ship-provenance stamp). |
 
 ### Details
 
