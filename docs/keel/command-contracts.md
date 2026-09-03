@@ -330,7 +330,7 @@ The block records:
   comment so external evidence checks can distinguish the actual s11 closure comment from
   PR bodies, chat summaries, and automated assessment comments
 - `heading` (`Ship outcome`) and the ordered `sections`: implementer, reviewers, tester,
-  pull_request, changed_files, docs_touched, capture, run_id, run_context
+  fix_rounds, pull_request, changed_files, docs_touched, capture, run_id, run_context
 - a **Fix rounds** line after `tester`, listing who took each s9 fix round
   (`round 2: opus (gate)`) from the ledger record's `actors.fixers`. It is **omitted
   entirely** on a run that spent no fix round — most of them — so every existing line of
@@ -468,6 +468,14 @@ review finding, and with what words*.
   path. Every rung unavailable is `status: no-fixer`, the same fail-closed exit.
 - the **dispatch** — the `keel delegate run --role fix` argv for the resolved seat, or
   `null` for a `kind: subagent` seat the host runs itself.
+- **reviewer text is quoted data.** The brief becomes the fixer's prompt and findings are
+  the one part of it keel did not write, so every reviewer-supplied string is rendered as a
+  blockquote — one `> ` per line, the HTML-comment opener defanged, a leading `#` escaped, a
+  line reading as one of the brief's trailer keys rendered as inline code, and the field
+  capped. A finding cannot contribute a heading, a second brief marker or a forged trailer.
+- a fourth status, `no-config`: `knobs.team.fix` decides whether the round goes back to the
+  delegate or to the host, so an unreadable project config is a **refusal** (non-zero), not
+  a silent fallback to the host. `--no-project` is the deliberate opt-out.
 
 Severity semantics are `keel.findings`': `critical`/`major` block, `minor` is a gated
 suggestion, `nit` is advisory. The fix loop has no severity vocabulary of its own.

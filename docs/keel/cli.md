@@ -966,6 +966,22 @@ already approved"*) is rendered verbatim for the next reviewer's prompt.
 `minor`, `nit`), `message`, `source`, `path`, `line`, `anchorable`, `reproduction` — or an
 object with a `findings` array, so a `keel review` bundle can be passed straight through.
 
+**Reviewer text is quoted data, never instructions.** The brief becomes the fixer's
+`--prompt-file`, and findings are the one part of it keel did not write, so every
+reviewer-supplied string is rendered as a blockquote: one `> ` per line (nothing a reviewer
+wrote can sit at the start of a line, which is where every structural token of this format
+lives), the HTML-comment opener defanged so a second brief marker cannot be forged, a
+leading `#` escaped, a line reading as one of the brief's trailer keys rendered as inline
+code, and the field capped — a prompt has a budget. A finding whose message carries its own
+`## Rules for this round` section appears inside the quote and nowhere else.
+
+**The project config is required.** `knobs.team.fix` is what decides whether the round goes
+back to the delegate that implemented or to the host, so a config the command cannot read
+is a **refusal** — `status: no-config` and a non-zero exit — rather than a silent
+resolution against an empty policy, which answers "the host fixes" and is the failure this
+command exists to prevent. `--project` / `--root` name it; `--no-project` is the deliberate
+opt-out for a project that really has no team policy.
+
 The fixer is the **escalation ladder** `implementer → gate → host`, a pure function of the
 round, provider availability, and the budget:
 
@@ -980,7 +996,8 @@ round is not an escalation), a provider named by `--unavailable` is skipped rath
 dispatched to, and a round past the last rung stays with the last usable fixer. The
 `--budget` (default 3) is unchanged by the ladder: past it there is no fixer, and the
 command **exits non-zero** (`status: budget-exhausted`, or `no-fixer` when every rung is
-unavailable) so a spent loop cannot be mistaken for a round to run.
+unavailable) so a spent loop cannot be mistaken for a round to run. A further round needs
+an explicit `--budget` — that flag, not `keel ship --max-rounds`, which is the run budget.
 
 ```bash
 keel fixloop brief --pr 1042 --findings .keel/run/findings.json --round 2 \

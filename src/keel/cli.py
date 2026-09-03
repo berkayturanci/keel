@@ -2128,26 +2128,43 @@ def _cmd_runcontrols(args: argparse.Namespace) -> int:
     return 0 if report["status"] == "pass" else 1
 
 
-def _fixloop_assignment(args: argparse.Namespace) -> dict[str, Any]:
-    """The resolved team for a fix round.
+def _fixloop_config_path(args: argparse.Namespace) -> str:
+    return args.path or str(Path(args.root) / ".keel" / "project.yaml")
+
+
+def _fixloop_assignment(args: argparse.Namespace) -> tuple[dict[str, Any] | None, str | None]:
+    """``(assignment, error)`` — the resolved team for a fix round, or why there is none.
 
     The same resolution every review-aware command reads (:func:`_review_assignment`),
     because the fix seat *is* part of the review contract: ``team.fix`` defaults to the
-    alias ``implementer``, and the seat it resolves to is whoever s4 dispatched. Without a
-    readable project config the policy is simply unconfigured — the fix falls to the host
-    agent, which is the pre-#1014 behaviour and not an error worth refusing a brief over.
+    alias ``implementer``, and the seat it resolves to is whoever s4 dispatched.
+
+    **An unreadable config is a refusal, not a default.** Falling back to an unconfigured
+    policy here answers "the host fixes" — silently, and identically to a project that
+    really has no policy. That is the failure #1016 exists to prevent, reached by a
+    missing file instead of by a decision: run the command one directory too high and a
+    delegate's findings land on the host with `warnings: []` and exit 0. An operator who
+    means it says so with ``--no-project``.
     """
-    config = _delegate_config(args)
-    if config is None:
-        return team.resolve_assignment(
-            team.TeamPolicy(),
-            tier=args.tier,
-            role=args.role,
-            default_count=ship.reviewer_count(args.tier or 2),
-            delegate=args.delegate,
-            host_agent=args.host_agent or agents.HOST_DEFAULT,
+    if args.no_project:
+        return (
+            team.resolve_assignment(
+                team.TeamPolicy(),
+                tier=args.tier,
+                role=args.role,
+                default_count=ship.reviewer_count(args.tier or 2),
+                delegate=args.delegate,
+                host_agent=args.host_agent or agents.HOST_DEFAULT,
+            ),
+            None,
         )
-    return _review_assignment(config, args, tier=args.tier)
+    try:
+        config = cfg.load_config(_fixloop_config_path(args))
+    except FileNotFoundError:
+        return None, "no such file"
+    except cfg.ConfigError as exc:
+        return None, str(exc)
+    return _review_assignment(config, args, tier=args.tier), None
 
 
 def _cmd_fixloop_brief(args: argparse.Namespace) -> int:
@@ -2164,7 +2181,15 @@ def _cmd_fixloop_brief(args: argparse.Namespace) -> int:
     except fixloop.FixloopError as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    assignment = _fixloop_assignment(args)
+    assignment, config_error = _fixloop_assignment(args)
+    if config_error is not None:
+        document = fixloop.no_config_document(
+            path=_fixloop_config_path(args), reason=config_error, round_number=args.round
+        )
+        if args.json:
+            print(json.dumps(document, indent=2, sort_keys=True))
+        print(document["next_action"], file=sys.stderr)
+        return 1
     try:
         document = fixloop.brief_document(
             assignment=assignment,
@@ -6581,6 +6606,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_fb.add_argument("--root", default=".", help="project root")
     p_fb.add_argument(
         "--project", dest="path", default=None, help="project.yaml holding knobs.team"
+    )
+    p_fb.add_argument(
+        "--no-project",
+        action="store_true",
+        help="deliberately resolve without a team policy: no knobs.team, so the host "
+        "agent fixes. Without it an unreadable config is a refusal, not a default",
     )
     p_fb.add_argument("--json", action="store_true", help="emit the structured document")
     p_fb.set_defaults(func=_cmd_fixloop_brief)

@@ -57,8 +57,10 @@ STAGES = ("implementer", "gate", "host")
 #: Why a hop happened.
 HOP_REASONS = ("start", "round-failed", "provider-unavailable", "ladder-exhausted")
 
-#: Outcome of :func:`resolve_fixer`.
-STATUSES = ("assigned", "budget-exhausted", "no-fixer")
+#: Outcome of :func:`resolve_fixer`, plus the ``no-config`` refusal
+#: :func:`no_config_document` renders — a fix round resolved against a team policy that
+#: could not be read is a fix round handed to the host by accident.
+STATUSES = ("assigned", "budget-exhausted", "no-fixer", "no-config")
 
 #: Default host agent, mirroring :data:`keel.team.HOST_DEFAULT`.
 HOST_DEFAULT = "claude"
@@ -72,6 +74,23 @@ NARROWED_INSTRUCTION = (
 
 #: Placeholder when the fix commit does not exist yet — it cannot, the fix is unwritten.
 UNKNOWN_SHA = "<fix-commit-sha>"
+
+#: Most reviewer-supplied text the brief embeds per field, and the most lines of it. The
+#: brief *becomes* a delegate's prompt, so an unbounded finding is an unbounded prompt.
+MAX_QUOTED_CHARS = 2000
+MAX_QUOTED_LINES = 40
+
+#: Most of a reviewer-supplied value the brief renders inline — a headline, a reviewer id.
+MAX_INLINE_CHARS = 200
+
+#: The brief's own trailer keys. A reviewer line that reads as one is rendered as inline
+#: code inside the quote, so it cannot be mistaken for the brief's trailer.
+_TRAILER_KEYS = ("blocking:", "head:")
+
+_TRUNCATED = "… (truncated)"
+
+#: Indent for a quoted block, lining it up under its `   - label:` bullet.
+_QUOTE_INDENT = "     "
 
 _BLOCKING = ("critical", "major")
 
@@ -165,9 +184,11 @@ def ladder(
     — the ``implementer`` alias has been substituted for the seat that actually ran, so a
     delegated implementation is handed its own findings back rather than the host's.
 
-    A rung that repeats an earlier rung's provider is **dropped**, not dispatched: the
+    A rung that repeats an earlier rung's ``provider`` is **dropped**, not dispatched: the
     ladder exists to reach a different pair of eyes, and ``gate.provider == fix.provider``
-    escalates to the same seat that just failed the round.
+    escalates to the same seat that just failed the round. The comparison is on the
+    provider and not the bare name, because ``subagent:opus-reviewer`` and
+    ``opus-reviewer`` share a name and are two genuinely different seats.
     """
     blocked = {name for name in unavailable if isinstance(name, str) and name.strip()}
     record = assignment if isinstance(assignment, Mapping) else {}
@@ -180,7 +201,10 @@ def ladder(
         rungs.append(first)
     gate = _seat_of(record.get("gate"), stage="gate", default_source="team.gate")
     if gate is not None:
-        if any(rung.name == gate.name for rung in rungs):
+        # Compared on `provider`, which is the seat's identity — `subagent:opus-reviewer`
+        # and `opus-reviewer` share a `name` and are two different seats (a host subagent
+        # and a vendor), so a name comparison would merge two rungs that are not one.
+        if any(rung.provider == gate.provider for rung in rungs):
             warnings.append(
                 f"team.gate provider {gate.provider!r} is already the fixer; the ladder "
                 "skips it — escalating to the seat that just failed the round is not an "
@@ -193,7 +217,7 @@ def ladder(
     # fixer *is* the host, and a warning on every round of the default path is noise. The
     # short ladder is reported where it costs something: the round that wanted to escalate
     # and had nowhere to go says so, in `resolve_fixer`.
-    if not any(rung.name == host.name for rung in rungs):
+    if not any(rung.provider == host.provider for rung in rungs):
         rungs.append(host)
     resolved = tuple(
         Rung(
@@ -330,11 +354,20 @@ def resolve_fixer(
             "next_action": (
                 f"the {limit}-round review-fix budget is spent: mark the issue blocked, "
                 "quote the outstanding findings on the PR, and stop — a further round "
-                "needs an explicit operator --max-rounds override"
+                "needs an explicit operator `keel fixloop brief --budget` override"
             ),
             "warnings": warnings,
         }
-    fixer, hops = _walk(rungs, round_number=round_number)
+    # Bounded: one round advances one rung, so no round past `len(rungs) + 1` can reach a
+    # rung — or a hop — the round before it did not. Walking the literal round number made
+    # `--round 1000000` a million identical `ladder-exhausted` entries in the document an
+    # adapter has to read, for no more information than the first one carries.
+    walk_to = min(round_number, len(rungs) + 1)
+    fixer, hops = _walk(rungs, round_number=walk_to)
+    if hops and walk_to < round_number:
+        # The trail is clamped; the round it ends on is not. Re-stamp the terminal hop so
+        # the record still says which round this resolution is for.
+        hops[-1] = {**hops[-1], "round": round_number}
     if fixer is None:
         return {
             "schema_version": SCHEMA_VERSION,
@@ -378,6 +411,36 @@ def resolve_fixer(
     }
 
 
+def no_config_document(*, path: str, reason: str, round_number: int = 1) -> dict[str, Any]:
+    """The fail-closed answer when the project's team policy cannot be read.
+
+    ``knobs.team.fix`` is *the* input to this command: it says whether a delegate's
+    findings go back to that delegate or to the host. Resolving it against an
+    unconfigured policy answers "the host", silently — which is the exact failure #1016
+    exists to prevent, arrived at by a missing file rather than by a decision. So an
+    unreadable config is a refusal, and an operator who really means "no policy, the host
+    fixes" says so with ``--no-project``.
+    """
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "round": round_number,
+        "status": "no-config",
+        "blocked": True,
+        "fixer": None,
+        "ladder": [],
+        "hops": [],
+        "config_path": path,
+        "reason": reason,
+        "next_action": (
+            f"cannot read the project config at {path}: {reason}. `knobs.team.fix` decides "
+            "whether this round goes back to the delegate that implemented or to the host, "
+            "so it is not guessed — pass --project/--root, or --no-project to say "
+            "deliberately that there is no policy and the host fixes"
+        ),
+        "warnings": [],
+    }
+
+
 def parse_findings(raw: Any) -> list[findings_mod.Finding]:
     """Read the ``--findings`` document into :class:`keel.findings.Finding` objects.
 
@@ -415,22 +478,106 @@ def parse_findings(raw: Any) -> list[findings_mod.Finding]:
     return parsed
 
 
+def neutralise(text: str) -> str:
+    """Defang the one token reviewer text must never be able to forge.
+
+    The brief opens with an HTML-comment marker and is handed to a delegate as its
+    prompt. A reviewer who can emit ``<!--`` can emit a second
+    ``keel.fixloop-brief.v1`` marker — or any other keel artifact marker — so the opener
+    and closer are broken here, once, for every reviewer-supplied string.
+    """
+    return text.replace("<!--", "< !--").replace("-->", "-- >")
+
+
+def _inline(value: Any, *, fallback: str = "") -> str:
+    """One reviewer-supplied value, safe to interpolate into the middle of a line.
+
+    First line only, defanged and capped: a value that reaches the middle of a rendered
+    line cannot be allowed to carry a newline, because the text after that newline would
+    start a line of the brief that keel did not write.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return fallback
+    first = neutralise(value.strip().splitlines()[0]).strip()
+    if len(first) > MAX_INLINE_CHARS:
+        first = first[:MAX_INLINE_CHARS].rstrip() + _TRUNCATED
+    return first or fallback
+
+
+def _quoted_line(line: str) -> str:
+    """One line of reviewer text, with anything that reads as structure defanged."""
+    stripped = line.strip()
+    if stripped.startswith("#"):
+        # Escaped rather than dropped: the reviewer wrote it and the fixer should see it.
+        # It just must not render as a heading of its own inside the quote.
+        return line.rstrip().replace("#", "\\#", 1)
+    if any(stripped.lower().startswith(key) for key in _TRAILER_KEYS):
+        return "`" + stripped.replace("`", "'") + "`"
+    return line.rstrip()
+
+
+def quote(text: Any, *, indent: str = _QUOTE_INDENT) -> list[str]:
+    """Reviewer text as a blockquote: quoted **data**, never instructions.
+
+    Findings are the one part of the brief keel did not write, and the brief becomes the
+    fixer's ``--prompt-file``. A finding whose message carried its own
+    ``## Rules for this round`` section, a second brief marker and a forged
+    ``blocking: no`` trailer would otherwise render as brief structure — reviewer text
+    giving the fixer orders keel never issued.
+
+    So every line is prefixed with ``> ``: no line of reviewer text can sit at the start
+    of a line of the brief, which is where every structural token of this format lives.
+    On top of that the comment opener is defanged (:func:`neutralise`), a leading ``#``
+    is escaped, a line that reads as one of the brief's trailer keys becomes inline code,
+    and the whole field is capped — a prompt has a budget.
+    """
+    if not isinstance(text, str):
+        text = ""
+    body = neutralise(text)
+    truncated = False
+    if len(body) > MAX_QUOTED_CHARS:
+        body, truncated = body[:MAX_QUOTED_CHARS], True
+    lines = body.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    if len(lines) > MAX_QUOTED_LINES:
+        lines, truncated = lines[:MAX_QUOTED_LINES], True
+    rendered = []
+    for line in lines:
+        content = _quoted_line(line)
+        rendered.append(f"{indent}> {content}" if content else f"{indent}>")
+    if truncated:
+        rendered.append(f"{indent}> {_TRUNCATED}")
+    return rendered
+
+
 def _anchor(finding: findings_mod.Finding) -> str:
-    if finding.path is None:
+    if not isinstance(finding.path, str) or not finding.path.strip():
         return "whole PR"
+    # A backtick would close the code span the anchor is rendered in.
+    path = _inline(finding.path.replace("`", "'"), fallback="whole PR")
     if finding.line is None:
-        return finding.path
-    return f"{finding.path}:{finding.line}"
+        return path
+    return f"{path}:{finding.line}"
 
 
 def _finding_block(index: int, finding: findings_mod.Finding) -> list[str]:
+    """One finding: a scannable headline, then everything reviewer-written as a quote."""
+    message = finding.message if isinstance(finding.message, str) else ""
+    # The headline stays one scannable line and the rest of the message is quoted beneath
+    # it rather than dropped — the same split `cli._cmd_run_gates` makes for a multi-line
+    # gate message, for the same reason: line two onwards is often where the detail is.
+    headline, *detail = message.splitlines() or [""]
     lines = [
-        f"{index}. **{finding.severity}** · `{_anchor(finding)}` · {finding.message}",
-        f"   - reported by: {finding.source}",
+        f"{index}. **{finding.severity}** · `{_anchor(finding)}` · "
+        f"{_inline(headline, fallback='(no message)')}",
+        f"   - reported by: {_inline(finding.source, fallback='an unnamed reviewer')}",
         f"   - decision: {findings_mod.decision_for(finding.severity)}",
     ]
+    if detail:
+        lines.append("   - the rest of the reviewer's message:")
+        lines.extend(quote("\n".join(detail)))
     if finding.reproduction is not None:
-        lines.append(f"   - reproduction: {finding.reproduction}")
+        lines.append("   - reproduction:")
+        lines.extend(quote(finding.reproduction))
     else:
         lines.append("   - reproduction: not supplied by the reviewer — reproduce it yourself")
     return lines
