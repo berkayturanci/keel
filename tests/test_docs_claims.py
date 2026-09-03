@@ -39,7 +39,7 @@ import shlex
 import unittest
 from pathlib import Path
 
-from keel import cli
+from keel import cli, model
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SITE = REPO_ROOT / "website"
@@ -152,6 +152,7 @@ class TestTheSiteStatesTheRealCommandCount(unittest.TestCase):
         ("index.html", re.compile(r"(\d+) /keel commands, stdlib-first")),
         ("index.html", re.compile(r"All (\d+) <code>/keel:")),
         ("index.html", re.compile(r"(\d+) workflows · /keel:")),
+        ("coverage.html", re.compile(r"extension slots, (\d+) /keel commands")),
         ("content.js", re.compile(r"All (\d+) /keel:")),
         ("content.js", re.compile(r"keel ships <b>(\d+)</b> agentic workflow commands")),
         ("content.js", re.compile(r"Every one of the <b>(\d+)</b> commands")),
@@ -180,6 +181,115 @@ class TestTheSiteStatesTheRealCommandCount(unittest.TestCase):
             f"the site states a /keel command count that is not {expected} "
             f"(src/keel/adapters/commands/): {wrong}",
         )
+
+
+class TestTheSiteStatesTheRealBackboneShape(unittest.TestCase):
+    """`13 steps` and `28 extension slots` are printed in nine places across the site.
+
+    Both are hero numbers: they appear in `og:image:alt`, in `twitter:image:alt`, in the
+    README's hero and in the body copy, and every one of them is hand-typed. The command
+    count drifted exactly this way — 16 in five places, 17 in five others — and there is
+    no reason the other two are safer. `model.BACKBONE` and `model.SLOTS` are the answer.
+    """
+
+    _PAGES = ("index.html", "docs.html", "coverage.html", "content.js")
+
+    def test_the_backbone_is_readable(self):
+        self.assertGreater(len(model.BACKBONE), 5)
+        self.assertGreater(len(model.SLOTS), 5)
+
+    def test_every_stated_step_and_slot_count_matches_the_backbone(self):
+        # `(?<![A-Za-z])` keeps `the s4 step,` out of the step count.
+        expected = {
+            "steps": (re.compile(r"(?<![A-Za-z])(\d+) steps?\b"), str(len(model.BACKBONE))),
+            "slots": (re.compile(r"(\d+) (?:extension|named) slots"), str(len(model.SLOTS))),
+        }
+        wrong: dict[str, list[str]] = {}
+        seen = dict.fromkeys(expected, 0)
+        for name in (*self._PAGES, "README.md"):
+            path = REPO_ROOT / name if name == "README.md" else SITE / name
+            text = path.read_text(encoding="utf-8")
+            for label, (pattern, want) in expected.items():
+                found = pattern.findall(text)
+                seen[label] += len(found)
+                bad = [n for n in found if n != want]
+                if bad:
+                    wrong.setdefault(f"{name}:{label}", []).extend(bad)
+        # Guards the guard: a rewritten sentence that stops matching would make
+        # the assertion below vacuous, which is how the count drifted in the
+        # first place.
+        self.assertTrue(all(seen.values()), f"a hero-number pattern matched nothing: {seen}")
+        self.assertEqual(
+            {},
+            wrong,
+            "the site states a backbone shape that disagrees with keel.model "
+            f"({len(model.BACKBONE)} steps, {len(model.SLOTS)} slots): {wrong}",
+        )
+
+
+class TestTheSiteArgumentHintsAreTheAdapters(unittest.TestCase):
+    """`website/params.js` opens with "generated from src/keel/adapters/commands frontmatter".
+
+    No generator exists — the file is hand-maintained under a comment claiming it is not,
+    which is the most reliable way to drift. It already had: `/keel:swarm` advertising
+    `--rebalance` and `--landing <batch|funnel|auto>` (the adapter body defines and acts
+    on neither) plus a `--dry-run` the frontmatter never listed, while the two flags the
+    body *does* branch on were absent. Comparing the file to its stated source is the
+    check the comment implies and nothing performed.
+    """
+
+    def _site_args(self) -> dict[str, dict]:
+        text = (SITE / "params.js").read_text(encoding="utf-8")
+        return json.loads(text.split("=", 1)[1].strip().rstrip(";"))
+
+    @staticmethod
+    def _frontmatter(path: Path) -> dict[str, str | None]:
+        block = path.read_text(encoding="utf-8").split("---", 2)[1]
+        hint = re.search(r'(?m)^argument-hint:\s*"(.*)"\s*$', block)
+        desc = re.search(r"(?m)^description:\s*(.*)$", block)
+        return {
+            "hint": hint.group(1) if hint else None,
+            "desc": desc.group(1).strip() if desc else None,
+        }
+
+    def test_the_site_publishes_argument_hints(self):
+        self.assertGreater(len(self._site_args()), 10)
+
+    def test_every_published_hint_matches_its_adapter(self):
+        site = self._site_args()
+        drift: dict[str, dict[str, str | None]] = {}
+        for path in _adapter_commands():
+            published = site.get(path.stem)
+            if published is None:
+                drift[path.stem] = {"site": None, "adapter": "present"}
+                continue
+            source = self._frontmatter(path)
+            for field in ("hint", "desc"):
+                if source[field] != published.get(field):
+                    drift[f"{path.stem}.{field}"] = {
+                        "adapter": source[field],
+                        "site": published.get(field),
+                    }
+        self.assertEqual({}, drift, f"website/params.js has drifted from its source: {drift}")
+
+    def test_every_published_flag_is_in_the_hint_it_came_from(self):
+        """The card's flag chips are a split of the hint, so an extra one is invented.
+
+        The `swarm` card carried a `--rebalance` chip after the hint had already
+        stopped listing it — the chips are what a reader clicks, so a stale one
+        outlives the sentence above it.
+        """
+        stray = {
+            f"{name}: {flag}"
+            for name, entry in self._site_args().items()
+            for flag in entry.get("flags", ())
+            if flag not in entry.get("hint", "")
+        }
+        self.assertEqual(set(), stray, f"params.js lists flags its own hint does not: {stray}")
+
+    def test_the_site_publishes_nothing_that_is_not_a_command(self):
+        extra = sorted(set(self._site_args()) - {p.stem for p in _adapter_commands()})
+        self.assertEqual([], extra, f"params.js publishes non-commands: {extra}")
 
 
 class TestEveryDocumentedInvocationParses(unittest.TestCase):
