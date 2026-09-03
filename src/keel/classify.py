@@ -16,7 +16,7 @@ DEFAULT_TIER = 2
 #: Paths where a *diff* may lower the tier a path alone would set (#794).
 #:
 #: Only workflow YAML. For the other tier-3 paths the content **is** the risk — a
-#: checksum in ``Formula/keel.rb``, a pin in ``.github/requirements`` — so there is
+#: url in ``packaging/homebrew/``, a pin in ``.github/requirements`` — so there is
 #: no such thing as a cosmetic change there and every edit stays TIER-3.
 DIFF_CLASSIFIED_GLOBS = (
     ".github/workflows/*.yml",

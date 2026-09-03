@@ -262,6 +262,35 @@ To prevent autonomous agents from bypassing the Keel backbone via direct `git pu
 * **Require Status Checks**: Require the `keel-ship` / CI workflow checks to pass before merging.
 * **Restrict Bypass Permissions**: Only designated human administrators may bypass rulesets.
 
+### 3. No Bot Exemption — A Decision, Not An Omission
+
+The gate has one requirement for every pull request: three reviewer verdicts bound to the head
+SHA, plus an `agent:<vendor>` label. It exempts no account, and
+[#1023](https://github.com/berkayturanci/keel/issues/1023) — which asked for a narrow exemption
+so one machine-generated release pull request could merge itself — was answered by removing the
+pull request instead.
+
+Three reasons the exemption was refused, in order of weight:
+
+1. **The author is not a reliable key.** Several bots commit through the GitHub API *as the
+   repository owner*, so their commits carry a human login; an identity check sees a human.
+   Measured in the sibling repository on 2026-09-03
+   ([ai-jury#676](https://github.com/berkayturanci/ai-jury/issues/676),
+   [#680](https://github.com/berkayturanci/ai-jury/pull/680)), where a bot pushed on top of a
+   reviewed head from a stale checkout and silently reverted two merged pull requests — 25
+   files, 2,491 deletions. An exemption is precisely the mechanism that would let a change of
+   that shape past review.
+2. **A content filter is not a gate.** "One file, only these two lines" describes the diff at
+   the moment it is evaluated. A later push changes the diff; an exemption that re-evaluates is
+   a race, and one that does not is a signature over the wrong bytes.
+3. **The asymmetry with the PR-description lint is real.** That lint exempts bots by GitHub's
+   account classification (#963) and can afford to — its worst outcome is a badly-described
+   pull request. This gate's worst outcome is an unreviewed change on `main`.
+
+The general form: when a gate blocks the only sequence able to satisfy it, fix the sequence.
+An exemption records that the requirement was unsatisfiable and keeps it anyway. See
+[The Homebrew release chain](homebrew-release-chain.md) for the case that made this concrete.
+
 ---
 
 ## Comparison: Opaque Agents vs. Keel Evidence Chain

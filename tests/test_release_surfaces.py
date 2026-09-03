@@ -66,11 +66,6 @@ FIXTURE: dict[str, str] = {
     "docs/keel/cutover.md": (
         'Pin the cutover: `pip install "git+https://github.com/berkayturanci/keel@v{v}"`\n'
     ),
-    "Formula/keel.rb": (
-        "class Keel < Formula\n"
-        '  url "https://github.com/berkayturanci/keel/archive/refs/tags/v{v}.tar.gz"\n'
-        "end\n"
-    ),
     "website/index.html": (
         '<span class="ver" data-version>v{v}</span>\n'
         '<code>pip install "git+https://github.com/berkayturanci/keel@v{v}"</code>\n'

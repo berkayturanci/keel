@@ -3,8 +3,8 @@ class Keel < Formula
 
   desc "Project-neutral, multi-agent workflow core and autonomous issue shipping backbone"
   homepage "https://github.com/berkayturanci/keel"
-  url "https://github.com/berkayturanci/keel/archive/refs/tags/v1.19.3.tar.gz"
-  sha256 "5ad23fe8a2510df1cf9341e24037a97252e86716d689da7aa7e06da5a94bf4cb"
+  url "@URL@"
+  sha256 "@SHA256@"
   license "Apache-2.0"
   head "https://github.com/berkayturanci/keel.git", branch: "main"
 
@@ -17,6 +17,12 @@ class Keel < Formula
   #
   # `tzdata` is deliberately absent: pyproject marks it `sys_platform == 'win32'`,
   # and Homebrew does not run there.
+  #
+  # These two values are pinned, not rendered, and that is correct: PyYAML 6.0.3
+  # is already published, so its url and digest are knowable at commit time and
+  # are checked offline by `tests/test_release_docs.py` and online by the tap's
+  # own suite. The pair that could not be knowable at commit time is the one
+  # above, which is why only that pair is a placeholder.
   resource "PyYAML" do
     url "https://files.pythonhosted.org/packages/05/8e/961c0007c59b8dd7729d542c61a4d537767a59645b82a0b521206e1e25c2/pyyaml-6.0.3.tar.gz"
     sha256 "d76623373421df22fb4cf8817020cbb7ef15c725b9d5e45f17e189bfc384190f"
@@ -27,6 +33,6 @@ class Keel < Formula
   end
 
   test do
-    assert_match "keel", shell_output("#{bin}/keel version")
+    assert_match "keel @VERSION@", shell_output("#{bin}/keel version")
   end
 end

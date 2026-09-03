@@ -1,7 +1,8 @@
 # Release Runbook
 
 > This is the *what*. For the *why* — the reason the formula's url and digest
-> cannot both be correct at the same moment, which guard catches which
+> cannot both be correct at the same moment, why the formula is therefore
+> rendered during the release instead of committed, which guard catches which
 > failure, and what has already gone wrong five ways — see
 > [The Homebrew release chain](homebrew-release-chain.md).
 
@@ -127,7 +128,7 @@ Before tagging a release:
   |---|---|
   | `declared version` | `pyproject.toml` and `src/keel/__init__.py` naming different versions |
   | `changelog lockstep` | a top released `## [x.y.z]` that is not the declared version — i.e. a CHANGELOG never renamed from `## [Unreleased]` |
-  | `release surfaces` | any surface in `scripts/release_surfaces.py` left behind: the two plugin manifests, the pinned-install references in `README.md` / `keel-ship.yml` / `cutover.md`, the formula url, the four site fallbacks |
+  | `release surfaces` | any surface in `scripts/release_surfaces.py` left behind: the two plugin manifests, the pinned-install references in `README.md` / `keel-ship.yml` / `cutover.md`, the four site fallbacks |
   | `keel-visual markers` | `keel-visual/pyproject.toml` and `keel_visual/__init__.py` disagreeing (#796) |
 
   `scripts/release_surfaces.py` is the single table: `release_bump.py` writes through it
@@ -346,28 +347,32 @@ python scripts/release_smoke.py --requirement "keel-workflow==<version>"
 gh release view "v<version>" --json assets
 ```
 
-## Complete The Homebrew Formula
+## The Homebrew Formula (Nothing To Do)
 
-**This step is required on every release, and it can only be done after the tag exists.**
+**This step used to be required on every release and no longer exists.**
 
-`Formula/keel.rb`'s url is bumped in the release commit — `test_release_docs` pins it to the
-declared version — but its `sha256` describes the tarball GitHub builds *from the tag*, which
-is created from the commit that release PR produces. So the digest in the release commit is
-stale by construction, every time. The `publish-formula` job reports the correct value as a
-notice rather than failing the run (#842); take it from there, or compute it yourself:
+`Formula/keel.rb` is not in this repository. It named a url and a sha256 that
+cannot both be correct before the tag exists, so it was stale on every release
+and each one ended with a hand-merged follow-up pull request — the step that,
+when it was forgotten, left the tap refusing every sync for a day (#981).
+[#1023](https://github.com/berkayturanci/keel/issues/1023) removed the
+requirement rather than the symptom, implementing
+[#990](https://github.com/berkayturanci/keel/issues/990).
 
-```bash
-curl -fsSL https://github.com/berkayturanci/keel/archive/refs/tags/v<version>.tar.gz \
-  -o /tmp/keel-src.tar.gz
-shasum -a 256 /tmp/keel-src.tar.gz
-```
+What happens instead, with no human in it:
 
-Set that as the `sha256` in `Formula/keel.rb` and merge it to the default branch. Nothing else
-in the formula changes.
+1. `publish.yml` downloads the archive the tag produced, hashes it, and renders
+   `packaging/homebrew/keel.rb.template`. It **refuses** — before the GitHub
+   Release is created — on an archive it cannot fetch, a placeholder that
+   survived rendering, a url that is not this project's archive for this tag, or
+   a missing digest.
+2. The rendered `keel.rb` is attached to the GitHub Release and listed in its
+   `SHA256SUMS`, so it is permanently at
+   `https://github.com/berkayturanci/keel/releases/latest/download/keel.rb`.
+3. The tap pulls that asset within 30 minutes, re-hashes the artifact itself, and
+   commits only if the pair is consistent.
 
-The tap pulls from the default branch every 30 minutes and re-hashes the artifact before
-committing, so it publishes only once the pair is consistent — and refuses in the meantime,
-continuing to serve the previous release, which still installs. To publish without waiting:
+To publish to the tap without waiting for its schedule:
 
 ```bash
 gh workflow run sync-formula.yml --repo berkayturanci/homebrew-keel
@@ -380,9 +385,14 @@ gh api repos/berkayturanci/homebrew-keel/contents/Formula/keel.rb --jq '.content
   | base64 -d | grep -E '^  (url|sha256)'
 ```
 
-Until this lands, PyPI is on the new release and Homebrew is one behind. That is the intended
-degraded state, not a failure: a tap one release behind installs, and one carrying a digest
-that does not match its url does not (#805).
+Between the release and that sync, Homebrew is one release behind PyPI. That is
+the intended degraded state, not a failure: a tap one release behind installs,
+and one carrying a digest that does not match its url does not (#805).
+
+To change the formula itself — a new vendored resource, a different interpreter —
+edit `packaging/homebrew/keel.rb.template` in an ordinary pull request. It is
+tier-3, so it takes the same three reviewer verdicts as any other privileged
+change; there is no bot exemption on this path and no longer any need for one.
 
 ## Known Pitfall: Squash-Merging A Branch Updated Via The GitHub API
 
@@ -414,7 +424,7 @@ not the fix for another:
 | PyPI has a bad wheel/sdist; the GitHub Release and Homebrew are fine | [Bad PyPI release only](#bad-pypi-release-only) |
 | The git tag points at the wrong commit, or the GitHub Release is missing assets | [Bad tag or GitHub Release](#bad-tag-or-github-release) |
 | `brew install keel` builds something wrong even though PyPI and the tag are fine | [Bad Homebrew formula](#bad-homebrew-formula) |
-| PyPI succeeded but a later `publish.yml` step (GitHub Release, formula digest) failed | [Partial publish](#partial-publish-pypi-succeeded-a-later-step-failed) |
+| PyPI succeeded but a later `publish.yml` step (formula render, GitHub Release) failed | [Partial publish](#partial-publish-pypi-succeeded-a-later-step-failed) |
 
 Ground rules that apply to every row:
 
@@ -424,12 +434,12 @@ Ground rules that apply to every row:
   overwrites already-uploaded distributions, so re-running is always safe; it only fills in
   whatever did not finish. Confirm the existing artifacts are the intended ones before you rely
   on that.
-- **`brew install keel` builds from the GitHub tag archive**, not from PyPI —
-  `Formula/keel.rb`'s `url` points at
+- **`brew install keel` builds from the GitHub tag archive**, not from PyPI — the formula
+  rendered by the release points at
   `https://github.com/berkayturanci/keel/archive/refs/tags/v<version>.tar.gz`. Yanking the PyPI
   release does **not** stop Homebrew from serving a bad tag. What does: retargeting or deleting
   the tag before the tap's next sync, or shipping a corrective release and waiting out the tap's
-  30-minute sync window (see [Complete The Homebrew Formula](#complete-the-homebrew-formula)).
+  30-minute sync window (see [The Homebrew Formula](#the-homebrew-formula-nothing-to-do)).
 
 ### Bad PyPI release only
 
@@ -470,7 +480,7 @@ git push origin v<version>
 ```
 
 If PyPI already has the correct artifacts for `<version>`, `skip-existing: true` makes the
-re-run's PyPI upload a no-op; only the GitHub Release, formula-digest PR, and provenance
+re-run's PyPI upload a no-op; only the rendered formula, the GitHub Release and the provenance
 attestation are (re)created. If PyPI does not yet have this version, the re-run publishes it
 normally.
 
@@ -495,12 +505,12 @@ git push origin :refs/tags/v<version>
 ```
 
 **Ship a corrective release and wait for the tap's sync** — the normal path (see
-[Complete The Homebrew Formula](#complete-the-homebrew-formula)):
+[The Homebrew Formula](#the-homebrew-formula-nothing-to-do)):
 
 ```bash
 make release-bump VERSION=<next-version>
-# ...tag and push v<next-version>; publish.yml computes the digest and opens the
-# formula-digest PR against the tap (merge it if auto-merge is off).
+# ...tag and push v<next-version>; publish.yml renders the formula from the new
+# tag's archive and attaches it to the release. Nothing to merge.
 
 # Force the tap to pick it up now instead of waiting up to 30 minutes:
 gh workflow run sync-formula.yml --repo berkayturanci/homebrew-keel
@@ -517,8 +527,10 @@ does not match its `url`; the tap refuses to publish that pairing rather than se
 
 ### Partial publish (PyPI succeeded, a later step failed)
 
-PyPI has the correct wheel/sdist for `<version>`, but the GitHub Release, SBOM/attestation, or
-formula-digest step in `publish.yml` failed partway through.
+PyPI has the correct wheel/sdist for `<version>`, but the formula render, the GitHub Release or
+the SBOM/attestation step in `publish.yml` failed partway through. A release with no `keel.rb`
+asset is the case worth noticing: the tap has nothing to pull, so `brew` stays on the previous
+release until a re-run attaches one.
 
 ```bash
 # 1. Confirm what actually landed on PyPI:

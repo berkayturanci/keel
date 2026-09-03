@@ -1,0 +1,39 @@
+tap-sync-formula: ea6ad37030bdbe5cf347971f310c9c45312bc619
+
+# What this file is
+#
+# `Formula/keel.rb` no longer exists in this repository (#1023, #990). The tap —
+# berkayturanci/homebrew-keel — pulled that exact path every thirty minutes, so
+# until it was repointed at the release asset its sync job would have 404'd on a
+# schedule and `brew upgrade` would have stopped seeing releases: the failure
+# shape of #981, arriving from a new direction.
+#
+# The line above names the tap commit that applied
+# packaging/homebrew/tap-sync-formula.patch — berkayturanci/homebrew-keel#3 — so
+# the ordering (repoint, then merge, then release) is recorded rather than
+# remembered. To reproduce it:
+#
+#     git -C ../homebrew-keel apply /path/to/keel/packaging/homebrew/tap-sync-formula.patch
+#     git -C ../homebrew-keel commit -am "ci: sync the formula from keel's release asset"
+#     git -C ../homebrew-keel push
+#     echo "tap-sync-formula: $(git -C ../homebrew-keel rev-parse HEAD)" \
+#       > packaging/homebrew/TAP_REPOINTED
+#
+# `tests/test_external_promises.py` requires that line offline, and — under
+# KEEL_CHECK_EXTERNAL=1, which CI's `external promises` job sets — checks that
+# the live tap really no longer names the retired path.
+#
+# Only the offline half blocks a merge. `external promises` is NOT among main's
+# required status checks — those are the nine test-matrix jobs, Format (ruff),
+# CodeQL, the pull-request description lint and the keel evidence check — so a
+# red run there is visible and ignorable. Adding it to the required list is what
+# would make the online half enforced, and that is an operator decision.
+#
+# The line above is therefore a claim in a reviewable form, not proof: nothing
+# offline can read another repository, and the test accepts any 40 hex
+# characters. Requiring a commit sha rather than a non-empty file is what makes
+# the claim falsifiable — a reviewer can open the commit it names.
+#
+# Both the marker and its gate are single-use. Delete them once the tap has been
+# repointed for a release or two and nobody is tempted to restore the committed
+# formula.

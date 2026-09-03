@@ -105,13 +105,14 @@ RELEASE_SURFACES: tuple[Surface, ...] = (
         rf"keel@v(?P<version>{VERSION_RE})",
         False,
     ),
-    # --- the formula `brew install` runs --------------------------------------
-    Surface(
-        "Formula/keel.rb",
-        "/tags/v{version}.tar.gz",
-        rf"/tags/v(?P<version>{VERSION_RE})\.tar\.gz",
-        False,
-    ),
+    # --- the formula `brew install` runs is deliberately NOT a surface --------
+    # `Formula/keel.rb` was one until #1023. Bumping its url here was half of a
+    # pair: the other half — the sha256 of the archive that url names — is
+    # unknowable until the tag exists, so every release left the file internally
+    # inconsistent and needed a second write to `main` to repair it. The formula
+    # is now rendered from `packaging/homebrew/keel.rb.template` during the
+    # release, from the archive the tag actually produced. The template names no
+    # version, so there is nothing here to bump and nothing to check.
     # --- the site's hardcoded fallbacks, matched by shape ---------------------
     Surface(
         "website/index.html",

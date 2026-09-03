@@ -45,9 +45,16 @@ knobs:
     - ".github/workflows/codeql.yml"
     - ".github/workflows/scorecard.yml"
     # Not workflows, but they reach further than most code here does: this is the
-    # formula `brew install` runs, and the hash-locked tooling that publishes to
-    # PyPI. Both were tier-2 while every CI edit was tier-3 (#787, #779).
-    - "Formula/keel.rb"
+    # template the formula `brew install` runs is rendered from, the patch that
+    # tells the tap where to read it, and the hash-locked tooling that publishes
+    # to PyPI. All were tier-2 while every CI edit was tier-3 (#787, #779).
+    #
+    # By extension, not by directory: `packaging/homebrew/**` would also sweep in
+    # README.md and TAP_REPOINTED, neither of which reaches a user's machine, and
+    # `DIFF_CLASSIFIED_GLOBS` covers only workflow YAML — so a README typo there
+    # would be permanently tier-3, three verdicts, with no way to downgrade it.
+    - "packaging/homebrew/*.template"
+    - "packaging/homebrew/*.patch"
     - ".github/requirements/**"
   ci_workflows:
     "CI": "**"

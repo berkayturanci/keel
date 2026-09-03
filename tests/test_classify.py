@@ -199,13 +199,16 @@ class TestTierFromTheDiff(unittest.TestCase):
     def test_non_workflow_tier3_paths_are_never_downgraded(self):
         # For these the content *is* the risk — a checksum, a pin — so there is no
         # such thing as a cosmetic change (#787, #779).
-        for path in ("Formula/keel.rb", ".github/requirements/publish-tools.txt"):
+        for path in (
+            "packaging/homebrew/keel.rb.template",
+            ".github/requirements/publish-tools.txt",
+        ):
             with self.subTest(path=path):
                 self.assertEqual(
                     3,
                     classify.tier_for_files(
                         [path],
-                        tier3_globs=("Formula/keel.rb", ".github/requirements/**"),
+                        tier3_globs=("packaging/homebrew/**", ".github/requirements/**"),
                         patches={path: _H + "-    name: a\n+    name: b\n"},
                     ),
                 )

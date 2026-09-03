@@ -18,8 +18,10 @@ jobs:
     permissions:
       id-token: write       # PyPI trusted publishing (OIDC) + provenance attestation
       contents: write       # create the GitHub Release and upload assets
-      pull-requests: write # open the formula-digest follow-up (#984)
       attestations: write   # build-provenance attestations
+      # No `pull-requests: write`. Nothing after the tag writes to `main` any
+      # more: the formula is rendered below and attached to the release instead
+      # of being repaired in a follow-up pull request (#1023, #990).
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
@@ -130,6 +132,109 @@ jobs:
           sha256sum *.whl *.tar.gz sbom.cdx.json > SHA256SUMS
           cat SHA256SUMS
 
+      # The formula, rendered from what the tag actually produced (#1023, #990).
+      #
+      # A committed Formula/keel.rb had to name a url and a sha256 that cannot
+      # both be correct at once: the url is bumped in the release commit, and the
+      # digest belongs to the archive GitHub builds *from the tag* — created from
+      # that very commit. So the digest was stale on every release by
+      # construction, and making it true cost a second write to `main`
+      # afterwards: a pull request opened by this workflow that a human still had
+      # to merge, and an hourly-failing tap sync whenever nobody did (#981).
+      #
+      # The tag exists by the time this step runs, so the pair is knowable *here*
+      # and nowhere earlier. Rendering it at this moment removes the requirement
+      # instead of repairing its symptom: nothing in the repository names a
+      # digest, so nothing in the repository can be stale.
+      #
+      # This is the one thing the release constructs rather than copies. The
+      # counter-argument (#779: a release step that builds something moves its
+      # checks into the phase that runs once per tag) is answered by refusing
+      # here rather than reporting — every failure below exits non-zero.
+      #
+      # POSITION IS LOAD-BEARING. This sits between `Generate checksums` and the
+      # attestation, so it runs *before* anything irreversible: PyPI files are
+      # immutable and `skip-existing: true` means the version cannot be
+      # re-uploaded, so a render failure after the upload would leave a published
+      # version whose formula has to be fixed by cutting another release. Nothing
+      # here needs the upload: the inputs are GITHUB_REF_NAME, GITHUB_REPOSITORY,
+      # the committed template and release/SHA256SUMS. (The sibling renders after
+      # its upload because it must — its url and digest come from what PyPI
+      # reports about the sdist it just accepted. Here the url is the tag
+      # archive, which exists the moment the tag is pushed.)
+      - name: Render the Homebrew formula from the tagged archive
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          # Bounded, and named so a test can assert the number rather than match
+          # the loop's text. GitHub builds tag archives on demand; the first
+          # request after a push occasionally 404s while the ref propagates.
+          #
+          # 10 x 6s = 60s, a fifth of the sibling's 300s, because the two are
+          # waiting for different things. It waits for PyPI to *index* an upload
+          # — a third-party pipeline whose latency is measured in minutes. This
+          # waits for GitHub to serve an archive of a ref its own API already
+          # accepted, in the same run that pushed it; the only gap is internal
+          # propagation, seconds. A minute of retries is generous for that, and
+          # the failure it must not produce is a long silent hang before the
+          # release: the job already holds the built artifacts by this point.
+          ARCHIVE_WAIT_ATTEMPTS: "10"
+          ARCHIVE_WAIT_SECONDS: "6"
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          url="https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/${GITHUB_REF_NAME}.tar.gz"
+          archive="${RUNNER_TEMP}/tag-archive.tar.gz"
+
+          fetched=""
+          for attempt in $(seq 1 "$ARCHIVE_WAIT_ATTEMPTS"); do
+            if curl -fsSL "$url" -o "$archive"; then
+              fetched=1
+              echo "fetched the tag archive on attempt ${attempt}"
+              break
+            fi
+            echo "the tag archive is not being served yet (attempt ${attempt}/${ARCHIVE_WAIT_ATTEMPTS}); retrying in ${ARCHIVE_WAIT_SECONDS}s"
+            sleep "$ARCHIVE_WAIT_SECONDS"
+          done
+          if [ -z "$fetched" ]; then
+            echo "::error title=No tag archive::${url} did not resolve within the bounded wait; refusing to publish a formula whose digest nothing measured"
+            exit 1
+          fi
+
+          digest="$(sha256sum "$archive" | cut -d" " -f1)"
+          echo "url:    ${url}"
+          echo "sha256: ${digest}"
+
+          mkdir -p release
+          sed -e "s|@URL@|${url}|g" \
+              -e "s|@SHA256@|${digest}|g" \
+              -e "s|@VERSION@|${version}|g" \
+              packaging/homebrew/keel.rb.template > release/keel.rb
+
+          # `sed` reports success whether or not it substituted anything, so a
+          # renamed placeholder would ship a formula that cannot parse.
+          left="$(grep -oE '@[A-Z0-9_]+@' release/keel.rb || true)"
+          if [ -n "$left" ]; then
+            echo "::error title=Unrendered placeholder::${left} survived rendering"
+            exit 1
+          fi
+
+          # The guard #990 identified as the load-bearing one, asserted on the
+          # rendered file rather than on the variables that produced it: the url
+          # must be this project's archive for the version being released. A
+          # digest comparison alone is satisfied by a formula that faithfully
+          # describes somebody else's tarball.
+          if ! grep -qF "  url \"https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/${GITHUB_REF_NAME}.tar.gz\"" release/keel.rb; then
+            echo "::error title=Wrong url::the rendered formula does not name this repository's ${GITHUB_REF_NAME} archive"
+            exit 1
+          fi
+          if ! grep -qE '^  sha256 "[0-9a-f]{64}"$' release/keel.rb; then
+            echo "::error title=No digest::the rendered formula carries no top-level sha256"
+            exit 1
+          fi
+
+          ( cd release && sha256sum keel.rb >> SHA256SUMS )
+          cat release/keel.rb
+
       # Cryptographic attestation binding the artifacts to this workflow run,
       # verifiable with `gh attestation verify`.
       - name: Attest build provenance
@@ -166,6 +271,7 @@ jobs:
             release/*.tar.gz
             release/sbom.cdx.json
             release/SHA256SUMS
+            release/keel.rb
           name: Release ${{ github.ref_name }}
           draft: false
           prerelease: false
@@ -402,135 +508,45 @@ jobs:
               || gh issue create --title "$title" --body "$body"
           fi
 
-  publish-formula:
-    # This repo is the source of truth for Formula/keel.rb (#774). The tap holds
-    # the copy `brew install` actually runs, and they were once kept equal by hand
-    # — which is how #787 shipped: the formula was fixed here, the guard checked
-    # the copy here, and users kept installing the broken one until someone synced
-    # the tap manually. The tap now pulls on a schedule, so this job's remaining
-    # job is to refuse to release a formula that could not install.
+  tap-status:
+    # What is left of the old `publish-formula` job. It used to download the tag
+    # archive, rewrite Formula/keel.rb, push a branch, open a pull request and arm
+    # auto-merge on it — five mechanisms for one unsatisfiable requirement, which
+    # #1023 removed by rendering the formula in the publish job above and
+    # attaching it to the release instead. Nothing here writes anything, in this
+    # repository or any other: `contents: read`, no token, no `gh`.
     #
-    # Copy, not construct. Everything interesting about this file is already
-    # asserted on every push by test_release_docs.py; a release step that built
-    # the formula would move those checks into the one phase that runs once per
-    # tag, which is the phase where mistakes are least observed (#779).
-    name: Sync the formula to the Homebrew tap
+    # It reports where the tap stands so the release log answers "will `brew
+    # upgrade` see this?" without anyone opening a second repository. It cannot
+    # fail the release: the tap pulls on a 30-minute schedule, so being briefly
+    # behind is the design rather than a defect, and the render step already
+    # refused to attach a formula that does not hash to the archive it names.
+    name: Report where the Homebrew tap stands
     needs: build-n-publish
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
-      contents: write      # push the digest branch
-      pull-requests: write # open the follow-up PR (#984)
+      contents: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - name: Set the formula's post-tag digest, or open the PR that does
-        # The url is bumped in the release commit — test_release_docs pins it to
-        # the declared version — but the digest describes the tarball GitHub
-        # builds *from the tag*, created from the commit that release PR
-        # produces. So at this moment the stored digest is stale by
-        # construction, on every release without exception (#842).
-        #
-        # This used to `exit 1`. Two problems with that. It runs
-        # `needs: build-n-publish`, so it turned a release that had already
-        # published to PyPI successfully into a failed run — and a red that is
-        # always red cannot report a real release failure. And it duplicated a
-        # check that already exists closer to the user: the tap's sync-formula
-        # workflow re-hashes the artifact itself and refuses to commit on a
-        # mismatch, which is the guard that actually stands between a formula
-        # and `brew install` (added after #805, and it worked on 1.17.0).
-        #
-        # So report the value the formula needs and let the release run say
-        # whether the *release* succeeded. Nothing downstream is weakened.
-        env:
-          # `gh pr create` for the digest follow-up; scoped to this repo.
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Compare the tap with this tag
         run: |
           set -euo pipefail
-          url=$(grep -m1 -oE 'https://github.com/[^"]+\.tar\.gz' Formula/keel.rb)
-          want=$(grep -m1 -oE '^  sha256 "[0-9a-f]{64}"' Formula/keel.rb | grep -oE '[0-9a-f]{64}')
-          curl -fsSL "$url" -o /tmp/formula-src.tar.gz
-          got=$(sha256sum /tmp/formula-src.tar.gz | cut -d' ' -f1)
-          echo "url:  $url"
-          echo "want: $want"
-          echo "got:  $got"
-          if [ "$want" = "$got" ]; then
-            echo "formula digest already matches the tag"
+          tap="berkayturanci/homebrew-keel"
+          # The contents API, not raw.githubusercontent.com: `raw` is CDN-cached
+          # for minutes, so right after a sync it serves the previous formula and
+          # this step would report a tap that is already current as behind.
+          if ! curl -fsSL -H "Accept: application/vnd.github.raw" \
+              "https://api.github.com/repos/${tap}/contents/Formula/keel.rb" \
+              -o "${RUNNER_TEMP}/tap-keel.rb"; then
+            echo "::notice::could not read ${tap}; it syncs on its own schedule"
             exit 0
           fi
-          
-          # The tag exists by the time this runs, so the digest is knowable *now*.
-          # This used to emit a ::notice:: and leave the follow-up to a human — which
-          # is what was forgotten for 1.19.1, after which the tap refused every sync
-          # for a day (#981). A notice nobody is required to act on is not a safeguard.
-          #
-          # A pull request, not a push: main is protected, and a direct push is how
-          # the sibling repo's equivalent step failed silently for a whole release.
-          branch="chore/formula-digest-${GITHUB_REF_NAME}"
-          sed -i.bak "s|^  sha256 \"[0-9a-f]\{64\}\"|  sha256 \"${got}\"|" Formula/keel.rb
-          rm -f Formula/keel.rb.bak
-          
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -b "$branch"
-          git add Formula/keel.rb
-          git commit -m "chore(homebrew): set the ${GITHUB_REF_NAME} formula checksum" \
-            -m "release-bump moves the url to the new tag but cannot know its digest: the archive does not exist until the tag is pushed. Opened automatically." \
-            -m "no issue"
-          
-          if ! git push origin "$branch"; then
-            echo "::error title=Formula follow-up not pushed::Set sha256 to ${got} in Formula/keel.rb by hand, or the tap will refuse to sync."
+          serving="$(grep -m1 -oE '/tags/v[0-9]+\.[0-9]+\.[0-9]+\.tar\.gz' "${RUNNER_TEMP}/tap-keel.rb" || true)"
+          echo "tap serves: ${serving:-<no tag url found>}"
+          echo "this tag:   /tags/${GITHUB_REF_NAME}.tar.gz"
+          if [ "$serving" = "/tags/${GITHUB_REF_NAME}.tar.gz" ]; then
+            echo "the tap is already serving this release"
             exit 0
           fi
-          
-          gh pr create --base main --head "$branch" \
-            --title "chore(homebrew): set the ${GITHUB_REF_NAME} formula checksum" \
-            --body "Opened automatically by publish.yml after ${GITHUB_REF_NAME}.
-          
-          \`make release-bump\` moves the formula url to the new tag but cannot know its digest — the archive does not exist until the tag is pushed. Until this lands the tap refuses to sync and \`brew upgrade\` cannot see the release.
-          
-          | | |
-          |---|---|
-          | url | \`${url}\` |
-          | declared | \`${want}\` |
-          | actual | \`${got}\` |
-          
-          The digest is read from the published artifact, not constructed. \`external promises\` re-downloads and re-hashes it on this PR, so CI confirms the value independently before it merges.
-          
-          no issue — release follow-up." \
-            || echo "::notice::a pull request for $branch already exists"
-
-          # Arm the PR to land on its own once CI has re-verified the digest.
-          # main requires no approvals, only checks, so nothing is bypassed —
-          # this removes the wait between "green" and "someone noticed", which
-          # is the only manual step left in the chain and the one that left the
-          # tap failing hourly for a day (#981). Best-effort: if the repository
-          # has the setting off, the PR simply waits for a person.
-          gh pr merge --auto --squash "$branch" \
-            || echo "::notice::auto-merge unavailable; land $branch to unblock the tap"
-
-      - name: Confirm the tap will pick this up
-        # No push from here, and no token. GITHUB_TOKEN is scoped to this repo, so
-        # writing the tap needed a PAT with `contents: write` on it — one repo
-        # holding write access to another, to create, store and rotate.
-        #
-        # The tap pulls instead: berkayturanci/homebrew-keel runs a scheduled
-        # workflow that fetches this formula, resolves its url, re-hashes the
-        # artifact, and commits when they differ. Reading a public repo needs no
-        # credential, and the token that writes the tap is the tap's own.
-        #
-        # This step only reports where the tap currently stands, so the release
-        # log says whether it is already current or will catch up shortly. It
-        # cannot fail the release: a tap a few minutes behind still installs, and
-        # the step above already refused to release a formula that does not hash
-        # to its own tarball.
-        run: |
-          set -euo pipefail
-          curl -fsSL -H "Accept: application/vnd.github.raw" \
-            "https://api.github.com/repos/berkayturanci/homebrew-keel/contents/Formula/keel.rb" \
-            -o /tmp/tap-keel.rb || { echo "::notice::could not read the tap; it syncs on its own schedule"; exit 0; }
-          if diff -q Formula/keel.rb /tmp/tap-keel.rb >/dev/null; then
-            echo "tap is already serving this formula"
-          else
-            echo "::notice::tap is behind; its scheduled sync will pick this up within ~30 minutes."
-            echo "To publish immediately: gh workflow run 'Sync formula from keel' --repo berkayturanci/homebrew-keel"
-          fi
+          echo "::notice::the tap is behind; its scheduled sync pulls this release's keel.rb asset within ~30 minutes."
+          echo "To publish immediately: gh workflow run sync-formula.yml --repo ${tap}"
