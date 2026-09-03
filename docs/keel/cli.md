@@ -116,6 +116,21 @@ keel claim merge --owner "ship-pr-123" --root . --json
 keel release merge --owner "ship-pr-123" --root .
 ```
 
+## `keel release RESOURCE [--owner ID] [--root DIR] [--json]`
+
+Release the claim `keel claim` took. `--owner` scopes the release to one holder; omitting
+it is the deliberate any-owner escape for clearing a claim whose holder is gone.
+
+```bash
+keel release merge --owner "ship-pr-123" --root .
+keel release merge --root . --json      # clear a stuck claim, whoever holds it
+```
+
+Exit 0 covers two statuses, because both are the state the caller asked for: `released`,
+and `missing` — releasing a resource nobody holds is not a failure. A named `--owner` that
+does not match the recorded holder exits 1 with status `not-owner` and reports the holder;
+an *unidentifiable* holder refuses a named release the same way.
+
 ## `keel guard <project.yaml> [--issue NUMBER] [--issue-title TITLE] [--issue-labels L1,L2] [--root DIR] [--json]`
 
 Evaluate an issue against the **deterministic blocker ruleset** and report which
@@ -515,6 +530,48 @@ checks: `emit-capture-marker`, `run-capture-extension`, `post-closure-summary`,
 `policy_pack.capture.mode: marker-only` plans an `applied` core marker without requiring a
 project capture extension. Ambiguous linked issues or invalid/duplicate existing markers
 block the plan instead of guessing.
+
+## `keel close-reconcile <project.yaml> --issue N [--issue N …] [--root DIR] [--ledger-jsonl FILE] [--offline] [--closed] [--status-done] [--json]`
+
+Flag issues that were closed — or labelled done — without a ledger record attesting a
+merge. Closing an issue is the cheap half of the workflow and the ledger is the expensive
+half; when they disagree, the issue is the one that lied.
+
+```bash
+keel close-reconcile .keel/project.yaml --root . --issue 123 --issue 124
+keel close-reconcile .keel/project.yaml --root . --issue 123 --json
+```
+
+Live is the default: the issue's closed/label state is read from `gh`, and the
+merge-attesting `ship_run` records come from the ledger configured under `--root`.
+`--ledger-jsonl` substitutes a JSONL fixture for that read. `--offline` makes no `gh`
+call at all and uses only the supplied `--closed` / `--status-done` flags, which apply to
+every `--issue` — that pair is for tests and back-compat, since live mode reads
+host-authoritative state. The done label comes from
+`policy_pack.status_transitions.done`, falling back to keel's default.
+
+Exit 1 on any finding (and on a missing/invalid config or an unreadable ledger); 0 when
+every observed issue is consistent with the ledger.
+
+## `keel dryrun-verify <project.yaml> --run-id ID --issue N --before-json FILE [--root DIR] [--after-json FILE] [--json]`
+
+Assert, after the fact, that a dry run left nothing behind: no new ledger record, no new
+branch, no new PR. A dry run that mutates is the one failure a dry run cannot self-report.
+
+```bash
+keel dryrun-verify .keel/project.yaml --root . \
+  --run-id ship-123-rehearsal --issue 123 --before-json before.json
+```
+
+`--before-json` is a snapshot captured **before** the rehearsal:
+`{"ledger_run_ids": [...], "branches": [...], "pr_numbers": [...]}`. The after-snapshot is
+gathered live by default — ledger run ids from the configured ledger, branches from
+`git for-each-ref`, PRs from `gh pr list` scoped to the issue's ship-branch pattern — and
+`--after-json` supplies it offline instead.
+
+The after read is **fail-closed**: a corrupt ledger or a failed `git`/`gh` read exits 1
+rather than reporting a clean diff, because an empty-on-error snapshot would mask a real
+leak (`after − before = ∅`). Exit 1 on any leak, 0 when the rehearsal left no trace.
 
 ## `keel evidence-verify <project.yaml> --pr <N> [--issue <N>] [--json]`
 
@@ -994,6 +1051,35 @@ run-gates` (s8), and `keel merge` (s10) — so a run shows up and advances **sta
 merge** even if the per-phase `keel activity` calls never run. Use `keel activity` directly
 to fill in the **middle** phases (s1–s7, s9, s11–s12) or for the non-ship flows that stamp
 every phase as they go.
+
+## `keel scratch-dir [--root DIR] [--no-create]`
+
+Print the keel-owned scratch directory for transient artifacts, creating it (with its
+gitignore) unless `--no-create`. Adapters wire it as `SCRATCH=$(keel scratch-dir)` so PR
+diffs, issue dumps and draft prose land under `.keel/scratch` instead of the consumer's
+checkout.
+
+```bash
+SCRATCH=$(keel scratch-dir --root .)
+keel scratch-dir --root . --no-create      # just the path
+```
+
+Prints one line — the absolute path — and always exits 0.
+
+## `keel gc <project.yaml> [--root DIR] [--keep-activity N] [--no-scratch] [--no-activity] [--dry-run] [--json]`
+
+Reclaim keel's own disposable runtime artifacts: empty `.keel/scratch`, prune
+`.keel/activity` to the newest `--keep-activity` records (default 50). The run ledger, the
+checkpoint and the locks are durable or self-bounded and are never touched.
+
+```bash
+keel gc .keel/project.yaml --root . --dry-run
+keel gc .keel/project.yaml --root . --keep-activity 100 --json
+```
+
+Fail-soft by design: a failure on one tree degrades to a no-op reported under `degraded`
+(and on stderr) while the other still runs — taking out the trash must never abort a
+caller. Exit 1 only when the config is missing or invalid; otherwise 0, degraded or not.
 
 ## `keel morning <project.yaml> [--root DIR] [--since WHEN] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--json]`
 
@@ -1713,6 +1799,53 @@ The JSON result records the configured workflow map, latest-run context shape, a
 transport, supported diagnostic classifications, one-fix policy, and next-command
 recommendations.
 
+## `keel canary <project.yaml> [--root DIR] [--pr N] [--commit SHA] [--duration M] [--health-cmd CMD] [--auto-revert] [--json]`
+
+Run the post-merge health probe and, optionally, revert on a regression. The probe is
+`--health-cmd`, falling back to `knobs.build_gate_cmd` and then to `make test`.
+
+```bash
+keel canary .keel/project.yaml --root . --pr 456
+keel canary .keel/project.yaml --root . --commit 0d9ad10 --auto-revert --json
+```
+
+`--pr` and `--commit` only name the target in the report, with one exception: `--auto-revert`
+reverts nothing unless `--commit` names the merge commit to revert — there is no inference
+from a PR number, because reverting the wrong commit is worse than not reverting.
+`--duration` is accepted and currently inert: the probe runs once, and the flag is
+reserved for the sustained-monitoring shape rather than pretending to implement it.
+
+Exit 0 when the probe passes (`status: healthy`), 1 when it fails
+(`status: regression_detected`, with `reverted` and `revert_commit` recording what the
+rollback did) or when the config cannot be loaded.
+
+## `keel rollback COMMIT [--root DIR] [--json]`
+
+Atomically revert one merge commit.
+
+```bash
+keel rollback 0d9ad10 --root . --json
+```
+
+`git revert --no-edit -m 1 <sha>` first, since the target is normally a merge commit;
+a single-parent revert is the fallback. If both fail the command runs `git revert --abort`
+so the working tree is left clean rather than mid-revert, and reports the git output as
+`error`. On success the new revert commit's SHA is reported as `revert_sha`.
+
+Exit 0 when the revert commit was created, 1 otherwise.
+
+## `keel cost-report [--root DIR] [--json]`
+
+Report token consumption, estimated USD cost and per-model analytics from the activity
+records under `.keel/activity`. It takes **no** project.yaml — the records are the input.
+
+```bash
+keel cost-report --root . --json
+```
+
+A missing or empty activity directory is an empty report, not an error: a project that has
+not stamped any activity has spent nothing keel can see. Always exits 0.
+
 ## `keel init [--root DIR] [--force] [--wizard] [--auto]`
 
 Scaffold a default `.keel/project.yaml` for the repo. keel detects the stack from marker
@@ -1866,6 +1999,50 @@ and verified with `keel validate .keel/project.yaml --root .` plus
 Extension schema migrations are separate from adapter command updates and must be documented
 as their own versioned migration.
 
+## `keel adapter-status [TARGET] [--root DIR] [--include-unmanaged] [--json]`
+
+Report generated-adapter freshness plus orphan / unmanaged surface findings. `TARGET` is
+`all` (default) or one of `claude`, `skills`, `legacy-claude`. The status vocabulary and
+the orphan/unmanaged split are described under
+[`keel install-adapter`](#keel-install-adapter-target---root-dir---force) above.
+
+```bash
+keel adapter-status all --root .
+keel adapter-status all --root . --include-unmanaged --json
+```
+
+Advisory only: keel never deletes a file and no finding here gates a run. Exit 1 only on an
+unknown target; otherwise 0, findings or not.
+
+## `keel update-adapter [TARGET] [--root DIR] [--dry-run]`
+
+Safely refresh generated adapters from the installed keel package. `TARGET` is `all`
+(default), `claude` or `skills`.
+
+```bash
+keel update-adapter all --root . --dry-run
+keel update-adapter all --root .
+```
+
+Updates `missing` and `outdated` files only, and refuses to overwrite `locally-modified` or
+`unknown` ones — those need a human merge. Exit 1 only on an unknown target.
+
+## `keel sync [--root DIR] [--target all|claude|skills] [--dry-run]`
+
+The everyday short name for `update-adapter all`, plus the orphan heads-up and the
+follow-up commands.
+
+```bash
+pipx upgrade keel-workflow
+keel sync --root . --dry-run
+keel sync --root .
+```
+
+`sync` uses the keel package already installed in the active environment: it does not
+contact PyPI, choose a version, or change the installation — upgrade `keel-workflow` with
+`pipx`/`pip` first. After a successful sync it prints the orphan count when there is one
+and recommends `keel validate` / `keel plan`. Same exit codes as `update-adapter`.
+
 ## `keel install-legacy-wrappers <target> [--root DIR] [--command LEGACY=KEEL]`
 
 Install thin compatibility shims for old command names after the parity matrix proves that
@@ -1896,14 +2073,18 @@ behavior, and issue/PR targeting, then delegates to the installed keel adapter. 
 files carry a `keel-generated` marker on the `legacy-*` surfaces so adapter updates and local
 compatibility shims remain distinguishable.
 
-## `keel swarm-plan <project.yaml> [issues...] [--root DIR] [--tree] [--landing {batch,funnel,auto}] [--rebalance] [--json]`
+## `keel swarm-plan <project.yaml> [--issues N,N,…] [--issue N] [--declared-file PATH] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--swarm-id ID] [--tree] [--json]`
 
 Perform deterministic static dependency analysis, scope prediction, conflict matrix calculation,
 and wave tier partitioning across a list of backlog issues without mutating git or spawning workers.
 
+The issues are named by flag, not as positionals: `--issues` takes one comma-separated list and
+`--issue` is repeatable. Planning is pure — it reads no repository state — so `swarm-plan` has no
+`--root`.
+
 ```bash
-keel swarm-plan .keel/project.yaml --root . 714 715 716 717 --tree
-keel swarm-plan .keel/project.yaml --root . 714 715 716 717 --json
+keel swarm-plan .keel/project.yaml --issues 714,715,716,717 --tree
+keel swarm-plan .keel/project.yaml --issue 714 --issue 715 --json
 ```
 
 Use `--tree` to render an interactive ASCII DAG execution diagram directly in your terminal.
@@ -1918,25 +2099,32 @@ keel swarm-status .keel/project.yaml --root .
 keel swarm-status .keel/project.yaml --root . --swarm-id swarm-2026-08-15 --json
 ```
 
-## `keel swarm-run <project.yaml> [issues...] [--root DIR] [--swarm-id ID] [--rebalance] [--json]`
+## `keel swarm-run <project.yaml> [--root DIR] [--issues N,N,…] [--issue N] [--swarm-id ID] [--max-workers N] [--live] [--tree] [--json]`
 
 Launch parallel workers per cluster in dedicated git worktrees under `.keel/worktrees/swarm/`:
 
 ```bash
-keel swarm-run .keel/project.yaml --root . 714 715 716 717 --rebalance
+keel swarm-run .keel/project.yaml --root . --issues 714,715,716,717
+keel swarm-run .keel/project.yaml --root . --issues 714,715,716,717 --live --max-workers 2
 ```
 
-Each worker runs the standard `keel ship` backbone machine in its isolated worktree. If runtime
-file modification divergence is detected, `--rebalance` partitions the conflicting worker to
-subsequent waves.
+Each worker runs the standard `keel ship` backbone machine in its isolated worktree. Issues are
+named by `--issues` / `--issue`, as for `swarm-plan`. Rebalancing across waves is decided by the
+plan, not by a flag: when runtime file-modification divergence is detected the conflicting worker
+is partitioned to a later wave.
 
-## `keel swarm-land <project.yaml> [--root DIR] [--swarm-id ID] [--mode {batch,funnel,auto}] [--json]`
+## `keel swarm-land <project.yaml> [--root DIR] [--wave N] [--issues N,N,…] [--issue N] [--swarm-id ID] [--live] [--json]`
 
 Land passing cluster branches from completed execution waves into `main` under atomic `merge_lock`:
 
 ```bash
-keel swarm-land .keel/project.yaml --root . --mode auto
+keel swarm-land .keel/project.yaml --root . --wave 1
+keel swarm-land .keel/project.yaml --root . --wave 1 --live
 ```
+
+The landing mode is **derived, not chosen**: `evaluate_wave_landing_mode` reads the wave's diff
+map and picks batch or funnel, so there is no `--mode` flag to get wrong. `--wave` selects the
+wave (default `1`); without `--live` the command reports what it would land.
 
 - **Direct Batch Mode**: Orthogonal disjoint diff trees land concurrently.
 - **Adaptive Funnel Mode**: Overlapping trees land sequentially with automatic fail-soft rebase healing.

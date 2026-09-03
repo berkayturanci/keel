@@ -50,7 +50,7 @@ keel validate .keel/project.yaml --root .                 # abort if config/exte
 keel plan     .keel/project.yaml --root .                 # base_branch, ci_workflows, tier3_globs, gates
 keel plan     .keel/project.yaml --root . --command review-all-day --live --json
 keel review-all-day .keel/project.yaml 1 --root . --live --json
-keel window   .keel/project.yaml --root .                 # window state in the project timezone
+keel window   .keel/project.yaml                          # window state in the project timezone
 ```
 
 The live review-all-day contract is the operator-consent preflight and includes

@@ -53,7 +53,7 @@ keel validate .keel/project.yaml --root .                 # abort if config/exte
 keel plan     .keel/project.yaml --root .                 # base_branch, ci_workflows, tier3_globs, gates
 keel plan     .keel/project.yaml --root . --command review-all-day --live --json
 keel review-all-day .keel/project.yaml 1 --root . --live --json
-keel window   .keel/project.yaml --root .                 # window state in the project timezone
+keel window   .keel/project.yaml                          # window state in the project timezone
 ```
 
 The live review-all-day contract is the operator-consent preflight and includes
@@ -275,4 +275,4 @@ Always print the final report on exit, even if partial.
 - Fail-soft (a missing tool/gate degrades to a skipped check, never aborts) · deterministic
   ordering (same commits ⇒ same findings ⇒ same issues).
 
-<!-- keel-generated: surface=skills command=review-all-day keel_version=1.19.3 source_sha256=a869b7917f756a31b726c0bff423cf44cbed7573cd4eaf66e3dfb2ab09cf28eb generated_sha256=f7807345c19b1d7b9b2c0816576d5cbd6b2a93e547d2c6dcc3008c6749adee2b -->
+<!-- keel-generated: surface=skills command=review-all-day keel_version=1.19.3 source_sha256=daa2ae8e9be63e205e1901a34be787929fd0ffcd6d66e34decde9c88515ac455 generated_sha256=c769aa3134cc583c1393f62c4a6d5a605953c8fa2bb8abd2b02141d0d5186230 -->

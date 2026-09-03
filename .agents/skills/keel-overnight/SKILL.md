@@ -52,7 +52,7 @@ policy).
 keel validate .keel/project.yaml --root .
 keel plan     .keel/project.yaml --root .
 keel plan     .keel/project.yaml --root . --command overnight --live --json
-keel window   .keel/project.yaml --root .   # OPEN (merge-as-you-go) or CLOSED (no-merge)
+keel window   .keel/project.yaml   # OPEN (merge-as-you-go) or CLOSED (no-merge)
 ```
 
 The live plan is the operator-consent preflight. Before selecting work, spawning
@@ -203,4 +203,4 @@ When stopped, write the session report immediately, even if partial.
 Never merge outside the window · merge lock · fail-soft per issue (one failure
 never aborts the loop) · attribute the effective agents (vendor + base model).
 
-<!-- keel-generated: surface=skills command=overnight keel_version=1.19.3 source_sha256=1ccc85b63576106f661e9fe7efbef62296c783a08276075692294caa72486ffb generated_sha256=93d3af553cd96ad795ba40e0731fb10099813d6754523a9f43c39d64ce54b047 -->
+<!-- keel-generated: surface=skills command=overnight keel_version=1.19.3 source_sha256=a2a44fc92eb7f6f27d7e3ec01eb7b333524761f73d2c4365b3a6697582f71934 generated_sha256=cbe493f2bcc53e21031cb9206cc69afb7988f4696cb11cd3560d624743a366d5 -->
