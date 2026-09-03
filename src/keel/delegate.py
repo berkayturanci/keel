@@ -93,8 +93,9 @@ AGY_STREAM_ARGS = ("--input-format", "stream-json", "--output-format", "stream-j
 
 #: The only tools a read-only ``claude`` invocation may use. An **allow-list**: a denylist
 #: of write tools has to be extended every time the CLI grows one, and is wrong in the
-#: window before someone notices. Reading a diff needs no more than these four.
-CLAUDE_ALLOWED_TOOLS = "Read,Grep,Glob,LS"
+#: window before someone notices. Reading a diff needs no more than these three — ``Glob``
+#: is how the current CLI lists a directory, so there is no separate listing tool to name.
+CLAUDE_ALLOWED_TOOLS = "Read,Grep,Glob"
 
 #: How ``codex`` spells reasoning effort. Not a flag on the shipped CLI (0.152.1) — it is
 #: a config override, and an unknown key is rejected under ``--strict-config``, which is

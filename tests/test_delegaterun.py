@@ -429,9 +429,11 @@ class DetachLifecycleTest(unittest.TestCase):
             self.assertEqual(record["pid"], 4242)
             self.assertIsNone(record["result"])
             self.assertTrue(popen.calls[0][1]["start_new_session"])
-            on_disk = delegaterun.load_state(root, "r1")
-            self.assertEqual(on_disk, record)
             self.assertTrue(Path(record["out_path"]).exists())
+            # The pid lives beside the record, never in it: two writers, one file each.
+            self.assertNotIn("pid", delegaterun.load_state(root, "r1"))
+            self.assertEqual(delegaterun.read_pid(root, "r1"), 4242)
+            self.assertEqual(delegaterun.run_record(root, "r1"), record)
 
     def test_the_child_overwrites_the_record_with_its_result(self):
         with tempfile.TemporaryDirectory() as root:
@@ -439,7 +441,7 @@ class DetachLifecycleTest(unittest.TestCase):
             run = _Recorder(CommandResult(True, 0, "done", stdout="done"))
             result = delegaterun.execute(_plan("claude"), _run=run, _read=_read)
             delegaterun.finish_detached(root, "r1", result)
-            record = delegaterun.load_state(root, "r1")
+            record = delegaterun.run_record(root, "r1")
             self.assertEqual(record["status"], "done")
             self.assertEqual(record["pid"], 4242)
             self.assertTrue(record["result"]["ok"])
@@ -469,6 +471,20 @@ class DetachLifecycleTest(unittest.TestCase):
             record = delegaterun.start_detached(
                 ["nope"], root=root, run_id="r1", _popen=_FakePopen()
             )
+            self.assertEqual(record["result"]["error_code"], "spawn-failed")
+
+    def test_an_unwritable_root_is_a_contract_not_a_traceback(self):
+        with tempfile.TemporaryDirectory() as root:
+            with patch.object(delegaterun.Path, "mkdir", side_effect=PermissionError("denied")):
+                record = delegaterun.start_detached([], root=root, run_id="r1", _popen=_FakePopen())
+            self.assertEqual(record["status"], "done")
+            self.assertEqual(record["result"]["error_code"], "spawn-failed")
+            self.assertIn("denied", record["result"]["error"])
+
+    def test_a_root_that_cannot_hold_the_record_still_returns_the_contract(self):
+        with tempfile.TemporaryDirectory() as root:
+            with patch.object(delegaterun, "write_state", side_effect=OSError("read-only fs")):
+                record = delegaterun.start_detached([], root=root, run_id="r1", _popen=_FakePopen())
             self.assertEqual(record["result"]["error_code"], "spawn-failed")
 
     def test_start_detached_refuses_an_unsafe_run_id(self):
@@ -716,16 +732,80 @@ class LostUpdateTest(unittest.TestCase):
             self.assertIsNotNone(seen["record"])
             self.assertEqual(seen["record"]["status"], "running")
 
-    def test_a_guarded_merge_leaves_a_finished_record_alone(self):
-        with tempfile.TemporaryDirectory() as root:
-            delegaterun.finish_detached(root, "r1", {"ok": True})
-            merged = delegaterun._merge_while_running(root, "r1", {"pid": 99})
-            self.assertEqual(merged["status"], "done")
-            self.assertIsNone(merged.get("pid"))
+    def test_the_parent_never_writes_the_record_after_spawning(self):
+        """The reason the pid is a separate file rather than a guarded merge.
 
-    def test_a_guarded_merge_on_a_missing_record_is_a_no_op(self):
+        Any read-check-write from the parent is a race: the child's terminal record can
+        land between the read and the write, and the parent puts `running` back over the
+        result the caller is waiting for. Here the parent's post-spawn write goes to a
+        different file, so there is no window to lose.
+        """
         with tempfile.TemporaryDirectory() as root:
-            self.assertIsNone(delegaterun._merge_while_running(root, "absent", {"pid": 99}))
+            writes = []
+            real = delegaterun.write_state
+
+            def spy(target_root, record):
+                writes.append(record["status"])
+                return real(target_root, record)
+
+            class _FinishingPopen(_FakePopen):
+                def __call__(self, argv, **kwargs):
+                    delegaterun.finish_detached(root, "r1", {"ok": True, "text": "fast"})
+                    return super().__call__(argv, **kwargs)
+
+            with patch.object(delegaterun, "write_state", spy):
+                delegaterun.start_detached([], root=root, run_id="r1", _popen=_FinishingPopen())
+            # exactly one record write from the parent, and it happened before the spawn
+            self.assertEqual(writes, ["running", "done"])
+            record = delegaterun.run_record(root, "r1")
+            self.assertEqual(record["status"], "done")
+            self.assertEqual(record["result"]["text"], "fast")
+            self.assertEqual(record["pid"], 4242)
+
+    def test_an_unreadable_pid_file_reads_as_no_pid_rather_than_raising(self):
+        with tempfile.TemporaryDirectory() as root:
+            delegaterun.state_dir(root).mkdir(parents=True)
+            delegaterun.pid_path(root, "r1").write_text("not a number", encoding="utf-8")
+            self.assertIsNone(delegaterun.read_pid(root, "r1"))
+            self.assertIsNone(delegaterun.read_pid(root, "absent"))
+            self.assertIsNone(delegaterun.read_pid(root, "../escape"))
+
+    def test_a_pid_that_cannot_be_written_does_not_fail_the_spawn(self):
+        with tempfile.TemporaryDirectory() as root:
+            with patch.object(delegaterun.workspace, "write_text_atomic", side_effect=OSError):
+                delegaterun.write_pid(root, "r1", 7)
+            self.assertIsNone(delegaterun.read_pid(root, "r1"))
+
+    def test_run_record_on_a_missing_run_is_none(self):
+        with tempfile.TemporaryDirectory() as root:
+            self.assertIsNone(delegaterun.run_record(root, "absent"))
+
+
+class ReapTest(unittest.TestCase):
+    def _start(self, root, run_id):
+        return delegaterun.start_detached([], root=root, run_id=run_id, _popen=_FakePopen())
+
+    def test_reaping_marks_every_run_that_can_no_longer_finish(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._start(root, "gone")
+            self._start(root, "alsogone")
+            delegaterun.finish_detached(root, "finished", {"ok": True})
+            reaped = delegaterun.reap_abandoned(root, _alive=lambda _pid: False)
+            self.assertEqual(sorted(reaped), ["alsogone", "gone"])
+            statuses = {r["run_id"]: r["status"] for r in delegaterun.list_runs(root)}
+            self.assertEqual(
+                statuses, {"alsogone": "crashed", "finished": "done", "gone": "crashed"}
+            )
+
+    def test_reaping_leaves_a_live_run_alone(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._start(root, "alive")
+            self.assertEqual(delegaterun.reap_abandoned(root, _alive=_ALIVE), [])
+            self.assertEqual(delegaterun.load_state(root, "alive")["status"], "running")
+
+    def test_reaping_an_empty_root_is_a_no_op(self):
+        with tempfile.TemporaryDirectory() as root:
+            self.assertEqual(delegaterun.reap_abandoned(root, _alive=_ALIVE), [])
 
 
 class DocumentShapeTest(unittest.TestCase):

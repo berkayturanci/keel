@@ -377,8 +377,9 @@ Resolve the implementer: `implementer_agents` by the issue's role label, **overr
   warning instead of silently running at its default.
 - **Configured providers.** A `knobs.delegate_profiles` entry (`vendor: cli` or
   `vendor: openai-compatible`) and a `~/.keel/providers.yaml` entry are resolved by name,
-  precedence **project profile > registry > built-in**; a profile may not shadow a
-  built-in vendor and that is a `keel validate` error, never a silent override. Two rules
+  precedence **built-in > project profile > registry**: a built-in vendor always wins and
+  may not be redefined — a profile that shadows one is a `keel validate` error and a
+  registry entry that does is a `keel doctor --providers` error, never a silent override. Two rules
   hold for an `openai-compatible` endpoint, because config is the surface an attacker
   would influence: **(1) the endpoint is loopback-only by default** — a non-loopback host,
   including cloud-metadata addresses like `169.254.169.254`, is a `keel validate` error
@@ -546,7 +547,10 @@ The read-only role is a policy core enforces where it can and reports where it c
 the result tells you which: **`read_only` is the role you asked for, `read_only_backed` is
 whether anything enforces it.** For the three built-in CLI vendors it is backed — the
 invocation carries the vendor's documented read-only mechanism and no write-enabling flag,
-asserted per vendor in keel's own tests. A **`knobs.delegate_profiles` (or registry)
+asserted per vendor in keel's own tests. Two of the three carry no permission bypass
+either; `agy` is the exception, because its sandbox is the only read-only mechanism it
+documents and it still needs the non-interactive flag to run unattended, so its promise
+rests on the sandbox alone. A **`knobs.delegate_profiles` (or registry)
 reviewer is the one case keel cannot make read-only for you**: a profile is an arbitrary
 binary, the same `command` serves both roles, and its `args` typically carry the
 *implementer's* write-enabling flags (`aider`'s `--yes-always`, `cursor-agent`'s

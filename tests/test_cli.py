@@ -12886,14 +12886,18 @@ class DelegateCommandTest(unittest.TestCase):
             delegaterun.finish_detached(root, "gone", {"ok": True})
             delegaterun.finish_detached(root, "bad", {"ok": False})
 
-            rc, out, _err = run(["delegate", "status", "--root", root])
+            # `alive` has a fake pid, so status must be told the child is live or its
+            # own reaping (correctly) marks it crashed.
+            with patch("keel.delegaterun.process_is_alive", return_value=True):
+                rc, out, _err = run(["delegate", "status", "--root", root])
             self.assertEqual(rc, 0)
             self.assertIn("alive  running", out)
             self.assertNotIn("crashed", out)
             self.assertIn("gone  done ok", out)
             self.assertIn("bad  done failed", out)
 
-            rc, out, _err = run(["delegate", "status", "--root", root, "--json"])
+            with patch("keel.delegaterun.process_is_alive", return_value=True):
+                rc, out, _err = run(["delegate", "status", "--root", root, "--json"])
             self.assertEqual(rc, 0)
             document = json.loads(out)
             self.assertEqual(document["total"], 3)
@@ -12911,6 +12915,37 @@ class DelegateCommandTest(unittest.TestCase):
             rc, out, _err = run(["delegate", "status", "--root", root])
         self.assertEqual(rc, 0)
         self.assertIn("ghost  crashed lost", out)
+
+    def test_status_reaps_a_killed_run_nobody_waited_on(self):
+        """Status is the view an operator opens *because* they are not waiting."""
+        with tempfile.TemporaryDirectory() as root:
+            from keel import delegaterun
+
+            with patch("keel.delegaterun.subprocess.Popen") as popen:
+                popen.return_value.pid = 424243
+                run(
+                    [
+                        "delegate",
+                        "run",
+                        "--provider",
+                        "claude",
+                        "--role",
+                        "review",
+                        "--prompt-file",
+                        self._prompt(),
+                        "--root",
+                        root,
+                        "--run-id",
+                        "killed",
+                        "--detach",
+                    ]
+                )
+            self.assertEqual(delegaterun.load_state(root, "killed")["status"], "running")
+            with patch("keel.delegaterun.process_is_alive", return_value=False):
+                rc, out, _err = run(["delegate", "status", "--root", root])
+        self.assertEqual(rc, 0)
+        self.assertIn("killed  crashed lost", out)
+        self.assertNotIn("running", out)
 
     def test_status_on_a_root_with_no_runs_says_so(self):
         with tempfile.TemporaryDirectory() as root:

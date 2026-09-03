@@ -495,8 +495,13 @@ def plan_probes(config, registry: Registry | None = None) -> tuple[Provider, ...
     Built-ins first (dispatch order: CLI, local, hosted API), then this project's
     profiles, then the machine-level registry. A registry entry whose name clashes is
     **dropped** here rather than silently overriding: precedence is
-    *project profile > registry > built-in*, and :func:`registry_clashes` reports the
-    clash so the operator sees why the entry is missing.
+    *built-in > project profile > registry*, and :func:`registry_clashes` reports the
+    clash so the operator sees why the entry is missing. That is the same order
+    :func:`keel.delegate.resolve_provider` dispatches on, and the same invariant
+    :func:`keel.agents.resolve_delegate_profile` states — a built-in vendor always wins
+    and may not be redefined, by a committed profile or by a file in ``$HOME``. Below the
+    built-ins the project's own profiles win over the machine-level registry, so a
+    repository can pin the provider its team shares.
     """
     registry = Registry(path="") if registry is None else registry
     providers = list(builtin_providers())

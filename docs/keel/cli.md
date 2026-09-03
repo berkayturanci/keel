@@ -1344,9 +1344,11 @@ where the model lands**:
 
 For the three built-in CLIs the read-only invocation carries no write-enabling flag, and
 that is asserted per vendor in `tests/test_delegate.py`. `claude` runs read-only under an
-**allow-list** (`--allowed-tools Read,Grep,Glob,LS`) and no permission bypass: a denylist
+**allow-list** (`--allowed-tools Read,Grep,Glob`) and no permission bypass: a denylist
 has to be extended every time the CLI grows a tool and is wrong in the window before
-someone notices, while an allow-list refuses a new tool on the day it appears.
+someone notices, while an allow-list refuses a new tool on the day it appears. `agy` is
+the one built-in that still needs its non-interactive permission flag — `--sandbox` is
+the only read-only mechanism it documents — so its promise rests on the sandbox alone.
 
 keel cannot *enforce* read-only for an arbitrary binary, so the result reports both
 `read_only` (the role you asked for) and **`read_only_backed`** (whether anything enforces
@@ -1433,14 +1435,16 @@ keel delegate wait impl-1012 --root . --timeout 3600
 ```
 
 The state file `.keel/state/delegate/<run-id>.json` is **authoritative** — `{run_id,
-provider, role, pid, started_at, timeout, deadline_at, status: running|done|crashed,
-result}`, alongside `<run-id>.out` holding the child's stdout and stderr. The parent writes
-the `running` record **before** spawning, so a `wait` issued immediately afterwards always
-finds a file, and merges the pid in afterwards under a guard that never overwrites a
-terminal record — otherwise a child that finished during the spawn would have its result
-erased. Because the *result* only ever comes from the file, it survives the caller exiting,
-the session ending, and a reboot. `.keel/state/` is gitignored, so nothing here is ever
-committed.
+provider, role, started_at, timeout, deadline_at, status: running|done|crashed, result}`,
+alongside `<run-id>.out` for the child's stdout and stderr and `<run-id>.pid` for its pid.
+The parent writes the `running` record **before** spawning, so a `wait` issued immediately
+afterwards always finds a file, and then never touches it again: the pid goes to its own
+file. Two writers, one file each. A guarded read-check-write from the parent would still
+have been a race — the child's terminal record can land between the read and the write,
+putting `running` back over the result the caller is waiting for — and separate files
+close the window entirely. Because the *result* only ever comes from the record, it
+survives the caller exiting, the session ending, and a reboot. `.keel/state/` is
+gitignored, so nothing here is ever committed.
 
 **Always pass `--timeout` to `run`.** It is stamped into the record as `deadline_at`
 (plus a grace window for the child's final write). Together with a liveness check on the
@@ -1453,8 +1457,10 @@ file that holds whatever the child managed to print.
 `keel delegate wait` prints the same JSON contract as a foreground run. It exits `1` when
 the run failed, when the run was lost, when it did not finish within `--timeout`, and —
 failing closed — when the run id is unknown (`unknown-run`), so a mistyped id is an
-immediate error rather than a wait that can only time out. `keel delegate status` lists the
-runs under the state directory, as a table or, with `--json`, as a document. A run id may
+immediate error rather than a wait that can only time out. `keel delegate status` lists the runs under the
+state directory, as a table or, with `--json`, as a document, and applies the **same
+liveness and deadline test** first — otherwise the view an operator opens precisely
+because they are *not* waiting would be the one that never notices a killed child. A run id may
 contain only letters, digits, `.`, `_` and `-`: it becomes a file name, and anything else
 is refused rather than normalized.
 

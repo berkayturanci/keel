@@ -4717,6 +4717,10 @@ def _cmd_delegate_wait(args: argparse.Namespace) -> int:
 
 
 def _cmd_delegate_status(args: argparse.Namespace) -> int:
+    # Status reaps too, on the same liveness + deadline test `wait` uses. Otherwise the
+    # one view an operator opens *because* they are not waiting is the one that keeps
+    # reporting a killed child as running.
+    delegaterun.reap_abandoned(args.root)
     records = delegaterun.list_runs(args.root)
     if args.json:
         print(

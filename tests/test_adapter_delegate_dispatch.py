@@ -58,6 +58,13 @@ _MUST_DISPATCH = ("ship.md", "implement.md", "review-cycle.md")
 #: What an orchestrator must be told to use instead of polling.
 _WAIT_COMMAND = "keel delegate wait"
 
+#: Prose that contradicts the code. The resolution order was inverted in four places at
+#: once — the adapter source, its three generated copies, `providers.plan_probes` and
+#: `configuration.md` — because each restated it in its own words rather than pointing at
+#: one place. An operator who reads any of them and lets a registry entry shadow `claude`
+#: gets a `keel doctor --providers` error they were told to expect to work.
+_STALE_PRECEDENCE = re.compile(r"profile\s*>\s*(?:machine\s+)?registry\s*>\s*built-in")
+
 #: Fields of the return contract an adapter must actually name, because reading the wrong
 #: one is a silent failure rather than an error. `read_only` alone reports the role that
 #: was *asked for*; only `read_only_backed` says whether anything enforces it.
@@ -93,6 +100,14 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
                 if path.name == name or path.parent.name.endswith(name[:-3]):
                     with self.subTest(path=str(path.relative_to(REPO_ROOT))):
                         self.assertIn(_DISPATCH_COMMAND, path.read_text(encoding="utf-8"))
+
+    def test_no_adapter_states_the_inverted_resolution_order(self):
+        offenders = [
+            str(path.relative_to(REPO_ROOT))
+            for path in _adapter_files()
+            if _STALE_PRECEDENCE.search(path.read_text(encoding="utf-8"))
+        ]
+        self.assertEqual([], offenders, "resolution order is built-in > profile > registry")
 
     def test_a_dispatching_adapter_names_the_field_that_gates_a_reviewer(self):
         for name in _MUST_DISPATCH:

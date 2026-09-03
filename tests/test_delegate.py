@@ -9,6 +9,8 @@ write-enabling flag* — be asserted per vendor rather than written down in pros
 from __future__ import annotations
 
 import dataclasses
+import pathlib
+import re
 import unittest
 
 from keel import agents, delegate, providers
@@ -833,6 +835,41 @@ class ProviderConfiguredEffortTest(unittest.TestCase):
         plan = delegate.plan_run(provider, "review", PROMPT, model="gemini-3")
         self.assertEqual(plan.model, "gemini-3-high")
         self.assertTrue(plan.effort_applied)
+
+
+class ResolutionOrderIsStatedOnceTest(unittest.TestCase):
+    """The docs and the core must not restate the order in contradictory words.
+
+    Round 1 fixed the code and two documents; the adapter source, its three generated
+    copies, `providers.plan_probes` and `configuration.md` kept the inverted order. Every
+    one of them was a separate restatement, which is why fixing one did not fix the rest.
+    """
+
+    _STALE = re.compile(r"profile\s*>\s*(?:machine\s+)?registry\s*>\s*built-in")
+    #: The qualifiers vary by audience ("machine registry" in a guide, plain "registry" in
+    #: a docstring); the ORDER is what may not vary.
+    _STATED = re.compile(
+        r"built-in(?:\s+vendor)?\s*>\s*project\s+profile\s*>\s*(?:machine\s+)?registry"
+    )
+    _PATHS = (
+        "src/keel/providers.py",
+        "src/keel/delegate.py",
+        "docs/keel/configuration.md",
+        "docs/keel/models.md",
+        "src/keel/adapters/commands/ship.md",
+    )
+
+    def _read(self, name):
+        return pathlib.Path(__file__).resolve().parents[1].joinpath(name).read_text("utf-8")
+
+    def test_nothing_states_the_inverted_order(self):
+        offenders = [name for name in self._PATHS if self._STALE.search(self._read(name))]
+        self.assertEqual([], offenders)
+
+    def test_every_statement_of_the_order_matches_the_resolver(self):
+        for name in self._PATHS:
+            with self.subTest(path=name):
+                self.assertRegex(self._read(name), self._STATED)
 
 
 class ParsersTest(unittest.TestCase):

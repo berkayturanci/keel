@@ -30,6 +30,7 @@ normalized, so ``wait`` on an unknown or hostile id fails closed instead of read
 
 from __future__ import annotations
 
+import contextlib
 import datetime
 import json
 import os
@@ -111,6 +112,47 @@ def state_path(root: str | Path, run_id: str) -> Path:
 def out_path(root: str | Path, run_id: str) -> Path:
     """Path of one detached run's captured stdout+stderr."""
     return state_dir(root) / f"{check_run_id(run_id)}.out"
+
+
+def pid_path(root: str | Path, run_id: str) -> Path:
+    """Path of one detached run's pid, kept **beside** the record rather than in it.
+
+    Two writers touch a detached run: the parent, which knows the pid, and the child,
+    which knows the result. If both wrote the same document the parent's write would be a
+    read-check-write over a file the child can replace at any instant, and the child's
+    terminal record is precisely what must never be lost. Separate files means neither
+    writer needs a lock, a guard, or a retry: the record is the child's alone, the pid
+    file is the parent's alone, and a reader that wants both reads both.
+    """
+    return state_dir(root) / f"{check_run_id(run_id)}.pid"
+
+
+def write_pid(root: str | Path, run_id: str, pid: int) -> None:
+    """Record a detached child's pid. Best-effort: a run without one is bounded by its
+    ``deadline_at`` instead, so failing to write it must not fail the spawn."""
+    with contextlib.suppress(OSError):
+        workspace.write_text_atomic(pid_path(root, run_id), f"{pid}\n")
+
+
+def read_pid(root: str | Path, run_id: str) -> int | None:
+    """The recorded pid of a detached run, or ``None`` when there is none to read."""
+    try:
+        return int(pid_path(root, run_id).read_text(encoding="utf-8").strip())
+    except (OSError, ValueError, RunIdError):
+        return None
+
+
+def run_record(root: str | Path, run_id: str) -> dict[str, Any] | None:
+    """A run's record as a **reader** wants it: the child's document plus the pid.
+
+    ``pid`` is assembled here rather than stored, so nothing that writes the record has
+    to carry it and no writer can clobber the other's half.
+    """
+    record = load_state(root, run_id)
+    if record is None:
+        return None
+    record["pid"] = read_pid(root, run_id)
+    return record
 
 
 def _read_text(path: str) -> str:
@@ -368,7 +410,7 @@ def list_runs(root: str | Path = ".") -> list[dict[str, Any]]:
     except OSError:  # pragma: no cover - glob on a readable parent does not fail
         return []
     for name in names:
-        record = load_state(root, name)
+        record = run_record(root, name)
         if record is not None:
             records.append(record)
     return records
@@ -395,11 +437,12 @@ def start_detached(
     """Spawn ``argv`` as a background child and record it. Never raises.
 
     The record is written **before** the spawn, so a ``wait`` issued immediately
-    afterwards always finds a file, and the pid is merged in afterwards by a *guarded*
-    update. That order is the fix for a lost update: the child can finish and write its
-    terminal ``done`` record between the spawn and the parent's next write, and a blind
-    second write from the parent would erase the result the caller is waiting for. The
-    merge re-reads and leaves any non-``running`` record alone.
+    afterwards always finds a file, and the parent never writes it again: the pid goes to
+    its own ``<run-id>.pid`` file (:func:`pid_path`). That is the fix for a lost update.
+    A guarded read-check-write from the parent was still a race — the child's terminal
+    record can land between the read and the write, and the parent would put ``running``
+    back over the result the caller is waiting for. Two files, one writer each, and no
+    window at all.
 
     ``deadline_at`` is stamped from the run's own ``--timeout`` plus
     :data:`DEADLINE_GRACE_S`. It is what stops a ``wait`` with no ``--timeout`` of its own
@@ -416,15 +459,12 @@ def start_detached(
     """
     _popen = subprocess.Popen if _popen is None else _popen
     check_run_id(run_id)
-    directory = state_dir(root)
-    directory.mkdir(parents=True, exist_ok=True)
     started = _clock()
     record: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "run_id": run_id,
         "provider": provider,
         "role": role,
-        "pid": None,
         "started_at": started.isoformat(),
         "timeout": timeout,
         "deadline_at": (
@@ -441,13 +481,15 @@ def start_detached(
     if hasattr(os, "setsid"):  # pragma: no branch - POSIX everywhere keel runs
         kwargs["start_new_session"] = True
     try:
+        # Creating the directory and opening the log are I/O like any other: an
+        # unwritable root (a read-only checkout, a root owned by another user) must come
+        # back as the same fail-soft contract every other failure does, not as a
+        # PermissionError traceback out of `keel delegate run --detach`.
+        state_dir(root).mkdir(parents=True, exist_ok=True)
+        write_state(root, record)
         handle = out_path(root, run_id).open("w", encoding="utf-8")
     except OSError as exc:
-        record["status"] = "done"
-        record["result"] = _spawn_failure(record, exc)
-        write_state(root, record)
-        return record
-    write_state(root, record)
+        return _failed_spawn_record(root, record, exc)
     try:
         # argv is keel's own re-invocation (sys.executable -m keel), never a shell.
         child = _popen(
@@ -459,29 +501,26 @@ def start_detached(
             **kwargs,
         )
     except OSError as exc:
-        record["status"] = "done"
-        record["result"] = _spawn_failure(record, exc)
-        write_state(root, record)
-        return record
+        return _failed_spawn_record(root, record, exc)
     finally:
         handle.close()
+    write_pid(root, run_id, child.pid)
     record["pid"] = child.pid
-    return _merge_while_running(root, run_id, {"pid": child.pid}) or record
+    return record
 
 
-def _merge_while_running(
-    root: str | Path, run_id: str, fields: dict[str, Any]
-) -> dict[str, Any] | None:
-    """Merge ``fields`` into a run's record **only while it is still running**.
+def _failed_spawn_record(root: str | Path, record: dict[str, Any], exc: OSError) -> dict[str, Any]:
+    """Mark a run that never started, persisting the record when the disk allows it.
 
-    The guard is the whole point: a terminal record written by the child must never be
-    overwritten by a late housekeeping write from the parent.
+    Best-effort on purpose: the failure being reported may itself be "this directory
+    cannot be written", and a second write would raise the very traceback the caller is
+    being spared. The returned document is the contract either way.
     """
-    record = load_state(root, run_id)
-    if record is None or record.get("status") != "running":
-        return record
-    record.update(fields)
-    write_state(root, record)
+    record["status"] = "done"
+    record["pid"] = None
+    record["result"] = _spawn_failure(record, exc)
+    with contextlib.suppress(OSError):
+        write_state(root, record)
     return record
 
 
@@ -602,15 +641,43 @@ def _mark_crashed(
     *,
     clock: Callable[[], datetime.datetime],
 ) -> dict[str, Any] | None:
-    """Record that a run vanished — guarded, so a child's own result always wins."""
+    """Record that a run vanished — re-read immediately before writing, so a child's own
+    result always wins. The window is a load and a comparison rather than the whole
+    liveness probe that decided the run was gone."""
     record = load_state(root, run_id)
     if record is None or record.get("status") != "running":
-        return record
+        return record if record is None else run_record(root, run_id)
     record["status"] = "crashed"
     record["finished_at"] = _now_iso(clock)
     record["result"] = _detached_failure(record, code="lost", message=reason)
     write_state(root, record)
     return record
+
+
+def reap_abandoned(
+    root: str | Path = ".",
+    *,
+    _alive: Callable[[int], bool] | None = None,
+    _clock: Callable[[], datetime.datetime] = _utc_now,
+) -> list[str]:
+    """Mark every run that can no longer finish, and return their ids.
+
+    The same liveness and deadline test :func:`wait` applies, run across the whole state
+    directory. Without it a run only stops claiming to be ``running`` when somebody
+    happens to ``wait`` on it — so ``keel delegate status``, the command an operator uses
+    precisely because they are *not* waiting, would be the one view that never told the
+    truth about a killed child.
+    """
+    alive = process_is_alive if _alive is None else _alive
+    reaped = []
+    for record in list_runs(root):
+        if record.get("status") != "running":
+            continue
+        reason = _abandoned(record, alive=alive, clock=_clock)
+        if reason is not None:
+            _mark_crashed(root, record["run_id"], reason, clock=_clock)
+            reaped.append(record["run_id"])
+    return reaped
 
 
 def wait(
@@ -648,7 +715,7 @@ def wait(
     deadline = None if timeout is None else _now() + timeout
     alive = process_is_alive if _alive is None else _alive
     while True:
-        record = load_state(root, run_id)
+        record = run_record(root, run_id)
         if record is None:
             return None, "unknown-run"
         status = record.get("status")
