@@ -195,6 +195,18 @@ knobs:
     fix: { provider: implementer }         # who applies review findings
 ```
 
+**`review.default` and `review.by_tier`.** `by_tier` names the seats for a specific risk
+tier; `default` covers every tier `by_tier` does not name, and takes the same two shapes —
+a list of reviewer seats, or `jury`. A tier with neither falls back to the tier-derived
+count staffed by the host agent, which is keel's pre-`team` behaviour.
+
+**The gate review is adapter-enforced.** `team.gate` is emitted in the assignment and the
+adapter dispatches it; core has no evidence item for it, so nothing in `keel merge` or
+`keel evidence-verify` blocks a merge whose gate review never ran. This is the same
+emit-only boundary operator consent sits behind (see
+[`operator-consent.md`](operator-consent.md)) — the deterministic core does not perform the
+dispatch, so it cannot certify it happened.
+
 **Providers.** A `provider` names an entry the same registry `keel delegate run` resolves:
 a built-in vendor (`claude`, `codex`, `agy`, `ollama`, `anthropic-api`, `openai-api`,
 `google-api`), a [`delegate_profiles`](#delegate_profiles) entry, or a machine-level
@@ -229,6 +241,14 @@ the resolved team as `assignment` — `implementer`, `gate`, `reviewers[]` (with
 appear on `review_merge_contract.reviewers.slots`, so any host runs the same team. A tier
 whose review policy is `jury` yields `reviewers.count == 0` and a gating jury: the panel is
 the review, and the evidence gate requires its verdict instead of N review verdicts.
+
+**A committed policy may only name built-ins and `delegate_profiles`.** Validation does not
+consult the machine-level `~/.keel/providers.yaml`, so a registry entry named in
+`knobs.team` fails `keel validate` — deliberately: the policy is committed and read by
+people whose home directories do not have that entry, and a rule that only holds on its
+author's laptop is not a rule. Reach a registry provider **per run** instead, with
+`--delegate` / `--review-delegate`, which resolve through the full registry; or promote it
+to a `delegate_profiles` entry when the whole team should share it.
 
 **Per-run overrides still win.** `--delegate <provider[:model]>` replaces the implementer;
 `--review-delegate` is repeatable and **positional per slot** (first flag = slot A, second

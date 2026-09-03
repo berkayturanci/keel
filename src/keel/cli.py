@@ -19,6 +19,7 @@ import shutil
 import sys
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from . import (
     __version__,
@@ -64,6 +65,7 @@ from . import (
     status,
     stepverifier,
     swarm,
+    team,
     window,
     workspace,
 )
@@ -957,6 +959,44 @@ def _cmd_merge(args: argparse.Namespace) -> int:
         lock.release_resource(_lock_root(args.root), "merge", owner=owner, best_effort=True)
 
 
+def _review_assignment(
+    config: cfg.ProjectConfig,
+    args: argparse.Namespace,
+    *,
+    tier: int | None,
+) -> dict[str, Any]:
+    """The one resolution of ``knobs.team`` every review-aware command reads (#1014).
+
+    Five commands resolve a review contract — ``ship``, ``plan``, ``review``,
+    ``step-verify``, ``evidence-verify`` — and ``keel merge`` verifies evidence with a
+    sixth. Each of them derived the reviewer bench independently, which was survivable
+    only while the bench came from the risk tier alone. It stopped being survivable with
+    ``knobs.team``: on a project whose ``review.by_tier."3"`` is ``jury``, ``keel ship``
+    resolved ``review_panel: jury`` with **zero** reviewer slots while
+    ``keel evidence-verify`` fell back to ``reviewer_count(3)`` and demanded
+    ``review-verdict-1..3`` — a gate no run of that project could ever satisfy, because
+    the two halves of one contract disagreed about who the reviewers were.
+
+    So the resolution lives here, once, and every site calls it with the same inputs.
+    Flags a given subcommand does not define read as absent (``getattr``) rather than
+    being re-spelled per parser: ``keel merge`` has no ``--role``, and a reviewer bench
+    must not depend on which command is asking.
+    """
+    review_delegates = tuple(getattr(args, "review_delegate", None) or ())
+    return team.resolve_assignment(
+        config.knobs.team,
+        tier=tier,
+        role=getattr(args, "role", None),
+        default_count=ship.reviewer_count(tier or 2),
+        reviewer_override=getattr(args, "reviewers", None),
+        delegate=getattr(args, "delegate", None),
+        review_delegates=review_delegates,
+        host_agent=getattr(args, "host_agent", None) or agents.HOST_DEFAULT,
+        legacy=agents.legacy_team_seats(config),
+        jury_disabled=bool(getattr(args, "no_jury", False)),
+    )
+
+
 def _cmd_ship(args: argparse.Namespace) -> int:
     if args.dry_run and args.live:
         print("--dry-run and --live cannot be used together", file=sys.stderr)
@@ -1110,6 +1150,11 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         jury=args.jury,
         no_jury=args.no_jury,
         jury_advisory=args.jury_advisory,
+        require_distinct_vendors=config.knobs.evidence_require_distinct_vendors,
+        # The jury gate runs off this contract's mode, so it has to see the same team
+        # the assessment below resolves — otherwise the gate runs gating on a project
+        # whose policy said advisory.
+        assignment=_review_assignment(config, args, tier=tier),
     )
     # unreachable: orch.build_plan() above already calls plan_gates and surfaces GateError.
     try:
@@ -1196,6 +1241,15 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     # rendered against an unresolved tier is superseded by the one the assessment
     # resolved against the real one.
     contract["assignment"] = a.assignment
+    # …and so are the two blocks *derived* from the review contract. `evidence` and
+    # `step_verification` are built by `build_command_contract` at the unresolved tier;
+    # leaving them there published one JSON document holding `reviewers.count: 0` with a
+    # gating jury next to an evidence block demanding two review verdicts, and the
+    # adapters read the evidence block, not the reviewer count.
+    contract["evidence"] = evidence.contract_as_dict(a.review_contract, dry_run=not args.live)
+    contract["step_verification"] = stepverifier.contract_as_dict(
+        a.review_contract, dry_run=not args.live
+    )
     ledger_path = ledger.resolve_path(args.root, config)
     try:
         existing_ledger_records = ledger.read_records(ledger_path)
@@ -1963,8 +2017,24 @@ def _cmd_step_verify(args: argparse.Namespace) -> int:
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
+    # `step-verify` checks a supplied handoff against a supplied evidence report and
+    # builds the contract scaffold locally, so `--project` is optional. Supply it and the
+    # required evidence is derived from the same `knobs.team` the ship run resolved —
+    # without it a project whose tier-3 review is the jury would be verified against the
+    # tier-derived reviewer bench, which is the disagreement #1014 exists to close.
+    assignment, distinct_vendors = None, None
+    if args.project is not None:
+        try:
+            step_config = cfg.load_config(args.project)
+        except cfg.ConfigError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        assignment = _review_assignment(step_config, args, tier=args.review_tier)
+        distinct_vendors = step_config.knobs.evidence_require_distinct_vendors
     review_contract = ship.resolve_review_contract(
-        tier=None,
+        tier=args.review_tier,
+        assignment=assignment,
+        require_distinct_vendors=distinct_vendors,
         reviewer_override=args.reviewers,
         review_comments=args.review_comments,
         gates=(),
@@ -2154,6 +2224,8 @@ def _cmd_review(args: argparse.Namespace) -> int:
         reviewer_override=args.reviewers,
         gates=config.gates,
         policy_pack=config.policy_pack,
+        require_distinct_vendors=config.knobs.evidence_require_distinct_vendors,
+        assignment=_review_assignment(config, args, tier=tier),
     )
     required_count = review_contract["reviewers"]["count"]
 
@@ -2586,6 +2658,10 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
         jury=args.jury,
         no_jury=args.no_jury,
         jury_advisory=args.jury_advisory,
+        # The same team `keel ship` resolved. Without it a `review.by_tier."3": jury`
+        # project fails its own gate forever: ship publishes zero reviewer slots and
+        # this side demands review-verdict-1..3.
+        assignment=_review_assignment(config, args, tier=tier),
         # `or None` keeps the knob tri-state: an unset knob and an unset flag resolve
         # from the tier, while --require-distinct-vendors forces it on.
         require_distinct_vendors=(
@@ -3651,6 +3727,10 @@ def _verify_merge_evidence(
         no_jury=args.no_jury,
         jury_advisory=args.jury_advisory,
         require_distinct_vendors=config.knobs.evidence_require_distinct_vendors,
+        # `keel merge` verifies the same evidence contract ship produced, so it resolves
+        # the same team. A merge gate that disagreed with the ship contract about the
+        # reviewer bench would refuse a PR that satisfied every requirement it was given.
+        assignment=_review_assignment(config, args, tier=tier),
     )
     gate_label = args.gate_label or config.knobs.evidence_gate_label
     waiver_label = getattr(args, "waiver_label", None) or evidence.DEFAULT_WAIVER_LABEL
@@ -6138,6 +6218,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="verify a persisted step handoff against the evidence report",
     )
     p_step.add_argument("--step", required=True, help="backbone step id, e.g. s7")
+    p_step.add_argument(
+        "--project",
+        default=None,
+        help="path to project.yaml, so the required evidence is derived from the same "
+        "knobs.team the ship run resolved; without it the tier-derived bench is used",
+    )
+    p_step.add_argument(
+        "--tier",
+        dest="review_tier",
+        type=int,
+        choices=(1, 2, 3),
+        default=None,
+        help="risk tier the review contract is resolved against (needs --project)",
+    )
     p_step.add_argument("--handoff-file", required=True, help="JSON step handoff file")
     p_step.add_argument(
         "--evidence-report",

@@ -185,6 +185,33 @@ class TestLegacySeats(unittest.TestCase):
     def test_a_blank_value_names_nobody(self):
         self.assertEqual(team.legacy_seats({"core": "  ", "docs": 3}), {})
 
+    def test_a_vendor_model_value_is_that_vendor_and_that_model(self):
+        """`docs/keel/models.md` documents this spelling; it is not a subagent name.
+
+        Reading the whole string as one opaque name turned
+        `anthropic-api:claude-3-7-sonnet-20250219` into a host subagent called
+        `subagent:anthropic-api:claude-3-7-…`, which no host has — so the seat stopped
+        reaching `keel delegate run` at all.
+        """
+        seats = team.legacy_seats(
+            {"frontend": "anthropic-api:claude-3-7-sonnet-20250219"},
+            provider_names={"anthropic-api"},
+        )
+
+        self.assertEqual(seats["frontend"].kind, "provider")
+        self.assertEqual(seats["frontend"].provider, "anthropic-api")
+        self.assertEqual(seats["frontend"].model, "claude-3-7-sonnet-20250219")
+
+    def test_an_explicit_subagent_value_is_not_prefixed_twice(self):
+        seats = team.legacy_seats({"docs": "subagent:writer"}, provider_names={"claude"})
+
+        self.assertEqual(seats["docs"].provider, "subagent:writer")
+
+    def test_an_unresolvable_head_is_still_a_subagent_name(self):
+        seats = team.legacy_seats({"core": "backend-developer"}, provider_names={"claude"})
+
+        self.assertEqual(seats["core"].provider, "subagent:backend-developer")
+
 
 class TestSeatFromToken(unittest.TestCase):
     def test_a_vendor_model_token_splits_on_the_first_colon(self):
@@ -211,6 +238,13 @@ class TestSlotLabels(unittest.TestCase):
                     team.slot_labels(count),
                     tuple(focus["slot"] for focus in ship.reviewer_focuses(count)),
                 )
+
+    def test_the_labeller_is_total_beyond_keels_own_vocabulary(self):
+        # Not reachable through the CLI (--reviewers is 1|2|3), and that is the point:
+        # running short here raised IndexError from inside the resolver instead of the
+        # ValueError the caller documents for an out-of-range count.
+        self.assertEqual(team.slot_labels(5), ("A", "B", "C", "D", "E"))
+        self.assertEqual(team.slot_labels(-1), ())
 
 
 class TestResolveAssignment(unittest.TestCase):
@@ -303,6 +337,45 @@ class TestResolveAssignment(unittest.TestCase):
         self.assertEqual(
             [seat["provider"] for seat in assignment["reviewers"]], ["claude", "codex", "claude"]
         )
+
+    def test_padding_a_bench_with_a_seated_host_is_reported(self):
+        """`--reviewers 3` on a two-seat tier must not quietly duplicate a vendor.
+
+        The third slot is filled with the host agent, which is already slot A — so the
+        panel cannot return three distinct vendors, and `require_distinct_vendors` (on by
+        default from TIER-2) rejects it at the evidence gate, long after the run.
+        """
+        policy = team.parse_team(
+            {"review": {"by_tier": {"2": [{"provider": "claude"}, {"provider": "codex"}]}}}
+        )
+
+        assignment = team.resolve_assignment(
+            policy, tier=2, default_count=2, reviewer_override=3, host_agent="claude"
+        )
+
+        self.assertEqual(
+            [seat["provider"] for seat in assignment["reviewers"]], ["claude", "codex", "claude"]
+        )
+        self.assertIn("is already seated", assignment["warnings"][0])
+
+    def test_padding_with_an_unseated_host_is_not_a_duplicate(self):
+        policy = team.parse_team({"review": {"by_tier": {"2": [{"provider": "codex"}]}}})
+
+        assignment = team.resolve_assignment(
+            policy, tier=2, default_count=2, reviewer_override=2, host_agent="claude"
+        )
+
+        self.assertEqual(assignment["warnings"], [])
+
+    def test_no_jury_staffs_the_tiers_reviewers_instead_of_nobody(self):
+        policy = team.parse_team({"review": {"by_tier": {"3": "jury"}}})
+
+        assignment = team.resolve_assignment(policy, tier=3, default_count=3, jury_disabled=True)
+
+        self.assertEqual(assignment["review_panel"], "reviewers")
+        self.assertEqual(assignment["reviewer_count"], 3)
+        self.assertFalse(assignment["jury"]["panel_is_review"])
+        self.assertIn("--no-jury skips the panel, never the review", assignment["warnings"][0])
 
     def test_a_surplus_seat_is_reported_rather_than_silently_undispatched(self):
         assignment = team.resolve_assignment(
@@ -479,6 +552,25 @@ class TestTeamIssues(unittest.TestCase):
         errors = self.issues({"review": {"by_tier": {"2": [*seats, {"provider": "ollama"}]}}})
 
         self.assertIn("keel dispatches at most 3", errors[0])
+
+    def test_the_gate_rule_sees_the_deprecated_role_knob_too(self):
+        """`implementer_agents` still resolves implementers, so the gate must clear them.
+
+        Checking `team.implement*` alone let `implementer_agents: {core: codex}` sit beside
+        `gate: {provider: codex, distinct_from: implementer}` — the mandatory second
+        opinion being the first opinion, accepted by `keel validate`.
+        """
+        raw = {"gate": {"provider": "codex", "distinct_from": "implementer"}}
+
+        errors = self.issues(raw, implementer_agents={"core": "codex"})
+
+        self.assertIn("knobs.implementer_agents.core", errors[0])
+        self.assertIn("is not a second opinion", errors[0])
+
+    def test_a_legacy_subagent_role_does_not_clash_with_a_vendor_gate(self):
+        raw = {"gate": {"provider": "codex", "distinct_from": "implementer"}}
+
+        self.assertEqual(self.issues(raw, implementer_agents={"core": "backend-developer"}), [])
 
     def test_an_unknown_jury_mode_is_named(self):
         errors = self.issues({"jury": {"mode": "blocking"}})

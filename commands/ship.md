@@ -212,7 +212,10 @@ capture.
 - `--role <label>` — the issue role label that selects
   `knobs.team.implement.by_role`. Default: the role label read off the issue in s1.
 - `--review-comments <inline|summary>` — how reviewer findings post (s7). Default `inline`.
-- `--reviewers <1|2|3>` — override the tier-derived reviewer count. Default: auto (from tier).
+- `--reviewers <1|2|3>` — override the resolved reviewer count. Default: the seats
+  `knobs.team.review` names for the tier, else the tier-derived count. On a tier whose
+  review policy is `jury` it is reported in `assignment.warnings` and not applied: the
+  panel is the review, so there are no host slots to size.
 - `--jury` / `--no-jury` / `--jury-advisory` — control the cross-vendor jury gate (s8).
   Precedence `--no-jury` > `--jury` > tier-3 auto > off. `--jury-advisory` = report-only.
 - `--hotfix` — audited merge-window bypass (s10). Use sparingly.
@@ -579,19 +582,31 @@ a two-vendor panel is two different providers, not one vendor run twice. When
 `reviewers.panel` is `jury` the count is **0**: skip the host reviewer fan-out entirely and
 let the s8 jury gate be the review.
 
-Before the panel, run the **gate review** when `assignment.gate` is present: one
-mandatory second opinion on the implementation, dispatched read-only exactly like a
-reviewer but with `--role gate`. `distinct_ok: false` means the policy asked for a vendor
+Before the panel, run the **gate review** when `assignment.gate` is present: the project's
+second opinion on the implementation, dispatched read-only exactly like a reviewer but
+with `--role gate`. **Nothing in core enforces it** — there is no evidence item for a gate
+review, so `keel evidence-verify` and `keel merge` cannot tell whether it ran. It is
+mandatory the way operator consent is mandatory: emitted by core, honoured by you. `distinct_ok: false` means the policy asked for a vendor
 other than the implementer and did not get one — say so rather than passing it off as an
 independent opinion.
 
 A non-host reviewer runs through the **same one command as s4**, with the role that makes
-it read-only — `--role review` (or `gate` / `chair`):
+it read-only — `--role review` (or `gate` / `chair`). The `--provider` value is the slot's
+own `provider` (plus `:model` / `--effort` when the seat carries them), read straight off
+`review_merge_contract.reviewers.slots[i]` — never one vendor reused for every slot:
 
 ```bash
-keel delegate run --provider "$REVIEW_DELEGATE" --role review \
+# one dispatch per slot; SLOT is an entry of review_merge_contract.reviewers.slots
+keel delegate run --provider "$SLOT_PROVIDER" --role review \
+  --prompt-file "$RUBRIC_AND_DIFF" --cwd . --timeout 900 --project .keel/project.yaml
+
+# the gate review, when assignment.gate is present
+keel delegate run --provider "$GATE_PROVIDER" --role gate \
   --prompt-file "$RUBRIC_AND_DIFF" --cwd . --timeout 900 --project .keel/project.yaml
 ```
+
+A slot whose `kind` is `subagent` never reaches `keel delegate run`: it is a host
+(Claude-class) subagent named by `slot.name`, dispatched the way s4 dispatches one.
 
 Read the same JSON contract s4 documents: `text` is the verdict, `attribution` is what
 you record per reviewer, `error_code` is what you branch on. Long panels detach exactly
@@ -1018,4 +1033,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=plugin command=ship keel_version=1.19.3 source_sha256=d7d9958932fedd2a1fae10edecc1bcefe38f972f1e2d2512624abb659ccaf98e generated_sha256=d7d9958932fedd2a1fae10edecc1bcefe38f972f1e2d2512624abb659ccaf98e -->
+<!-- keel-generated: surface=plugin command=ship keel_version=1.19.3 source_sha256=5ee321bbc7d39a623b2db8f43530525c70ef2f9ced059cc1e8305b17c09e107f generated_sha256=5ee321bbc7d39a623b2db8f43530525c70ef2f9ced059cc1e8305b17c09e107f -->

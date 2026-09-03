@@ -796,6 +796,18 @@ class TestTeamAssignment(unittest.TestCase):
         self.assertTrue(assessment.assignment["gate"]["distinct_ok"])
         self.assertTrue(assessment.review_contract["reviewers"]["require_distinct_vendors"])
 
+    def test_an_out_of_range_override_raises_before_the_team_is_resolved(self):
+        """The documented ValueError, not an IndexError from inside the resolver.
+
+        `assess` resolves the assignment first, so the range guard has to run ahead of it
+        — a caller catching `ValueError` for a bad `--reviewers` was getting an
+        `IndexError` out of the slot labelling instead.
+        """
+        with self.assertRaises(ValueError) as ctx:
+            ship.assess(changed_files=["a.py"], gate_verdict=CLEAN, reviewer_override=5, team=TEAM)
+
+        self.assertIn("must be one of 1, 2, or 3", str(ctx.exception))
+
     def test_assess_without_a_team_keeps_the_tier_derived_bench(self):
         assessment = ship.assess(
             changed_files=["README.md"],

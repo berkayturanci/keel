@@ -1795,8 +1795,12 @@ Value set `claude | codex | agy | ollama:MODEL | anthropic-api:MODEL | openai-ap
 plus the name of any `knobs.delegate_profiles` entry;
 `ollama:` and the `*-api:` values require a non-empty model
 (per-issue model overrides can also come from a `delegate-model:<name>` label).
-Implementer precedence at s4: `--delegate` flag > issue `delegate:*` label >
-`HOST_AGENT` (the CLI driving the run, resolved from the runtime). Delegated CLI
+Implementer precedence at s4: `--delegate` flag > `knobs.team.implement.by_role` (by the
+issue's role label) > `knobs.team.implement.default` > the deprecated
+`knobs.implementer_agents` > issue `delegate:*` label > `HOST_AGENT` (the CLI driving the
+run, resolved from the runtime). `keel ship --json` publishes the winner and the config
+path it came from as `assignment.implementer`, so s4 reads the resolution rather than
+recomputing it. Delegated CLI
 implementers are fed the prompt via stdin and run network-enabled; a bare local (Ollama)
 model cannot run tools, so the orchestrator does every git/PR step itself and delegates
 only diff generation (≤2 retries on a bad diff, then fall back). The hosted-API
@@ -1837,7 +1841,7 @@ and `keel ship --json`:
 | --- | --- |
 | `assignment.implementer` | seat that runs s4 — `provider`, `model`, `effort`, `kind` (`provider` \| `subagent`), and the `source` config path |
 | `assignment.gate` | the mandatory second opinion, plus `distinct_ok` (false when `distinct_from: implementer` could not be honoured) |
-| `assignment.reviewers[]` | one entry per s7 slot, each with its own `provider`/`model`/`effort` and slot letter; mirrored on `review_merge_contract.reviewers.slots` |
+| `assignment.reviewers[]` | one entry per s7 slot, each with its own `provider`/`model`/`effort` and slot letter; mirrored on `review_merge_contract.reviewers.slots`. Seats come from `knobs.team.review.by_tier.<tier>`, else `knobs.team.review.default`, else the tier-derived count staffed by the host agent |
 | `assignment.review_panel` | `reviewers`, or `jury` when the panel *is* the review (then `reviewers.count == 0` and the jury gates) |
 | `assignment.jury` | `mode`, `min_vendors`, `panel_is_review` |
 | `assignment.fix` | who applies review findings; carries `alias: "implementer"` when it resolved through that reserved name |

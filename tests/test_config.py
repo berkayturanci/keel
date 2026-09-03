@@ -1389,6 +1389,31 @@ class TestTeamKnob(unittest.TestCase):
                 # anthropic. Tier-2 still gets two vendors by construction of the seats.
                 self.assertIs(config.knobs.evidence_require_distinct_vendors, False)
 
+    def test_a_malformed_implementer_agents_entry_does_not_break_gate_validation(self):
+        # A YAML mapping key is not necessarily a string; the gate rule reads this knob
+        # now, so it has to survive one. The schema reports the shape separately.
+        data = self._with_team(
+            {"gate": {"provider": "codex", "distinct_from": "implementer"}},
+            {"implementer_agents": {"core": "claude", 7: "codex", "docs": None}},
+        )
+
+        errors = [error for error in cfg.validate_data(data) if "knobs.team" in error]
+
+        self.assertEqual(errors, [])
+        with self.assertRaises(cfg.ConfigError):
+            cfg.parse_config(data)  # the schema still refuses the malformed keys
+
+    def test_a_non_object_implementer_agents_is_left_to_the_schema(self):
+        # The gate rule reads this knob, so `knobs.team` validation must not add a second
+        # error (or a TypeError) on top of the schema's "expected type object".
+        data = self._with_team({"gate": {"provider": "codex"}}, {"implementer_agents": "codex"})
+
+        with self.assertRaises(cfg.ConfigError) as ctx:
+            cfg.parse_config(data)
+
+        self.assertTrue(any("implementer_agents" in error for error in ctx.exception.errors))
+        self.assertFalse(any("knobs.team" in error for error in ctx.exception.errors))
+
     def test_the_two_dogfood_configs_are_the_same_file(self):
         self.assertEqual(
             DOGFOOD_CONFIG.read_text(encoding="utf-8"),

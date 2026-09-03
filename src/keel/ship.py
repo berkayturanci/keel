@@ -174,6 +174,18 @@ def resolve_jury(
     }
 
 
+def check_reviewer_override(reviewer_override: int | None) -> None:
+    """Refuse a reviewer count keel has no reviewer vocabulary for.
+
+    Extracted so :func:`assess` can apply it **before** it resolves the team: the
+    assignment is resolved first, and an out-of-range override reaching that resolver
+    produced an ``IndexError`` from inside it instead of the documented ``ValueError``
+    the caller has always been able to catch.
+    """
+    if reviewer_override is not None and reviewer_override not in {1, 2, 3}:
+        raise ValueError("reviewer_override must be one of 1, 2, or 3")
+
+
 def resolve_review_contract(
     *,
     tier: int | None,
@@ -199,8 +211,7 @@ def resolve_review_contract(
     ``require_distinct_vendors`` is tri-state: ``None`` takes the tier-derived default
     (on from tier-2 up), a bool is the project's explicit answer.
     """
-    if reviewer_override is not None and reviewer_override not in {1, 2, 3}:
-        raise ValueError("reviewer_override must be one of 1, 2, or 3")
+    check_reviewer_override(reviewer_override)
     if review_comments not in POSTING_MODES:
         raise ValueError("review_comments must be 'inline' or 'summary'")
     if assignment is None:
@@ -542,6 +553,7 @@ def assess(
             patches=patches,
         )
     )
+    check_reviewer_override(reviewer_override)
     assignment = team_policy.resolve_assignment(
         team if team is not None else team_policy.TeamPolicy(),
         tier=tier,
@@ -552,6 +564,7 @@ def assess(
         review_delegates=review_delegates,
         host_agent=host_agent,
         legacy=legacy_agents,
+        jury_disabled=no_jury,
     )
     reviewers = assignment["reviewer_count"]
     window_open = (

@@ -334,6 +334,7 @@ def build_command_contract(
             review_delegates=review_delegates,
             host_agent=host_agent,
             legacy=agents.legacy_team_seats(config),
+            jury_disabled=no_jury,
         )
         contract["assignment"] = assignment
         contract["review_merge_contract"] = ship_decisions.resolve_review_contract(

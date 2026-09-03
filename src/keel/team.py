@@ -288,7 +288,16 @@ def legacy_seats(
         name = _text(value)
         if name is None:
             continue
-        seats[role] = Seat(provider=name if name in known else f"{SUBAGENT_PREFIX}{name}")
+        # Split the same way `--delegate` does before deciding this is a subagent name.
+        # `docs/keel/models.md` documents `frontend: anthropic-api:claude-3-7-sonnet-…`
+        # as a legal value, and treating the whole string as one opaque name turned it
+        # into `subagent:anthropic-api:claude-…` — a host subagent that does not exist,
+        # instead of the hosted-API vendor plus its model.
+        seat = seat_from_token(name)
+        if seat.kind == "subagent" or seat.provider in known:
+            seats[role] = seat
+        else:
+            seats[role] = Seat(provider=f"{SUBAGENT_PREFIX}{name}")
     return seats
 
 
@@ -330,15 +339,31 @@ def _review_seats(
     default_count: int,
     reviewer_override: int | None,
     host_agent: str,
+    jury_disabled: bool = False,
 ) -> tuple[tuple[Seat, ...], str, str, list[str]]:
     """Reviewer seats, the panel, the source, and any warnings.
 
     Precedence: a tier whose policy is ``jury`` empties the reviewer bench (the panel
     *is* the review); otherwise ``--reviewers`` wins over the policy's seat count, which
     wins over the tier-derived default.
+
+    ``jury_disabled`` is ``--no-jury``, and it takes the panel back off the jury. Without
+    that, "no jury" on a ``jury`` tier would mean *no review at all* — zero host slots and
+    no panel, so the evidence gate would require no review evidence whatsoever. keel's own
+    contract already promises the opposite in as many words
+    (``test_gates.no_jury_preserves_review_and_test_gates``), and keel's CI passes
+    ``--no-jury`` on every run, so this is the difference between a flag that skips the
+    panel and a flag that skips the review.
     """
     configured, source = policy.review_for(tier)
     warnings: list[str] = []
+    if configured == JURY_PANEL and jury_disabled:
+        warnings.append(
+            f"{source} makes the jury the review panel, but the jury is disabled for this "
+            "run; the tier's host reviewers are staffed instead — --no-jury skips the "
+            "panel, never the review"
+        )
+        configured, source = None, None
     if configured == JURY_PANEL:
         if reviewer_override is not None:
             warnings.append(
@@ -357,6 +382,18 @@ def _review_seats(
     resolved = tuple(
         seats[index] if index < len(seats) else Seat(provider=host_agent) for index in range(count)
     )
+    padded = max(0, count - len(seats))
+    if padded and any(seat.provider == host_agent for seat in seats):
+        # Comparing provider names, not vendors: resolving a name to its vendor needs the
+        # registry, which this module deliberately cannot reach. A repeated *name* is
+        # already a repeated vendor, so this catches the case that matters — a bench
+        # `--reviewers 3` grew by re-seating the host that is already slot A, which
+        # `require_distinct_vendors` will then reject at the evidence gate.
+        warnings.append(
+            f"{padded} reviewer slot(s) padded with the host agent {host_agent!r}, which "
+            "is already seated; those reviewers cannot return distinct vendor provenance "
+            "— name the extra seats in knobs.team.review, or lower --reviewers"
+        )
     if seats and len(seats) > count:
         warnings.append(
             f"{len(seats)} reviewer seat(s) configured but only {count} slot(s) are "
@@ -377,8 +414,16 @@ _SLOT_LABELS = {0: (), 1: ("A",), 2: ("A", "C"), 3: ("A", "B", "C")}
 
 
 def slot_labels(count: int) -> tuple[str, ...]:
-    """Slot letters for ``count`` reviewer seats, matching ``ship.reviewer_focuses``."""
-    return _SLOT_LABELS.get(count, ("A", "B", "C")[:count])
+    """Slot letters for ``count`` reviewer seats, matching ``ship.reviewer_focuses``.
+
+    Total for any non-negative count, including counts keel's own vocabulary does not
+    have a focus for. It is a labelling function: running short here turned an
+    out-of-range reviewer count into an ``IndexError`` from the middle of the resolver
+    rather than the documented ``ValueError`` the caller raises for it.
+    """
+    if count in _SLOT_LABELS:
+        return _SLOT_LABELS[count]
+    return tuple(chr(ord("A") + index) for index in range(max(0, count)))
 
 
 def resolve_assignment(
@@ -392,6 +437,7 @@ def resolve_assignment(
     review_delegates: Sequence[str] = (),
     host_agent: str = HOST_DEFAULT,
     legacy: Mapping[str, Seat] | None = None,
+    jury_disabled: bool = False,
 ) -> dict[str, Any]:
     """Who runs this ship: implementer, gate, reviewer slots, jury, fix.
 
@@ -414,6 +460,7 @@ def resolve_assignment(
         default_count=default_count,
         reviewer_override=reviewer_override,
         host_agent=host_agent,
+        jury_disabled=jury_disabled,
     )
     labels = slot_labels(len(seats))
     sources = [review_source] * len(seats)
@@ -507,12 +554,19 @@ def team_issues(
     *,
     source: str,
     profiles: Mapping[str, str] | None = None,
+    implementer_agents: Mapping[str, str] | None = None,
 ) -> list[str]:
     """Semantic errors for ``knobs.team`` (empty == valid).
 
     The schema owns the *shape*; this owns the *meaning* — which providers exist, which
     of them can honour an ``effort``, that the mandatory gate review really is a second
     opinion, and that a ``review.by_tier`` entry is either reviewer seats or the jury.
+
+    ``implementer_agents`` is the deprecated per-role knob. It is read here because it
+    still resolves implementers (:func:`legacy_seats`), so a ``gate`` declared
+    ``distinct_from: implementer`` has to be checked against those seats too — otherwise
+    ``implementer_agents: {core: codex}`` beside ``gate: {provider: codex}`` passes
+    validation and the "mandatory second opinion" is the first opinion again.
 
     ``profiles`` maps a ``knobs.delegate_profiles`` name to its vendor. A machine-level
     ``~/.keel/providers.yaml`` entry is deliberately **not** consulted: validation has to
@@ -556,7 +610,8 @@ def team_issues(
                 f"(e.g. gemini-3.8-flash-high), so effort {seat.effort!r} needs a "
                 "'model' beside it"
             )
-    errors.extend(_gate_issues(policy, source=source))
+    legacy = legacy_seats(implementer_agents or {}, provider_names=known)
+    errors.extend(_gate_issues(policy, source=source, legacy=legacy))
     errors.extend(_review_issues(policy, source=source))
     return errors
 
@@ -612,7 +667,12 @@ def _tier_key_issues(raw: Mapping[str, Any], *, source: str) -> list[str]:
     return errors
 
 
-def _gate_issues(policy: TeamPolicy, *, source: str) -> list[str]:
+def _gate_issues(
+    policy: TeamPolicy,
+    *,
+    source: str,
+    legacy: Mapping[str, Seat] | None = None,
+) -> list[str]:
     """The mandatory second opinion must be able to *be* a second opinion."""
     gate = policy.gate
     if gate is None:
@@ -625,14 +685,20 @@ def _gate_issues(policy: TeamPolicy, *, source: str) -> list[str]:
     if gate.distinct_from != IMPLEMENTER:
         return []
     implementers = {
-        seat.name: path for path, seat in _seat_paths(policy) if path.startswith("implement")
+        seat.name: f"{source}.{path}"
+        for path, seat in _seat_paths(policy)
+        if path.startswith("implement")
     }
+    # A role the policy does not name still resolves through the deprecated knob, so a
+    # gate matching one of those seats is the same defect wearing an older spelling.
+    for role, seat in sorted((legacy or {}).items()):
+        implementers.setdefault(seat.name, f"knobs.implementer_agents.{role}")
     clash = implementers.get(gate.name)
     if clash is None:
         return []
     return [
         f"{source}.gate: provider {gate.provider!r} is also the implementer at "
-        f"{source}.{clash}, and gate.distinct_from is {IMPLEMENTER!r} — a gate review "
+        f"{clash}, and gate.distinct_from is {IMPLEMENTER!r} — a gate review "
         "from the vendor that wrote the change is not a second opinion"
     ]
 

@@ -390,6 +390,7 @@ def parse_config(data: Any, *, source: str = "<dict>", schema: dict | None = Non
                 knobs.get("team"),
                 source=f"{source}: knobs.team",
                 profiles=_profile_vendors(knobs.get("delegate_profiles", {})),
+                implementer_agents=_role_agents(knobs.get("implementer_agents", {})),
             )
         )
     if isinstance(data, dict) and isinstance(data.get("policy_pack"), dict):
@@ -584,6 +585,17 @@ def endpoint_issues(endpoint: Any, *, where: str, env=None) -> list[str]:
             "file — for a model server on your own network"
         ]
     return []
+
+
+def _role_agents(role_agents: Any) -> dict[str, str]:
+    """``knobs.implementer_agents`` reduced to its well-formed ``str -> str`` entries."""
+    if not isinstance(role_agents, dict):
+        return {}
+    return {
+        role: agent
+        for role, agent in role_agents.items()
+        if isinstance(role, str) and isinstance(agent, str)
+    }
 
 
 def _profile_vendors(profiles: Any) -> dict[str, str]:

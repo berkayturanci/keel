@@ -97,11 +97,16 @@ The older `knobs.implementer_agents` still works and is mapped onto
 `team.implement.by_role`, but it is **deprecated**: its values were documented as vendor
 strings here and as Claude subagent names in `ship.md` s4, and nothing said which.
 
+Both documented spellings keep working, and keel now says which is which: a value whose
+head names a provider it can resolve **is** that provider (with the model after the colon);
+anything else is the host subagent, and keel prefixes it for you.
+
 ```yaml
 knobs:
-  implementer_agents:              # deprecated — prefer team.implement.by_role
-    core: backend-developer        # reads as subagent:backend-developer
-    frontend: anthropic-api        # reads as the built-in hosted-API vendor
+  implementer_agents:                                 # deprecated — prefer team.implement.by_role
+    core: backend-developer                           # -> subagent:backend-developer
+    frontend: anthropic-api:claude-3-7-sonnet-20250219  # -> anthropic-api, model claude-3-7-…
+    docs: google-api:gemini-2.5-flash                 # -> google-api, model gemini-2.5-flash
 ```
 
 ---
