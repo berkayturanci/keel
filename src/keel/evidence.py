@@ -7,7 +7,8 @@ without trusting prose in an agent prompt.
 
 Classification is **header-anchored**: :func:`marker_in_header` decides what a
 comment is from its first non-empty line and nothing else, so a marker a reviewer
-quotes in prose is content rather than a classification signal (#1026).
+quotes in prose is content rather than a classification signal (#1026). The ship
+assessment heading is anchored the same way, from its own header line (#1035).
 """
 
 from __future__ import annotations
@@ -37,6 +38,10 @@ SHIP_PROVENANCE_MARKER = "keel.ship-provenance.v1"
 #: being classified by whichever marker its prose happens to name.
 DEFERRAL_MARKER = "keel.deferral.v1"
 SHIP_ASSESSMENT_HEADING = "### \U0001f6a2 keel ship"
+#: The banner the ``keel ship`` CLI prints above its own summary. An assessment pasted
+#: raw — without the workflow's Markdown heading — leads with this line instead, so both
+#: forms identify the comment. See :func:`_is_ship_assessment`.
+SHIP_ASSESSMENT_BANNER = "keel ship \u2014"
 DEFAULT_WAIVER_LABEL = "keel:evidence-waived"
 TRUSTED_AUTHOR_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 TRUSTED_SHIP_ASSESSMENT_BOTS = frozenset({"github-actions", "github-actions[bot]"})
@@ -889,7 +894,23 @@ def _is_trusted_source(item: dict[str, Any], *, enforced: bool = True) -> bool:
 
 
 def _is_ship_assessment(body: str) -> bool:
-    return SHIP_ASSESSMENT_HEADING in body or "keel ship \u2014" in body
+    """Whether ``body`` is a ship assessment comment, decided by its header (#1035).
+
+    Header-anchored for the same reason markers are (#1026): this is consulted as an
+    *exclusion* by :func:`_is_review_verdict_body` and :func:`_is_jury_verdict`, so a
+    whole-body substring test let a reviewer disarm their own verdict by quoting the
+    heading while describing what they reviewed ("the ``### \U0001f6a2 keel ship``
+    comment claims the gates passed, but…"). The verdict was then silently uncounted
+    and ``evidence-verify`` reported it missing from a PR it was sitting on.
+
+    The heading is a Markdown heading rather than a versioned ``keel.*.v1`` marker, so
+    it cannot join :data:`CLASSIFICATION_MARKERS`; it gets the same anchoring instead.
+    A real assessment leads with the heading (the workflow writes it first) or with the
+    CLI's own banner, so nothing that armed the gate through a genuine assessment
+    comment stops arming it.
+    """
+    header = _header_line(body)
+    return header.startswith(SHIP_ASSESSMENT_HEADING) or header.startswith(SHIP_ASSESSMENT_BANNER)
 
 
 def count_review_verdicts(

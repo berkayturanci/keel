@@ -2001,6 +2001,152 @@ class TestHeaderAnchoredMarkerClassification(unittest.TestCase):
         self.assertEqual(decision["reason"], "no-ship-provenance")
 
 
+class TestHeaderAnchoredShipAssessment(unittest.TestCase):
+    """#1035: the ship-assessment heading only classifies from the header line.
+
+    The heading is a Markdown heading rather than a versioned ``keel.*.v1`` marker,
+    so it could not join ``CLASSIFICATION_MARKERS`` in #1026 and stayed a whole-body
+    substring test. It is consulted as an *exclusion* by both verdict classifiers, so
+    a reviewer who quoted the heading while describing what they reviewed disarmed
+    their own verdict and ``evidence-verify`` reported it missing.
+    """
+
+    HEADING_IN_REVIEW_PROSE = (
+        "keel.review-verdict.v1\n"
+        "reviewer: alpha\n"
+        "head: abc123\n"
+        "\n"
+        "Verdict: pass\n"
+        "\n"
+        "Scope reviewed: the `### \U0001f6a2 keel ship` comment claims the gates passed, "
+        "but src/keel/evidence.py never re-ran them.\n"
+    )
+
+    BANNER_IN_REVIEW_PROSE = (
+        "keel.review-verdict.v1\n"
+        "reviewer: alpha\n"
+        "head: abc123\n"
+        "\n"
+        "Verdict: pass\n"
+        "\n"
+        "Scope reviewed: the `keel ship \u2014 keel (base main)` banner in "
+        "src/keel/cli.py still prints the resolved base.\n"
+    )
+
+    HEADING_IN_JURY_PROSE = (
+        "keel.jury-verdict.v1\n"
+        "head: abc123\n"
+        "vendors: 2\n"
+        "\n"
+        "AI Jury verdict: LGTM.\n"
+        "\n"
+        "Panel checked the `### \U0001f6a2 keel ship` assessment against the ledger.\n"
+    )
+
+    BANNER_IN_JURY_PROSE = (
+        "keel.jury-verdict.v1\n"
+        "head: abc123\n"
+        "vendors: 2\n"
+        "\n"
+        "AI Jury verdict: LGTM.\n"
+        "\n"
+        "Panel checked the `keel ship \u2014 keel (base main)` banner.\n"
+    )
+
+    ASSESSMENT = (
+        "### \U0001f6a2 keel ship\n"
+        "\n"
+        "```\n"
+        "keel ship \u2014 keel  (base main)\n"
+        "  decision      : MERGE \u2014 clear to merge\n"
+        "```\n"
+    )
+
+    #: A raw paste of the CLI summary, with no Markdown heading above it.
+    BANNER_ASSESSMENT = "keel ship \u2014 keel  (base main)\n  decision      : MERGE\n"
+
+    def _counts(self, *, pr_comments, reviewers=1, jury=False, no_jury=True):
+        report = evidence.verify(
+            _review_contract(reviewers=reviewers, jury=jury, no_jury=no_jury),
+            pr_comments=pr_comments,
+            issue_comments=[],
+            head_sha="abc123",
+        )
+        return report["counts"]
+
+    def test_review_verdict_quoting_the_assessment_heading_is_counted(self):
+        counts = self._counts(pr_comments=[_trusted_comment(self.HEADING_IN_REVIEW_PROSE)])
+
+        self.assertEqual(counts["review_verdict"], 1)
+
+    def test_review_verdict_quoting_the_assessment_banner_is_counted(self):
+        counts = self._counts(pr_comments=[_trusted_comment(self.BANNER_IN_REVIEW_PROSE)])
+
+        self.assertEqual(counts["review_verdict"], 1)
+
+    def test_jury_verdict_quoting_the_assessment_heading_is_counted(self):
+        counts = self._counts(
+            pr_comments=[_trusted_comment(self.HEADING_IN_JURY_PROSE)],
+            jury=True,
+            no_jury=False,
+        )
+
+        self.assertEqual(counts["jury_verdict"], 1)
+
+    def test_jury_verdict_quoting_the_assessment_banner_is_counted(self):
+        counts = self._counts(
+            pr_comments=[_trusted_comment(self.BANNER_IN_JURY_PROSE)],
+            jury=True,
+            no_jury=False,
+        )
+
+        self.assertEqual(counts["jury_verdict"], 1)
+
+    def test_the_gate_no_longer_reports_a_quoted_verdict_missing(self):
+        # The live symptom: `missing: review-verdict-1` for a comment on the PR.
+        report = evidence.verify(
+            _review_contract(reviewers=1, no_jury=True),
+            pr_comments=[_trusted_comment(self.HEADING_IN_REVIEW_PROSE, reviewer="agent-a")],
+            head_sha="abc123",
+            phase=evidence.PHASE_PRE_MERGE,
+        )
+
+        self.assertEqual(report["missing"], [])
+        self.assertEqual(report["status"], evidence.STATUS_PASS)
+
+    def test_a_real_assessment_still_arms_the_gate_and_counts_for_nothing(self):
+        decision = evidence.gate_decision(
+            [], "keel:ship", pr_comments=[_trusted_comment(self.ASSESSMENT)]
+        )
+
+        self.assertTrue(decision["enforced"])
+        self.assertEqual(decision["reason"], "ship-assessment-comment")
+        self.assertEqual(
+            self._counts(pr_comments=[_trusted_comment(self.ASSESSMENT)]),
+            {"closure_pr": 0, "closure_issue": 0, "review_verdict": 0, "jury_verdict": 0},
+        )
+
+    def test_a_banner_only_assessment_still_arms_the_gate(self):
+        decision = evidence.gate_decision(
+            [], "keel:ship", pr_comments=[_trusted_comment(self.BANNER_ASSESSMENT)]
+        )
+
+        self.assertTrue(decision["enforced"])
+        self.assertEqual(decision["reason"], "ship-assessment-comment")
+
+    def test_the_heading_quoted_in_prose_does_not_arm_the_gate(self):
+        decision = evidence.gate_decision(
+            [],
+            "keel:ship",
+            pr_comments=[
+                _trusted_comment("Please post the `### \U0001f6a2 keel ship` assessment.\n")
+            ],
+        )
+
+        self.assertFalse(decision["enforced"])
+        self.assertEqual(decision["reason"], "no-ship-provenance")
+
+
 class TestMalformedMarkerHeader(unittest.TestCase):
     """A header naming two markers does not say which artifact it is (#1026)."""
 
