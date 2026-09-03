@@ -313,6 +313,25 @@ class TestVisualDivergence(unittest.TestCase):
             self.assertEqual(rc, 1)
             self.assertIn("keel-visual", err.getvalue())
 
+    def test_main_core_bump_strict_refusal_leaves_the_tree_untouched(self):
+        # The divergence check must run before `bump()` writes anything — a
+        # refused run must not leave a half-bumped tree (core rewritten,
+        # adapters not regenerated).
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _fixture(root, "1.7.0")
+            _add_visual(root, "0.8.0", "0.6.0")
+            before = (root / "pyproject.toml").read_text(encoding="utf-8")
+            before_init = (root / "src" / "keel" / "__init__.py").read_text(encoding="utf-8")
+            with redirect_stderr(StringIO()), redirect_stdout(StringIO()):
+                rc = release_bump.main(["1.8.0", "--root", str(root), "--strict"])
+            self.assertEqual(rc, 1)
+            self.assertEqual((root / "pyproject.toml").read_text(encoding="utf-8"), before)
+            self.assertEqual(
+                (root / "src" / "keel" / "__init__.py").read_text(encoding="utf-8"), before_init
+            )
+            self.assertIn('version = "1.7.0"', before)
+
     def test_main_core_bump_strict_passes_when_markers_agree(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

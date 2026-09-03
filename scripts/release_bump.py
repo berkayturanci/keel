@@ -240,6 +240,19 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     root = Path(args.root)
+
+    if args.package == "core":
+        # A core bump never touches keel-visual, so a pre-existing drift between
+        # its own two markers (#796) would otherwise ship unnoticed. Checked
+        # before any file is written, so a --strict refusal leaves the tree
+        # untouched rather than half-bumped.
+        warning = visual_divergence(root)
+        if warning:
+            print(f"warning: {warning}", file=sys.stderr)
+            if args.strict:
+                print("release-bump failed: keel-visual left behind (--strict)", file=sys.stderr)
+                return 1
+
     try:
         if args.package == "keel-visual":
             old, changed = bump_visual(root, args.version)
@@ -248,16 +261,6 @@ def main(argv: list[str] | None = None) -> int:
     except (ValueError, OSError) as exc:
         print(f"release-bump failed: {exc}", file=sys.stderr)
         return 1
-
-    if args.package == "core":
-        # A core bump never touches keel-visual, so a pre-existing drift between
-        # its own two markers (#796) would otherwise ship unnoticed.
-        warning = visual_divergence(root)
-        if warning:
-            print(f"warning: {warning}", file=sys.stderr)
-            if args.strict:
-                print("release-bump failed: keel-visual left behind (--strict)", file=sys.stderr)
-                return 1
 
     if not changed:
         print(f"release-bump: already at {args.version}; nothing to change")
