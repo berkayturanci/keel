@@ -537,9 +537,21 @@ class TestTheGateRunsWhenAVerdictArrives(unittest.TestCase):
         self.assertNotRegex(env["IS_FORK"], r"head\.repo\.fork\s*}}")
 
     def test_every_violation_fails_the_job_not_only_exit_one(self):
-        """`evidence-verify` can exit 3+; only 0 and 2 are non-violations."""
+        """`evidence-verify` can exit 3+; only 0 and 2 are non-violations.
+
+        Scoped to the branch that actually published: this run's RC may only
+        fail the job when this run's verdict is the one on the check. The
+        declined branch is pinned separately, in
+        :class:`TestAStaleEvaluationCannotOverwriteANewerVerdict`.
+        """
         run = _evidence_run()
         self.assertRegex(run, r'\[ "\$RC" -ne 0 \] && \[ "\$RC" -ne 2 \]')
+        published = run[run.index('if [ "$PUBLISHED" -eq 0 ]') :]
+        self.assertRegex(
+            published[: published.index("\n\n")],
+            r'\[ "\$RC" -ne 0 \] && \[ "\$RC" -ne 2 \]',
+            "the violation exit is not scoped to the branch that published",
+        )
 
     def test_the_lookup_cannot_be_neutered_into_a_blind_post(self):
         """`--jq 'empty'` would always miss, silently restoring the stacking.
@@ -551,9 +563,27 @@ class TestTheGateRunsWhenAVerdictArrives(unittest.TestCase):
         id, and every run would POST a second check under the gating name.
         """
         body = re.search(r"publish_check\(\)\s*\{(.*?)\n\}", _evidence_run(), re.DOTALL).group(1)
-        self.assertIn(".check_runs[0] | select(.id)", body)
+        self.assertIn("map(select(.id))", body)
+        self.assertIn("| select(.) |", body, "an absent run renders as a space, not as empty")
         self.assertIn("\\(.id)", body)
         self.assertIn(".external_id", body)
+
+    def test_the_stamp_is_read_off_the_newest_run_not_an_arbitrary_one(self):
+        """The list endpoint's order is not documented as newest-first.
+
+        A head that carries more than one check-run under the gating name — the
+        stacking the upsert exists to prevent, which a pre-guard workflow could
+        have left behind — would otherwise have its stamp read off whichever row
+        came back first, and an old stamp there disarms the staleness guard
+        silently.
+        """
+        body = re.search(r"publish_check\(\)\s*\{(.*?)\n\}", _evidence_run(), re.DOTALL).group(1)
+        self.assertIn("max_by(.external_id | tonumber? // 0)", body)
+        # On the invocation, not the block: the comment above it names
+        # `.check_runs[0]` to explain what it replaced, so a block-wide
+        # assertion passes with the lookup reverted.
+        lookup = next(line for line in body.splitlines() if "--jq" in line)
+        self.assertNotIn(".check_runs[0]", lookup, "the lookup is back on an arbitrary row")
 
 
 class TestOneEventCannotCancelAnotherEventsRun(unittest.TestCase):
@@ -647,6 +677,36 @@ class TestAStaleEvaluationCannotOverwriteANewerVerdict(unittest.TestCase):
     def test_the_check_records_when_it_was_evaluated(self):
         self.assertIn("external_id=${EVALUATED_AT}", self._publisher())
 
+    def test_a_declined_write_is_not_a_failed_job(self):
+        """The blocking defect a review caught in the first round.
+
+        `publish_check` returned 0 both when it published and when it declined,
+        and the caller replayed this run's RC either way — so an older
+        `pull_request` run that correctly declined to overwrite a newer success
+        still exited 1 on a stale violation RC. Actions marks that job FAILURE on
+        the *live* head, `cli._ci_rollup_state` scores FAILURE exactly like
+        CANCELLED, and `keel merge` refuses on "CI failing" again: the same
+        defect #1037 is about, reintroduced through the fix. Reachable whenever
+        the answer differs between two reads, which comment `edited` guarantees.
+        """
+        run = _evidence_run()
+        self.assertIn("return 3", self._publisher(), "the declined path is not distinguishable")
+        self.assertRegex(
+            run,
+            r'if \[ "\$PUBLISHED" -eq 3 \]; then\n\s*exit 0\n\s*fi',
+            "a declined write does not exit 0 unconditionally",
+        )
+        declined = run[run.index('if [ "$PUBLISHED" -eq 3 ]') :]
+        self.assertNotIn("$RC", declined[: declined.index('if [ "$PUBLISHED" -eq 0 ]')])
+
+    def test_the_stamp_orders_reads_that_land_in_the_same_second(self):
+        """Whole seconds plus a strict `-gt` means neither of two runs declines.
+
+        Two runs racing over one head are seconds apart at most, so the same
+        second is the common case, not the corner.
+        """
+        self.assertIn("date -u +%s%N", _evidence_run())
+
     def test_the_stamp_is_taken_before_the_pull_request_is_read(self):
         """A completion time would rank the stale answer first.
 
@@ -655,7 +715,7 @@ class TestAStaleEvaluationCannotOverwriteANewerVerdict(unittest.TestCase):
         the wrong one.
         """
         run = _evidence_run()
-        self.assertRegex(run, r"EVALUATED_AT=\$\(date -u \+%s\)")
+        self.assertRegex(run, r"EVALUATED_AT=\$\(date -u \+%s%N\)")
         self.assertLess(
             run.index("EVALUATED_AT=$(date"),
             run.index("keel evidence-verify"),
@@ -674,7 +734,7 @@ class TestAStaleEvaluationCannotOverwriteANewerVerdict(unittest.TestCase):
         self.assertLess(guard, body.index("-X POST"), "the guard runs after the create")
         self.assertRegex(
             body[guard : body.index("-X PATCH")],
-            r"return 0",
+            r"return 3",
             "the guard does not actually skip the write",
         )
         self.assertIn("::notice", body, "a skipped write is invisible in the log")
@@ -717,6 +777,32 @@ class TestTheDocsSayWhichRunIsAuthoritative(unittest.TestCase):
         section = self._section()
         self.assertIn("read the pull request last", section)
         self.assertIn("external_id", section, "the mechanism behind the rule is not named")
+
+    def test_the_docs_do_not_oversell_the_guard(self):
+        """A read-then-write guard is not a compare-and-swap.
+
+        The check-runs API offers none, so the honest claim is a smaller window,
+        not an impossible lost update — an operator who reads the strong claim
+        stops looking when the weaker one is violated.
+        """
+        section = self._section()
+        self.assertIn("compare-and-swap", section)
+        self.assertIn("round trip", section)
+
+    def test_the_docs_state_the_exception_to_the_superseded_head(self):
+        """`reopened`, a base-branch `synchronize` and a force-push back to an
+        assessed SHA all re-run `pull_request` on an unchanged head."""
+        section = self._section()
+        for term in ("reopened", "force-push", "base"):
+            with self.subTest(term=term):
+                self.assertIn(term, section)
+
+    def test_the_docs_admit_what_the_split_costs(self):
+        """Cancelled comment runs now leave cancelled checks on the default
+        branch's tip — harmless to the gate, visible in the UI, and surprising
+        to anyone who has not been told."""
+        section = self._section()
+        self.assertIn("default branch's tip", section)
 
 
 if __name__ == "__main__":  # pragma: no cover - manual entry point
