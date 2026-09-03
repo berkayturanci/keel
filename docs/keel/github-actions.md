@@ -47,6 +47,34 @@ Manual `workflow_dispatch` runs also accept an optional `deferral` input. Use it
 an explicitly recorded evidence deferral (`review`, `jury`, a concrete evidence id, or
 `all`); normal PR runs remain fail-closed.
 
+### Which run is authoritative
+
+Two triggers are routinely in flight over one pull request at once — `keel review --live`
+posts its verdict comments seconds after the push that started the assessment — so the
+`concurrency` group carries the **event name**: `keel-ship-pull_request-<n>`,
+`keel-ship-issue_comment-<n>`, `keel-ship-workflow_dispatch-<n>`. Runs of the *same* event
+still cancel their predecessor (`cancel-in-progress: true`); runs of *different* events
+never cancel each other.
+
+The split matters because a cancelled run's check-runs cannot be deleted. One group across
+every trigger meant a verdict comment's run cancelled the still-running `pull_request` run,
+leaving `keel ship (assessment)` and `keel evidence (verify)` `cancelled` on the pull
+request's head; GitHub reports that head as UNSTABLE and `keel merge` refuses on "CI
+failing" with every required check green (#1037). Cancelling *within* one event stays safe:
+a superseded `pull_request` run belongs to a superseded head SHA, and an `issue_comment` run
+always runs from the default branch, so its job check-runs land there and never on the pull
+request's head.
+
+**The authoritative verdict is the one from the run that read the pull request last** — not
+the run that finished last, and not the run for any particular event. Each run stamps the
+moment it read the PR (taken immediately before `keel evidence-verify`) into the
+`keel evidence (required)` check-run's `external_id`; before writing, it compares that stamp
+with the one already published for the head and declines to overwrite a newer one, logging a
+`Newer evidence verdict kept` notice instead. That is what keeps an assessment run which
+started *before* a verdict was posted from putting its "waiting" answer back over the
+"verified" one a later comment run published — the protection the shared concurrency group
+used to provide by cancelling, minus the cancelled check-runs.
+
 ## Gate arming and the operator waiver
 
 The evidence gate **arms from deterministic ship provenance by default** — when the PR
@@ -121,6 +149,10 @@ jobs:
 ## Adopting it in a consumer repo
 
 Add `.github/workflows/keel-ship.yml` with `uses: berkayturanci/keel-action@v1` and supply your project's API key secrets (`GEMINI_API_KEY`, `OPENAI_API_KEY`, or `ANTHROPIC_API_KEY`). Everything else (the runner, git, gh, quality gates, and reviewer panel) is handled automatically.
+
+A repository that copied this workflow file rather than the action needs the `concurrency`
+block copied too, event name and all — an older copy keyed on the pull request number alone
+carries the cancelled-check-run defect described above.
 
 ## Branch protection
 
