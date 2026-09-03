@@ -539,7 +539,9 @@ class TestSwarmLandingThinIO(unittest.TestCase):
 
             conflicted = Path(tmpdir) / "src"
             conflicted.mkdir(parents=True, exist_ok=True)
-            (conflicted / "shared.py").write_text("<<<<<<< HEAD\na\n=======\nb\n>>>>>>> x\n")
+            (conflicted / "shared.py").write_text(
+                "<<<<<<< HEAD\na\n=======\nb\n>>>>>>> x\n", encoding="utf-8"
+            )
 
             res = land_wave_clusters(
                 plan,
@@ -870,7 +872,9 @@ class TestSwarmLandingThinIO(unittest.TestCase):
 
             d = Path(tmpdir) / "src"
             d.mkdir(parents=True, exist_ok=True)
-            (d / "shared.py").write_text("<<<<<<< HEAD\na\n=======\nb\n>>>>>>> x\n")
+            (d / "shared.py").write_text(
+                "<<<<<<< HEAD\na\n=======\nb\n>>>>>>> x\n", encoding="utf-8"
+            )
 
             res = land_wave_clusters(
                 plan,

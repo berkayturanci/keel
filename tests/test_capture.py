@@ -653,10 +653,10 @@ class TestRetrieveRelevantLearnings(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             p = Path(td)
             (p / "auth_tokens.md").write_text(
-                "# Auth Token Handling\nAlways refresh expired bearer tokens."
+                "# Auth Token Handling\nAlways refresh expired bearer tokens.", encoding="utf-8"
             )
             (p / "database_lock.md").write_text(
-                "# SQLite Locking\nDo not hold write locks across network calls."
+                "# SQLite Locking\nDo not hold write locks across network calls.", encoding="utf-8"
             )
             (p / "ignored.bin").write_bytes(b"\x00\x01\x02")
 
@@ -674,7 +674,7 @@ class TestRetrieveRelevantLearnings(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as td:
             p = Path(td)
-            (p / "lesson.md").write_text("# Lesson\nSome content")
+            (p / "lesson.md").write_text("# Lesson\nSome content", encoding="utf-8")
             with patch.object(Path, "read_text", side_effect=OSError("permission denied")):
                 self.assertEqual(capture.retrieve_relevant_learnings("lesson content", td), [])
 

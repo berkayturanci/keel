@@ -68,7 +68,7 @@ class TestEnsureGitignore(unittest.TestCase):
             keel = Path(tmp) / ".keel"
             keel.mkdir()
             gitignore = keel / ".gitignore"
-            gitignore.write_text("state/\n# my own rule\nbuild-cache/\n")
+            gitignore.write_text("state/\n# my own rule\nbuild-cache/\n", encoding="utf-8")
             self.assertTrue(workspace.ensure_runtime_gitignore(keel))
             text = gitignore.read_text(encoding="utf-8")
             # Operator content preserved.
@@ -85,7 +85,7 @@ class TestEnsureGitignore(unittest.TestCase):
             keel = Path(tmp) / ".keel"
             keel.mkdir()
             gitignore = keel / ".gitignore"
-            gitignore.write_text("state/")  # no trailing newline, missing others
+            gitignore.write_text("state/", encoding="utf-8")  # no trailing newline, missing others
             self.assertTrue(workspace.ensure_runtime_gitignore(keel))
             lines = gitignore.read_text(encoding="utf-8").splitlines()
             self.assertIn("state/", lines)
@@ -96,7 +96,7 @@ class TestEnsureGitignore(unittest.TestCase):
             keel = Path(tmp) / ".keel"
             keel.mkdir()
             gitignore = keel / ".gitignore"
-            gitignore.write_text("")
+            gitignore.write_text("", encoding="utf-8")
             self.assertTrue(workspace.ensure_runtime_gitignore(keel))
             self.assertIn("scratch/", gitignore.read_text(encoding="utf-8").splitlines())
 
@@ -565,7 +565,7 @@ class TestCleanScratch(unittest.TestCase):
     def test_entries_and_clean_roundtrip(self):
         with tempfile.TemporaryDirectory() as tmp:
             scratch = workspace.scratch_dir(tmp)
-            (scratch / "pr-1.diff").write_text("x")
+            (scratch / "pr-1.diff").write_text("x", encoding="utf-8")
             (scratch / "sub").mkdir()
             self.assertEqual(workspace.scratch_entries(tmp), ["pr-1.diff", "sub"])
             removed = workspace.clean_scratch(tmp)
@@ -599,7 +599,9 @@ class TestPruneActivity(unittest.TestCase):
             directory = _activity_dir_with(
                 tmp, ["old1.json", "old2.json", "new1.json", "new2.json"]
             )
-            (directory / "notes.txt").write_text("keep me")  # non-json never counts
+            (directory / "notes.txt").write_text(
+                "keep me", encoding="utf-8"
+            )  # non-json never counts
             plan = workspace.activity_prune_plan(directory, keep_last=2)
             self.assertEqual(plan, ["old1.json", "old2.json"])
             removed = workspace.prune_activity(directory, keep_last=2)
@@ -647,7 +649,9 @@ class TestGcCommand(unittest.TestCase):
     def test_invalid_config_returns_1(self):
         with tempfile.TemporaryDirectory() as tmp:
             bad = Path(tmp) / "bad.yaml"
-            bad.write_text("extends: keel\ncore_version: 5\n")  # core_version wrong type
+            bad.write_text(
+                "extends: keel\ncore_version: 5\n", encoding="utf-8"
+            )  # core_version wrong type
             rc, _, err = self._run(["gc", str(bad), "--root", tmp])
             self.assertEqual(rc, 1)
 
@@ -655,7 +659,7 @@ class TestGcCommand(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             cfg_path = _write_config(tmp)
             scratch = workspace.scratch_dir(tmp)
-            (scratch / "pr.diff").write_text("x")
+            (scratch / "pr.diff").write_text("x", encoding="utf-8")
             _activity_dir_with(tmp, ["a.json", "b.json", "c.json"])
             rc, out, _ = self._run(
                 ["gc", cfg_path, "--root", tmp, "--keep-activity", "1", "--dry-run", "--json"]
@@ -673,7 +677,7 @@ class TestGcCommand(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             cfg_path = _write_config(tmp)
             scratch = workspace.scratch_dir(tmp)
-            (scratch / "pr.diff").write_text("x")
+            (scratch / "pr.diff").write_text("x", encoding="utf-8")
             _activity_dir_with(tmp, ["a.json", "b.json", "c.json"])
             rc, out, _ = self._run(["gc", cfg_path, "--root", tmp, "--keep-activity", "1"])
             self.assertEqual(rc, 0)
@@ -689,8 +693,8 @@ class TestGcCommand(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             cfg_path = _write_config(tmp)
             scratch = workspace.scratch_dir(tmp)
-            (scratch / "a").write_text("x")
-            (scratch / "b").write_text("y")
+            (scratch / "a").write_text("x", encoding="utf-8")
+            (scratch / "b").write_text("y", encoding="utf-8")
             rc, out, _ = self._run(["gc", cfg_path, "--root", tmp, "--no-activity"])
             self.assertEqual(rc, 0)
             self.assertIn("removed 2 entries", out)
@@ -700,7 +704,7 @@ class TestGcCommand(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             cfg_path = _write_config(tmp)
             scratch = workspace.scratch_dir(tmp)
-            (scratch / "pr.diff").write_text("x")
+            (scratch / "pr.diff").write_text("x", encoding="utf-8")
             rc, out, _ = self._run(["gc", cfg_path, "--root", tmp, "--no-scratch"])
             self.assertEqual(rc, 0)
             self.assertNotIn("scratch   :", out)
@@ -711,8 +715,8 @@ class TestGcCommand(unittest.TestCase):
             cfg_path = _write_config(tmp)
             state = Path(tmp) / ".keel" / "state"
             state.mkdir(parents=True)
-            (state / "checkpoint.json").write_text("{}")
-            (state / "run-ledger.jsonl").write_text("{}\n")
+            (state / "checkpoint.json").write_text("{}", encoding="utf-8")
+            (state / "run-ledger.jsonl").write_text("{}\n", encoding="utf-8")
             _activity_dir_with(tmp, ["a.json"])
             rc, _, _ = self._run(["gc", cfg_path, "--root", tmp, "--keep-activity", "0"])
             self.assertEqual(rc, 0)

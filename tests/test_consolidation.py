@@ -59,7 +59,7 @@ def _isolated_env(**overrides: str) -> dict[str, str]:
 
 def _write_raw(text):
     path = Path(_TMP.name) / f"cfg-{next(_TMP_COUNTER)}.yaml"
-    path.write_text(text)
+    path.write_text(text, encoding="utf-8")
     return str(path)
 
 

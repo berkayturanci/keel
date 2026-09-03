@@ -374,7 +374,7 @@ class TestPlan(unittest.TestCase):
 
 def _write_raw(text):
     path = Path(_TMP.name) / f"cfg-{next(_TMP_COUNTER)}.yaml"
-    path.write_text(text)
+    path.write_text(text, encoding="utf-8")
     return str(path)
 
 
@@ -10504,7 +10504,7 @@ class TestInit(unittest.TestCase):
         import tempfile
 
         with tempfile.TemporaryDirectory() as d:
-            (Path(d) / "pubspec.yaml").write_text("name: app\n")
+            (Path(d) / "pubspec.yaml").write_text("name: app\n", encoding="utf-8")
             rc, out, _ = run(["init", "--root", d])
             self.assertEqual(rc, 0)
             self.assertIn("flutter", out)
@@ -10520,7 +10520,7 @@ class TestInit(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             keel = Path(d) / ".keel"
             keel.mkdir()
-            (keel / "project.yaml").write_text("x")
+            (keel / "project.yaml").write_text("x", encoding="utf-8")
             rc, _, err = run(["init", "--root", d])
             self.assertEqual(rc, 1)
             self.assertIn("already exists", err)
@@ -10531,10 +10531,10 @@ class TestInit(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             keel = Path(d) / ".keel"
             keel.mkdir()
-            (keel / "project.yaml").write_text("old")
+            (keel / "project.yaml").write_text("old", encoding="utf-8")
             ext = keel / "extensions/local.md"
             ext.parent.mkdir()
-            ext.write_text("extension\n")
+            ext.write_text("extension\n", encoding="utf-8")
             rc, _, err = run(["init", "--root", d, "--force"])
             self.assertEqual(rc, 0)
             self.assertIn("extensions/ was not touched", err)
@@ -10546,7 +10546,7 @@ class TestInit(unittest.TestCase):
         from unittest.mock import patch
 
         with tempfile.TemporaryDirectory() as d:
-            (Path(d) / "pyproject.toml").write_text("x")
+            (Path(d) / "pyproject.toml").write_text("x", encoding="utf-8")
             answers = ["develop", "Etc/GMT-3", "09:00-18:00", "explicit", "pytest", ""]
             with patch("builtins.input", side_effect=answers):
                 rc, out, _ = run(["init", "--root", d, "--wizard"])
@@ -10567,7 +10567,7 @@ class TestInit(unittest.TestCase):
         from unittest.mock import patch
 
         with tempfile.TemporaryDirectory() as d:
-            (Path(d) / "pyproject.toml").write_text("x")
+            (Path(d) / "pyproject.toml").write_text("x", encoding="utf-8")
             answers = ["develop", "Etc/GMT-3", "09:00-18:00", "maybe", "pytest", ""]
             with patch("builtins.input", side_effect=answers):
                 rc, _, err = run(["init", "--root", d, "--wizard"])
@@ -10579,7 +10579,7 @@ class TestInit(unittest.TestCase):
         import tempfile
 
         with tempfile.TemporaryDirectory() as d:
-            (Path(d) / "Cargo.toml").write_text("[package]\nname = 'demo'\n")
+            (Path(d) / "Cargo.toml").write_text("[package]\nname = 'demo'\n", encoding="utf-8")
             git_dir = Path(d) / ".git"
             git_dir.mkdir()
             (git_dir / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
@@ -10610,7 +10610,7 @@ class TestSetup(unittest.TestCase):
         import tempfile
 
         with tempfile.TemporaryDirectory() as d:
-            (Path(d) / "pyproject.toml").write_text("[project]\nname = 'demo'\n")
+            (Path(d) / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
             rc, out, err = run(["setup", "--root", d])
             self.assertEqual(rc, 0, err)
             self.assertIn("keel setup", out)
@@ -10648,7 +10648,7 @@ class TestSetup(unittest.TestCase):
                 "extends: keel\ncore_version: '^0.6'\nrepo: existing\nbase_branch: develop\n"
                 "knobs:\n  build_gate_cmd: 'true'\n"
             )
-            target.write_text(text)
+            target.write_text(text, encoding="utf-8")
             rc, out, err = run(["setup", "--root", d, "--adapter-target", "claude"])
             self.assertEqual(rc, 0, err)
             self.assertIn("using existing", out)
@@ -10663,13 +10663,13 @@ class TestSetup(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             target = Path(d) / ".keel/project.yaml"
             target.parent.mkdir()
-            target.write_text("old")
+            target.write_text("old", encoding="utf-8")
             ext = Path(d) / ".keel/extensions/local.md"
             ext.parent.mkdir()
-            ext.write_text("extension\n")
+            ext.write_text("extension\n", encoding="utf-8")
             adapter = Path(d) / ".claude/commands/keel/ship.md"
             adapter.parent.mkdir(parents=True)
-            adapter.write_text("old")
+            adapter.write_text("old", encoding="utf-8")
             rc, out, err = run(["setup", "--root", d, "--adapter-target", "claude", "--force"])
             self.assertEqual(rc, 0, err)
             self.assertIn("overwrote", out)
@@ -10683,7 +10683,7 @@ class TestSetup(unittest.TestCase):
         import tempfile
 
         with tempfile.TemporaryDirectory() as d:
-            (Path(d) / "pyproject.toml").write_text("x")
+            (Path(d) / "pyproject.toml").write_text("x", encoding="utf-8")
             answers = ["develop", "Etc/GMT-3", "09:00-18:00", "explicit", "pytest", ""]
             with patch("builtins.input", side_effect=answers):
                 rc, out, err = run(["setup", "--root", d, "--wizard"])
@@ -10701,7 +10701,7 @@ class TestSetup(unittest.TestCase):
         import tempfile
 
         with tempfile.TemporaryDirectory() as d:
-            (Path(d) / "pyproject.toml").write_text("x")
+            (Path(d) / "pyproject.toml").write_text("x", encoding="utf-8")
             answers = ["develop", "Etc/GMT-3", "09:00-18:00", "maybe", "pytest", ""]
             with patch("builtins.input", side_effect=answers):
                 rc, _, err = run(["setup", "--root", d, "--wizard"])
@@ -10715,7 +10715,7 @@ class TestSetup(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             target = Path(d) / ".keel/project.yaml"
             target.parent.mkdir()
-            target.write_text("extends: keel\n")
+            target.write_text("extends: keel\n", encoding="utf-8")
             rc, out, err = run(["setup", "--root", d, "--adapter-target", "claude"])
             self.assertEqual(rc, 1)
             self.assertIn("using existing", out)

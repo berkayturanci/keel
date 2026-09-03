@@ -203,7 +203,7 @@ class TestBump(unittest.TestCase):
 
     def test_current_version_missing_raises(self):
         with TemporaryDirectory() as tmp:
-            (Path(tmp) / "pyproject.toml").write_text("[project]\nname='x'\n")
+            (Path(tmp) / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
             with self.assertRaises(ValueError):
                 release_bump.current_version(Path(tmp))
 
