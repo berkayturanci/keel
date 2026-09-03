@@ -285,8 +285,16 @@ class TestPlan(unittest.TestCase):
         self.assertEqual(assignment["reviewers"][0]["source"], "flag:--review-delegate")
         self.assertEqual(assignment["reviewers"][1]["provider"], "agy")
 
-    def _keel_tier_three_plan(self, *extra):
-        rc, out, err = run(
+    def test_plan_json_renders_keels_own_tier_three_bench(self):
+        """keel's live policy, not the reference example (#1014 lead decision).
+
+        Three seats — the host lead, the second vendor, and a second Opus subagent —
+        with `evidence_require_distinct_vendors` explicitly off, because
+        `distinct_vendor_check` wants every required verdict to carry a pairwise-distinct
+        vendor and that panel is anthropic + google + anthropic. The jury stays advisory
+        until #1015 dispatches it from s7, so no `jury-verdict` is required.
+        """
+        rc, out, _ = run(
             [
                 "plan",
                 str(PROJECTS / "keel.yaml"),
@@ -297,45 +305,20 @@ class TestPlan(unittest.TestCase):
                 "--tier",
                 "3",
                 "--json",
-                *extra,
             ]
         )
-        self.assertEqual(rc, 0, err)
-        return json.loads(out)["contract"]
 
-    def test_plan_json_renders_keels_own_tier_three_bench(self):
-        """keel's live policy: at tier-3 the cross-vendor panel is the review (#1015).
-
-        No host seat is staffed — s7 dispatches ai-jury once and `keel review
-        --from-jury` maps its ballots onto the review verdicts — and the jury verdict
-        stays required as the consensus record. `evidence_require_distinct_vendors` is
-        explicitly off: its pairwise rule would refuse a legitimate three-ballot,
-        two-vendor panel, which core already holds to `jury.min_vendors` instead.
-        """
-        contract = self._keel_tier_three_plan()
-
-        reviewers = contract["review_merge_contract"]["reviewers"]
-        self.assertEqual(contract["assignment"]["review_panel"], "jury")
-        self.assertEqual(reviewers["source"], "jury")
-        self.assertEqual(reviewers["count"], 2)
-        self.assertEqual(reviewers["slots"], [])
-        self.assertIs(reviewers["require_distinct_vendors"], False)
-        self.assertEqual(contract["review_merge_contract"]["jury"]["mode"], "gating")
-        required = [item["id"] for item in contract["evidence"]["required"]]
-        self.assertIn("review-verdict-2", required)
-        self.assertIn("jury-verdict", required)
-
-    def test_keels_own_ci_run_keeps_the_host_bench(self):
-        """keel's CI evidence run passes `--no-jury` (#965) — that skips the panel only.
-
-        The tier-3 seats it staffs instead are the ones this project's policy names for
-        the bench, so a run without the panel still requires three reviewer verdicts.
-        """
-        contract = self._keel_tier_three_plan("--no-jury")
-
+        self.assertEqual(rc, 0)
+        contract = json.loads(out)["contract"]
         reviewers = contract["review_merge_contract"]["reviewers"]
         self.assertEqual(contract["assignment"]["review_panel"], "reviewers")
         self.assertEqual(reviewers["count"], 3)
+        self.assertIs(reviewers["require_distinct_vendors"], False)
+        self.assertEqual(
+            [seat["provider"] for seat in reviewers["slots"]],
+            ["claude", "agy", "subagent:opus-reviewer"],
+        )
+        self.assertEqual(contract["review_merge_contract"]["jury"]["mode"], "advisory")
         required = [item["id"] for item in contract["evidence"]["required"]]
         self.assertIn("review-verdict-3", required)
         self.assertNotIn("jury-verdict", required)

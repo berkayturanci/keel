@@ -280,10 +280,13 @@ both render it as `assignment`, resolved against the same tier the review contra
   panel once and maps its ballots onto the review verdicts (see s7). `reviewers.count` is
   the number of ballots that must be posted: the size a posted jury verdict declared, or
   the jury's `min_vendors` floor before the panel has run.
-- `reviewers.source: "jury-not-gating"` is the other half of that policy: the panel does
-  not gate (advisory by policy, or downgraded for too few participating vendors), so the
-  tier's **host reviewers are required again** and `reviewers.count` is the tier's own
-  count. Fewer participating vendors never means fewer eyes — run the bench.
+- **The bench never moves.** `reviewers.source` on such a tier is always `jury`: neither a
+  jury flag nor the participating-vendor count changes *who* reviews, only whether the
+  panel's verdict gates. You receive the same bench whichever surface you ask, which is the
+  point — `keel review` has no `--no-jury`, and only `evidence-verify`/`keel merge` can see
+  a vendor count. A short panel therefore owes exactly the same ballots; what it loses is
+  the gating of its verdict, and `evidence-verify` reports the thin vendor span rather than
+  swapping in a bench nobody dispatched.
 
 ## Backbone (do not reorder; the step IDs are fixed)
 
@@ -622,10 +625,11 @@ findings already in keel's severity vocabulary — and that block is what feeds 
 `critical`/`major` block exactly as a host reviewer's findings do. Take the fix loop's input
 from there, not from the panel's prose.
 
-A panel that spans fewer than `jury.minimum_vendors` distinct vendors is downgraded to
-advisory by core, and the contract then says so: `reviewers.panel` comes back as
-`reviewers` with `source: "jury-not-gating"`. That is not a licence to skip the review —
-staff the tier's host reviewers below and run them.
+A panel that spans fewer than `jury.minimum_vendors` distinct vendors is downgraded by
+core, exactly as it always was — that is about the **verdict's gating**, not about the
+bench. The bench does not move: report the count (`keel evidence-verify --jury-vendors
+<N>`), post every ballot the panel returned, and let core decide. Do not fall back to host
+reviewers on your own; a tier's reviewers are what its config says they are.
 
 Before the panel, run the **gate review** when `assignment.gate` is present: the project's
 second opinion on the implementation, dispatched read-only exactly like a reviewer but

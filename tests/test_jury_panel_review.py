@@ -228,30 +228,35 @@ class TestTheJuryIsTheReviewPanel(unittest.TestCase):
 
         self.assertEqual(rc, 1)
         self.assertEqual(report["verification"]["status"], "fail")
-        self.assertIn(
-            "review-vendor-distinctness",
-            [finding["id"] for finding in report["verification"]["findings"]],
+        finding = next(
+            f for f in report["verification"]["findings"] if f["id"] == "review-vendor-distinctness"
         )
+        self.assertEqual(finding["severity"], "major")
+        # The panel's own rule, not the per-slot one: it names the span it found.
+        self.assertIn("spans 1 distinct vendor(s), below the minimum of 2", finding["message"])
 
-    def test_a_single_vendor_panel_also_puts_the_host_reviewers_back(self):
-        """The downgrade rule, unchanged: fewer vendors never means fewer eyes.
+    def test_a_short_panel_never_shrinks_the_review_it_owes(self):
+        """The downgrade changes what gates, never who reviews (#1014 round 3, #1015).
 
-        A panel that spans one vendor is below `min_vendors`, so the jury is
-        downgraded to advisory — and an advisory panel is not a review keel may
-        rely on, so the tier's host bench is required again rather than left empty.
+        A panel spanning one vendor is below `min_vendors`, so the jury verdict
+        stops gating — but the bench does not move: the panel is still the review,
+        and all three of its ballots stay required. That is the fail-closed
+        direction without the cross-surface disagreement a moving bench brings,
+        since only the surfaces that can read the posted verdict ever learn the
+        vendor count. The too-few-vendors condition is reported by the vendor
+        check above, not by quietly swapping in a bench nobody dispatched.
         """
         result = self._map_panel(["anthropic", "anthropic", "anthropic"])
 
         _rc, report = self._verify(result["plan"]["posts"])
 
-        reviewers = report["verification"]
+        results = report["verification"]["results"]
         self.assertEqual(
-            [item["id"] for item in reviewers["results"] if item["kind"] == "review"],
+            [item["id"] for item in results if item["kind"] == "review"],
             ["review-verdict-1", "review-verdict-2", "review-verdict-3"],
         )
-        # The jury verdict is no longer *required* — an advisory panel does not gate —
-        # while the three host verdicts are.
-        self.assertNotIn("jury-verdict", [item["id"] for item in reviewers["results"]])
+        self.assertTrue(all(item["present"] for item in results if item["kind"] == "review"))
+        self.assertNotIn("jury-verdict", [item["id"] for item in results])
 
     def test_the_panel_is_dispatched_once_not_beside_a_host_bench(self):
         """`keel ship --json` at tier-3: the reviewers are the panel, and only the panel."""

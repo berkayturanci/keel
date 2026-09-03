@@ -206,36 +206,37 @@ def check_reviewer_override(reviewer_override: int | None) -> None:
         raise ValueError("reviewer_override must be one of 1, 2, or 3")
 
 
-def _jury_panel_bench(
-    jury_record: dict[str, Any],
-    *,
-    tier: int | None,
-    reviewer_override: int | None,
-    panel_size: int | None,
-) -> tuple[int, str, str]:
-    """The reviewer bench for a tier whose review policy is the jury panel (#1015).
+def _jury_panel_size(jury_record: dict[str, Any], panel_size: int | None) -> int:
+    """How many verdicts a jury-panel tier requires (#1015).
 
-    Two answers, and which one applies is decided by the mode the jury actually
-    resolved to rather than by the policy that asked for it:
+    The panel *is* the review there, so its ballots are the required s7 verdicts —
+    ``keel review --from-jury`` posts one head-pinned verdict per ballot — and the
+    required count is the panel's own size, declared as ``panelists: <N>`` on the
+    posted jury verdict. Before anything has declared it the count rests on the
+    jury's minimum vendor count: a floor rather than nothing, so an unmeasured
+    panel cannot satisfy the gate by being unmeasured.
 
-    * **gating** — the panel *is* the review. Its ballots are the required s7
-      verdicts (``keel review --from-jury`` posts one head-pinned verdict per
-      ballot), so the required count is the panel's own size. Until the panel has
-      run, nothing has declared that size; the count then rests on the jury's
-      minimum vendor count, which is a floor rather than nothing, so an undeclared
-      panel cannot satisfy the gate by being unmeasured.
-    * **not gating** — advisory by policy, or downgraded because too few vendors
-      took part. A panel that does not gate is not a review keel may rely on, so
-      the tier's **host reviewers are required again**. That is the fail-closed
-      direction the downgrade rule exists for: fewer participating vendors must
-      never mean fewer eyes.
+    **What this deliberately does not do is move the bench.** Neither a jury flag
+    nor the measured participating-vendor count may change *who reviews*, only
+    whether the panel's verdict gates. The bench is a pure function of config +
+    tier + role + ``--reviewers``/``--review-delegate`` (:func:`keel.team._review_seats`),
+    and for the same reason: the six commands that resolve this contract do not
+    receive the other inputs uniformly. ``keel review`` has no ``--no-jury`` at
+    all, and only the surfaces that can read the PR's posted jury verdict —
+    ``evidence-verify`` and ``keel merge`` — ever see a vendor count. A bench that
+    moved with either input would have ``keel plan`` requiring the panel's ballots
+    while ``evidence-verify`` demanded a host bench of the same PR, which is the
+    contract disagreement #1014 exists to prevent, reintroduced along a new axis.
+
+    A short panel therefore does not buy fewer eyes: the ballots stay required in
+    full, the jury verdict's own gating is resolved by :func:`resolve_jury` as
+    before, and a panel that spans too few vendors is refused by
+    :func:`keel.evidence.panel_vendor_check` rather than quietly swapped for a
+    bench nobody dispatched.
     """
-    if jury_record["mode"] != "gating":
-        count = reviewer_override if reviewer_override is not None else reviewer_count(tier or 2)
-        return count, "jury-not-gating", "reviewers"
     if isinstance(panel_size, int) and panel_size > 0:
-        return panel_size, "jury", team_policy.JURY_PANEL
-    return jury_record["minimum_vendors"], "jury", team_policy.JURY_PANEL
+        return panel_size
+    return jury_record["minimum_vendors"]
 
 
 def resolve_review_contract(
@@ -301,12 +302,7 @@ def resolve_review_contract(
         ),
     )
     if panel_is_jury:
-        count, source, panel = _jury_panel_bench(
-            jury_record,
-            tier=tier,
-            reviewer_override=reviewer_override,
-            panel_size=jury_panel_size,
-        )
+        count, source = _jury_panel_size(jury_record, jury_panel_size), "jury"
     pack = policy_pack or {}
     review_policy = pack.get("review", {}) if isinstance(pack.get("review", {}), dict) else {}
     return {

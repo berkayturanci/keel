@@ -108,7 +108,13 @@ The required `review-verdict` count comes from the review contract's `reviewers`
 |---|---|---|
 | `reviewers` | `team.review.by_tier.<n>` / `risk-tier` / `override` | One verdict per staffed host seat. |
 | `jury` | `jury` | One verdict per **ai-jury panelist ballot**, plus the `jury-verdict` consensus record. |
-| `reviewers` | `jury-not-gating` | The tier's host seats — the panel was downgraded or is advisory, and a panel that does not gate is not a review. |
+
+The bench is a pure function of **config + tier + role + `--reviewers` / `--review-delegate`**,
+and of nothing else — not a jury flag, and not the measured participating-vendor count. It
+has to be: the six commands that resolve this contract do not receive those inputs uniformly
+(`keel review` has no `--no-jury`; only `evidence-verify` and `keel merge` can read a posted
+vendor count), so a bench that moved with either would have one surface requiring the panel's
+ballots while another demanded a host bench of the same pull request.
 
 On a `review.by_tier.<n>: jury` tier the panel *is* the review: `s7` dispatches ai-jury once
 and `keel review --from-jury <report.json>` maps each ballot onto a head-pinned
@@ -134,9 +140,10 @@ review; three from one vendor is one opinion three times and fails with
 
 **The downgrade never buys fewer eyes.** A panel with fewer than `jury.min_vendors`
 participating vendors is downgraded `gating → advisory` (see
-[cli.md](cli.md#--jury-vendors-n--the-panel-decides-whether-the-jury-gates)), and an
-advisory panel is not a review keel may rely on — so the tier's host reviewers are required
-again, reported as `reviewers.source: jury-not-gating`.
+[cli.md](cli.md#--jury-vendors-n--the-panel-decides-whether-the-jury-gates)) — that is about
+whether the *verdict* gates, and it leaves the review untouched: every ballot the panel owed
+is still required, and the thin vendor span is reported by the check above. The requirement
+shrinks in neither direction, which is what a moving bench could not have promised.
 
 ### 5. Phase-Separated Verification Contract
 Evidence requirements are split by lifecycle phase:

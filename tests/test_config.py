@@ -1360,10 +1360,10 @@ class TestTeamKnob(unittest.TestCase):
     def test_keels_own_configs_describe_the_team_that_reviews_keel_today(self):
         """Both dogfood configs, and they must match — `make validate` checks both.
 
-        The policy here is not the reference example: it is who actually reviews keel.
-        Tier-1 and tier-2 are host seats; tier-3 is the cross-vendor panel itself
-        (#1015), dispatched once at s7 and mapped onto the review verdicts by
-        `keel review --from-jury`, rather than three host readings *plus* a panel.
+        The policy here is not the reference example: it is who actually reviews keel,
+        so it must not gate a merge on a seat or a verdict that does not exist yet. The
+        `"3": jury` shape stays documented in `configuration.md#team` as the intended
+        future (#1015 wires the jury into s7), not as keel's live config.
         """
         for path in (DOGFOOD_CONFIG, PROJECTS_DIR / "keel.yaml"):
             with self.subTest(config=path.name):
@@ -1377,15 +1377,16 @@ class TestTeamKnob(unittest.TestCase):
                 self.assertEqual(
                     [seat.provider for seat in team.review_by_tier["2"]], ["claude", "agy"]
                 )
-                # The panel *is* the tier-3 review, and it gates: its verdict is
-                # evidence keel's own merge waits on.
-                self.assertEqual(team.review_by_tier["3"], "jury")
-                self.assertEqual(team.jury_mode, "gating")
-                self.assertEqual(team.jury_min_vendors, 2)
-                # Explicitly off, not unset: the tier-derived default adds a *pairwise*
-                # distinctness rule that a legitimate three-ballot, two-vendor panel
-                # fails. Tier-2 still gets two vendors by construction of the seats, and
-                # the panel is held to `jury.min_vendors` by core.
+                self.assertEqual(
+                    [seat.provider for seat in team.review_by_tier["3"]],
+                    ["claude", "agy", "subagent:opus-reviewer"],
+                )
+                # Advisory until the jury actually runs from s7: keel does not get to
+                # make its own merge wait on a panel nobody dispatches.
+                self.assertEqual(team.jury_mode, "advisory")
+                # Explicitly off, not unset: the tier-derived default would demand three
+                # pairwise-distinct vendors from a panel that is anthropic + google +
+                # anthropic. Tier-2 still gets two vendors by construction of the seats.
                 self.assertIs(config.knobs.evidence_require_distinct_vendors, False)
 
     def test_a_malformed_implementer_agents_entry_does_not_break_gate_validation(self):

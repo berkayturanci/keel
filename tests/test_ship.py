@@ -760,8 +760,18 @@ class TestTeamAssignment(unittest.TestCase):
 
         self.assertEqual(contract["reviewers"]["count"], 3)
 
-    def test_a_downgraded_panel_staffs_the_host_reviewers_again(self):
-        """Fewer participating vendors must never mean fewer eyes (#1015)."""
+    def test_a_downgraded_panel_keeps_the_bench_it_was_configured_with(self):
+        """The bench never moves with the measured vendor count (#1014 round 3, #1015).
+
+        A short panel downgrades the *verdict's* gating, which is
+        :func:`resolve_jury`'s business. It must not restaff the review: only the
+        surfaces that can read the PR's posted jury verdict ever see a vendor
+        count, so a bench that moved with it would have `keel plan` requiring the
+        panel's ballots while `evidence-verify` demanded a host bench of the same
+        PR — the contract disagreement #1014 exists to prevent, along a new axis.
+        The ballots stay required in full instead, and too few vendors is refused
+        by `evidence.panel_vendor_check`.
+        """
         contract = ship.resolve_review_contract(
             tier=3,
             assignment=self._assignment(3),
@@ -769,38 +779,11 @@ class TestTeamAssignment(unittest.TestCase):
             jury_panel_size=3,
         )
 
-        self.assertEqual(contract["jury"]["mode"], "advisory")
         self.assertTrue(contract["jury"]["downgraded"])
-        self.assertEqual(contract["reviewers"]["panel"], "reviewers")
-        self.assertEqual(contract["reviewers"]["count"], ship.reviewer_count(3))
-        self.assertEqual(contract["reviewers"]["source"], "jury-not-gating")
-        self.assertEqual(
-            [focus["slot"] for focus in contract["reviewers"]["focuses"]], ["A", "B", "C"]
-        )
-
-    def test_an_advisory_panel_staffs_the_host_reviewers_too(self):
-        """An advisory panel does not gate, so it is not the review either."""
-        policy = team_policy.parse_team(
-            {"review": {"by_tier": {"3": "jury"}}, "jury": {"mode": "advisory"}}
-        )
-        assignment = team_policy.resolve_assignment(policy, tier=3, default_count=3)
-
-        contract = ship.resolve_review_contract(tier=3, assignment=assignment)
-
-        self.assertEqual(contract["reviewers"]["panel"], "reviewers")
+        self.assertEqual(contract["reviewers"]["panel"], "jury")
+        self.assertEqual(contract["reviewers"]["source"], "jury")
         self.assertEqual(contract["reviewers"]["count"], 3)
-
-    def test_an_override_still_sizes_a_non_gating_panels_host_bench(self):
-        policy = team_policy.parse_team(
-            {"review": {"by_tier": {"3": "jury"}}, "jury": {"mode": "advisory"}}
-        )
-        assignment = team_policy.resolve_assignment(
-            policy, tier=3, default_count=3, reviewer_override=1
-        )
-
-        contract = ship.resolve_review_contract(tier=3, assignment=assignment, reviewer_override=1)
-
-        self.assertEqual(contract["reviewers"]["count"], 1)
+        self.assertEqual(contract["reviewers"]["slots"], [])
 
     def test_the_panel_enables_the_jury_below_tier_three(self):
         policy = team_policy.parse_team({"review": {"by_tier": {"2": "jury"}}})
@@ -832,7 +815,10 @@ class TestTeamAssignment(unittest.TestCase):
 
                 self.assertTrue(contract["jury"]["enabled"])
                 self.assertEqual(contract["jury"]["mode"], "gating")
-                self.assertEqual(contract["reviewers"]["count"], 0)
+                # The panel's own ballots are the required verdicts (#1015); before a
+                # posted verdict declares the panel size that is the min_vendors floor.
+                self.assertEqual(contract["reviewers"]["count"], 3)
+                self.assertEqual(contract["reviewers"]["source"], "jury")
                 self.assertIn("does not apply", contract["jury"]["reason"])
 
     def test_no_jury_keeps_its_meaning_below_a_panel_tier(self):
@@ -859,13 +845,18 @@ class TestTeamAssignment(unittest.TestCase):
         # …and the bench is untouched: there are still three host reviewers behind it.
         self.assertEqual(contract["reviewers"]["count"], 3)
 
-    def test_a_raised_minimum_downgrades_a_panel_that_met_the_old_floor(self):
-        contract = ship.resolve_review_contract(
-            tier=3, assignment=self._assignment(3), jury_participating_vendors=2
+    def test_a_jury_flag_never_resizes_the_panels_requirement(self):
+        """`--no-jury` / `--jury-advisory` are recorded upstream, never applied here."""
+        base = ship.resolve_review_contract(
+            tier=3, assignment=self._assignment(3), jury_panel_size=4
         )
 
-        self.assertEqual(contract["jury"]["mode"], "advisory")
-        self.assertIn("minimum 3", contract["jury"]["reason"])
+        for flags in ({"no_jury": True}, {"jury_advisory": True}, {"jury": True}):
+            with self.subTest(flags=flags):
+                contract = ship.resolve_review_contract(
+                    tier=3, assignment=self._assignment(3), jury_panel_size=4, **flags
+                )
+                self.assertEqual(contract["reviewers"], base["reviewers"])
 
     def test_distinct_vendors_defaults_on_from_tier_two(self):
         for tier, expected in ((1, False), (2, True), (3, True), (None, False)):
