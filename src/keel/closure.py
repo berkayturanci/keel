@@ -56,6 +56,9 @@ def contract_as_dict() -> dict[str, Any]:
             "implementer",
             "reviewers",
             "tester",
+            # Rendered only when the run spent an s9 fix round (#1016); a clean run's
+            # comment is byte-identical to what it was before the section existed.
+            "fix_rounds",
             "pull_request",
             "changed_files",
             "docs_touched",
@@ -92,6 +95,7 @@ def render_closure_comment(record: dict[str, Any]) -> str:
     lines.append(f"- **Implementer:** {_value(actors.get('implementer'))}")
     lines.append(f"- **Reviewers:** {_reviewers(actors.get('reviewers'))}")
     lines.append(f"- **Tester:** {_value(actors.get('tester'))}")
+    lines.extend(_fix_rounds(actors))
     lines.append(f"- **PR:** {_pull_request(record.get('pull_request'))}")
     lines.extend(_changed_files(record.get("changes")))
     lines.append(f"- **Docs touched:** {_docs_touched(record.get('changes'))}")
@@ -100,6 +104,30 @@ def render_closure_comment(record: dict[str, Any]) -> str:
     lines.extend(_run_context(record.get("run_context")))
     lines.extend(_watermark(record.get("watermark")))
     return "\n".join(lines) + "\n"
+
+
+def _fix_rounds(actors: dict[str, Any]) -> list[str]:
+    """The s9 fix rounds, when any were recorded (#1016).
+
+    Omitted entirely on a run with no fix round, which is most of them — a blank
+    ``- **Fix rounds:** none`` on every clean ship would be noise, and the field is
+    additive to a comment shape other tooling already reads.
+    """
+    fixers = actors.get("fixers")
+    if not isinstance(fixers, list) or not fixers:
+        return []
+    rendered = ", ".join(
+        f"round {item.get('round')}: {_value(item.get('actor'))}{_stage_suffix(item.get('stage'))}"
+        for item in fixers
+        if isinstance(item, dict)
+    )
+    if not rendered:
+        return []
+    return [f"- **Fix rounds:** {rendered}"]
+
+
+def _stage_suffix(stage: Any) -> str:
+    return f" ({stage.strip()})" if isinstance(stage, str) and stage.strip() else ""
 
 
 def _target_line(target: Any) -> list[str]:

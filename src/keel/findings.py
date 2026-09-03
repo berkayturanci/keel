@@ -42,6 +42,10 @@ class Finding:
     line: int | None = None
     anchorable: bool = False
     provenance: dict[str, Any] | None = None
+    #: How the reviewer reproduced it — the command, the failing case, the steps. Carried
+    #: so the s9 fix brief can hand the fixer the reviewer's own reproduction instead of
+    #: asking them to invent one (#1016). Not part of the ordering or the gate decision.
+    reproduction: str | None = None
 
     def __post_init__(self) -> None:
         if self.severity not in _RANK:
