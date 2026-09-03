@@ -39,7 +39,9 @@ _FORBIDDEN = {
     "agy --": "the agy argv belongs to keel.delegate, not to adapter prose",
     "claude -p": "the claude argv belongs to keel.delegate, not to adapter prose",
     "--dangerously-skip-permissions": "a permission flag is core's to choose, not prose's",
-    "--disallowed-tools": "the read-only tool denylist is core's, not prose's",
+    "--disallowed-tools": "the read-only tool list is core's, not prose's",
+    "--allowed-tools": "the read-only tool list is core's, not prose's",
+    "model_reasoning_effort": "codex's effort spelling is core's, not prose's",
     "-s read-only": "the codex sandbox flag is core's, not prose's",
     "-s workspace-write": "the codex sandbox flag is core's, not prose's",
     "--input-format stream-json": "agy's stdin framing is core's, not prose's",
@@ -55,6 +57,11 @@ _MUST_DISPATCH = ("ship.md", "implement.md", "review-cycle.md")
 
 #: What an orchestrator must be told to use instead of polling.
 _WAIT_COMMAND = "keel delegate wait"
+
+#: Fields of the return contract an adapter must actually name, because reading the wrong
+#: one is a silent failure rather than an error. `read_only` alone reports the role that
+#: was *asked for*; only `read_only_backed` says whether anything enforces it.
+_MUST_NAME = ("read_only_backed",)
 
 #: Sleep-and-poll advice: a loop in the host's own turn cannot outlive the turn.
 _SLEEP_ADVICE = re.compile(r"\bsleep\s+\d|\bsleep loop\b|poll(ing)? (in a )?loop", re.IGNORECASE)
@@ -86,6 +93,30 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
                 if path.name == name or path.parent.name.endswith(name[:-3]):
                     with self.subTest(path=str(path.relative_to(REPO_ROOT))):
                         self.assertIn(_DISPATCH_COMMAND, path.read_text(encoding="utf-8"))
+
+    def test_a_dispatching_adapter_names_the_field_that_gates_a_reviewer(self):
+        for name in _MUST_DISPATCH:
+            for path in _adapter_files():
+                if path.name == name or path.parent.name.endswith(name[:-3]):
+                    text = path.read_text(encoding="utf-8")
+                    if _DISPATCH_COMMAND not in text:
+                        continue
+                    for field in _MUST_NAME:
+                        with self.subTest(path=str(path.relative_to(REPO_ROOT)), field=field):
+                            self.assertIn(field, text)
+
+    def test_every_detach_example_bounds_the_run(self):
+        """A detached run with no `--timeout` has no deadline, so a killed child is
+        indistinguishable from a slow one and `wait` can block forever."""
+        for path in _adapter_files():
+            text = path.read_text(encoding="utf-8")
+            for line in text.splitlines():
+                if "--detach" not in line:
+                    continue
+                with self.subTest(path=str(path.relative_to(REPO_ROOT)), line=line.strip()):
+                    # the flag may sit on a continuation line of the same example
+                    block = text[max(0, text.index(line) - 400) : text.index(line) + 400]
+                    self.assertIn("--timeout", block)
 
     def test_the_detach_primitive_replaces_sleep_polling_advice(self):
         for path in _adapter_files():

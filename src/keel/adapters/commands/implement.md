@@ -112,10 +112,13 @@ keel delegate run --provider "$DELEGATE" --role implement \
 ```
 
 Parse the JSON contract it prints (`ok`, `text`, `error_code`, `attribution`,
-`effort_applied`, `warnings`) rather than re-deriving any of it; the ship.md s4
-section is the canonical description of that document. For a run that will outlive
-your turn, add `--detach --run-id "$RUN_ID"` and collect it with
-`keel delegate wait "$RUN_ID"` — never a sleep-and-poll loop. The policy around the
+`effort_applied`, `read_only_backed`, `warnings`) rather than re-deriving any of it;
+the ship.md s4 section is the canonical description of that document. For a run that
+will outlive your turn, add `--detach --run-id "$RUN_ID"` and collect it with
+`keel delegate wait "$RUN_ID" --timeout <s>` — never a sleep-and-poll loop. Always
+pass `--timeout` to both: the one on `run` is stamped into the run record as its
+deadline, so a child that is killed outright is reported `lost` rather than left
+`running` forever. The policy around the
 call is unchanged and stays here, not in the command: the no-tools contract for a
 provider that cannot run tools (orchestrator does every git/PR step; the delegate
 produces only a diff), the `secrets` consent scope before any key is read, refusal

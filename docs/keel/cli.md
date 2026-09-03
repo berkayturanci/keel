@@ -1321,10 +1321,19 @@ keel delegate run --provider openrouter --role review \
   --prompt-file rubric.md --project .keel/project.yaml
 ```
 
-`--provider` takes a provider **name** or `name:model`. Resolution order is **project
-profile > machine registry > built-in vendor**. `--model` overrides the model half; either
-way the token is validated (`[A-Za-z0-9._-]`, no leading dash) before it can reach an argv
-or a URL path, because it can arrive from a `delegate-model:` issue label.
+`--provider` takes a provider **name** or `name:model`. Resolution order is **built-in
+vendor > project profile > machine registry**: a built-in always wins and can never be
+redefined, the same invariant `keel validate` enforces for `knobs.delegate_profiles` and
+`keel doctor --providers` reports for the registry.
+
+`--model` overrides the model half. Either way the token is validated before use, because
+it can arrive from a `delegate-model:` issue label — and **which rule applies depends on
+where the model lands**:
+
+| destination | accepted | why |
+| --- | --- | --- |
+| a subprocess argv (`cli`, `profile`), or `google-api`'s URL path | `[A-Za-z0-9._-]`, no leading dash | a stray character could read as another flag, or retarget a URL that carries an API key header |
+| a JSON request body (`ollama`, `anthropic-api`, `openai-api`, `openai-compatible`) | `[A-Za-z0-9._:/-]`, no leading dash, no `..` | real ids need `:` and `/` — `qwen2.5-coder:32b`, `deepseek/deepseek-r1` — and neither can do anything inside a JSON string |
 
 `--role` selects the invocation, not just a label:
 
@@ -1334,16 +1343,29 @@ or a URL path, because it can arrive from a `delegate-model:` issue label.
 | `implement` · `fix` | tool-enabled: the vendor's network- and write-enabled mode |
 
 For the three built-in CLIs the read-only invocation carries no write-enabling flag, and
-that is asserted per vendor in `tests/test_delegate.py`. keel cannot *enforce* read-only
-for an arbitrary binary: a profile or registry entry with no `review_args` runs with its
-own defaults and the result carries a `warnings` entry saying so.
+that is asserted per vendor in `tests/test_delegate.py`. `claude` runs read-only under an
+**allow-list** (`--allowed-tools Read,Grep,Glob,LS`) and no permission bypass: a denylist
+has to be extended every time the CLI grows a tool and is wrong in the window before
+someone notices, while an allow-list refuses a new tool on the day it appears.
+
+keel cannot *enforce* read-only for an arbitrary binary, so the result reports both
+`read_only` (the role you asked for) and **`read_only_backed`** (whether anything enforces
+it). They differ in exactly the case that matters: `DelegateProfile.role_args` falls back
+to `args` when `review_args` is unset, so a profile carrying the implementer's
+write-enabling flags plans a *reviewer* with them. That run comes back
+`read_only_backed: false` with a warning naming the provider — **branch on that field, not
+on `read_only`.** Set `review_args` for any profile used as a reviewer; an explicitly empty
+`review_args: []` is a deliberate "this CLI needs no flags to review" and counts as backed.
 
 `--effort` is translated into each vendor's own spelling — a model suffix for `agy`,
-`thinking.budget_tokens` for `anthropic-api` (with `max_tokens` raised above the budget),
-`reasoning_effort` for `openai-api` and OpenAI-compatible endpoints,
+`-c model_reasoning_effort=<level>` for `codex`, `thinking.budget_tokens` for
+`anthropic-api` (with `max_tokens` raised above the budget), `reasoning_effort` for
+`openai-api` and OpenAI-compatible endpoints,
 `generationConfig.thinkingConfig.thinkingBudget` for `google-api`. A provider that cannot
 express effort returns `effort_applied: false` with a warning rather than silently running
-at its default.
+at its default. A provider entry may also carry its own `effort:` as a per-seat default; a
+per-run `--effort` wins, and an unrecognised configured value is a warning rather than a
+failed run.
 
 The prompt is read from `--prompt-file` and delivered on the delegate's **stdin**, never on
 its argv: a prompt carries the diff and the brief, and an argv is world-readable in `ps`
@@ -1362,6 +1384,7 @@ for the life of the process. The one exception is a profile that declares
   "exit_code": 0, "duration_s": 412.6, "timed_out": false,
   "error_code": null, "error": null,
   "attribution": { "agent_label": "agent:agy", "model_label": "model:gemini-3", "system": "agy:gemini-3.8-flash-high" },
+  "read_only": false, "read_only_backed": false,
   "effort_applied": true,
   "warnings": []
 }
@@ -1387,6 +1410,7 @@ traceback. Branch on the code, never on the message.
 | `timeout` | the wall-clock limit killed it (`timed_out: true`) |
 | `rate-limit` | HTTP 429, or a CLI that said it was out of quota |
 | `no-key` · `auth` · `http` · `network` · `bad-response` | the HTTP transports' vocabulary |
+| `lost` | a detached run's process vanished, or it passed its own deadline, without recording a result |
 
 The **policy** around those codes stays with the caller (ship s4/s7), not here: this
 command never retries, never falls back to the host agent, and never consults the risk
@@ -1408,21 +1432,31 @@ keel delegate status --root .
 keel delegate wait impl-1012 --root . --timeout 3600
 ```
 
-The state file `.keel/state/delegate/<run-id>.json` is **authoritative** — `{run_id, pid,
-started_at, status: running|done, result}`, alongside `<run-id>.out` holding the child's
-stdout and stderr. The parent writes the `running` record (it is the one that knows the
-pid) and the child overwrites it with `done` plus the result. Because the file is the
-authority and the pid is never consulted, the result survives the caller exiting, the
-session ending, and a reboot. `.keel/state/` is gitignored, so nothing here is ever
+The state file `.keel/state/delegate/<run-id>.json` is **authoritative** — `{run_id,
+provider, role, pid, started_at, timeout, deadline_at, status: running|done|crashed,
+result}`, alongside `<run-id>.out` holding the child's stdout and stderr. The parent writes
+the `running` record **before** spawning, so a `wait` issued immediately afterwards always
+finds a file, and merges the pid in afterwards under a guard that never overwrites a
+terminal record — otherwise a child that finished during the spawn would have its result
+erased. Because the *result* only ever comes from the file, it survives the caller exiting,
+the session ending, and a reboot. `.keel/state/` is gitignored, so nothing here is ever
 committed.
 
+**Always pass `--timeout` to `run`.** It is stamped into the record as `deadline_at`
+(plus a grace window for the child's final write). Together with a liveness check on the
+recorded pid, that is what bounds a `wait`: a child killed outright — `SIGKILL`, an OOM
+kill, a reboot — never writes anything, so without either signal the record would say
+`running` forever and a `wait` with no `--timeout` of its own would block indefinitely.
+Such a run is marked `crashed` and reported with `error_code: lost`, naming the `.out`
+file that holds whatever the child managed to print.
+
 `keel delegate wait` prints the same JSON contract as a foreground run. It exits `1` when
-the run failed, when it did not finish within `--timeout`, and — failing closed — when the
-run id is unknown (`unknown-run`), so a mistyped id is an immediate error rather than a
-wait that can only time out. `keel delegate status` lists the runs under the state
-directory, as a table or, with `--json`, as a document. A run id may contain only letters,
-digits, `.`, `_` and `-`: it becomes a file name, and anything else is refused rather than
-normalized.
+the run failed, when the run was lost, when it did not finish within `--timeout`, and —
+failing closed — when the run id is unknown (`unknown-run`), so a mistyped id is an
+immediate error rather than a wait that can only time out. `keel delegate status` lists the
+runs under the state directory, as a table or, with `--json`, as a document. A run id may
+contain only letters, digits, `.`, `_` and `-`: it becomes a file name, and anything else
+is refused rather than normalized.
 
 **This is the primitive an orchestrating agent uses instead of a sleep loop.** A polling
 loop burns the host's context window and cannot survive its turn ending — which is how a

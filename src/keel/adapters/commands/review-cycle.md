@@ -108,10 +108,13 @@ A non-host reviewer is dispatched with `keel delegate run --role review` — the
 executor for every transport, which picks the vendor's read-only invocation for that role
 and returns the JSON contract ship.md s4 documents (`text` is the verdict, `attribution`
 is what you record per reviewer, `error_code` is what you branch on). Do not hand-build
-the invocation, and do not read a vendor's flags out of this file. For a panel that will
-outlive your turn, start each reviewer with `--detach --run-id <id>` and collect them with
-`keel delegate wait <id>`: a sleep-and-poll loop cannot survive the turn ending, and the
-state file under `.keel/state/delegate/` can.
+the invocation, and do not read a vendor's flags out of this file. Check
+**`read_only_backed`** before trusting a reviewer: `read_only` is the role you asked for,
+that field is whether anything enforces it, and for a configured profile with no
+`review_args` the answer is no. For a panel that will outlive your turn, start each
+reviewer with `--timeout <s> --detach --run-id <id>` and collect them with
+`keel delegate wait <id> --timeout <s>`: a sleep-and-poll loop cannot survive the turn
+ending, and the state file under `.keel/state/delegate/` can.
 
 Each reviewer prompt MUST carry:
 

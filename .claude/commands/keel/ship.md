@@ -306,6 +306,7 @@ Resolve the implementer: `implementer_agents` by the issue's role label, **overr
     "transport": "cli|profile|api|ollama", "text": "…", "exit_code": 0,
     "duration_s": 42.5, "timed_out": false, "error_code": null, "error": null,
     "attribution": { "agent_label": "…", "model_label": "…", "system": "…" },
+    "read_only": false, "read_only_backed": false,
     "effort_applied": true, "warnings": [] }
   ```
 
@@ -315,13 +316,13 @@ Resolve the implementer: `implementer_agents` by the issue's role label, **overr
   did not take effect. On `ok: false`, branch on `error_code`
   (`missing-binary` · `nonzero-exit` · `timeout` · `rate-limit` · `no-key` · `auth` ·
   `http` · `network` · `bad-response` · `unknown-provider` · `bad-model` · `no-model` ·
-  `no-prompt` · `empty-output`) — never on the message text.
+  `no-prompt` · `empty-output` · `lost`) — never on the message text.
 - **Long runs detach.** A delegated implementation outlives your turn. Start it with
   `--detach`, which prints a `run_id` and returns immediately, then block on it:
 
   ```bash
   keel delegate run --provider "$DELEGATE" --role implement --prompt-file "$BRIEF" \
-    --cwd "$WORKTREE" --detach --run-id "$RUN_ID" --root .
+    --cwd "$WORKTREE" --timeout 3600 --detach --run-id "$RUN_ID" --root .
   keel delegate wait "$RUN_ID" --root . --timeout 3600
   ```
 
@@ -329,7 +330,12 @@ Resolve the implementer: `implementer_agents` by the issue's role label, **overr
   runs. **Do not write a sleep-and-poll loop.** The state file under
   `.keel/state/delegate/` is authoritative, so the result survives your turn ending, the
   session ending, and the machine rebooting — which a loop in your own context does not.
-  `wait` on an unknown run id fails closed with `unknown-run`.
+  **Always pass `--timeout` to both `run` and `wait`.** The one on `run` is stamped into
+  the run record as its deadline, which is what lets a child that was `SIGKILL`ed or
+  OOM-killed be reported as `lost` instead of sitting at `running` forever; the one on
+  `wait` bounds your own call. `wait` on an unknown run id fails closed with
+  `unknown-run`, and a run whose process vanished returns `error_code: lost` with the
+  child's captured output named in the message.
 - **What still belongs to you, not to the command.** `keel delegate run` is a transport:
   it never retries, never falls back, and never consults the risk tier. Those are the
   orchestrator's rules and they are unchanged:
@@ -345,6 +351,12 @@ Resolve the implementer: `implementer_agents` by the issue's role label, **overr
     the PR). Fall back to `HOST_AGENT` on tier-3.
   - **Reading an API key is `secret_access`**, so the run's approved scope must include
     `secrets` — without it, resolve to `HOST_AGENT` before invoking a hosted provider.
+  - **Refuse a read-only role that nothing backs.** When the result says `read_only: true`
+    and `read_only_backed: false`, the provider is running with whatever flags its entry
+    carries — for a profile with `args` and no `review_args`, that is the *implementer's*
+    write-enabling set. Fall back to `HOST_AGENT`, or accept the run only as advisory and
+    re-check the worktree is clean afterwards. Never read `read_only` alone: it reports
+    the role you asked for, not whether anything enforces it.
   - A local-model or generic-CLI harness that already created a worktree must remove it
     before the host path recreates one at the same path (same obligation under
     `--dry-run` if it created one).
@@ -524,23 +536,27 @@ keel delegate run --provider "$REVIEW_DELEGATE" --role review \
 
 Read the same JSON contract s4 documents: `text` is the verdict, `attribution` is what
 you record per reviewer, `error_code` is what you branch on. Long panels detach exactly
-as s4 does — `--detach` per reviewer, then `keel delegate wait <run-id>` on each; never a
-sleep loop. The `secrets`-scope and no-retry-on-`rate-limit` rules are unchanged; there
-is **no tier restriction**, because review output is advisory, not a mutation. The
-orchestrator still posts — the **orchestrator owns all writes**; reviewers never call a
-GitHub write API.
+as s4 does — `--detach` per reviewer with `--timeout`, then `keel delegate wait <run-id>
+--timeout <s>` on each; never a sleep loop. The `secrets`-scope and
+no-retry-on-`rate-limit` rules are unchanged; there is **no tier restriction**, because
+review output is advisory, not a mutation. The orchestrator still posts — the
+**orchestrator owns all writes**; reviewers never call a GitHub write API.
 
-The read-only role is a policy core enforces where it can and reports where it cannot.
-For the three built-in CLI vendors the invocation carries the vendor's documented
-read-only mechanism and no write-enabling flag, which is asserted per vendor in keel's own
-tests. A **`knobs.delegate_profiles` (or registry) reviewer is the one case keel cannot
-make read-only for you**: a profile is an arbitrary binary, the same `command` serves both
-roles, and its `args` typically carry the *implementer's* write-enabling flags
-(`cursor-agent`'s `--force` approves edits non-interactively). `keel delegate run` uses the
-entry's **`review_args`** for a read-only role and returns a **warning** naming the
-provider when none is configured — set `review_args` to a read-only invocation for any
-profile used as a reviewer, treat that reviewer's output as advisory, and
-**re-check the worktree is clean afterwards** rather than assuming it was untouched.
+The read-only role is a policy core enforces where it can and reports where it cannot, and
+the result tells you which: **`read_only` is the role you asked for, `read_only_backed` is
+whether anything enforces it.** For the three built-in CLI vendors it is backed — the
+invocation carries the vendor's documented read-only mechanism and no write-enabling flag,
+asserted per vendor in keel's own tests. A **`knobs.delegate_profiles` (or registry)
+reviewer is the one case keel cannot make read-only for you**: a profile is an arbitrary
+binary, the same `command` serves both roles, and its `args` typically carry the
+*implementer's* write-enabling flags (`aider`'s `--yes-always`, `cursor-agent`'s
+`--force`). `keel delegate run` uses the entry's **`review_args`** for a read-only role,
+and when none is configured it returns `read_only_backed: false` plus a warning naming the
+provider — because the profile's fallback is `args`, so "no `review_args`" means the
+reviewer just received the implementer's flags. **Check that field before you trust the
+run**: set `review_args` to a read-only invocation for any profile used as a reviewer, and
+otherwise treat the output as advisory and **re-check the worktree is clean afterwards**
+rather than assuming it was untouched.
 Spawn all reviewers in a **single
 Agent message** so they run concurrently; each gets a fresh codename, the PR head SHA, its
 focus slice, and a no-cross-reading instruction. Coverage invariant: when the count drops,
@@ -938,4 +954,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=claude command=ship keel_version=1.19.3 source_sha256=ec10545a7e33b533c908c1f7ebbb51ee08d0484caf94e559bb461a15b4657d22 generated_sha256=ec10545a7e33b533c908c1f7ebbb51ee08d0484caf94e559bb461a15b4657d22 -->
+<!-- keel-generated: surface=claude command=ship keel_version=1.19.3 source_sha256=54b5b6ea59f29e176687d9c6d42dd70a25f6d3634e47ac6f8a36dc9c5a579532 generated_sha256=54b5b6ea59f29e176687d9c6d42dd70a25f6d3634e47ac6f8a36dc9c5a579532 -->

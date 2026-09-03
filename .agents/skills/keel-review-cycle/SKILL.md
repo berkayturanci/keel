@@ -111,10 +111,13 @@ A non-host reviewer is dispatched with `keel delegate run --role review` — the
 executor for every transport, which picks the vendor's read-only invocation for that role
 and returns the JSON contract ship.md s4 documents (`text` is the verdict, `attribution`
 is what you record per reviewer, `error_code` is what you branch on). Do not hand-build
-the invocation, and do not read a vendor's flags out of this file. For a panel that will
-outlive your turn, start each reviewer with `--detach --run-id <id>` and collect them with
-`keel delegate wait <id>`: a sleep-and-poll loop cannot survive the turn ending, and the
-state file under `.keel/state/delegate/` can.
+the invocation, and do not read a vendor's flags out of this file. Check
+**`read_only_backed`** before trusting a reviewer: `read_only` is the role you asked for,
+that field is whether anything enforces it, and for a configured profile with no
+`review_args` the answer is no. For a panel that will outlive your turn, start each
+reviewer with `--timeout <s> --detach --run-id <id>` and collect them with
+`keel delegate wait <id> --timeout <s>`: a sleep-and-poll loop cannot survive the turn
+ending, and the state file under `.keel/state/delegate/` can.
 
 Each reviewer prompt MUST carry:
 
@@ -285,4 +288,4 @@ Do every read plus `keel validate` / `keel plan` / `keel run-gates` and the revi
 but redirect every state-changing `gh` write (comments, label) to a logged
 `DRY-RUN: <action>` line.
 
-<!-- keel-generated: surface=skills command=review-cycle keel_version=1.19.3 source_sha256=ed08a90250a1b48a19a4532f4850a778eb9892363fc6bd0b89386455c12d2f6f generated_sha256=841b46bffb3c44876744a5924ade5969c53397169c225f954cd002aeda7dbb68 -->
+<!-- keel-generated: surface=skills command=review-cycle keel_version=1.19.3 source_sha256=362d8f38fd43903a92facb0669dc7f218ae5cd56cd2721a06b4e602c99e1b77b generated_sha256=d1cf8e60ed13b0244939c1baf8bdd4bc11012c4fa70366ec8db742669f286019 -->

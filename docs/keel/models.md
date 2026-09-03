@@ -98,22 +98,33 @@ keel delegate run --provider anthropic-api:claude-opus-4-5 --role review \
 
 # a long run that outlives the caller
 keel delegate run --provider codex --role implement --prompt-file brief.md \
-  --detach --run-id impl-1012 --root .
+  --timeout 3600 --detach --run-id impl-1012 --root .
 keel delegate wait impl-1012 --root . --timeout 3600
 ```
 
 * `--provider` takes the same token as `--delegate`: a name or `name:model`, resolved
-  **project profile > machine registry > built-in vendor**.
+  **built-in vendor > project profile > machine registry**. A built-in always wins and can
+  never be redefined by config or by a file in `$HOME`.
+* Model ids are validated against where they land: the strict `[A-Za-z0-9._-]` rule where
+  the model reaches a command line or `google-api`'s URL path, and `[A-Za-z0-9._:/-]` where
+  it is only a JSON body field — which is why `ollama:qwen2.5-coder:32b` and
+  `openrouter:deepseek/deepseek-r1` work.
 * `--role review|gate|chair` runs read-only; `--role implement|fix` runs tool-enabled. For
   the three built-in CLIs the read-only invocation carries no write-enabling flag, asserted
-  per vendor in keel's tests. A profile with no `review_args` cannot be made read-only by
-  keel, and the result says so in `warnings`.
-* `--effort low|medium|high` becomes an `agy` model suffix, Anthropic `thinking`, OpenAI
-  `reasoning_effort`, or Gemini `thinkingConfig` — and `effort_applied: false` plus a
-  warning where the vendor cannot express it.
+  per vendor in keel's tests. keel cannot enforce read-only for an arbitrary binary, so the
+  result reports `read_only` **and** `read_only_backed` — branch on the second: a profile
+  with `args` and no `review_args` reviews with the *implementer's* flags.
+* `--effort low|medium|high` becomes an `agy` model suffix, a `codex`
+  `model_reasoning_effort` override, Anthropic `thinking`, OpenAI `reasoning_effort`, or
+  Gemini `thinkingConfig` — and `effort_applied: false` plus a warning where the vendor
+  cannot express it. A provider entry's own `effort:` is the default when `--effort` is
+  absent.
 * Failures are fail-soft: `ok: false` with an `error_code`
-  (`missing-binary`, `nonzero-exit`, `timeout`, `rate-limit`, `no-key`, …), never a
+  (`missing-binary`, `nonzero-exit`, `timeout`, `rate-limit`, `no-key`, `lost`, …), never a
   traceback. The retry, fall-back and tier rules stay with the caller.
+* Pass `--timeout` to both `run` and `wait` on a detached run: the first becomes the run's
+  own deadline, which is what lets a killed child be reported `lost` instead of sitting at
+  `running` forever.
 
 Full flag and contract reference: [`cli.md`](cli.md#keel-delegate).
 
@@ -333,7 +344,10 @@ If you have official agent CLI tools installed and authenticated on your machine
 For all three, the invocation is core's: `keel delegate run` selects the vendor's
 read-only mode for `--role review|gate|chair` and its write-enabled mode for
 `--role implement|fix`, and the prompt travels on the CLI's standard input rather than its
-argv — a prompt carries the diff, and an argv is world-readable in `ps`.
+argv — a prompt carries the diff, and an argv is world-readable in `ps`. A read-only
+`claude` runs under a tool **allow-list** and no permission bypass; `codex` under its
+`read-only` sandbox; `agy` under `--sandbox`, which is the only read-only mechanism it
+documents and the reason it still needs the non-interactive permission flag.
 
 ```bash
 keel delegate run --provider claude --role review --prompt-file rubric.md
