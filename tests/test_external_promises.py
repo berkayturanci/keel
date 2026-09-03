@@ -38,10 +38,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 PUBLIC = ("README.md", "docs", "website")
 ONLINE = os.environ.get("KEEL_CHECK_EXTERNAL") == "1"
 
-#: The tap `brew install` resolves from. This repo is the source of truth for
-#: Formula/keel.rb and the release publishes it here (#774), so the name is
-#: declared rather than read from the environment — an env-gated check is a check
-#: nobody sets.
+#: The tap `brew install` resolves from, and — since #1023 — the only place a
+#: keel formula exists at all: the release renders one and attaches it, and the
+#: tap pulls that asset (#774 for why the direction is a pull). Declared rather
+#: than read from the environment: an env-gated check is a check nobody sets.
 HOMEBREW_TAP = "berkayturanci/homebrew-keel"
 
 _ACTION_REF = re.compile(r"uses:\s*([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)@([A-Za-z0-9_.-]+)")
@@ -60,17 +60,45 @@ def _public_text() -> dict[str, str]:
     return out
 
 
-def _declared_version() -> str | None:
-    """The version this tree declares, read off disk.
+#: A url `brew` may be pointed at. The guard #990 named as the load-bearing one:
+#: not "does this digest match" — a digest is a correct description of whatever
+#: it was taken over — but "is this an archive of *this* project, at a tag".
+#: Written as a pure function so it can be exercised offline in both directions;
+#: the same rule is applied to the rendered formula in `publish.yml` and to the
+#: incoming formula in the tap's own workflow.
+_OUR_TAG_ARCHIVE = re.compile(
+    r"^https://github\.com/berkayturanci/keel/archive/refs/tags/v[0-9]+\.[0-9]+\.[0-9]+\.tar\.gz$"
+)
 
-    This module deliberately reads files rather than importing keel — it checks
-    what the repository *promises*, not what the package computes — so the
-    version is parsed from pyproject.toml in the same spirit.
+
+def _is_our_tag_archive(url: str) -> bool:
+    return _OUR_TAG_ARCHIVE.match(url) is not None
+
+
+def _tap_file(path: str, what: str, case) -> str:
+    """Read one file from the tap, as a user's `brew tap` would see it.
+
+    The contents API, not raw.githubusercontent.com: `raw` is CDN-cached for
+    minutes, so right after a sync it serves the previous formula and a check
+    against it fails on a tap that is already correct — observed while fixing
+    #805. `brew tap` clones the repository, so the API is also the closer view.
     """
-    match = re.search(
-        r'(?m)^version = "([^"]+)"', (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    request = urllib.request.Request(
+        f"https://api.github.com/repos/{HOMEBREW_TAP}/contents/{path}",
+        headers={"Accept": "application/vnd.github.raw", "User-Agent": "keel-tests"},
     )
-    return match.group(1) if match else None
+    token = os.environ.get("GITHUB_TOKEN")
+    if token:
+        request.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            return response.read(50 * 1024 * 1024).decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            case.fail(f"{HOMEBREW_TAP} has no {path}; brew install would fail")
+        _could_not_look(case, what, exc)
+    except (urllib.error.URLError, OSError) as exc:
+        _could_not_look(case, what, exc)
 
 
 def _could_not_look(case, what: str, exc: Exception):
@@ -202,24 +230,30 @@ class TestActionReferences(unittest.TestCase):
 
 
 class TestHomebrewPromise(unittest.TestCase):
-    """`brew install` resolves from a tap, not from a formula sitting in this repo."""
+    """`brew install` resolves from a tap, and the tap is now the only copy.
+
+    Until #1023 this repository committed `Formula/keel.rb` and the tap mirrored
+    it, so the guards here could examine a local file. They cannot any more, and
+    that is the point: the url/sha256 pair is unknowable until the tag exists
+    (#990), so it is rendered during the release and attached to it. The subject
+    of every check below is therefore the **tap** — the copy `brew` downloads —
+    and never this branch's version, because the tap pulls on a schedule and is
+    legitimately behind between a release and its next sync. A check that failed
+    on that lag would block the only sequence able to satisfy it.
+    """
 
     def test_a_documented_brew_install_has_a_formula_behind_it(self):
         promised = {name for text in _public_text().values() for name in _BREW.findall(text)}
         if not promised:
             self.skipTest("no brew install documented")
         self.assertTrue(
-            (REPO_ROOT / "Formula" / "keel.rb").exists(),
-            f"docs promise `brew install {sorted(promised)[0]}` with no formula in the repo",
+            (REPO_ROOT / "packaging" / "homebrew" / "keel.rb.template").exists(),
+            f"docs promise `brew install {sorted(promised)[0]}` with no formula template "
+            "for the release to render",
         )
 
     def test_a_bare_formula_name_needs_a_tap(self):
-        """`brew install keel` only works from a tap; the formula alone is a template.
-
-        No longer inert: #774 decided this repo is the source of truth and the tap
-        is published from it, so `HOMEBREW_TAP` is declared here rather than read
-        from the environment.
-        """
+        """`brew install keel` only works from a tap."""
         if not ONLINE:
             self.skipTest("set KEEL_CHECK_EXTERNAL=1 to check reachability")
         self.assertTrue(
@@ -227,103 +261,117 @@ class TestHomebrewPromise(unittest.TestCase):
             f"docs promise a tap install but {HOMEBREW_TAP} does not exist",
         )
 
-    def test_the_formula_checksum_matches_the_tarball_it_points_at(self):
+    def test_a_url_that_is_not_our_tag_archive_is_rejected(self):
+        """#990's load-bearing guard, offline: a digest is a poor proxy for it.
+
+        A formula whose url points somewhere else is the real defect, and it is
+        one a checksum comparison passes happily — the digest of the wrong
+        tarball is a perfectly correct description of the wrong tarball.
+        """
+        good = "https://github.com/berkayturanci/keel/archive/refs/tags/v1.19.3.tar.gz"
+        self.assertTrue(_is_our_tag_archive(good))
+        for bad in (
+            "https://github.com/someone-else/keel/archive/refs/tags/v1.19.3.tar.gz",
+            "https://example.com/keel/archive/refs/tags/v1.19.3.tar.gz",
+            "https://github.com/berkayturanci/keel/archive/refs/heads/main.tar.gz",
+            "https://github.com/berkayturanci/keel-visual/archive/refs/tags/v1.19.3.tar.gz",
+        ):
+            with self.subTest(url=bad):
+                self.assertFalse(_is_our_tag_archive(bad))
+
+    def test_the_tap_serves_an_installable_formula(self):
         """`brew install` refuses on a checksum mismatch, so a wrong one is fatal.
 
-        1.16.0 shipped with 1.15.0's digest (#805). The url is bumped before the
-        tag exists, so the checksum cannot be correct at that moment — it can only
-        be computed from the tarball GitHub builds *from* the tag, and nothing
-        closed the gap. `test_homebrew_formula_matches_the_project` compares the
-        formula to the project and passed throughout: a real-looking 64-hex string
-        satisfies it, whatever it is a digest of.
+        1.16.0 shipped with 1.15.0's digest (#805) and the tap refused every sync
+        for a day after 1.19.1 (#981). Both were the committed copy going stale.
+        This asserts the property that actually matters to a user — what the tap
+        serves downloads and hashes to what it declares — against the copy that
+        serves them.
         """
         if not ONLINE:
-            self.skipTest("set KEEL_CHECK_EXTERNAL=1 to fetch the tarball")
-        formula = (REPO_ROOT / "Formula" / "keel.rb").read_text(encoding="utf-8")
+            self.skipTest("set KEEL_CHECK_EXTERNAL=1 to fetch the tap and its tarball")
+        formula = _tap_file("Formula/keel.rb", "the published tap formula", self)
         url = re.search(r"https://github\.com/\S+?\.tar\.gz", formula)
-        self.assertIsNotNone(url, "formula has no source tarball url")
+        self.assertIsNotNone(url, "the tap's formula has no source tarball url")
+        self.assertTrue(
+            _is_our_tag_archive(url.group(0)),
+            f"the tap serves a formula whose url is not a keel tag archive: {url.group(0)}",
+        )
         declared = re.search(r'(?m)^  sha256 "([0-9a-f]{64})"', formula)
-        self.assertIsNotNone(declared, "formula has no top-level sha256")
+        self.assertIsNotNone(declared, "the tap's formula has no top-level sha256")
         try:
             with urllib.request.urlopen(url.group(0), timeout=60) as response:
                 payload = response.read(50 * 1024 * 1024)
         except urllib.error.HTTPError as exc:
             if exc.code == 404:
-                # A release PR bumps the declared version and, because
-                # test_homebrew_formula_matches_the_project pins the url to it,
-                # the formula points at a tag that is created *from the commit
-                # this PR produces*. It cannot exist yet, and no value of the
-                # formula satisfies both tests at once (#839). Only that window
-                # is exempt: a url naming any other version must still resolve.
-                if _declared_version() and f"/tags/v{_declared_version()}." in url.group(0):
-                    self.skipTest(
-                        f"v{_declared_version()} is not tagged yet; the checksum "
-                        "cannot be verified until the release is tagged"
-                    )
-                self.fail(f"the formula points at {url.group(0)}, which does not exist")
-            _could_not_look(self, "the formula's tarball", exc)
+                self.fail(f"the tap's formula points at {url.group(0)}, which does not exist")
+            _could_not_look(self, "the tap formula's tarball", exc)
         except (urllib.error.URLError, OSError) as exc:
-            _could_not_look(self, "the formula's tarball", exc)
+            _could_not_look(self, "the tap formula's tarball", exc)
         self.assertEqual(
             hashlib.sha256(payload).hexdigest(),
             declared.group(1),
-            "the formula's sha256 is not the digest of the tarball it points at; "
+            "the tap's sha256 is not the digest of the tarball it points at; "
             "brew install would refuse",
         )
 
-    def test_the_tap_serves_the_formula_in_this_repo(self):
-        """The guarded copy must be the copy `brew install` runs.
 
-        This is the assertion that was missing when #787 shipped. The formula here
-        was fixed and every check went green while the tap still served a version
-        that installed a keel unable to start — because nothing compared the two.
-        Release automation now syncs them; this fails if that automation is broken,
-        skipped, or someone edits one copy by hand.
-        """
-        if not ONLINE:
-            self.skipTest("set KEEL_CHECK_EXTERNAL=1 to compare against the tap")
-        # The contents API, not raw.githubusercontent.com. `raw` is CDN-cached for
-        # minutes, so right after a sync it serves the previous formula and this
-        # test fails on a tap that is already correct — observed while fixing #805.
-        # `brew tap` clones the repository, so the API is also the view that
-        # matches what a user actually installs.
-        url = f"https://api.github.com/repos/{HOMEBREW_TAP}/contents/Formula/keel.rb"
-        request = urllib.request.Request(
-            url,
-            headers={"Accept": "application/vnd.github.raw", "User-Agent": "keel-tests"},
+class TestTheTapReadsTheReleaseAsset(unittest.TestCase):
+    """The one thing the other repository had to be told (#1023).
+
+    The tap's `sync-formula.yml` pulled `contents/Formula/keel.rb` from this
+    repository every thirty minutes. That file is gone, so an un-repointed tap
+    404s on a schedule forever — the shape of #981 arriving from a new direction.
+    `packaging/homebrew/tap-sync-formula.patch` is the change it needs; this pair
+    of checks is how the claim that it was applied stops being only a claim.
+
+    The offline half is a claim in a reviewable form rather than proof — nothing
+    offline can read another repository — and requiring the tap's commit sha is
+    what makes it falsifiable. The online half is the real check.
+    """
+
+    #: The path the tap must no longer fetch. It is the file this repo deleted.
+    RETIRED = "contents/Formula/keel.rb"
+    #: What it must fetch instead: rendered per release, never stale.
+    ASSET = "releases/latest/download/keel.rb"
+
+    def test_the_repointing_is_recorded_with_a_commit_sha(self):
+        marker = REPO_ROOT / "packaging" / "homebrew" / "TAP_REPOINTED"
+        self.assertTrue(marker.exists(), "packaging/homebrew/TAP_REPOINTED is missing")
+        self.assertRegex(
+            marker.read_text(encoding="utf-8"),
+            r"(?m)^tap-sync-formula: [0-9a-f]{40}$",
+            "record the tap commit that applied packaging/homebrew/tap-sync-formula.patch: "
+            'echo "tap-sync-formula: $(git -C ../homebrew-keel rev-parse HEAD)" '
+            "> packaging/homebrew/TAP_REPOINTED",
         )
-        token = os.environ.get("GITHUB_TOKEN")
-        if token:
-            request.add_header("Authorization", f"Bearer {token}")
-        try:
-            with urllib.request.urlopen(request, timeout=20) as response:
-                published = response.read(50 * 1024 * 1024).decode("utf-8")
-        except urllib.error.HTTPError as exc:
-            if exc.code == 404:
-                self.fail(f"{HOMEBREW_TAP} has no Formula/keel.rb; brew install would fail")
-            _could_not_look(self, "the published tap formula", exc)
-        except (urllib.error.URLError, OSError) as exc:
-            _could_not_look(self, "the published tap formula", exc)
 
-        local = (REPO_ROOT / "Formula" / "keel.rb").read_text(encoding="utf-8")
-        published_version_match = re.search(r"/tags/v([0-9]+\.[0-9]+\.[0-9]+)\.tar\.gz", published)
-        if published_version_match:
-            published_v = [int(p) for p in published_version_match.group(1).split(".")]
-            current_v = [int(p) for p in __version__.split(".")]
-            if current_v > published_v:
-                # A release bump staged here but not yet on the tap. The tap
-                # pulls on a schedule rather than being pushed to (#774), so a
-                # short window where it is behind is expected — and a tap serving
-                # an installable older formula is a lag, not a defect. Failing on
-                # it would make every release briefly red for nothing anyone
-                # should act on. A tap *claiming this version* with different
-                # content still falls through to the assertion below.
-                return
+    def test_the_patch_is_shipped_next_to_the_marker(self):
+        """A marker asking for a change nobody can find is a request, not a fix."""
+        patch = (REPO_ROOT / "packaging" / "homebrew" / "tap-sync-formula.patch").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("--- a/.github/workflows/sync-formula.yml", patch)
+        self.assertIn("+++ b/.github/workflows/sync-formula.yml", patch)
+        # It must both retire the old source and name the new one; a patch that
+        # only deleted the fetch would leave the tap serving nothing new forever.
+        self.assertIn(f'-{" " * 12}"https://api.github.com/repos/berkayturanci/keel/', patch)
+        self.assertIn(self.ASSET, patch)
 
-        self.assertEqual(
-            local,
-            published,
-            "the tap's formula differs from this repo's; the tap is what users install",
+    def test_the_live_tap_no_longer_pulls_the_deleted_file(self):
+        if not ONLINE:
+            self.skipTest("set KEEL_CHECK_EXTERNAL=1 to read the tap's workflow")
+        workflow = _tap_file(".github/workflows/sync-formula.yml", "the tap's sync workflow", self)
+        self.assertNotIn(
+            self.RETIRED,
+            workflow,
+            f"{HOMEBREW_TAP} still fetches a file this repository no longer has; its sync "
+            "will fail every 30 minutes. Apply packaging/homebrew/tap-sync-formula.patch.",
+        )
+        self.assertIn(
+            self.ASSET,
+            workflow,
+            f"{HOMEBREW_TAP} does not read the release asset; releases would never reach it",
         )
 
 

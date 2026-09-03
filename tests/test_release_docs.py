@@ -114,26 +114,34 @@ class TestReleaseDocs(unittest.TestCase):
         self.assertIn('keel ship "${ARGS[@]}" | tee ship.txt', text)
         self.assertNotIn("keel ship $ARGS", text)
 
-    def test_homebrew_formula_matches_the_project(self):
+    def test_homebrew_template_matches_the_project(self):
         """The formula drifted seven releases and misstated the licence (#774).
 
         None of it was caught, because nothing compared the formula to the project
-        it installs. A placeholder checksum only fails for whoever runs
-        `brew install`; a wrong licence never fails at all.
-        """
-        formula = (REPO_ROOT / "Formula" / "keel.rb").read_text(encoding="utf-8")
+        it installs. A wrong licence never fails an install at all.
 
-        self.assertIn(
-            f"/tags/v{__version__}.tar.gz",
-            formula,
-            "formula url must point at the current release tag",
+        The subject is now `packaging/homebrew/keel.rb.template`: the pair that
+        could not be true before the tag exists (#990) is a placeholder there and
+        is rendered during the release, while everything a diff can meaningfully
+        review — licence, interpreter, vendored resources — is still committed
+        and still checked here.
+        """
+        template = (REPO_ROOT / "packaging" / "homebrew" / "keel.rb.template").read_text(
+            encoding="utf-8"
         )
-        digest = re.search(r'sha256 "([0-9a-f]{64})"', formula)
-        self.assertIsNotNone(digest, "formula must carry a sha256")
-        self.assertNotEqual(
-            digest.group(1),
-            "0" * 64,
-            "formula sha256 is still the placeholder; brew would refuse it",
+
+        # The url and digest are rendered, not stored. A literal pair coming back
+        # is the second write to `main` coming back with it.
+        self.assertIn('url "@URL@"', template)
+        self.assertIn('sha256 "@SHA256@"', template)
+        self.assertIsNone(
+            re.search(r'(?m)^  sha256 "[0-9a-f]{64}"$', template),
+            "the top-level sha256 must stay a placeholder; it cannot be known before the tag",
+        )
+        self.assertNotIn(
+            f"/tags/v{__version__}.tar.gz",
+            template,
+            "the template must name no version; `make release-bump` no longer touches it",
         )
         # Read the licence from the project rather than hard-coding it here, so the
         # test cannot drift into asserting the wrong thing either.
@@ -142,8 +150,31 @@ class TestReleaseDocs(unittest.TestCase):
         )
         self.assertIsNotNone(declared)
         self.assertIn(
-            f'license "{declared.group(1)}"', formula, "formula licence must match pyproject"
+            f'license "{declared.group(1)}"', template, "formula licence must match pyproject"
         )
+
+    def test_rendering_the_template_leaves_no_placeholder_behind(self):
+        """The rendering `publish.yml` performs, run here on a fixture.
+
+        `sed` reports success whether or not it substituted anything, so the only
+        thing standing between a renamed placeholder and a formula `brew` cannot
+        parse is the check that nothing survives. That check is in the workflow,
+        which runs once per tag; this is the same rule, offline, on every push.
+        """
+        template = (REPO_ROOT / "packaging" / "homebrew" / "keel.rb.template").read_text(
+            encoding="utf-8"
+        )
+        rendered = (
+            template.replace(
+                "@URL@", "https://github.com/berkayturanci/keel/archive/refs/tags/v9.9.9.tar.gz"
+            )
+            .replace("@SHA256@", "0" * 64)
+            .replace("@VERSION@", "9.9.9")
+        )
+
+        self.assertEqual([], re.findall(r"@[A-Z0-9_]+@", rendered))
+        self.assertIn("class Keel < Formula", rendered)
+        self.assertIn('depends_on "python@3.12"', rendered)
 
     def test_keel_visual_version_markers_agree(self):
         """keel-visual shipped `__version__ = "0.6.0"` as 0.8.0 (#796).
@@ -167,11 +198,11 @@ class TestReleaseDocs(unittest.TestCase):
 
         self.assertEqual(result.problems, [])
 
-    def test_homebrew_formula_vendors_every_runtime_dependency(self):
+    def test_homebrew_template_vendors_every_runtime_dependency(self):
         """The formula installed a keel that could not start (#787).
 
-        `test_homebrew_formula_matches_the_project` above compares the formula's
-        *identity* to the project — tag, checksum, licence — and all three agreed
+        `test_homebrew_template_matches_the_project` above compares the formula's
+        *identity* to the project — licence, interpreter — and every field agreed
         while `brew install` produced a virtualenv that died on `import yaml`
         before printing anything.
 
@@ -180,7 +211,9 @@ class TestReleaseDocs(unittest.TestCase):
         be vendored as a `resource` stanza. That is the invariant here, and it is
         checkable offline — no network, no `brew` binary.
         """
-        formula = (REPO_ROOT / "Formula" / "keel.rb").read_text(encoding="utf-8")
+        formula = (REPO_ROOT / "packaging" / "homebrew" / "keel.rb.template").read_text(
+            encoding="utf-8"
+        )
         project = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
         # Homebrew runs on macOS and Linux only, so a Windows-marked dependency
@@ -482,7 +515,7 @@ class TestThePublishWorkflowRunsTheGuards(unittest.TestCase):
     def _code(script: str) -> str:
         """The script with comment lines removed.
 
-        The same precaution `test_publish_formula_followup.py` takes: these steps
+        The same precaution `test_publish_release_chain.py` takes: these steps
         explain in prose what they no longer do, and a plain `assertNotIn` matches
         that explanation happily — passing, or failing, on a comment.
         """

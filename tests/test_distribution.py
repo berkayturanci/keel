@@ -10,15 +10,31 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 class TestHomebrewFormula(unittest.TestCase):
-    def test_formula_exists_and_has_required_fields(self):
-        formula_path = ROOT / "Formula" / "keel.rb"
-        self.assertTrue(formula_path.exists(), "Formula/keel.rb must exist in root repo")
-        content = formula_path.read_text(encoding="utf-8")
+    """What is committed is the template, not the formula (#1023, #990).
+
+    A committed `Formula/keel.rb` had to name a url and a sha256 that cannot both
+    be correct before the tag exists, so it was stale on every release and every
+    release paid for it with a second write to `main`. `publish.yml` renders the
+    template after the tag and attaches the result to the GitHub Release.
+    """
+
+    def test_template_exists_and_has_required_fields(self):
+        template_path = ROOT / "packaging" / "homebrew" / "keel.rb.template"
+        self.assertTrue(template_path.exists(), "packaging/homebrew/keel.rb.template must exist")
+        content = template_path.read_text(encoding="utf-8")
         self.assertIn("class Keel < Formula", content)
         self.assertIn('homepage "https://github.com/berkayturanci/keel"', content)
         self.assertIn('depends_on "python@3.12"', content)
         self.assertIn("def install", content)
         self.assertIn("test do", content)
+
+    def test_the_committed_formula_does_not_come_back(self):
+        """The file, not the mechanism: restoring it restores the second write."""
+        self.assertFalse(
+            (ROOT / "Formula" / "keel.rb").exists(),
+            "Formula/keel.rb is rendered during the release (see packaging/homebrew/README.md); "
+            "a committed copy is stale on every release by construction",
+        )
 
 
 class TestStandaloneInstaller(unittest.TestCase):

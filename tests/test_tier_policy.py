@@ -3,7 +3,7 @@
 Tier-3 is for changes that can reach past CI. `.github/workflows/**` used to be in
 the list wholesale, which tiered up four PRs in one session that could not reach a
 user — a workflow comment, two added CI jobs, and one that pinned four action refs
-*more tightly* — while leaving `Formula/keel.rb`, the file `brew install` actually
+*more tightly* — while leaving `packaging/homebrew/`, what `brew install` actually
 runs, at tier-2. All four were waived; the one that shipped to users was not.
 
 Splitting the glob is only half a fix. A static list drifts the moment someone adds
@@ -104,11 +104,15 @@ class TestTierThreeCoversWhatCanReachOut(unittest.TestCase):
 
     def test_the_artifacts_users_install_are_tier3(self):
         # Not workflows, but they reach further than most code in this repo: the
-        # formula `brew install` runs (#787) and the hash-locked tooling that
-        # publishes to PyPI (#779). Both sat at tier-2 while every CI edit was
-        # tier-3, which is the imbalance #786 is about.
+        # template the formula `brew install` runs is rendered from (#787, #1023)
+        # and the hash-locked tooling that publishes to PyPI (#779). Both sat at
+        # tier-2 while every CI edit was tier-3, the imbalance #786 is about.
         globs = _tier3_globs()
-        for path in ("Formula/keel.rb", ".github/requirements/publish-tools.txt"):
+        for path in (
+            "packaging/homebrew/keel.rb.template",
+            "packaging/homebrew/tap-sync-formula.patch",
+            ".github/requirements/publish-tools.txt",
+        ):
             with self.subTest(path=path):
                 self.assertTrue(_is_tier3(path, globs))
 
