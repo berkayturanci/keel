@@ -190,13 +190,19 @@ Release maintainers should follow [`docs/keel/release.md`](docs/keel/release.md)
 
 ```bash
 keel setup --root .                                  # add keel config + adapters to a project
+keel setup --root . --wizard                         # …and pick the team interactively
 keel validate projects/example-flutter.yaml          # validate a config against the schema
 keel plan      projects/example-flutter.yaml          # show the backbone plan for a project
 keel version
 ```
 
 `keel setup` wraps first-run onboarding (`init` + `install-adapter` + strict `validate` +
-`plan`) for a consumer project. `keel plan` renders the fixed backbone with each project's
+`plan`) for a consumer project. With `--wizard` it also runs a **team step**: it probes
+which agent CLIs, hosted APIs and local models are usable on this machine (the same probe
+as `keel doctor --providers`) and writes `knobs.team` from what it found — who implements,
+who gives the mandatory gate review, who reviews at each risk tier. Only providers that
+are actually reachable are offered. `keel ship --wizard` picks the same seats for a single
+run. See [`docs/keel/onboarding.md`](docs/keel/onboarding.md). `keel plan` renders the fixed backbone with each project's
 gates/extensions slotted in — exactly what a dry-run executes:
 
 ```

@@ -1165,7 +1165,7 @@ Dry-run mode never runs gates, commits, pushes, opens PRs, or writes reports. Li
 only a preflight contract; adapters perform approved session closeout work after checking
 consent and GitHub transport support.
 
-## `keel work-block <project.yaml> [issues…] [--root DIR] [--queue SELECTOR] [--max N] [--hours H] [--review-comments inline|summary] [--reviewers 1|2|3] [--target TEXT] [--dry-run] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--json]`
+## `keel work-block <project.yaml> [issues…] [--root DIR] [--queue SELECTOR] [--max N] [--hours H] [--review-comments inline|summary] [--reviewers 1|2|3] [--target TEXT] [--dry-run] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--json] [--wizard] [--wizard-answer KEY=VALUE]...`
 
 Render the standalone daytime multi-issue work-block contract. The core owns the generic
 `keel.work-block.v1` queue primitive: explicit issue numbers (processed in the order given)
@@ -1181,7 +1181,11 @@ keel work-block .keel/project.yaml 76 --live --approve-scope filesystem,git,gith
 ```
 
 `--max` caps how many issues are attempted, `--hours` sets an optional time budget, and
-`--review-comments` / `--reviewers` pass through to the per-issue ship handoffs. The contract
+`--review-comments` / `--reviewers` pass through to the per-issue ship handoffs.
+`--wizard` / `--wizard-answer` behave exactly as they do for
+[`keel ship`](#ship-wizard) — same probe, same questions, same interactivity guard. The
+implementer and jury choices have no work-block flag of their own, so they are echoed in
+the resolved flag set for the adapter to hand to each child `keel ship`. The contract
 shares its queue primitive with `overnight`; the daytime mode lets the operator redirect
 between items, while a blocked item stops the daytime block instead of continuing. Final
 reporting buckets each issue as shipped, PR-open-not-merged, deferred, blocked, skipped, or
@@ -1676,7 +1680,7 @@ keel window .keel/project.yaml
 # merge window OPEN  [Europe/Istanbul 07:00-01:30]
 ```
 
-## `keel ship <project.yaml> [--root DIR] [--pr N] [--compound|--profile standard|compound] [--role LABEL] [--delegate PROVIDER] [--review-delegate PROVIDER]... [--dry-run] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--target TARGET] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--review-comments inline|summary] [--reviewers 1|2|3] [--jury|--no-jury] [--jury-advisory] [--json]`
+## `keel ship <project.yaml> [--root DIR] [--pr N] [--compound|--profile standard|compound] [--role LABEL] [--delegate PROVIDER] [--review-delegate PROVIDER]... [--dry-run] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--target TARGET] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--review-comments inline|summary] [--reviewers 1|2|3] [--jury|--no-jury] [--jury-advisory] [--json] [--wizard] [--wizard-answer KEY=VALUE]...`
 
 Run the **deterministic slice of a ship** against the current checkout and print the
 assessment: how many files changed vs. the base branch, the **risk tier** (→ reviewer
@@ -1742,6 +1746,49 @@ The resolved [`knobs.team`](configuration.md#team) team is exposed as `assignmen
 for the run, and `--review-delegate` is repeatable and positional per reviewer slot.
 `keel plan --tier` resolves the assignment for a risk tier before a diff exists;
 `keel ship` resolves it against the tier it classified from the real diff.
+
+<a id="ship-wizard"></a>
+
+### `--wizard` — the provider picker
+
+`--wizard` is a pre-s1 front layer that collects the same options the grammar above
+produces; it adds no pipeline behaviour and cannot produce a run the flags could not.
+Its choices come from the probe [`keel doctor --providers`](#keel-doctor) runs, which is
+the single source of truth for what is usable here — **a provider the probe did not find
+is never offered and cannot be selected**, whether it is typed at the prompt or handed in
+with `--wizard-answer`.
+
+Every default comes from [`knobs.team`](configuration.md#team) and from the flags already
+on the command line, so a wizard run that answers nothing reproduces exactly what the
+command would have done. A configured seat this machine cannot reach is named once and
+then degrades to one it can.
+
+**Interactivity guard.** With no terminal and no recorded answers the wizard is a *logged
+no-op*: it prints `wizard: non-interactive context …` and the command proceeds with the
+literal flags as parsed. Never a hang, never a rejection. A machine where the probe finds
+nothing usable is the same logged no-op.
+
+`--wizard-answer KEY=VALUE` (repeatable, or semicolon-separated) pre-answers questions
+without prompting, on a terminal or not — which is what makes a wizard run reproducible.
+A malformed pair, or one naming a choice the wizard does not offer, exits 1 before any
+gate runs rather than silently running a team nobody asked for.
+
+The questions are `mode` (quick-start vs customize), `implement.provider`,
+`implement.model`, `implement.effort`, `gate.provider`, `jury`, `review` (the bench for
+this run: up to three seats, or `jury` when the panel *is* the review) and
+`review_comments`. `keel init --wizard` asks the same questions per risk tier instead,
+because a config names a bench per tier while a run has one — see
+[the team step](#init-team-step).
+
+Output is the resolved flag set, echoed back for the adapter to pass on literally:
+
+```text
+keel ship --wizard — resolved
+  flags : --delegate ollama:qwen2.5-coder --reviewers 1 --review-delegate claude --review-comments summary --jury-advisory
+  seats : implement=ollama:qwen2.5-coder · gate=claude (distinct from the implementer) · review=claude
+```
+
+With `--json` that echo goes to stderr so stdout carries only the contract document.
 
 Adapters should pass the selected issue text with `--issue-title`, `--issue-body`, and
 `--issue-label` before branch/worktree creation. JSON output then includes
@@ -1906,7 +1953,7 @@ Use it only when intentionally regenerating project config.
 keel init                 # scaffold .keel/project.yaml for the detected stack
 keel init --auto          # smart auto-detect stack, base branch, and test/lint gates without prompts
 keel init --root ../app   # scaffold elsewhere
-keel init --wizard        # prompt for base branch, merge-window hours, timezone, commands
+keel init --wizard        # prompt for base branch, merge-window hours, timezone, commands, team
 ```
 
 With `--auto`, keel inspects project marker files, detects the primary base branch from git
@@ -1916,6 +1963,35 @@ structured summary report.
 With `--wizard`, keel prompts for each value (base branch, timezone, **merge window
 `HH:MM-HH:MM`**, build/lint commands); press Enter to accept the stack default, or leave a
 field blank to skip it. The result still passes `keel validate`.
+
+<a id="init-team-step"></a>
+
+### The team step
+
+`--wizard` ends with a **team step** that writes [`knobs.team`](configuration.md#team) —
+who implements, who gives the mandatory gate review, who reviews at each risk tier, and
+how the jury gates. Its options come from the same probe
+[`keel doctor --providers`](#keel-doctor) runs, so the block names providers that are
+usable *on this machine* rather than seats copied out of somebody else's example. A
+provider the probe did not find is never offered and cannot be typed in.
+
+The first question is **quick-start vs customize**: quick-start takes every default and
+asks nothing else (an implementer, a reviewer bench of one/two/three seats by tier
+preferring two distinct vendors, no gate seat, no jury). Customize walks the rest —
+implementer provider, its model and reasoning effort where the provider can express one,
+the gate seat, the jury mode, the bench for each tier, and the review-comments mode.
+
+Two rules the step will not let you break, because `keel validate` would not either:
+
+- the gate seat is offered from every provider **except** the implementer, and is written
+  with `distinct_from: implementer` — a gate review from the vendor that wrote the change
+  is not a second opinion;
+- reasoning effort is only asked for a provider that has a spelling for it, and only once
+  a model is chosen for a vendor that spells effort as a model *suffix* (`agy`).
+
+On a machine where the probe finds nothing usable the step is skipped and no `team` block
+is written at all — an absent block is not an empty one, and leaves `config_hash` exactly
+where it was.
 
 ## `keel install-adapter <target> [--root DIR] [--force]`
 

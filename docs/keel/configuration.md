@@ -291,6 +291,17 @@ reported in `assignment.warnings` rather than silently replacing the panel.
 rotate the hash for a project that has not adopted it — and `config_hash` changes whenever
 `team` does.
 
+**Writing one with the wizard.** `keel init --wizard` / `keel setup --wizard` end with a
+team step that builds this block from the [`keel doctor --providers`](cli.md#keel-doctor)
+probe, so the seats it writes are providers that exist on the machine doing the
+scaffolding. It offers only what a *committed* policy may name — the built-in vendors and
+this project's `delegate_profiles`, never a machine-level `~/.keel/providers.yaml` entry —
+for the same reason validation refuses one, and it will not offer an `effort` whose
+provider has no spelling for it. `keel ship --wizard` picks the same seats for a single
+run instead of writing them down; it *does* offer registry providers, because
+`--delegate` resolves through the full registry. See
+[`cli.md`](cli.md#init-team-step).
+
 #### `delegate_profiles`
 
 Named **generic delegate vendors**, referenced by name as `--delegate <name>` /

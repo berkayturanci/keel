@@ -227,8 +227,9 @@ capture.
   the only review that tier has, so its verdict stays required.
 - `--hotfix` — audited merge-window bypass (s10). Use sparingly.
 - `--dry-run` — read-only rehearsal (see `--dry-run` section).
-- `--wizard` — interactive opt-in only; runs the guided pre-s1 config collector (see
-  `--wizard` section). In any non-interactive context it degrades to a logged no-op.
+- `--wizard` — interactive opt-in only; runs `keel ship --wizard`, the guided pre-s1
+  option picker (see `--wizard` section). In any non-interactive context it degrades to a
+  logged no-op. `--wizard-answer <key>=<value>` (repeatable) replays a recorded run.
 
 Reject unknown `--flags`, out-of-range `--reviewers`, an empty `ollama:`/`*-api:` model, a
 `--delegate`/`--review-delegate` value that is neither a built-in vendor nor a configured
@@ -1088,15 +1089,48 @@ no-op (`dry-run` marker).
 ## `--wizard` (interactive opt-in only)
 
 A pre-s1 front layer that collects the same options the grammar above produces — it adds no
-new pipeline behaviour and cannot produce a config the grammar could not. **Hard
-interactivity guard:** never enter the wizard in any non-interactive context (watch mode,
-overnight/background/headless runs); there it degrades to a logged no-op and proceeds with
-the literal flags as parsed (never a hang, never a rejection). Best-effort tool/model probe
-(installed CLIs + local models) builds the offered choices; detection failures just yield
-shorter lists. First question is a **Quick-start vs Customize** fast path (Quick-start
-resolves every option to its default and only still asks for Issues). Every question shows
-its `(default)` option first with a one-line description of what the default does. After
-collecting, echo the resolved config in the worked-example shape, then proceed to s1.
+new pipeline behaviour and cannot produce a config the grammar could not.
+
+**Do not improvise the questions.** Run the core picker and use what it prints:
+
+```bash
+keel ship <project.yaml> --root . --wizard [--wizard-answer key=value]...
+```
+
+Core owns the offered choices, and they come from one source: the provider probe behind
+`keel doctor --providers`. **A provider that probe did not mark available is never offered
+and cannot be selected** — so the wizard cannot propose a CLI the operator has not
+installed, which is exactly what an improvised list did. Defaults come from `knobs.team`
+and from the flags already on the command line; a configured seat this machine cannot
+reach is named once and degrades to one it can.
+
+**Hard interactivity guard:** never enter the wizard in any non-interactive context (watch
+mode, overnight/background/headless runs); there it degrades to a logged no-op and proceeds
+with the literal flags as parsed (never a hang, never a rejection). Core enforces this
+itself through an `isatty` check, and a machine where no provider is usable is the same
+logged no-op — but do not pass `--wizard` from an unattended run just because core would
+survive it.
+
+First question is a **Quick-start vs Customize** fast path (Quick-start resolves every
+option to its default and only still asks for Issues). Every question shows its
+`(default)` option first with a one-line description. The questions are `mode`,
+`implement.provider`, `implement.model`, `implement.effort`, `gate.provider`, `jury`,
+`review` (this run's bench, or `jury` when the panel *is* the review) and
+`review_comments`.
+
+Core echoes the resolved **flag set**; pass those flags on literally and proceed to s1:
+
+```text
+keel ship --wizard — resolved
+  flags : --delegate ollama:qwen2.5-coder --reviewers 1 --review-delegate claude --review-comments summary --jury-advisory
+  seats : implement=ollama:qwen2.5-coder · gate=claude (distinct from the implementer) · review=claude
+```
+
+The `seats` line carries what has no `keel ship` flag: the implementer's reasoning effort
+(pass it to `keel delegate run --effort` at s4) and the gate seat (dispatch it as the s7
+gate review, as `assignment.gate` already directs). A malformed or unofferable
+`--wizard-answer` exits 1 before any gate runs — surface that to the operator rather than
+retrying with a guess.
 
 ## Invariants (always)
 
