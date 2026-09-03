@@ -231,6 +231,42 @@ the gate for callers that legitimately do not checkpoint. It **requires a named
 `--operator`** and records the bypass in the merge payload
 (`checkpoint_gate: {status: "bypassed", operator}`).
 
+## `keel attribution --vendor VENDOR [--model MODEL] [--profile NAME] [--config FILE] [--json]`
+
+Print keel's own attribution labels for a delegate vendor/model pair. This is the **only**
+sanctioned way for an adapter to learn what to label a PR with: `keel.agents.attribution()`
+defines the vocabulary, and re-deriving it in prose is what produced `agent:gemini` /
+`model:gemini` for a run keel calls `agent:agy` / `model:gemini-3` (issue #1013).
+
+```bash
+keel attribution --vendor agy --model gemini-3.8-flash-high
+# agent_label   : agent:agy
+# model_label   : model:gemini-3
+# system        : agy:gemini-3.8-flash-high
+
+keel attribution --vendor agy --model gemini-3.8-flash-high --json
+# {"agent_label": "agent:agy", "model_label": "model:gemini-3", "system": "agy:gemini-3.8-flash-high"}
+```
+
+`--json` prints the attribution record itself, so it can be consumed directly (it is the
+same shape as the `attribution` block a delegate result carries). Apply `agent_label` and
+`model_label` to the PR verbatim, and record `system` as the run's implementer string.
+
+`--model` is optional: without it there is no `model_label` (human output prints
+`not recorded`, JSON prints `null`) — attribute no model rather than one that was merely
+asked for.
+
+`--profile NAME` names the `knobs.delegate_profiles` entry that ran and requires
+`--config`. The result then carries `delegate_profile`, so the s11 closure can say *which*
+CLI ran rather than just `cli`, and the model falls back to the profile's own `model` when
+`--model` is omitted. A `--vendor` that contradicts the profile's `vendor` is refused
+rather than silently overridden.
+
+`--config` also switches on vendor validation: a vendor that is neither a built-in delegate
+vendor nor a configured delegate profile is refused. Without `--config` any vendor is
+accepted, because the run ledger carries values written by older runs and a lookup with no
+project config cannot tell a legacy value from a typo.
+
 ## `keel post-comment <project.yaml> --target issue:N|pr:N --artifact ARTIFACT --body-file FILE [--run-id ID] [--dry-run] [--json]`
 
 Post or update a deterministic GitHub issue/PR artifact comment. `post-comment` reads the
@@ -248,9 +284,9 @@ keel post-comment .keel/project.yaml --root . \
   --body-file /tmp/closure-comment.md --run-id "$RUN_ID" --json
 ```
 
-Supported artifacts are `closure-comment`, `issue-update`, `review-verdict`,
-`jury-verdict`, `review-cycle-summary`, `extension-result`, `step-handoff`, and
-`run-control-halt`. When
+Supported artifacts are `ship-provenance`, `closure-comment`, `issue-update`,
+`review-verdict`, `jury-verdict`, `review-cycle-summary`, `extension-result`,
+`step-handoff`, and `run-control-halt`. When
 `--run-id` is supplied, the command edits the latest existing comment that has the same
 marker and run id; otherwise it posts a new comment. Bodies that are missing the expected
 marker, or that look like a literal `@/tmp/...` placeholder, are rejected before any
@@ -1378,7 +1414,8 @@ line is printed). It never bypasses failing gates, blocking findings, or failing
 
 `--json` emits the structured command contract plus a deterministic `result` record for the
 dry assessment. `result.artifact_bodies` contains canonical Markdown bodies for the PR body,
-issue update, reviewer verdict, jury verdict, and extension result output; adapters should
+issue update, reviewer verdict, jury verdict, extension result output, and the
+`ship_provenance` comment a live run posts on its PR; adapters should
 post those rendered bodies verbatim when available instead of hand-authoring project-specific
 variants. `--dry-run` is accepted for adapter clarity; this CLI command is already
 non-mutating.
