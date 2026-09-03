@@ -29,6 +29,7 @@ import unittest
 import unittest.mock
 import urllib.error
 import urllib.request
+from typing import NoReturn
 from pathlib import Path
 
 from keel import __version__
@@ -96,12 +97,12 @@ def _tap_file(path: str, what: str, case) -> str:
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
             case.fail(f"{HOMEBREW_TAP} has no {path}; brew install would fail")
-        _could_not_look(case, what, exc)
+        return _could_not_look(case, what, exc)
     except (urllib.error.URLError, OSError) as exc:
-        _could_not_look(case, what, exc)
+        return _could_not_look(case, what, exc)
 
 
-def _could_not_look(case, what: str, exc: Exception):
+def _could_not_look(case, what: str, exc: Exception) -> NoReturn:
     """An I/O failure in a check the operator asked for is a failure, not a skip.
 
     These guards used to raise ``SkipTest`` here, reasoning that "being unable to
