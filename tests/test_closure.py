@@ -357,6 +357,41 @@ class TestRunContext(unittest.TestCase):
         rendered = closure.render_closure_comment(_record())
         self.assertRegex(rendered, r"- \*\*Run id:\*\* RUN-170\n\n### Run context\n")
 
+    def test_a_default_run_says_nothing_about_the_implement_mode(self):
+        # Conditional on purpose: `default` is what s4 has always done, and a line
+        # saying so on every closure comment keel has ever posted would be noise.
+        self.assertNotIn("- **Implement:**", closure.render_closure_comment(_record()))
+        record = _record()
+        record["run_context"]["implement_mode"] = "default"
+        self.assertNotIn("- **Implement:**", closure.render_closure_comment(record))
+
+    def test_a_tdd_run_names_both_phase_commits(self):
+        record = _record()
+        record["run_context"]["implement_mode"] = "tdd"
+        record["run_context"]["implement_phases"] = [
+            {"phase": "tests", "commit": "abcdef1234567890"},
+            {"phase": "implementation", "commit": "1234567890abcdef"},
+        ]
+        rendered = closure.render_closure_comment(record)
+        self.assertIn("- **Implement:** TDD (tests abcdef1 → implementation 1234567)", rendered)
+        # …and it sits inside the run-context block, after the jury line.
+        self.assertRegex(rendered, r"- \*\*Jury:\*\* gating\n- \*\*Implement:\*\* TDD")
+
+    def test_a_tdd_run_with_no_phase_records_still_says_tdd(self):
+        record = _record()
+        record["run_context"]["implement_mode"] = "tdd"
+        self.assertIn("- **Implement:** TDD\n", closure.render_closure_comment(record))
+
+    def test_an_unidentified_phase_commit_renders_unknown(self):
+        record = _record()
+        record["run_context"]["implement_mode"] = "tdd"
+        record["run_context"]["implement_phases"] = [
+            {"phase": "tests", "commit": None},
+            "not a phase record",
+        ]
+        rendered = closure.render_closure_comment(record)
+        self.assertIn("- **Implement:** TDD (tests unknown)", rendered)
+
     def test_transport_gh(self):
         record = _record()
         record["run_context"]["transport"] = "gh"
@@ -475,7 +510,7 @@ class TestClosureContract(unittest.TestCase):
         self.assertEqual(sections[-1], "watermark")
         self.assertEqual(
             contract["run_context_fields"],
-            ["host_agent", "transport", "profile", "jury_mode", "consent"],
+            ["host_agent", "transport", "profile", "jury_mode", "implement_mode", "consent"],
         )
 
 

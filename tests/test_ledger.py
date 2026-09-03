@@ -189,6 +189,36 @@ class TestLedgerRecords(unittest.TestCase):
         self.assertEqual(run_context["consent"]["status"], "approved")
         self.assertEqual(run_context["consent"]["scopes"], ["pr-merge", "label"])
 
+    def test_run_context_records_the_tdd_phases(self):
+        record = ledger.build_ship_run_record(
+            command="ship",
+            base_branch="main",
+            changed_files=["src/keel/tdd.py"],
+            outcomes=[],
+            verdict=SimpleNamespace(blocked=False, counts={}),
+            assessment=SimpleNamespace(
+                tier=2,
+                reviewers=2,
+                window_open=True,
+                ci_ok=None,
+                merge=SimpleNamespace(action="merge", reason="ok"),
+                halted=False,
+                bypassed_window=False,
+            ),
+            implement_mode="tdd",
+            implement_phases=[
+                {"phase": "tests", "commit": "a" * 40},
+                {"phase": "implementation", "commit": "b" * 40},
+            ],
+        )
+
+        run_context = record["run_context"]
+        self.assertEqual(run_context["implement_mode"], "tdd")
+        self.assertEqual(
+            [phase["phase"] for phase in run_context["implement_phases"]],
+            ["tests", "implementation"],
+        )
+
     def test_run_context_block_is_optional_and_degrades(self):
         # The default fixture passes none of the run-context inputs.
         run_context = _record()["run_context"]
@@ -196,6 +226,10 @@ class TestLedgerRecords(unittest.TestCase):
         self.assertIsNone(run_context["transport"])
         self.assertIsNone(run_context["profile"])
         self.assertIsNone(run_context["jury_mode"])
+        # A `default` run records no mode and no phases, so a record written before the
+        # knob existed reads exactly like one written by a run that did not use it.
+        self.assertIsNone(run_context["implement_mode"])
+        self.assertEqual(run_context["implement_phases"], [])
         self.assertIsNone(run_context["consent"]["status"])
         self.assertEqual(run_context["consent"]["scopes"], [])
 

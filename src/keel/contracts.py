@@ -32,6 +32,7 @@ from . import (
     runcontrols,
     runtime,
     stepverifier,
+    tdd,
     team,
     workblock,
     workcreation,
@@ -237,8 +238,15 @@ def build_command_contract(
     delegate: str | None = None,
     review_delegates: tuple[str, ...] = (),
     host_agent: str = agents.HOST_DEFAULT,
+    tdd_override: bool = False,
 ) -> dict[str, Any]:
-    """Build the stable adapter contract shared by ``plan --json`` and dry-run commands."""
+    """Build the stable adapter contract shared by ``plan --json`` and dry-run commands.
+
+    ``tdd_override`` is the per-run ``--tdd`` flag. The resolved s4 profile is published as
+    ``implement_mode`` — a sibling of ``workflow_profile``, because ``tdd`` is an s4 profile
+    the same way ``compound`` is a workflow one — and is what selects the ``tdd-order`` gate
+    in the contract's ``gates`` list."""
+    implement_mode = tdd.resolve_mode(config.knobs.implement_mode, flag=tdd_override)
     declared_side_effects = command_side_effects(command, config, requirement, loaded)
     graph = command_graph(command, profile=profile)
     if not graph and (project_command := get_project_command(config, command)):
@@ -259,9 +267,13 @@ def build_command_contract(
         "no_mutations": dry_run,
         "project": project_as_dict(config),
         "workflow_profile": workflow_profile(command, profile=profile),
+        "implement_mode": implement_mode.as_dict(),
         "graph": graph,
         "backbone_plan": orchestrator.plan_as_dict(plan),
-        "gates": [gate_as_dict(spec) for spec in gates.plan_gates(config, loaded)],
+        "gates": [
+            gate_as_dict(spec)
+            for spec in gates.plan_gates(config, loaded, implement_mode=implement_mode.name)
+        ],
         "project_commands": [command.as_dict() for command in list_project_commands(config)],
         "extension_hooks": extension_hooks_as_dict(config, loaded),
         "extension_problems": list(extension_problems),

@@ -13298,3 +13298,131 @@ class DelegateCommandTest(unittest.TestCase):
     def test_delegate_without_a_subcommand_prints_help(self):
         rc, _out, _err = run(["delegate"])
         self.assertEqual(rc, 2)
+
+
+class TestTddOrderGateOnTheCli(unittest.TestCase):
+    """`implement_mode: tdd` end to end: git through the seam, the verdict from core.
+
+    These build a real two-commit branch rather than stubbing `git.commit_log`, because
+    the property under test is that the argv keel constructs against a repository yields
+    the commit order `keel.tdd` is asked about — a stub would assert keel agrees with
+    itself.
+    """
+
+    def _repo(self, root: Path, *, tests_first: bool) -> None:
+        _run_git(root, "init", "-b", "main")
+        _run_git(root, "config", "user.email", "test@example.com")
+        _run_git(root, "config", "user.name", "Test User")
+        (root / "README.md").write_text("base\n", encoding="utf-8")
+        _run_git(root, "add", "README.md")
+        _run_git(root, "commit", "-m", "base")
+        _run_git(root, "checkout", "-b", "feature")
+        tests_dir = root / "tests"
+        tests_dir.mkdir()
+        src_dir = root / "src"
+        src_dir.mkdir()
+        first, second = ("tests/test_x.py", "src/x.py")
+        if not tests_first:
+            first, second = second, first
+        (root / first).write_text("first\n", encoding="utf-8")
+        _run_git(root, "add", first)
+        _run_git(root, "commit", "-m", f"first: {first}")
+        (root / second).write_text("second\n", encoding="utf-8")
+        _run_git(root, "add", second)
+        _run_git(root, "commit", "-m", f"second: {second}")
+
+    def _config(self, build_cmd="'true'", *, mode_line="", test_paths="['tests/**']"):
+        return _write_raw(
+            "extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: tmp\n"
+            f"gates: [build]\nknobs:\n  build_gate_cmd: {build_cmd}\n{mode_line}"
+            "policy_pack:\n  name: tmp\n  test_groups:\n    unit:\n"
+            "      command: 'true'\n      paths: ['src/**', 'tests/**']\n"
+            f"      test_paths: {test_paths}\n"
+        )
+
+    def test_a_test_first_branch_passes_the_gate(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._repo(Path(d), tests_first=True)
+            rc, out, _ = run(["run-gates", self._config(), "--root", d, "--tdd"])
+        self.assertEqual(rc, 0)
+        self.assertIn("tdd-order", out)
+        self.assertNotIn("FAIL", out)
+
+    def test_an_implementation_first_branch_blocks_and_names_the_paths(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._repo(Path(d), tests_first=False)
+            rc, out, _ = run(["run-gates", self._config(), "--root", d, "--tdd"])
+        self.assertEqual(rc, 1)
+        self.assertIn("FAIL", out)
+        self.assertIn("src/x.py", out)
+        self.assertIn("BLOCKED", out)
+
+    def test_red_gates_block_the_tdd_gate_even_on_a_test_first_branch(self):
+        # The "last gate run is green" half of the contract: the tdd-order gate is
+        # evaluated after the others precisely so it can see their verdict.
+        with tempfile.TemporaryDirectory() as d:
+            self._repo(Path(d), tests_first=True)
+            rc, out, _ = run(["run-gates", self._config("'false'"), "--root", d, "--tdd"])
+        self.assertEqual(rc, 1)
+        self.assertIn("the gates are red", out)
+
+    def test_the_project_knob_needs_no_flag(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._repo(Path(d), tests_first=False)
+            config = self._config(mode_line="  implement_mode: tdd\n")
+            rc, out, _ = run(["run-gates", config, "--root", d])
+        self.assertEqual(rc, 1)
+        self.assertIn("not written test-first", out)
+
+    def test_default_mode_never_runs_the_gate(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._repo(Path(d), tests_first=False)
+            rc, out, _ = run(["run-gates", self._config(), "--root", d])
+        self.assertEqual(rc, 0)
+        self.assertNotIn("tdd-order", out)
+
+    def test_a_project_declaring_no_test_paths_fails_closed(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._repo(Path(d), tests_first=True)
+            config = _write_raw(
+                "extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: tmp\n"
+                "gates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+                "  implement_mode: tdd\n"
+            )
+            rc, out, _ = run(["run-gates", config, "--root", d])
+        self.assertEqual(rc, 1)
+        self.assertIn("policy_pack.test_groups", out)
+
+    def test_ship_publishes_the_mode_and_records_both_phases(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self._repo(root, tests_first=True)
+            rc, out, _ = run(["ship", self._config(), "--root", d, "--tdd", "--dry-run", "--json"])
+            self.assertEqual(rc, 0)
+            data = json.loads(out)
+            mode = data["contract"]["implement_mode"]
+            self.assertEqual(mode["mode"], "tdd")
+            self.assertEqual(mode["source"], "flag:--tdd")
+            self.assertEqual(mode["phases"], ["tests", "implementation"])
+            self.assertIn("tdd-order", [gate["id"] for gate in data["contract"]["gates"]])
+            self.assertIn(
+                "tdd-order",
+                [outcome["gate"] for outcome in data["result"]["gate_outcomes"]],
+            )
+            record = data["result"]["run_ledger"]["record"]
+            phases = record["run_context"]["implement_phases"]
+            self.assertEqual([p["phase"] for p in phases], ["tests", "implementation"])
+            self.assertTrue(all(p["commit"] for p in phases))
+            self.assertEqual(record["run_context"]["implement_mode"], "tdd")
+            self.assertIn("- **Implement:** TDD (tests ", data["result"]["closure_comment"])
+
+    def test_ship_without_the_flag_records_no_implement_mode(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._repo(Path(d), tests_first=True)
+            rc, out, _ = run(["ship", self._config(), "--root", d, "--dry-run", "--json"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["contract"]["implement_mode"]["mode"], "default")
+        run_context = data["result"]["run_ledger"]["record"]["run_context"]
+        self.assertIsNone(run_context["implement_mode"])
+        self.assertEqual(run_context["implement_phases"], [])
