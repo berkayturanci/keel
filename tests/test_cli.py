@@ -75,6 +75,53 @@ def run(argv):
 #: Held between ``setUpModule`` and ``tearDownModule``.
 _NO_REAL_JURY = None
 _NO_GH_AUTH_PROBE = None
+_NO_REAL_PROVIDER_PROBE = None
+
+#: The provider report every ``--wizard`` test in this module sees (#1018). Two
+#: providers, one of them listing a model, so the offered choices are the same on CI
+#: and on a laptop with three agent CLIs installed — and so no test shells out to
+#: ``claude --version`` or dials Ollama on loopback.
+_WIZARD_PROBE_REPORT = {
+    "schema_version": "keel.providers.v1",
+    "providers": [
+        {
+            "name": "claude",
+            "vendor": "claude",
+            "transport": "cli",
+            "source": "builtin",
+            "available": True,
+            "reason": "/usr/local/bin/claude",
+            "models": [],
+            "capabilities": {"tools": True, "read_only_mode": True, "model_selection": True},
+        },
+        {
+            "name": "codex",
+            "vendor": "codex",
+            "transport": "cli",
+            "source": "builtin",
+            "available": False,
+            "reason": "codex not found on PATH",
+            "models": [],
+            "capabilities": {"tools": True, "read_only_mode": True, "model_selection": True},
+        },
+        {
+            "name": "ollama",
+            "vendor": "ollama",
+            "transport": "local",
+            "source": "builtin",
+            "available": True,
+            "reason": "/usr/local/bin/ollama; 1 model(s) served locally",
+            "models": ["qwen2.5-coder"],
+            "capabilities": {"tools": False, "read_only_mode": False, "model_selection": True},
+        },
+    ],
+    "registry_path": "/home/op/.keel/providers.yaml",
+    "registry_present": False,
+    "warnings": [],
+    "errors": [],
+    "available": 2,
+    "total": 3,
+}
 
 #: The real ``runtime.detect``, called by the stub below with its ``run`` seam filled in.
 _REAL_DETECT = runtime.detect
@@ -115,14 +162,19 @@ def setUpModule():
     ``tests/test_jury.py`` and ``tests/test_runtime.py`` both drive the real functions
     through their injection seams.
     """
-    global _NO_REAL_JURY, _NO_GH_AUTH_PROBE
+    global _NO_REAL_JURY, _NO_GH_AUTH_PROBE, _NO_REAL_PROVIDER_PROBE
     _NO_REAL_JURY = patch("keel.jury.available", return_value=False)
     _NO_REAL_JURY.start()
     _NO_GH_AUTH_PROBE = patch("keel.runtime.detect", _detect_without_probing_gh)
     _NO_GH_AUTH_PROBE.start()
+    _NO_REAL_PROVIDER_PROBE = patch(
+        "keel.providerprobe.collect", lambda *_a, **_kw: dict(_WIZARD_PROBE_REPORT)
+    )
+    _NO_REAL_PROVIDER_PROBE.start()
 
 
 def tearDownModule():
+    _NO_REAL_PROVIDER_PROBE.stop()
     _NO_GH_AUTH_PROBE.stop()
     _NO_REAL_JURY.stop()
 
@@ -968,6 +1020,100 @@ class TestWindow(unittest.TestCase):
         rc, _, err = run(["window", _write_raw("extends: keel\n")])
         self.assertEqual(rc, 1)
         self.assertIn("invalid keel config", err)
+
+
+class TestShipWizard(unittest.TestCase):
+    """`keel ship --wizard` end to end through the CLI (#1018)."""
+
+    def test_recorded_answers_rewrite_the_resolved_flags(self):
+        import tempfile
+
+        with (
+            tempfile.TemporaryDirectory() as d,
+            patch("keel.git.changed_files", return_value=[]),
+            patch("keel.git.diff", return_value=""),
+        ):
+            rc, out, err = run(
+                [
+                    "ship",
+                    _write_config("'true'"),
+                    "--root",
+                    d,
+                    "--wizard",
+                    "--wizard-answer",
+                    "mode=customize;implement.provider=ollama;review=claude",
+                ]
+            )
+        self.assertEqual(rc, 0, err)
+        self.assertIn("keel ship --wizard — resolved", out)
+        self.assertIn("--delegate ollama", out)
+        # The wizard's answers reach the resolved assignment, not just the echo.
+        self.assertIn("ollama", out)
+
+    def test_the_wizard_never_offers_a_provider_the_probe_did_not_find(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            rc, _, err = run(
+                [
+                    "ship",
+                    _write_config("'true'"),
+                    "--root",
+                    d,
+                    "--wizard",
+                    "--wizard-answer",
+                    "mode=customize;implement.provider=codex",
+                ]
+            )
+        self.assertEqual(rc, 1)
+        self.assertIn("'codex' is not on offer here", err)
+
+    def test_a_malformed_answer_stops_the_run_before_any_gate(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            rc, _, err = run(
+                ["ship", _write_config("'true'"), "--root", d, "--wizard", "--wizard-answer", "x"]
+            )
+        self.assertEqual(rc, 1)
+        self.assertIn("is not KEY=VALUE", err)
+
+    def test_work_block_takes_the_same_wizard(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, err = run(
+                [
+                    "work-block",
+                    _write_config("'true'"),
+                    "--root",
+                    d,
+                    "--wizard",
+                    "--wizard-answer",
+                    "mode=customize;review=claude",
+                ]
+            )
+        self.assertEqual(rc, 0, err)
+        self.assertIn("keel work-block --wizard — resolved", out)
+        self.assertIn("--review-delegate claude", out)
+
+    def test_work_block_fails_closed_on_a_malformed_answer(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            rc, _, err = run(
+                [
+                    "work-block",
+                    _write_config("'true'"),
+                    "--root",
+                    d,
+                    "--wizard",
+                    "--wizard-answer",
+                    "x",
+                ]
+            )
+        self.assertEqual(rc, 1)
+        self.assertIn("is not KEY=VALUE", err)
 
 
 class TestShip(unittest.TestCase):
@@ -10709,7 +10855,8 @@ class TestInit(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as d:
             (Path(d) / "pyproject.toml").write_text("x", encoding="utf-8")
-            answers = ["develop", "Etc/GMT-3", "09:00-18:00", "explicit", "pytest", ""]
+            # The trailing "" is the team step's quick-start answer (#1018).
+            answers = ["develop", "Etc/GMT-3", "09:00-18:00", "explicit", "pytest", "", ""]
             with patch("builtins.input", side_effect=answers):
                 rc, out, _ = run(["init", "--root", d, "--wizard"])
             self.assertEqual(rc, 0)
@@ -10724,13 +10871,43 @@ class TestInit(unittest.TestCase):
             vrc, _, _ = run(["validate", str(Path(d) / ".keel" / "project.yaml")])
             self.assertEqual(vrc, 0)
 
+    def test_wizard_team_step_writes_knobs_team_and_reports_a_bad_answer(self):
+        import tempfile
+        from unittest.mock import patch as _patch
+
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "pyproject.toml").write_text("x", encoding="utf-8")
+            scripted = iter(
+                [
+                    "develop",
+                    "Etc/GMT-3",
+                    "09:00-18:00",
+                    "explicit",
+                    "pytest",
+                    "",
+                    "customize",
+                    "codex",  # not on offer — reported, then the default stands
+                ]
+            )
+            # Everything after that is an empty line: Enter accepts each default, and
+            # the team step asks as many questions as the probe fixture warrants.
+            with _patch("builtins.input", side_effect=lambda _p="": next(scripted, "")):
+                rc, _, err = run(["init", "--root", d, "--wizard"])
+            self.assertEqual(rc, 0, err)
+            self.assertIn("is not on offer here", err)
+            written = (Path(d) / ".keel" / "project.yaml").read_text(encoding="utf-8")
+            self.assertIn("  team:", written)
+            self.assertIn('"1":', written)
+            vrc, _, verr = run(["validate", str(Path(d) / ".keel" / "project.yaml")])
+            self.assertEqual(vrc, 0, verr)
+
     def test_wizard_rejects_invalid_consent_mode_before_write(self):
         import tempfile
         from unittest.mock import patch
 
         with tempfile.TemporaryDirectory() as d:
             (Path(d) / "pyproject.toml").write_text("x", encoding="utf-8")
-            answers = ["develop", "Etc/GMT-3", "09:00-18:00", "maybe", "pytest", ""]
+            answers = ["develop", "Etc/GMT-3", "09:00-18:00", "maybe", "pytest", "", ""]
             with patch("builtins.input", side_effect=answers):
                 rc, _, err = run(["init", "--root", d, "--wizard"])
             self.assertEqual(rc, 1)
@@ -10846,7 +11023,8 @@ class TestSetup(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as d:
             (Path(d) / "pyproject.toml").write_text("x", encoding="utf-8")
-            answers = ["develop", "Etc/GMT-3", "09:00-18:00", "explicit", "pytest", ""]
+            # The trailing "" is the team step's quick-start answer (#1018).
+            answers = ["develop", "Etc/GMT-3", "09:00-18:00", "explicit", "pytest", "", ""]
             with patch("builtins.input", side_effect=answers):
                 rc, out, err = run(["setup", "--root", d, "--wizard"])
             self.assertEqual(rc, 0, err)
@@ -10864,7 +11042,7 @@ class TestSetup(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as d:
             (Path(d) / "pyproject.toml").write_text("x", encoding="utf-8")
-            answers = ["develop", "Etc/GMT-3", "09:00-18:00", "maybe", "pytest", ""]
+            answers = ["develop", "Etc/GMT-3", "09:00-18:00", "maybe", "pytest", "", ""]
             with patch("builtins.input", side_effect=answers):
                 rc, _, err = run(["setup", "--root", d, "--wizard"])
             self.assertEqual(rc, 1)

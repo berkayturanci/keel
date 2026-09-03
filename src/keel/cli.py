@@ -67,6 +67,8 @@ from . import (
     swarm,
     team,
     window,
+    wizard,
+    wizardrun,
     workspace,
 )
 from . import config as cfg
@@ -1014,6 +1016,9 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         return 1
     except cfg.ConfigError as exc:
         print(str(exc), file=sys.stderr)
+        return 1
+
+    if wizardrun.run_option_wizard(args, config, command=command) != 0:
         return 1
 
     loaded, problems = load_extensions(config, args.root, strict=False)
@@ -4439,6 +4444,21 @@ def _ask(prompt: str, default: str) -> str:  # pragma: no cover - interactive I/
     return raw or default
 
 
+def _warn(message: str) -> None:
+    print(message, file=sys.stderr)
+
+
+def _wizard_catalog(_probe=None) -> wizard.Catalog:
+    """Probe this machine so the init wizard's team step offers only usable providers.
+
+    ``keel init`` runs before a config exists, so the probe sees the built-in vendors
+    and the machine-level registry — which is exactly the set an operator scaffolding a
+    new repository can actually staff a team from.
+    """
+    probe = _probe if _probe is not None else providerprobe.collect
+    return wizard.Catalog.from_report(probe(None))
+
+
 def _cmd_init(args: argparse.Namespace) -> int:
     root = Path(args.root)
     target = root / ".keel" / "project.yaml"
@@ -4464,7 +4484,7 @@ def _cmd_init(args: argparse.Namespace) -> int:
         elif args.wizard:
             stack = scaffold.detect_stack(root)
             print(f"keel init wizard — detected stack: {stack} (Enter accepts each default)")
-            text = scaffold.wizard(stack, _ask, repo=repo)
+            text = scaffold.wizard(stack, _ask, repo=repo, catalog=_wizard_catalog(), notify=_warn)
         else:
             stack = scaffold.detect_stack(root)
             text = scaffold.default_config(stack, repo=repo)
@@ -4488,7 +4508,10 @@ def _render_scaffolded_config(root: Path, *, wizard: bool) -> tuple[str, str]:
     repo = root.resolve().name
     if wizard:
         print(f"keel setup wizard — detected stack: {stack} (Enter accepts each default)")
-        return scaffold.wizard(stack, _ask, repo=repo), stack
+        return (
+            scaffold.wizard(stack, _ask, repo=repo, catalog=_wizard_catalog(), notify=_warn),
+            stack,
+        )
     return scaffold.default_config(stack, repo=repo), stack
 
 
@@ -7282,6 +7305,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="operator consent mode: explicit, standing, or agent",
     )
+    _add_wizard_arguments(p_work_block)
     p_work_block.add_argument("--json", action="store_true", help="emit structured JSON")
     p_work_block.set_defaults(func=_cmd_standalone, standalone_command="work-block")
 
@@ -8028,8 +8052,27 @@ def _add_ship_parser(parser: argparse.ArgumentParser, *, command: str) -> None:
         action="store_true",
         help="select the compound workflow profile (alias for --profile compound)",
     )
+    _add_wizard_arguments(parser)
     parser.add_argument("--json", action="store_true", help="emit structured JSON")
     parser.set_defaults(func=_cmd_ship, ship_command=command)
+
+
+def _add_wizard_arguments(parser: argparse.ArgumentParser) -> None:
+    """The `--wizard` pair every command with a provider picker shares (#1018)."""
+    parser.add_argument(
+        "--wizard",
+        action="store_true",
+        help="interactive pre-s1 picker for implementer/gate/reviewer seats, built "
+        "from the `keel doctor --providers` probe; a logged no-op with no terminal",
+    )
+    parser.add_argument(
+        "--wizard-answer",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="pre-answer one wizard question without prompting (repeatable, or "
+        "semicolon-separated); makes a wizard run reproducible and offline",
+    )
 
 
 def _positive_int(value: str) -> int:
