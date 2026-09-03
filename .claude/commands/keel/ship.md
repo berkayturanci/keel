@@ -274,10 +274,16 @@ both render it as `assignment`, resolved against the same tier the review contra
   `flag:--review-delegate`. Cite it when you say who you dispatched.
 - `warnings` is not decoration: an entry there says a flag or a seat you supplied was not
   dispatched, or that `gate.distinct_from: implementer` could not be honoured.
-- `review_panel: "jury"` means `review_merge_contract.reviewers.count == 0` — there are no
-  host reviewer slots for that tier, the panel is the review, and the evidence gate
-  requires the jury verdict instead of N review verdicts. Do **not** invent reviewers to
-  fill the gap.
+- `review_panel: "jury"` means the cross-vendor panel **is** the review for that tier:
+  `review_merge_contract.reviewers.slots` is empty and `reviewers.source` is `jury`. Do
+  **not** invent host reviewers to fill the gap, and do not run both — s7 dispatches the
+  panel once and maps its ballots onto the review verdicts (see s7). `reviewers.count` is
+  the number of ballots that must be posted: the size a posted jury verdict declared, or
+  the jury's `min_vendors` floor before the panel has run.
+- `reviewers.source: "jury-not-gating"` is the other half of that policy: the panel does
+  not gate (advisory by policy, or downgraded for too few participating vendors), so the
+  tier's **host reviewers are required again** and `reviewers.count` is the tier's own
+  count. Fewer participating vendors never means fewer eyes — run the bench.
 
 ## Backbone (do not reorder; the step IDs are fixed)
 
@@ -590,9 +596,36 @@ abort the session** (counter resets after any merge).
 Run one reviewer per entry in `review_merge_contract.reviewers.slots` — the same seats as
 `assignment.reviewers`, already reconciled with the s5 tier, `--reviewers`, and each
 positional `--review-delegate`. Each slot carries its own `provider`/`model`/`effort`, so
-a two-vendor panel is two different providers, not one vendor run twice. When
-`reviewers.panel` is `jury` the count is **0**: skip the host reviewer fan-out entirely and
-let the s8 jury gate be the review.
+a two-vendor panel is two different providers, not one vendor run twice.
+
+**When `reviewers.panel` is `jury`, the panel is the review — dispatch it here, once.**
+There are no host reviewer slots and there is no second reading at s8: running both would
+pay twice for the same diff, which is the arrangement this path replaced. Read the panel
+off the contract, never off this prose:
+
+```bash
+# 1. one panel run, read-only, machine-readable, saved for the visualizer
+mkdir -p .keel/state/jury
+jury --format json --diff-file "$DIFF" -o ".keel/state/jury/$RUN_ID.json"
+
+# 2. its ballots become the s7 evidence: one head-pinned verdict per panelist,
+#    carrying the vendor and model that produced it, plus the jury verdict
+keel review .keel/project.yaml --root . --pr <PR> \
+  --from-jury ".keel/state/jury/$RUN_ID.json" --run-id "$RUN_ID" --live
+```
+
+`keel review --from-jury` reads the report's per-reviewer ballots (`jury --format json`,
+report schema 1.1+), refuses a report that carries none rather than posting a thinner
+review, and fails closed when the bundle is under the required count. Its `--json` result
+carries a `panel` block — the ballots, the distinct vendors, and the **verified** consensus
+findings already in keel's severity vocabulary — and that block is what feeds s9: verified
+`critical`/`major` block exactly as a host reviewer's findings do. Take the fix loop's input
+from there, not from the panel's prose.
+
+A panel that spans fewer than `jury.minimum_vendors` distinct vendors is downgraded to
+advisory by core, and the contract then says so: `reviewers.panel` comes back as
+`reviewers` with `source: "jury-not-gating"`. That is not a licence to skip the review —
+staff the tier's host reviewers below and run them.
 
 Before the panel, run the **gate review** when `assignment.gate` is present: the project's
 second opinion on the implementation, dispatched read-only exactly like a reviewer but
@@ -763,6 +796,15 @@ Dispatch the gate yourself (at s9 for `pre-merge` Lego), then **re-run the comma
 only be given for a gate keel did not execute — the command refuses to override its own
 measurement of a gate it ran.
 
+**One panel per head, never two.** When `review_merge_contract.reviewers.panel` is `jury`,
+s7 already ran the panel and `keel review --from-jury` already posted its ballots and its
+`keel.jury-verdict.v1` comment. Do **not** run the jury again here: re-read the saved report
+at `.keel/state/jury/$RUN_ID.json` if you need its findings, run the command gates below,
+and leave the verdict alone. Running it twice buys a second opinion from the first opinion
+and doubles the bill for it. The rest of this section is the jury as a *gate* — the
+arrangement for a tier whose reviewers are the host bench and whose panel is a second,
+separate reading.
+
 When a gating or advisory jury is enabled and `result.artifact_bodies.jury_verdict_template`
 is available, use that canonical shape for the posted jury verdict and preserve
 `keel.jury-verdict.v1` plus `head: <sha>`.
@@ -782,7 +824,9 @@ mode. The gate refuses to call a non-review a pass; the evidence check separatel
 to *require* a verdict from a panel that never ran. Pass the distinct participating vendors — those that actually
 returned output, not those merely configured — via `keel evidence-verify --jury-vendors <N>`,
 and post a verdict whose declared mode matches the resolved `jury.mode`, which the evidence
-gate reads to decide whether a `jury-verdict` is required at all.
+gate reads to decide whether a `jury-verdict` is required at all. A verdict rendered by keel
+also declares `panelists: <N>`, the size of the panel that ran; on a `review: jury` tier that
+is what sizes the required verdict count, so keep it on any verdict you post by hand.
 Honour `--review-comments` (pass the jury's native inline
 flag through in inline mode, never under `--dry-run`). The orchestrator MUST POST the
 single jury summary/verdict comment to the GitHub PR through `keel post-comment`:

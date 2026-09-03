@@ -29,24 +29,26 @@ knobs:
         # cannot describe. keel says so rather than accepting it and meaning something
         # else.
         #
-        # These are the seats that actually review keel today. Tier-3 reaches past CI,
-        # so it gets all three: the host lead, the second vendor, and a second Opus
-        # reviewer — spelled `subagent:` because that is what it is, not a vendor keel
-        # dispatches to. `"3": jury` (the cross-vendor panel *as* the review) is the
-        # intended future and is documented in docs/keel/configuration.md#team; it is
-        # not keel's live config until #1015 wires the jury into s7, because a tier-3
-        # policy of `jury` makes the pre-merge evidence gate require a jury verdict
-        # nobody posts yet.
+        # These are the seats that actually review keel today. Tier-1 and tier-2 are
+        # host seats: the lead, then a second vendor.
+        #
+        # Tier-3 reaches past CI, and there the cross-vendor panel *is* the review
+        # (#1015): s7 dispatches ai-jury once and `keel review --from-jury` posts one
+        # head-pinned verdict per panelist with the vendor that produced it, plus the
+        # jury verdict as the consensus record. It replaces the old three host seats —
+        # claude + agy + a second Opus subagent — which paid for three readings and a
+        # four-agent panel over the same diff while the panel's ballots reached no gate.
+        # Fewer than `min_vendors` participating vendors downgrades the panel to
+        # advisory, and then those host seats are required again (see
+        # docs/keel/configuration.md#team).
         "1": [{ provider: claude }]
         "2": [{ provider: claude }, { provider: agy }]
-        "3":
-          - { provider: claude }
-          - { provider: agy }
-          - { provider: "subagent:opus-reviewer" }
+        "3": jury
     jury:
-      # Advisory, not gating, until #1015 dispatches the jury from s7. keel does not
-      # get to make its own merge wait on a panel that does not run yet.
-      mode: advisory
+      # Gating: at tier-3 the panel is the review, so its verdict is evidence keel's own
+      # merge waits on. keel's CI evidence run still passes `--no-jury` (#965), which
+      # skips the panel and staffs the tier's host reviewers instead — never no review.
+      mode: gating
       min_vendors: 2
     fix: { provider: implementer }
   build_gate_cmd: "make test"
@@ -98,13 +100,13 @@ knobs:
     "CI": "**"
   docs_gate_paths: ["docs/**", "*.md", "README.md"]
   sot_doc: AGENTS.md
-  # Explicitly off, overriding the tier-derived default (#1014), until a third
-  # *vendor* seat is stable. Today's tier-3 panel is claude + agy + a second Opus
-  # subagent, and `evidence.distinct_vendor_check` requires every required verdict to
-  # carry a pairwise-distinct vendor — anthropic + google + anthropic fails that. The
-  # protection it buys at tier-2 is already there by construction: the two tier-2
-  # seats above are two different vendors. Revisit when the third seat is its own
-  # vendor rather than a second Opus.
+  # Explicitly off, overriding the tier-derived default (#1014). The protection it
+  # buys is already there by construction on both tiers it would apply to: tier-2's
+  # two seats are two different vendors, and tier-3 is the jury panel, which core
+  # holds to `jury.min_vendors` distinct participating vendors or downgrades to
+  # advisory (#1015). What the knob would add is a *pairwise* distinctness rule over
+  # every posted verdict, which a legitimate three-ballot, two-vendor panel fails.
+  # Revisit if keel's host bench ever grows a seat whose vendor is not its own.
   evidence_require_distinct_vendors: false
 
 gates: [build, lint]
