@@ -12901,7 +12901,9 @@ class DelegateCommandTest(unittest.TestCase):
             self.assertEqual(rc, 0)
             document = json.loads(out)
             self.assertEqual(document["total"], 3)
-            self.assertTrue(document["state_dir"].endswith("/.keel/state/delegate"))
+            self.assertEqual(
+                Path(document["state_dir"]), Path(root) / ".keel" / "state" / "delegate"
+            )
 
     def test_status_shows_a_crashed_run_with_its_error_code(self):
         with tempfile.TemporaryDirectory() as root:

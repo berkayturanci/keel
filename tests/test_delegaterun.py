@@ -428,7 +428,10 @@ class DetachLifecycleTest(unittest.TestCase):
             self.assertEqual(record["status"], "running")
             self.assertEqual(record["pid"], 4242)
             self.assertIsNone(record["result"])
-            self.assertTrue(popen.calls[0][1]["start_new_session"])
+            if hasattr(os, "setsid"):
+                self.assertTrue(popen.calls[0][1]["start_new_session"])
+            else:  # Windows has no sessions; the flag must not be passed at all
+                self.assertNotIn("start_new_session", popen.calls[0][1])
             self.assertTrue(Path(record["out_path"]).exists())
             # The pid lives beside the record, never in it: two writers, one file each.
             self.assertNotIn("pid", delegaterun.load_state(root, "r1"))
@@ -714,14 +717,13 @@ class LostUpdateTest(unittest.TestCase):
     def test_a_child_that_finishes_during_the_spawn_keeps_its_result(self):
         with tempfile.TemporaryDirectory() as root:
 
-            class _FinishingPopen(_FakePopen):
-                def __call__(self, argv, **kwargs):
-                    # The child races to completion between Popen returning and the
-                    # parent's next write — the window that lost the result.
-                    delegaterun.finish_detached(root, "r1", {"ok": True, "text": "fast"})
-                    return super().__call__(argv, **kwargs)
+            def finishing_popen(argv, **kwargs):
+                # The child races to completion between Popen returning and the
+                # parent's next write — the window that lost the result.
+                delegaterun.finish_detached(root, "r1", {"ok": True, "text": "fast"})
+                return _FakeChild(4242)
 
-            delegaterun.start_detached([], root=root, run_id="r1", _popen=_FinishingPopen())
+            delegaterun.start_detached([], root=root, run_id="r1", _popen=finishing_popen)
             record = delegaterun.load_state(root, "r1")
             self.assertEqual(record["status"], "done")
             self.assertEqual(record["result"]["text"], "fast")
@@ -730,12 +732,11 @@ class LostUpdateTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             seen = {}
 
-            class _CheckingPopen(_FakePopen):
-                def __call__(self, argv, **kwargs):
-                    seen["record"] = delegaterun.load_state(root, "r1")
-                    return super().__call__(argv, **kwargs)
+            def checking_popen(argv, **kwargs):
+                seen["record"] = delegaterun.load_state(root, "r1")
+                return _FakeChild(4242)
 
-            delegaterun.start_detached([], root=root, run_id="r1", _popen=_CheckingPopen())
+            delegaterun.start_detached([], root=root, run_id="r1", _popen=checking_popen)
             self.assertIsNotNone(seen["record"])
             self.assertEqual(seen["record"]["status"], "running")
 
@@ -755,13 +756,12 @@ class LostUpdateTest(unittest.TestCase):
                 writes.append(record["status"])
                 return real(target_root, record)
 
-            class _FinishingPopen(_FakePopen):
-                def __call__(self, argv, **kwargs):
-                    delegaterun.finish_detached(root, "r1", {"ok": True, "text": "fast"})
-                    return super().__call__(argv, **kwargs)
+            def finishing_popen(argv, **kwargs):
+                delegaterun.finish_detached(root, "r1", {"ok": True, "text": "fast"})
+                return _FakeChild(4242)
 
             with patch.object(delegaterun, "write_state", spy):
-                delegaterun.start_detached([], root=root, run_id="r1", _popen=_FinishingPopen())
+                delegaterun.start_detached([], root=root, run_id="r1", _popen=finishing_popen)
             # exactly one record write from the parent, and it happened before the spawn
             self.assertEqual(writes, ["running", "done"])
             record = delegaterun.run_record(root, "r1")
