@@ -24,7 +24,9 @@ from .swarm import (
     SwarmWorkerStatus,
     rebalance_swarm_plan,
     save_swarm_state,
+    ship_handoff_args,
     update_worker_state,
+    worker_seed,
 )
 
 SubprocessRunner = Callable[[list[str], Path], CommandResult]
@@ -174,19 +176,12 @@ def run_swarm_orchestration(
     root_path = Path(root).resolve()
     workers_list: list[SwarmWorkerStatus] = []
 
-    # Initialize workers
+    # Initialize workers from the plan's own staffing, so the board reports the team the
+    # planner resolved rather than the record's placeholder defaults (#1017).
     for w in plan.waves:
         for c in w.clusters:
-            issue_num = c.issues[0] if c.issues else 0
             workers_list.append(
-                SwarmWorkerStatus(
-                    cluster_id=c.cluster_id,
-                    issue=issue_num,
-                    role=c.role,
-                    step="s0",
-                    status="queued",
-                    updated_at=datetime.datetime.now(datetime.UTC).isoformat(),
-                )
+                worker_seed(c, updated_at=datetime.datetime.now(datetime.UTC).isoformat())
             )
 
     state = SwarmRunState(
@@ -258,6 +253,10 @@ def run_swarm_orchestration(
                     worktree_dir=wt_path,
                     dry_run=dry_run,
                     role=cluster.role,
+                    # The lead hands its cluster's team to the child ship. Without this the
+                    # child re-resolved from config alone and dropped both the difficulty
+                    # bench and the operator's per-run overrides.
+                    extra_args=list(ship_handoff_args(cluster.assignment)),
                     runner=runner,
                 )
             finally:
