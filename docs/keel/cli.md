@@ -1329,7 +1329,10 @@ KEEL_APPROVE_SCOPE=filesystem,git,github KEEL_OPERATOR=automation:nightly keel s
 ```
 
 Exits non-zero when the decision is `BLOCK` (failing gates, blocking findings, or failing
-CI), so it can gate a runner before it attempts a real merge.
+CI), so it can gate a runner before it attempts a real merge. When the block comes from a
+failed `on_fail: block` gate, the reason names it — `BLOCK — blocking findings from
+gate(s): lint` — so the line does not read as a contradiction next to a reviewer verdict
+reporting no blocking findings.
 
 `--hotfix` marks an emergency change so it may merge **outside** the merge window (an audit
 line is printed). It never bypasses failing gates, blocking findings, or failing CI.

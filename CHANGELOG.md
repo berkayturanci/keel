@@ -6,6 +6,9 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **"BLOCK — blocking findings present" now says what blocked** (#1007): a failed `on_fail: block` gate becomes a blocking finding, and the decision line reported it with a fixed string that named nothing. Read under a reviewer verdict saying "none blocking", it looked like a contradiction or a bug. The reason now names the gate(s) whose findings block — `blocking findings from gate(s): lint` — and the jury template's `remaining_risks` renders the same wording. The built-in jury gate's `jury:<reviewer>` sources collapse to the one gate they belong to, so a gating jury reads as one failed gate, not one per reviewer. A blocked verdict with no attributable source keeps the old text.
+
 ## [1.19.3] - 2026-09-02
 
 ### Added
