@@ -45,9 +45,12 @@ knobs:
     - ".github/workflows/codeql.yml"
     - ".github/workflows/scorecard.yml"
     # Not workflows, but they reach further than most code here does: this is the
-    # formula `brew install` runs, and the hash-locked tooling that publishes to
-    # PyPI. Both were tier-2 while every CI edit was tier-3 (#787, #779).
-    - "Formula/keel.rb"
+    # template the formula `brew install` runs is rendered from, and the
+    # hash-locked tooling that publishes to PyPI. Both were tier-2 while every CI
+    # edit was tier-3 (#787, #779). The formula itself is no longer committed
+    # (#1023) — the template, the tap patch and the marker that records the tap's
+    # repointing are what a change can reach a user's machine through now.
+    - "packaging/homebrew/**"
     - ".github/requirements/**"
   ci_workflows:
     "CI": "**"

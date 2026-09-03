@@ -1,0 +1,32 @@
+tap-sync-formula: PENDING
+
+# What this file is
+#
+# `Formula/keel.rb` no longer exists in this repository (#1023, #990). The tap —
+# berkayturanci/homebrew-keel — pulled that exact path every thirty minutes, so
+# until it is repointed at the release asset its sync job 404s on a schedule and
+# `brew upgrade` stops seeing releases. That is the failure shape of #981,
+# arriving from a new direction.
+#
+# The change the tap needs ships next to this file rather than as a request that
+# someone remember it:
+#
+#     git -C ../homebrew-keel apply /path/to/keel/packaging/homebrew/tap-sync-formula.patch
+#     git -C ../homebrew-keel commit -am "ci: sync the formula from keel's release asset"
+#     git -C ../homebrew-keel push
+#
+# Then record the tap commit it produced, replacing PENDING above with its
+# 40-character sha:
+#
+#     echo "tap-sync-formula: $(git -C ../homebrew-keel rev-parse HEAD)" > packaging/homebrew/TAP_REPOINTED
+#
+# `tests/test_external_promises.py` requires that line offline, and — under
+# KEEL_CHECK_EXTERNAL=1, which CI's `external promises` job sets — checks the
+# live tap really no longer names the retired path. The offline half is a claim
+# in a reviewable form, not proof: nothing offline can read another repository.
+# Requiring the sha rather than a non-empty file is what makes the claim
+# falsifiable.
+#
+# Both the marker and its gate are single-use. Delete them once the tap has been
+# repointed for a release or two and nobody is tempted to restore the committed
+# formula.

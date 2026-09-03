@@ -1,0 +1,89 @@
+--- a/.github/workflows/sync-formula.yml
++++ b/.github/workflows/sync-formula.yml
+@@ -2,13 +2,28 @@
+ 
+ # The source repo cannot push here without a personal access token, because a
+ # workflow's GITHUB_TOKEN is scoped to its own repository. So the direction is
+-# inverted: this tap *pulls*. Reading a public repository needs no credential at
+-# all, and the GITHUB_TOKEN below is scoped to this repo — the one being written.
+-# Nothing to create, store, rotate, or leak.
++# inverted: this tap *pulls*. Reading a public release asset needs no credential
++# at all, and the GITHUB_TOKEN below is scoped to this repo — the one being
++# written. Nothing to create, store, rotate, or leak.
+ #
++# The source is the *release asset*, not a file on the source repo's `main`.
++# keel#1023 removed `Formula/keel.rb` from that repository: a committed formula
++# names a url and a sha256 for an archive that does not exist until the tag is
++# pushed, so keeping it true cost a second write to `main` after every release —
++# a hand-merged pull request per release, and an hourly-failing sync when anyone
++# forgot (keel#981). The formula is now rendered during the release, from the
++# archive the tag actually produced, and attached to the release, so
++# `releases/latest/download/keel.rb` is always the newest one and is never stale.
++#
++# The asset does not exist on releases cut before that change, and this workflow
++# runs every thirty minutes. A missing asset is therefore an ordinary state, not
++# a fault: the fetch below records it and the rest of the job is skipped. Failing
++# on it would replace one red cron with another.
++#
+ # The trade is latency: up to the schedule interval, or zero via "Run workflow".
+-# Acceptable because keel's release already fails if the formula does not hash to
+-# the tarball it names, so what arrives here late is at least installable.
++# Acceptable because keel's release already refuses to attach a formula that does
++# not hash to the tarball it names, so what arrives here late is at least
++# installable.
+ 
+ on:
+   schedule:
+@@ -28,16 +43,21 @@
+     steps:
+       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+ 
+-      - name: Fetch the formula from the source repo
++      - name: Fetch the formula from the latest release
++        id: fetch
+         run: |
+           set -euo pipefail
+-          curl -fsSL \
+-            -H "Accept: application/vnd.github.raw" \
+-            "https://api.github.com/repos/berkayturanci/keel/contents/Formula/keel.rb" \
+-            -o /tmp/incoming.rb
+-          test -s /tmp/incoming.rb
++          asset="https://github.com/berkayturanci/keel/releases/latest/download/keel.rb"
++          if curl -fsSL "$asset" -o /tmp/incoming.rb && [ -s /tmp/incoming.rb ]; then
++            echo "found=true" >> "$GITHUB_OUTPUT"
++            echo "fetched $asset"
++          else
++            echo "found=false" >> "$GITHUB_OUTPUT"
++            echo "::notice::formula asset not published yet — the newest keel release predates the change that attaches keel.rb to it. Nothing to sync; this tap keeps serving the formula it has. The next release will carry the asset."
++          fi
+ 
+       - name: Refuse to publish a formula that cannot install
++        if: steps.fetch.outputs.found == 'true'
+         # This tap is what `brew install` reads, so a broken formula here is a
+         # broken install for everyone. Never mirror blindly: resolve the url and
+         # re-hash the artifact exactly as brew will. keel 1.16.0 shipped with the
+@@ -48,6 +68,16 @@
+           url=$(grep -m1 -oE '^  url "[^"]+"' /tmp/incoming.rb | cut -d'"' -f2)
+           want=$(grep -m1 -oE '^  sha256 "[0-9a-f]{64}"' /tmp/incoming.rb | cut -d'"' -f2)
+           echo "url:  $url"
++          # The guard that is actually load-bearing (keel#990): the url must be an
++          # archive of *this* project. A digest comparison alone is satisfied by a
++          # formula that faithfully describes somebody else's tarball.
++          case "$url" in
++            https://github.com/berkayturanci/keel/archive/refs/tags/v*.tar.gz) ;;
++            *)
++              echo "::error::incoming formula's url is not a keel tag archive; not publishing"
++              exit 1
++              ;;
++          esac
+           curl -fsSL "$url" -o /tmp/artifact
+           got=$(sha256sum /tmp/artifact | cut -d' ' -f1)
+           if [ "$want" != "$got" ]; then
+@@ -59,6 +89,7 @@
+           echo "verified"
+ 
+       - name: Commit when it differs
++        if: steps.fetch.outputs.found == 'true'
+         run: |
+           set -euo pipefail
+           if diff -q /tmp/incoming.rb Formula/keel.rb >/dev/null 2>&1; then
