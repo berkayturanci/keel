@@ -116,6 +116,30 @@ Rather than offering an unmonitored backdoor, Keel makes exceptions **first-clas
 * **Audit Record**: Every waiver requires an explicit `--operator` attribution and records a durable
   entry in `.keel/ledger/` and GitHub issue timeline, creating a tamper-evident record.
 
+### 6. Header-Anchored Marker Classification
+What a comment *is* — a review verdict, a jury verdict, a closure comment, a ship-provenance stamp,
+a deferral — is decided by its **header line** and nothing else: the first non-empty line, which every
+Keel renderer emits as the marker alone, either bare (`keel.review-verdict.v1`) or wrapped in an HTML
+comment so it renders invisibly (`<!-- keel.closure-comment.v1 -->`). A marker further down the body is
+prose, not a classification signal — a reviewer writing "I checked the `keel.jury-verdict.v1` handling"
+is quoting a string, not filing a jury verdict. Testing for the marker anywhere in the body could not
+tell the two apart: two `keel.review-verdict.v1` comments whose scope mentioned the literal string
+`keel.jury-verdict.v1` were counted as `jury_verdict: 2, review_verdict: 0`, and the review that
+actually happened was invisible to the gate (#1026). This is the same anchoring the `reviewer:` /
+`head:` / `vendor:` header fields already use (#868), extended from the fields to the marker itself.
+A header naming **two different markers** does not say which artifact it is: that comment is excluded
+from every count and reported as an advisory `malformed-evidence-comment` finding (`minor` — it never
+blocks on its own), rather than being counted for both or silently dropped.
+
+The wrapper is matched **literally, never with a regex**. Keel does not parse HTML — it recognises the
+one wrapper `closure.render_closure_comment` writes and refuses everything else. A pattern that treats
+`-->` as *the* comment terminator is wrong about HTML, because a browser also ends a comment at `--!>`,
+and a classifier that disagrees with the renderer about where a comment ends would let a body render
+invisibly on the page while still counting as evidence. So `<!-- keel.review-verdict.v1 --!>`, an
+unterminated `<!--`, two wrappers on one line, or anything trailing the close is left intact and
+therefore does not classify. The cost is that a hand-rolled wrapper loses its classification; the
+alternative is guessing, which is the failure mode.
+
 ---
 
 ## Offline Verification: `keel evidence-verify`

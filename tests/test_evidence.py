@@ -1844,11 +1844,335 @@ vendor: fake
         self.assertEqual(evidence._fields(None), {})
         self.assertEqual(evidence._fields("Just a regular comment without headers"), {})
 
+    def test_a_marker_only_line_is_skipped_but_prose_naming_one_ends_the_block(self):
+        # The header rule reaches the field parser too (#1026): the artifact's own
+        # marker line is not a field, while a line that merely mentions a marker is
+        # prose — and prose ends the block, so nothing below it can be harvested.
+        body = (
+            "keel.review-verdict.v1\n"
+            "reviewer: claude\n"
+            "I re-read the keel.jury-verdict.v1 branch.\n"
+            "vendor: spoofed\n"
+        )
+
+        self.assertEqual(evidence._fields(body), {"reviewer": "claude"})
+
     def test_fields_leading_blank_lines_and_duplicate_keys(self):
         body = "\n\n  \nreviewer: claude\nreviewer: second\nhead: 123\n"
         fields = evidence._fields(body)
         self.assertEqual(fields["reviewer"], "claude")
         self.assertEqual(fields["head"], "123")
+
+
+class TestHeaderAnchoredMarkerClassification(unittest.TestCase):
+    """#1026: a marker quoted in prose is content, never a classification signal.
+
+    Observed live: two ``keel.review-verdict.v1`` comments whose scope text
+    mentioned the literal string ``keel.jury-verdict.v1`` were counted as
+    ``jury_verdict: 2, review_verdict: 0``, so the review that happened was
+    invisible to the gate.
+    """
+
+    JURY_MARKER_IN_SCOPE = (
+        "keel.review-verdict.v1\n"
+        "reviewer: alpha\n"
+        "head: abc123\n"
+        "\n"
+        "Verdict: pass\n"
+        "\n"
+        "Scope reviewed: checked that keel.jury-verdict.v1 classification in "
+        "src/keel/evidence.py is anchored to the header.\n"
+    )
+
+    REVIEW_MARKER_IN_JURY_PROSE = (
+        "keel.jury-verdict.v1\n"
+        "head: abc123\n"
+        "vendors: 2\n"
+        "\n"
+        "AI Jury verdict: LGTM.\n"
+        "\n"
+        "Panel read the keel.review-verdict.v1 path in src/keel/evidence.py.\n"
+    )
+
+    def _counts(self, *, pr_comments, reviewers=1, jury=False, no_jury=True):
+        report = evidence.verify(
+            _review_contract(reviewers=reviewers, jury=jury, no_jury=no_jury),
+            pr_comments=pr_comments,
+            issue_comments=[],
+            head_sha="abc123",
+        )
+        return report["counts"]
+
+    def test_review_verdict_quoting_the_jury_marker_counts_as_a_review(self):
+        counts = self._counts(pr_comments=[_trusted_comment(self.JURY_MARKER_IN_SCOPE)])
+
+        self.assertEqual(counts["review_verdict"], 1)
+        self.assertEqual(counts["jury_verdict"], 0)
+
+    def test_jury_verdict_quoting_the_review_marker_counts_as_a_jury_verdict(self):
+        counts = self._counts(
+            pr_comments=[_trusted_comment(self.REVIEW_MARKER_IN_JURY_PROSE)],
+            jury=True,
+            no_jury=False,
+        )
+
+        self.assertEqual(counts["jury_verdict"], 1)
+        self.assertEqual(counts["review_verdict"], 0)
+
+    def test_the_gate_still_finds_both_required_review_verdicts(self):
+        # The live symptom: `missing: review-verdict-1, review-verdict-2`.
+        report = evidence.verify(
+            _review_contract(reviewers=2, no_jury=True),
+            pr_comments=[
+                _trusted_comment(self.JURY_MARKER_IN_SCOPE, reviewer="agent-a"),
+                _trusted_comment(
+                    self.JURY_MARKER_IN_SCOPE.replace("reviewer: alpha", "reviewer: beta"),
+                    reviewer="agent-b",
+                ),
+            ],
+            head_sha="abc123",
+            phase=evidence.PHASE_PRE_MERGE,
+        )
+
+        self.assertEqual(report["missing"], [])
+        self.assertEqual(report["status"], evidence.STATUS_PASS)
+
+    def test_closure_marker_in_prose_is_not_a_closure_comment(self):
+        body = (
+            "keel.review-verdict.v1\n"
+            "reviewer: alpha\n"
+            "head: abc123\n"
+            "\n"
+            "Checked that keel.closure-comment.v1 is still emitted by "
+            "src/keel/closure.py.\n"
+        )
+
+        counts = self._counts(pr_comments=[_trusted_comment(body)])
+
+        self.assertEqual(counts["closure_pr"], 0)
+        self.assertEqual(counts["review_verdict"], 1)
+
+    def test_deferral_marker_in_prose_does_not_change_the_classification(self):
+        body = (
+            "keel.review-verdict.v1\n"
+            "reviewer: alpha\n"
+            "head: abc123\n"
+            "\n"
+            "The keel.deferral.v1 comment for src/keel/evidence.py is already posted.\n"
+        )
+
+        counts = self._counts(pr_comments=[_trusted_comment(body)])
+
+        self.assertEqual(counts["review_verdict"], 1)
+
+    def test_a_deferral_comment_is_classified_as_one_and_counts_for_nothing(self):
+        body = "keel.deferral.v1\nfinding: minor-1\n\nDeferred to a follow-up issue.\n"
+
+        self.assertEqual(evidence.marker_in_header(body), evidence.DEFERRAL_MARKER)
+        self.assertEqual(
+            self._counts(pr_comments=[_trusted_comment(body)]),
+            {"closure_pr": 0, "closure_issue": 0, "review_verdict": 0, "jury_verdict": 0},
+        )
+
+    def test_provenance_marker_in_prose_does_not_arm_the_gate(self):
+        decision = evidence.gate_decision(
+            [],
+            "keel:ship",
+            pr_comments=[
+                _trusted_comment(
+                    "No keel.ship-provenance.v1 comment was posted on this pull request.\n"
+                )
+            ],
+        )
+
+        self.assertFalse(decision["enforced"])
+        self.assertEqual(decision["reason"], "no-ship-provenance")
+
+    def test_review_marker_in_prose_does_not_arm_the_gate(self):
+        decision = evidence.gate_decision(
+            [],
+            "keel:ship",
+            pr_reviews=[
+                _trusted_comment("Please post a keel.review-verdict.v1 comment when done.\n")
+            ],
+        )
+
+        self.assertFalse(decision["enforced"])
+        self.assertEqual(decision["reason"], "no-ship-provenance")
+
+
+class TestMalformedMarkerHeader(unittest.TestCase):
+    """A header naming two markers does not say which artifact it is (#1026)."""
+
+    TWO_MARKERS = (
+        "keel.review-verdict.v1 keel.jury-verdict.v1\n"
+        "reviewer: alpha\n"
+        "head: abc123\n"
+        "\n"
+        "Verdict: pass. src/keel/evidence.py reads correctly.\n"
+    )
+
+    def _report(self, comment):
+        return evidence.verify(
+            _review_contract(reviewers=1, no_jury=True),
+            pr_comments=[comment],
+            issue_comments=[],
+            head_sha="abc123",
+            phase=evidence.PHASE_PRE_MERGE,
+        )
+
+    def test_a_two_marker_header_counts_for_neither_artifact(self):
+        report = self._report(_trusted_comment(self.TWO_MARKERS))
+
+        self.assertEqual(report["counts"]["review_verdict"], 0)
+        self.assertEqual(report["counts"]["jury_verdict"], 0)
+        self.assertEqual(report["missing"], ["review-verdict-1"])
+
+    def test_the_exclusion_is_reported_as_an_advisory_finding(self):
+        report = self._report(_trusted_comment(self.TWO_MARKERS))
+
+        findings = [
+            finding
+            for finding in report["findings"]
+            if finding["id"] == evidence.MALFORMED_MARKER_FINDING
+        ]
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["severity"], "minor")
+        self.assertEqual(findings[0]["kind"], "evidence")
+        self.assertIn("keel.review-verdict.v1, keel.jury-verdict.v1", findings[0]["message"])
+        # minor never blocks: the requirement it failed to satisfy fails on its own.
+        self.assertEqual(report["status"], evidence.STATUS_WAITING)
+
+    def test_a_browser_honoured_close_tag_does_not_smuggle_in_a_verdict(self):
+        # `--!>` ends a comment for a browser but not for keel's literal matcher, so
+        # this body renders invisibly *and* must not count. It does not.
+        report = self._report(
+            _trusted_comment(
+                "<!-- keel.review-verdict.v1 --!>\n"
+                "reviewer: a\n"
+                "head: abc123\n"
+                "\n"
+                "src/keel/evidence.py: ok."
+            )
+        )
+
+        self.assertEqual(report["counts"]["review_verdict"], 0)
+        self.assertEqual(report["missing"], ["review-verdict-1"])
+
+    def test_an_untrusted_malformed_comment_is_not_reported(self):
+        report = self._report(_untrusted_comment(self.TWO_MARKERS))
+
+        self.assertEqual(
+            [f for f in report["findings"] if f["id"] == evidence.MALFORMED_MARKER_FINDING],
+            [],
+        )
+
+    def test_a_well_formed_comment_is_not_reported(self):
+        report = self._report(
+            _trusted_comment(
+                "keel.review-verdict.v1\nreviewer: a\nhead: abc123\n\nsrc/keel/evidence.py: ok."
+            )
+        )
+
+        self.assertEqual(
+            [f for f in report["findings"] if f["id"] == evidence.MALFORMED_MARKER_FINDING],
+            [],
+        )
+        self.assertEqual(report["status"], evidence.STATUS_PASS)
+
+
+class TestMarkerInHeader(unittest.TestCase):
+    def test_bare_and_html_wrapped_markers_both_resolve(self):
+        self.assertEqual(
+            evidence.marker_in_header("keel.review-verdict.v1\nreviewer: a\n"),
+            evidence.REVIEW_VERDICT_MARKER,
+        )
+        self.assertEqual(
+            evidence.marker_in_header("<!-- keel.review-verdict.v1 -->\nreviewer: a\n"),
+            evidence.REVIEW_VERDICT_MARKER,
+        )
+        self.assertEqual(
+            evidence.marker_in_header(closure.COMMENT_MARKER),
+            closure.CLOSURE_SCHEMA_VERSION,
+        )
+
+    def test_leading_blank_lines_are_skipped_not_treated_as_the_end(self):
+        self.assertEqual(
+            evidence.marker_in_header("\n\n  \nkeel.jury-verdict.v1\nhead: abc\n"),
+            evidence.JURY_VERDICT_MARKER,
+        )
+
+    def test_no_marker_yields_none(self):
+        self.assertIsNone(evidence.marker_in_header(""))
+        self.assertIsNone(evidence.marker_in_header("\n \n"))
+        self.assertIsNone(evidence.marker_in_header("Just a chat comment.\n"))
+        self.assertIsNone(
+            evidence.marker_in_header("Thanks!\n\nkeel.review-verdict.v1\nreviewer: a\n")
+        )
+
+    def test_two_markers_in_the_header_yield_none(self):
+        self.assertIsNone(
+            evidence.marker_in_header("keel.review-verdict.v1 keel.jury-verdict.v1\n")
+        )
+
+    def test_the_wrapper_is_matched_literally_not_parsed_as_html(self):
+        # CodeQL py/bad-tag-filter: a regex that treats `-->` as *the* comment
+        # terminator is wrong about HTML — a browser also ends a comment at `--!>`.
+        # keel does not need to parse HTML; it needs to recognise the one shape
+        # `closure.render_closure_comment` writes and refuse everything else, so a
+        # body cannot render as an invisible comment while counting as evidence.
+        for header in (
+            "<!-- keel.review-verdict.v1 --!>",  # the `--!>` close a browser honours
+            "<!-- keel.review-verdict.v1 --!>\nreviewer: a\nhead: abc",
+            "<!--! keel.review-verdict.v1 -->",  # bogus opener
+            "<!-- keel.review-verdict.v1",  # unterminated
+            "keel.review-verdict.v1 -->",  # close with no opener
+            "<!-- keel.review-verdict.v1 --> trailing prose",
+            "<!-- keel.closure-comment.v1 --> <!-- keel.deferral.v1 -->",  # two wrappers
+            "<!---->",  # empty wrapper
+            "<!-->",  # overlapping delimiters
+        ):
+            with self.subTest(header=header):
+                self.assertEqual(evidence.header_markers(header), ())
+                self.assertIsNone(evidence.marker_in_header(header))
+
+    def test_the_wrapper_keel_writes_classifies_with_or_without_inner_spaces(self):
+        self.assertEqual(
+            evidence.marker_in_header("<!--keel.review-verdict.v1-->"),
+            evidence.REVIEW_VERDICT_MARKER,
+        )
+        self.assertEqual(
+            evidence.marker_in_header("<!--   keel.review-verdict.v1   -->"),
+            evidence.REVIEW_VERDICT_MARKER,
+        )
+
+    def test_header_markers_reports_them_in_a_stable_order(self):
+        self.assertEqual(
+            evidence.header_markers("keel.jury-verdict.v1 keel.review-verdict.v1\n"),
+            (evidence.REVIEW_VERDICT_MARKER, evidence.JURY_VERDICT_MARKER),
+        )
+        self.assertEqual(evidence.header_markers("plain prose"), ())
+
+    def test_every_renderer_emits_a_header_the_classifier_recognises(self):
+        # The rule is only as good as its agreement with what keel actually posts.
+        self.assertEqual(
+            evidence.marker_in_header(
+                artifacts.render_review_verdict(reviewer="alpha", head_sha="abc")
+            ),
+            evidence.REVIEW_VERDICT_MARKER,
+        )
+        self.assertEqual(
+            evidence.marker_in_header(artifacts.render_jury_verdict(head_sha="abc")),
+            evidence.JURY_VERDICT_MARKER,
+        )
+        self.assertEqual(
+            evidence.marker_in_header(artifacts.render_ship_provenance(head_sha="abc")),
+            evidence.SHIP_PROVENANCE_MARKER,
+        )
+        self.assertEqual(
+            evidence.marker_in_header(closure.render_closure_comment({})),
+            closure.CLOSURE_SCHEMA_VERSION,
+        )
 
 
 if __name__ == "__main__":
