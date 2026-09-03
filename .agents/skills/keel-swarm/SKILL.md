@@ -97,7 +97,7 @@ keel swarm-status .keel/project.yaml --root .
 keel-visual swarm .keel/project.yaml --root . --out keel-swarm.html
 ```
 
-Optionally launch the localhost visualizer dashboard:
+When `--visual` was requested, launch the localhost visualizer dashboard:
 ```bash
 keel-visual swarm .keel/project.yaml --root . --serve --port 8766
 ```
@@ -112,4 +112,4 @@ Compile the overall multi-agent swarm outcome:
 - Record final completion:
   `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
 
-<!-- keel-generated: surface=skills command=swarm keel_version=1.19.3 source_sha256=e2181df2f66c8a9f38d5d453503dd86c9395eef1b4d75bdc18aeaae0e8a4b820 generated_sha256=10663f8b3efa56970edafef194bf3bd1230bc6cb52a06c68c1fe6953b58f5517 -->
+<!-- keel-generated: surface=skills command=swarm keel_version=1.19.3 source_sha256=7fc3850cb93df674e5481d7bc80f9f19572ed386a779ee5c0cfad34ad90a0550 generated_sha256=0819faf72ed04a66c6687feecfce863f2ea364bf2c572cd2c69dfda5c13dbd5f -->

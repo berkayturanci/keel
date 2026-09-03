@@ -1,6 +1,6 @@
 ---
 description: Multi-agent swarm coordinator — cluster backlog issues, execute parallel waves in isolated worktrees, and land orthogonal batches with self-healing rebase.
-argument-hint: "[issue numbers...] [--plan-only] [--tree] [--landing {batch,funnel,auto}] [--rebalance] [--visual]"
+argument-hint: "[issue numbers...] [--plan-only] [--tree] [--visual]"
 allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Bash(jury:*), Read, Edit, Write, Agent
 ---
 
@@ -94,7 +94,7 @@ keel swarm-status .keel/project.yaml --root .
 keel-visual swarm .keel/project.yaml --root . --out keel-swarm.html
 ```
 
-Optionally launch the localhost visualizer dashboard:
+When `--visual` was requested, launch the localhost visualizer dashboard:
 ```bash
 keel-visual swarm .keel/project.yaml --root . --serve --port 8766
 ```
@@ -109,4 +109,4 @@ Compile the overall multi-agent swarm outcome:
 - Record final completion:
   `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
 
-<!-- keel-generated: surface=plugin command=swarm keel_version=1.19.3 source_sha256=e2181df2f66c8a9f38d5d453503dd86c9395eef1b4d75bdc18aeaae0e8a4b820 generated_sha256=e2181df2f66c8a9f38d5d453503dd86c9395eef1b4d75bdc18aeaae0e8a4b820 -->
+<!-- keel-generated: surface=plugin command=swarm keel_version=1.19.3 source_sha256=7fc3850cb93df674e5481d7bc80f9f19572ed386a779ee5c0cfad34ad90a0550 generated_sha256=7fc3850cb93df674e5481d7bc80f9f19572ed386a779ee5c0cfad34ad90a0550 -->

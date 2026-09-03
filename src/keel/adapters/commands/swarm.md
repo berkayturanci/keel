@@ -1,6 +1,6 @@
 ---
 description: Multi-agent swarm coordinator — cluster backlog issues, execute parallel waves in isolated worktrees, and land orthogonal batches with self-healing rebase.
-argument-hint: "[issue numbers...] [--plan-only] [--tree] [--landing {batch,funnel,auto}] [--rebalance] [--visual]"
+argument-hint: "[issue numbers...] [--plan-only] [--tree] [--visual]"
 allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Bash(jury:*), Read, Edit, Write, Agent
 ---
 
@@ -94,7 +94,7 @@ keel swarm-status .keel/project.yaml --root .
 keel-visual swarm .keel/project.yaml --root . --out keel-swarm.html
 ```
 
-Optionally launch the localhost visualizer dashboard:
+When `--visual` was requested, launch the localhost visualizer dashboard:
 ```bash
 keel-visual swarm .keel/project.yaml --root . --serve --port 8766
 ```
