@@ -395,5 +395,72 @@ class TestExistingDelegateFormsUnchanged(unittest.TestCase):
                 )
 
 
+class TestAttributionLabels(unittest.TestCase):
+    """Every ``agent:*``/``model:*`` label keel can write, for doctor's label check."""
+
+    def test_the_configuration_free_vocabulary(self):
+        labels = agents.attribution_labels()
+        self.assertEqual(
+            labels,
+            (
+                "agent:agy",
+                "agent:anthropic-api",
+                "agent:claude",
+                "agent:codex",
+                "agent:google-api",
+                "agent:ollama",
+                "agent:openai-api",
+            ),
+        )
+
+    def test_every_builtin_vendor_and_the_host_default_are_covered(self):
+        labels = set(agents.attribution_labels(CONFIG))
+        for vendor in (*agents.BUILTIN_DELEGATE_VENDORS, agents.HOST_DEFAULT):
+            self.assertIn(f"agent:{vendor}", labels)
+
+    def test_a_profile_contributes_its_vendor_and_its_pinned_model(self):
+        labels = agents.attribution_labels(PROFILE_CONFIG)
+        # `agent:cli` is the label profile_attribution writes — never the profile name.
+        self.assertIn("agent:cli", labels)
+        self.assertNotIn("agent:cursor", labels)
+        self.assertIn("model:composer-1", labels)
+
+    def test_a_profile_without_a_model_adds_no_model_label(self):
+        config = cfg.parse_config(
+            {
+                "extends": "keel",
+                "core_version": "^0.1",
+                "base_branch": "main",
+                "knobs": {
+                    "build_gate_cmd": "make test",
+                    "delegate_profiles": {"local": {"vendor": "cli", "command": "aider"}},
+                },
+            }
+        )
+        self.assertEqual(
+            [label for label in agents.attribution_labels(config) if label.startswith("model:")],
+            [],
+        )
+
+    def test_a_model_with_no_base_contributes_no_label(self):
+        config = cfg.parse_config(
+            {
+                "extends": "keel",
+                "core_version": "^0.1",
+                "base_branch": "main",
+                "knobs": {
+                    "build_gate_cmd": "make test",
+                    "delegate_profiles": {
+                        "local": {"vendor": "cli", "command": "aider", "model": "4.5"}
+                    },
+                },
+            }
+        )
+        self.assertEqual(
+            [label for label in agents.attribution_labels(config) if label.startswith("model:")],
+            [],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -23,21 +23,29 @@ Checks
                      version, and whether PyYAML imports there (advisory).
 ``providers``        which delegates are usable on this machine — only when
                      ``--providers`` asked for the probe (#1011).
+``policy_labels``    the labels the project's policy pack (and keel's own
+                     attribution vocabulary) declare, vs the labels that exist on
+                     the repository (#1021).
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import PurePath
 
 SCHEMA_VERSION = "keel.doctor.v1"
 
-#: per-check status levels, ordered worst-last for summary roll-up.
+#: per-check status levels, ordered worst-last for summary roll-up. ``skipped`` is
+#: a *reported* outcome, not a passing one: a check that could not look (no config,
+#: no ``gh``, ``--offline``) says so instead of claiming ``ok``, and ranks with
+#: ``ok`` so it never moves the roll-up.
 _OK = "ok"
+_SKIPPED = "skipped"
 _WARN = "warn"
 _FAIL = "fail"
-_RANK = {_OK: 0, _WARN: 1, _FAIL: 2}
+_RANK = {_OK: 0, _SKIPPED: 0, _WARN: 1, _FAIL: 2}
 
 #: a release version: ``MAJOR.MINOR.PATCH`` with optional further dotted parts.
 _VERSION_RE = re.compile(r"^\d+(?:\.\d+)*$")
@@ -415,6 +423,119 @@ def _check_providers(payload: dict[str, object]) -> CheckResult:
     return CheckResult("providers", _OK, summary, detail)
 
 
+def _label_values(value: object) -> list[str]:
+    """The non-empty strings in a policy-pack label list (anything else is ignored)."""
+    if not isinstance(value, list):
+        return []
+    return [item.strip() for item in value if isinstance(item, str) and item.strip()]
+
+
+def _qualify(group: str, name: str) -> str:
+    """Qualify a bare vocabulary entry with its group: ``role`` + ``core`` -> ``role:core``.
+
+    A policy pack may spell a label either way — ``status: ["status:backlog"]`` carries
+    the group already, ``role: ["core"]`` does not — and both mean the same GitHub label.
+    Anything already carrying a ``:`` is taken as the full label name.
+    """
+    return name if ":" in name else f"{group}:{name}"
+
+
+def declared_labels(
+    policy_pack: object,
+    *,
+    attribution: Iterable[str] = (),
+) -> tuple[str, ...]:
+    """Every label name a project's policy pack requires to exist on its repository.
+
+    Three sources, all of them labels keel itself writes: ``policy_pack.labels.*``
+    (the status/priority/role vocabularies ship and triage apply),
+    ``policy_pack.scan.issue_labels.*`` (what the scan-and-file commands stamp on an
+    issue they open), and ``attribution`` — the ``agent:*`` / ``model:*`` names from
+    :func:`keel.agents.attribution_labels`, passed in so this module stays free of
+    config types. Pure and deterministic: the result is sorted and deduplicated.
+    """
+    pack = policy_pack if isinstance(policy_pack, dict) else {}
+    names: set[str] = set()
+    groups = pack.get("labels")
+    if isinstance(groups, dict):
+        for group, values in groups.items():
+            names.update(_qualify(str(group), name) for name in _label_values(values))
+    scan = pack.get("scan")
+    issue_labels = scan.get("issue_labels") if isinstance(scan, dict) else None
+    if isinstance(issue_labels, dict):
+        for values in issue_labels.values():
+            names.update(_label_values(values))
+    names.update(name.strip() for name in attribution if name.strip())
+    return tuple(sorted(names))
+
+
+def missing_labels(declared: Iterable[str], existing: Iterable[str]) -> tuple[str, ...]:
+    """The declared labels that do not exist on the repository.
+
+    Compared case-insensitively because GitHub label names are: creating ``Bug`` on a
+    repository that already has ``bug`` is rejected as a duplicate, so a case-only
+    difference is a label that exists, not one to create.
+    """
+    have = {name.strip().lower() for name in existing}
+    return tuple(sorted({name for name in declared if name.strip().lower() not in have}))
+
+
+#: Missing labels named in the check summary before the rest are counted.
+_LABELS_SHOWN = 5
+
+
+def _check_policy_labels(payload: dict[str, object] | None) -> CheckResult:
+    """Do the labels this project declares actually exist on its repository (#1021)?
+
+    ``ship`` and ``triage`` apply ``status:*`` / ``priority:*`` / ``role:*`` and the
+    ``agent:*`` / ``model:*`` attribution pair by name. GitHub rejects a label that was
+    never created, and the rejection surfaces as a failed ``gh`` call in the middle of a
+    run rather than as a diagnosis — keel's own repository ran for months with every one
+    of those labels missing and nothing said so.
+
+    Never a ``fail``: the caller cannot always look (no config, no ``gh`` on PATH,
+    ``--offline``, an unauthenticated or unreachable GitHub), and a check that could not
+    look reports ``skipped`` with the reason. Missing labels are a ``warn`` carrying the
+    exact ``gh label create`` commands, which ``keel doctor --fix`` runs for you.
+    """
+    if payload is None:
+        return CheckResult(
+            "policy_labels",
+            _SKIPPED,
+            "no project config given — no policy pack to check",
+            {},
+        )
+    declared = list(payload.get("declared") or [])
+    missing = list(payload.get("missing") or [])
+    repo = payload.get("repo")
+    detail: dict[str, object] = {
+        "repo": repo,
+        "declared": declared,
+        "missing": missing,
+        "commands": list(payload.get("commands") or []),
+        "existing": len(list(payload.get("existing") or [])),
+    }
+    if not payload.get("available"):
+        reason = str(payload.get("reason") or "repository labels not read")
+        return CheckResult("policy_labels", _SKIPPED, reason, detail)
+    if missing:
+        shown = ", ".join(missing[:_LABELS_SHOWN])
+        extra = f", +{len(missing) - _LABELS_SHOWN} more" if len(missing) > _LABELS_SHOWN else ""
+        return CheckResult(
+            "policy_labels",
+            _WARN,
+            f"{len(missing)} of {len(declared)} declared label(s) missing on {repo}: "
+            f"{shown}{extra} — create them, or run keel doctor --fix",
+            detail,
+        )
+    return CheckResult(
+        "policy_labels",
+        _OK,
+        f"all {len(declared)} declared label(s) exist on {repo}",
+        detail,
+    )
+
+
 def run_doctor(
     *,
     installed_version: str,
@@ -426,6 +547,7 @@ def run_doctor(
     module_path: str | None = None,
     checkout_root: str | None = None,
     python_toolchain: dict[str, object] | None = None,
+    policy_labels: dict[str, object] | None = None,
     providers: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Run all diagnostic checks over already-gathered facts (pure, deterministic).
@@ -443,13 +565,16 @@ def run_doctor(
         _check_core_version(installed_version, core_version),
         _check_state_paths(state_paths),
         _check_python_toolchain(python_toolchain),
+        _check_policy_labels(policy_labels),
     ]
     # Only when asked for: the provider probe shells out once per CLI vendor and makes
     # one loopback request, which the default run must not pay for on every invocation.
     if providers is not None:
         checks.append(_check_providers(providers))
-    worst = max((c.status for c in checks), key=lambda s: _RANK[s])
-    counts = {_OK: 0, _WARN: 0, _FAIL: 0}
+    # A skipped check reports that it could not look; it never speaks for the roll-up.
+    # ``checkout_binding`` is always ``ok`` or ``warn``, so this is never empty.
+    worst = max((c.status for c in checks if c.status != _SKIPPED), key=lambda s: _RANK[s])
+    counts = {_OK: 0, _SKIPPED: 0, _WARN: 0, _FAIL: 0}
     for check in checks:
         counts[check.status] += 1
     report: dict[str, object] = {
@@ -472,10 +597,18 @@ def render_report(report: dict[str, object]) -> str:
     """Render a doctor report as aligned human-readable status lines."""
     lines = [f"keel doctor — {report['status']}  (keel {report['installed_version']})"]
     for check in report["checks"]:
-        state = str(check["status"]).upper()
+        # Four characters keeps the column aligned: OK / WARN / FAIL / SKIP(ped).
+        state = str(check["status"]).upper()[:4]
         lines.append(f"  {state:>4}  {check['name']:<16}  {check['summary']}")
+        # A check that can name its own fix prints it as a runnable line rather than
+        # burying it in --json, which is the whole point of the policy-label warning.
+        for command in check.get("detail", {}).get("commands") or ():
+            lines.append(f"        $ {command}")
     counts = report["counts"]
-    lines.append(f"  summary       : {counts[_OK]} ok, {counts[_WARN]} warn, {counts[_FAIL]} fail")
+    lines.append(
+        f"  summary       : {counts[_OK]} ok, {counts[_SKIPPED]} skipped, "
+        f"{counts[_WARN]} warn, {counts[_FAIL]} fail"
+    )
     return "\n".join(lines)
 
 
