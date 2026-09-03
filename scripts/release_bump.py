@@ -37,6 +37,16 @@ import re
 import sys
 from pathlib import Path
 
+# `scripts/` is a directory of maintenance tools, not an installed package, so a
+# sibling import needs the directory on the path. Already true when this file is
+# run directly (`python scripts/release_bump.py`); stated here so importing it
+# from a test works the same way.
+_SCRIPTS = Path(__file__).resolve().parent
+if str(_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS))
+
+from release_surfaces import literal_surfaces, shape_surfaces  # noqa: E402
+
 SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
 
 # Repo root = parent of this script's directory (scripts/..).
@@ -58,8 +68,16 @@ def current_version(root: Path) -> str:
 #: 0.6.0 through the 0.7.0 and 0.8.0 releases (#796). Both files are listed here
 #: so the pair moves together; the test in test_release_docs.py is what makes a
 #: future omission fail rather than ship.
-#: ``(path, regex)`` — the regex captures the version and nothing else, so the
-#: rewrite cannot touch prose that happens to contain the same digits.
+#: ``(path, regex)``, where the regex is a **three-group sandwich**:
+#: ``(prefix)(version)(suffix)``. ``bump_visual`` substitutes ``\g<1>{new}\g<3>``,
+#: so group 2 is the version and the two anchors around it are what keep the
+#: rewrite off prose that happens to contain the same digits — the pattern matches
+#: more than the version, and replaces only the middle.
+#:
+#: That shape is a contract, not an implementation detail: ``release_check.py``
+#: reads this same list rather than restating it, and takes group 2 as the version.
+#: A two-group pattern added here would make the guard compare the wrong substring,
+#: so it asserts the group count (``VISUAL_PATTERN_GROUPS``) instead of trusting it.
 VISUAL_EDITS = (
     ("keel-visual/pyproject.toml", re.compile(r'(?m)^(version = ")([^"]+)(")')),
     (
@@ -141,18 +159,18 @@ def bump_visual(root: Path, new: str) -> tuple[str, list[str]]:
 def _edits(old: str, new: str) -> list[tuple[str, str, str]]:
     """Return ``(relative_path, find, replace)`` rewrites for ``old`` → ``new``.
 
+    Derived from :data:`release_surfaces.RELEASE_SURFACES` rather than restated
+    here. That table is also what ``scripts/release_check.py`` asserts against, so
+    a surface registered for the bump is guarded at tag time by the same edit —
+    the half-registration that left three site files behind for seven releases is
+    no longer expressible.
+
     Each ``find`` is specific enough that only the version-bearing token is
     touched — never historical prose that happens to mention ``old``.
     """
     return [
-        ("pyproject.toml", f'version = "{old}"', f'version = "{new}"'),
-        ("src/keel/__init__.py", f'__version__ = "{old}"', f'__version__ = "{new}"'),
-        (".claude-plugin/plugin.json", f'"version": "{old}"', f'"version": "{new}"'),
-        (".codex-plugin/plugin.json", f'"version": "{old}"', f'"version": "{new}"'),
-        ("README.md", f"keel@v{old}", f"keel@v{new}"),
-        (".github/workflows/keel-ship.yml", f"keel@v{old}", f"keel@v{new}"),
-        ("docs/keel/cutover.md", f"keel@v{old}", f"keel@v{new}"),
-        ("Formula/keel.rb", f"/tags/v{old}.tar.gz", f"/tags/v{new}.tar.gz"),
+        (surface.path, surface.token.format(version=old), surface.token.format(version=new))
+        for surface in literal_surfaces()
     ]
 
 
@@ -166,13 +184,12 @@ def _edits(old: str, new: str) -> list[tuple[str, str, str]]:
 #: fallen behind contains neither ``old`` nor ``new``, is skipped by the ``find not in
 #: text`` guard, and stays behind forever. Matching by shape registers the three missing
 #: surfaces and removes that fragility from the fourth at the same time.
-_SITE_PATTERNS: tuple[tuple[str, str, str], ...] = (
-    ("website/index.html", r"keel@v\d+\.\d+\.\d+", "keel@v{new}"),
-    ("website/index.html", r"(?<=data-version>)v\d+\.\d+\.\d+", "v{new}"),
-    ("website/docs.html", r"(?<=data-version>)v\d+\.\d+\.\d+", "v{new}"),
-    ("website/coverage.html", r"(?<=data-version>)v\d+\.\d+\.\d+", "v{new}"),
-    ("website/content.js", r'(?<=version: ")v\d+\.\d+\.\d+', "v{new}"),
-    ("website/content.js", r"keel@v\d+\.\d+\.\d+", "keel@v{new}"),
+#:
+#: Projected from the shared table in ``release_surfaces.py`` — see there for why the
+#: two rewrite modes differ and what a historical pin must not look like in these files.
+_SITE_PATTERNS: tuple[tuple[str, str, str], ...] = tuple(
+    (surface.path, surface.pattern, surface.token.replace("{version}", "{new}"))
+    for surface in shape_surfaces()
 )
 
 

@@ -20,14 +20,20 @@ project intentionally publishes as `keel-workflow`.
 
 ## Current Release State
 
-The last release recorded here was `keel-workflow==1.19.0`, owned by `berkayturanci`.
-**This line goes stale by construction** — it names the *previous* release and nothing
-enforces it, which is why it sat at `1.8.2` for three releases. Treat it as a hint, not a
-fact, and read the real state before every release with:
+**This section deliberately names no version.** It used to record "the last release
+was `x.y.z`", updated by hand, and nothing enforced it: it sat at `1.8.2` for three
+releases and then at `1.19.0` for three more. A line that is wrong more often than it
+is right teaches readers to skip the section, so the version is gone and the commands
+that answer the question are here instead:
 
 ```bash
-python -m pip index versions keel-workflow
+python -m pip index versions keel-workflow   # what PyPI actually serves
+gh release list --limit 5                    # what has actually been tagged
+make release-check                           # what this tree declares, and whether
+                                             # every surface agrees with it
 ```
+
+The distribution is `keel-workflow`, owned by `berkayturanci`.
 
 A production release must contain both expected distributions:
 
@@ -106,6 +112,31 @@ Before tagging a release:
   version to repair it: `make release-bump VERSION=<current>` re-syncs the site surfaces
   without touching anything else, and reports which files it repaired.
 - Update `CHANGELOG.md` with the release notes (the one step `make release-bump` leaves to you).
+  Rename `## [Unreleased]` to `## [<x.y.z>]` — this is the step `make release-check` below
+  refuses a release for, because a tag that skipped it publishes notes headed "Unreleased"
+  to PyPI and to the GitHub Release, and PyPI files are immutable.
+- **Run the release guards:**
+
+  ```bash
+  make release-check
+  ```
+
+  Four checks, all offline and stdlib-only (`scripts/release_check.py`):
+
+  | Guard | What it refuses |
+  |---|---|
+  | `declared version` | `pyproject.toml` and `src/keel/__init__.py` naming different versions |
+  | `changelog lockstep` | a top released `## [x.y.z]` that is not the declared version — i.e. a CHANGELOG never renamed from `## [Unreleased]` |
+  | `release surfaces` | any surface in `scripts/release_surfaces.py` left behind: the two plugin manifests, the pinned-install references in `README.md` / `keel-ship.yml` / `cutover.md`, the formula url, the four site fallbacks |
+  | `keel-visual markers` | `keel-visual/pyproject.toml` and `keel_visual/__init__.py` disagreeing (#796) |
+
+  `scripts/release_surfaces.py` is the single table: `release_bump.py` writes through it
+  and `release_check.py` reads it, so a surface can no longer be registered for the bump
+  and guarded by nothing. Add a surface there and both directions pick it up.
+
+  **The same command runs in `publish.yml`'s build job**, with `--tag "$GITHUB_REF_NAME"`
+  added so the tag must also name the declared version — before the build step, so a tag
+  that fails it uploads nothing.
 - Confirm `pyproject.toml` metadata: name, version, description, readme, license, authors,
   Python version, dependencies, classifiers, URLs, and `keel = "keel.cli:main"`.
 - Confirm package data includes `schema/*.json` and `adapters/commands/*.md`.
@@ -222,16 +253,98 @@ The workflow must produce:
 - build-provenance attestation
 - GitHub Release
 
-After publish, verify PyPI and smoke-test the production package:
+### Reproducible builds
+
+Two builds of the same tree must produce the same bytes. PyPI keeps the first upload of a
+file forever (`skip-existing: true`), so if they do not, a workflow re-run at the same tag
+publishes a GitHub Release describing artifacts PyPI never served — and the verify job
+reports a digest mismatch, and files a `release-broken` issue, against a perfectly healthy
+release. The residual case is narrow and real: publish succeeds, `Create GitHub Release`
+fails, the re-run rebuilds and uploads `SHA256SUMS` *for the first time*, so the
+"was this asset replaced?" tolerance correctly says no and the mismatch hard-fails with
+the wrong diagnosis.
+
+It takes three things, and the first two are not enough:
+
+1. **`SOURCE_DATE_EPOCH`**, exported from the **tagged commit's own commit time**
+   (`git log -1 --pretty=%ct`) before `python -m build`. Pin it to the tag, not the clock:
+   a value that changes per run is the same bug with more steps.
+
+2. **`scripts/normalize_sdist.py`**, run on `dist/*.tar.gz` immediately after the build.
+   `SOURCE_DATE_EPOCH` is necessary and *not sufficient*: with the pinned setuptools
+   84.0.0 the wheel comes out byte-identical but the sdist does not. Measured on this
+   toolchain — same tree, same epoch, two builds:
+
+   | artifact | build 1 | build 2 |
+   |---|---|---|
+   | `keel_workflow-1.19.3-py3-none-any.whl` | `74409e71…` | `74409e71…` |
+   | `keel_workflow-1.19.3.tar.gz` | `ccbe9a67…` | `7cf93d4e…` |
+
+   Every *file* member correctly takes the epoch. What does not: the **root directory
+   member**, stamped with wall clock as a PAX `mtime` record with sub-second precision
+   (`1788437700.5630772` vs `1788437703.3743458`); the **gzip header's** own mtime; and
+   every member's **uid/gid/uname/gname**, which describe the runner rather than the
+   release. The script rewrites that envelope — members sorted, `USTAR` format (which
+   cannot express a PAX record at all), mtimes pinned, ownership zeroed, modes reduced to
+   the executable bit, gzip written with `mtime=0`. Stdlib only, so it adds nothing to the
+   hash-locked toolchain, and it touches no byte a consumer unpacks.
+
+3. **A proof, on every release.** The build job then builds a *second* time into a scratch
+   directory, normalizes that too, and fails if either digest differs. A reproducibility
+   claim asserted only in a comment is how the sdist gap survived the first round of this
+   work: the wheel was checked, matched, and the sdist was assumed to behave the same way.
+
+The release upload also carries `overwrite_files: false`, matching PyPI's `skip-existing`:
+**first upload wins on both sides**, so the two records of one release cannot drift apart.
+
+## Post-Publish Verification
+
+**This is automatic.** `publish.yml`'s `verify` job runs after the publish job, on the tag,
+and does all of it (#1024):
+
+- waits until PyPI's release document (`https://pypi.org/pypi/keel-workflow/<version>/json`)
+  lists **both** distributions — a wheel is indexed before the sdist, and a check that
+  proceeds on "something is served" verifies half a release. Bounded at five minutes
+  (`PYPI_WAIT_ATTEMPTS` × `PYPI_WAIT_SECONDS` in the job's `env:`), then it fails;
+- downloads each artifact from that document's own `urls[]` and checks the bytes against
+  the `digests.sha256` PyPI computed on upload. **This is the primary comparison**, because
+  PyPI is the record of what was actually published: `skip-existing: true` means no later
+  run can replace those files. Fetching from `urls[]` also avoids `pip download
+  --no-binary=:all:`, which prepares the sdist's metadata and so pulls an unpinned
+  setuptools into an isolated build environment to learn a filename the document states;
+- installs `keel-workflow==<version>` from PyPI into a clean virtualenv and requires
+  `keel version` to print the tag's version — a wheel built from the wrong commit installs
+  and runs perfectly while reporting a different one. `keel doctor` runs log-only
+  (deliberately not `--strict`: outside a keel checkout it correctly warns that no adapter
+  surfaces are present, which is not a release defect);
+- runs `python scripts/release_smoke.py --requirement "keel-workflow==<version>"` — the
+  smoke test this runbook documented for several releases while no workflow ran it;
+- compares the same artifacts against the GitHub Release's `SHA256SUMS` as a **secondary**
+  check. The log prints both digests per artifact, so the comparison is readable rather
+  than asserted. It tolerates exactly one history: a release whose `SHA256SUMS` asset was
+  **replaced after its first upload** — a re-run that rebuilt the artifacts — warns instead
+  of failing, because PyPI's own digest already matched and it is the checksum file, not
+  the package, that describes something else.
+
+  The discriminator is the asset's own `createdAt` vs `updatedAt`, not its age relative to
+  the PyPI upload. On the healthy v1.19.3 release PyPI uploaded at 07:28:47 and the release
+  assets at 07:28:58 — the release is created after the publish step of the same run — so
+  "the asset is newer than the PyPI upload" is true of *every* normal release and would
+  downgrade every genuine mismatch to a warning. GitHub bumps `updatedAt` only when an
+  asset is replaced, so on a first upload the two are equal and the question needs no
+  threshold.
+
+If any of it fails the job fails **and** opens (or comments on) an issue titled
+`release-broken: v<version>` carrying the last 100 lines of the verify log. A red job in a
+workflow nobody reopens after a green publish is not a safeguard; a thing on a list is.
+
+To run the same verification by hand — a rehearsal, or after a re-run:
 
 ```bash
 python -m pip index versions keel-workflow
 python scripts/release_smoke.py --requirement "keel-workflow==<version>"
 gh release view "v<version>" --json assets
 ```
-
-Confirm the PyPI wheel and source-distribution SHA256 digests match the GitHub Release asset
-digests before announcing the release.
 
 ## Complete The Homebrew Formula
 

@@ -9,6 +9,11 @@
 #                  (.claude/commands/keel/ + the shared .agents/skills/keel-* skill set)
 #   make plugin    regenerate the committed Claude Code plugin command files (commands/*.md)
 #                  from src/keel/adapters/commands/ — the drift test locks these byte-for-byte
+#   make release-check
+#                  refuse a release that does not agree with itself: CHANGELOG top
+#                  released section == declared version, every release surface in
+#                  scripts/release_surfaces.py on that version, keel-visual markers
+#                  in step. Same guards publish.yml runs before it builds anything.
 #   make release-bump VERSION=x.y.z
 #                  bump the version everywhere a release must touch (pyproject, __init__,
 #                  Claude + Codex plugin manifests, pinned-install refs) and regenerate all
@@ -34,7 +39,7 @@ PY = $(error no usable Python — see the find_python message above, or set PY=/
 endif
 endif
 
-.PHONY: test lint coverage validate site adapters plugin release-bump doctor-python clean
+.PHONY: test lint coverage validate site adapters plugin release-check release-bump doctor-python clean
 
 test:
 	PYTHONPATH=src $(PY) -m unittest discover -s tests -v
@@ -60,6 +65,9 @@ adapters:
 
 plugin:
 	PYTHONPATH=src $(PY) -m keel install-adapter plugin --root . --force
+
+release-check:
+	$(PY) scripts/release_check.py
 
 release-bump:
 	@test -n "$(VERSION)" || { echo "usage: make release-bump VERSION=x.y.z"; exit 1; }
