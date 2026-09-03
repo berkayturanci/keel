@@ -14,7 +14,7 @@
 3. [One Executor: `keel delegate run`](#one-executor-keel-delegate-run)
 4. [Hosted API Delegates (Zero-CLI)](#1-hosted-api-delegates-zero-cli)
    - [Anthropic (Claude)](#anthropic-claude)
-   - [OpenAI (GPT / o-series)](#openai-gpt--o-series)
+   - [OpenAI](#openai)
    - [Google (Gemini)](#google-gemini)
 5. [OpenAI-Compatible Profiles (OpenRouter, DeepSeek, Groq, local LLMs)](#2-openai-compatible-profiles)
    - [OpenRouter (Universal Model Gateway)](#openrouter)
@@ -54,8 +54,8 @@ You can choose models at three different levels:
 ### 1. Per-Command Override (CLI Flags)
 Pass `--delegate` (for implementer) or `--review-delegate` (for reviewer):
 ```bash
-# Implement with Gemini 2.5 Pro and review with Claude 3.7 Sonnet
-/keel:ship 123 --delegate google-api:gemini-2.5-pro --review-delegate anthropic-api:claude-3-7-sonnet-20250219
+# Implement on one vendor, review on another
+/keel:ship 123 --delegate agy:gemini-3.8-flash-high --review-delegate anthropic-api:claude-opus-5
 
 # Implement with DeepSeek-R1 via an OpenRouter profile
 /keel:ship 123 --delegate openrouter:deepseek/deepseek-r1
@@ -63,8 +63,8 @@ Pass `--delegate` (for implementer) or `--review-delegate` (for reviewer):
 
 ### 2. Issue Labels
 Label an issue on GitHub to route implementation automatically:
-* `delegate:google-api` + `delegate-model:gemini-2.5-pro`
-* `delegate:anthropic-api` + `delegate-model:claude-3-7-sonnet-20250219`
+* `delegate:google-api` + `delegate-model:<model-id>`
+* `delegate:anthropic-api` + `delegate-model:claude-sonnet-5`
 * `delegate:openrouter` + `delegate-model:meta-llama/llama-3.3-70b-instruct`
 
 ### 3. Project Team Policy (`project.yaml`)
@@ -79,7 +79,7 @@ knobs:
       default: { provider: claude }
       by_role:
         core: { provider: agy, model: gemini-3.8-flash-high, effort: high }
-        frontend: { provider: anthropic-api, model: claude-3-7-sonnet-20250219 }
+        frontend: { provider: anthropic-api, model: claude-sonnet-5 }
         docs: { provider: "subagent:docs-writer" }   # a host subagent, not a vendor
     gate: { provider: codex, distinct_from: implementer }
     review:
@@ -103,10 +103,10 @@ anything else is the host subagent, and keel prefixes it for you.
 
 ```yaml
 knobs:
-  implementer_agents:                                 # deprecated — prefer team.implement.by_role
-    core: backend-developer                           # -> subagent:backend-developer
-    frontend: anthropic-api:claude-3-7-sonnet-20250219  # -> anthropic-api, model claude-3-7-…
-    docs: google-api:gemini-2.5-flash                 # -> google-api, model gemini-2.5-flash
+  implementer_agents:                        # deprecated — prefer team.implement.by_role
+    core: backend-developer                  # -> subagent:backend-developer
+    frontend: anthropic-api:claude-sonnet-5  # -> anthropic-api, model claude-sonnet-5
+    docs: agy:gemini-3.8-flash-high          # -> agy, model gemini-3.8-flash-high
 ```
 
 ---
@@ -125,7 +125,7 @@ keel delegate run --provider agy:gemini-3.8-flash --role implement \
   --prompt-file brief.md --cwd ../wt-1012 --timeout 3600
 
 # read-only reviewer — the role picks the vendor's read-only invocation
-keel delegate run --provider anthropic-api:claude-opus-4-5 --role review \
+keel delegate run --provider anthropic-api:claude-opus-5 --role review \
   --prompt-file rubric.md --effort high
 
 # a long run that outlives the caller
@@ -170,47 +170,47 @@ endpoint via Python standard library HTTP (`urllib`), needing only an API key in
 ### Anthropic (Claude)
 * **Vendor Prefix**: `anthropic-api:<model>`
 * **Required Env Var**: `ANTHROPIC_API_KEY`
-* **Common Models**:
-  * `claude-3-7-sonnet-20250219`
-  * `claude-3-5-sonnet-20241022`
-  * `claude-3-5-haiku-20241022`
+* **Example models** — a vendor's catalogue moves, so these are illustrations rather
+  than a supported list:
+  * `claude-opus-5` — the strongest
+  * `claude-sonnet-5` — the everyday default
+  * `claude-haiku-4-5-20251001` — the cheap, fast one
 
 ```bash
 export ANTHROPIC_API_KEY="sk-ant-..."
 
-# Run implementation via Claude 3.7 Sonnet API
-/keel:ship 42 --delegate anthropic-api:claude-3-7-sonnet-20250219
+# Run implementation via the hosted Anthropic API
+/keel:ship 42 --delegate anthropic-api:claude-opus-5
 ```
 
-### OpenAI (GPT / o-series)
+### OpenAI
 * **Vendor Prefix**: `openai-api:<model>`
 * **Required Env Var**: `OPENAI_API_KEY`
-* **Common Models**:
-  * `gpt-4o`
-  * `gpt-4o-mini`
-  * `o3-mini`
-  * `o1`
+* **Model id**: whichever id the vendor currently serves. This page deliberately does not
+  reprint a hosted catalogue — the last time it did, it went stale in place. Run
+  `keel doctor --providers` for the ids your CLIs advertise, and read the vendor's own
+  model list for the hosted ones.
 
 ```bash
 export OPENAI_API_KEY="sk-proj-..."
 
-# Run implementation via GPT-4o API
-/keel:ship 42 --delegate openai-api:gpt-4o
+# Run implementation via the hosted OpenAI API
+/keel:ship 42 --delegate openai-api:<model-id>
 ```
 
 ### Google (Gemini)
 * **Vendor Prefix**: `google-api:<model>`
 * **Required Env Var**: `GEMINI_API_KEY`
-* **Common Models**:
-  * `gemini-2.5-pro`
-  * `gemini-2.5-flash`
-  * `gemini-2.0-flash-exp`
+* **Model id**: as for OpenAI, whichever id the vendor currently serves — run
+  `keel doctor --providers` for the ids your CLIs advertise. The Antigravity CLI reports
+  its own list, which is where ids such as `gemini-3.8-flash-high` in this page's `agy:`
+  examples come from.
 
 ```bash
 export GEMINI_API_KEY="AIzaSy..."
 
-# Run implementation via Gemini 2.5 Pro API
-/keel:ship 42 --delegate google-api:gemini-2.5-pro
+# Run implementation via the hosted Gemini API
+/keel:ship 42 --delegate google-api:<model-id>
 ```
 
 > **Security Note on Google API**: Keel sends the key via the `x-goog-api-key` header (never in query parameters)
@@ -421,10 +421,10 @@ Keel encourages **cross-model verification** to prevent self-affirming model bli
 ### Heterogeneous Review Panels
 Run implementation on one vendor and assign independent reviewers on different model architectures:
 ```bash
-# Implement with Claude 3.7, review with Gemini 2.5 Pro and GPT-4o
+# Implement on Anthropic, review on two other vendors
 /keel:ship 101 \
-  --delegate anthropic-api:claude-3-7-sonnet-20250219 \
-  --review-delegate google-api:gemini-2.5-pro \
+  --delegate anthropic-api:claude-opus-5 \
+  --review-delegate agy:gemini-3.8-flash-high \
   --reviewers 2
 ```
 
@@ -440,9 +440,9 @@ When [`ai-jury`](https://github.com/berkayturanci/ai-jury) is installed, Keel ga
 
 | Category | Identifier / Vendor | Transport | Setup Requirement | `keel delegate run --provider …` |
 |---|---|---|---|---|
-| **Hosted Anthropic** | `anthropic-api:MODEL` | HTTP (stdlib) | `ANTHROPIC_API_KEY` | `anthropic-api:claude-3-7-sonnet-20250219` |
-| **Hosted OpenAI** | `openai-api:MODEL` | HTTP (stdlib) | `OPENAI_API_KEY` | `openai-api:gpt-4o` |
-| **Hosted Google** | `google-api:MODEL` | HTTP (stdlib) | `GEMINI_API_KEY` | `google-api:gemini-2.5-pro` |
+| **Hosted Anthropic** | `anthropic-api:MODEL` | HTTP (stdlib) | `ANTHROPIC_API_KEY` | `anthropic-api:claude-opus-5` |
+| **Hosted OpenAI** | `openai-api:MODEL` | HTTP (stdlib) | `OPENAI_API_KEY` | `openai-api:<model-id>` |
+| **Hosted Google** | `google-api:MODEL` | HTTP (stdlib) | `GEMINI_API_KEY` | `google-api:<model-id>` |
 | **OpenAI-Compatible** | `knobs.delegate_profiles` | HTTP (stdlib) | Custom endpoint + env key | `openrouter:deepseek/deepseek-r1` |
 | **Local Ollama** | `ollama:MODEL` | HTTP (local) | Local `ollama` daemon | `ollama:qwen2.5-coder:32b` |
 | **Agent CLI** | `claude`, `codex`, `agy` | Subprocess | Installed CLI in PATH | `claude` |

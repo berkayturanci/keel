@@ -1436,7 +1436,7 @@ keel delegate run --provider agy:gemini-3.8-flash --role implement \
   --prompt-file brief.md --cwd ../wt-1012 --timeout 3600
 
 # a read-only reviewer, one hosted API call
-keel delegate run --provider anthropic-api:claude-opus-4-5 --role review \
+keel delegate run --provider anthropic-api:claude-opus-5 --role review \
   --prompt-file rubric.md --effort high
 
 # a configured OpenAI-compatible profile — exactly one HTTP call through api_delegate

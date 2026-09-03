@@ -38,7 +38,7 @@ In Keel's evidence gate (`s10 merge`), approvals and review verdicts are strictl
 ### 2. Multi-Vendor Agent Attribution
 Every agentic mutation (implementation in `s4`, review in `s7`) is permanently stamped with standard attribution:
 * `agent:<vendor>` (e.g. `agent:agy`, `agent:anthropic-api`, `agent:ollama`)
-* `model:<base>` (e.g. `model:claude-opus-4-5`, `model:gemini-3`, `model:gpt-4o`)
+* `model:<base>` (e.g. `model:claude-opus-5`, `model:gemini-3`, `model:qwen2.5-coder`)
 
 Attribution is captured both in the git commit metadata, the PR labels, and Keel's durable run ledger.
 

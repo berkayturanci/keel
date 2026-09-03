@@ -126,8 +126,8 @@
       name: "Anthropic Claude",
       category: "backends",
       badge: "LLM Backend",
-      desc: "Claude 3.7 Sonnet, 3.5 Sonnet, Haiku, and Opus supported for implementer and reviewer roles.",
-      cmd: "keel ship .keel/project.yaml --implementer claude-3-7-sonnet",
+      desc: "Hosted Anthropic API for the implementer and reviewer roles. keel pins no model catalogue \u2014 keel doctor --providers reports what this machine can reach.",
+      cmd: "keel ship .keel/project.yaml --implementer anthropic-api:claude-opus-5",
       logo: "logos/anthropic.svg"
     },
     {
@@ -135,17 +135,17 @@
       name: "Google Gemini",
       category: "backends",
       badge: "LLM Backend",
-      desc: "Gemini 2.5 Flash and Pro with fast multi-token reasoning and low token cost tracking.",
-      cmd: "keel ship .keel/project.yaml --implementer gemini-2.5-flash",
+      desc: "Hosted Gemini API with per-run token cost tracking; the Antigravity CLI reports its own model list to keel doctor --providers.",
+      cmd: "keel ship .keel/project.yaml --implementer agy:gemini-3.8-flash-high",
       logo: "logos/googlegemini.svg"
     },
     {
       id: "openai",
-      name: "OpenAI GPT & o1",
+      name: "OpenAI",
       category: "backends",
       badge: "LLM Backend",
-      desc: "GPT-4o, o1, o3-mini, and GPT-4o-mini supported across single-issue ships and jury panels.",
-      cmd: "keel ship .keel/project.yaml --implementer gpt-4o",
+      desc: "Hosted OpenAI API across single-issue ships and jury panels; the model id is whichever the vendor currently serves.",
+      cmd: "keel ship .keel/project.yaml --implementer openai-api:<model-id>",
       logo: "logos/openai.svg"
     },
     {
