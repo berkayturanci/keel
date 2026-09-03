@@ -10611,7 +10611,9 @@ class TestGateResultFlag(unittest.TestCase):
         rc, out, _ = self._ship("--gate-result", "security-review=fail")
         self.assertEqual(rc, 1)
         self.assertIn("gate security-review FAIL", out)
-        self.assertIn("blocking findings present", out)
+        # The reason names the gate: "blocking findings present" alone left the
+        # operator to guess which finding, from where (#1007).
+        self.assertIn("BLOCK — blocking findings from gate(s): security-review", out)
 
     def test_a_result_for_a_gate_keel_executed_is_refused(self):
         # The flag records what keel *cannot* measure. Overriding what it did measure

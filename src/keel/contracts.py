@@ -885,7 +885,9 @@ def ship_result_as_dict(
             participants=("reviewer-a", "reviewer-b", "reviewer-c", "orchestrator"),
             verdict="REQUEST_CHANGES" if verdict.blocked else "LGTM",
             findings_summary=_finding_summaries(finding_dicts),
-            remaining_risks="blocking findings present" if verdict.blocked else "none identified",
+            remaining_risks=(
+                ship_decisions.block_reason(verdict) if verdict.blocked else "none identified"
+            ),
         ),
         "extension_result_template": artifacts.render_extension_result(
             slot="<slot>",
