@@ -63,7 +63,7 @@ plugin:
 
 release-bump:
 	@test -n "$(VERSION)" || { echo "usage: make release-bump VERSION=x.y.z"; exit 1; }
-	$(PY) scripts/release_bump.py "$(VERSION)"
+	$(PY) scripts/release_bump.py "$(VERSION)" --strict
 	$(MAKE) plugin
 	$(MAKE) adapters
 	@echo "release-bump done. Add a CHANGELOG.md entry for $(VERSION), run the gates, then follow docs/keel/release.md to tag."

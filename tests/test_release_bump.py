@@ -8,6 +8,8 @@ release must touch and leaves historical version prose alone.
 
 import importlib.util
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -49,6 +51,21 @@ def _fixture(root: Path, old: str) -> None:
     )
     (root / ".github" / "workflows" / "keel-ship.yml").write_text(
         f'# (`pip install "git+https://github.com/berkayturanci/keel@v{old}"`)\n', encoding="utf-8"
+    )
+
+
+def _add_visual(root: Path, pyproject_version: str, init_version: str) -> None:
+    """Add keel-visual's two version-bearing files to a fixture tree.
+
+    The two versions are independent arguments (rather than one) precisely to
+    let a test put them out of step with each other — the #796 shape.
+    """
+    (root / "keel-visual" / "src" / "keel_visual").mkdir(parents=True)
+    (root / "keel-visual" / "pyproject.toml").write_text(
+        f'[project]\nname = "keel-visual"\nversion = "{pyproject_version}"\n', encoding="utf-8"
+    )
+    (root / "keel-visual" / "src" / "keel_visual" / "__init__.py").write_text(
+        f'"""doc."""\n__version__ = "{init_version}"\n', encoding="utf-8"
     )
 
 
@@ -236,6 +253,87 @@ class TestBump(unittest.TestCase):
             root = Path(tmp)
             _fixture(root, "1.7.0")
             self.assertEqual(release_bump.main(["nope", "--root", str(root)]), 1)
+
+
+class TestVisualDivergence(unittest.TestCase):
+    """`visual_divergence` and the `--strict` refusal it feeds (#1025).
+
+    A core bump (the default `--package`) never calls `bump_visual`, so if
+    keel-visual's own two markers had already drifted apart — the #796 shape —
+    a core release would ship right past it. These pin the function's return
+    value directly and the `main()` wiring (warn by default, refuse under
+    `--strict`) that surfaces it at bump time instead of only in CI.
+    """
+
+    def test_none_when_markers_agree(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _fixture(root, "1.7.0")
+            _add_visual(root, "0.8.0", "0.8.0")
+            self.assertIsNone(release_bump.visual_divergence(root))
+
+    def test_warns_when_markers_disagree_and_names_both_versions(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _fixture(root, "1.7.0")
+            _add_visual(root, "0.8.0", "0.6.0")
+            warning = release_bump.visual_divergence(root)
+            self.assertIsNotNone(warning)
+            self.assertIn("0.8.0", warning)
+            self.assertIn("0.6.0", warning)
+
+    def test_none_when_keel_visual_is_absent(self):
+        # A fixture root (or a consumer checkout) without keel-visual at all is
+        # not a failure — there is nothing to have drifted.
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _fixture(root, "1.7.0")
+            self.assertIsNone(release_bump.visual_divergence(root))
+
+    def test_main_core_bump_warns_but_still_succeeds_without_strict(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _fixture(root, "1.7.0")
+            _add_visual(root, "0.8.0", "0.6.0")
+            err = StringIO()
+            with redirect_stderr(err), redirect_stdout(StringIO()):
+                rc = release_bump.main(["1.8.0", "--root", str(root)])
+            self.assertEqual(rc, 0)
+            self.assertIn("0.8.0", err.getvalue())
+            self.assertIn("0.6.0", err.getvalue())
+
+    def test_main_core_bump_strict_refuses_on_divergence(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _fixture(root, "1.7.0")
+            _add_visual(root, "0.8.0", "0.6.0")
+            err = StringIO()
+            with redirect_stderr(err), redirect_stdout(StringIO()):
+                rc = release_bump.main(["1.8.0", "--root", str(root), "--strict"])
+            self.assertEqual(rc, 1)
+            self.assertIn("keel-visual", err.getvalue())
+
+    def test_main_core_bump_strict_passes_when_markers_agree(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _fixture(root, "1.7.0")
+            _add_visual(root, "0.8.0", "0.8.0")
+            with redirect_stderr(StringIO()), redirect_stdout(StringIO()):
+                rc = release_bump.main(["1.8.0", "--root", str(root), "--strict"])
+            self.assertEqual(rc, 0)
+
+    def test_main_visual_bump_is_unaffected_by_strict(self):
+        # `--package keel-visual` runs `bump_visual`, which always leaves the two
+        # markers agreeing with each other — `--strict` has nothing to refuse.
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _fixture(root, "1.7.0")
+            _add_visual(root, "0.6.0", "0.6.0")
+            with redirect_stderr(StringIO()), redirect_stdout(StringIO()):
+                rc = release_bump.main(
+                    ["0.8.0", "--root", str(root), "--package", "keel-visual", "--strict"]
+                )
+            self.assertEqual(rc, 0)
 
 
 if __name__ == "__main__":  # pragma: no cover
