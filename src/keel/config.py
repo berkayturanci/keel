@@ -19,6 +19,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from . import jsonschema_min
+from . import tdd as tdd_mode
 from . import team as team_policy
 from . import yaml_helper as yaml
 from .capabilities import validate_names
@@ -246,6 +247,9 @@ class Knobs:
     #: exception lives in config where a reviewer can see it, never in a
     #: driver's judgement call under time pressure.
     swarm_review_evidence: bool = True
+    #: The s4 implement profile: ``default`` (one pass) or ``tdd`` (test-first, two
+    #: phases, with the pure ``tdd-order`` gate at s8). See :mod:`keel.tdd`.
+    implement_mode: str = tdd_mode.DEFAULT_MODE
     #: Wall-clock seconds a command gate may run before it is killed. Raise this on a
     #: slow host; a single slower gate can override it with ``timeout:`` frontmatter.
     gate_timeout_s: int = DEFAULT_GATE_TIMEOUT_S
@@ -330,6 +334,7 @@ def _build(data: dict) -> ProjectConfig:
             if k.get("evidence_require_distinct_vendors") is None
             else bool(k["evidence_require_distinct_vendors"])
         ),
+        implement_mode=k.get("implement_mode", tdd_mode.DEFAULT_MODE),
         swarm_review_evidence=bool(k.get("swarm_review_evidence", True)),
         gate_timeout_s=int(k.get("gate_timeout_s", DEFAULT_GATE_TIMEOUT_S)),
         jury_timeout_s=int(k.get("jury_timeout_s", DEFAULT_JURY_TIMEOUT_S)),
@@ -837,6 +842,14 @@ def _canonical(config: ProjectConfig) -> dict:
             # adding the "unset" spelling must not rotate config_hash for every project.
             "evidence_require_distinct_vendors": bool(
                 config.knobs.evidence_require_distinct_vendors
+            ),
+            # Omitted while it is the default, on the `delegate_profiles` / `team` rule:
+            # an added optional knob must not rotate config_hash for the projects that
+            # never set it — and config_hash changes whenever implement_mode does.
+            **(
+                {"implement_mode": config.knobs.implement_mode}
+                if config.knobs.implement_mode != tdd_mode.DEFAULT_MODE
+                else {}
             ),
             "swarm_review_evidence": config.knobs.swarm_review_evidence,
             "gate_timeout_s": config.knobs.gate_timeout_s,

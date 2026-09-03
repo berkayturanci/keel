@@ -3,7 +3,7 @@
 import json
 import unittest
 
-from keel import git, github
+from keel import git, github, tdd
 
 #: Realistic object names — the wrappers validate a parsed SHA's shape, so a
 #: placeholder no longer passes for one.
@@ -81,6 +81,30 @@ class TestGit(unittest.TestCase):
         # None, not "": an unreadable diff must not read as an empty one, or the
         # review gate passes on a change nobody reviewed (#628).
         self.assertIsNone(git.diff("a", "b", _run=_Recorder(code=1)))
+
+    def test_commit_log_argv_asks_for_the_branch_side_only(self):
+        rec = _Recorder(out="log")
+        self.assertEqual(git.commit_log("origin/main", "HEAD", _run=rec), "log")
+        self.assertEqual(
+            rec.calls[0],
+            [
+                "git",
+                "log",
+                "--reverse",
+                "--no-color",
+                f"--format={tdd.LOG_FORMAT}",
+                "--name-only",
+                # Two dots, not three: the tdd-order gate asks in which order *this
+                # branch's* commits were written, and the symmetric range would also
+                # list the base's side of the fork.
+                "origin/main..HEAD",
+            ],
+        )
+
+    def test_commit_log_failsoft_is_none_not_empty(self):
+        # None is "we could not read the history"; "" is "the range is empty". The
+        # tdd-order gate blocks on the first and must not read it as the second.
+        self.assertIsNone(git.commit_log("a", "b", _run=_Recorder(code=128)))
 
     def test_rev_parse_resolves_sha(self):
         rec = _Recorder(out=SHA_A + "\n")

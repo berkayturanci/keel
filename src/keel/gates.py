@@ -10,10 +10,11 @@ semantics, normalising everything into :class:`keel.findings.Finding`.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from . import tdd
 from .findings import Finding
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -21,6 +22,10 @@ if TYPE_CHECKING:  # pragma: no cover
     from .extensions import Extension
 
 #: Built-in gate names accepted in ``project.yaml``'s ``gates:`` list.
+#:
+#: ``tdd-order`` is deliberately not among them: it is not a gate a project *lists*, it
+#: is the gate ``implement_mode: tdd`` brings with it. Naming it here would let a project
+#: ask for the verification of a commit order it never asked its implementer to produce.
 BUILTIN_GATES: tuple[str, ...] = ("build", "lint", "jury")
 
 #: Directories a source scanner must not walk, as **prefix-independent globs**.
@@ -113,8 +118,20 @@ GateRunner = Callable[
 ]
 
 
-def plan_gates(config: ProjectConfig, loaded: dict[str, list[Extension]]) -> tuple[GateSpec, ...]:
+def plan_gates(
+    config: ProjectConfig,
+    loaded: dict[str, list[Extension]],
+    *,
+    implement_mode: str | None = None,
+) -> tuple[GateSpec, ...]:
     """Order gates by backbone phase: guard, built-in test gates, test hooks, pre-merge.
+
+    ``implement_mode`` is the resolved s4 profile for *this run* (:func:`keel.tdd.resolve_mode`);
+    ``None`` reads the project's ``knobs.implement_mode``, which is what every caller that
+    has no per-run ``--tdd`` flag wants. In ``tdd`` mode the pure :data:`keel.tdd.GATE_ID`
+    gate is appended last at the ``test`` phase: it is the only gate whose verdict depends
+    on the other gates' (the branch must be test-first **and** green), so it is planned to
+    run after them.
 
     Every gate that shells out gets its wall-clock ``timeout`` resolved here, so the
     planner is the single place budgets are decided:
@@ -237,7 +254,33 @@ def plan_gates(config: ProjectConfig, loaded: dict[str, list[Extension]]) -> tup
                     timeout=_timeout_for(e),
                 )
             )
+    mode = implement_mode or config.knobs.implement_mode
+    if mode == tdd.TDD_MODE:
+        specs.append(
+            GateSpec(
+                tdd.GATE_ID,
+                "builtin",
+                "test",
+                "block",
+                source=f"implement_mode:{tdd.TDD_MODE}",
+            )
+        )
     return tuple(specs)
+
+
+def split_deferred(
+    specs: Sequence[GateSpec],
+) -> tuple[tuple[GateSpec, ...], tuple[GateSpec, ...]]:
+    """Split planned gates into "run now" and "run after the rest" (the ``tdd-order`` gate).
+
+    One gate reads the others' verdict, and a runner cannot: :func:`run_gates` hands each
+    spec to the runner independently, and may run them concurrently. So the caller runs
+    the first group, summarises it, and only then evaluates the deferred one — rather than
+    depending on a list order that a future ``concurrency > 1`` would quietly invalidate.
+    """
+    now = tuple(spec for spec in specs if spec.id != tdd.GATE_ID)
+    later = tuple(spec for spec in specs if spec.id == tdd.GATE_ID)
+    return now, later
 
 
 def run_gates(

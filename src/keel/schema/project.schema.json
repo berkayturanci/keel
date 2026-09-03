@@ -257,6 +257,11 @@
           },
           "description": "Named generic delegate profiles, referenced as --delegate <name>. A profile name may not shadow a built-in delegate vendor (claude, codex, agy, ollama, anthropic-api, openai-api) - that is a validation error, not a silent override."
         },
+        "implement_mode": {
+          "type": "string",
+          "enum": ["default", "tdd"],
+          "description": "The s4 implement profile. 'default' (the default) is the single implement pass. 'tdd' splits s4 into two phases against the same provider - a test-only commit carrying the failing tests derived from the issue's acceptance criteria, then the implementation that turns them green - and adds the pure 'tdd-order' gate at s8, which verifies that commit order against policy_pack.test_groups paths. Backbone step ids are unchanged; this is an s4 profile like the compound workflow profile. --tdd selects it for a single run."
+        },
         "build_gate_cmd": { "type": "string", "minLength": 1 },
         "lint_cmd": { "type": "string" },
         "tier3_globs": { "type": "array", "items": { "type": "string" } },
@@ -436,6 +441,11 @@
             "properties": {
               "command": { "type": "string", "minLength": 1 },
               "paths": { "type": "array", "items": { "type": "string" } },
+              "test_paths": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Paths this group's TESTS live in, when they differ from the 'paths' selectors that make the group relevant. Read by the implement_mode: tdd 'tdd-order' gate: 'paths' routinely include the implementation surface, which would make a test-first check vacuous. When any group declares test_paths, only the declared ones count."
+              },
               "reports": { "type": "array", "items": { "type": "string" } },
               "required_capabilities": { "type": "array", "items": { "type": "string" } },
               "optional_capabilities": { "type": "array", "items": { "type": "string" } }

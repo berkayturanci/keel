@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 
+from . import tdd
 from .runner import CommandResult, run_argv
 
 
@@ -94,6 +95,34 @@ def changed_files(base: str, head: str, *, cwd: str | None = None, _run=None) ->
     if not result.ok:
         return None
     return [line for line in result.stdout.splitlines() if line.strip()]
+
+
+def commit_log(base: str, head: str, *, cwd: str | None = None, _run=None) -> str | None:
+    """Raw ``git log`` for ``base..head``, oldest first, with each commit's files.
+
+    Returns git's stdout verbatim — :func:`keel.tdd.parse_commits` turns it into records,
+    so the parsing is pure and unit-tested rather than living behind a subprocess. ``None``
+    when the command failed, deliberately distinct from ``""`` (the range is empty): the
+    ``tdd-order`` gate must be able to block on "we could not read the history" instead of
+    reading it as "this branch has no commits".
+
+    ``base..head``, not ``base...head``: the gate asks in which order *this branch's* own
+    commits were written, and the symmetric form would also list the base's side.
+    """
+    result = run_argv(
+        [
+            "git",
+            "log",
+            "--reverse",
+            "--no-color",
+            f"--format={tdd.LOG_FORMAT}",
+            "--name-only",
+            f"{base}..{head}",
+        ],
+        cwd=cwd,
+        **_kw(_run),
+    )
+    return result.stdout if result.ok else None
 
 
 def diff(base: str, head: str, *, cwd: str | None = None, _run=None) -> str | None:

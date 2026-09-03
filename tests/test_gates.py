@@ -4,7 +4,7 @@ import unittest
 from dataclasses import replace
 
 from keel import config as cfg
-from keel import gates, model
+from keel import gates, model, tdd
 from keel.extensions import Extension
 from keel.findings import Finding, summarize
 
@@ -94,6 +94,65 @@ class TestPlan(unittest.TestCase):
         self.assertEqual(specs[2].on_fail, "suggest")
         self.assertEqual(specs[3].on_fail, "suggest")
         self.assertEqual(specs[4].on_fail, "warn")
+
+
+class TestTddOrderGate(unittest.TestCase):
+    """`implement_mode: tdd` brings its own gate; nothing else adds or removes it."""
+
+    def _config(self, mode=None, gates_list=("build",)):
+        data = {
+            "extends": "keel",
+            "core_version": "^0.1",
+            "base_branch": "main",
+            "knobs": {"build_gate_cmd": "make test"},
+            "gates": list(gates_list),
+        }
+        if mode is not None:
+            data["knobs"]["implement_mode"] = mode
+        return cfg.parse_config(data)
+
+    def test_default_mode_plans_no_tdd_gate(self):
+        specs = gates.plan_gates(self._config(), {})
+        self.assertEqual([s.id for s in specs], ["build"])
+
+    def test_configured_tdd_mode_appends_the_gate_last_at_the_test_phase(self):
+        loaded = {"pre-merge": [_ext("dp-gate", "pre-merge", on_fail="block")]}
+        specs = gates.plan_gates(self._config("tdd"), loaded)
+        self.assertEqual([s.id for s in specs], ["build", "dp-gate", tdd.GATE_ID])
+        gate = specs[-1]
+        # Last in the list *and* a test-phase gate: it is the only gate whose verdict
+        # depends on the others', so it is planned to be evaluated after them.
+        self.assertEqual(gate.phase, "test")
+        self.assertEqual(gate.kind, "builtin")
+        self.assertEqual(gate.on_fail, "block")
+        self.assertEqual(gate.source, "implement_mode:tdd")
+        self.assertIsNone(gate.run)
+        self.assertIsNone(gate.timeout)
+
+    def test_a_per_run_mode_overrides_the_project_knob_in_both_directions(self):
+        selected = gates.plan_gates(self._config(), {}, implement_mode="tdd")
+        self.assertIn(tdd.GATE_ID, [s.id for s in selected])
+        # …and a run that resolved `default` on a tdd project plans no gate for a
+        # commit order that run never asked its implementer to produce.
+        plain = gates.plan_gates(self._config("tdd"), {}, implement_mode="default")
+        self.assertNotIn(tdd.GATE_ID, [s.id for s in plain])
+
+    def test_the_gate_is_not_a_name_a_project_may_list(self):
+        self.assertNotIn(tdd.GATE_ID, gates.BUILTIN_GATES)
+        with self.assertRaises(gates.GateError):
+            gates.plan_gates(self._config(gates_list=("build", tdd.GATE_ID)), {})
+
+    def test_split_deferred_holds_the_tdd_gate_back(self):
+        specs = gates.plan_gates(self._config("tdd"), {})
+        now, later = gates.split_deferred(specs)
+        self.assertEqual([s.id for s in now], ["build"])
+        self.assertEqual([s.id for s in later], [tdd.GATE_ID])
+
+    def test_split_deferred_defers_nothing_in_default_mode(self):
+        specs = gates.plan_gates(self._config(), {})
+        now, later = gates.split_deferred(specs)
+        self.assertEqual([s.id for s in now], ["build"])
+        self.assertEqual(later, ())
 
 
 class TestRun(unittest.TestCase):
