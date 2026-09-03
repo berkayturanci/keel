@@ -159,5 +159,53 @@ class TestValidateNames(unittest.TestCase):
         self.assertEqual(runtime.validate_names(("adb", "firebase"), source="x"), [])
 
 
+class TestProviderCapabilities(unittest.TestCase):
+    """`providers` and `review-vendors` — the cheap half of the #1011 probe."""
+
+    def _detect(self, present, env=None):
+        with tempfile.TemporaryDirectory() as d:
+            return runtime.detect(
+                d,
+                env=env or {},
+                which=lambda name: f"/bin/{name}" if name in present else None,
+                run=fake_run,
+            )
+
+    def test_a_tool_capable_cli_on_path_satisfies_providers(self):
+        report = self._detect({"sh", "claude"})
+        self.assertTrue(report.available("providers"))
+        self.assertEqual(report.get("providers").detail, "claude")
+        self.assertEqual(report.get("providers").source, "PATH")
+
+    def test_no_agent_cli_means_no_tool_capable_implementer(self):
+        report = self._detect({"sh"}, env={"ANTHROPIC_API_KEY": "sk-secret"})
+        # A hosted key is not a tool-capable implementer: an api delegate runs under
+        # the no-tools contract, so it can never drive the git/PR steps itself.
+        self.assertFalse(report.available("providers"))
+        self.assertIn("no tool-capable agent CLI", report.get("providers").detail)
+        self.assertIn("claude, codex, agy", report.get("providers").detail)
+
+    def test_review_vendors_counts_distinct_vendors_across_transports(self):
+        report = self._detect({"sh", "claude", "ollama"}, env={"GEMINI_API_KEY": "AIza-secret"})
+        cap = report.get("review-vendors")
+        self.assertTrue(cap.available)
+        self.assertIn("3 distinct vendor(s)", cap.detail)
+        self.assertIn("claude, ollama, google-api", cap.detail)
+        self.assertNotIn("AIza-secret", cap.detail)
+
+    def test_one_vendor_is_not_a_cross_vendor_panel(self):
+        report = self._detect({"sh", "claude"})
+        self.assertFalse(report.available("review-vendors"))
+        self.assertIn("1 distinct vendor(s)", report.get("review-vendors").detail)
+
+    def test_no_vendor_at_all_names_none(self):
+        report = self._detect({"sh"}, env={"OPENAI_API_KEY": "   "})
+        self.assertFalse(report.available("review-vendors"))
+        self.assertEqual(report.get("review-vendors").detail, "0 distinct vendor(s)")
+
+    def test_both_names_are_part_of_the_capability_vocabulary(self):
+        self.assertEqual(runtime.validate_names(("providers", "review-vendors"), source="x"), [])
+
+
 if __name__ == "__main__":
     unittest.main()
