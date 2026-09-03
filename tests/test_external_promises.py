@@ -97,9 +97,12 @@ def _tap_file(path: str, what: str, case) -> str:
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
             case.fail(f"{HOMEBREW_TAP} has no {path}; brew install would fail")
-        return _could_not_look(case, what, exc)
+        _could_not_look(case, what, exc)
     except (urllib.error.URLError, OSError) as exc:
-        return _could_not_look(case, what, exc)
+        _could_not_look(case, what, exc)
+    # Every branch above either returned the body or failed the test; this line is
+    # the explicit end of the function so no path falls through implicitly.
+    raise AssertionError(f"unreachable: could not read {path} and the failure was not reported")
 
 
 def _could_not_look(case, what: str, exc: Exception) -> NoReturn:
