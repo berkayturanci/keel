@@ -12450,3 +12450,353 @@ class TestRenderReport(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DelegateCommandTest(unittest.TestCase):
+    """``keel delegate run|wait|status`` (#1012).
+
+    The executor and the planner have their own suites; these tests cover the wiring —
+    flag plumbing, the detach hand-off, and the exit codes an orchestrator branches on.
+    """
+
+    def _prompt(self, text="write the fix"):
+        path = Path(_TMP.name) / f"brief-{next(_TMP_COUNTER)}.md"
+        path.write_text(text, encoding="utf-8")
+        return str(path)
+
+    def test_a_run_prints_the_json_contract_and_exits_zero(self):
+        result = CommandResult(True, 0, "the diff", stdout="the diff")
+        with patch("keel.runner.run_argv", return_value=result) as ran:
+            rc, out, _err = run(
+                [
+                    "delegate",
+                    "run",
+                    "--provider",
+                    "codex:gpt-5.5",
+                    "--role",
+                    "implement",
+                    "--prompt-file",
+                    self._prompt(),
+                    "--cwd",
+                    "/work",
+                    "--timeout",
+                    "60",
+                ]
+            )
+        self.assertEqual(rc, 0)
+        document = json.loads(out)
+        self.assertTrue(document["ok"])
+        self.assertEqual(document["text"], "the diff")
+        self.assertEqual(document["model"], "gpt-5.5")
+        self.assertEqual(document["attribution"]["agent_label"], "agent:codex")
+        argv, kwargs = ran.call_args[0][0], ran.call_args[1]
+        self.assertEqual(argv[:2], ["codex", "exec"])
+        self.assertEqual(kwargs["cwd"], "/work")
+        self.assertEqual(kwargs["timeout"], 60)
+
+    def test_a_failing_run_exits_one_with_an_error_code_and_no_traceback(self):
+        result = CommandResult(False, 127, "", stderr="")
+        with patch("keel.runner.run_argv", return_value=result):
+            rc, out, _err = run(
+                [
+                    "delegate",
+                    "run",
+                    "--provider",
+                    "agy",
+                    "--role",
+                    "review",
+                    "--prompt-file",
+                    self._prompt(),
+                ]
+            )
+        self.assertEqual(rc, 1)
+        self.assertEqual(json.loads(out)["error_code"], "missing-binary")
+
+    def test_an_unknown_provider_is_a_json_failure_not_a_stack_trace(self):
+        rc, out, _err = run(
+            [
+                "delegate",
+                "run",
+                "--provider",
+                "nope",
+                "--role",
+                "review",
+                "--prompt-file",
+                self._prompt(),
+            ]
+        )
+        self.assertEqual(rc, 1)
+        document = json.loads(out)
+        self.assertEqual(document["error_code"], "unknown-provider")
+        self.assertIsNone(document["transport"])
+
+    def test_a_project_profile_is_read_from_the_config(self):
+        with tempfile.TemporaryDirectory() as root:
+            config = Path(root) / "project.yaml"
+            config.write_text(
+                "extends: keel\n"
+                "core_version: '^1.0'\n"
+                "base_branch: main\n"
+                "knobs:\n"
+                "  build_gate_cmd: 'true'\n"
+                "  delegate_profiles:\n"
+                "    cursor:\n"
+                "      vendor: cli\n"
+                "      command: cursor-agent\n"
+                "      args: ['-p', '--force']\n"
+                "      review_args: ['-p']\n",
+                encoding="utf-8",
+            )
+            result = CommandResult(True, 0, "verdict", stdout="verdict")
+            with patch("keel.runner.run_argv", return_value=result) as ran:
+                rc, out, _err = run(
+                    [
+                        "delegate",
+                        "run",
+                        "--provider",
+                        "cursor",
+                        "--role",
+                        "review",
+                        "--prompt-file",
+                        self._prompt(),
+                        "--project",
+                        str(config),
+                    ]
+                )
+            self.assertEqual(rc, 0)
+            self.assertEqual(ran.call_args[0][0], ["cursor-agent", "-p"])
+            self.assertEqual(json.loads(out)["attribution"]["delegate_profile"], "cursor")
+
+    def test_an_unreadable_project_config_still_resolves_the_builtins(self):
+        result = CommandResult(True, 0, "ok", stdout="ok")
+        with patch("keel.runner.run_argv", return_value=result):
+            rc, _out, _err = run(
+                [
+                    "delegate",
+                    "run",
+                    "--provider",
+                    "claude",
+                    "--role",
+                    "review",
+                    "--prompt-file",
+                    self._prompt(),
+                    "--project",
+                    "/no/such/project.yaml",
+                ]
+            )
+        self.assertEqual(rc, 0)
+
+    def test_detach_spawns_a_child_and_prints_the_state_record(self):
+        with tempfile.TemporaryDirectory() as root:
+            prompt = self._prompt()
+            with patch("keel.delegaterun.subprocess.Popen") as popen:
+                popen.return_value.pid = 9999
+                rc, out, _err = run(
+                    [
+                        "delegate",
+                        "run",
+                        "--provider",
+                        "claude",
+                        "--role",
+                        "implement",
+                        "--prompt-file",
+                        prompt,
+                        "--root",
+                        root,
+                        "--run-id",
+                        "r1",
+                        "--detach",
+                    ]
+                )
+            self.assertEqual(rc, 0)
+            record = json.loads(out)
+            self.assertEqual(record["status"], "running")
+            self.assertEqual(record["pid"], 9999)
+            child = record["argv"]
+            self.assertEqual(child[:5], [sys.executable, "-m", "keel", "delegate", "run"])
+            self.assertIn("--_child", child)
+            self.assertIn("--run-id", child)
+            # the flags the parent was given travel to the child
+            self.assertIn(prompt, child)
+
+    def test_detach_carries_the_optional_flags_to_the_child(self):
+        with tempfile.TemporaryDirectory() as root:
+            with patch("keel.delegaterun.subprocess.Popen") as popen:
+                popen.return_value.pid = 1
+                _rc, out, _err = run(
+                    [
+                        "delegate",
+                        "run",
+                        "--provider",
+                        "agy",
+                        "--role",
+                        "review",
+                        "--prompt-file",
+                        self._prompt(),
+                        "--root",
+                        root,
+                        "--run-id",
+                        "r2",
+                        "--cwd",
+                        "/work",
+                        "--effort",
+                        "high",
+                        "--model",
+                        "gemini-3",
+                        "--registry",
+                        "/reg.yaml",
+                        "--detach",
+                    ]
+                )
+            child = json.loads(out)["argv"]
+            for flag, value in (
+                ("--cwd", "/work"),
+                ("--effort", "high"),
+                ("--model", "gemini-3"),
+                ("--registry", "/reg.yaml"),
+            ):
+                self.assertEqual(child[child.index(flag) + 1], value)
+
+    def test_detach_refuses_an_unsafe_run_id(self):
+        with tempfile.TemporaryDirectory() as root:
+            rc, out, _err = run(
+                [
+                    "delegate",
+                    "run",
+                    "--provider",
+                    "claude",
+                    "--role",
+                    "review",
+                    "--prompt-file",
+                    self._prompt(),
+                    "--root",
+                    root,
+                    "--run-id",
+                    "../escape",
+                    "--detach",
+                ]
+            )
+        self.assertEqual(rc, 1)
+        self.assertEqual(json.loads(out)["error_code"], "bad-run-id")
+
+    def test_detach_reports_a_spawn_failure_and_exits_one(self):
+        with tempfile.TemporaryDirectory() as root:
+            with patch("keel.delegaterun.subprocess.Popen", side_effect=OSError("no python")):
+                rc, out, _err = run(
+                    [
+                        "delegate",
+                        "run",
+                        "--provider",
+                        "claude",
+                        "--role",
+                        "review",
+                        "--prompt-file",
+                        self._prompt(),
+                        "--root",
+                        root,
+                        "--detach",
+                    ]
+                )
+        self.assertEqual(rc, 1)
+        self.assertEqual(json.loads(out)["result"]["error_code"], "spawn-failed")
+
+    def test_the_child_writes_the_authoritative_state_that_wait_reads(self):
+        with tempfile.TemporaryDirectory() as root:
+            result = CommandResult(True, 0, "done", stdout="done")
+            with patch("keel.runner.run_argv", return_value=result):
+                rc, _out, _err = run(
+                    [
+                        "delegate",
+                        "run",
+                        "--provider",
+                        "claude",
+                        "--role",
+                        "implement",
+                        "--prompt-file",
+                        self._prompt(),
+                        "--root",
+                        root,
+                        "--run-id",
+                        "r3",
+                        "--_child",
+                    ]
+                )
+            self.assertEqual(rc, 0)
+            rc, out, _err = run(["delegate", "wait", "r3", "--root", root])
+            self.assertEqual(rc, 0)
+            self.assertEqual(json.loads(out)["text"], "done")
+
+    def test_wait_on_an_unknown_run_id_fails_closed(self):
+        with tempfile.TemporaryDirectory() as root:
+            rc, out, _err = run(["delegate", "wait", "ghost", "--root", root])
+        self.assertEqual(rc, 1)
+        self.assertEqual(json.loads(out)["error_code"], "unknown-run")
+
+    def test_wait_reports_a_timeout_against_a_still_running_child(self):
+        with tempfile.TemporaryDirectory() as root:
+            with patch("keel.delegaterun.subprocess.Popen") as popen:
+                popen.return_value.pid = 7
+                run(
+                    [
+                        "delegate",
+                        "run",
+                        "--provider",
+                        "claude",
+                        "--role",
+                        "review",
+                        "--prompt-file",
+                        self._prompt(),
+                        "--root",
+                        root,
+                        "--run-id",
+                        "r4",
+                        "--detach",
+                    ]
+                )
+            with patch("keel.delegaterun.time.sleep"):
+                rc, out, _err = run(["delegate", "wait", "r4", "--root", root, "--timeout", "1"])
+        self.assertEqual(rc, 1)
+        document = json.loads(out)
+        self.assertEqual(document["error_code"], "timeout")
+        self.assertIn("r4", document["error"])
+
+    def test_wait_on_a_failed_run_prints_its_result_and_exits_one(self):
+        with tempfile.TemporaryDirectory() as root:
+            from keel import delegaterun
+
+            delegaterun.finish_detached(root, "r5", {"ok": False, "error_code": "nonzero-exit"})
+            rc, out, _err = run(["delegate", "wait", "r5", "--root", root])
+        self.assertEqual(rc, 1)
+        self.assertEqual(json.loads(out)["error_code"], "nonzero-exit")
+
+    def test_status_lists_runs_as_a_table_and_as_json(self):
+        with tempfile.TemporaryDirectory() as root:
+            from keel import delegaterun
+
+            with patch("keel.delegaterun.subprocess.Popen") as popen:
+                popen.return_value.pid = 11
+                delegaterun.start_detached([], root=root, run_id="alive")
+            delegaterun.finish_detached(root, "gone", {"ok": True})
+            delegaterun.finish_detached(root, "bad", {"ok": False})
+
+            rc, out, _err = run(["delegate", "status", "--root", root])
+            self.assertEqual(rc, 0)
+            self.assertIn("alive  running", out)
+            self.assertIn("gone  done ok", out)
+            self.assertIn("bad  done failed", out)
+
+            rc, out, _err = run(["delegate", "status", "--root", root, "--json"])
+            self.assertEqual(rc, 0)
+            document = json.loads(out)
+            self.assertEqual(document["total"], 3)
+            self.assertTrue(document["state_dir"].endswith("/.keel/state/delegate"))
+
+    def test_status_on_a_root_with_no_runs_says_so(self):
+        with tempfile.TemporaryDirectory() as root:
+            rc, out, _err = run(["delegate", "status", "--root", root])
+        self.assertEqual(rc, 0)
+        self.assertIn("no delegate runs", out)
+
+    def test_delegate_without_a_subcommand_prints_help(self):
+        rc, _out, _err = run(["delegate"])
+        self.assertEqual(rc, 2)
