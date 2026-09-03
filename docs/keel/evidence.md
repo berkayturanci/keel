@@ -98,7 +98,47 @@ itself exactly when review had not happened. The marker closes that hole.
 Only a **trusted** comment arms the gate — the same fail-closed `author_association` rule
 every other evidence source uses — so an outside contributor cannot manufacture provenance.
 
-### 4. Phase-Separated Verification Contract
+### 4. Who the Reviewers Are: the Bench, or the Panel
+
+The required `review-verdict` count comes from the review contract's `reviewers` block, and
+`knobs.team` decides what that block describes (see
+[configuration.md](configuration.md#team)):
+
+| `reviewers.panel` | `reviewers.source` | What must be posted |
+|---|---|---|
+| `reviewers` | `team.review.by_tier.<n>` / `risk-tier` / `override` | One verdict per staffed host seat. |
+| `jury` | `jury` | One verdict per **ai-jury panelist ballot**, plus the `jury-verdict` consensus record. |
+| `reviewers` | `jury-not-gating` | The tier's host seats — the panel was downgraded or is advisory, and a panel that does not gate is not a review. |
+
+On a `review.by_tier.<n>: jury` tier the panel *is* the review: `s7` dispatches ai-jury once
+and `keel review --from-jury <report.json>` maps each ballot onto a head-pinned
+`keel.review-verdict.v1` carrying the vendor and model that produced it. Running host
+reviewers **and** the panel over the same diff is what this replaced — it paid twice for the
+same reading while the panel's per-reviewer ballots reached no gate at all.
+
+**How the requirement is sized.** The panel decides how many ballots there are, so the
+posted `keel.jury-verdict.v1` declares `panelists: <N>` beside `vendors: <N>`, and
+`evidence.jury_panel_size()` reads it back — the same channel, and for the same reason: the
+run ledger and the jury artifact live under the gitignored `.keel/state/`, so a hosted
+runner can read neither, while PR comments are always visible. Before any verdict declares
+it, the count rests on the jury's `min_vendors` floor rather than on nothing, so an
+unmeasured panel cannot satisfy the gate by being unmeasured.
+
+**Vendor distinctness asks a panel the panel's own question.**
+`evidence_require_distinct_vendors` normally wants one distinct vendor per required verdict,
+which is the right question for a bench keel staffs. For a panel, keel did not pick the
+seats: every ballot must still declare a vendor, but the panel as a whole must span at least
+`jury.min_vendors` distinct ones. Three ballots from two vendors is a legitimate cross-vendor
+review; three from one vendor is one opinion three times and fails with
+`review-vendor-distinctness`.
+
+**The downgrade never buys fewer eyes.** A panel with fewer than `jury.min_vendors`
+participating vendors is downgraded `gating → advisory` (see
+[cli.md](cli.md#--jury-vendors-n--the-panel-decides-whether-the-jury-gates)), and an
+advisory panel is not a review keel may rely on — so the tier's host reviewers are required
+again, reported as `reviewers.source: jury-not-gating`.
+
+### 5. Phase-Separated Verification Contract
 Evidence requirements are split by lifecycle phase:
 * **Pre-Merge Phase (`s10`)**: Requires verified `review-verdict` (from required risk-tier reviewer count)
   and passing gate results (`build`, `lint`, optional `jury`).
@@ -107,7 +147,7 @@ Evidence requirements are split by lifecycle phase:
 The pre-merge gate strictly validates what exists before the merge, preventing cyclical dependencies
 while guaranteeing full review compliance.
 
-### 5. Transparent Deferrals & Audit Trail
+### 6. Transparent Deferrals & Audit Trail
 In real engineering teams, legitimate exceptions occur (e.g. emergency hotfixes outside the merge window,
 or temporary gate waivers).
 
@@ -116,7 +156,7 @@ Rather than offering an unmonitored backdoor, Keel makes exceptions **first-clas
 * **Audit Record**: Every waiver requires an explicit `--operator` attribution and records a durable
   entry in `.keel/ledger/` and GitHub issue timeline, creating a tamper-evident record.
 
-### 6. Header-Anchored Marker Classification
+### 7. Header-Anchored Marker Classification
 What a comment *is* — a review verdict, a jury verdict, a closure comment, a ship-provenance stamp,
 a deferral — is decided by its **header line** and nothing else: the first non-empty line, which every
 Keel renderer emits as the marker alone, either bare (`keel.review-verdict.v1`) or wrapped in an HTML

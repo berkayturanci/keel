@@ -66,6 +66,14 @@ Changing the backbone is a keel-core change. Projects only ever touch layers 2�
   reviewer on the diff when installed; a fail-soft no-op otherwise. Core resolves the mode from
   the panel that actually ran: a cross-vendor gate needs ≥2 distinct vendors, so a short panel
   downgrades to advisory instead of blocking on a jury that never convened.
+- **…or the panel *is* the review** — set `knobs.team.review.by_tier."3": jury` and s7 dispatches
+  ai-jury **once** instead of running host reviewers beside it. `keel review --from-jury
+  <report.json>` turns each panelist's ballot into a head-pinned `keel.review-verdict.v1` with the
+  vendor and model that produced it, posts the jury verdict as the consensus record, and hands the
+  fix loop the panel's *verified* findings. The evidence gate then requires one verdict per ballot
+  (the panel declares its own size) plus that verdict — and if too few vendors take part, the
+  panel is downgraded and the tier's host reviewers are required again. Needs ai-jury's ballot
+  report (`jury --format json`, schema 1.1+); keel still never imports it.
 - **Headless with just an API key** — the hosted-API delegates
   (`--delegate anthropic-api:MODEL` / `openai-api:MODEL` / `google-api:MODEL`) drive the implement/review steps
   with only `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/`GEMINI_API_KEY` in the environment — no agent CLI
