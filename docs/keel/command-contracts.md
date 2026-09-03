@@ -60,6 +60,7 @@ Every contract includes:
 | `closure_comment` | Present for `ship` (both profiles); the deterministic, consumer-neutral closure-comment contract describing how the s11 ship-outcome comment is rendered from the `ship_run` ledger record. |
 | `evidence` | Present for `ship` (both profiles); the pre-merge evidence contract used by `keel evidence-verify`. The gate is armed by deterministic ship provenance (ship-style branch, review marker, trusted `keel ship` assessment comment, ship-run ledger record, or the legacy `evidence_gate_label`), and only an operator waiver label disarms it. Assessment comments arm the gate but are not accepted as evidence. The contract carries an `enforced` flag and, when not enforced for a hand-authored PR, an empty `required` set. When enforced it is fail-closed. |
 | `step_verification` | Present for `ship` (both profiles); the fail-closed step completion contract that maps required public evidence onto backbone steps and defines the structured handoff object every successful step must produce. |
+| `assignment` | Present for ship-like commands (`ship`, `pr-loop`, `review-cycle`, `work-block`, `overnight`); the resolved `knobs.team` team for this run — `implementer`, `gate`, `reviewers[]` (per-slot `provider`/`model`/`effort`), `review_panel`, `jury`, `fix`, and `warnings`. Resolved once and shared with `review_merge_contract.reviewers.slots`, so the bench a host dispatches and the contract it publishes cannot disagree. `keel ship` re-resolves it against the tier classified from the real diff. |
 | `run_controls` | Present for agentic/looping commands (`ship`, `pr-loop`, `review-cycle`, `work-block`, `overnight`); deterministic run budgets, per-slot step caps, and oscillation hard-halt rules. |
 | `artifact_renderers` | Present for `ship` (both profiles); canonical renderer contract for PR bodies, issue updates, review verdicts, jury verdicts, and extension result output. |
 | `side_effects` | Declared possible live-run side effects and whether dry-run mutates. |
@@ -569,8 +570,9 @@ The block records:
 - `required`: stable ids such as `closure-comment-pr`, `closure-comment-issue`,
   `review-verdict-1`, `review-verdict-2`, and `jury-verdict` when jury is gating
 - `dry_run_disables_gating: true` and `fail_closed: true`
-- `require_distinct_vendors`: reflects the `evidence_require_distinct_vendors` knob /
-  `--require-distinct-vendors` flag (default `false`). When `true`, each required review
+- `require_distinct_vendors`: reflects the effective `evidence_require_distinct_vendors` —
+  the knob when set, otherwise the tier-derived default (on from TIER-2 up) — or the
+  `--require-distinct-vendors` flag. When `true`, each required review
   verdict must carry `vendor:` provenance and no two may share a vendor; a missing or
   duplicate vendor yields a blocking `review-vendor-distinctness` finding. The check is
   jury-agnostic — it reads only the verdict provenance fields and imports no review vendor.

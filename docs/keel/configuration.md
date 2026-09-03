@@ -133,7 +133,8 @@ contracts, but executable project behavior remains in extension files or project
 |---|---|---|---|
 | `build_gate_cmd` | string | ✅ | command the `build` gate runs |
 | `lint_cmd` | string | | command the `lint` gate runs (gate skipped if absent) |
-| `implementer_agents` | map role→agent | | role to local agent mapping |
+| `implementer_agents` | map role→agent | | **deprecated** by `team.implement.by_role`: role to local agent mapping (still accepted and mapped onto it) |
+| `team` | object | | who implements / gates / reviews per role and risk tier, and how the jury gates |
 | `delegate_profiles` | map name→profile | | named generic delegate vendors, referenced as `--delegate <name>` |
 | `tier3_globs` | string[] | | high-risk paths that force full scrutiny |
 | `ci_workflows` | map name→glob | | CI workflow display name → gating path glob |
@@ -143,7 +144,7 @@ contracts, but executable project behavior remains in extension files or project
 | `required_capabilities` | string[] | | runtime capabilities that must be present before mutating work starts |
 | `optional_capabilities` | string[] | | runtime capabilities that may degrade explicitly when unavailable |
 | `evidence_gate_label` | string | | Legacy PR label that also arms the required pre-merge evidence gate (default `keel:ship`); ship provenance now arms the gate by default |
-| `evidence_require_distinct_vendors` | boolean | | When `true`, `evidence-verify` additionally requires each required review verdict to carry vendor provenance and that no two share a vendor (default `false`) |
+| `evidence_require_distinct_vendors` | boolean | | requires each required review verdict to carry vendor provenance, and no two to share a vendor. **Unset resolves from the risk tier — on from TIER-2 up**; set it to `false` to opt out |
 | `gate_timeout_s` | integer ≥ 1 | | wall-clock seconds a command gate may run before it is killed (default `600`) |
 | `jury_timeout_s` | integer ≥ 1 | | wall-clock seconds the `jury` built-in may run before it is killed (default `600`) |
 
@@ -160,8 +161,78 @@ Command run by the built-in `lint` gate. If absent, the lint gate is skipped.
 
 #### `implementer_agents`
 
-Map from a role label or project role to the local implementer agent name. `keel ship` and
-`keel implement` use it when choosing the implementation delegate.
+**Deprecated by [`team.implement.by_role`](#team).** Map from a role label or project role
+to the local implementer agent name. Still accepted: keel maps each value onto a
+`team.implement.by_role` seat, reading a value that names a provider keel can resolve as
+that provider and anything else as a host subagent (`subagent:<name>`). That ambiguity —
+the same field documented as a vendor string here and as a Claude subagent name in
+`ship.md` s4 — is why `team` exists. `team.implement` wins where both name a role.
+
+#### `team`
+
+Who runs the ship. `knobs.team` is the whole team a project fields, not just an
+implementer: which provider implements (per issue role), which one gives the mandatory
+**gate review**, which ones review (per risk tier — or `jury`, when the cross-vendor panel
+*is* the review), who applies the findings, and how the jury gates.
+
+```yaml
+knobs:
+  team:
+    implement:
+      default: { provider: claude }
+      by_role:
+        core: { provider: agy, model: gemini-3.8-flash-high, effort: high }
+        docs: { provider: "subagent:docs-writer" }
+    gate:                                  # one second opinion on every implementation
+      provider: codex
+      distinct_from: implementer
+    review:
+      by_tier:
+        "1": [{ provider: claude }]
+        "2": [{ provider: claude }, { provider: grok-via-openai-compatible }]
+        "3": jury                          # the panel is the review
+    jury: { mode: gating, min_vendors: 2 }
+    fix: { provider: implementer }         # who applies review findings
+```
+
+**Providers.** A `provider` names an entry the same registry `keel delegate run` resolves:
+a built-in vendor (`claude`, `codex`, `agy`, `ollama`, `anthropic-api`, `openai-api`,
+`google-api`), a [`delegate_profiles`](#delegate_profiles) entry, or a machine-level
+`~/.keel/providers.yaml` entry. Two spellings are reserved:
+
+- `subagent:<name>` — a **host (Claude-class) subagent**, never a `keel delegate run`
+  dispatch. This is the pre-`team` meaning of an `implementer_agents` value, made explicit.
+- `implementer` — *whoever implemented this change*. Valid at `fix.provider` and
+  `gate.distinct_from` only.
+
+**Validation** (`keel validate`) rejects a provider name that is neither a built-in vendor
+nor a `delegate_profiles` entry nor a `subagent:` name; an `effort` on a provider that has
+no spelling for reasoning effort (`claude`, `ollama`, a generic `cli` profile), or on `agy`
+without the `model` its suffix-based effort needs; a `gate.provider` equal to a configured
+implementer when `gate.distinct_from: implementer`; more than three reviewer seats for a
+tier; and a `review` value that is neither seats nor `jury`. A machine-level
+`~/.keel/providers.yaml` entry is deliberately **not** consulted: validation must give the
+same answer on every machine.
+
+**Tier keys are quoted strings** (`"1"`, `"2"`, `"3"`). YAML reads a bare `1:` as an
+integer key, which a JSON schema cannot describe; keel says so instead of accepting it and
+meaning something else.
+
+**What it resolves to.** `keel plan --command ship --json` and `keel ship --json` render
+the resolved team as `assignment` — `implementer`, `gate`, `reviewers[]` (with per-slot
+`provider`/`model`/`effort`), `jury`, `fix`, and a `warnings` list — and the same seats
+appear on `review_merge_contract.reviewers.slots`, so any host runs the same team. A tier
+whose review policy is `jury` yields `reviewers.count == 0` and a gating jury: the panel is
+the review, and the evidence gate requires its verdict instead of N review verdicts.
+
+**Per-run overrides still win.** `--delegate <provider[:model]>` replaces the implementer;
+`--review-delegate` is repeatable and **positional per slot** (first flag = slot A, second
+= slot B). `--reviewers N` overrides the seat count, except on a `jury` tier, where it is
+reported in `assignment.warnings` rather than silently replacing the panel.
+
+`team` participates in `config_hash` only when it is present, so adding the knob does not
+rotate the hash for a project that has not adopted it — and `config_hash` changes whenever
+`team` does.
 
 #### `delegate_profiles`
 
@@ -459,7 +530,11 @@ verifier output. Override the legacy arming label per run with
 
 #### `evidence_require_distinct_vendors`
 
-Off by default (`false`), so behaviour is exactly the count + head-pin check. When set to
+**Tri-state.** Unset (the default) resolves from the **resolved risk tier**: on from
+TIER-2 up, off below it. From tier-2 a review panel that is really one vendor reviewing
+twice is one opinion twice, which is the gap `knobs.team` exists to close. Setting it to
+`false` explicitly keeps the plain count + head-pin check for a project that has decided
+otherwise — the exception then lives in a file a reviewer can read. When it resolves to
 `true`, `keel evidence-verify` additionally enforces **verdict provenance distinctness**:
 each required review verdict must carry a `vendor:` provenance line, and no two required
 verdicts may declare the same vendor. This closes the gap where one agent could post N

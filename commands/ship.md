@@ -1,6 +1,6 @@
 ---
 description: Drive a GitHub issue end-to-end through the keel backbone (select → branch → implement → CI → review → test → merge → close → capture), reading every project value from .keel/project.yaml via the keel CLI.
-argument-hint: "[issue numbers...] [--compound|--profile <standard|compound>] [--delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL|google-api:MODEL|PROFILE>] [--review-delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL|google-api:MODEL|PROFILE>] [--review-comments <inline|summary>] [--reviewers <1|2|3>] [--jury|--no-jury|--jury-advisory] [--hotfix] [--dry-run] [--wizard]"
+argument-hint: "[issue numbers...] [--compound|--profile <standard|compound>] [--delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL|google-api:MODEL|PROFILE>] [--review-delegate <...> (repeatable, one per reviewer slot)] [--review-comments <inline|summary>] [--reviewers <1|2|3>] [--jury|--no-jury|--jury-advisory] [--hotfix] [--dry-run] [--wizard]"
 allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Bash(jury:*), Read, Edit, Write, Agent
 ---
 
@@ -18,7 +18,8 @@ obvious.
 Project-neutral flagship workflow. **Every project value comes from `.keel/project.yaml`
 via the `keel` CLI** — never hardcode a branch, command, glob, agent, timezone, window,
 allowlist, or workflow name here. Reference knobs by name: `base_branch`, `build_gate_cmd`,
-`lint_cmd`, `implementer_agents`, `delegate_profiles`, `tier3_globs`, `ci_workflows`,
+`lint_cmd`, `team`, `implementer_agents` (deprecated by `team.implement.by_role`),
+`delegate_profiles`, `tier3_globs`, `ci_workflows`,
 `docs_gate_paths`, `merge_window`, `merge_window_mode`, `timezone`. Anything truly app-specific stays in the
 project (config knobs, or a `.keel/extensions/` Lego), never inlined here.
 
@@ -98,7 +99,7 @@ credential approval from project knowledge. Store `operator_consent.delegated_ag
 for every later delegated-agent brief.
 
 `keel validate`/`plan` resolve `base_branch`, the knob commands (`build_gate_cmd`,
-`lint_cmd`), `implementer_agents`, `delegate_profiles`, `tier3_globs`, `ci_workflows`,
+`lint_cmd`), `team`, `implementer_agents`, `delegate_profiles`, `tier3_globs`, `ci_workflows`,
 `docs_gate_paths`, and the `tester` / `pre-merge` / `reviewers` / `capture` extensions. `keel window`
 evaluates `merge_window` in the project `timezone` and reports `merge_window_mode`
 (`pause` = halt outside the window; `freeze` = defer to the morning queue). The merge
@@ -203,8 +204,13 @@ capture.
   **generic CLI vendor** configured in `.keel/project.yaml` (e.g. `--delegate cursor`;
   see s4). Built-in vendor names always win over a profile name. Default: the **host
   agent** (the CLI driving this run).
-- `--review-delegate <…>` — the **reviewer** vendor (same value set, profile names
-  included). Default: host agent.
+- `--review-delegate <…>` — a **reviewer** slot (same value set, profile names included).
+  **Repeatable and positional**: the first occurrence is reviewer slot A, the second slot
+  B, and so on, so a two-vendor panel needs no config change. A value past the last
+  staffed slot is reported in `assignment.warnings` and not dispatched. Default: the seat
+  `knobs.team.review` names for the tier, else the host agent.
+- `--role <label>` — the issue role label that selects
+  `knobs.team.implement.by_role`. Default: the role label read off the issue in s1.
 - `--review-comments <inline|summary>` — how reviewer findings post (s7). Default `inline`.
 - `--reviewers <1|2|3>` — override the tier-derived reviewer count. Default: auto (from tier).
 - `--jury` / `--no-jury` / `--jury-advisory` — control the cross-vendor jury gate (s8).
@@ -224,6 +230,44 @@ watch mode: take the top of the backlog (s1). Resolve **`HOST_AGENT`** from the 
 (the CLI executing this command: `claude` / `codex` / `agy`) — it is the default
 implementer and reviewer; a delegate label or an explicit `--delegate`/`--review-delegate`
 overrides it. State the detected window state and host agent in your first user-facing line.
+
+## The team — one resolved assignment, not four independent guesses
+
+`knobs.team` is the project's answer to *who runs this ship*: which provider implements
+(per issue role), which one gives the mandatory gate review, which ones review (per risk
+tier, or `jury` when the cross-vendor panel **is** the review), and how the jury gates.
+**Do not re-derive any of it.** `keel plan … --command ship --json` and `keel ship --json`
+both render it as `assignment`, resolved against the same tier the review contract used:
+
+```json
+{ "assignment": {
+    "configured": true, "role": "core", "tier": 2,
+    "implementer": { "provider": "agy", "model": "gemini-3.8-flash-high", "effort": "high",
+                     "kind": "provider", "name": "agy",
+                     "source": "team.implement.by_role.core" },
+    "gate": { "provider": "codex", "distinct_from": "implementer", "distinct_ok": true,
+              "source": "team.gate" },
+    "review_panel": "reviewers", "reviewer_count": 2,
+    "reviewers": [ { "slot": "A", "provider": "claude", "source": "team.review.by_tier.2" },
+                   { "slot": "C", "provider": "codex", "source": "team.review.by_tier.2" } ],
+    "jury": { "mode": "gating", "min_vendors": 2, "panel_is_review": false },
+    "fix": { "provider": "agy", "alias": "implementer", "source": "team.fix" },
+    "warnings": [] } }
+```
+
+- `kind` says how to dispatch the seat: `provider` goes to `keel delegate run --provider
+  <provider>`; `subagent` is a **host (Claude-class) subagent** named by `name` and never
+  reaches `keel delegate run`; `alias` only ever appears resolved (`fix` carries the
+  implementer's seat plus `alias: "implementer"`).
+- `source` is the config path the seat came from, including
+  `knobs.implementer_agents.<role> (deprecated)` and `flag:--delegate` /
+  `flag:--review-delegate`. Cite it when you say who you dispatched.
+- `warnings` is not decoration: an entry there says a flag or a seat you supplied was not
+  dispatched, or that `gate.distinct_from: implementer` could not be honoured.
+- `review_panel: "jury"` means `review_merge_contract.reviewers.count == 0` — there are no
+  host reviewer slots for that tier, the panel is the review, and the evidence gate
+  requires the jury verdict instead of N review verdicts. Do **not** invent reviewers to
+  fill the gap.
 
 ## Backbone (do not reorder; the step IDs are fixed)
 
@@ -283,12 +327,14 @@ whose paths this PR touches. When the branch-scoped red-`base_branch` signal is 
 on the fallback transport, treat that rule as no-fire and log it.
 
 ### s4 implement *(agent)*
-Resolve the implementer: `implementer_agents` by the issue's role label, **overridden by
-`--delegate`**, defaulting to `HOST_AGENT`. Precedence: `--delegate` flag > issue
-`delegate:*` label > `HOST_AGENT`. Dispatch:
+Read the implementer from `assignment.implementer` — core resolved it from
+`knobs.team.implement` (or the deprecated `implementer_agents`) by the issue's role label,
+**overridden by `--delegate`**, defaulting to `HOST_AGENT`. Precedence: `--delegate` flag >
+`team.implement.by_role` > `team.implement.default` > `implementer_agents` > issue
+`delegate:*` label > `HOST_AGENT`. Dispatch on `assignment.implementer.kind`:
 
-- **Host / Claude-class subagent** — pick the role agent from `implementer_agents` by the
-  issue's labels/paths; run the standard implement brief.
+- **Host / Claude-class subagent** (`kind: "subagent"`) — run the standard implement brief
+  under the subagent named by `assignment.implementer.name`.
 - **Any non-host implementer — one command.** `keel delegate run` is the executor for
   every transport; **never** hand-build a delegate invocation. It resolves the provider
   (built-in vendor, `knobs.delegate_profiles` entry, or a machine-level
@@ -526,9 +572,21 @@ mixed state with any failure is a failure, never poll past it. Three branches:
 abort the session** (counter resets after any merge).
 
 ### s7 review *(agent)* + slot `reviewers`
-Run **N reviewers** (N from the s5 tier, or `--reviewers`), the host or `--review-delegate`
-vendor. A non-host reviewer runs through the **same one command as s4**, with the role
-that makes it read-only — `--role review` (or `gate` / `chair`):
+Run one reviewer per entry in `review_merge_contract.reviewers.slots` — the same seats as
+`assignment.reviewers`, already reconciled with the s5 tier, `--reviewers`, and each
+positional `--review-delegate`. Each slot carries its own `provider`/`model`/`effort`, so
+a two-vendor panel is two different providers, not one vendor run twice. When
+`reviewers.panel` is `jury` the count is **0**: skip the host reviewer fan-out entirely and
+let the s8 jury gate be the review.
+
+Before the panel, run the **gate review** when `assignment.gate` is present: one
+mandatory second opinion on the implementation, dispatched read-only exactly like a
+reviewer but with `--role gate`. `distinct_ok: false` means the policy asked for a vendor
+other than the implementer and did not get one — say so rather than passing it off as an
+independent opinion.
+
+A non-host reviewer runs through the **same one command as s4**, with the role that makes
+it read-only — `--role review` (or `gate` / `chair`):
 
 ```bash
 keel delegate run --provider "$REVIEW_DELEGATE" --role review \
@@ -628,8 +686,10 @@ When available, use `result.artifact_bodies.review_verdict_template` as the cano
 comment shape: keep `keel.review-verdict.v1`, `reviewer: <stable-id>`, and `head: <sha>`
 intact, then fill in the reviewer-specific verdict, scope, findings, and testing notes.
 Carry the **effective** reviewer `vendor` (and `model` when known) on each verdict — the
-same attribution computed at s7 — so a project that enables `evidence_require_distinct_vendors`
-can verify the verdicts came from distinct vendors. This is jury-agnostic: a plain
+same attribution computed at s7 — so `evidence_require_distinct_vendors` can verify the
+verdicts came from distinct vendors. That knob is **on by default from TIER-2 up** (a
+project that has decided otherwise sets it to `false` explicitly), so a verdict without
+`vendor:` provenance blocks the pre-merge evidence gate on most changes. This is jury-agnostic: a plain
 host-agent reviewer carrying distinct vendor provenance satisfies the check just as a
 cross-vendor panel would; keel takes no dependency on any review vendor.
 Post each review verdict through `keel post-comment` with a reviewer-scoped run id
@@ -958,4 +1018,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=plugin command=ship keel_version=1.19.3 source_sha256=a41ee62bc0870688b097803f2a945993d1ac02ad769ee91c6f2952653808fd15 generated_sha256=a41ee62bc0870688b097803f2a945993d1ac02ad769ee91c6f2952653808fd15 -->
+<!-- keel-generated: surface=plugin command=ship keel_version=1.19.3 source_sha256=d7d9958932fedd2a1fae10edecc1bcefe38f972f1e2d2512624abb659ccaf98e generated_sha256=d7d9958932fedd2a1fae10edecc1bcefe38f972f1e2d2512624abb659ccaf98e -->

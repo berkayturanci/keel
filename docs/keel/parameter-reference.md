@@ -1454,6 +1454,8 @@ keel ship <project.yaml> [--root DIR] [--pr N] [--hotfix] [--dry-run] [--live]
 | `--strict-run-context` | flag | off | Fail (exit 1) instead of appending a degraded ledger record when required run-context fields are missing on a live append. |
 | `--issue-title/-body/-label` | shared | none | Issue intake (live non-ready intake exits 1 before gates). Title/labels are also stamped into the ledger record. |
 | `--review-comments` / `--reviewers` / jury flags | shared | — | Shape `review_merge_contract`; the jury mode also drives the built-in jury gate's gating-vs-advisory behavior. |
+| `--role` / `--delegate` / `--review-delegate` (repeatable) | shared | — | Per-run overrides of `knobs.team`; shape `assignment` and `review_merge_contract.reviewers.slots`. |
+| `--tier` | `plan` | — | Risk tier the review contract and team assignment are resolved against before a diff exists. |
 | `--profile` | `standard` \| `compound` | `standard` | Workflow profile in the contract. |
 | `--compound` | flag | off | Alias for `--profile compound`. |
 | `--json` | flag | off | `{contract, result}` with `result.artifact_bodies` (canonical PR body, issue update, review/jury verdict templates, extension result, ship-provenance stamp). |
@@ -1745,7 +1747,7 @@ positionals are all rejected as user error.
 ```
 /keel:ship [issue numbers...] [--compound|--profile <standard|compound>]
            [--delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL|google-api:MODEL|PROFILE>]
-           [--review-delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL|google-api:MODEL|PROFILE>]
+           [--review-delegate <...>]... [--role <label>]
            [--review-comments <inline|summary>] [--reviewers <1|2|3>]
            [--jury|--no-jury|--jury-advisory] [--hotfix] [--dry-run] [--wizard]
 ```
@@ -1755,9 +1757,10 @@ positionals are all rejected as user error.
 | issue numbers | bare positive integers | none → **watch mode** | Explicit issue(s) to ship. With none, the run takes the top of the backlog (highest priority first, then ascending issue number), with a capped watch-mode batch. |
 | `--compound` / `--profile` | flag / `standard` \| `compound` | `standard` | Select the workflow profile. `--compound` ≡ `--profile compound`. |
 | `--delegate` | `claude` \| `codex` \| `agy` \| `ollama:MODEL` \| `anthropic-api:MODEL` \| `openai-api:MODEL` \| `google-api:MODEL` \| a `knobs.delegate_profiles` name | host agent | The s4 implementer; per-run override of any issue role/delegate label. A profile name selects a generic CLI vendor configured in `.keel/project.yaml`; built-in vendor names always win. |
-| `--review-delegate` | same value set (profile names included) | host agent | The s7 reviewer vendor. |
+| `--review-delegate` | same value set (profile names included) | the `knobs.team.review` seat for the tier, else host agent | One s7 reviewer slot. **Repeatable and positional**: first occurrence = slot A, second = slot B. A value past the last staffed slot lands in `assignment.warnings` and is not dispatched. |
+| `--role` | issue role label | role read off the issue | Selects the `knobs.team.implement.by_role` seat. |
 | `--review-comments` | `inline` \| `summary` | `inline` | How reviewer findings post in s7. |
-| `--reviewers` | `1` \| `2` \| `3` | auto (from tier) | Override the tier-derived reviewer count. |
+| `--reviewers` | `1` \| `2` \| `3` | auto (from `knobs.team.review`, else the tier) | Override the resolved reviewer count. On a tier whose `team.review` policy is `jury` it is reported in `assignment.warnings` instead: the panel is the review, and there are no host slots to size. |
 | `--jury` / `--no-jury` / `--jury-advisory` | flags | tier-driven | Cross-vendor jury gate control (s8). |
 | `--hotfix` | flag | off | Audited merge-window bypass at s10. |
 | `--dry-run` | flag | off | Read-only rehearsal of s0–s8. |
@@ -1820,6 +1823,29 @@ all GitHub writes on every path. Attribution always records the **effective**
 vendor+model that actually ran, never the requested-but-fell-back one; for a profile
 that is `agent:cli` plus the profile's model when set, with the profile name carried in
 the run record so the closure says *which* CLI ran, not just `cli`.
+
+### `knobs.team` — the resolved assignment
+
+`--delegate` and `--review-delegate` remain **per-run overrides of a policy**, not the
+policy itself. The policy is [`knobs.team`](configuration.md#team): implementer per issue
+role, one mandatory gate reviewer from a different vendor, reviewer seats per risk tier
+(or `jury`, when the cross-vendor panel is the review), and who applies findings. keel
+resolves it once and publishes it as `assignment` in both `keel plan --command ship --json`
+and `keel ship --json`:
+
+| field | meaning |
+| --- | --- |
+| `assignment.implementer` | seat that runs s4 — `provider`, `model`, `effort`, `kind` (`provider` \| `subagent`), and the `source` config path |
+| `assignment.gate` | the mandatory second opinion, plus `distinct_ok` (false when `distinct_from: implementer` could not be honoured) |
+| `assignment.reviewers[]` | one entry per s7 slot, each with its own `provider`/`model`/`effort` and slot letter; mirrored on `review_merge_contract.reviewers.slots` |
+| `assignment.review_panel` | `reviewers`, or `jury` when the panel *is* the review (then `reviewers.count == 0` and the jury gates) |
+| `assignment.jury` | `mode`, `min_vendors`, `panel_is_review` |
+| `assignment.fix` | who applies review findings; carries `alias: "implementer"` when it resolved through that reserved name |
+| `assignment.warnings` | flags or seats that were **not** dispatched, and unhonoured `distinct_from` |
+
+`keel plan` takes `--tier` (plus `--role` / `--delegate` / `--review-delegate`) to render
+the assignment for a tier before a diff exists; `keel ship` resolves it against the tier it
+classified from the real diff.
 
 ### `--review-comments inline|summary`
 

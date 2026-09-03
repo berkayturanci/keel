@@ -73,6 +73,13 @@ Changing the backbone is a keel-core change. Projects only ever touch layers 2�
   via `knobs.delegate_profiles` ([design](docs/proposals/api-token-delegate.md)), or keep operator-owned
   entries out of the repository entirely in the machine-level
   [provider registry](docs/keel/configuration.md#provider-registry) (`~/.keel/providers.yaml`).
+- **A team, not a delegate** — `knobs.team` states who implements (per issue role, with model
+  and reasoning effort), who gives the mandatory gate review from a *different* vendor, who
+  reviews at each risk tier — or `jury`, when the cross-vendor panel **is** the review — and who
+  applies the findings ([reference](docs/keel/configuration.md#team)). `keel plan`/`keel ship --json`
+  render it as one resolved `assignment` so every host runs the same team, and `keel validate`
+  refuses a policy keel cannot execute: an unknown provider, an effort a vendor cannot honour, or
+  a gate reviewer that is the implementer.
 - **Know which providers this machine can actually dispatch to** — `keel doctor --providers [--json]`
   probes every provider keel supports (agent CLIs, hosted APIs, local Ollama models, delegate profiles
   and registry entries) and reports `available` / `reason` / transport / capabilities / model list for

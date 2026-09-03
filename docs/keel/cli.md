@@ -50,7 +50,7 @@ keel validate projects/*.yaml                 # schema only
 keel validate .claude/project.yaml --root .   # schema + extensions (use in CI)
 ```
 
-## `keel plan <project.yaml> [--root DIR] [--command COMMAND] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--target TARGET] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--run-id ID] [--issue N] [--pull-request N] [--json]`
+## `keel plan <project.yaml> [--root DIR] [--command COMMAND] [--tier 1|2|3] [--role LABEL] [--delegate PROVIDER] [--review-delegate PROVIDER]... [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--target TARGET] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--run-id ID] [--issue N] [--pull-request N] [--json]`
 
 Render the backbone plan for a project: the fixed steps with the project's built-in gates
 and extensions slotted in. This is the dry-run view — what an actual run would execute.
@@ -1545,7 +1545,7 @@ keel window .keel/project.yaml
 # merge window OPEN  [Europe/Istanbul 07:00-01:30]
 ```
 
-## `keel ship <project.yaml> [--root DIR] [--pr N] [--compound|--profile standard|compound] [--dry-run] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--target TARGET] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--review-comments inline|summary] [--reviewers 1|2|3] [--jury|--no-jury] [--jury-advisory] [--json]`
+## `keel ship <project.yaml> [--root DIR] [--pr N] [--compound|--profile standard|compound] [--role LABEL] [--delegate PROVIDER] [--review-delegate PROVIDER]... [--dry-run] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--target TARGET] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--review-comments inline|summary] [--reviewers 1|2|3] [--jury|--no-jury] [--jury-advisory] [--json]`
 
 Run the **deterministic slice of a ship** against the current checkout and print the
 assessment: how many files changed vs. the base branch, the **risk tier** (→ reviewer
@@ -1593,9 +1593,18 @@ approval values. Approved live runs include a local
 
 Review and merge-gate parity is exposed through `review_merge_contract` in JSON output.
 `--review-comments` selects inline or summary posting, `--reviewers` overrides the
-risk-derived reviewer count, and jury precedence is `--no-jury` over `--jury` over tier-3
-auto-jury over off. `--jury-advisory` keeps an enabled jury report-only. No-jury mode still
+resolved reviewer count, and jury precedence is `--no-jury` over `--jury` over a
+`knobs.team` tier whose review policy is `jury` over tier-3 auto-jury over off. `--jury-advisory` keeps an enabled jury report-only. No-jury mode still
 preserves the reviewer, CI, tester, merge-window, merge-lock, closeout, and capture gates.
+
+The resolved [`knobs.team`](configuration.md#team) team is exposed as `assignment` in both
+`keel plan --command ship --json` and `keel ship --json`: `implementer`, `gate`,
+`reviewers[]` (per-slot `provider`/`model`/`effort`, mirrored on
+`review_merge_contract.reviewers.slots`), `review_panel`, `jury`, `fix`, and `warnings`.
+`--role` selects the `team.implement.by_role` seat, `--delegate` overrides the implementer
+for the run, and `--review-delegate` is repeatable and positional per reviewer slot.
+`keel plan --tier` resolves the assignment for a risk tier before a diff exists;
+`keel ship` resolves it against the tier it classified from the real diff.
 
 Adapters should pass the selected issue text with `--issue-title`, `--issue-body`, and
 `--issue-label` before branch/worktree creation. JSON output then includes
