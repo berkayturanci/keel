@@ -575,5 +575,40 @@ def issue_facts(issue: int | str, *, cwd: str | None = None, _run=None) -> Comma
     )
 
 
+#: Labels read in one page. GitHub's default is 30; a policy pack plus keel's
+#: attribution vocabulary exceeds that on any real repository, and a truncated
+#: listing would report labels as missing that exist.
+LABEL_PAGE_LIMIT = 500
+
+
+def label_list_argv(repo: str | None = None) -> list[str]:
+    """The exact ``gh label list`` command ``keel doctor`` runs (pure, for tests)."""
+    argv = ["gh", "label", "list", "--limit", str(LABEL_PAGE_LIMIT), "--json", "name"]
+    return argv + ["--repo", repo] if repo else argv
+
+
+def list_labels(*, repo: str | None = None, cwd: str | None = None, _run=None) -> CommandResult:
+    """List a repository's labels as JSON. Fail-soft: the caller reads ``result.ok``."""
+    return run_argv(label_list_argv(repo), cwd=cwd, **_kw(_run))
+
+
+def label_create_argv(name: str, repo: str | None = None) -> list[str]:
+    """The exact ``gh label create`` command for one label.
+
+    Built here, in the one module that owns keel's ``gh`` command shapes, so the command
+    ``keel doctor`` *prints* for an operator to paste and the command ``--fix`` *runs*
+    are the same string and cannot drift apart.
+    """
+    argv = ["gh", "label", "create", name]
+    return argv + ["--repo", repo] if repo else argv
+
+
+def create_label(
+    name: str, *, repo: str | None = None, cwd: str | None = None, _run=None
+) -> CommandResult:
+    """Create one repository label. Mutating — callers gate it on operator consent."""
+    return run_argv(label_create_argv(name, repo), cwd=cwd, **_kw(_run))
+
+
 def _kw(_run):
     return {"_run": _run} if _run is not None else {}

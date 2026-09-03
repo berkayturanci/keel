@@ -80,6 +80,45 @@ class TestGithubComments(unittest.TestCase):
             ["gh", "issue", "view", "42", "--json", "title,labels"],
         )
 
+    def test_label_list_argv_pages_past_ghs_default(self):
+        mock_runner = MagicMock(return_value=_proc('[{"name":"bug"}]'))
+        res = github.list_labels(repo="owner/repo", _run=mock_runner)
+        self.assertTrue(res.ok)
+        self.assertEqual(
+            mock_runner.call_args[0][0],
+            [
+                "gh",
+                "label",
+                "list",
+                "--limit",
+                str(github.LABEL_PAGE_LIMIT),
+                "--json",
+                "name",
+                "--repo",
+                "owner/repo",
+            ],
+        )
+
+    def test_label_list_without_a_repo_uses_the_working_directory(self):
+        self.assertEqual(
+            github.label_list_argv(),
+            ["gh", "label", "list", "--limit", str(github.LABEL_PAGE_LIMIT), "--json", "name"],
+        )
+
+    def test_create_label(self):
+        mock_runner = MagicMock(return_value=_proc(""))
+        res = github.create_label("status:done", repo="owner/repo", _run=mock_runner)
+        self.assertTrue(res.ok)
+        self.assertEqual(
+            mock_runner.call_args[0][0],
+            ["gh", "label", "create", "status:done", "--repo", "owner/repo"],
+        )
+
+    def test_create_label_without_a_repo(self):
+        self.assertEqual(
+            github.label_create_argv("role:core"), ["gh", "label", "create", "role:core"]
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

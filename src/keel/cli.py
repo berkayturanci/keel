@@ -14,6 +14,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import shutil
 import sys
 from collections.abc import Callable
@@ -4515,6 +4516,131 @@ def _doctor_python_toolchain(
     return _probe_python(lines[-1].strip(), "scripts/find_python.sh", _run=_run)
 
 
+def _doctor_policy_labels(
+    config: cfg.ProjectConfig | None,
+    *,
+    root: str = ".",
+    offline: bool = False,
+    _which=None,
+    _run=None,
+) -> dict[str, object] | None:
+    """Which declared labels exist on the project's repository (#1021)?
+
+    Thin I/O for the ``policy_labels`` check: :mod:`keel.doctor` derives the declared
+    set and the difference, this reads the repository's side of it through one
+    ``gh label list``. Fail-soft in every direction — no config, no ``owner``/``repo``,
+    ``--offline``, no ``gh`` on PATH, an unauthenticated or unreachable GitHub — each
+    returns facts carrying a ``reason`` and ``available: False``, which the pure check
+    reports as ``skipped``. It never raises and never fails a run.
+
+    ``_which`` and ``_run`` are the injectable seams, so the whole path is unit-tested
+    offline against a stubbed ``gh``.
+    """
+    if config is None:
+        return None
+    declared = doctor.declared_labels(
+        config.policy_pack, attribution=agents.attribution_labels(config)
+    )
+    repo = f"{config.owner}/{config.repo}" if config.owner and config.repo else None
+    facts: dict[str, object] = {
+        "repo": repo,
+        "declared": list(declared),
+        "existing": [],
+        "missing": [],
+        "commands": [],
+        "available": False,
+        "reason": "",
+    }
+    if repo is None:
+        facts["reason"] = "project config names no owner/repo — labels not checked"
+        return facts
+    if offline:
+        facts["reason"] = f"--offline: labels on {repo} not read"
+        return facts
+    which = shutil.which if _which is None else _which
+    if not which("gh"):
+        facts["reason"] = f"gh not found on PATH — labels on {repo} not read"
+        return facts
+    result = github.list_labels(repo=repo, cwd=root, **_kw(_run))
+    if not result.ok:
+        facts["reason"] = f"gh label list failed: {_short(result.output)}"
+        return facts
+    try:
+        existing = [str(row["name"]) for row in json.loads(result.stdout)]
+    except (ValueError, TypeError, KeyError, AttributeError):
+        facts["reason"] = f"gh label list returned unreadable JSON: {_short(result.stdout)}"
+        return facts
+    missing = doctor.missing_labels(declared, existing)
+    facts.update(
+        {
+            "available": True,
+            "existing": sorted(existing),
+            "missing": list(missing),
+            "commands": [shlex.join(github.label_create_argv(name, repo)) for name in missing],
+        }
+    )
+    return facts
+
+
+def _doctor_fix_labels(
+    args: argparse.Namespace,
+    config: cfg.ProjectConfig | None,
+    facts: dict[str, object] | None,
+    *,
+    _run=None,
+) -> int:
+    """``keel doctor --fix``: create the declared labels the repository lacks.
+
+    The one mutation ``doctor`` performs, and it is gated exactly like every other live
+    keel mutation — ``consent.build_consent_contract`` over the ``labels`` side effect,
+    refused unless the operator approved the ``github`` scope. Each label is created by
+    the same ``gh label create`` command the warning printed; a failure is reported per
+    label and makes the command exit non-zero, without stopping the rest.
+    """
+    stream = sys.stderr if args.json else sys.stdout
+    if config is None or facts is None:
+        print("--fix needs a project.yaml naming the labels to create", file=sys.stderr)
+        return 1
+    if not facts.get("available"):
+        print(f"--fix cannot read the repository's labels: {facts.get('reason')}", file=sys.stderr)
+        return 1
+    missing = [str(name) for name in facts.get("missing") or ()]
+    if not missing:
+        print(f"nothing to fix: every declared label exists on {facts.get('repo')}", file=stream)
+        return 0
+    args.live = True
+    try:
+        approved_scopes, approval_source, approval_operator, consent_mode = _approved_consent(
+            args, config, True
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    operator_consent = consent.build_consent_contract(
+        command="doctor",
+        side_effects=("labels",),
+        dry_run=False,
+        approved_scopes=approved_scopes,
+        approval_source=approval_source,
+        mode=consent_mode,
+        operator=approval_operator,
+        target=f"{facts['repo']} labels",
+    )
+    consent_ok, consent_message = consent.assert_operator_consent(operator_consent)
+    if not consent_ok:
+        print(consent_message, file=sys.stderr)
+        return 1
+    failed = 0
+    for name in missing:
+        result = github.create_label(name, repo=str(facts["repo"]), **_kw(_run))
+        if result.ok:
+            print(f"  created  {name}", file=stream)
+        else:
+            failed += 1
+            print(f"  FAILED   {name} — {_short(result.output)}", file=sys.stderr)
+    return 1 if failed else 0
+
+
 def _cmd_doctor(args: argparse.Namespace) -> int:
     config = None
     core_version = None
@@ -4536,6 +4662,9 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     # vendor, plus a single loopback request for Ollama. Cheap enough to ask for,
     # too expensive to run on every `keel doctor`.
     providers = providerprobe.collect(config) if args.providers else None
+    # One `gh label list` per run, and only with a config: the labels to check are the
+    # ones that config declares. `--offline` skips it like every other network read.
+    policy_labels = _doctor_policy_labels(config, root=args.root, offline=args.offline)
     report = doctor.run_doctor(
         installed_version=__version__,
         latest_version=latest,
@@ -4546,6 +4675,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         module_path=str(Path(__file__).resolve().parent),
         checkout_root=_doctor_checkout_root(args.root),
         python_toolchain=_doctor_python_toolchain(args.root, config),
+        policy_labels=policy_labels,
         providers=providers,
     )
     if args.json:
@@ -4555,9 +4685,10 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         if providers is not None:
             print()
             print(doctor.render_providers(providers))
+    fixed = _doctor_fix_labels(args, config, policy_labels) if args.fix else 0
     if args.strict and report["status"] == "fail":
         return 1
-    return 0
+    return fixed
 
 
 def _delegate_config(args: argparse.Namespace):
@@ -7052,7 +7183,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_doctor = sub.add_parser(
         "doctor",
-        help="read-only diagnostics: CLI/adapter version drift, orphans, core_version, state",
+        help="read-only diagnostics: CLI/adapter drift, orphans, core_version, state, "
+        "policy labels (--fix creates missing labels)",
     )
     p_doctor.add_argument(
         "path",
@@ -7076,6 +7208,28 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="probe every provider keel can dispatch to (agent CLIs, hosted APIs, "
         "local models, delegate profiles, and ~/.keel/providers.yaml)",
+    )
+    p_doctor.add_argument(
+        "--fix",
+        action="store_true",
+        help="create the declared labels missing from the repository (consent-gated)",
+    )
+    p_doctor.add_argument(
+        "--approve-scope",
+        action="append",
+        default=[],
+        help="approve a consent scope for --fix; repeat or comma-separate",
+    )
+    p_doctor.add_argument(
+        "--operator",
+        default=None,
+        help="operator identifier to include in an approved consent record",
+    )
+    p_doctor.add_argument(
+        "--consent-mode",
+        choices=consent.CONSENT_MODES,
+        default=None,
+        help="operator consent mode: explicit, standing, or agent",
     )
     p_doctor.add_argument("--json", action="store_true", help="emit structured JSON")
     p_doctor.set_defaults(func=_cmd_doctor)

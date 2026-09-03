@@ -11,7 +11,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from keel import __version__, api_delegate, cli, doctor, install
+from keel import __version__, agents, api_delegate, cli, doctor, install
+from keel import config as cfg
 
 PROJECTS = Path(__file__).resolve().parent.parent / "projects"
 SAMPLE_PROJECT = PROJECTS / "example-android.yaml"
@@ -408,6 +409,7 @@ class TestDoctorCli(unittest.TestCase):
                 "core_version",
                 "state_paths",
                 "python_toolchain",
+                "policy_labels",
             },
         )
         # --offline => latest unknown.
@@ -1138,6 +1140,417 @@ class TestDoctorProvidersCli(unittest.TestCase):
                 )
         self.assertEqual(rc, 0)
         self.assertIsNotNone(seen["config"])
+
+
+class TestDeclaredLabels(unittest.TestCase):
+    """What a policy pack declares, normalised to the names GitHub stores (#1021)."""
+
+    def test_a_bare_vocabulary_entry_is_qualified_with_its_group(self):
+        pack = {"labels": {"role": ["core"], "status": ["status:done"]}}
+        self.assertEqual(doctor.declared_labels(pack), ("role:core", "status:done"))
+
+    def test_scan_issue_labels_count_too(self):
+        pack = {"scan": {"issue_labels": {"regression": ["type:bug", "source:regression-scan"]}}}
+        self.assertEqual(doctor.declared_labels(pack), ("source:regression-scan", "type:bug"))
+
+    def test_attribution_labels_join_the_set(self):
+        self.assertEqual(
+            doctor.declared_labels({}, attribution=["agent:claude", "   ", "model:opus"]),
+            ("agent:claude", "model:opus"),
+        )
+
+    def test_duplicates_collapse_and_the_result_is_sorted(self):
+        pack = {
+            "labels": {"status": ["status:done", "done"]},
+            "scan": {"issue_labels": {"regression": ["status:done"]}},
+        }
+        self.assertEqual(
+            doctor.declared_labels(pack, attribution=["status:done"]), ("status:done",)
+        )
+
+    def test_a_malformed_pack_contributes_nothing_rather_than_raising(self):
+        # Every shape the schema does not guarantee at this depth: a pack that is not a
+        # mapping, groups that are not lists, entries that are not strings or are blank.
+        self.assertEqual(doctor.declared_labels("not-a-pack"), ())
+        self.assertEqual(doctor.declared_labels({"labels": [], "scan": []}), ())
+        self.assertEqual(
+            doctor.declared_labels(
+                {"labels": {"status": "backlog"}, "scan": {"issue_labels": ["x"]}}
+            ),
+            (),
+        )
+        self.assertEqual(
+            doctor.declared_labels({"labels": {"status": ["", 3, " ok "]}}), ("status:ok",)
+        )
+
+
+class TestMissingLabels(unittest.TestCase):
+    def test_case_only_differences_are_not_missing(self):
+        # GitHub rejects `Bug` when `bug` exists, so a case difference is not a gap.
+        self.assertEqual(
+            doctor.missing_labels(["Status:Done", "role:core"], [" status:done "]),
+            ("role:core",),
+        )
+
+    def test_nothing_missing(self):
+        self.assertEqual(doctor.missing_labels(["a"], ["a", "b"]), ())
+
+    def test_result_is_sorted_and_deduplicated(self):
+        self.assertEqual(doctor.missing_labels(["b", "a", "a"], []), ("a", "b"))
+
+
+def _labels(**overrides):
+    facts = {
+        "repo": "berkayturanci/keel",
+        "declared": ["role:core", "status:done"],
+        "existing": ["role:core", "status:done"],
+        "missing": [],
+        "commands": [],
+        "available": True,
+        "reason": "",
+    }
+    facts.update(overrides)
+    return facts
+
+
+class TestPolicyLabelsCheck(unittest.TestCase):
+    """The pure classifier over already-gathered label facts (#1021)."""
+
+    def test_without_a_config_the_check_is_skipped(self):
+        report = _doctor()
+        check = _check(report, "policy_labels")
+        self.assertEqual(check["status"], "skipped")
+        self.assertIn("no project config", check["summary"])
+        self.assertEqual(report["counts"]["skipped"], 1)
+
+    def test_a_check_that_could_not_look_is_skipped_never_failed(self):
+        facts = _labels(available=False, reason="gh not found on PATH — labels not read")
+        report = _doctor(policy_labels=facts, latest_version="1.2.3", core_version="^1.0")
+        check = _check(report, "policy_labels")
+        self.assertEqual(check["status"], "skipped")
+        self.assertIn("gh not found on PATH", check["summary"])
+        # A skipped check never speaks for the roll-up.
+        self.assertNotEqual(report["status"], "skipped")
+        self.assertEqual(report["counts"]["fail"], 0)
+
+    def test_every_declared_label_present_is_ok(self):
+        check = _check(_doctor(policy_labels=_labels()), "policy_labels")
+        self.assertEqual(check["status"], "ok")
+        self.assertIn("all 2 declared label(s) exist on berkayturanci/keel", check["summary"])
+        self.assertEqual(check["detail"]["existing"], 2)
+
+    def test_missing_labels_warn_and_carry_the_create_commands(self):
+        facts = _labels(
+            missing=["status:done"],
+            existing=["role:core"],
+            commands=["gh label create status:done --repo berkayturanci/keel"],
+        )
+        report = _doctor(policy_labels=facts)
+        check = _check(report, "policy_labels")
+        self.assertEqual(check["status"], "warn")
+        self.assertIn("1 of 2 declared label(s) missing", check["summary"])
+        self.assertIn("status:done", check["summary"])
+        self.assertIn("keel doctor --fix", check["summary"])
+        self.assertEqual(
+            check["detail"]["commands"],
+            ["gh label create status:done --repo berkayturanci/keel"],
+        )
+
+    def test_a_long_missing_list_is_summarised(self):
+        missing = [f"status:{i}" for i in range(9)]
+        check = _check(_doctor(policy_labels=_labels(missing=missing)), "policy_labels")
+        self.assertIn("status:0, status:1, status:2, status:3, status:4, +4 more", check["summary"])
+
+
+class TestRenderReportWithLabels(unittest.TestCase):
+    def test_skipped_renders_as_a_four_character_state_and_is_counted(self):
+        text = doctor.render_report(_doctor())
+        self.assertIn("SKIP  policy_labels", text)
+        self.assertIn("1 skipped", text)
+
+    def test_the_fix_commands_are_printed_under_the_check(self):
+        facts = _labels(
+            missing=["status:done"],
+            commands=["gh label create status:done --repo berkayturanci/keel"],
+        )
+        text = doctor.render_report(_doctor(policy_labels=facts))
+        self.assertIn("$ gh label create status:done --repo berkayturanci/keel", text)
+
+
+def _label_config(**overrides):
+    data = {
+        "extends": "keel",
+        "core_version": "^1.0",
+        "base_branch": "main",
+        "owner": "berkayturanci",
+        "repo": "keel",
+        "knobs": {"build_gate_cmd": "make test"},
+        "policy_pack": {"name": "keel-python", "labels": {"role": ["core"]}},
+    }
+    # A key set to None is *removed*: `owner`/`repo` are optional in the schema but
+    # must be strings when present, which is how a config with neither is built here.
+    data.update(overrides)
+    return cfg.parse_config({k: v for k, v in data.items() if v is not None})
+
+
+LABEL_LIST_OK = _ok('[{"name": "agent:claude"}, {"name": "role:core"}]')
+
+
+def _gh_on_path(name):
+    """A PATH lookup where only ``gh`` resolves — nothing else may be probed."""
+    return "/bin/gh" if name == "gh" else None
+
+
+class TestDoctorPolicyLabelFacts(unittest.TestCase):
+    """Thin I/O: read the repository's labels through one injected ``gh`` call."""
+
+    def test_no_config_means_no_facts_at_all(self):
+        self.assertIsNone(cli._doctor_policy_labels(None))
+
+    def test_a_config_without_owner_repo_is_reported_not_guessed(self):
+        facts = cli._doctor_policy_labels(_label_config(owner=None, repo=None))
+        self.assertFalse(facts["available"])
+        self.assertIn("names no owner/repo", facts["reason"])
+        self.assertIsNone(facts["repo"])
+
+    def test_offline_does_not_touch_the_network(self):
+        fake_run, calls = _fake_run()
+        facts = cli._doctor_policy_labels(
+            _label_config(), offline=True, _which=lambda _: "/bin/gh", _run=fake_run
+        )
+        self.assertFalse(facts["available"])
+        self.assertIn("--offline", facts["reason"])
+        self.assertEqual(calls, [])
+
+    def test_gh_absent_is_skipped_with_a_reason(self):
+        fake_run, calls = _fake_run()
+        facts = cli._doctor_policy_labels(_label_config(), _which=lambda _: None, _run=fake_run)
+        self.assertFalse(facts["available"])
+        self.assertIn("gh not found on PATH", facts["reason"])
+        self.assertEqual(calls, [])
+
+    def test_a_failed_gh_call_is_skipped_never_failed(self):
+        fake_run, _ = _fake_run(_failed("gh: not authenticated"))
+        facts = cli._doctor_policy_labels(
+            _label_config(), _which=lambda _: "/bin/gh", _run=fake_run
+        )
+        self.assertFalse(facts["available"])
+        self.assertIn("not authenticated", facts["reason"])
+
+    def test_unreadable_json_is_skipped(self):
+        fake_run, _ = _fake_run(_ok("not json at all"))
+        facts = cli._doctor_policy_labels(
+            _label_config(), _which=lambda _: "/bin/gh", _run=fake_run
+        )
+        self.assertFalse(facts["available"])
+        self.assertIn("unreadable JSON", facts["reason"])
+
+    def test_json_without_the_name_field_is_skipped(self):
+        fake_run, _ = _fake_run(_ok('[{"colour": "f29513"}]'))
+        facts = cli._doctor_policy_labels(
+            _label_config(), _which=lambda _: "/bin/gh", _run=fake_run
+        )
+        self.assertFalse(facts["available"])
+        self.assertIn("unreadable JSON", facts["reason"])
+
+    def test_missing_labels_come_back_with_the_exact_create_commands(self):
+        fake_run, calls = _fake_run(LABEL_LIST_OK)
+        facts = cli._doctor_policy_labels(
+            _label_config(), root="/tmp/x", _which=lambda _: "/bin/gh", _run=fake_run
+        )
+        self.assertTrue(facts["available"])
+        self.assertEqual(facts["repo"], "berkayturanci/keel")
+        self.assertIn("role:core", facts["declared"])
+        self.assertIn("agent:codex", facts["missing"])
+        self.assertNotIn("role:core", facts["missing"])
+        self.assertNotIn("agent:claude", facts["missing"])
+        self.assertIn("gh label create agent:codex --repo berkayturanci/keel", facts["commands"])
+        self.assertEqual(calls[0]["argv"][:3], ["gh", "label", "list"])
+        self.assertEqual(calls[0]["cwd"], "/tmp/x")
+
+    def test_a_repository_with_every_label_reports_none_missing(self):
+        declared = doctor.declared_labels(
+            {"labels": {"role": ["core"]}}, attribution=agents.attribution_labels(_label_config())
+        )
+        rows = json.dumps([{"name": name} for name in declared])
+        fake_run, _ = _fake_run(_ok(rows))
+        facts = cli._doctor_policy_labels(
+            _label_config(), _which=lambda _: "/bin/gh", _run=fake_run
+        )
+        self.assertEqual(facts["missing"], [])
+        self.assertEqual(facts["commands"], [])
+
+
+def _fix_args(**overrides):
+    args = {
+        "json": False,
+        "approve_scope": [],
+        "operator": None,
+        "consent_mode": None,
+        "live": False,
+    }
+    args.update(overrides)
+    return SimpleNamespace(**args)
+
+
+class TestDoctorFixLabels(unittest.TestCase):
+    """``--fix`` is the one mutation doctor performs, and it is consent-gated."""
+
+    def test_without_a_config_there_is_nothing_to_create(self):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = cli._doctor_fix_labels(_fix_args(), None, None)
+        self.assertEqual(rc, 1)
+        self.assertIn("needs a project.yaml", err.getvalue())
+
+    def test_a_check_that_could_not_look_refuses_to_fix(self):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = cli._doctor_fix_labels(
+                _fix_args(), _label_config(), _labels(available=False, reason="gh not found")
+            )
+        self.assertEqual(rc, 1)
+        self.assertIn("gh not found", err.getvalue())
+
+    def test_nothing_missing_is_a_no_op(self):
+        fake_run, calls = _fake_run()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = cli._doctor_fix_labels(_fix_args(), _label_config(), _labels(), _run=fake_run)
+        self.assertEqual(rc, 0)
+        self.assertIn("nothing to fix", out.getvalue())
+        self.assertEqual(calls, [])
+
+    def test_creation_is_refused_without_an_approved_github_scope(self):
+        fake_run, calls = _fake_run()
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = cli._doctor_fix_labels(
+                _fix_args(), _label_config(), _labels(missing=["role:core"]), _run=fake_run
+            )
+        self.assertEqual(rc, 1)
+        self.assertIn("operator consent required", err.getvalue())
+        self.assertEqual(calls, [])  # nothing was created
+
+    def test_an_approved_scope_creates_each_missing_label(self):
+        fake_run, calls = _fake_run(_ok(""), _ok(""))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = cli._doctor_fix_labels(
+                _fix_args(approve_scope=["github"], operator="berkay"),
+                _label_config(),
+                _labels(missing=["agent:codex", "role:core"]),
+                _run=fake_run,
+            )
+        self.assertEqual(rc, 0)
+        self.assertEqual(
+            [call["argv"] for call in calls],
+            [
+                ["gh", "label", "create", "agent:codex", "--repo", "berkayturanci/keel"],
+                ["gh", "label", "create", "role:core", "--repo", "berkayturanci/keel"],
+            ],
+        )
+        self.assertIn("created  role:core", out.getvalue())
+
+    def test_a_failed_creation_is_reported_per_label_and_exits_non_zero(self):
+        fake_run, calls = _fake_run(_failed("label already exists"), _ok(""))
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = cli._doctor_fix_labels(
+                _fix_args(approve_scope=["github"], operator="berkay"),
+                _label_config(),
+                _labels(missing=["agent:codex", "role:core"]),
+                _run=fake_run,
+            )
+        self.assertEqual(rc, 1)
+        self.assertEqual(len(calls), 2)  # one failure does not stop the rest
+        self.assertIn("FAILED   agent:codex", err.getvalue())
+        self.assertIn("created  role:core", out.getvalue())
+
+    def test_a_broken_standing_consent_record_is_an_error_not_a_traceback(self):
+        fake_run, calls = _fake_run()
+        out, err = io.StringIO(), io.StringIO()
+        env = {"KEEL_APPROVE_SCOPE": "github", "KEEL_CONSENT_MODE": "standing"}
+        with patch.dict(cli.os.environ, env, clear=False):
+            cli.os.environ.pop("KEEL_OPERATOR", None)
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                rc = cli._doctor_fix_labels(
+                    _fix_args(consent_mode="standing"),
+                    _label_config(),
+                    _labels(missing=["role:core"]),
+                    _run=fake_run,
+                )
+        self.assertEqual(rc, 1)
+        self.assertIn("KEEL_OPERATOR is required", err.getvalue())
+        self.assertEqual(calls, [])
+
+    def test_json_output_keeps_the_creation_log_off_stdout(self):
+        fake_run, _ = _fake_run(_ok(""))
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = cli._doctor_fix_labels(
+                _fix_args(json=True, approve_scope=["github"], operator="berkay"),
+                _label_config(),
+                _labels(missing=["role:core"]),
+                _run=fake_run,
+            )
+        self.assertEqual(rc, 0)
+        self.assertEqual(out.getvalue(), "")
+        self.assertIn("created  role:core", err.getvalue())
+
+
+class TestDoctorLabelsCli(unittest.TestCase):
+    """`keel doctor` wires the label check in without touching this machine."""
+
+    def setUp(self):
+        self._real_fetch = cli._fetch_latest_pypi_version
+        cli._fetch_latest_pypi_version = lambda **kw: __version__
+
+    def tearDown(self):
+        cli._fetch_latest_pypi_version = self._real_fetch
+
+    def test_offline_with_a_config_skips_the_label_read(self):
+        with tempfile.TemporaryDirectory() as d:
+            with patch.object(cli.github, "list_labels") as list_labels:
+                rc, out, _ = run(
+                    ["doctor", str(SAMPLE_PROJECT), "--root", d, "--offline", "--json"]
+                )
+        list_labels.assert_not_called()
+        self.assertEqual(rc, 0)
+        check = _check(json.loads(out), "policy_labels")
+        self.assertEqual(check["status"], "skipped")
+
+    def test_a_missing_label_warns_with_a_runnable_command(self):
+        listing = cli.github.CommandResult(
+            True, 0, "", stdout=json.dumps([{"name": "status:backlog"}])
+        )
+        with tempfile.TemporaryDirectory() as d:
+            with patch.object(cli.shutil, "which", _gh_on_path):
+                with patch.object(cli.github, "list_labels", return_value=listing) as list_labels:
+                    rc, out, _ = run(["doctor", str(SAMPLE_PROJECT), "--root", d])
+        self.assertEqual(rc, 0)  # advisory without --strict
+        self.assertEqual(list_labels.call_args.kwargs["repo"], "berkayturanci/example-android")
+        self.assertIn("WARN  policy_labels", out)
+        self.assertIn("$ gh label create ", out)
+        self.assertIn("--repo berkayturanci/example-android", out)
+
+    def test_a_label_warning_never_fails_a_strict_run(self):
+        listing = cli.github.CommandResult(True, 0, "", stdout="[]")
+        with tempfile.TemporaryDirectory() as d:
+            with patch.object(cli.shutil, "which", _gh_on_path):
+                with patch.object(cli.github, "list_labels", return_value=listing):
+                    rc, out, _ = run(
+                        ["doctor", str(SAMPLE_PROJECT), "--root", d, "--strict", "--json"]
+                    )
+        report = json.loads(out)
+        self.assertEqual(_check(report, "policy_labels")["status"], "warn")
+        self.assertEqual(rc, 0)
+
+    def test_fix_without_a_config_exits_non_zero(self):
+        with tempfile.TemporaryDirectory() as d:
+            rc, _, err = run(["doctor", "--root", d, "--offline", "--fix"])
+        self.assertEqual(rc, 1)
+        self.assertIn("needs a project.yaml", err)
 
 
 if __name__ == "__main__":

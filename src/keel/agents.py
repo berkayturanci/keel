@@ -172,6 +172,35 @@ def model_label(model: str) -> str | None:
     return f"model:{base}" if base else None
 
 
+def attribution_labels(config: ProjectConfig | None = None) -> tuple[str, ...]:
+    """Every ``agent:*`` / ``model:*`` label keel's attribution vocabulary can write.
+
+    Sorted and deduplicated, for ``keel doctor``'s ``policy_labels`` check (#1021): a
+    label keel applies must already exist on the repository or GitHub rejects the call,
+    and the attribution pair is applied by name just like the policy pack's own
+    vocabularies.
+
+    The set is the built-in vendors plus the host default and — when a config is given —
+    each ``knobs.delegate_profiles`` entry's **vendor** (``agent:cli``, the label
+    :func:`profile_attribution` writes; the profile *name* goes in ``delegate_profile``,
+    never in a label) and the model that entry pins.
+
+    ``model:*`` is only enumerable that far. The effective model can arrive from
+    ``--delegate <vendor>:<model>`` or a ``delegate-model:`` issue label, so the labels
+    minted from those are unbounded and no check can list them ahead of time.
+    """
+    vendors = {*BUILTIN_DELEGATE_VENDORS, HOST_DEFAULT}
+    models: set[str] = set()
+    if config is not None:
+        for profile in config.knobs.delegate_profiles.values():
+            vendors.add(profile.vendor)
+            if profile.model:
+                models.add(profile.model)
+    labels = {agent_label(vendor) for vendor in vendors}
+    labels.update(label for label in map(model_label, models) if label)
+    return tuple(sorted(labels))
+
+
 def attribution(vendor: str, model: str | None = None) -> dict[str, str | None]:
     """Resolve the effective attribution for an implementer/reviewer.
 
