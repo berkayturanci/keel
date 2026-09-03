@@ -1296,6 +1296,138 @@ for the per-transport rules.
 By default `doctor` is advisory and exits `0` (unless the command itself errors, e.g. a
 missing or invalid config). Pass `--strict` to exit non-zero when any check is `fail`.
 
+<a id="keel-delegate"></a>
+
+## `keel delegate run --provider TOKEN --role ROLE --prompt-file FILE [--cwd DIR] [--timeout S] [--effort low|medium|high] [--model TOKEN] [--root DIR] [--project project.yaml] [--registry FILE] [--run-id ID] [--detach] [--json]`
+
+Dispatch **one** delegate and print the JSON return contract. This is the single executor
+for every transport keel supports — the three built-in agent CLIs, a
+`knobs.delegate_profiles` entry, a machine-level `~/.keel/providers.yaml` entry, a hosted
+vendor API, an OpenAI-compatible endpoint, and a local Ollama model. Before it existed the
+argv shapes, the prompt delivery, the endpoint and the return contract lived only as prose
+in the adapters, so every host agent re-implemented them and the copies drifted.
+
+```bash
+# a tool-enabled implementer in a worktree
+keel delegate run --provider agy:gemini-3.8-flash --role implement \
+  --prompt-file brief.md --cwd ../wt-1012 --timeout 3600
+
+# a read-only reviewer, one hosted API call
+keel delegate run --provider anthropic-api:claude-opus-4-5 --role review \
+  --prompt-file rubric.md --effort high
+
+# a configured OpenAI-compatible profile — exactly one HTTP call through api_delegate
+keel delegate run --provider openrouter --role review \
+  --prompt-file rubric.md --project .keel/project.yaml
+```
+
+`--provider` takes a provider **name** or `name:model`. Resolution order is **project
+profile > machine registry > built-in vendor**. `--model` overrides the model half; either
+way the token is validated (`[A-Za-z0-9._-]`, no leading dash) before it can reach an argv
+or a URL path, because it can arrive from a `delegate-model:` issue label.
+
+`--role` selects the invocation, not just a label:
+
+| role | invocation |
+| --- | --- |
+| `review` · `gate` · `chair` | read-only / findings-only: the vendor's documented read-only mode, or a profile's `review_args` |
+| `implement` · `fix` | tool-enabled: the vendor's network- and write-enabled mode |
+
+For the three built-in CLIs the read-only invocation carries no write-enabling flag, and
+that is asserted per vendor in `tests/test_delegate.py`. keel cannot *enforce* read-only
+for an arbitrary binary: a profile or registry entry with no `review_args` runs with its
+own defaults and the result carries a `warnings` entry saying so.
+
+`--effort` is translated into each vendor's own spelling — a model suffix for `agy`,
+`thinking.budget_tokens` for `anthropic-api` (with `max_tokens` raised above the budget),
+`reasoning_effort` for `openai-api` and OpenAI-compatible endpoints,
+`generationConfig.thinkingConfig.thinkingBudget` for `google-api`. A provider that cannot
+express effort returns `effort_applied: false` with a warning rather than silently running
+at its default.
+
+The prompt is read from `--prompt-file` and delivered on the delegate's **stdin**, never on
+its argv: a prompt carries the diff and the brief, and an argv is world-readable in `ps`
+for the life of the process. The one exception is a profile that declares
+`prompt_mode: arg`, where the operator has said the CLI requires it.
+
+### The return contract
+
+```json
+{
+  "schema_version": "keel.delegate-run.v1",
+  "ok": true,
+  "provider": "agy", "vendor": "agy", "model": "gemini-3.8-flash-high",
+  "role": "implement", "transport": "cli",
+  "text": "…the delegate's output…",
+  "exit_code": 0, "duration_s": 412.6, "timed_out": false,
+  "error_code": null, "error": null,
+  "attribution": { "agent_label": "agent:agy", "model_label": "model:gemini-3", "system": "agy:gemini-3.8-flash-high" },
+  "effort_applied": true,
+  "warnings": []
+}
+```
+
+`transport` is one of `cli` (a built-in agent CLI), `profile` (any other configured
+binary), `api` (a hosted or OpenAI-compatible endpoint) or `ollama`. `exit_code` is `null`
+for the HTTP transports — there is no process, and a synthetic `1` would let a caller
+mistake a refused API key for a crashed CLI. `attribution` is computed by
+`keel.agents`, so the labels a caller writes cannot drift from what core recorded.
+
+Every failure is **fail-soft**: `ok: false` with a machine-readable `error_code`, never a
+traceback. Branch on the code, never on the message.
+
+| `error_code` | meaning |
+| --- | --- |
+| `unknown-provider` · `bad-provider` | the `--provider` token names nothing keel can resolve |
+| `bad-role` · `bad-effort` · `bad-timeout` | an argument keel refuses |
+| `bad-model` · `no-model` | the model token is unsafe, or the transport needs one and has none |
+| `no-prompt` | `--prompt-file` is missing, unreadable, or empty |
+| `missing-binary` | the CLI is not installed |
+| `nonzero-exit` · `empty-output` | the CLI ran and produced a failure, or nothing |
+| `timeout` | the wall-clock limit killed it (`timed_out: true`) |
+| `rate-limit` | HTTP 429, or a CLI that said it was out of quota |
+| `no-key` · `auth` · `http` · `network` · `bad-response` | the HTTP transports' vocabulary |
+
+The **policy** around those codes stays with the caller (ship s4/s7), not here: this
+command never retries, never falls back to the host agent, and never consults the risk
+tier. The no-retry-on-`rate-limit` rule and the refuse-on-tier-3 rule are the
+orchestrator's.
+
+Exit status is `0` when `ok` is true, `1` otherwise. `--json` is accepted for symmetry with
+every other keel command; the contract is JSON either way.
+
+## `keel delegate run … --detach` / `keel delegate wait RUN_ID [--timeout S]` / `keel delegate status`
+
+A delegated implementation runs for tens of minutes; a host LLM's turn does not. `--detach`
+starts the same run as a background child in its own session and returns immediately:
+
+```bash
+keel delegate run --provider agy:gemini-3.8-flash --role implement \
+  --prompt-file brief.md --cwd ../wt-1012 --detach --run-id impl-1012 --root .
+keel delegate status --root .
+keel delegate wait impl-1012 --root . --timeout 3600
+```
+
+The state file `.keel/state/delegate/<run-id>.json` is **authoritative** — `{run_id, pid,
+started_at, status: running|done, result}`, alongside `<run-id>.out` holding the child's
+stdout and stderr. The parent writes the `running` record (it is the one that knows the
+pid) and the child overwrites it with `done` plus the result. Because the file is the
+authority and the pid is never consulted, the result survives the caller exiting, the
+session ending, and a reboot. `.keel/state/` is gitignored, so nothing here is ever
+committed.
+
+`keel delegate wait` prints the same JSON contract as a foreground run. It exits `1` when
+the run failed, when it did not finish within `--timeout`, and — failing closed — when the
+run id is unknown (`unknown-run`), so a mistyped id is an immediate error rather than a
+wait that can only time out. `keel delegate status` lists the runs under the state
+directory, as a table or, with `--json`, as a document. A run id may contain only letters,
+digits, `.`, `_` and `-`: it becomes a file name, and anything else is refused rather than
+normalized.
+
+**This is the primitive an orchestrating agent uses instead of a sleep loop.** A polling
+loop burns the host's context window and cannot survive its turn ending — which is how a
+live run finished three reviewers and posted none of their verdicts.
+
 ## `keel project-commands <project.yaml> [--json]`
 
 List project-provided commands declared by `policy_pack.project_commands` or the older

@@ -289,97 +289,101 @@ Resolve the implementer: `implementer_agents` by the issue's role label, **overr
 
 - **Host / Claude-class subagent** — pick the role agent from `implementer_agents` by the
   issue's labels/paths; run the standard implement brief.
-- **Delegated CLI implementer** (`codex exec`, `agy --print`, an Ollama model) — write the
-  prompt to a temp file and pipe via **stdin** (positional-arg passing hangs some CLIs);
-  run in the project root with the vendor's **network-enabled** mode so it can reach the
-  GitHub API (sandbox-blocking flags break PR creation). Pass any per-issue model override
-  from a `delegate-model:<name>` label. A bare local model (Ollama) **cannot run tools** —
-  there the orchestrator does every git/PR step itself and delegates only code generation
-  (generate a unified diff against a size-limited slice of the in-scope files, apply it,
-  run gates, then commit/push/open the PR); retry up to 2 times on a bad/unapplicable
-  diff, then fall back. **Local-model implementers are refused on tier-3** (high-risk,
-  per `tier3_globs`; pre-classified from the issue's target paths/labels before the diff
-  exists, ambiguous ⇒ treat as tier-2 and let s7 gate) — fall back to `HOST_AGENT` there.
-- **Generic CLI implementer** (a `knobs.delegate_profiles` name, e.g. `--delegate cursor`)
-  — resolve the delegate value against `knobs.delegate_profiles` **after** the built-in
-  vendors above: built-ins always win, and a profile that shadows a built-in name is a
-  `keel validate` error, never a silent override. Run the profile's `command` from the
-  project root under the **same no-tools contract as the local-model path** — the
-  orchestrator does every git/PR step itself and asks the CLI only for code generation
-  (unified diff against a size-limited slice of the in-scope files, apply it, run gates,
-  then commit/push/open the PR). Deliver the prompt per the profile's `prompt_mode`:
-  **`stdin`** (the default) writes the prompt to a temp file and pipes it in
-  (positional-arg passing hangs some CLIs), **`arg`** passes it as a positional argument
-  for CLIs whose usage requires it (`cursor-agent`'s is `agent [options] [command]
-  [prompt...]`). Model precedence: a per-run `--delegate <profile>:<model>` wins, else the
-  profile's `model`, else the CLI's own default — so one profile serves a whole family
-  (`--delegate cursor:cursor-grok-4.5-high` vs `--delegate cursor:composer-2.5`) without
-  editing config per run. Pass the effective model as **`<model_arg> <model>`**, where
-  `model_arg` is the profile's (default `--model`) — set it for a CLI that spells model
-  selection differently, because nothing guarantees the flag across arbitrary CLIs. When
-  no model is effective, pass neither, and attribute no model rather than the one that
-  was merely asked for. **Validate the model token before it reaches argv** (`keel`'s
-  `agents.is_safe_model_token`: `[A-Za-z0-9._-]`, no leading dash): unlike the profile's
-  `command`, the model can arrive from a `delegate-model:<name>` issue label, which is a
-  lower-trust source — refuse the run rather than escaping it. Retry up to 2 times on a
-  bad/unapplicable diff, then fall soft
-  back to `HOST_AGENT`. **Treat any verification a delegate reports as unperformed until
-  you reproduce it.** Not just external references — a delegate emitting the *artefact* of
-  a check instead of the check is one failure mode with several costumes, all observed:
-  specific-looking citations (registry reference numbers, archive snapshot ids) stated as
-  verified when nothing verified them; a fabricated `keel.review-verdict.v1` marker written
-  into a shipped file; "tests pass" with no run behind it. Re-run the check yourself, or
-  record the claim as unverified — never promote it to a fact in a commit, a comment, or a
-  PR body because a delegate asserted it. **Generic-CLI implementers are refused on
-  tier-3**, same rule and fallback as local models — an unvetted CLI is not a
-  high-risk-path implementer. No new
-  consent scope: this is the `shell`/subprocess surface `codex`/`agy` already use, and
-  the profile's `command` is operator-authored config exactly like `build_gate_cmd` —
-  never take it from PR content or agent output. Attribution: run
-  `keel attribution --vendor cli --profile <profile> --config .keel/project.yaml --json`
-  with the **effective** model (`--model` — the per-run `--delegate <profile>:<model>` if
-  given, else the profile's own `model`, which the command falls back to) and use the
-  returned labels verbatim. The record carries the profile name under
+- **Any non-host implementer — one command.** `keel delegate run` is the executor for
+  every transport; **never** hand-build a delegate invocation. It resolves the provider
+  (built-in vendor, `knobs.delegate_profiles` entry, or a machine-level
+  `~/.keel/providers.yaml` entry), picks the vendor's flags for the role, delivers the
+  prompt off the process list, applies `--effort` in the vendor's own spelling, and
+  returns one JSON document:
+
+  ```bash
+  keel delegate run --provider "$DELEGATE" --role implement \
+    --prompt-file "$BRIEF" --cwd "$WORKTREE" --timeout 3600 --project .keel/project.yaml
+  ```
+
+  ```json
+  { "ok": true, "provider": "…", "vendor": "…", "model": "…", "role": "implement",
+    "transport": "cli|profile|api|ollama", "text": "…", "exit_code": 0,
+    "duration_s": 42.5, "timed_out": false, "error_code": null, "error": null,
+    "attribution": { "agent_label": "…", "model_label": "…", "system": "…" },
+    "effort_applied": true, "warnings": [] }
+  ```
+
+  Parse that document; do not re-derive any of it. `attribution` is computed by core, so
+  the labels you write and the ledger's `actors.implementer` can no longer drift from what
+  actually ran. `warnings` is not decoration — an entry there says a flag you asked for
+  did not take effect. On `ok: false`, branch on `error_code`
+  (`missing-binary` · `nonzero-exit` · `timeout` · `rate-limit` · `no-key` · `auth` ·
+  `http` · `network` · `bad-response` · `unknown-provider` · `bad-model` · `no-model` ·
+  `no-prompt` · `empty-output`) — never on the message text.
+- **Long runs detach.** A delegated implementation outlives your turn. Start it with
+  `--detach`, which prints a `run_id` and returns immediately, then block on it:
+
+  ```bash
+  keel delegate run --provider "$DELEGATE" --role implement --prompt-file "$BRIEF" \
+    --cwd "$WORKTREE" --detach --run-id "$RUN_ID" --root .
+  keel delegate wait "$RUN_ID" --root . --timeout 3600
+  ```
+
+  `keel delegate wait` prints the same JSON contract; `keel delegate status` lists live
+  runs. **Do not write a sleep-and-poll loop.** The state file under
+  `.keel/state/delegate/` is authoritative, so the result survives your turn ending, the
+  session ending, and the machine rebooting — which a loop in your own context does not.
+  `wait` on an unknown run id fails closed with `unknown-run`.
+- **What still belongs to you, not to the command.** `keel delegate run` is a transport:
+  it never retries, never falls back, and never consults the risk tier. Those are the
+  orchestrator's rules and they are unchanged:
+  - **Retry at most twice** on a bad or unapplicable diff, then fall back to `HOST_AGENT`
+    and log the reason.
+  - **Never retry `rate-limit`** — quota resets slowly. Fail over immediately.
+  - **Refuse a non-tool implementer on tier-3** (high-risk, per `tier3_globs`;
+    pre-classified from the issue's target paths/labels before the diff exists, ambiguous
+    ⇒ treat as tier-2 and let s7 gate). A provider whose `transport` is `api`, `ollama` or
+    a generic `profile` **cannot run tools**: there the orchestrator does every git/PR
+    step itself and delegates only code generation (generate a unified diff against a
+    size-limited slice of the in-scope files, apply it, run gates, then commit/push/open
+    the PR). Fall back to `HOST_AGENT` on tier-3.
+  - **Reading an API key is `secret_access`**, so the run's approved scope must include
+    `secrets` — without it, resolve to `HOST_AGENT` before invoking a hosted provider.
+  - A local-model or generic-CLI harness that already created a worktree must remove it
+    before the host path recreates one at the same path (same obligation under
+    `--dry-run` if it created one).
+  - **Treat any verification a delegate reports as unperformed until you reproduce it.**
+    Not just external references — a delegate emitting the *artefact* of a check instead
+    of the check is one failure mode with several costumes, all observed: specific-looking
+    citations (registry reference numbers, archive snapshot ids) stated as verified when
+    nothing verified them; a fabricated `keel.review-verdict.v1` marker written into a
+    shipped file; "tests pass" with no run behind it. Re-run the check yourself, or record
+    the claim as unverified — never promote it to a fact in a commit, a comment, or a PR
+    body because a delegate asserted it.
+- **Model and effort selection.** `--provider <name>:<model>` or `--model <token>` picks
+  the model; a per-run choice wins over the profile's or the registry entry's, and core
+  validates the token (`agents.is_safe_model_token`) before it can reach an argv or a URL
+  path — a `delegate-model:<name>` issue label is a lower-trust source than config, so an
+  unsafe value is refused rather than escaped. `--effort low|medium|high` is translated
+  per vendor; a provider that cannot express it returns `effort_applied: false` with a
+  warning instead of silently running at its default.
+- **Configured providers.** A `knobs.delegate_profiles` entry (`vendor: cli` or
+  `vendor: openai-compatible`) and a `~/.keel/providers.yaml` entry are resolved by name,
+  precedence **project profile > registry > built-in**; a profile may not shadow a
+  built-in vendor and that is a `keel validate` error, never a silent override. Two rules
+  hold for an `openai-compatible` endpoint, because config is the surface an attacker
+  would influence: **(1) the endpoint is loopback-only by default** — a non-loopback host,
+  including cloud-metadata addresses like `169.254.169.254`, is a `keel validate` error
+  unless `KEEL_ALLOW_REMOTE_ENDPOINT` is set **in the environment** (env-only on purpose:
+  someone who can edit `project.yaml` must not be able to grant it), and non-`http(s)`
+  schemes are refused outright; **(2) `api_key_env` is a variable *name*, never a key** —
+  profile config is hashed into `config_hash`, so a pasted key would be published.
+- **Attribution comes back in the result.** Record `attribution.agent_label` and
+  `attribution.model_label` as PR labels and `attribution.system` as `IMPLEMENTER_SYSTEM`.
+  For a configured provider the document also carries `delegate_profile` — the entry's
+  name, so the s11 closure can say *which* CLI ran rather than just `cli`. Record it under
   **`delegate_profile`**, never `profile`: the run record's `profile` field already means
-  the workflow profile (`standard`/`compound`), and writing the CLI's name there would
-  overwrite it. That is what makes the s11 closure say *which* CLI ran, not just `cli`.
-  **Write the ledger's `actors.implementer` as the vendor string `cli` (or
-  `cli:<effective-model>`), never the profile name.** The evidence gate splits
-  `actors.implementer` on the first colon and cross-checks the result against the PR's
-  `agent:*` labels, so recording `cursor` there against an `agent:cli` label reads as a
-  vendor contradiction and blocks the merge. The profile name goes in `delegate_profile`,
-  as above, which is what the closure comment reads.
-- **OpenAI-compatible implementer** (a `knobs.delegate_profiles` name whose
-  `vendor: openai-compatible`) — the same no-tools contract as the hosted-API path, with
-  the endpoint and key-env **named by config** instead of hardcoded, so one profile
-  reaches OpenRouter, Groq, DeepSeek, Together, LiteLLM or a local vLLM. Two rules that
-  do not apply to any other vendor, because config is the surface an attacker would
-  influence:
-  **(1) the endpoint is loopback-only by default.** A non-loopback host — including
-  internal and cloud-metadata addresses like `169.254.169.254` — is a `keel validate`
-  error unless `KEEL_ALLOW_REMOTE_ENDPOINT` is set **in the environment**. The opt-in is
-  env-only on purpose: someone who can edit `project.yaml` must not be able to grant it.
-  Non-`http(s)` schemes are refused outright, which blocks `file://`/`ftp://`.
-  **(2) `api_key_env` is a variable *name*, never a key.** Profile config is serialised
-  into the command contract and hashed into `config_hash`, so a pasted key would be
-  published; keel rejects a value that is not shaped like an env var name. The value is
-  read from the environment at dispatch under the same `secrets` scope as every other
-  hosted delegate.
-- **Hosted-API implementer** (`anthropic-api:MODEL`, `openai-api:MODEL`, `google-api:MODEL`) — the same
-  no-tools contract as the local-model path with the endpoint swapped: the orchestrator
-  does every git/PR step itself and requests only code generation via
-  `keel`'s `api_delegate` wrapper (one stdlib HTTP call per attempt against the vendor's
-  API, keyed by `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/`GEMINI_API_KEY` from the
-  environment). Same retry-×2-then-fall-back rule; **never retry HTTP 429 /
-  rate-limit** — fail soft and fall back immediately. `google-api` is the one vendor
-  whose URL carries the **model in its path**, so an unsafe model id there is refused
-  before any request (`bad-model`) rather than escaped — treat a `delegate-model:`
-  label as untrusted for that vendor. It also answers an invalid key with HTTP **400**,
-  not 401, which keel maps to `auth` so a mistyped key reads as a key problem. Reading the token is `secret_access`, so the run's approved
-  scope must include `secrets` — without it, resolve to `HOST_AGENT` before any key is
-  read. **Hosted-API implementers are refused on tier-3**, same rule and fallback as
-  local models. Attribution: `keel attribution --vendor anthropic-api --model MODEL`,
-  same as every other path — never compose `agent:`/`model:` by hand.
+  the workflow profile (`standard`/`compound`). **Write the ledger's `actors.implementer`
+  as `attribution.system`** (the vendor string, e.g. `cli:<model>`), never the profile
+  name: the evidence gate splits it on the first colon and cross-checks the result against
+  the PR's `agent:*` labels, so recording `cursor` there against an `agent:cli` label
+  reads as a vendor contradiction and blocks the merge.
 
 Every implementer (delegated or not) receives the same brief plus:
 - The approved `operator_consent.delegated_agent_scope`. If the implementer attempts work
@@ -510,22 +514,32 @@ abort the session** (counter resets after any merge).
 
 ### s7 review *(agent)* + slot `reviewers`
 Run **N reviewers** (N from the s5 tier, or `--reviewers`), the host or `--review-delegate`
-vendor. A non-host reviewer vendor runs **read-only / findings-only** (the vendor's
-read-only mode, local endpoint, or — for `anthropic-api:`/`openai-api:`/`google-api:` — one hosted-API
-call via the `api_delegate` wrapper: diff + rubric in, structured verdict out; same
-`secrets`-scope and no-retry-on-429 rules as s4, no tier restriction since review output
-is advisory, not a mutation), the orchestrator still posts — the **orchestrator owns
-all writes**; reviewers never call a GitHub write API.
-A **`knobs.delegate_profiles` reviewer is the one case keel cannot make read-only for
-you.** Every other non-host vendor has a mechanism behind that promise — a vendor
-read-only flag, a local endpoint, a single hosted-API call — but a profile is an
-arbitrary binary, and the same `command` serves both roles. Its `args` typically carry
-the *implementer's* write-enabling flags (`cursor-agent`'s `--force` approves edits
-non-interactively), so reusing them for review hands a reviewer permission to edit the
-checkout. Invoke a profile reviewer with **`review_args`** when set, else `args`
-(`DelegateProfile.role_args(review=True)`), and set `review_args` to a read-only
-invocation for any profile used as a reviewer. keel validates neither — this is
-operator-configured, not enforced. Treat a profile reviewer's diff as advisory and
+vendor. A non-host reviewer runs through the **same one command as s4**, with the role
+that makes it read-only — `--role review` (or `gate` / `chair`):
+
+```bash
+keel delegate run --provider "$REVIEW_DELEGATE" --role review \
+  --prompt-file "$RUBRIC_AND_DIFF" --cwd . --timeout 900 --project .keel/project.yaml
+```
+
+Read the same JSON contract s4 documents: `text` is the verdict, `attribution` is what
+you record per reviewer, `error_code` is what you branch on. Long panels detach exactly
+as s4 does — `--detach` per reviewer, then `keel delegate wait <run-id>` on each; never a
+sleep loop. The `secrets`-scope and no-retry-on-`rate-limit` rules are unchanged; there
+is **no tier restriction**, because review output is advisory, not a mutation. The
+orchestrator still posts — the **orchestrator owns all writes**; reviewers never call a
+GitHub write API.
+
+The read-only role is a policy core enforces where it can and reports where it cannot.
+For the three built-in CLI vendors the invocation carries the vendor's documented
+read-only mechanism and no write-enabling flag, which is asserted per vendor in keel's own
+tests. A **`knobs.delegate_profiles` (or registry) reviewer is the one case keel cannot
+make read-only for you**: a profile is an arbitrary binary, the same `command` serves both
+roles, and its `args` typically carry the *implementer's* write-enabling flags
+(`cursor-agent`'s `--force` approves edits non-interactively). `keel delegate run` uses the
+entry's **`review_args`** for a read-only role and returns a **warning** naming the
+provider when none is configured — set `review_args` to a read-only invocation for any
+profile used as a reviewer, treat that reviewer's output as advisory, and
 **re-check the worktree is clean afterwards** rather than assuming it was untouched.
 Spawn all reviewers in a **single
 Agent message** so they run concurrently; each gets a fresh codename, the PR head SHA, its
@@ -924,4 +938,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=claude command=ship keel_version=1.19.3 source_sha256=8ea59a6849b152eec996eb3dac18faf3cd63051ce96e088adba21f8612b16527 generated_sha256=8ea59a6849b152eec996eb3dac18faf3cd63051ce96e088adba21f8612b16527 -->
+<!-- keel-generated: surface=claude command=ship keel_version=1.19.3 source_sha256=ec10545a7e33b533c908c1f7ebbb51ee08d0484caf94e559bb461a15b4657d22 generated_sha256=ec10545a7e33b533c908c1f7ebbb51ee08d0484caf94e559bb461a15b4657d22 -->

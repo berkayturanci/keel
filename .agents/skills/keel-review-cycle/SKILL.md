@@ -107,6 +107,15 @@ reviewer count; reviewers draw their full rubric (severity vocabulary, return fo
 PR-head-SHA verification) from the canonical reviewer rubric, not from inline heuristics
 here.
 
+A non-host reviewer is dispatched with `keel delegate run --role review` — the one
+executor for every transport, which picks the vendor's read-only invocation for that role
+and returns the JSON contract ship.md s4 documents (`text` is the verdict, `attribution`
+is what you record per reviewer, `error_code` is what you branch on). Do not hand-build
+the invocation, and do not read a vendor's flags out of this file. For a panel that will
+outlive your turn, start each reviewer with `--detach --run-id <id>` and collect them with
+`keel delegate wait <id>`: a sleep-and-poll loop cannot survive the turn ending, and the
+state file under `.keel/state/delegate/` can.
+
 Each reviewer prompt MUST carry:
 
 - The **reviewer stance** from the canonical rubric (ship.md s7): refute rather than
@@ -276,4 +285,4 @@ Do every read plus `keel validate` / `keel plan` / `keel run-gates` and the revi
 but redirect every state-changing `gh` write (comments, label) to a logged
 `DRY-RUN: <action>` line.
 
-<!-- keel-generated: surface=skills command=review-cycle keel_version=1.19.3 source_sha256=3cf17718a03ace58ae14e87219334ee98486ae1148bba39d4514769e50212be8 generated_sha256=c611030924b45fd5df3dc15e150c1e2f381eb8d50e9a5328183331d7debdffe8 -->
+<!-- keel-generated: surface=skills command=review-cycle keel_version=1.19.3 source_sha256=ed08a90250a1b48a19a4532f4850a778eb9892363fc6bd0b89386455c12d2f6f generated_sha256=841b46bffb3c44876744a5924ade5969c53397169c225f954cd002aeda7dbb68 -->
