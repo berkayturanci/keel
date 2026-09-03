@@ -47,6 +47,51 @@ Manual `workflow_dispatch` runs also accept an optional `deferral` input. Use it
 an explicitly recorded evidence deferral (`review`, `jury`, a concrete evidence id, or
 `all`); normal PR runs remain fail-closed.
 
+### Which run is authoritative
+
+Two triggers are routinely in flight over one pull request at once — `keel review --live`
+posts its verdict comments seconds after the push that started the assessment — so the
+`concurrency` group carries the **event name**: `keel-ship-pull_request-<n>`,
+`keel-ship-issue_comment-<n>`, `keel-ship-workflow_dispatch-<n>`. (A `workflow_dispatch`
+with no `pr` input has no number to key on and falls back to the ref, so it groups as
+`keel-ship-workflow_dispatch-refs/heads/main`.) Runs of the *same* event still cancel their
+predecessor (`cancel-in-progress: true`); runs of *different* events never cancel each other.
+
+The split matters because a cancelled run's check-runs cannot be deleted. One group across
+every trigger meant a verdict comment's run cancelled the still-running `pull_request` run,
+leaving `keel ship (assessment)` and `keel evidence (verify)` `cancelled` on the pull
+request's head; GitHub reports that head as UNSTABLE and `keel merge` refuses on "CI
+failing" with every required check green (#1037).
+
+Cancelling *within* one event stays safe, though not for the obvious reason. Usually the
+cancelled run belongs to a head SHA the newer run has superseded — but `reopened`, a
+`synchronize` fired by a **base**-branch update, and a force-push back to an already-assessed
+SHA all re-run `pull_request` on an unchanged head. What covers those is that the run doing
+the cancelling is a run of the same event on that same head: it republishes both job
+check-runs under the same names, and branch protection and keel's own rollup dedupe alike
+read the most recent check-run per name. A *different* event cancelling republishes nothing,
+which is why that case broke and this one does not.
+
+The cost is paid on the default branch. `keel review --live` posts three verdicts seconds
+apart, so two of those `issue_comment` runs are now cancelled inside their own group — and
+that event always runs from the default branch, so those cancelled `keel evidence (verify)`
+job checks land on the default branch's tip. They are visible in the Actions and commit UI
+and are read by nothing that gates a pull request.
+
+**The authoritative verdict is the one from the run that read the pull request last** — not
+the run that finished last, and not the run for any particular event. Each run stamps the
+moment it read the PR (taken immediately before `keel evidence-verify`) into the
+`keel evidence (required)` check-run's `external_id`; before writing, it compares that stamp
+with the newest one already published for the head and declines to overwrite a newer one,
+logging a `Newer evidence verdict kept` notice and exiting 0 — the newer verdict is
+authoritative, so a declining run must not replay its own exit code over it either.
+
+That is what keeps an assessment run which started *before* a verdict was posted from putting
+its "waiting" answer back over the "verified" one a later comment run published. It is a
+read-then-write guard, not a compare-and-swap — the check-runs API offers none — so it does
+not make a lost update impossible; it shrinks the window from the whole install-and-verify
+run to the single round trip between reading the published stamp and writing over it.
+
 ## Gate arming and the operator waiver
 
 The evidence gate **arms from deterministic ship provenance by default** — when the PR
@@ -121,6 +166,10 @@ jobs:
 ## Adopting it in a consumer repo
 
 Add `.github/workflows/keel-ship.yml` with `uses: berkayturanci/keel-action@v1` and supply your project's API key secrets (`GEMINI_API_KEY`, `OPENAI_API_KEY`, or `ANTHROPIC_API_KEY`). Everything else (the runner, git, gh, quality gates, and reviewer panel) is handled automatically.
+
+A repository that copied this workflow file rather than the action needs the `concurrency`
+block copied too, event name and all — an older copy keyed on the pull request number alone
+carries the cancelled-check-run defect described above.
 
 ## Branch protection
 
