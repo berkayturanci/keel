@@ -179,7 +179,7 @@ the project's plans directory, use it as the queue instead.
 
 ## Main loop
 
-1. `keel window .keel/project.yaml --root .` — only merge while OPEN; in CLOSED
+1. `keel window .keel/project.yaml` — only merge while OPEN; in CLOSED
    mode leave PRs open (blocker exception above). Stop the loop at window close.
 2. Pick the next candidate issue in queue order. Fetch its title, body, and labels, then
    run the shared intake preflight before handing it to ship:

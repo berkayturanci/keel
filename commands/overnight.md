@@ -179,7 +179,7 @@ the project's plans directory, use it as the queue instead.
 
 ## Main loop
 
-1. `keel window .keel/project.yaml --root .` — only merge while OPEN; in CLOSED
+1. `keel window .keel/project.yaml` — only merge while OPEN; in CLOSED
    mode leave PRs open (blocker exception above). Stop the loop at window close.
 2. Pick the next candidate issue in queue order. Fetch its title, body, and labels, then
    run the shared intake preflight before handing it to ship:
@@ -228,4 +228,4 @@ When stopped, write the session report immediately, even if partial.
 Never merge outside the window · merge lock · fail-soft per issue (one failure
 never aborts the loop) · attribute the effective agents (vendor + base model).
 
-<!-- keel-generated: surface=plugin command=overnight keel_version=1.19.3 source_sha256=1ef71b848eb1601717321f872ce13efc4a2318b3a73de4293f7aa8a941e42e27 generated_sha256=1ef71b848eb1601717321f872ce13efc4a2318b3a73de4293f7aa8a941e42e27 -->
+<!-- keel-generated: surface=plugin command=overnight keel_version=1.19.3 source_sha256=a1a101fc53792c0f57a5ca81e4b0f7f87de8ea69b1fc18ad5d8e6eea2ec22355 generated_sha256=a1a101fc53792c0f57a5ca81e4b0f7f87de8ea69b1fc18ad5d8e6eea2ec22355 -->

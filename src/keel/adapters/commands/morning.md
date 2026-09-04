@@ -114,7 +114,7 @@ Suggested Focus.
 
 ## Step 5 — Window
 
-Run `keel window .keel/project.yaml --root .` so the brief states whether the
+Run `keel window .keel/project.yaml` so the brief states whether the
 merge window (derived from `timezone` + `merge_window`) is currently open or in
 its no-merge phase.
 

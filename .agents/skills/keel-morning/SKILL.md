@@ -117,7 +117,7 @@ Suggested Focus.
 
 ## Step 5 — Window
 
-Run `keel window .keel/project.yaml --root .` so the brief states whether the
+Run `keel window .keel/project.yaml` so the brief states whether the
 merge window (derived from `timezone` + `merge_window`) is currently open or in
 its no-merge phase.
 
@@ -138,4 +138,4 @@ On the **first run** (no prior brief at the reports path), offer to schedule the
 brief on a recurring cadence at the configured `timezone` — the exact scheduler
 mechanism is project-specific.
 
-<!-- keel-generated: surface=skills command=morning keel_version=1.19.3 source_sha256=5bcd4d2e1d791805237934d8333fa14283bf5bac184020b71fdfdcd80fd25b65 generated_sha256=77bc61d980e8725c9684cb0e42d01a8cce02f9fafd79a891ce4cb52072e2dd5a -->
+<!-- keel-generated: surface=skills command=morning keel_version=1.19.3 source_sha256=2fafee4f1970172e7ff962be695d442e8cfeefa2e2c73e6ce7578b4a79446d52 generated_sha256=03741291ed0a861a2b3093dc077bdac4a7cb6552ba26d213a78c1f2fab24f4bd -->

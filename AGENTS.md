@@ -119,12 +119,30 @@ the installed `.claude/commands/keel/`, and `.agents/skills/keel-*`). The adapte
 project-neutral — it reads every project specific from `projects/keel.yaml` (this repo's own
 config) via the `keel` CLI and never hardcodes a value. For keel itself:
 
-- **Implementer** — resolved from `knobs.implementer_agents` by the issue's role; keel
-  maps `core → backend-developer`. Overridable per run with `--delegate`; defaults to the
-  host agent. Attribution (`agent:<vendor>` + versionless `model:<base>`) is recorded.
-- **Reviewers** — step s7 dispatches N reviewers, where N is the reviewer count for the
-  risk tier from s5 classify (using `knobs.tier3_globs`). Overridable with
-  `--review-delegate`.
+- **Implementer** — resolved from `knobs.team.implement.by_role` by the issue's role,
+  falling back to `team.implement.default`; keel maps `core → subagent:backend-developer`.
+  (`knobs.implementer_agents` is the deprecated spelling, still accepted and mapped onto
+  this one.) Overridable per run with `--delegate`; defaults to the host agent.
+  Attribution (`agent:<vendor>` + versionless `model:<base>`) is recorded.
+- **Gate review** — `knobs.team.gate` is a mandatory second opinion on every
+  implementation, `distinct_from: implementer`. The adapter dispatches it; core has no
+  evidence item for it, so no merge check can certify that it ran.
+- **Reviewers** — step s7 dispatches the seats `knobs.team.review.by_tier` names for the
+  risk tier from s5 classify (using `knobs.tier3_globs`); a tier named by neither
+  `by_tier` nor `review.default` falls back to the tier-derived count staffed by the host
+  agent. Overridable with `--review-delegate`.
+- **The panel *as* the review** — a project that sets `team.review.by_tier."<tier>": jury`
+  makes s7 dispatch the cross-vendor panel once, with no host bench staffed beside it, and
+  `keel review --from-jury` maps its ballots onto the review verdicts. keel has not adopted
+  this for its own tier 3 — that tier is three named seats, and `projects/keel.yaml` records
+  why the switch is deliberate.
+- **Fixes** — `knobs.team.fix` is who applies review findings (default the alias
+  `implementer`). s9 does not read it directly: `keel fixloop brief` resolves the seat and
+  escalates it along `fixloop.STAGES` — `implementer` → `gate` → `host` — when a round
+  fails.
+- **Lead** — `knobs.team.lead` is the seat that coordinates a batch of ships (a swarm
+  cluster, a work block) and that its workers report through. It defaults to the host agent
+  driving the run, which is what keel uses: `projects/keel.yaml` sets no `lead`.
 - **Gates** — s8 runs the built-in `build`/`lint` command gates (`make test` / `make lint`
   from `knobs`) plus any `tester` Lego; s10 runs `pre-merge` gates.
 
