@@ -860,9 +860,9 @@ comment shape: keep `keel.review-verdict.v1`, `reviewer: <stable-id>`, and `head
 intact, then fill in the reviewer-specific verdict, scope, findings, and testing notes.
 Carry the **effective** reviewer `vendor` (and `model` when known) on each verdict — the
 same attribution computed at s7 — so `evidence_require_distinct_vendors` can verify the
-verdicts came from distinct vendors. That knob is **on by default from TIER-2 up** (a
-project that has decided otherwise sets it to `false` explicitly), so a verdict without
-`vendor:` provenance blocks the pre-merge evidence gate on most changes. This is jury-agnostic: a plain
+verdicts came from distinct vendors. That knob is **opt-in and off unless the project set
+it** (#1065), so a verdict without `vendor:` provenance blocks the pre-merge evidence gate
+only where the project asked for the check. This is jury-agnostic: a plain
 host-agent reviewer carrying distinct vendor provenance satisfies the check just as a
 cross-vendor panel would; keel takes no dependency on any review vendor.
 Post each review verdict through `keel post-comment` with a reviewer-scoped run id

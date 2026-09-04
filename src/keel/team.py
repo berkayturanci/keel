@@ -92,12 +92,6 @@ def effort_needs_model(vendor: str | None) -> bool:
     return vendor in EFFORT_MODEL_SUFFIX_VENDORS
 
 
-#: Risk tier at which a cross-vendor review panel stops being optional: from tier-2 up,
-#: ``evidence_require_distinct_vendors`` defaults to true (an explicit ``false`` in
-#: config still wins). One vendor reviewing twice is one opinion twice.
-DISTINCT_VENDOR_TIER = 2
-
-
 @dataclass(frozen=True)
 class Seat:
     """One chair on the team: who sits in it, on which model, at which effort."""
@@ -744,18 +738,22 @@ def resolve_assignment(
     }
 
 
-def require_distinct_vendors(setting: bool | None, tier: int | None) -> bool:
-    """The effective ``evidence_require_distinct_vendors`` for a resolved tier.
+def require_distinct_vendors(setting: bool | None) -> bool:
+    """The effective ``evidence_require_distinct_vendors``.
 
-    ``None`` is *unset* and is what makes the tier-derived default possible: from
-    :data:`DISTINCT_VENDOR_TIER` up, a review panel that is really one vendor reviewing
-    twice is one opinion twice, so the cross-vendor requirement is on. An explicit
-    ``false`` in config is still honoured — a project that has decided otherwise has
-    said so in a file a reviewer can read.
+    **Opt-in** (#1065). ``None`` is *unset* and resolves to ``False``: the knob asserts
+    that the required verdicts came from *independent* opinions, and that is a claim only
+    the project can make. It is a property a cross-vendor panel provides, not one every
+    high-tier review has to carry — a person with a single agent CLI installed must still
+    be able to land a TIER-3 change without configuring anything. A project that wants
+    the independence claim enforced says so, and the requirement then lives in a file a
+    reviewer can read rather than in a default nobody chose.
+
+    The setting is still tri-state at the config boundary (``None`` unset, ``True``,
+    ``False``) so an explicit ``false`` stays distinguishable from silence, which is what
+    ``config_hash`` and the wizard read.
     """
-    if setting is not None:
-        return bool(setting)
-    return tier is not None and tier >= DISTINCT_VENDOR_TIER
+    return bool(setting)
 
 
 def _seat_paths(policy: TeamPolicy) -> list[tuple[str, Seat]]:

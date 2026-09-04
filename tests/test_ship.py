@@ -927,16 +927,25 @@ class TestTeamAssignment(unittest.TestCase):
                 )
                 self.assertEqual(contract["reviewers"], base["reviewers"])
 
-    def test_distinct_vendors_defaults_on_from_tier_two(self):
-        for tier, expected in ((1, False), (2, True), (3, True), (None, False)):
+    def test_distinct_vendors_is_off_on_every_tier_when_unset(self):
+        """Opt-in (#1065), replacing `test_distinct_vendors_defaults_on_from_tier_two`.
+
+        That test asserted the tier-derived default — `(2, True), (3, True)` — which is the
+        behaviour this change removes, so the rows had to move rather than be dropped: the
+        same four tiers are still exercised, and the expectation on each is now `False`.
+        """
+        for tier in (1, 2, 3, None):
             with self.subTest(tier=tier):
                 contract = ship.resolve_review_contract(tier=tier)
-                self.assertIs(contract["reviewers"]["require_distinct_vendors"], expected)
+                self.assertIs(contract["reviewers"]["require_distinct_vendors"], False)
 
-    def test_an_explicit_false_is_still_honoured(self):
-        contract = ship.resolve_review_contract(tier=3, require_distinct_vendors=False)
-
-        self.assertFalse(contract["reviewers"]["require_distinct_vendors"])
+    def test_an_explicit_setting_is_honoured_on_every_tier(self):
+        for tier in (1, 2, 3, None):
+            with self.subTest(tier=tier):
+                off = ship.resolve_review_contract(tier=tier, require_distinct_vendors=False)
+                on = ship.resolve_review_contract(tier=tier, require_distinct_vendors=True)
+                self.assertIs(off["reviewers"]["require_distinct_vendors"], False)
+                self.assertIs(on["reviewers"]["require_distinct_vendors"], True)
 
     def test_assess_resolves_the_assignment_against_the_classified_tier(self):
         assessment = ship.assess(
@@ -954,7 +963,11 @@ class TestTeamAssignment(unittest.TestCase):
         self.assertEqual(assessment.assignment["review_panel"], "jury")
         self.assertEqual(assessment.assignment["implementer"]["provider"], "agy")
         self.assertTrue(assessment.assignment["gate"]["distinct_ok"])
-        self.assertTrue(assessment.review_contract["reviewers"]["require_distinct_vendors"])
+        # This fixture names no `evidence_require_distinct_vendors`, so the assertion here
+        # was `assertTrue` only because TIER-3 used to derive it (#1065). The knob is opt-in
+        # now, and an unset knob is `false` even on the tier whose panel *is* the jury —
+        # the coupled rule was considered and left to the availability probe in #1066.
+        self.assertIs(assessment.review_contract["reviewers"]["require_distinct_vendors"], False)
 
     def test_an_out_of_range_override_raises_before_the_team_is_resolved(self):
         """The documented ValueError, not an IndexError from inside the resolver.

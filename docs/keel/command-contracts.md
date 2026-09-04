@@ -615,8 +615,8 @@ The block records:
   `review-verdict-1`, `review-verdict-2`, and `jury-verdict` when jury is gating
 - `dry_run_disables_gating: true` and `fail_closed: true`
 - `require_distinct_vendors`: reflects the effective `evidence_require_distinct_vendors` —
-  the knob when set, otherwise the tier-derived default (on from TIER-2 up) — or the
-  `--require-distinct-vendors` flag. When `true`, each required review
+  the knob when set, otherwise `false` on every tier, because the knob is opt-in (#1065) —
+  or the `--require-distinct-vendors` flag. When `true`, each required review
   verdict must carry `vendor:` provenance and no two may share a vendor; a missing or
   duplicate vendor yields a blocking `review-vendor-distinctness` finding. The check is
   jury-agnostic — it reads only the verdict provenance fields and imports no review vendor.

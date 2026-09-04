@@ -147,7 +147,7 @@ contracts, but executable project behavior remains in extension files or project
 | `required_capabilities` | string[] | | runtime capabilities that must be present before mutating work starts |
 | `optional_capabilities` | string[] | | runtime capabilities that may degrade explicitly when unavailable |
 | `evidence_gate_label` | string | | Legacy PR label that also arms the required pre-merge evidence gate (default `keel:ship`); ship provenance now arms the gate by default |
-| `evidence_require_distinct_vendors` | boolean | | requires each required review verdict to carry vendor provenance, and no two to share a vendor. **Unset resolves from the risk tier — on from TIER-2 up**; set it to `false` to opt out |
+| `evidence_require_distinct_vendors` | boolean | `false` | requires each required review verdict to carry vendor provenance, and no two to share a vendor. **Opt-in: unset is `false` on every risk tier**; set it to `true` on a project whose reviewer bench really spans vendors |
 | `swarm_review_evidence` | boolean | | Swarm landings enforce the same per-PR review-evidence contract as ship s10 (default `true`); `false` is the explicit, logged opt-out |
 | `implement_mode` | `default` \| `tdd` | | the s4 implement profile: one pass (default), or test-first in two phases with the blocking `tdd-order` gate at s8 |
 | `gate_timeout_s` | integer ≥ 1 | | wall-clock seconds a command gate may run before it is killed (default `600`) |
@@ -696,12 +696,21 @@ verifier output. Override the legacy arming label per run with
 
 #### `evidence_require_distinct_vendors`
 
-**Tri-state.** Unset (the default) resolves from the **resolved risk tier**: on from
-TIER-2 up, off below it. From tier-2 a review panel that is really one vendor reviewing
-twice is one opinion twice, which is the gap `knobs.team` exists to close. Setting it to
-`false` explicitly keeps the plain count + head-pin check for a project that has decided
-otherwise — the exception then lives in a file a reviewer can read. When it resolves to
-`true`, `keel evidence-verify` additionally enforces **verdict provenance distinctness**:
+**Opt-in. Unset is `false`, on every risk tier.** The knob makes two different claims
+separable. The *count* claim — three reviewers looked at this — keel can verify from the
+posted evidence for any bench a project configured. The *independence* claim — three
+independent opinions looked at this — needs distinct vendors, and it is a property a
+cross-vendor panel provides rather than one every high-tier review has to carry. Asserting
+it by default would have keel say, on the project's behalf, something the project never
+said: a reviewer bench drawn from one vendor is the normal case for someone running a
+single agent CLI, and that person's TIER-3 change must still be reachable without
+configuring anything (#1065). Set it to `true` on a project whose bench really does span
+vendors, and the requirement then lives in a file a reviewer can read.
+
+The setting stays tri-state at the config boundary — unset, `true`, `false` — so an
+explicit `false` remains distinguishable from silence, but the two resolve identically.
+When it resolves to `true`, `keel evidence-verify` additionally enforces **verdict
+provenance distinctness**:
 each required review verdict must carry a `vendor:` provenance line, and no two required
 verdicts may declare the same vendor. This closes the gap where one agent could post N
 verdicts under invented reviewer ids — the verdict *count* was checkable but the *vendors*

@@ -305,8 +305,9 @@ def resolve_review_contract(
     the assignment it renders cannot disagree. Without one the tier-derived counts stand,
     which is every pre-#1014 caller.
 
-    ``require_distinct_vendors`` is tri-state: ``None`` takes the tier-derived default
-    (on from tier-2 up), a bool is the project's explicit answer.
+    ``require_distinct_vendors`` is tri-state at the config boundary, but ``None`` — unset
+    — resolves to ``False`` on every tier (#1065): the independence claim is opt-in, and a
+    bool is the project's explicit answer.
 
     ``jury_panel_size`` is the number of ballots a jury panel actually returned, which
     only a run that has seen the panel can know (a posted jury verdict declares it; see
@@ -357,7 +358,7 @@ def resolve_review_contract(
             "self_review_counts_toward_lgtm": False,
             "minimum_lgtm": count,
             "require_distinct_vendors": team_policy.require_distinct_vendors(
-                require_distinct_vendors, tier
+                require_distinct_vendors
             ),
             "orchestrator_owns_writes": True,
             "panel": panel,

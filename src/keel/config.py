@@ -238,10 +238,10 @@ class Knobs:
     required_capabilities: tuple[str, ...] = ()
     optional_capabilities: tuple[str, ...] = ()
     evidence_gate_label: str = "keel:ship"
-    #: Tri-state on purpose. ``None`` is *unset*, which is what lets the effective value
-    #: come from the resolved risk tier (:func:`keel.team.require_distinct_vendors`):
-    #: from tier-2 up a review panel that is one vendor twice is one opinion twice. An
-    #: explicit ``false`` still wins — the exception lives in a file a reviewer can read.
+    #: Tri-state on purpose, but **opt-in**: ``None`` is *unset* and resolves to ``False``
+    #: on every tier (:func:`keel.team.require_distinct_vendors`, #1065). The tri-state is
+    #: kept so an explicit ``false`` stays distinguishable from silence for the wizard and
+    #: for anything that reports what a project actually said.
     evidence_require_distinct_vendors: bool | None = None
     #: Swarm landings enforce the same per-PR review-evidence contract as ship
     #: s10. Turning this off is the explicit, logged opt-out #828 requires: the

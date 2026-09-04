@@ -1,5 +1,6 @@
 """Unit tests for ``knobs.team`` — the per-role / per-tier provider policy (#1014)."""
 
+import inspect
 import unittest
 
 from keel import ship, team
@@ -342,8 +343,8 @@ class TestResolveAssignment(unittest.TestCase):
         """`--reviewers 3` on a two-seat tier must not quietly duplicate a vendor.
 
         The third slot is filled with the host agent, which is already slot A — so the
-        panel cannot return three distinct vendors, and `require_distinct_vendors` (on by
-        default from TIER-2) rejects it at the evidence gate, long after the run.
+        panel cannot return three distinct vendors, and `require_distinct_vendors`, on a
+        project that opted into it, rejects it at the evidence gate long after the run.
         """
         policy = team.parse_team(
             {"review": {"by_tier": {"2": [{"provider": "claude"}, {"provider": "codex"}]}}}
@@ -470,15 +471,21 @@ class TestResolveAssignment(unittest.TestCase):
 
 
 class TestRequireDistinctVendors(unittest.TestCase):
-    def test_unset_resolves_from_the_tier(self):
-        self.assertFalse(team.require_distinct_vendors(None, 1))
-        self.assertTrue(team.require_distinct_vendors(None, 2))
-        self.assertTrue(team.require_distinct_vendors(None, 3))
-        self.assertFalse(team.require_distinct_vendors(None, None))
+    def test_unset_is_off_and_takes_no_tier(self):
+        """Opt-in (#1065): unset is `false`, and the resolver has no tier to consult.
+
+        This replaces `test_unset_resolves_from_the_tier`, which asserted the tier-derived
+        default #1065 removes. The tier is gone from the signature, so a caller that still
+        tried to derive the value from one would not compile rather than pass quietly.
+        """
+        self.assertFalse(team.require_distinct_vendors(None))
+        self.assertEqual(
+            list(inspect.signature(team.require_distinct_vendors).parameters), ["setting"]
+        )
 
     def test_an_explicit_setting_wins_in_both_directions(self):
-        self.assertFalse(team.require_distinct_vendors(False, 3))
-        self.assertTrue(team.require_distinct_vendors(True, 1))
+        self.assertFalse(team.require_distinct_vendors(False))
+        self.assertTrue(team.require_distinct_vendors(True))
 
 
 class TestTeamIssues(unittest.TestCase):

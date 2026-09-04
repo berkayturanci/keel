@@ -1256,7 +1256,10 @@ class TestShip(unittest.TestCase):
         self.assertEqual(review["reviewers"]["panel"], "jury")
         self.assertEqual(review["reviewers"]["slots"], [])
         self.assertEqual(review["jury"]["mode"], "gating")
-        self.assertTrue(review["reviewers"]["require_distinct_vendors"])
+        # The fixture project names no `evidence_require_distinct_vendors`, so this was
+        # `assertTrue` only through the TIER-3 derivation #1065 removes. Unset is `false`
+        # now, on this jury-panel tier as on every other.
+        self.assertIs(review["reviewers"]["require_distinct_vendors"], False)
         # The reviewer flag is not silently dropped: there is no slot to put it in.
         self.assertIn("not dispatched", assignment["warnings"][0])
 
@@ -9267,6 +9270,99 @@ class TestCoreMerge(unittest.TestCase):
             rc, _, err = run(["ship", p, "--root", d])
         self.assertEqual(rc, 0)
         self.assertIn("extension not loaded", err)
+
+
+class TestSingleVendorBenchCanLandATierThreeChange(unittest.TestCase):
+    """The #1065 acceptance criteria, driven through the merge gate that refused it.
+
+    A project whose reviewers all come from one vendor — the normal case for someone
+    with one agent CLI installed — must be able to land a TIER-3 change without naming
+    `evidence_require_distinct_vendors` anywhere, and must still be refused, with the
+    same message, once it sets the knob to true.
+    """
+
+    #: Three genuinely separate reviewers that happen to share a vendor: the shape the
+    #: 1.20.0 tier-derived default turned into an unmergeable pull request.
+    SAME_VENDOR_VERDICTS = tuple(
+        f"keel.review-verdict.v1\nreviewer: {who}\nvendor: anthropic\nhead: abc\nLGTM"
+        f"\n\nsrc/acme/auth.py: checked the token refresh path; ok."
+        for who in ("lead", "gate", "third")
+    )
+
+    def _verify(self, knob_line=""):
+        config = _write_raw(
+            "extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
+            "repo: acme/example\ngates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+            "  tier3_globs: ['src/acme/auth.py']\n" + knob_line
+        )
+        args = Namespace(
+            path=config,
+            root=str(REPO_ROOT),
+            pr=300,
+            reviewers=None,
+            review_comments="inline",
+            jury=False,
+            no_jury=True,
+            jury_advisory=False,
+            jury_vendors=None,
+            require_distinct_vendors=False,
+            gate_label=None,
+            waiver_label=None,
+            deferral=[],
+            phase="pre-merge",
+            require_armed=False,
+            dry_run=False,
+            issue=None,
+        )
+        artifacts = {
+            "pr_body": "Closes #1",
+            "pr_comments": [
+                _trusted_comment("<!-- keel.closure-comment.v1 -->"),
+                *(_trusted_comment(body) for body in self.SAME_VENDOR_VERDICTS),
+            ],
+            "issue_comments": [_trusted_comment("<!-- keel.closure-comment.v1 -->")],
+            "pr_reviews": [],
+            "issue": 1,
+            "head_sha": "abc",
+            "head_ref": "feature/x",
+            # Matches `tier3_globs`, so the change really does classify TIER-3 — the tier
+            # the old default made unreachable for this bench.
+            "changed_files": ["src/acme/auth.py"],
+            "pr_labels": ["keel:ship", "agent:claude"],
+        }
+        with patch("keel.cli._load_evidence_artifacts", return_value=artifacts):
+            return cli._verify_merge_evidence(args, cli.cfg.load_config(config))
+
+    def _distinctness_findings(self, payload):
+        return [
+            f
+            for f in payload["verification"]["findings"]
+            if f["id"] == "review-vendor-distinctness"
+        ]
+
+    def test_the_unset_knob_lets_a_one_vendor_bench_merge_at_tier_three(self):
+        payload = self._verify()
+
+        self.assertTrue(payload["enforced"])
+        # Three required review verdicts is `reviewer_count(3)`: the gate really did
+        # resolve TIER-3 rather than passing on a softer tier.
+        self.assertEqual(
+            [r["id"] for r in payload["verification"]["results"] if r["kind"] == "review"],
+            ["review-verdict-1", "review-verdict-2", "review-verdict-3"],
+        )
+        self.assertEqual(payload["verification"]["missing"], [])
+        self.assertEqual(self._distinctness_findings(payload), [])
+        self.assertEqual(payload["verification"]["status"], "pass")
+
+    def test_setting_it_true_still_refuses_with_the_same_message(self):
+        payload = self._verify("  evidence_require_distinct_vendors: true\n")
+
+        self.assertEqual(payload["verification"]["missing"], [])
+        self.assertEqual(payload["verification"]["status"], "fail")
+        self.assertEqual(
+            [f["message"] for f in self._distinctness_findings(payload)],
+            ["require_distinct_vendors: review verdicts share a vendor: anthropic."],
+        )
 
 
 class TestShipCiVisibility(unittest.TestCase):
