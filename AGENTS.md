@@ -138,7 +138,11 @@ config) via the `keel` CLI and never hardcodes a value. For keel itself:
   why the switch is deliberate.
 - **Fixes** — `knobs.team.fix` is who applies review findings (default the alias
   `implementer`). s9 does not read it directly: `keel fixloop brief` resolves the seat and
-  escalates `fix` → `gate` → host agent when a round fails.
+  escalates it along `fixloop.STAGES` — `implementer` → `gate` → `host` — when a round
+  fails.
+- **Lead** — `knobs.team.lead` is the seat that coordinates a batch of ships (a swarm
+  cluster, a work block) and that its workers report through. It defaults to the host agent
+  driving the run, which is what keel uses: `projects/keel.yaml` sets no `lead`.
 - **Gates** — s8 runs the built-in `build`/`lint` command gates (`make test` / `make lint`
   from `knobs`) plus any `tester` Lego; s10 runs `pre-merge` gates.
 
