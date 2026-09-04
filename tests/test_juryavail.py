@@ -31,7 +31,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from keel import cli, closure, juryavail, ledger, providerprobe, runtime, ship
+from keel import cli, closure, evidence, juryavail, ledger, providerprobe, runtime, ship
 from keel import config as cfg
 from keel import team as team_policy
 
@@ -278,7 +278,7 @@ class TestTheBenchTheProbeSeats(unittest.TestCase):
     def _policy(self, **jury):
         return team_policy.parse_team({"review": {"by_tier": {"3": "jury"}}, "jury": jury})
 
-    def _resolve(self, report, *, policy=None, **kwargs):
+    def _resolve(self, report, *, policy=None, default_count=3, **kwargs):
         availability = (
             None
             if report is None
@@ -287,7 +287,7 @@ class TestTheBenchTheProbeSeats(unittest.TestCase):
         return team_policy.resolve_assignment(
             self._policy(mode="gating"),
             tier=3,
-            default_count=3,
+            default_count=default_count,
             jury_availability=availability,
             **kwargs,
         )
@@ -339,12 +339,44 @@ class TestTheBenchTheProbeSeats(unittest.TestCase):
         self.assertEqual(assignment["jury"]["availability"]["decision"], "block")
         self.assertEqual(assignment["jury"]["on_unavailable"], "fallback")
 
-    def test_reviewers_override_sizes_the_fallback_bench(self):
-        assignment = self._resolve(UNSTAFFED, reviewer_override=2)
+    def test_reviewers_cannot_shrink_the_fallback_bench(self):
+        """The guarantee: a fallback changes *who* sat, never *how many*.
+
+        `--reviewers` is inert on a panel tier — the panel is the review, so there are no
+        host slots to size — and a failed probe may not turn that inert flag into a live
+        one. If it could, the same operator flag would go from ignored to policy-lowering
+        purely because an agent CLI was missing: `--reviewers 2` on a tier-3 fallback would
+        seat two reviewers and publish a two-verdict evidence requirement where the tier
+        asks for three.
+        """
+        for override in (2, 1):
+            with self.subTest(reviewers=override):
+                assignment = self._resolve(UNSTAFFED, reviewer_override=override)
+
+                self.assertEqual(assignment["reviewer_count"], 3)
+                self.assertEqual(assignment["reviewer_source"], "jury-fallback")
+                warning = "\n".join(assignment["warnings"])
+                self.assertIn("host bench of 3 seat(s)", warning)
+                self.assertIn(f"--reviewers {override} ignored", warning)
+                self.assertIn("not how many", warning)
+
+    def test_reviewers_cannot_raise_it_either(self):
+        """Ignored is ignored: the tier's own count stands in both directions."""
+        assignment = self._resolve(UNSTAFFED, reviewer_override=3, default_count=2)
 
         self.assertEqual(assignment["reviewer_count"], 2)
-        self.assertEqual(assignment["reviewer_source"], "jury-fallback")
-        self.assertIn("host bench of 2 seat(s)", "\n".join(assignment["warnings"]))
+        self.assertIn("--reviewers 3 ignored", "\n".join(assignment["warnings"]))
+
+    def test_the_flag_is_ignored_whether_or_not_the_panel_can_sit(self):
+        available = self._resolve(STAFFED, reviewer_override=2)
+        fell_back = self._resolve(UNSTAFFED, reviewer_override=2)
+
+        self.assertIn("--reviewers 2 ignored", "\n".join(available["warnings"]))
+        self.assertIn("--reviewers 2 ignored", "\n".join(fell_back["warnings"]))
+        # A panel tier publishes no host slots at all; the fallback publishes the tier's
+        # three. Neither publishes the two the flag asked for.
+        self.assertEqual(available["reviewer_count"], 0)
+        self.assertEqual(fell_back["reviewer_count"], 3)
 
     def test_a_probe_record_with_no_reason_still_warns(self):
         assignment = team_policy.resolve_assignment(
@@ -367,7 +399,7 @@ class TestTheBenchTheProbeSeats(unittest.TestCase):
 class TestTheContractTheFallbackPublishes(unittest.TestCase):
     """`ship.resolve_review_contract` — same seat count, and no verdict nobody can post."""
 
-    def _contract(self, report, *, policy=None):
+    def _contract(self, report, *, policy=None, reviewer_override=None):
         availability = juryavail.assess(report, min_vendors=2, policy=policy).as_dict()
         assignment = team_policy.resolve_assignment(
             team_policy.parse_team(
@@ -375,9 +407,12 @@ class TestTheContractTheFallbackPublishes(unittest.TestCase):
             ),
             tier=3,
             default_count=3,
+            reviewer_override=reviewer_override,
             jury_availability=availability,
         )
-        return ship.resolve_review_contract(tier=3, assignment=assignment)
+        return ship.resolve_review_contract(
+            tier=3, assignment=assignment, reviewer_override=reviewer_override
+        )
 
     def test_a_staffable_panel_still_requires_its_verdict(self):
         contract = self._contract(STAFFED)
@@ -400,6 +435,16 @@ class TestTheContractTheFallbackPublishes(unittest.TestCase):
         self.assertEqual(contract["jury"]["mode"], "off")
         self.assertIn("host bench fallback", contract["jury"]["reason"])
         self.assertTrue(contract["jury"]["panel_unavailable"])
+
+    def test_reviewers_cannot_shrink_the_published_evidence_requirement(self):
+        """The end of the guarantee a caller can actually see: three verdicts, still."""
+        contract = self._contract(UNSTAFFED, reviewer_override=2)
+
+        self.assertEqual(contract["reviewers"]["count"], 3)
+        self.assertEqual(contract["reviewers"]["minimum_lgtm"], 3)
+        required = [item.id for item in evidence.required_items(contract)]
+        self.assertIn("review-verdict-3", required)
+        self.assertNotIn("jury-verdict", required)
 
     def test_a_contract_with_no_assignment_records_no_availability(self):
         contract = ship.resolve_review_contract(tier=3)

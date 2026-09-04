@@ -541,10 +541,13 @@ def _review_seats(
     :func:`keel.juryavail.assess`'s verdict on whether this machine can convene the panel
     at all, measured from the same probe ``keel doctor --providers`` prints. When it says
     the panel is unstaffable and ``team.jury.on_unavailable`` is ``fallback``, the tier
-    resolves *exactly as a tier without a panel does* — the tier's own seat count, staffed
-    from the host — and the record says so. The seat count and the evidence requirement do
-    not move; only who sits does. Under ``block`` the panel stays the panel and the run
-    never reaches here: :func:`keel.providerprobe.jury_availability` refuses at the probe.
+    resolves onto the **tier's own** seat count, staffed from the host, and the record says
+    so. The seat count and the evidence requirement do not move; only who sits does — which
+    is why ``--reviewers`` stays ignored on a fallback bench exactly as it is ignored while
+    the panel sits. A flag that was inert on a staffable panel and *lowered* the tier's
+    requirement the moment the probe failed would make a failed probe a policy change.
+    Under ``block`` the panel stays the panel and the run never reaches here:
+    :func:`keel.providerprobe.jury_availability` refuses at the probe.
 
     **The bench is a pure function of config + tier + role + the explicit ``--reviewers``
     and ``--review-delegate`` overrides, and of nothing else.** In particular it does not
@@ -573,15 +576,27 @@ def _review_seats(
         # panel": the tier's own count, staffed from the host. Reached only from a
         # measured probe, and the reason travels in `warnings` and in the assignment's
         # `jury.availability` block so no reader has to re-derive it.
-        seat_count = default_count if reviewer_override is None else reviewer_override
         warnings.append(
             f"{source} makes the jury the review for this tier, but the panel cannot be "
             f"staffed here; knobs.team.jury.on_unavailable is 'fallback', so a host bench "
-            f"of {seat_count} seat(s) reviews instead — the same count and the same "
+            f"of {default_count} seat(s) reviews instead — the same count and the same "
             f"evidence, different reviewers, and they share one vendor so this review "
             f"carries no cross-vendor independence claim. "
             f"{_availability_reason(jury_availability)}"
         )
+        if reviewer_override is not None:
+            # The same flag, ignored the same way, whether or not the panel could sit.
+            # `--reviewers` is inert on a panel tier — the panel *is* the review — and a
+            # fallback may not turn that inert flag into a live one: a bench sized by
+            # `--reviewers 2` would publish a two-verdict evidence requirement where the
+            # tier asks for three, so a probe failure would have *lowered* the tier's
+            # policy. The fallback changes who sat, never how many.
+            warnings.append(
+                f"--reviewers {reviewer_override} ignored: {source} makes the jury the "
+                f"review panel, and the host bench standing in for it is the tier's own "
+                f"{default_count} seat(s) — a fallback changes who reviews, not how many"
+            )
+        reviewer_override = None
         configured = ()
     if configured == JURY_PANEL:
         if reviewer_override is not None:
