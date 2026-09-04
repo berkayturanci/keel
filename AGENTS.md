@@ -131,9 +131,11 @@ config) via the `keel` CLI and never hardcodes a value. For keel itself:
   risk tier from s5 classify (using `knobs.tier3_globs`); a tier named by neither
   `by_tier` nor `review.default` falls back to the tier-derived count staffed by the host
   agent. Overridable with `--review-delegate`.
-- **The panel *is* the review on tier 3** — keel sets `team.review.by_tier."3": jury`, so
-  s7 dispatches ai-jury once and its ballots are the review; no host bench is staffed
-  beside it.
+- **The panel *as* the review** — a project that sets `team.review.by_tier."<tier>": jury`
+  makes s7 dispatch the cross-vendor panel once, with no host bench staffed beside it, and
+  `keel review --from-jury` maps its ballots onto the review verdicts. keel has not adopted
+  this for its own tier 3 — that tier is three named seats, and `projects/keel.yaml` records
+  why the switch is deliberate.
 - **Fixes** — `knobs.team.fix` is who applies review findings (default the alias
   `implementer`). s9 does not read it directly: `keel fixloop brief` resolves the seat and
   escalates `fix` → `gate` → host agent when a round fails.
