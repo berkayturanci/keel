@@ -111,10 +111,11 @@ def resolve_jury(
     are no host reviewer slots, so a flag that turned the jury off or made it advisory
     would leave that tier with no required review evidence at all — a stricter policy
     producing a weaker gate. It is also the only answer the six commands that resolve this
-    contract can agree on, because they do not all receive the flags: ``keel review`` has
-    no ``--no-jury``, and keel's CI passes it to ``evidence-verify`` on every run and to
-    ``ship``/``plan`` on none. So on a panel tier the verdict stays required, whatever was
-    typed; the flag is recorded in ``assignment.warnings`` instead of applied. Below that
+    contract can agree on, because they are not all *given* the flags: every surface
+    accepts them since #1043, but keel's CI passes ``--no-jury`` to ``evidence-verify`` on
+    every run and to ``ship``/``plan`` on none. So on a panel tier the verdict stays
+    required, whatever was typed; the flag is recorded in ``assignment.warnings`` instead
+    of applied. Below that
     tier ``--no-jury`` keeps its pre-existing meaning and still beats the tier-3 auto-jury.
 
     ``policy_mode`` is ``team.jury.mode``, which can make an enabled jury *advisory* — a
@@ -246,10 +247,12 @@ def _jury_panel_size(jury_record: dict[str, Any], panel_size: int | None) -> int
     nor the measured participating-vendor count may change *who reviews*, only
     whether the panel's verdict gates. The bench is a pure function of config +
     tier + role + ``--reviewers``/``--review-delegate`` (:func:`keel.team._review_seats`),
-    and for the same reason: the six commands that resolve this contract do not
-    receive the other inputs uniformly. ``keel review`` has no ``--no-jury`` at
-    all, and only the surfaces that can read the PR's posted jury verdict —
-    ``evidence-verify`` and ``keel merge`` — ever see a vendor count. A bench that
+    and for the same reason: the six commands that resolve this contract are not
+    *given* the other inputs uniformly. All six accept the jury flags since #1043,
+    but keel's CI passes ``--no-jury`` to ``evidence-verify`` on every run and to
+    ``ship``/``plan`` on none, and only the surfaces that can read the PR's posted
+    jury verdict — ``evidence-verify`` and ``keel merge`` — ever see a vendor
+    count. A bench that
     moved with either input would have ``keel plan`` requiring the panel's ballots
     while ``evidence-verify`` demanded a host bench of the same PR, which is the
     contract disagreement #1014 exists to prevent, reintroduced along a new axis.

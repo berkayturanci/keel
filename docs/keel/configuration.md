@@ -262,7 +262,12 @@ Three consequences worth stating plainly:
   policy producing a weaker gate. Below a panel tier both flags keep their usual meaning.
 - **`jury.mode: advisory` may not be combined with a jury panel.** "The panel is the
   review" and "the panel does not gate" together mean the tier requires nothing, so
-  `keel validate` refuses the pair.
+  `keel validate` refuses the pair. Note that `jury.mode` is a **single global knob** while
+  review panels are **per-tier**, so the refusal is whole-config: "a gating panel at tier-3,
+  with the advisory jury that `--jury` would raise at tier-1/2" is rejected even though
+  `resolve_jury` would scope the two correctly at run time (a panel tier ignores the mode;
+  a non-panel tier applies it). Express that shape as `jury.mode: gating` plus seats at the
+  tiers that should not gate, or keep the panel off until `jury.mode` is per-tier.
 - **A short panel changes nothing about what the tier owes.** Below `jury.min_vendors`
   participating vendors a jury is downgraded `gating → advisory` only where it sits *beside*
   a host bench. On a panel tier there is no bench behind it, so the downgrade is suppressed:
@@ -271,7 +276,9 @@ Three consequences worth stating plainly:
   panel does not get to excuse itself from the consensus record that says it was short. The
   bench does not move with the vendor count either: only `evidence-verify` and `keel merge`
   can read a count off a posted verdict, so a bench that followed it would put two surfaces
-  of the same run in disagreement about who reviews.
+  of the same run in disagreement about who reviews. Every review-aware surface *accepts*
+  the jury flags — `keel review` included, since #1043 — but nothing makes a run pass them
+  to all six, which is the other half of why the bench may not follow them.
 
 **Tier keys are quoted strings** (`"1"`, `"2"`, `"3"`). YAML reads a bare `1:` as an
 integer key, which a JSON schema cannot describe; keel says so instead of accepting it and

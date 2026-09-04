@@ -360,7 +360,7 @@ keel render-report --kind coverage --payload coverage.json > body.md
 keel render-report --kind triage-audit --payload audit.json --json
 ```
 
-## `keel review <project.yaml> --pr N (--reviews FILE | --from-jury FILE) [--root DIR] [--issue N] [--closure FILE] [--reviewers 1|2|3] [--head-sha SHA] [--changed-file PATH] [--run-id ID] [--verify] [--dry-run] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--json]`
+## `keel review <project.yaml> --pr N (--reviews FILE | --from-jury FILE) [--root DIR] [--issue N] [--closure FILE] [--reviewers 1|2|3] [--jury] [--no-jury] [--jury-advisory] [--head-sha SHA] [--changed-file PATH] [--run-id ID] [--verify] [--dry-run] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--json]`
 
 Orchestrate a supplied review *evidence bundle* in one deterministic command. The host
 agent runs the actual reviewers and produces the review content; `keel review` is **not**
@@ -383,6 +383,36 @@ The required reviewer count is resolved from the live diff tier using the exact 
 `keel evidence-verify` uses (`ship.resolve_review_contract`). If fewer reviews are supplied
 than the tier requires, the command fails rather than silently under-posting evidence; an
 exact count or more is allowed. `--reviewers` overrides the required count.
+
+### Jury flags — `keel review` resolves the same contract as every other surface
+
+`--jury` / `--no-jury` / `--jury-advisory` are accepted here and mean exactly what they mean
+on `keel ship`, `keel plan`, `keel step-verify`, `keel evidence-verify` and `keel merge`;
+all six resolve the review contract through `ship.resolve_review_contract`, and the resolved
+document is published as `review_contract` in `--json` output (and as the `jury:` line of the
+human-readable summary), so the six can be checked against each other rather than assumed
+equal. Until #1043 this command defined none of them and hardcoded them false, which made its
+`--verify` report **bench-authoritative but jury-blind**: on a plain (non-panel) tier-3
+project it could report `jury-verdict` as required while the `keel ship --no-jury` run that
+produced the pull request was told never to post one.
+
+The flags **never move the reviewer bench** — that is a pure function of config + tier + role
++ `--reviewers` / `--review-delegate` — so the set of verdicts this command posts is
+identical with and without them. They own the jury line only. Precedence is unchanged and is
+`ship.resolve_jury`'s: a `knobs.team` jury-panel tier > `--no-jury` > `--jury` > tier-3
+auto-jury > off, with `team.jury.mode: advisory` able to make an *enabled* jury advisory.
+
+`--from-jury` is orthogonal to all three: it decides *where the verdicts come from* (the
+panel's ballots rather than a host bundle) and always posts the panel's own
+`keel.jury-verdict.v1` consensus record, while the flags decide *whether the contract
+requires a jury verdict*. `--from-jury` additionally declares the real panel size, which on a
+jury-panel tier sizes the required verdict count. On such a tier the panel outranks the
+flags entirely: `--no-jury` / `--jury-advisory` are recorded in `assignment.warnings` and not
+applied, because the panel is that tier's only review.
+
+Pass a run's ship flags through to its `keel review` call. `keel review --verify` re-runs
+`evidence-verify` against the contract *this command* resolved, so `keel ship --no-jury`
+followed by a bare `keel review --verify` asks two halves of one run for two different gates.
 
 ### `--from-jury FILE` — the ai-jury panel *is* the review
 
@@ -1811,11 +1841,13 @@ approval values. Approved live runs include a local
 Review and merge-gate parity is exposed through `review_merge_contract` in JSON output.
 `--review-comments` selects inline or summary posting, `--reviewers` overrides the
 resolved reviewer count, and jury precedence is a `knobs.team` tier whose review policy is
-`jury` over `--no-jury` over `--jury` over tier-3 auto-jury over off. **The jury flags
-never change the reviewer bench**, which is a pure function of config + tier + role +
-`--reviewers` / `--review-delegate`: the six commands that resolve this contract do not all
-receive them (`keel review` has no `--no-jury`), so a bench that moved with a flag would
-make one command require evidence another told the adapter not to produce. On a jury-panel
+`jury` over `--no-jury` over `--jury` over tier-3 auto-jury over off. All six commands that
+resolve this contract accept the same three flags (`keel review` included, since #1043).
+**The jury flags never change the reviewer bench**, which is a pure function of config +
+tier + role + `--reviewers` / `--review-delegate`: nothing makes a run *pass* the flags to
+all six — keel's CI passes `--no-jury` to `evidence-verify` on every run and to
+`ship`/`plan` on none — so a bench that moved with a flag would make one command require
+evidence another told the adapter not to produce. On a jury-panel
 tier `--no-jury` / `--jury-advisory` are recorded in `assignment.warnings` and not applied —
 the panel is that tier's only review, so its verdict stays required. `--jury-advisory` keeps an enabled jury report-only. No-jury mode still
 preserves the reviewer, CI, tester, merge-window, merge-lock, closeout, and capture gates.

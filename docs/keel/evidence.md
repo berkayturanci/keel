@@ -111,10 +111,12 @@ The required `review-verdict` count comes from the review contract's `reviewers`
 
 The bench is a pure function of **config + tier + role + `--reviewers` / `--review-delegate`**,
 and of nothing else — not a jury flag, and not the measured participating-vendor count. It
-has to be: the six commands that resolve this contract do not receive those inputs uniformly
-(`keel review` has no `--no-jury`; only `evidence-verify` and `keel merge` can read a posted
-vendor count), so a bench that moved with either would have one surface requiring the panel's
-ballots while another demanded a host bench of the same pull request.
+has to be: the six commands that resolve this contract are not *given* those inputs
+uniformly (all six accept the jury flags since #1043, but keel's CI passes `--no-jury` to
+`evidence-verify` on every run and to `ship`/`plan` on none; only `evidence-verify` and
+`keel merge` can read a posted vendor count), so a bench that moved with either would have
+one surface requiring the panel's ballots while another demanded a host bench of the same
+pull request.
 
 On a `review.by_tier.<n>: jury` tier the panel *is* the review: `s7` dispatches ai-jury once
 and `keel review --from-jury <report.json>` maps each ballot onto a head-pinned

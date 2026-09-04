@@ -292,10 +292,16 @@ both render it as `assignment`, resolved against the same tier the review contra
   participating-vendor count changes *who* reviews, and on a panel tier none of them makes
   the verdict advisory either — the panel is the whole review, so a short panel may not
   excuse itself from the consensus record that says it was short. You receive the same
-  contract whichever surface you ask, which is the point: `keel review` has no `--no-jury`,
-  and only `evidence-verify`/`keel merge` can see a vendor count. The thin vendor span is
-  reported as `review-vendor-distinctness` rather than swapping in a bench nobody
-  dispatched.
+  contract whichever surface you ask, which is the point: every surface accepts the jury
+  flags (`--jury` / `--no-jury` / `--jury-advisory`, `keel review` included since #1043),
+  but nothing makes a run pass them uniformly, and only `evidence-verify`/`keel merge` can
+  see a vendor count. The thin vendor span is reported as `review-vendor-distinctness`
+  rather than swapping in a bench nobody dispatched.
+- **Pass the same jury flags to `keel review` that you passed to `keel ship`.** They do not
+  move the bench, so the verdicts you post are unchanged either way; they do decide whether
+  the contract `keel review --verify` re-checks requires a `jury-verdict`. A run that ships
+  with `--no-jury` and then posts with a bare `keel review --verify` is asking two halves of
+  one run for two different gates.
 
 ## Backbone (do not reorder; the step IDs are fixed)
 
@@ -850,6 +856,17 @@ s11 closure into the same call, and `--verify` to re-run `evidence-verify` immed
 posting. This is the canonical way to collapse `render_review_verdict` + N× `post-comment`
 + `evidence-verify` into one deterministic, idempotent step; it never spawns reviewers — the
 host still produces the review content above.
+
+**Repeat this run's jury flags on the `keel review` call.** `keel review` accepts
+`--jury` / `--no-jury` / `--jury-advisory` (#1043) and resolves the same review contract
+every other surface does. They never change how many verdicts you post — the bench is a
+pure function of config + tier + role + `--reviewers` / `--review-delegate` — but they do
+decide whether the contract requires a `jury-verdict`, so a run started as
+`keel ship --no-jury` must post with `keel review --no-jury …`; otherwise `--verify`
+re-checks a stricter gate than the one this run was planned against. On a
+`review.by_tier.<n>: jury` tier the panel outranks all three and the verdict stays
+required whatever was typed, and `--from-jury` is orthogonal to them: it says *where the
+verdicts come from*, the flags say *whether a jury verdict is required*.
 
 - `inline` → fetch the diff once; anchor each `critical`/`major` finding as an **inline
   review comment** on its `file:line` (resolve `RIGHT`/`LEFT` side; `line` is the new-file
