@@ -790,17 +790,19 @@ class TestTeamAssignment(unittest.TestCase):
 
                 self.assertEqual(contract["reviewers"]["count"], expected)
 
-    def test_a_downgraded_panel_keeps_the_bench_it_was_configured_with(self):
-        """The bench never moves with the measured vendor count (#1014 round 3, #1015).
+    def test_a_short_panel_changes_neither_the_bench_nor_the_gating(self):
+        """A vendor count below the minimum relaxes nothing on a panel tier.
 
-        A short panel downgrades the *verdict's* gating, which is
-        :func:`resolve_jury`'s business. It must not restaff the review: only the
-        surfaces that can read the PR's posted jury verdict ever see a vendor
-        count, so a bench that moved with it would have `keel plan` requiring the
-        panel's ballots while `evidence-verify` demanded a host bench of the same
-        PR — the contract disagreement #1014 exists to prevent, along a new axis.
-        The ballots stay required in full instead, and too few vendors is refused
-        by `evidence.panel_vendor_check`.
+        Two independent claims, both asserted below. The **bench** does not move:
+        only the surfaces that can read the PR's posted jury verdict ever see a
+        vendor count, so a bench that followed it would have `keel plan` requiring
+        the panel's ballots while `evidence-verify` demanded a host bench of the
+        same PR — the contract disagreement #1014 exists to prevent, along a new
+        axis. The **verdict** does not stop gating either (`downgraded` is False),
+        because a panel tier has no bench behind it and a short panel may not
+        excuse itself from the consensus record that says it was short; the
+        sibling test below pins that rule on its own, and `panel_vendor_check` is
+        what reports the shortfall.
         """
         contract = ship.resolve_review_contract(
             tier=3,
@@ -809,8 +811,8 @@ class TestTeamAssignment(unittest.TestCase):
             jury_panel_size=3,
         )
 
-        # …and on a panel tier the verdict does not stop gating either (below).
         self.assertFalse(contract["jury"]["downgraded"])
+        self.assertEqual(contract["jury"]["mode"], "gating")
         self.assertEqual(contract["reviewers"]["panel"], "jury")
         self.assertEqual(contract["reviewers"]["source"], "jury")
         self.assertEqual(contract["reviewers"]["count"], 3)

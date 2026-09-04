@@ -255,10 +255,23 @@ def _jury_panel_size(jury_record: dict[str, Any], panel_size: int | None) -> int
     contract disagreement #1014 exists to prevent, reintroduced along a new axis.
 
     A short panel therefore does not buy fewer eyes: the ballots stay required in
-    full, the jury verdict's own gating is resolved by :func:`resolve_jury` as
-    before, and a panel that spans too few vendors is refused by
-    :func:`keel.evidence.panel_vendor_check` rather than quietly swapped for a
+    full, the jury verdict stays required (:func:`resolve_jury` suppresses the
+    downgrade on a panel tier), and a panel that spans too few vendors is refused
+    by :func:`keel.evidence.panel_vendor_check` rather than quietly swapped for a
     bench nobody dispatched.
+
+    **Why the planning surfaces publish the floor rather than the real count.**
+    ``keel plan`` is offline by construction and has no pull request to read a
+    verdict from. ``keel ship --pr N`` does have one — it already makes three
+    GitHub reads for CI status, and could make a fourth for the posted
+    ``panelists`` — and deliberately does not. Two reasons, both about keeping one
+    answer rather than two: the floor is *provably conservative* (this function
+    only ever raises, so a planning surface can under-state what will be required
+    and never over-state it), and ``keel ship`` without ``--pr``, and every dry
+    run, must resolve the same contract with no verdict in reach — so the floor
+    has to be right on its own regardless. Reading it only sometimes would buy a
+    number that is sharper on some runs and identical on the rest, at the cost of
+    a contract whose value depends on which flags the caller happened to pass.
     """
     floor = jury_record["minimum_vendors"]
     if isinstance(panel_size, int) and panel_size > floor:

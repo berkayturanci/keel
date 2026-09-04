@@ -251,12 +251,15 @@ Three consequences worth stating plainly:
 - **`jury.mode: advisory` may not be combined with a jury panel.** "The panel is the
   review" and "the panel does not gate" together mean the tier requires nothing, so
   `keel validate` refuses the pair.
-- **The bench does not move with the panel's measured vendor count either.** A run below
-  `jury.min_vendors` participating vendors downgrades whether the *verdict* gates; it never
-  restaffs the review. Only `evidence-verify` and `keel merge` can read a vendor count off a
-  posted verdict, so a bench that followed it would put two surfaces of the same run in
-  disagreement about who reviews. Every ballot stays required, and the thin vendor span is
-  refused by `panel_vendor_check`.
+- **A short panel changes nothing about what the tier owes.** Below `jury.min_vendors`
+  participating vendors a jury is downgraded `gating → advisory` only where it sits *beside*
+  a host bench. On a panel tier there is no bench behind it, so the downgrade is suppressed:
+  the verdict stays gating and required, and every ballot stays required. The shortfall is
+  refused by `evidence.panel_vendor_check` as `review-vendor-distinctness` instead — a short
+  panel does not get to excuse itself from the consensus record that says it was short. The
+  bench does not move with the vendor count either: only `evidence-verify` and `keel merge`
+  can read a count off a posted verdict, so a bench that followed it would put two surfaces
+  of the same run in disagreement about who reviews.
 
 **Tier keys are quoted strings** (`"1"`, `"2"`, `"3"`). YAML reads a bare `1:` as an
 integer key, which a JSON schema cannot describe; keel says so instead of accepting it and

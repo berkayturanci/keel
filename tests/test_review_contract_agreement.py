@@ -476,15 +476,18 @@ class TestEveryCommandResolvesTheSameBench(unittest.TestCase):
     def test_the_posted_panel_count_governs_and_the_contract_publishes_the_floor(self):
         """The one place the surfaces legitimately differ, pinned rather than assumed.
 
-        `keel plan` / `keel ship` / `keel step-verify` resolve the contract with no
-        pull request in reach — `plan` is offline by construction — so on a panel
-        tier they publish the **floor**: `jury.min_vendors` ballots. Only the
-        surfaces that can read the PR's posted `keel.jury-verdict.v1` learn the
-        panel's real size, and there the declared count governs.
+        `keel plan` / `keel ship` / `keel step-verify` publish the **floor** on a
+        panel tier — `jury.min_vendors` ballots — while `keel review`,
+        `keel evidence-verify` and `keel merge` read the posted
+        `keel.jury-verdict.v1` and require the panel that actually sat.
 
-        This is convergent and conservative, never contradictory: the floor can
-        only be raised (`_jury_panel_size` takes the max), so a plan/ship run can
-        under-state what will be required but never over-state it, and every
+        `plan` is offline by construction and has no pull request to read. `ship
+        --pr N` does, and could read the count beside its CI reads; it
+        deliberately does not, because the floor is provably conservative
+        (`_jury_panel_size` only ever raises, so a planning surface can
+        under-state what will be required and never over-state it) and because
+        `ship` without `--pr`, and every dry run, has to resolve the same contract
+        with no verdict in reach anyway. Convergent, never contradictory: every
         surface that *can* see the panel agrees with every other one. The adapter
         is told the same thing in s7: post one verdict per ballot the panel
         returned, not `reviewers.count` verdicts.
