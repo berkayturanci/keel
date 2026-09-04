@@ -95,6 +95,10 @@ DEFAULT_BENCH = {"1": 1, "2": 2, "3": 3}
 #: named a gate while the published ``assignment.gate`` still held the policy's — two
 #: documents disagreeing about the same seat, which is the defect #1014 round 2 fixed
 #: for reviewers. A question the run cannot honour is not asked.
+#: **#1049 re-opens ``implement.effort`` for runs**: it adds ``--effort`` (and ``--team``)
+#: to ``keel ship``, at which point a run *can* carry an effort and the key moves back to
+#: the run column — here, and in the table at ``docs/keel/cli.md#ship-wizard-questions``
+#: that ``tests/test_wizard.py`` holds against this tuple.
 CONFIG_ONLY_KEYS = ("implement.effort", "gate.provider")
 
 #: Every key the planner can ask under any scope or branch. Used to tell a misspelled

@@ -1814,23 +1814,31 @@ so the tier and `knobs.team` still decide it. An answer naming a key this run ne
 (`review.3` in a run, `implement.model` for a provider that lists none) says so
 specifically, rather than being reported as a misspelling.
 
-A run is asked `mode` (quick-start vs customize), `implement.provider`,
-`implement.model`, `jury`, `review` (this run's bench, up to three seats) and
-`review_comments` — and **nothing else, because a run can carry nothing else**. Every
-one of those lands on a real flag; a question whose answer no flag could carry would be
-decorative, and an operator who answered it would be told one thing while the published
-contract said another. So two questions belong to `keel init --wizard` alone:
+A run is asked **only what a run can carry**. Every question below lands on a real flag;
+one whose answer no flag could carry would be decorative, and an operator who answered it
+would be told one thing while the published contract said another.
 
-| question | why a run cannot honour it |
-| --- | --- |
-| `gate.provider` | there is no `--gate`; the gate seat is `knobs.team.gate`, and `assignment.gate` is what the adapter dispatches at s7 |
-| `implement.effort` | there is no `--effort`; `--delegate` splits `provider:model` and stops there |
+<a id="ship-wizard-questions"></a>
 
-The **jury panel** is a config answer for the same reason: `--reviewers` takes `1|2|3`
-and nothing on `keel ship` spells "the panel *is* the review", so `review=jury` is not
-offered in a run and is refused if passed to `--wizard-answer`. A tier whose *policy* is
-the panel still resolves to it — that comes from `knobs.team`, not from the wizard. (If
-a run flag ever learns to spell a panel, this is the line to revisit.)
+| question | run | `keel init --wizard` | what carries it |
+| --- | --- | --- | --- |
+| `mode` | yes | yes | quick-start vs customize; it steers the walk, not the run |
+| `implement.provider` | yes | yes | `--delegate <provider>` |
+| `implement.model` | yes | yes | `--delegate <provider:model>` |
+| `jury` | yes | yes | `--jury` / `--jury-advisory` / `--no-jury` |
+| `review` | yes | yes | `--reviewers` + `--review-delegate`, per slot. A config asks it once per risk tier (`review.1` / `review.2` / `review.3`) and a run asks it once, because the tier is not classified until s5 |
+| `review_comments` | yes | yes | `--review-comments` |
+| `implement.effort` | no | yes | nothing: there is no `--effort`, and `--delegate` splits `provider:model` and stops there. It is a `knobs.team` seat field |
+| `gate.provider` | no | yes | nothing: there is no `--gate`. The seat is `knobs.team.gate`, and `assignment.gate` is what the adapter dispatches at s7 |
+
+`tests/test_wizard.py` parses that table and fails if it stops matching the planner, so a
+flag that moves a question between the columns has to move the row with it.
+
+The **jury panel** is a config answer for the same reason as the bottom two rows:
+`--reviewers` takes `1|2|3` and nothing on `keel ship` spells "the panel *is* the review",
+so `review=jury` is not offered in a run and is refused if passed to `--wizard-answer`. A
+tier whose *policy* is the panel still resolves to it — that comes from `knobs.team`, not
+from the wizard. (If a run flag ever learns to spell a panel, this is the line to revisit.)
 
 `keel init --wizard` asks the full set, per risk tier, because a config names a bench per
 tier while a run has one — see [the team step](#init-team-step).

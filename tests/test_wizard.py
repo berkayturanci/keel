@@ -12,10 +12,14 @@ from __future__ import annotations
 import argparse
 import contextlib
 import io
+import re
 import unittest
+from pathlib import Path
 
 from keel import cli, scaffold, team, wizard, wizardrun
 from keel import config as cfg
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _row(
@@ -1022,6 +1026,86 @@ class TestQuickStartChangesNothing(unittest.TestCase):
         _, assignment = self._assignment(wizarded, 3)
         self.assertEqual(wizarded.reviewers, 1)
         self.assertEqual(assignment["reviewer_count"], 1)
+
+
+class TestTheDocsTableMatchesThePlanner(unittest.TestCase):
+    """`docs/keel/cli.md`'s run-vs-config table is held against the planner (#1018).
+
+    Which questions a run asks is a function of which flags `keel ship` has, and that
+    changes: #1049 adds `--effort` and `--team`, after which a run *can* carry a
+    reasoning effort and `implement.effort` moves back to the run column. Prose does not
+    move with it. This is the same failure `tests/test_documented_commands.py` exists
+    for — a document that described a command keel never had — caught one layer earlier:
+    the table is parsed, and the columns are compared against the constants and against
+    a real walk of the planner, so a question that changes scope has to change the row.
+
+    The authoritative lists are read from the code, never restated here; a list in a test
+    drifts exactly the way the prose does.
+    """
+
+    #: The table under `## keel ship … ### --wizard`, by its own anchor.
+    ANCHOR = '<a id="ship-wizard-questions"></a>'
+    ROW = re.compile(r"^\|\s*`([^`]+)`\s*\|\s*(yes|no)\s*\|\s*(yes|no)\s*\|", re.MULTILINE)
+
+    def _table(self):
+        text = (REPO_ROOT / "docs" / "keel" / "cli.md").read_text(encoding="utf-8")
+        self.assertIn(self.ANCHOR, text, "the question table lost its anchor")
+        after = text[text.index(self.ANCHOR) :]
+        # Stop at the blank line that ends the table block.
+        rows = self.ROW.findall(after[: after.index("\n\n", after.index("| ---"))])
+        self.assertTrue(rows, "no question rows parsed out of the table")
+        return {key: (run, config) for key, run, config in rows}
+
+    #: `agy` lists models *and* has a spelling for reasoning effort, so a walk seated on
+    #: it reveals every question either scope is capable of asking. Anything absent from
+    #: such a walk is absent because the *scope* withholds it — which is the fact these
+    #: tests are about.
+    REVEALING = wizard.Catalog.from_report(
+        {"providers": [_row("agy", models=("gemini-3.8-flash",)), _row("claude")]}
+    )
+
+    def _asked(self, scope):
+        """Every question ``scope`` asks, from the planner rather than from a list."""
+        start = (
+            _config_state(self.REVEALING)
+            if scope == wizard.SCOPE_CONFIG
+            else wizard.start(self.REVEALING)
+        )
+        state = start.with_answer("mode", wizard.CUSTOMIZE).with_answer(
+            "implement.model", "gemini-3.8-flash"
+        )
+        return {q.key for q in state.questions()}
+
+    def test_the_config_only_column_is_config_only_keys(self):
+        documented = {key for key, (run, _) in self._table().items() if run == "no"}
+        self.assertEqual(documented, set(wizard.CONFIG_ONLY_KEYS))
+
+    def test_the_run_column_is_what_the_planner_asks_a_run(self):
+        documented = {key for key, (run, _) in self._table().items() if run == "yes"}
+        self.assertEqual(documented, self._asked(wizard.SCOPE_RUN))
+
+    def test_every_documented_question_is_a_real_key(self):
+        self.assertEqual(set(self._table()) - set(wizard.QUESTION_KEYS), set())
+
+    def test_every_real_key_is_documented_or_a_per_tier_spelling(self):
+        """A new question must reach the table; only the tier spellings may be absent."""
+        undocumented = set(wizard.QUESTION_KEYS) - set(self._table())
+        self.assertEqual(
+            undocumented,
+            {f"review.{tier}" for tier in team.TIERS},
+            "a wizard question is missing from docs/keel/cli.md#ship-wizard-questions",
+        )
+
+    def test_the_config_column_asks_everything(self):
+        table = self._table()
+        self.assertTrue(all(config == "yes" for _, config in table.values()))
+        config_keys = self._asked(wizard.SCOPE_CONFIG)
+        # The table spells the bench once; the planner asks it per tier.
+        self.assertEqual(
+            set(table) - config_keys,
+            {"review"},
+            "the table claims a config question the config wizard does not ask",
+        )
 
 
 class TestEveryRunQuestionIsHonoured(unittest.TestCase):
