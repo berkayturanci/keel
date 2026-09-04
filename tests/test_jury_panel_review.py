@@ -25,6 +25,37 @@ from unittest.mock import patch
 
 from keel import cli, runtime
 
+#: A canned ``keel doctor --providers`` report in which the panel *is* staffable (#1066).
+#: s7 probes provider availability before it dispatches the panel, and that probe is the
+#: one machine-dependent input to the reviewer bench — so an offline suite has to supply
+#: it, or these tests resolve one bench on a laptop with three agent CLIs installed and a
+#: different one on a CI runner with none.
+_STAFFED_PANEL_REPORT = {
+    "schema_version": "keel.providers.v1",
+    "providers": [
+        {"name": "claude", "vendor": "claude", "available": True, "reason": "/usr/bin/claude"},
+        {"name": "codex", "vendor": "codex", "available": True, "reason": "/usr/bin/codex"},
+    ],
+    "available": 2,
+    "total": 2,
+}
+
+_NO_REAL_PROVIDER_PROBE = None
+
+
+def setUpModule():
+    """Answer the s7 panel-availability probe from memory, never from this machine."""
+    global _NO_REAL_PROVIDER_PROBE
+    _NO_REAL_PROVIDER_PROBE = patch(
+        "keel.providerprobe.collect", lambda *_a, **_kw: dict(_STAFFED_PANEL_REPORT)
+    )
+    _NO_REAL_PROVIDER_PROBE.start()
+
+
+def tearDownModule():
+    _NO_REAL_PROVIDER_PROBE.stop()
+
+
 PROJECT = """
 extends: keel
 core_version: "^1.0"

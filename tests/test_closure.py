@@ -510,7 +510,15 @@ class TestClosureContract(unittest.TestCase):
         self.assertEqual(sections[-1], "watermark")
         self.assertEqual(
             contract["run_context_fields"],
-            ["host_agent", "transport", "profile", "jury_mode", "implement_mode", "consent"],
+            [
+                "host_agent",
+                "transport",
+                "profile",
+                "jury_mode",
+                "jury_panel",
+                "implement_mode",
+                "consent",
+            ],
         )
 
 

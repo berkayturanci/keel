@@ -291,7 +291,9 @@ both render it as `assignment`, resolved against the same tier the review contra
     "review_panel": "reviewers", "reviewer_count": 2,
     "reviewers": [ { "slot": "A", "provider": "claude", "source": "team.review.by_tier.2" },
                    { "slot": "C", "provider": "codex", "source": "team.review.by_tier.2" } ],
-    "jury": { "mode": "gating", "min_vendors": 2, "panel_is_review": false },
+    "jury": { "mode": "gating", "min_vendors": 2, "panel_is_review": false,
+              "panel_configured": false, "on_unavailable": "fallback",
+              "availability": null },
     "fix": { "provider": "agy", "alias": "implementer", "source": "team.fix" },
     "warnings": [] } }
 ```
@@ -305,6 +307,10 @@ both render it as `assignment`, resolved against the same tier the review contra
   `flag:--review-delegate`. Cite it when you say who you dispatched.
 - `warnings` is not decoration: an entry there says a flag or a seat you supplied was not
   dispatched, or that `gate.distinct_from: implementer` could not be honoured.
+- `jury.availability` is the s7 panel-availability probe (`null` when this tier names
+  no panel). On `decision: "fallback"` core has already replaced the panel with a host
+  bench of the tier's own size and `reviewer_source` reads `jury-fallback`; report the
+  panel as unavailable rather than as reviewed. See s7.
 - `review_panel: "jury"` means the cross-vendor panel **is** the review for that tier:
   `review_merge_contract.reviewers.slots` is empty and `reviewers.source` is `jury`. Do
   **not** invent host reviewers to fill the gap, and do not run both — s7 dispatches the
@@ -739,6 +745,41 @@ it was short (the shortfall surfaces as `review-vendor-distinctness` from
 `evidence-verify` instead). Report the count (`keel evidence-verify --jury-vendors <N>`),
 post every ballot the panel returned, and let core decide. Do not fall back to host
 reviewers on your own; a tier's reviewers are what its config says they are.
+
+**When the panel cannot be staffed here, core has already decided — read the contract.**
+Before it publishes the bench, keel probes provider availability with the same machinery
+`keel doctor --providers` runs, and the verdict is on the contract at
+`review_merge_contract.jury.availability` (`null` when no panel was configured for this
+tier, so nothing was asked):
+
+```json
+{ "probed": true, "staffable": false, "decision": "fallback",
+  "on_unavailable": "fallback", "required_vendors": 2,
+  "available_vendors": ["claude"],
+  "unavailable": [ { "provider": "codex", "vendor": "codex",
+                     "reason": "codex not found on PATH" } ],
+  "reason": "jury panel not staffable: 1 vendor(s) available (claude), 2 required; …" }
+```
+
+- `decision: "available"` — dispatch the panel exactly as above. Nothing changes.
+- `decision: "fallback"` — `knobs.team.jury.on_unavailable` is `fallback` and the panel
+  cannot sit. Core has already moved the bench for you: `reviewers.panel` reads
+  `reviewers`, `reviewers.slots` carries the tier's **own** seat count (three at tier-3),
+  `assignment.reviewer_source` reads `jury-fallback`, and `jury.mode` is `off` because
+  there is no panel to produce a verdict. Run those host reviewers, and **say so**: the
+  record is written into the run ledger at `run_context.jury_panel`, so the s11 closure
+  comment `keel` renders from it already carries a **Jury panel:** line naming the panel as
+  unavailable and listing the seats — do not paper over it in your own summary. Do not
+  dispatch `jury`; do not invent a panel; do not lower the seat count. The fallback changes
+  who sat, not how many.
+- `decision: "block"` — the project's policy is `block`, and the command already refused
+  with a message naming each unavailable provider. There is nothing to review: report the
+  refusal and stop.
+
+This is the one place a fact about the machine, rather than the config, moves the bench —
+and it is why the record travels with the run. Never infer it, and never staff a fallback
+bench of your own: a tier's reviewers are what its config *and this recorded measurement*
+say they are.
 
 Before the panel, run the **gate review** when `assignment.gate` is present: the project's
 second opinion on the implementation, dispatched read-only exactly like a reviewer but
@@ -1342,4 +1383,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=plugin command=ship keel_version=1.20.0 source_sha256=6545723dcc568aa337df962712a2bc47fe94c9bda212902816a92dee9976f2ab generated_sha256=6545723dcc568aa337df962712a2bc47fe94c9bda212902816a92dee9976f2ab -->
+<!-- keel-generated: surface=plugin command=ship keel_version=1.20.0 source_sha256=1ef0eedd5ef38a11a591a6e0f32d0b934423f256e892adc40d0e963d66eff036 generated_sha256=1ef0eedd5ef38a11a591a6e0f32d0b934423f256e892adc40d0e963d66eff036 -->

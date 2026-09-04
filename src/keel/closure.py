@@ -76,6 +76,7 @@ def contract_as_dict() -> dict[str, Any]:
             "transport",
             "profile",
             "jury_mode",
+            "jury_panel",
             "implement_mode",
             "consent",
         ],
@@ -251,9 +252,49 @@ def _run_context(run_context: Any) -> list[str]:
         f"- **Transport:** {_unknown(block.get('transport'))}",
         f"- **Profile:** {_unknown(block.get('profile'))}",
         f"- **Jury:** {_jury_mode(block.get('jury_mode'))}",
+        *_jury_panel(block),
         *_implement_mode(block),
         f"- **Consent:** {_consent(block.get('consent'))}",
     ]
+
+
+#: How a run whose panel could not be staffed names that in the closure comment
+#: (#1066). The point of the line is that a reader can tell a jury-reviewed change
+#: from a fallback-reviewed one without re-deriving it — ai-jury #682 is what a
+#: panel that quietly collapsed and still reported success costs.
+PANEL_UNAVAILABLE_LABEL = "panel unavailable"
+
+
+def _jury_panel(block: dict[str, Any]) -> list[str]:
+    """The s7 panel-availability line — emitted only when the panel could not sit.
+
+    Conditional, like the s4 profile line: a run whose panel convened (and every run
+    of a project that has no panel) posts the comment it always did, byte for byte.
+    The exception is the case worth naming, and it names the seats.
+    """
+    panel = block.get("jury_panel")
+    panel = panel if isinstance(panel, dict) else {}
+    decision = panel.get("decision")
+    if decision not in ("fallback", "block"):
+        return []
+    outcome = (
+        "a host bench of the same size reviewed instead"
+        if decision == "fallback"
+        else "the run was refused (knobs.team.jury.on_unavailable: block)"
+    )
+    return [f"- **Jury panel:** {PANEL_UNAVAILABLE_LABEL} — {outcome}"
+            f"{_panel_detail(panel)}"]
+
+
+def _panel_detail(panel: dict[str, Any]) -> str:
+    """`` (claude: not found on PATH; …)`` — the seats, or nothing when none named."""
+    unavailable = panel.get("unavailable")
+    seats = [
+        f"{seat.get('provider')}: {seat.get('reason')}"
+        for seat in (unavailable if isinstance(unavailable, list) else [])
+        if isinstance(seat, dict)
+    ]
+    return f" ({'; '.join(seats)})" if seats else ""
 
 
 #: How a test-first run names itself in the closure comment (#1020).

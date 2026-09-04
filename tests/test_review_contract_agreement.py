@@ -89,6 +89,26 @@ _REAL_DETECT = None
 _PATCHES: list = []
 
 
+#: A canned `keel doctor --providers` report in which the panel *is* staffable (#1066).
+#: s7 probes provider availability before it dispatches a jury panel, and the probe is the
+#: one machine-dependent input to the reviewer bench — so an offline suite has to supply
+#: it, or these tests would resolve a different bench on a laptop with three agent CLIs
+#: than on a CI runner with none.
+STAFFED_PANEL_REPORT = {
+    "schema_version": "keel.providers.v1",
+    "providers": [
+        {"name": "claude", "vendor": "claude", "available": True, "reason": "/usr/bin/claude"},
+        {"name": "codex", "vendor": "codex", "available": True, "reason": "/usr/bin/codex"},
+    ],
+    "available": 2,
+    "total": 2,
+}
+
+
+def _staffed_panel_probe(_config=None, **_kwargs):
+    return dict(STAFFED_PANEL_REPORT)
+
+
 def setUpModule():
     global _REAL_DETECT
     from keel import runtime
@@ -103,6 +123,7 @@ def setUpModule():
             patch("keel.cli.run_argv", _recording_run_argv),
             patch("keel.git.run_argv", _recording_run_argv),
             patch("keel.github.run_argv", _recording_run_argv),
+            patch("keel.providerprobe.collect", _staffed_panel_probe),
         ]
     )
     for entry in _PATCHES:

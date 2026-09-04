@@ -7,7 +7,7 @@ fixing) are pure and live here, so they are reproducible and fully unit-tested.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -103,8 +103,18 @@ def resolve_jury(
     panel_is_jury: bool = False,
     policy_mode: str | None = None,
     minimum_vendors: int = MINIMUM_JURY_VENDORS,
+    panel_unavailable: bool = False,
 ) -> dict[str, Any]:
     """Resolve the cross-vendor jury mode using ship flag precedence.
+
+    ``panel_unavailable`` outranks everything, including ``tier == 3``'s auto-on (#1066).
+    It is set only when a measured probe found the panel unstaffable *and* the project's
+    ``team.jury.on_unavailable`` allowed a host bench in its place, and it turns the jury
+    off because there is no panel to produce a verdict: leaving ``tier-3 auto`` standing
+    would require a ``jury-verdict`` artifact from a panel this machine just established
+    cannot convene, which is the tier stuck all over again one layer down. It is not the
+    flag route #1014 closed — a preference still cannot do this, and the reason string
+    names the fallback so nothing reads it as a plain ``--no-jury``.
 
     ``panel_is_jury`` is a ``knobs.team`` tier whose review policy is ``jury``, and it
     **outranks every per-run jury flag**. At such a tier the panel *is* the review: there
@@ -148,7 +158,10 @@ def resolve_jury(
     being required. ``downgraded`` reports ``False`` there, and the reason string
     is left alone, so nothing downstream reads a relaxation that did not happen.
     """
-    if panel_is_jury:
+    if panel_unavailable:
+        enabled = False
+        reason = "jury panel unavailable; host bench fallback (team.jury.on_unavailable)"
+    elif panel_is_jury:
         enabled = True
         reason = "team.review panel"
         ignored = [
@@ -211,6 +224,23 @@ def resolve_jury(
             "nit": "advisory",
         },
     }
+
+
+def panel_fell_back(assignment: dict[str, Any] | None) -> bool:
+    """Did a measured probe move this tier's review off the panel and onto a host bench?
+
+    Read off the resolved assignment rather than re-derived, so every surface that resolves
+    the review contract reaches the same answer from the same measurement (#1066). Total:
+    an assignment from before the block existed, or one with no availability recorded,
+    reads as "no fallback" — the answer that leaves the contract exactly as it was.
+    """
+    if not isinstance(assignment, dict):
+        return False
+    jury = assignment.get("jury")
+    availability = jury.get("availability") if isinstance(jury, dict) else None
+    if not isinstance(availability, dict):
+        return False
+    return availability.get("decision") == team_policy.JURY_ON_UNAVAILABLE[0]
 
 
 def check_reviewer_override(reviewer_override: int | None) -> None:
@@ -326,12 +356,14 @@ def resolve_review_contract(
         )
         panel, slots = "reviewers", []
         panel_is_jury = False
+        panel_unavailable = False
     else:
         count = assignment["reviewer_count"]
         source = assignment["reviewer_source"]
         panel = assignment["review_panel"]
         slots = list(assignment["reviewers"])
         panel_is_jury = bool(assignment["jury"]["panel_is_review"])
+        panel_unavailable = panel_fell_back(assignment)
     jury_record = resolve_jury(
         tier=tier,
         gates=gates,
@@ -344,7 +376,14 @@ def resolve_review_contract(
         minimum_vendors=(
             MINIMUM_JURY_VENDORS if assignment is None else assignment["jury"]["min_vendors"]
         ),
+        panel_unavailable=panel_unavailable,
     )
+    # The probe's verdict travels *on the contract*, not only in the assignment (#1066).
+    # `evidence-verify`, the ledger and the closure comment all read the contract, and a
+    # fallback that only the assignment recorded would be exactly the silent downgrade
+    # ai-jury #682 was opened for: a review that says nothing about the panel it replaced.
+    jury_record["panel_unavailable"] = panel_unavailable
+    jury_record["availability"] = None if assignment is None else assignment["jury"]["availability"]
     if panel_is_jury:
         count, source = _jury_panel_size(jury_record, jury_panel_size), "jury"
     pack = policy_pack or {}
@@ -638,6 +677,12 @@ def assess(
     effort: str | None = None,
     host_agent: str = team_policy.HOST_DEFAULT,
     require_distinct_vendors: bool | None = None,
+    #: The s7 panel-availability probe (#1066), measured by
+    #: :func:`keel.providerprobe.jury_availability` and passed in for the same reason
+    #: ``team_profile``/``effort`` are: ``keel ship`` **replaces** the planned assignment
+    #: with this one once the real tier is known, so a measurement that stopped here would
+    #: publish a ship contract naming a panel the plan had already found unstaffable.
+    jury_availability: Mapping[str, Any] | None = None,
 ) -> ShipAssessment:
     """The whole deterministic ship decision in one place: tier → reviewers, window,
     CI, and the final merge action. Pure — identical inputs give identical output.
@@ -683,6 +728,7 @@ def assess(
         jury_advisory=jury_advisory,
         team_profile=team_profile,
         effort=effort,
+        jury_availability=jury_availability,
     )
     reviewers = assignment["reviewer_count"]
     window_open = (

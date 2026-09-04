@@ -111,6 +111,7 @@ def build_ship_run_record(
     transport: str | None = None,
     profile: str | None = None,
     jury_mode: str | None = None,
+    jury_panel: dict[str, Any] | None = None,
     implement_mode: str | None = None,
     implement_phases: list[dict[str, Any]] | None = None,
     consent_status: str | None = None,
@@ -191,6 +192,7 @@ def build_ship_run_record(
             transport=transport,
             profile=profile,
             jury_mode=jury_mode,
+            jury_panel=jury_panel,
             implement_mode=implement_mode,
             implement_phases=implement_phases,
             consent_status=consent_status,
@@ -264,6 +266,7 @@ def _run_context(
     transport: str | None,
     profile: str | None,
     jury_mode: str | None,
+    jury_panel: dict[str, Any] | None,
     consent_status: str | None,
     consent_scopes: list[str] | tuple[str, ...] | None,
     implement_mode: str | None = None,
@@ -286,6 +289,12 @@ def _run_context(
         "transport": transport if _nonblank(transport) else None,
         "profile": profile if _nonblank(profile) else None,
         "jury_mode": jury_mode if _nonblank(jury_mode) else None,
+        # The panel-availability probe this run measured, or `None` when the tier
+        # never named a panel (#1066). Recorded so a reader of the ledger can tell
+        # a jury-reviewed change from one a host bench reviewed because the panel
+        # could not be staffed, without re-deriving it from a machine that has
+        # since changed.
+        "jury_panel": dict(jury_panel) if isinstance(jury_panel, dict) else None,
         # The s4 profile and, under `tdd`, one record per phase — the ledger is where a
         # closure comment and a later audit learn that this change was written test-first
         # and which commit each half of s4 produced.

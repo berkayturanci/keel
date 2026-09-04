@@ -51,6 +51,7 @@ from . import (
     guard,
     install,
     jury,
+    juryavail,
     ledger,
     lock,
     mergeverify,
@@ -356,6 +357,11 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         delegate=args.delegate,
         review_delegates=tuple(args.review_delegate),
         tdd_override=args.tdd,
+        # The panel-availability probe for the tier this contract is being built at
+        # (#1066) — the same measurement `_review_assignment` hands the other six
+        # surfaces, so `keel plan` cannot publish a panel the run it plans could not
+        # staff.
+        jury_availability=providerprobe.jury_availability(config, tier=args.review_tier),
         # `plan` accepts these, so `plan` has to resolve them. Accepting a flag and then
         # not threading it published an assignment that disagreed with the one `ship`
         # renders from the identical command line — two answers to the one question this
@@ -1054,6 +1060,10 @@ def _review_assignment(
     must not depend on which command is asking.
     """
     review_delegates = tuple(getattr(args, "review_delegate", None) or ())
+    # The probe #1066 asks for, at the one place all six surfaces pass through. It runs
+    # *only* on a tier whose review policy is the panel, so a project that never convenes
+    # one pays nothing and behaves exactly as before.
+    availability = providerprobe.jury_availability(config, tier=tier)
     return team.resolve_assignment(
         config.knobs.team,
         tier=tier,
@@ -1074,6 +1084,7 @@ def _review_assignment(
         # parent's clusters and silently drop out of the child's own assignment.
         team_profile=getattr(args, "team_profile", None),
         effort=getattr(args, "effort", None),
+        jury_availability=availability,
     )
 
 
@@ -1159,6 +1170,10 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         team_profile=args.team_profile,
         host_agent=args.host_agent or agents.HOST_DEFAULT,
         tdd_override=args.tdd,
+        # The preflight contract is built before s5 classifies, so its tier is
+        # unresolved and no tier's policy can be the panel yet; this probes only when
+        # a `review.default: jury` makes the panel the review at every tier (#1066).
+        jury_availability=providerprobe.jury_availability(config, tier=None),
     )
     consent_ok, consent_message = consent.assert_operator_consent(contract["operator_consent"])
     if not consent_ok:
@@ -1328,6 +1343,10 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         review_delegates=tuple(args.review_delegate),
         team_profile=args.team_profile,
         effort=args.effort,
+        # The same measurement `_review_assignment` took above, handed to the resolver
+        # that produces the *assessed* contract — the one the ledger, the closure comment
+        # and `evidence-verify` all read (#1066).
+        jury_availability=review_contract["jury"]["availability"],
         host_agent=args.host_agent or agents.HOST_DEFAULT,
         require_distinct_vendors=config.knobs.evidence_require_distinct_vendors,
     )
@@ -1398,6 +1417,11 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         transport=args.transport or transport.name,
         profile=profile,
         jury_mode=a.review_contract["jury"]["mode"],
+        # …and, when the tier named a panel, what the availability probe found (#1066).
+        # The ledger is what the closure comment is rendered from, so recording it here
+        # is what lets the posted comment say the panel was unavailable and a host bench
+        # reviewed instead, rather than leaving a reader to infer it from a seat count.
+        jury_panel=a.review_contract["jury"]["availability"],
         implement_mode=mode.name if mode.is_tdd else None,
         implement_phases=tdd.phase_records(
             tdd_result,
@@ -8569,4 +8593,12 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     except checkpoint.CheckpointError as exc:
         print(f"invalid checkpoint path: {exc}", file=sys.stderr)
+        return 1
+    except juryavail.JuryUnavailableError as exc:
+        # `knobs.team.jury.on_unavailable: block` and the panel cannot be staffed here
+        # (#1066). Raised at the probe — the only place the measurement is taken — and
+        # caught once here, so every review-aware surface refuses identically. Six
+        # near-copies of the same check would drift, and a surface that missed it would
+        # review a jury tier with a bench the project's policy refused.
+        print(str(exc), file=sys.stderr)
         return 1

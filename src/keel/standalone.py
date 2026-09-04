@@ -12,7 +12,15 @@ import os
 import sys
 
 from . import config as cfg
-from . import consent, contracts, github_transport, runtime, wizardrun, workblock
+from . import (
+    consent,
+    contracts,
+    github_transport,
+    providerprobe,
+    runtime,
+    wizardrun,
+    workblock,
+)
 from . import orchestrator as orch
 from .extensions import load_extensions
 from .gates import GateError
@@ -198,6 +206,9 @@ def cmd_standalone(args: argparse.Namespace) -> int:
         review_delegates=review_delegates,
         effort=effort,
         team_profile=team_profile,
+        # A standalone command resolves no risk tier, so only a `review.default: jury`
+        # reaches the probe here — the same rule the preflight contract follows (#1066).
+        jury_availability=providerprobe.jury_availability(config, tier=None),
     )
     consent_ok, consent_message = consent.assert_operator_consent(contract["operator_consent"])
     result = contracts.standalone_result_as_dict(

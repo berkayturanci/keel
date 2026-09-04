@@ -196,7 +196,10 @@ knobs:
         "1": [{ provider: claude }]
         "2": [{ provider: claude }, { provider: grok-via-openai-compatible }]
         "3": jury                          # the panel is the review (see the caveat below)
-    jury: { mode: gating, min_vendors: 2 }
+    jury:
+      mode: gating
+      min_vendors: 2
+      on_unavailable: fallback       # or `block` — what to do when the panel cannot sit
     fix: { provider: implementer }         # who applies review findings
     lead: { provider: claude }             # coordinates a batch; workers report through it
     by_difficulty:                         # how much work it is -> which bench staffs it
@@ -293,6 +296,69 @@ Three consequences worth stating plainly:
   of the same run in disagreement about who reviews. Every review-aware surface *accepts*
   the jury flags — `keel review` included, since #1043 — but nothing makes a run pass them
   to all six, which is the other half of why the bench may not follow them.
+
+### `jury.on_unavailable` — when the panel cannot be staffed here
+
+A panel tier commits every change at that tier to a jury run, and no per-run flag can take
+the panel away. That is the right shape while the panel can actually run. When it cannot —
+an agent CLI is not installed, is unauthenticated, or the account is out of quota — the
+tier would otherwise be simply stuck: the only review it has is one this machine cannot
+convene. A single-maintainer project hits that routinely.
+
+So **before s7 dispatches the panel, keel probes it.** The probe is the machinery
+`keel doctor --providers` already runs — one `PATH` lookup and one `--version` call per CLI
+vendor, an env-var *name* check per hosted API, one loopback request for Ollama — reused
+rather than re-implemented, so keel keeps one answer to "is this provider usable here"
+instead of two that drift. The panel is *staffable* when the probe finds at least
+`jury.min_vendors` distinct vendors available; two entries that shell out to the same CLI
+are one vendor and one opinion, exactly as they are everywhere else.
+
+`on_unavailable` is what happens when it is not:
+
+| value | behaviour |
+| --- | --- |
+| `fallback` *(default)* | Staff a **host bench of the same size the tier requires** — three seats at tier-3, exactly as a tier without a panel resolves — and record why. |
+| `block` | Refuse the run, with a message naming each unavailable provider and the reason the probe reported. |
+
+`fallback` is the sensible default for a solo project: the panel is the better review when
+it is available and should not become a wall when it is not. `block` preserves the strict
+behaviour for a project whose product claim *is* cross-vendor review.
+
+**The fallback changes who sat, never how many.** It seats the tier's own reviewer count
+and publishes the tier's own required evidence: three `review-verdict-*` items at tier-3,
+not two. What it does drop is `jury-verdict`, and it must — there is no panel to produce
+one, and requiring it would leave the tier stuck one layer down.
+
+**Nothing about it is silent.** The probe's verdict is recorded in full — which seats were
+unavailable and why — and travels with the run:
+
+- `assignment.jury.availability` and `review_merge_contract.jury.availability` carry the
+  whole record; `assignment.reviewer_source` reads `jury-fallback` rather than `risk-tier`,
+  so a fallback bench is distinguishable from a tier that never had a panel;
+- `assignment.warnings` names the unavailable seats in one sentence;
+- the run ledger records it at `run_context.jury_panel`;
+- the closure comment renders a **Jury panel:** line saying the panel was unavailable and a
+  host bench reviewed instead, listing the seats. A run whose panel convened, and every run
+  of a project with no panel, posts the comment it always did, byte for byte.
+
+That is the point: a reader can tell a jury-reviewed change from a fallback-reviewed one
+without re-deriving it. A panel that quietly collapses and still reports success is
+[ai-jury #682](https://github.com/berkayturanci/ai-jury/issues/682), and this must not
+reintroduce it on keel's side.
+
+**Availability is measured, never asserted.** There is no flag that says "the panel is
+fine", and #1014's rule survives intact: what may not take the panel off is an operator's
+*preference*. Availability is a fact about the world, and it is allowed to change the
+outcome precisely because it is recorded. The consequence is that two machines can resolve
+the same tier differently — a CI runner with no agent CLI falls back where a workstation
+convenes the panel — and each says which it did rather than either quietly claiming the
+other's provenance.
+
+**`config_hash`.** `on_unavailable` is absent from the canonical `team` block when it is
+unset, like every other optional field there, so a project that never names the setting
+keeps the `config_hash` it had before the setting existed. Writing it explicitly — even as
+`fallback`, the value it would default to — is a config change and rotates the hash, which
+is the guarantee `knobs.team` has made since #1014: the hash changes *iff* `team` does.
 
 **Tier keys are quoted strings** (`"1"`, `"2"`, `"3"`). YAML reads a bare `1:` as an
 integer key, which a JSON schema cannot describe; keel says so instead of accepting it and

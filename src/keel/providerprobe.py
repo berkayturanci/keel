@@ -31,7 +31,7 @@ import urllib.request
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 
-from . import api_delegate, providers, runner
+from . import api_delegate, juryavail, providers, runner, team
 from .providers import Provider, Registry
 
 #: Wall-clock seconds a single provider subprocess may take.
@@ -252,6 +252,51 @@ def build_report(
         "available": sum(1 for row in rows if row["available"]),
         "total": len(rows),
     }
+
+
+def jury_availability(config, *, tier: int | None, _probe=None) -> dict[str, object] | None:
+    """Can this machine convene the panel this tier's review policy names? (#1066)
+
+    ``None`` when the question does not arise — the tier's review is a host bench, so
+    nothing about the panel can change the answer and nothing is spent asking. That keeps
+    the whole feature inert for every project that has not made the panel its review,
+    keel's own ``projects/keel.yaml`` included.
+
+    On a panel tier it runs :func:`collect` — the machinery ``keel doctor --providers``
+    already prints, reused rather than re-implemented, so keel keeps one answer to "is this
+    provider usable here" instead of two that drift — and hands the report to
+    :func:`keel.juryavail.assess`. The probe is local: one ``PATH`` lookup and one
+    ``--version`` call per CLI vendor, an env-var *name* check per hosted API, and one
+    loopback request for Ollama. No key value is read, and no address a config names is
+    dialled.
+
+    **This is the one machine-dependent input to the reviewer bench, and it is
+    deliberate.** Every other input is config; this one is a fact about the world, which is
+    why it is allowed to move the outcome — #1014 round 3 closed the *flag* route, not this
+    one — and why :meth:`keel.juryavail.Availability.as_dict` travels with it into the
+    assignment, the review contract, the run ledger and the closure comment. Two machines
+    can resolve the same tier differently: a runner with no agent CLI installed falls back
+    where a workstation convenes the panel, and each says which it did rather than either
+    quietly claiming the other's provenance.
+    """
+    seats, source = config.knobs.team.review_for(tier)
+    if seats != team.JURY_PANEL:
+        return None
+    probe = collect if _probe is None else _probe
+    record = juryavail.assess(
+        probe(config),
+        min_vendors=config.knobs.team.jury_min_vendors or team.DEFAULT_MIN_VENDORS,
+        policy=config.knobs.team.jury_on_unavailable,
+    ).as_dict()
+    if record["decision"] == juryavail.DECISION_BLOCK:
+        # Raised at the probe rather than at each caller: this is the *only* place the
+        # measurement is taken, so it is the only place that cannot be forgotten. A check
+        # copied to seven resolution sites is seven chances for a new surface to review a
+        # jury tier with a bench the project's policy refused.
+        raise juryavail.JuryUnavailableError(
+            juryavail.refusal_message(record, source=source or "team.review")
+        )
+    return record
 
 
 def collect(
