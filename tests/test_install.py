@@ -711,6 +711,14 @@ class TestSiteParamsGenerator(unittest.TestCase):
     def _adapter(self, front: str) -> str:
         return f"---\n{front}\n---\n\nbody\n"
 
+    @staticmethod
+    def _payload(text: str):
+        """The object `params.js` assigns — or the raw text, when it will not parse."""
+        try:
+            return json.loads(text.split("=", 1)[1].strip().rstrip(";"))
+        except (IndexError, ValueError):
+            return text
+
     def test_flags_are_the_hints_top_level_groups(self):
         self.assertEqual(
             install.hint_flags("[issue numbers...] [--tdd] [--dry-run]"),
@@ -757,22 +765,20 @@ class TestSiteParamsGenerator(unittest.TestCase):
         self.assertTrue(text.startswith(install.SITE_PARAMS_HEADER))
         self.assertTrue(text.endswith(";\n"))
         self.assertIn(f"{install.SITE_PARAMS_GLOBAL} = ", text)
-        payload = json.loads(text.split("=", 1)[1].strip().rstrip(";"))
-        self.assertEqual(payload, {"ship": {"desc": "d", "hint": "", "flags": []}})
+        self.assertEqual(self._payload(text), {"ship": {"desc": "d", "hint": "", "flags": []}})
 
     def test_the_header_carries_no_equals_sign(self):
-        """The site's own drift check parses the file by splitting on the first `=`."""
+        """The readers that split the file on its first `=` are these tests, not the site.
+
+        Nothing under `website/` parses `params.js` — the browser runs it, and the
+        assignment is all it wants. The rule is real all the same: this class and
+        `tests/test_docs_claims.py` recover the payload by splitting on the first `=`,
+        so a header that grew one would take the whole guard down with it.
+        """
         self.assertNotIn("=", install.SITE_PARAMS_HEADER)
 
     def test_generated_entries_are_sorted_by_adapter_filename(self):
-        names = list(
-            json.loads(
-                install.site_params_files()[install.SITE_PARAMS_PATH]
-                .split("=", 1)[1]
-                .strip()
-                .rstrip(";")
-            )
-        )
+        names = list(self._payload(install.site_params_files()[install.SITE_PARAMS_PATH]))
         self.assertEqual(names, sorted(p.stem for p in install.ADAPTERS.glob("*.md")))
 
     def test_committed_site_params_matches_generator(self):
@@ -780,8 +786,21 @@ class TestSiteParamsGenerator(unittest.TestCase):
         for rel, expected in install.site_params_files().items():
             path = REPO_ROOT / rel
             self.assertTrue(path.exists(), f"missing: {rel}")
+            found = path.read_text(encoding="utf-8")
+            # Name the command before showing bytes. The file is ~200 lines of generated
+            # JSON, so a whole-file diff is truncated ahead of the advice underneath it —
+            # the reader is told to regenerate without being told what moved. Comparing
+            # the parsed payloads entry by entry says which command drifted, and how.
+            committed, generated = self._payload(found), self._payload(expected)
+            if isinstance(committed, dict):  # else: not JS any more, the bytes say it best
+                drift = {
+                    name: {"committed": committed.get(name), "generated": generated.get(name)}
+                    for name in sorted(set(committed) | set(generated))
+                    if committed.get(name) != generated.get(name)
+                }
+                self.assertEqual({}, drift, f"{rel} has drifted from the frontmatter: {drift}")
             self.assertEqual(
-                path.read_text(encoding="utf-8"),
+                found,
                 expected,
                 "run `make site-params` to regenerate the site's argument surface",
             )
@@ -819,7 +838,7 @@ class TestSiteParamsGenerator(unittest.TestCase):
                 self._adapter('description: Solo.\nargument-hint: "[--only]"'), encoding="utf-8"
             )
             text = install.site_params_files(_src=src)[install.SITE_PARAMS_PATH]
-            payload = json.loads(text.split("=", 1)[1].strip().rstrip(";"))
+            payload = self._payload(text)
             self.assertEqual(
                 payload, {"solo": {"desc": "Solo.", "hint": "[--only]", "flags": ["--only"]}}
             )
