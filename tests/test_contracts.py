@@ -163,7 +163,7 @@ class TestBuildCommandContract(unittest.TestCase):
         self.assertIn("run_context", contract["closure_comment"]["sections"])
         self.assertEqual(
             contract["closure_comment"]["run_context_fields"],
-            ["host_agent", "transport", "profile", "jury_mode", "consent"],
+            ["host_agent", "transport", "profile", "jury_mode", "implement_mode", "consent"],
         )
         self.assertIn("issue_intake", contract)
         self.assertEqual(contract["issue_intake"]["status"], "needs-input")

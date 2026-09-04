@@ -270,7 +270,7 @@ keel plan <project.yaml> [--root DIR] [--command COMMAND] [--profile standard|co
           [--live] [--approve-scope SCOPE] [--operator ID] [--consent-mode MODE]
           [--target TEXT] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL]
           [--review-comments inline|summary] [--reviewers 1|2|3]
-          [--jury] [--no-jury] [--jury-advisory] [--json]
+          [--jury] [--no-jury] [--jury-advisory] [--tdd] [--json]
 ```
 
 | Flag | Type / values | Default | Effect |
@@ -288,6 +288,7 @@ keel plan <project.yaml> [--root DIR] [--command COMMAND] [--profile standard|co
 | `--review-comments` | `inline` \| `summary` | `inline` | Review posting mode in ship-like contracts. |
 | `--reviewers` | `1` \| `2` \| `3` | tier-derived | Reviewer count override in the contract. |
 | `--jury` / `--no-jury` / `--jury-advisory` | flags | off | Jury contract control (shared precedence). |
+| `--tdd` | flag | off | Resolve the test-first s4 profile for this contract (`knobs.implement_mode: tdd` is the per-project spelling), so the plan shows the `tdd-order` gate and `contract.implement_mode` says `tdd`. |
 | `--json` | flag | off | Emit `{contract, plan, capabilities, github_transport}`. |
 
 ### Details
@@ -1294,13 +1295,15 @@ keel review-all-day .keel/project.yaml 1 --live --approve-scope github --operato
 Run the project's deterministic command gates (the runnable slice of s8).
 
 ```
-keel run-gates <project.yaml> [--root DIR]
+keel run-gates <project.yaml> [--root DIR] [--tdd]
+          [--run-id ID] [--command CMD] [--phase PHASE] [--issue N] [--pull-request N]
 ```
 
 | Flag | Type / values | Default | Effect |
 | --- | --- | --- | --- |
 | `path` | file path | required | Project config. |
 | `--root DIR` | path | `.` | Root for commands and extensions. |
+| `--tdd` | flag | off | Add the `tdd-order` gate to this run, as `knobs.implement_mode: tdd` would. |
 
 ### Details
 
@@ -1319,6 +1322,16 @@ a non-blocking `minor`). Missing *required* runtime
 capabilities exit 1 before any gate runs; missing optional capabilities print a degraded
 notice and continue. Exits 1 when the summarized verdict blocks (`BLOCKED — merge is
 gated by the findings above`), so it wires directly into CI.
+
+Under `implement_mode: tdd` (or `--tdd`) the run also carries the pure **`tdd-order`**
+gate, evaluated **after** every other gate because its verdict includes theirs: it passes
+when the first non-merge commit on the branch touches only the project's test paths and
+adds or modifies at least one of them, no later commit removes a test (deleted or renamed
+out of the test paths), a later commit touches an implementation path, and the rest of the gate run is green. It reads the branch
+through one `git log --topo-order --first-parent --name-status` and decides in `keel.tdd`
+— order by ancestry, not by commit date, so integrating the base branch cannot make one of
+its commits the "first" one. It checks order and paths only, never whether phase A's tests
+were red; see [`knobs.implement_mode`](configuration.md#implement_mode).
 
 ### Examples
 
@@ -1426,7 +1439,7 @@ keel ship <project.yaml> [--root DIR] [--pr N] [--hotfix] [--dry-run] [--live]
           [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL]
           [--review-comments inline|summary] [--reviewers 1|2|3]
           [--jury] [--no-jury] [--jury-advisory]
-          [--profile standard|compound] [--compound]
+          [--profile standard|compound] [--compound] [--tdd]
           [--wizard] [--wizard-answer KEY=VALUE]... [--json]
 ```
 
@@ -1449,6 +1462,7 @@ keel ship <project.yaml> [--root DIR] [--pr N] [--hotfix] [--dry-run] [--live]
 | `--capture-status` | `applied` \| `deferred` \| `skipped:<reason>` \| `not-run` | `None` | Capture outcome for the ledger record. **Required** when `--live --append-ledger` (exit 1 otherwise). Allowed skip reasons: `dry-run`, `deferred`, `merge-failed`, `recursion-guard`, `capability-unavailable`, `no-policy`. `not-run` is not an outcome — it records that this run never reached capture, so the record carries no marker; use it to re-record gates for a rebased head. |
 | `--capture-reason TEXT` | string | `None` | Capture outcome reason. |
 | `--capture-artifact REF` | string (path or hash) | `None` | Durable capture artifact reference proving an `applied` capture; `keel capture-verify` reconcile flags `applied` records with no artifact. |
+| `--phase-implementer PHASE=LABEL` | repeatable | `--implementer` for both | Effective implementer for one `implement_mode: tdd` phase (`tests` \| `implementation`), recorded on that phase's `run_context.implement_phases` entry so a run where the two phases differed says so. |
 | `--implementer LABEL` | string | `None` | Effective implementer codename or `vendor:model` label for attribution. Its vendor slug is what `keel evidence-verify` cross-checks against the PR's `agent:<vendor>` label when the gate is enforced (`attribution-label` finding on mismatch). |
 | `--reviewer-agent LABEL` | string, repeatable | none | Effective reviewer labels (order-preserving parallel array). |
 | `--tester LABEL` | string | `None` | Effective tester label. |
@@ -1461,6 +1475,7 @@ keel ship <project.yaml> [--root DIR] [--pr N] [--hotfix] [--dry-run] [--live]
 | `--tier` | `plan` | — | Risk tier the review contract and team assignment are resolved against before a diff exists. |
 | `--profile` | `standard` \| `compound` | `standard` | Workflow profile in the contract. |
 | `--compound` | flag | off | Alias for `--profile compound`. |
+| `--tdd` | flag | off | Select the test-first s4 profile for this run (see [`knobs.implement_mode`](configuration.md#implement_mode)): the run plans the blocking `tdd-order` gate, publishes `contract.implement_mode`, and records `run_context.implement_mode` / `run_context.implement_phases` in the ledger. There is no `--no-tdd`. |
 | `--wizard` | flag | off | Interactive pre-s1 picker for the implementer/gate/reviewer seats, built from the `keel doctor --providers` probe. Only providers the probe found usable are offered. **Only an answered question becomes a flag** — an unanswered one is left to `knobs.team` and the risk tier, so quick-start changes nothing. With no terminal and no `--wizard-answer` it is a logged no-op and the parsed flags stand. |
 | `--wizard-answer KEY=VALUE` | repeatable, or `;`-separated | none | Pre-answer wizard questions without prompting (`mode`, `implement.provider`, `implement.model`, `jury`, `review`, `review_comments` — a run asks only what a run flag can carry, so `gate.provider` and `implement.effort` are `keel init --wizard` keys and `review=jury` is refused). Supplying any key but `mode` implies `mode=customize`; pass `mode=quick-start` explicitly to take every default. A malformed pair, or one naming a choice the wizard does not offer, exits 1 before any gate runs. |
 | `--json` | flag | off | `{contract, result}` with `result.artifact_bodies` (canonical PR body, issue update, review/jury verdict templates, extension result, ship-provenance stamp). |

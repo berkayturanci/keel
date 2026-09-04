@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 
+from . import tdd
 from .runner import CommandResult, run_argv
 
 
@@ -94,6 +95,56 @@ def changed_files(base: str, head: str, *, cwd: str | None = None, _run=None) ->
     if not result.ok:
         return None
     return [line for line in result.stdout.splitlines() if line.strip()]
+
+
+def commit_log(base: str, head: str, *, cwd: str | None = None, _run=None) -> str | None:
+    """Raw ``git log`` for ``base..head``: this branch's own commits, oldest first.
+
+    Returns git's stdout verbatim — :func:`keel.tdd.parse_commits` turns it into records,
+    so the parsing is pure and unit-tested rather than living behind a subprocess. ``None``
+    when the command failed, deliberately distinct from ``""`` (the range is empty): the
+    ``tdd-order`` gate must be able to block on "we could not read the history" instead of
+    reading it as "this branch has no commits".
+
+    Four flags carry the whole meaning of "this implementer's commit order", and each is
+    load-bearing:
+
+    ``base..head``
+        not ``base...head`` — the symmetric form would also list the base's side.
+    ``--topo-order``
+        git's default is *commit-date* order. Once the branch integrates its base (ship
+        s10), a base commit dated before the tests commit sorts ahead of it and becomes
+        the "first commit" — so the same topology passed or blocked depending on nothing
+        but timestamps. Topological order asks about ancestry, which is what was meant.
+    ``--first-parent``
+        follows only this branch's own line through its merges, dropping the commits a
+        base merge brought in. Without it a stale local ``base`` ref leaves those commits
+        inside the range, and one of them can be judged as this implementer's first
+        commit. The merge commits themselves stay on the chain and
+        :func:`keel.tdd.check_order` skips them.
+    ``--name-status``
+        not ``--name-only`` — a name alone cannot tell an addition from a deletion, and
+        the gate has to separate "wrote the failing tests" from ``git rm`` over them.
+
+    ``--reverse`` is applied after ordering and selection, so the output is oldest-first
+    within the topological order.
+    """
+    result = run_argv(
+        [
+            "git",
+            "log",
+            "--topo-order",
+            "--first-parent",
+            "--reverse",
+            "--no-color",
+            f"--format={tdd.LOG_FORMAT}",
+            "--name-status",
+            f"{base}..{head}",
+        ],
+        cwd=cwd,
+        **_kw(_run),
+    )
+    return result.stdout if result.ok else None
 
 
 def diff(base: str, head: str, *, cwd: str | None = None, _run=None) -> str | None:

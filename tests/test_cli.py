@@ -13298,3 +13298,348 @@ class DelegateCommandTest(unittest.TestCase):
     def test_delegate_without_a_subcommand_prints_help(self):
         rc, _out, _err = run(["delegate"])
         self.assertEqual(rc, 2)
+
+
+class TestTddOrderGateOnTheCli(unittest.TestCase):
+    """`implement_mode: tdd` end to end: git through the seam, the verdict from core.
+
+    These build a real two-commit branch rather than stubbing `git.commit_log`, because
+    the property under test is that the argv keel constructs against a repository yields
+    the commit order `keel.tdd` is asked about — a stub would assert keel agrees with
+    itself.
+    """
+
+    def _repo(self, root: Path, *, tests_first: bool) -> None:
+        _run_git(root, "init", "-b", "main")
+        _run_git(root, "config", "user.email", "test@example.com")
+        _run_git(root, "config", "user.name", "Test User")
+        (root / "README.md").write_text("base\n", encoding="utf-8")
+        _run_git(root, "add", "README.md")
+        _run_git(root, "commit", "-m", "base")
+        _run_git(root, "checkout", "-b", "feature")
+        tests_dir = root / "tests"
+        tests_dir.mkdir()
+        src_dir = root / "src"
+        src_dir.mkdir()
+        first, second = ("tests/test_x.py", "src/x.py")
+        if not tests_first:
+            first, second = second, first
+        (root / first).write_text("first\n", encoding="utf-8")
+        _run_git(root, "add", first)
+        _run_git(root, "commit", "-m", f"first: {first}")
+        (root / second).write_text("second\n", encoding="utf-8")
+        _run_git(root, "add", second)
+        _run_git(root, "commit", "-m", f"second: {second}")
+
+    def _commit_at(self, root: Path, message: str, *, date: str | None = None) -> None:
+        """Commit staged changes, optionally pinning both dates (the ordering test)."""
+        env = None
+        if date is not None:
+            env = dict(os.environ, GIT_AUTHOR_DATE=date, GIT_COMMITTER_DATE=date)
+        subprocess.run(
+            ["git", "commit", "-m", message],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+
+    def _config(self, build_cmd="'true'", *, mode_line="", test_paths="['tests/**']"):
+        return _write_raw(
+            "extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: tmp\n"
+            f"gates: [build]\nknobs:\n  build_gate_cmd: {build_cmd}\n{mode_line}"
+            "policy_pack:\n  name: tmp\n  test_groups:\n    unit:\n"
+            "      command: 'true'\n      paths: ['src/**', 'tests/**']\n"
+            f"      test_paths: {test_paths}\n"
+        )
+
+    def test_a_test_first_branch_passes_the_gate(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._repo(Path(d), tests_first=True)
+            rc, out, _ = run(["run-gates", self._config(), "--root", d, "--tdd"])
+        self.assertEqual(rc, 0)
+        self.assertIn("tdd-order", out)
+        self.assertNotIn("FAIL", out)
+
+    def test_an_implementation_first_branch_blocks_and_names_the_paths(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._repo(Path(d), tests_first=False)
+            rc, out, _ = run(["run-gates", self._config(), "--root", d, "--tdd"])
+        self.assertEqual(rc, 1)
+        self.assertIn("FAIL", out)
+        self.assertIn("src/x.py", out)
+        self.assertIn("BLOCKED", out)
+
+    def test_red_gates_block_the_tdd_gate_even_on_a_test_first_branch(self):
+        # The "last gate run is green" half of the contract: the tdd-order gate is
+        # evaluated after the others precisely so it can see their verdict.
+        with tempfile.TemporaryDirectory() as d:
+            self._repo(Path(d), tests_first=True)
+            rc, out, _ = run(["run-gates", self._config("'false'"), "--root", d, "--tdd"])
+        self.assertEqual(rc, 1)
+        self.assertIn("the gates are red", out)
+
+    def test_the_project_knob_needs_no_flag(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._repo(Path(d), tests_first=False)
+            config = self._config(mode_line="  implement_mode: tdd\n")
+            rc, out, _ = run(["run-gates", config, "--root", d])
+        self.assertEqual(rc, 1)
+        self.assertIn("not written test-first", out)
+
+    def test_default_mode_never_runs_the_gate(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._repo(Path(d), tests_first=False)
+            rc, out, _ = run(["run-gates", self._config(), "--root", d])
+        self.assertEqual(rc, 0)
+        self.assertNotIn("tdd-order", out)
+
+    def test_a_project_declaring_no_test_paths_fails_closed(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._repo(Path(d), tests_first=True)
+            config = _write_raw(
+                "extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: tmp\n"
+                "gates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+                "  implement_mode: tdd\n"
+            )
+            rc, out, _ = run(["run-gates", config, "--root", d])
+        self.assertEqual(rc, 1)
+        self.assertIn("policy_pack.test_groups", out)
+
+    def test_a_base_commit_merged_in_later_is_never_the_first_commit(self):
+        """The ordering bug: `git log` defaults to commit-*date* order (#1020 review).
+
+        Once the branch integrates its base — ship s10, and any long-lived branch — a
+        base commit dated *before* the tests commit sorted ahead of it and was judged as
+        this implementer's first commit. A tests-only branch with no implementation of
+        its own then passed the blocking gate, and the identical topology with different
+        timestamps blocked it.
+
+        The fixture is that exact shape: the base moves with an old date, the branch
+        merges it in, and the local `main` ref stays where it was (a stale base ref is
+        the normal state in a worktree or a CI clone), so the base commit really is
+        inside `main..HEAD`.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _run_git(root, "init", "-b", "main")
+            _run_git(root, "config", "user.email", "test@example.com")
+            _run_git(root, "config", "user.name", "Test User")
+            (root / "README.md").write_text("base\n", encoding="utf-8")
+            _run_git(root, "add", "README.md")
+            self._commit_at(root, "base", date="2026-01-01T00:00:00+00:00")
+            _run_git(root, "branch", "upstream")
+            _run_git(root, "checkout", "-b", "feature")
+            (root / "tests").mkdir()
+            (root / "tests/test_x.py").write_text("first\n", encoding="utf-8")
+            _run_git(root, "add", "tests/test_x.py")
+            self._commit_at(root, "tests first", date="2026-01-03T00:00:00+00:00")
+
+            _run_git(root, "checkout", "upstream")
+            (root / "src").mkdir()
+            (root / "src/base_side.py").write_text("someone else\n", encoding="utf-8")
+            _run_git(root, "add", "src/base_side.py")
+            # Older than the tests commit: this is what date order puts first.
+            self._commit_at(root, "unrelated base work", date="2026-01-02T00:00:00+00:00")
+            _run_git(root, "checkout", "feature")
+            _run_git(root, "merge", "--no-ff", "-m", "Merge upstream into feature", "upstream")
+
+            rc, out, _ = run(["run-gates", self._config(), "--root", d, "--tdd"])
+
+        # The branch has no implementation commit of its own; the only non-test path in
+        # the range came from the base. That must read as "phase B never ran", not as a
+        # pass, and not as "the base commit was the first one".
+        self.assertEqual(rc, 1)
+        self.assertIn("no later commit touches an implementation path", out)
+        self.assertNotIn("src/base_side.py", out)
+
+    def test_a_first_commit_that_only_deletes_tests_blocks(self):
+        """The name-only bug: `git rm` over the suite looked exactly like writing it."""
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _run_git(root, "init", "-b", "main")
+            _run_git(root, "config", "user.email", "test@example.com")
+            _run_git(root, "config", "user.name", "Test User")
+            (root / "tests").mkdir()
+            (root / "src").mkdir()
+            (root / "tests/test_a.py").write_text("assert True\n", encoding="utf-8")
+            (root / "src/x.py").write_text("x = 1\n", encoding="utf-8")
+            _run_git(root, "add", ".")
+            _run_git(root, "commit", "-m", "base")
+            _run_git(root, "checkout", "-b", "feature")
+            _run_git(root, "rm", "-q", "tests/test_a.py")
+            _run_git(root, "commit", "-m", "chore: drop the test")
+            (root / "src/x.py").write_text("x = 2\n", encoding="utf-8")
+            _run_git(root, "add", "src/x.py")
+            _run_git(root, "commit", "-m", "feat: change x")
+
+            rc, out, _ = run(["run-gates", self._config(), "--root", d, "--tdd"])
+
+        self.assertEqual(rc, 1)
+        self.assertIn("only deletes tests", out)
+        self.assertIn("tests/test_a.py", out)
+
+    def test_deleting_the_tests_after_committing_them_blocks(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _run_git(root, "init", "-b", "main")
+            _run_git(root, "config", "user.email", "test@example.com")
+            _run_git(root, "config", "user.name", "Test User")
+            (root / "README.md").write_text("base\n", encoding="utf-8")
+            _run_git(root, "add", "README.md")
+            _run_git(root, "commit", "-m", "base")
+            _run_git(root, "checkout", "-b", "feature")
+            (root / "tests").mkdir()
+            (root / "src").mkdir()
+            (root / "tests/test_a.py").write_text("assert False\n", encoding="utf-8")
+            _run_git(root, "add", "tests/test_a.py")
+            _run_git(root, "commit", "-m", "test: failing test")
+            (root / "src/x.py").write_text("x = 1\n", encoding="utf-8")
+            _run_git(root, "add", "src/x.py")
+            _run_git(root, "rm", "-q", "tests/test_a.py")
+            _run_git(root, "commit", "-m", "feat: x (and the test is gone)")
+
+            rc, out, _ = run(["run-gates", self._config(), "--root", d, "--tdd"])
+
+        self.assertEqual(rc, 1)
+        self.assertIn("removes tests", out)
+        self.assertIn("tests/test_a.py", out)
+
+    def test_moving_a_test_out_of_the_test_tree_blocks_like_deleting_it(self):
+        """`git mv tests/… src/…` is `git rm` wearing a rename (#1020 review, round 3).
+
+        The byte-identical branch with `git rm` already blocked; this one passed, because
+        a rename is recorded at its destination and the destination is not a test path.
+        Driven through the real CLI so the rename detection git actually emits (`R100`,
+        which needs the similarity index to fire) is what is under test.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _run_git(root, "init", "-b", "main")
+            _run_git(root, "config", "user.email", "test@example.com")
+            _run_git(root, "config", "user.name", "Test User")
+            (root / "README.md").write_text("base\n", encoding="utf-8")
+            _run_git(root, "add", "README.md")
+            _run_git(root, "commit", "-m", "base")
+            _run_git(root, "checkout", "-b", "feature")
+            (root / "tests").mkdir()
+            (root / "src").mkdir()
+            (root / "tests/test_a.py").write_text("assert False\n" * 20, encoding="utf-8")
+            _run_git(root, "add", "tests/test_a.py")
+            _run_git(root, "commit", "-m", "test: failing test")
+            _run_git(root, "mv", "tests/test_a.py", "src/legacy_test_a.py")
+            (root / "src/a.py").write_text("a = 1\n", encoding="utf-8")
+            _run_git(root, "add", "src/a.py")
+            _run_git(root, "commit", "-m", "feat: a (and the test is not a test any more)")
+
+            rc, out, _ = run(["run-gates", self._config(), "--root", d, "--tdd"])
+
+        self.assertEqual(rc, 1)
+        self.assertIn("renamed out of the test paths", out)
+        self.assertIn("tests/test_a.py", out)
+
+    def test_moving_a_test_within_the_test_tree_stays_fine(self):
+        """The control case the fix must not break: an ordinary reorganisation."""
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _run_git(root, "init", "-b", "main")
+            _run_git(root, "config", "user.email", "test@example.com")
+            _run_git(root, "config", "user.name", "Test User")
+            (root / "README.md").write_text("base\n", encoding="utf-8")
+            _run_git(root, "add", "README.md")
+            _run_git(root, "commit", "-m", "base")
+            _run_git(root, "checkout", "-b", "feature")
+            (root / "tests").mkdir()
+            (root / "src").mkdir()
+            (root / "tests/test_a.py").write_text("assert False\n" * 20, encoding="utf-8")
+            _run_git(root, "add", "tests/test_a.py")
+            _run_git(root, "commit", "-m", "test: failing test")
+            (root / "tests/unit").mkdir()
+            _run_git(root, "mv", "tests/test_a.py", "tests/unit/test_a.py")
+            (root / "src/a.py").write_text("a = 1\n", encoding="utf-8")
+            _run_git(root, "add", "src/a.py")
+            _run_git(root, "commit", "-m", "feat: a, tests reorganised")
+
+            rc, out, _ = run(["run-gates", self._config(), "--root", d, "--tdd"])
+
+        self.assertEqual(rc, 0)
+        self.assertNotIn("FAIL", out)
+
+    def test_ship_records_the_implementer_of_each_phase(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._repo(Path(d), tests_first=True)
+            rc, out, _ = run(
+                [
+                    "ship",
+                    self._config(),
+                    "--root",
+                    d,
+                    "--tdd",
+                    "--implementer",
+                    "codex:gpt-5",
+                    "--phase-implementer",
+                    "implementation=claude:opus",
+                    "--dry-run",
+                    "--json",
+                ]
+            )
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        phases = data["result"]["run_ledger"]["record"]["run_context"]["implement_phases"]
+        self.assertEqual(
+            [(p["phase"], p["implementer"]) for p in phases],
+            [("tests", "codex:gpt-5"), ("implementation", "claude:opus")],
+        )
+        self.assertIn("by codex:gpt-5 → implementation", data["result"]["closure_comment"])
+
+    def _refuses(self, value):
+        """`ship --phase-implementer <value>` must fail at parse time (argparse exits 2)."""
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as ctx:
+            cli.main(["ship", self._config(), "--phase-implementer", value, "--dry-run"])
+        self.assertEqual(ctx.exception.code, 2)
+        return err.getvalue()
+
+    def test_phase_implementer_rejects_a_phase_that_is_not_one(self):
+        # `review` is a keel role but not an s4 phase; a typo must not silently record a
+        # phase nobody will ever read.
+        self.assertIn("phase must be one of", self._refuses("review=claude"))
+
+    def test_phase_implementer_rejects_a_malformed_pair(self):
+        self.assertIn("must use PHASE=LABEL", self._refuses("claude"))
+        self.assertIn("requires an implementer label", self._refuses("tests="))
+
+    def test_ship_publishes_the_mode_and_records_both_phases(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self._repo(root, tests_first=True)
+            rc, out, _ = run(["ship", self._config(), "--root", d, "--tdd", "--dry-run", "--json"])
+            self.assertEqual(rc, 0)
+            data = json.loads(out)
+            mode = data["contract"]["implement_mode"]
+            self.assertEqual(mode["mode"], "tdd")
+            self.assertEqual(mode["source"], "flag:--tdd")
+            self.assertEqual(mode["phases"], ["tests", "implementation"])
+            self.assertIn("tdd-order", [gate["id"] for gate in data["contract"]["gates"]])
+            self.assertIn(
+                "tdd-order",
+                [outcome["gate"] for outcome in data["result"]["gate_outcomes"]],
+            )
+            record = data["result"]["run_ledger"]["record"]
+            phases = record["run_context"]["implement_phases"]
+            self.assertEqual([p["phase"] for p in phases], ["tests", "implementation"])
+            self.assertTrue(all(p["commit"] for p in phases))
+            self.assertEqual(record["run_context"]["implement_mode"], "tdd")
+            self.assertIn("- **Implement:** TDD (tests ", data["result"]["closure_comment"])
+
+    def test_ship_without_the_flag_records_no_implement_mode(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._repo(Path(d), tests_first=True)
+            rc, out, _ = run(["ship", self._config(), "--root", d, "--dry-run", "--json"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["contract"]["implement_mode"]["mode"], "default")
+        run_context = data["result"]["run_ledger"]["record"]["run_context"]
+        self.assertIsNone(run_context["implement_mode"])
+        self.assertEqual(run_context["implement_phases"], [])

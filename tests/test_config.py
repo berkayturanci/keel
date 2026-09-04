@@ -319,6 +319,42 @@ class TestParse(unittest.TestCase):
         with self.assertRaises(cfg.ConfigError):
             cfg.parse_config(bad)
 
+    def test_implement_mode_defaults_to_the_single_pass_profile(self):
+        self.assertEqual(cfg.parse_config(copy.deepcopy(VALID)).knobs.implement_mode, "default")
+
+        data = copy.deepcopy(VALID)
+        data["knobs"]["implement_mode"] = "tdd"
+        self.assertEqual(cfg.parse_config(data).knobs.implement_mode, "tdd")
+
+    def test_implement_mode_changes_config_hash_only_when_it_is_set(self):
+        base = cfg.parse_config(copy.deepcopy(VALID))
+        explicit_default = copy.deepcopy(VALID)
+        explicit_default["knobs"]["implement_mode"] = "default"
+        # An added optional knob must not rotate config_hash for the projects that never
+        # set it — nor for one that spells out the default it already had.
+        self.assertEqual(cfg.config_hash(base), cfg.config_hash(cfg.parse_config(explicit_default)))
+
+        data = copy.deepcopy(VALID)
+        data["knobs"]["implement_mode"] = "tdd"
+        self.assertNotEqual(cfg.config_hash(base), cfg.config_hash(cfg.parse_config(data)))
+
+    def test_implement_mode_rejects_a_profile_keel_cannot_run(self):
+        bad = copy.deepcopy(VALID)
+        bad["knobs"]["implement_mode"] = "test-first"
+        with self.assertRaises(cfg.ConfigError):
+            cfg.parse_config(bad)
+
+    def test_test_groups_accept_declared_test_paths(self):
+        data = copy.deepcopy(VALID)
+        data["policy_pack"] = {
+            "name": "p",
+            "test_groups": {
+                "unit": {"command": "make test", "paths": ["src/**"], "test_paths": ["tests/**"]}
+            },
+        }
+        config = cfg.parse_config(data)
+        self.assertEqual(config.policy_pack["test_groups"]["unit"]["test_paths"], ["tests/**"])
+
     def test_gate_timeout_defaults_to_600_and_parses(self):
         config = cfg.parse_config(copy.deepcopy(VALID))
         self.assertEqual(config.knobs.gate_timeout_s, 600)  # today's behaviour preserved

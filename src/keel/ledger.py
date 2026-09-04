@@ -111,6 +111,8 @@ def build_ship_run_record(
     transport: str | None = None,
     profile: str | None = None,
     jury_mode: str | None = None,
+    implement_mode: str | None = None,
+    implement_phases: list[dict[str, Any]] | None = None,
     consent_status: str | None = None,
     consent_scopes: list[str] | tuple[str, ...] | None = None,
     run_controls: dict[str, Any] | None = None,
@@ -189,6 +191,8 @@ def build_ship_run_record(
             transport=transport,
             profile=profile,
             jury_mode=jury_mode,
+            implement_mode=implement_mode,
+            implement_phases=implement_phases,
             consent_status=consent_status,
             consent_scopes=consent_scopes,
         ),
@@ -262,6 +266,8 @@ def _run_context(
     jury_mode: str | None,
     consent_status: str | None,
     consent_scopes: list[str] | tuple[str, ...] | None,
+    implement_mode: str | None = None,
+    implement_phases: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build the deterministic consumer-neutral preflight run-context block.
 
@@ -269,6 +275,10 @@ def _run_context(
     closure renderer can present ``unknown``/``none`` without a schema change.
     Consent is a small summary: a status and the approved mutation scopes,
     reusing the operator/approve-scope inputs already resolved by the caller.
+
+    ``implement_mode``/``implement_phases`` are the s4 profile (#1020). A ``default`` run
+    records ``None`` and an empty phase list, so a record written before the knob existed
+    reads identically to one written by a run that did not use it.
     """
     scopes = [str(scope) for scope in (consent_scopes or ()) if str(scope).strip()]
     return {
@@ -276,6 +286,11 @@ def _run_context(
         "transport": transport if _nonblank(transport) else None,
         "profile": profile if _nonblank(profile) else None,
         "jury_mode": jury_mode if _nonblank(jury_mode) else None,
+        # The s4 profile and, under `tdd`, one record per phase — the ledger is where a
+        # closure comment and a later audit learn that this change was written test-first
+        # and which commit each half of s4 produced.
+        "implement_mode": implement_mode if _nonblank(implement_mode) else None,
+        "implement_phases": [dict(phase) for phase in implement_phases or ()],
         "consent": {
             "status": consent_status if _nonblank(consent_status) else None,
             "scopes": scopes,

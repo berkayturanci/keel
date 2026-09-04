@@ -66,6 +66,7 @@ from . import (
     status,
     stepverifier,
     swarm,
+    tdd,
     team,
     window,
     wizard,
@@ -77,9 +78,17 @@ from . import findings as fnd
 from . import orchestrator as orch
 from . import providers as providers_mod
 from .extensions import ExtensionError, load_extensions
-from .gates import GateSpec
+from .gates import GateOutcome, GateSpec
 from .model import DEFAULT_GATE_TIMEOUT_S, DEFAULT_JURY_TIMEOUT_S
 from .runner import command_gate_runner, run_argv
+
+#: Help text for the per-run ``--tdd`` flag, shared by ``ship``, ``plan`` and
+#: ``run-gates`` so the three cannot describe the same profile differently.
+_TDD_FLAG_HELP = (
+    "run s4 test-first for this run (implement_mode: tdd): a test-only commit carrying "
+    "the issue's acceptance criteria, then the implementation, verified by the "
+    "tdd-order gate at s8"
+)
 
 
 def _gate_status(outcome) -> str:
@@ -115,6 +124,54 @@ def _gate_runner(
         return commands(spec)
 
     return run
+
+
+def _tdd_order_outcome(
+    spec: GateSpec,
+    config: cfg.ProjectConfig,
+    root: str,
+    *,
+    gates_green: bool,
+) -> tuple[GateOutcome, tdd.OrderResult]:
+    """Evaluate the pure ``tdd-order`` gate: git through the seam, the decision in core.
+
+    The only I/O is one :func:`keel.git.commit_log` read; parsing the log, matching the
+    paths and deciding the verdict all live in :mod:`keel.tdd`, which is why the gate is
+    unit-tested offline against commit lists instead of against a repository.
+    """
+    result = tdd.check_order(
+        tdd.parse_commits(git.commit_log(config.base_branch, "HEAD", cwd=root)),
+        test_globs=tdd.test_globs(config.policy_pack),
+        gates_green=gates_green,
+    )
+    findings = [] if result.ok else [fnd.Finding("major", result.message, spec.id)]
+    outcomes = gates.run_gates((spec,), lambda _spec: (result.ok, findings))
+    return outcomes[0], result
+
+
+def _run_planned_gates(
+    specs,
+    runner,
+    *,
+    config: cfg.ProjectConfig,
+    root: str,
+) -> tuple[list[GateOutcome], tdd.OrderResult | None]:
+    """Run the planned gates, evaluating the deferred ``tdd-order`` gate last.
+
+    Returns the outcomes plus the commit-order result, which the ledger records as the
+    run's two s4 phases. ``None`` when the run is not in ``tdd`` mode — there were no
+    phases, which is not the same as phases nobody could identify.
+    """
+    now, later = gates.split_deferred(specs)
+    outcomes = gates.run_gates(now, runner)
+    if not later:
+        return outcomes, None
+    # The other gates' verdict *is* the "last gate run is green" half of the contract:
+    # a branch whose tests were committed first and are still red has not finished s4.
+    green = not fnd.summarize(gates.collect_findings(outcomes)).blocked
+    outcome, result = _tdd_order_outcome(later[0], config, root, gates_green=green)
+    outcomes.append(outcome)
+    return outcomes, result
 
 
 def _cmd_version(args: argparse.Namespace) -> int:
@@ -247,8 +304,9 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         return 1
 
     loaded, problems = load_extensions(config, args.root, strict=False)
+    mode = tdd.resolve_mode(config.knobs.implement_mode, flag=args.tdd)
     try:
-        plan = orch.build_plan(config, loaded)
+        plan = orch.build_plan(config, loaded, implement_mode=mode.name)
     except gates.GateError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -297,6 +355,7 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         role=args.role,
         delegate=args.delegate,
         review_delegates=tuple(args.review_delegate),
+        tdd_override=args.tdd,
     )
     consent_ok, consent_message = consent.assert_operator_consent(contract["operator_consent"])
     if args.json:
@@ -340,8 +399,9 @@ def _cmd_run_gates(args: argparse.Namespace) -> int:
     for prob in problems:
         print(f"  ! extension not loaded: {prob}", file=sys.stderr)
 
+    mode = tdd.resolve_mode(config.knobs.implement_mode, flag=args.tdd)
     try:
-        specs = gates.plan_gates(config, loaded)
+        specs = gates.plan_gates(config, loaded, implement_mode=mode.name)
     except gates.GateError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -356,9 +416,11 @@ def _cmd_run_gates(args: argparse.Namespace) -> int:
         print(evaluation.render(), file=sys.stderr)
 
     diff_text = git.diff(config.base_branch, "HEAD", cwd=args.root)
-    outcomes = gates.run_gates(
+    outcomes, _tdd_result = _run_planned_gates(
         specs,
         _gate_runner(args.root, diff_text, jury_mode="gating", timeout=config.knobs.gate_timeout_s),
+        config=config,
+        root=args.root,
     )
     verdict = fnd.summarize(gates.collect_findings(outcomes))
     # Stamp *after* the verdict exists, and carry it. Stamping on reach alone recorded
@@ -1044,8 +1106,9 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
+    mode = tdd.resolve_mode(config.knobs.implement_mode, flag=args.tdd)
     try:
-        plan = orch.build_plan(config, loaded)
+        plan = orch.build_plan(config, loaded, implement_mode=mode.name)
     except gates.GateError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -1077,6 +1140,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         delegate=args.delegate,
         review_delegates=tuple(args.review_delegate),
         host_agent=args.host_agent or agents.HOST_DEFAULT,
+        tdd_override=args.tdd,
     )
     consent_ok, consent_message = consent.assert_operator_consent(contract["operator_consent"])
     if not consent_ok:
@@ -1167,12 +1231,12 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     )
     # unreachable: orch.build_plan() above already calls plan_gates and surfaces GateError.
     try:
-        specs = gates.plan_gates(config, loaded)
+        specs = gates.plan_gates(config, loaded, implement_mode=mode.name)
     except gates.GateError as exc:  # pragma: no cover - defensive duplicate of the build_plan guard
         print(str(exc), file=sys.stderr)
         return 1
     diff_text = git.diff(config.base_branch, "HEAD", cwd=args.root)
-    outcomes = gates.run_gates(
+    outcomes, tdd_result = _run_planned_gates(
         specs,
         _gate_runner(
             args.root,
@@ -1180,6 +1244,8 @@ def _cmd_ship(args: argparse.Namespace) -> int:
             jury_mode=review_contract["jury"]["mode"],
             timeout=config.knobs.gate_timeout_s,
         ),
+        config=config,
+        root=args.root,
     )
     recorded_results = dict(getattr(args, "gate_result", None) or ())
     planned = {spec.id for spec in specs}
@@ -1312,6 +1378,14 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         transport=args.transport or transport.name,
         profile=profile,
         jury_mode=a.review_contract["jury"]["mode"],
+        implement_mode=mode.name if mode.is_tdd else None,
+        implement_phases=tdd.phase_records(
+            tdd_result,
+            implementers=tdd.phase_implementers(
+                getattr(args, "phase_implementer", None) or (),
+                default=args.implementer,
+            ),
+        ),
         consent_status=contract["operator_consent"]["status"],
         consent_scopes=contract["operator_consent"]["effective_approved_scope"],
         run_controls=run_control_report,
@@ -4380,6 +4454,21 @@ def _gate_result_arg(value: str) -> tuple[str, str]:
     return gate_id, verdict
 
 
+def _phase_implementer_arg(value: str) -> tuple[str, str]:
+    """Parse ``--phase-implementer PHASE=LABEL`` (PHASE one of the two s4 phases)."""
+    if "=" not in value:
+        raise argparse.ArgumentTypeError("--phase-implementer must use PHASE=LABEL")
+    phase, _, label = value.partition("=")
+    phase, label = phase.strip().lower(), label.strip()
+    if phase not in tdd.PHASES:
+        raise argparse.ArgumentTypeError(
+            f"--phase-implementer phase must be one of {', '.join(tdd.PHASES)}"
+        )
+    if not label:
+        raise argparse.ArgumentTypeError("--phase-implementer requires an implementer label")
+    return phase, label
+
+
 def _gh_json(args: list[str], *, cwd: str) -> dict[str, object]:
     endpoint = "/".join(args)
     result = run_argv(["gh", "api", endpoint], cwd=cwd)
@@ -5966,6 +6055,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="workflow profile for ship command contracts",
     )
     p_plan.add_argument(
+        "--tdd",
+        action="store_true",
+        help=_TDD_FLAG_HELP,
+    )
+    p_plan.add_argument(
         "--live",
         action="store_true",
         help="render a live preflight contract and fail if consent is missing",
@@ -6104,6 +6198,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=_positive_int,
         default=None,
         help="pull request number to record on the activity stamp",
+    )
+    p_run.add_argument(
+        "--tdd",
+        action="store_true",
+        help="add the tdd-order gate to this run, as implement_mode: tdd would",
     )
     p_run.set_defaults(func=_cmd_run_gates)
 
@@ -8124,6 +8223,15 @@ def _add_ship_parser(parser: argparse.ArgumentParser, *, command: str) -> None:
         "--implementer", default=None, help="effective implementer codename or vendor/model label"
     )
     parser.add_argument(
+        "--phase-implementer",
+        action="append",
+        default=[],
+        type=_phase_implementer_arg,
+        metavar="PHASE=LABEL",
+        help="effective implementer for one implement_mode: tdd phase "
+        "(tests|implementation); defaults to --implementer for both; repeatable",
+    )
+    parser.add_argument(
         "--reviewer-agent",
         action="append",
         default=[],
@@ -8214,6 +8322,11 @@ def _add_ship_parser(parser: argparse.ArgumentParser, *, command: str) -> None:
         "--compound",
         action="store_true",
         help="select the compound workflow profile (alias for --profile compound)",
+    )
+    parser.add_argument(
+        "--tdd",
+        action="store_true",
+        help=_TDD_FLAG_HELP,
     )
     _add_wizard_arguments(parser)
     parser.add_argument("--json", action="store_true", help="emit structured JSON")

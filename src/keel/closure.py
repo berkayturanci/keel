@@ -40,6 +40,10 @@ WATERMARK_BODY = (
 _DOC_SUFFIXES = frozenset({".md", ".mdx", ".markdown", ".rst", ".adoc"})
 _DOC_SUFFIXES_TUPLE = tuple(_DOC_SUFFIXES)
 
+#: The ``knobs.implement_mode`` value this renderer names. Spelled here rather than
+#: imported so the renderer keeps its "plain dict in, markdown out" contract.
+_TDD_MODE = "tdd"
+
 
 def contract_as_dict() -> dict[str, Any]:
     """Return the stable closure-comment contract consumed by ship adapters."""
@@ -72,6 +76,7 @@ def contract_as_dict() -> dict[str, Any]:
             "transport",
             "profile",
             "jury_mode",
+            "implement_mode",
             "consent",
         ],
         "jury_label": JURY_LABEL,
@@ -246,8 +251,51 @@ def _run_context(run_context: Any) -> list[str]:
         f"- **Transport:** {_unknown(block.get('transport'))}",
         f"- **Profile:** {_unknown(block.get('profile'))}",
         f"- **Jury:** {_jury_mode(block.get('jury_mode'))}",
+        *_implement_mode(block),
         f"- **Consent:** {_consent(block.get('consent'))}",
     ]
+
+
+#: How a test-first run names itself in the closure comment (#1020).
+TDD_LABEL = "TDD"
+
+
+def _implement_mode(block: dict[str, Any]) -> list[str]:
+    """The s4 profile line — emitted only for a ``tdd`` run.
+
+    Conditional, unlike every other run-context field: ``default`` is what s4 has always
+    done, and a line saying so on every closure comment keel has ever posted would be
+    noise. A test-first run is the exception worth naming, and it names both phases'
+    commits so a reader can check the order the gate checked.
+    """
+    if block.get("implement_mode") != _TDD_MODE:
+        return []
+    phases = block.get("implement_phases")
+    parts = [
+        f"{phase.get('phase')} {_short(phase.get('commit'))}{_by(phase.get('implementer'))}"
+        for phase in (phases if isinstance(phases, list) else [])
+        if isinstance(phase, dict)
+    ]
+    detail = f" ({' → '.join(parts)})" if parts else ""
+    return [f"- **Implement:** {TDD_LABEL}{detail}"]
+
+
+def _by(implementer: Any) -> str:
+    """`` by <implementer>``, or nothing when the phase records none.
+
+    Rendered per phase rather than once for the run: the profile's whole premise is that
+    one provider wrote the tests it then had to satisfy, so two different names here are
+    the finding a reader is looking for.
+    """
+    if isinstance(implementer, str) and implementer.strip():
+        return f" by {implementer.strip()}"
+    return ""
+
+
+def _short(sha: Any) -> str:
+    if isinstance(sha, str) and sha.strip():
+        return sha.strip()[:7]
+    return "unknown"
 
 
 def _unknown(value: Any) -> str:

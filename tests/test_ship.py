@@ -2,7 +2,7 @@
 
 import unittest
 
-from keel import classify, evidence, ship
+from keel import classify, evidence, ship, tdd
 from keel import team as team_policy
 from keel.findings import Finding, summarize
 
@@ -983,3 +983,42 @@ class TestTeamAssignment(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTddOrderBlocksTheMerge(unittest.TestCase):
+    """The `tdd-order` gate is a gate: its finding reaches the merge decision (#1020).
+
+    `implement_mode: tdd` adds one blocking gate at s8 and changes nothing else about
+    the backbone — so the assessment must treat its finding exactly as it treats a
+    failing build, and must not treat the mode itself as a reason to decide differently.
+    """
+
+    def _assess(self, verdict):
+        return ship.assess(
+            changed_files=["src/keel/tdd.py", "tests/test_tdd.py"],
+            gate_verdict=verdict,
+            ci_conclusion="success",
+        )
+
+    def test_a_failing_tdd_order_gate_blocks(self):
+        blocked = summarize(
+            [Finding("major", "the first commit touches implementation paths", tdd.GATE_ID)]
+        )
+        assessment = self._assess(blocked)
+        self.assertEqual(assessment.merge.action, "block")
+        self.assertIn(tdd.GATE_ID, ship.blocking_sources(blocked))
+
+    def test_a_passing_tdd_order_gate_leaves_the_decision_alone(self):
+        assessment = self._assess(CLEAN)
+        self.assertEqual(assessment.merge.action, "merge")
+
+    def test_an_unrun_tdd_order_gate_is_never_a_clear_merge(self):
+        # `on_fail: block`, so a run that never executed it has produced no verdict —
+        # the same fail-closed rule every other blocking gate gets.
+        assessment = ship.assess(
+            changed_files=["src/keel/tdd.py"],
+            gate_verdict=CLEAN,
+            ci_conclusion="success",
+            unrun_blocking_gates=(tdd.GATE_ID,),
+        )
+        self.assertEqual(assessment.merge.action, "block")

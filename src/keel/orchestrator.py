@@ -56,9 +56,19 @@ class PlanItem:
     hooks: tuple[PlanHook, ...] = ()
 
 
-def build_plan(config: ProjectConfig, loaded: dict[str, list[Extension]]) -> tuple[PlanItem, ...]:
-    """Map the planned gates onto the fixed backbone (deterministic)."""
-    specs = gates.plan_gates(config, loaded)
+def build_plan(
+    config: ProjectConfig,
+    loaded: dict[str, list[Extension]],
+    *,
+    implement_mode: str | None = None,
+) -> tuple[PlanItem, ...]:
+    """Map the planned gates onto the fixed backbone (deterministic).
+
+    ``implement_mode`` is threaded to :func:`keel.gates.plan_gates` so a run selecting the
+    test-first s4 profile with ``--tdd`` sees its ``tdd-order`` gate in the rendered plan,
+    rather than a plan that disagrees with the gates the same run will execute.
+    """
+    specs = gates.plan_gates(config, loaded, implement_mode=implement_mode)
     test_gates = tuple(s.id for s in specs if s.phase == "test")
     pre_merge_gates = tuple(s.id for s in specs if s.phase == "pre-merge")
 
