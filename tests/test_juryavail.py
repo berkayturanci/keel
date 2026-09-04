@@ -1468,8 +1468,12 @@ class TestTheContractIsPinnedToTheShipsMeasurement(unittest.TestCase):
         ):
             yield
 
-    def _ledger(self, availability):
-        """A `ship_run` record for PR 1 carrying what that run measured, as ship writes it."""
+    def _ledger(self, availability, *, head_sha="abc"):
+        """A `ship_run` record for PR 1 carrying what that run measured, as ship writes it.
+
+        Written against `head_sha` — the head the verify below is checking — because the pin
+        is head-scoped: a record from another head is not this head's measurement (#1068).
+        """
         record = ledger.build_ship_run_record(
             command="ship",
             run_id="r1",
@@ -1481,6 +1485,7 @@ class TestTheContractIsPinnedToTheShipsMeasurement(unittest.TestCase):
             verdict=_verdict(),
             assessment=_assessment(),
             pr_number=1,
+            head_sha=head_sha,
             jury_panel=availability,
         )
         path = self.root / "ledger.jsonl"
@@ -1587,13 +1592,58 @@ class TestTheContractIsPinnedToTheShipsMeasurement(unittest.TestCase):
                 self.assertNotIn("jury-verdict", required)
 
     def test_the_merge_gate_reads_the_same_pin(self):
-        record = {"run_context": {"jury_panel": _assess(STAFFED, min_vendors=2).as_dict()}}
+        record = {
+            "git": {"head_sha": "abc"},
+            "run_context": {"jury_panel": _assess(STAFFED, min_vendors=2).as_dict()},
+        }
         artifacts = {"pr_comments": [], "pr_reviews": [], "head_sha": "abc"}
 
         pinned = cli._shipped_jury_availability(artifacts, record)
 
         self.assertEqual(pinned["decision"], "available")
         self.assertEqual(pinned["source"], "run-ledger")
+        self.assertFalse(pinned["probed"], "a pin is not a measurement and must not claim to be")
+
+    def test_a_ship_record_from_an_earlier_head_does_not_answer_for_this_one(self):
+        """A pull request outlives its heads; a stale run may not weaken a live contract."""
+        record = {
+            "git": {"head_sha": "old-head"},
+            "run_context": {"jury_panel": _assess(UNSTAFFED, min_vendors=2).as_dict()},
+        }
+        artifacts = {"pr_comments": [], "pr_reviews": [], "head_sha": "current-head"}
+
+        self.assertIsNone(cli._shipped_jury_availability(artifacts, record))
+
+    def test_a_record_with_no_readable_head_pins_nothing(self):
+        """Fail closed on every unreadable shape, rather than pick a permissive reading."""
+        panel = {"run_context": {"jury_panel": _assess(UNSTAFFED, min_vendors=2).as_dict()}}
+        for git, head_sha in (
+            (None, "abc"),
+            ({"head_sha": None}, "abc"),
+            ("not a mapping", "abc"),
+            ({"head_sha": "abc"}, ""),
+            ({"head_sha": "abc"}, None),
+        ):
+            with self.subTest(git=git, head_sha=head_sha):
+                record = {**panel, "git": git}
+
+                self.assertIsNone(juryavail.shipped(record, head_sha=head_sha))
+
+    def test_dropping_the_pin_fails_closed_on_the_surface_that_verifies(self):
+        """`None` does not waive the panel: the surface measures, and both ways refuse.
+
+        The ship fell back at an earlier head, so its record says `fallback`. Held to that
+        stale record, this head would be checked against a host bench. Unpinned, the bare
+        runner measures for itself — and requires what *it* resolves, which is the answer
+        the change has to satisfy rather than one an old run chose for it.
+        """
+        _shipped, contract = self._shipped_required(UNSTAFFED)
+        stale = self._ledger(contract["jury"]["availability"], head_sha="old-head")
+
+        required = self._required(report=STAFFED, ledger_jsonl=stale)
+
+        self.assertIn("jury-verdict", required)
+        self.assertNotIn("review-verdict-3", required)
 
     def test_a_posted_verdict_outranks_the_ledger(self):
         record = {"run_context": {"jury_panel": _assess(UNSTAFFED, min_vendors=2).as_dict()}}

@@ -348,6 +348,16 @@ def latest_ship_run_for_pr(
 
     Records are appended in chronological order, so the last match is the most
     recent ship run for that PR. Returns ``None`` when no record matches.
+
+    **Scoped by pull request, not by head, and a caller that gates on the record must
+    say so itself.** A pull request outlives its heads, so the record this returns may
+    have been written for a commit that is no longer the head — right for a reader
+    asking "what happened on this PR" (capture health, scope verification), wrong for
+    anything a merge decision hangs on. The two callers that gate check the head
+    themselves: :func:`gates_pass_for_head` selects on ``git.head_sha`` here, and
+    :func:`keel.juryavail.shipped` refuses a record whose head is not the one being
+    verified — without which an earlier head's fallback weakened the current head's
+    contract (#1068 round 2).
     """
     match: dict[str, Any] | None = None
     for record in records:

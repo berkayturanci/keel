@@ -309,13 +309,35 @@ def panel_sat(
     }
 
 
-def shipped(record: Mapping[str, Any] | None) -> dict[str, Any] | None:
-    """The panel decision the ship that produced this pull request measured, or ``None``.
+def shipped(record: Mapping[str, Any] | None, *, head_sha: str | None) -> dict[str, Any] | None:
+    """The panel decision the ship that produced **this head** measured, or ``None``.
 
     Read out of that run's ``ship_run`` ledger entry at ``run_context.jury_panel``, which
     :func:`keel.ledger.build_ship_run_record` writes for exactly this purpose. Total: a
     record from before the field existed, or one whose run resolved no panel, reads as
     ``None`` and leaves the caller to probe as it did before.
+
+    **Pinned to the exact head, the way the posted-verdict path is.** The record is selected
+    by pull-request number (:func:`keel.ledger.latest_ship_run_for_pr`), and a pull request
+    outlives its heads: a ship of an earlier head that fell back to a host bench would
+    otherwise weaken the contract of the head being verified now, which is a stale run
+    relaxing a live gate. So the record's ``git.head_sha`` must equal the head under
+    verification, and anything else — an older head, a blank or absent head on either side,
+    a malformed ``git`` block — reads as ``None``.
+
+    ``None`` **fails closed**, which is why it is safe to be strict here. It does not waive
+    the panel; it drops the pin, and the caller then measures this machine. Both ways that
+    can land are the refusing one: a fallback-shipped change verified where the panel *can*
+    be staffed is held to a panel it did not run, and a panel-shipped change verified on a
+    bare runner is held to host verdicts nobody posted. A run that genuinely convened the
+    panel at this head is unaffected either way — its ballots are on the pull request, and
+    :func:`panel_sat` answers before this is ever consulted.
+
+    ``probed: False`` for the same reason :func:`panel_sat` sets it: this is a record being
+    republished, not a measurement taken here. The ledger's own copy carries ``probed: True``
+    because the *ship* did probe; repeating that claim on a surface that only read a file
+    would be the one thing this module refuses to let a record do — claim a provenance it
+    does not have.
     """
     context = record.get("run_context") if isinstance(record, Mapping) else None
     panel = context.get("jury_panel") if isinstance(context, Mapping) else None
@@ -324,7 +346,22 @@ def shipped(record: Mapping[str, Any] | None) -> dict[str, Any] | None:
         DECISION_FALLBACK,
     ):
         return None
-    return {**dict(panel), "source": SOURCE_RUN_LEDGER}
+    if not _matches_head(record, head_sha):
+        return None
+    return {**dict(panel), "probed": False, "source": SOURCE_RUN_LEDGER}
+
+
+def _matches_head(record: Mapping[str, Any], head_sha: str | None) -> bool:
+    """Was this ledger record written for exactly ``head_sha``? A blank head never matches.
+
+    The rule :func:`keel.ledger.gates_pass_for_head` already holds the merge gate to: an
+    unknown head must not be authorized by a record from some other commit.
+    """
+    if not isinstance(head_sha, str) or not head_sha.strip():
+        return False
+    git = record.get("git")
+    recorded = git.get("head_sha") if isinstance(git, Mapping) else None
+    return isinstance(recorded, str) and recorded == head_sha
 
 
 def refusal_message(availability: Mapping[str, Any], *, source: str) -> str:

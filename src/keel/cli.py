@@ -1059,9 +1059,15 @@ def _shipped_jury_availability(
 
     * a head-pinned jury verdict already posted on the pull request — the panel sat, and the
       ballots prove it from the one place a bare runner can read;
-    * the ``ship_run`` ledger entry for this pull request, which carries the decision the
-      shipping run measured (fallback included, so a fallback-reviewed change is not held to
-      a panel a workstation *could* have convened).
+    * the ``ship_run`` ledger entry written for **this head** of this pull request, which
+      carries the decision the shipping run measured (fallback included, so a
+      fallback-reviewed change is not held to a panel a workstation *could* have convened).
+
+    Both sources are pinned to the current head, and for one reason: a pull request outlives
+    its heads. A ship of an earlier head that fell back would otherwise still be answering
+    for the head being verified now — a stale run relaxing a live gate. A record from any
+    other head is no record at all (:func:`keel.juryavail.shipped`), and the caller measures
+    this machine instead, which is the fail-closed answer both ways round.
 
     The ledger lives under the gitignored ``.keel/state/``, so on a hosted runner the first
     source is usually the only one. That is less a gap than the shape of the thing: a run
@@ -1075,7 +1081,7 @@ def _shipped_jury_availability(
         artifacts["pr_comments"], artifacts["pr_reviews"], head_sha=artifacts["head_sha"]
     ):
         return juryavail.panel_sat()
-    return juryavail.shipped(ledger_record)
+    return juryavail.shipped(ledger_record, head_sha=artifacts["head_sha"])
 
 
 def _review_assignment(
