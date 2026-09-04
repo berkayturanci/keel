@@ -21,10 +21,12 @@ not a network is available.
 
 from __future__ import annotations
 
+import email.message
 import hashlib
 import json
 import os
 import re
+import sys
 import unittest
 import unittest.mock
 import urllib.error
@@ -145,6 +147,42 @@ def _reachable(url: str) -> bool:
         ) from exc
 
 
+#: The tarball the stub formula points at, and the url the PyPI check reads, so
+#: a simulated HTTP status names the artifact the real check would have fetched.
+_STUB_TARBALL = "https://github.com/berkayturanci/keel/archive/refs/tags/v1.0.0.tar.gz"
+_PYPI_JSON = "https://pypi.org/pypi/keel-workflow/json"
+
+#: A tap formula body shaped like the real one: the assertions that run before
+#: the tarball fetch read a keel tag archive and a top-level sha256 out of it and
+#: nothing else. The digest is deliberately wrong, so a run that reached the
+#: comparison would fail loudly instead of passing by accident.
+_STUB_FORMULA = (f'  url "{_STUB_TARBALL}"\n  sha256 "{"0" * 64}"\n').encode()
+
+
+def _stub_fetch(body: bytes) -> unittest.mock.MagicMock:
+    """A stand-in for one `urlopen` call: a context manager whose body is `body`."""
+    response = unittest.mock.MagicMock()
+    response.__enter__.return_value.read.return_value = body
+    return response
+
+
+def _http_error(url: str, code: int) -> urllib.error.HTTPError:
+    """A real `HTTPError`, because the handlers under guard branch on `.code`."""
+    return urllib.error.HTTPError(url, code, "simulated", email.message.Message(), None)
+
+
+def _failure_message(failure: str) -> str:
+    """The message a failure was raised with, without the traceback's own source.
+
+    A fragment asserted against the whole formatted traceback can be satisfied by
+    the *source line* of the handler that did not run — `self.fail("...")`'s
+    literal text is printed as a stack frame whenever a later frame fails — which
+    would make the per-handler fragments below insensitive to precisely the
+    regression they exist to catch.
+    """
+    return failure.rsplit("AssertionError: ", 1)[-1]
+
+
 class TestNotLookingIsNotAPass(unittest.TestCase):
     """The rule itself, asserted hermetically.
 
@@ -199,6 +237,136 @@ class TestNotLookingIsNotAPass(unittest.TestCase):
                     # guard, so the guard would hide it.
                     continue
                 self.fail("the guard raised nothing at all")
+
+    def test_a_fetch_that_could_not_happen_fails_at_the_call_sites_too(self):
+        """Every handler the two restructured `else` clauses depend on, driven.
+
+        The two online checks below read a name bound inside a `try` and used in
+        that `try`'s `else`. The `else` is what makes the binding provable to a
+        reader and to CodeQL (#1063), and it is load-bearing in one direction
+        only: it is reached solely on the path that bound the name, so if a
+        handler ever stopped ending in a call that never returns, the read would
+        be *skipped* and the check would pass without having looked — the
+        fail-open #933 is about, arriving quietly instead of as a loud
+        unbound-name error the way it would have before the restructuring.
+
+        **What this pins.** One row per handler each `else` depends on. Each
+        drives its check with `urlopen` stubbed to raise the error that reaches
+        that handler, and asserts the check ends in a failure *from that
+        handler* — identified by a fragment of the handler's own message, not
+        merely "a failure happened". The handlers are enumerated from the source
+        rather than assumed to match each other:
+
+        * `test_the_tap_serves_an_installable_formula` has two `except` clauses
+          and three paths through them: an `HTTPError` whose `.code` is 404 (the
+          missing artifact, reported by a direct `self.fail`), an `HTTPError`
+          with any other code (which falls *through* that `if` to the shared
+          helper), and a `URLError`/`OSError` (the unreachable host, the shared
+          helper again).
+        * `test_the_version_is_not_one_pypi_already_published_differently` has
+          exactly one, `except OSError`, and no direct-call branch. Because
+          `HTTPError` subclasses `OSError`, an HTTP answer reaches that same
+          clause rather than a clause of its own; it is driven here too, so the
+          shape is shown rather than inferred from the check above.
+
+        Sensitivity is established by mutation, one handler at a time:
+        substituting a returning stub for a handler's failure call makes every
+        row that reaches it fail. Rows and handlers are not one to one, and the
+        two PyPI rows are why — they reach the same `except OSError` and the same
+        helper call by different error types, so a single stub turns both red
+        together. The three tap rows do map to distinct handlers. The runs are
+        recorded in the pull request.
+
+        **What this does not pin.** Not the `else` bodies: a wrong digest and a
+        repo version behind PyPI are the online checks' own subject. Not
+        anything about the world — every response here is a stub, so no row says
+        the tap or PyPI is reachable, current, or in sync. Not *why* a handler
+        never returns: `_could_not_look` is pinned by the tests above and
+        `self.fail` is unittest's contract; this shows the property as observed
+        at the call site. Not `_tap_file`'s own handlers — it ends in an explicit
+        `raise AssertionError` instead of an `else`, so no binding of its depends
+        on them, and it is reached here only through its success path. Not the
+        other online classes, which bind nothing inside a `try`.
+
+        Both online classes are gated behind `KEEL_CHECK_EXTERNAL=1` and that job
+        is not a required check, so no blocking signal would catch the
+        regression. This test is not gated: it drives those checks itself with
+        the network stubbed to raise.
+        """
+        for handler, case_class, name, responses, expected in (
+            (
+                "unreachable host: `except (URLError, OSError)` -> `_could_not_look`",
+                TestHomebrewPromise,
+                "test_the_tap_serves_an_installable_formula",
+                # The tap read succeeds so the tarball fetch is reached at all;
+                # that second call — the one the restructured `try` wraps — is
+                # the outage.
+                [_stub_fetch(_STUB_FORMULA), OSError("simulated outage")],
+                ("could not check the tap formula's tarball", "reads as a pass"),
+            ),
+            (
+                "missing artifact: `except HTTPError` with .code 404 -> `self.fail` directly",
+                TestHomebrewPromise,
+                "test_the_tap_serves_an_installable_formula",
+                [_stub_fetch(_STUB_FORMULA), _http_error(_STUB_TARBALL, 404)],
+                (_STUB_TARBALL, "which does not exist"),
+            ),
+            (
+                "other status: `except HTTPError` past the 404 `if` -> `_could_not_look`",
+                TestHomebrewPromise,
+                "test_the_tap_serves_an_installable_formula",
+                [_stub_fetch(_STUB_FORMULA), _http_error(_STUB_TARBALL, 503)],
+                ("could not check the tap formula's tarball", "reads as a pass"),
+            ),
+            (
+                "unreachable host: `except OSError` -> `_could_not_look`",
+                TestPublishedVersion,
+                "test_the_version_is_not_one_pypi_already_published_differently",
+                [OSError("simulated outage")],
+                ("could not check the versions published on PyPI", "reads as a pass"),
+            ),
+            (
+                "HTTP status: `HTTPError` subclasses `OSError`, so the same one clause",
+                TestPublishedVersion,
+                "test_the_version_is_not_one_pypi_already_published_differently",
+                [_http_error(_PYPI_JSON, 404)],
+                ("could not check the versions published on PyPI", "reads as a pass"),
+            ),
+        ):
+            with self.subTest(check=name, handler=handler):
+                online = unittest.mock.patch.object(sys.modules[__name__], "ONLINE", True)
+                outage = unittest.mock.patch.object(
+                    urllib.request, "urlopen", side_effect=responses
+                )
+                outcome = unittest.TestResult()
+                with online, outage:
+                    case_class(name).run(outcome)
+                self.assertEqual(
+                    outcome.errors,
+                    [],
+                    f"{name} raised instead of reporting a failure ({handler}): {outcome.errors}",
+                )
+                self.assertEqual(
+                    outcome.skipped,
+                    [],
+                    f"{name} skipped rather than failing when it could not look "
+                    f"({handler}): {outcome.skipped}",
+                )
+                self.assertEqual(
+                    len(outcome.failures),
+                    1,
+                    f"{name} passed on a fetch that never happened ({handler}): the `else` "
+                    "was skipped and no handler failed the test, so 'could not look' read "
+                    "as a pass",
+                )
+                message = _failure_message(outcome.failures[0][1])
+                for fragment in expected:
+                    self.assertIn(
+                        fragment,
+                        message,
+                        f"{name} failed, but not from the handler under test ({handler}): "
+                        "the handler stopped reporting the outcome it exists to report",
+                    )
 
 
 class TestActionReferences(unittest.TestCase):
@@ -312,12 +480,21 @@ class TestHomebrewPromise(unittest.TestCase):
             _could_not_look(self, "the tap formula's tarball", exc)
         except (urllib.error.URLError, OSError) as exc:
             _could_not_look(self, "the tap formula's tarball", exc)
-        self.assertEqual(
-            hashlib.sha256(payload).hexdigest(),
-            declared.group(1),
-            "the tap's sha256 is not the digest of the tarball it points at; "
-            "brew install would refuse",
-        )
+        else:
+            # `else`, not a trailing statement: the digest comparison is reached
+            # only on the path that actually bound `payload`. Every handler above
+            # ends in a call that never returns, but that guarantee lives in
+            # `self.fail`/`_could_not_look` rather than here, so neither a reader
+            # nor a static analyser could see it at the point of use
+            # (`py/uninitialized-local-variable`, #1063). The three outcomes stay
+            # distinct: a wrong digest fails here, an unreadable tarball fails in
+            # the handler, and only a fetch that succeeded reaches this block.
+            self.assertEqual(
+                hashlib.sha256(payload).hexdigest(),
+                declared.group(1),
+                "the tap's sha256 is not the digest of the tarball it points at; "
+                "brew install would refuse",
+            )
 
 
 class TestTheTapReadsTheReleaseAsset(unittest.TestCase):
@@ -398,16 +575,21 @@ class TestPublishedVersion(unittest.TestCase):
                 published = set(json.load(response)["releases"])
         except OSError as exc:
             _could_not_look(self, "the versions published on PyPI", exc)
-
-        latest = max(published, key=lambda v: [int(p) for p in v.split(".") if p.isdigit()])
-        current = [int(p) for p in __version__.split(".") if p.isdigit()]
-        newest = [int(p) for p in latest.split(".") if p.isdigit()]
-        self.assertGreaterEqual(
-            current,
-            newest,
-            f"the repo says {__version__} but PyPI has published {latest}. Either a "
-            "release was reverted on main (see #772) or the bump was never committed.",
-        )
+        else:
+            # See the note in `test_the_tap_serves_an_installable_formula`: the
+            # comparison lives in the `else` so `published` is provably bound
+            # where it is read. `_could_not_look` never returns — pinned by
+            # `TestNotLookingIsNotAPass` above — so "could not ask PyPI" still
+            # fails rather than reaching this block and passing.
+            latest = max(published, key=lambda v: [int(p) for p in v.split(".") if p.isdigit()])
+            current = [int(p) for p in __version__.split(".") if p.isdigit()]
+            newest = [int(p) for p in latest.split(".") if p.isdigit()]
+            self.assertGreaterEqual(
+                current,
+                newest,
+                f"the repo says {__version__} but PyPI has published {latest}. Either a "
+                "release was reverted on main (see #772) or the bump was never committed.",
+            )
 
     def test_documented_git_pins_point_at_the_current_version(self):
         stale = {
