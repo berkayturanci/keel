@@ -1766,7 +1766,7 @@ class TestJuryParticipatingVendors(unittest.TestCase):
     """The panel size reaches a CI gate only through the posted jury verdict."""
 
     @staticmethod
-    def _verdict_comment(*, vendors=None, participants=(), head="abc"):
+    def _verdict_comment(*, vendors=None, participants=(), head="abc", panelists=None):
         from keel import artifacts
 
         return _comment(
@@ -1774,6 +1774,7 @@ class TestJuryParticipatingVendors(unittest.TestCase):
                 head_sha=head,
                 participants=participants,
                 participating_vendors=vendors,
+                panelists=panelists,
             )
         )
 
@@ -1817,6 +1818,34 @@ class TestJuryParticipatingVendors(unittest.TestCase):
         )
 
         self.assertIsNone(got)
+
+    def test_a_run_that_resolved_no_head_declares_nothing(self):
+        """#1069: the blank head is the half `_matches_head` read as *do not filter*.
+
+        A `vendors: 1` verdict posted against some earlier head reached a gate resolving
+        at a head this run never established, and relaxed it. Every blank-head shape
+        `keel.juryavail.is_pinnable_head` refuses is refused here, including the non-string
+        shapes a JSON payload can hand over.
+        """
+        stale = [self._verdict_comment(vendors=1, head="three-heads-ago")]
+
+        for head_sha in (None, "", "  \t ", 0, ["abc"], b"abc"):
+            with self.subTest(head_sha=head_sha):
+                self.assertIsNone(evidence.jury_participating_vendors(stale, head_sha=head_sha))
+
+    def test_the_two_safe_readers_keep_the_permissive_head_rule(self):
+        """…and only that one reader moved (#1069).
+
+        `jury_panel_size` feeds `max(declared, minimum_vendors)` and `panel_verdict_posted`
+        is refused on a blank head by its own caller, so neither can relax a gate and
+        neither takes the pin's rule. A change that pushed the guard down into
+        `_matches_head` would fail here.
+        """
+        stale = [self._verdict_comment(vendors=1, panelists=4, head="three-heads-ago")]
+
+        self.assertIsNone(evidence.jury_participating_vendors(stale, head_sha=None))
+        self.assertEqual(evidence.jury_panel_size(stale, head_sha=None), 4)
+        self.assertTrue(evidence.panel_verdict_posted(stale, head_sha=None))
 
     def test_untrusted_author_is_ignored(self):
         item = {
