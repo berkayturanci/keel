@@ -81,6 +81,10 @@ def contract_as_dict() -> dict[str, Any]:
             "consent",
         ],
         "jury_label": JURY_LABEL,
+        # Published so a consumer reading the closure comment back — keel's own
+        # verification surfaces included — has the marker name from the contract
+        # rather than from a literal (#1068).
+        "jury_panel_marker": JURY_PANEL_MARKER,
         "watermark_marker": WATERMARK_MARKER,
     }
 
@@ -107,9 +111,21 @@ def render_closure_comment(record: dict[str, Any]) -> str:
     lines.append(f"- **Docs touched:** {_docs_touched(record.get('changes'))}")
     lines.append(f"- **Capture:** {_capture(record.get('capture'))}")
     lines.append(f"- **Run id:** {_value(record.get('run_id'))}")
-    lines.extend(_run_context(record.get("run_context")))
+    lines.extend(_run_context(record.get("run_context"), _head_sha(record)))
     lines.extend(_watermark(record.get("watermark")))
     return "\n".join(lines) + "\n"
+
+
+def _head_sha(record: dict[str, Any]) -> Any:
+    """``git.head_sha`` off the record, or ``None`` when the block is unreadable.
+
+    The head the ship produced, which is the head every pin is taken against. Read
+    defensively for the same reason every other field here is: the renderer's contract
+    is "plain dict in, markdown out", and a malformed block degrades to no marker
+    rather than to an exception on the one artifact a human reads.
+    """
+    git = record.get("git")
+    return git.get("head_sha") if isinstance(git, dict) else None
 
 
 def _fix_rounds(actors: dict[str, Any]) -> list[str]:
@@ -235,7 +251,7 @@ def _learning(learning: Any) -> str | None:
     return decision.strip()
 
 
-def _run_context(run_context: Any) -> list[str]:
+def _run_context(run_context: Any, head_sha: Any = None) -> list[str]:
     """Render the deterministic preflight Run context block.
 
     Always emitted (additive section, appended after the existing lines). Each
@@ -252,7 +268,7 @@ def _run_context(run_context: Any) -> list[str]:
         f"- **Transport:** {_unknown(block.get('transport'))}",
         f"- **Profile:** {_unknown(block.get('profile'))}",
         f"- **Jury:** {_jury_mode(block.get('jury_mode'))}",
-        *_jury_panel(block),
+        *_jury_panel(block, head_sha),
         *_implement_mode(block),
         f"- **Consent:** {_consent(block.get('consent'))}",
     ]
@@ -264,13 +280,33 @@ def _run_context(run_context: Any) -> list[str]:
 #: panel that quietly collapsed and still reported success costs.
 PANEL_UNAVAILABLE_LABEL = "panel unavailable"
 
+#: The machine-readable half of that line (#1068 round 6). The prose above is for a
+#: human; this is for :func:`keel.evidence.shipped_panel_decision`, which reads the
+#: run's own panel decision back off the pull request on a host that cannot see the
+#: run ledger — ``.keel/state/`` is gitignored, so a hosted ``evidence-verify`` or
+#: ``merge`` has no ledger to pin to and the closure comment is the only place this
+#: run still speaks. Both halves are always emitted together: the marker is the
+#: parser's input so nothing downstream has to regex over Markdown, and the sentence
+#: stays because the comment is read by people.
+#:
+#: Deliberately **not** one of :data:`keel.evidence.CLASSIFICATION_MARKERS`: it does
+#: not classify a comment (the closure marker in the header already did that), it is
+#: a field inside one. It is head-pinned for the same reason every pin is — a pull
+#: request outlives its heads — and is emitted only when the record carries a head.
+JURY_PANEL_MARKER = "keel.jury-panel.v1"
 
-def _jury_panel(block: dict[str, Any]) -> list[str]:
+
+def _jury_panel(block: dict[str, Any], head_sha: Any) -> list[str]:
     """The s7 panel-availability line — emitted only when the panel could not sit.
 
     Conditional, like the s4 profile line: a run whose panel convened (and every run
     of a project that has no panel) posts the comment it always did, byte for byte.
     The exception is the case worth naming, and it names the seats.
+
+    A ``fallback`` is also the decision a verification surface elsewhere has to be
+    held to, so the line is followed by the machine-readable
+    :data:`JURY_PANEL_MARKER` naming the head and the decision — a mirror of the
+    record like every other line here, never a second source of truth.
     """
     panel = block.get("jury_panel")
     panel = panel if isinstance(panel, dict) else {}
@@ -282,7 +318,24 @@ def _jury_panel(block: dict[str, Any]) -> list[str]:
         if decision == "fallback"
         else "the run was refused (knobs.team.jury.on_unavailable: block)"
     )
-    return [f"- **Jury panel:** {PANEL_UNAVAILABLE_LABEL} — {outcome}{_panel_detail(panel)}"]
+    return [
+        f"- **Jury panel:** {PANEL_UNAVAILABLE_LABEL} — {outcome}{_panel_detail(panel)}",
+        *_jury_panel_marker(head_sha, decision),
+    ]
+
+
+def _jury_panel_marker(head_sha: Any, decision: str) -> list[str]:
+    """``<!-- keel.jury-panel.v1 head=… decision=… -->``, or nothing without a head.
+
+    A record whose run resolved no head is not pinnable by anything (see
+    :func:`keel.juryavail.is_pinnable_head`), so a marker naming no head could only
+    ever be noise a reader has to ignore. Omitted, the comment is exactly the one this
+    renderer wrote before the marker existed.
+    """
+    head = head_sha.strip() if isinstance(head_sha, str) and head_sha.strip() else None
+    if head is None:
+        return []
+    return [f"<!-- {JURY_PANEL_MARKER} head={head} decision={decision} -->"]
 
 
 def _panel_detail(panel: dict[str, Any]) -> str:

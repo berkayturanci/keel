@@ -287,6 +287,9 @@ def _rows(document: Mapping[str, Any] | None, key: str) -> tuple[Any, ...] | Non
 SOURCE_PROBE = "probe"
 SOURCE_PULL_REQUEST = "pull-request"
 SOURCE_RUN_LEDGER = "run-ledger"
+#: The run's own record, read back off the closure comment it posted — the same statement
+#: as :data:`SOURCE_RUN_LEDGER`, from the copy that travels with the pull request (#1068).
+SOURCE_CLOSURE_COMMENT = "closure-comment"
 
 
 def panel_sat(
@@ -301,10 +304,11 @@ def panel_sat(
     demanded that nobody was ever asked to post. The ballots are already on the pull
     request; that outranks anything *this host* can observe.
 
-    It does **not** outrank the shipping run's own record of what it did
-    (:func:`shipped`), and :func:`pin` — not this function — owns that order. A posted
-    verdict establishes that a panel sat for this head; it does not establish that this
-    run's review *was* that panel.
+    It is the **weakest** pin, and :func:`pin` — not this function — owns that order. It
+    does not outrank the shipping run's own record of what it did, in either of the two
+    places that record survives: the ``ship_run`` ledger (:func:`shipped`) and the closure
+    comment rendered from it (:func:`recorded`). A posted verdict establishes that a panel
+    sat for this head; it does not establish that this run's review *was* that panel.
 
     ``probed: False`` says plainly that nothing was measured here. Everything else keeps the
     shape :meth:`Availability.as_dict` publishes, so every reader downstream is unchanged.
@@ -323,6 +327,66 @@ def panel_sat(
         "reason": (
             "jury panel staffable: a head-pinned jury verdict is posted on the pull "
             "request, so the panel sat for this head; this surface did not re-probe"
+        ),
+    }
+
+
+def recorded(
+    decision: Any, *, min_vendors: int = DEFAULT_MIN_VENDORS, policy: str | None = None
+) -> dict[str, Any] | None:
+    """The panel decision this run published in its own closure comment (#1068 round 6).
+
+    The same statement :func:`shipped` reads, from the copy that travels with the pull
+    request. It exists because the stronger copy does not travel: the ``ship_run`` ledger
+    lives under the gitignored ``.keel/state/``, so on a hosted ``evidence-verify`` or
+    ``merge`` — the CI check, or any machine other than the one that shipped — there is no
+    same-head record and the ledger pin cannot fire at all. The precedence it establishes
+    held on the workstation that shipped and nowhere else, while a leftover
+    ``keel.jury-verdict.v1`` answered for that run everywhere else.
+
+    ``decision`` comes from :func:`keel.evidence.shipped_panel_decision`, which has already
+    held it to a trusted author, an actual closure comment, and this exact head. Only
+    ``available`` and ``fallback`` produce a record, exactly as in :func:`shipped`:
+    ``block`` refused its run, so it is not a decision anything shipped under, and an
+    unrecognised value is not a decision at all. Either reads as ``None``, and :func:`pin`
+    returns that ``None`` as the answer rather than falling through — the same rule it
+    holds a same-head ledger record to, for the same reason.
+
+    The record is thinner than the ledger's — the comment carries the decision and the
+    seats' prose, not the structured inventory — so it publishes no vendors and no seats
+    and says where it came from. Every consumer reads ``decision``
+    (:func:`keel.team._panel_falls_back`) and the ``reason`` sentence, both of which are
+    here; nothing downstream needs the seat list to resolve a bench.
+
+    ``probed: False``, like every pin: a surface that read a comment measured nothing.
+    """
+    if decision not in (DECISION_AVAILABLE, DECISION_FALLBACK):
+        return None
+    staffable = decision == DECISION_AVAILABLE
+    outcome = (
+        "the panel sat"
+        if staffable
+        else "the panel could not be staffed there and a host bench reviewed instead"
+    )
+    return {
+        "probed": False,
+        "staffable": staffable,
+        "decision": decision,
+        "on_unavailable": jury_on_unavailable(policy),
+        "required_vendors": max(1, min_vendors),
+        "available_vendors": [],
+        "unavailable": [],
+        "runner": {
+            "command": JURY_RUNNER_COMMAND,
+            "usable": staffable,
+            "reason": outcome,
+        },
+        "inventory": SOURCE_CLOSURE_COMMENT,
+        "source": SOURCE_CLOSURE_COMMENT,
+        "reason": (
+            f"jury panel {'staffable' if staffable else 'not staffable'}: the run that "
+            f"produced this head recorded '{decision}' in the closure comment it posted "
+            "on this pull request, so " + outcome + "; this surface did not re-probe"
         ),
     }
 
@@ -386,6 +450,7 @@ def pin(
     *,
     head_sha: Any,
     panel_verdict_posted: bool,
+    closure_panel_decision: Any = None,
 ) -> dict[str, Any] | None:
     """**The single authority on "what did this run ship under".** (#1066, #1068)
 
@@ -419,20 +484,38 @@ def pin(
     3. **A same-head record that says nothing about a panel still speaks.** :func:`shipped`
        returns ``None`` for a record whose ``run_context.jury_panel`` is missing,
        malformed, or ``block``, and that ``None`` is returned as-is rather than falling
-       through to the verdict: this run left a record here and it does not say the run
-       shipped under a panel, so no comment may say otherwise on its behalf.
-    4. **Only with no record for this head does a posted verdict pin** (:func:`panel_sat`).
-       This is the hosted-runner route and the common one: ``.keel/state/`` is gitignored,
-       so CI usually cannot read the ledger at all, and the head-pinned ballots on the pull
-       request are then the only surviving proof that the panel sat.
+       through to a comment: this run left a record here and it does not say the run
+       shipped under a panel, so nobody may say otherwise on its behalf.
+    4. **Failing that, the run's own closure comment** (:func:`recorded`), whose decision
+       :func:`keel.evidence.shipped_panel_decision` has already held to a trusted author,
+       to an actual closure comment, and to this head. This rank is what makes rank 2 mean
+       anything off the shipping workstation (#1068 round 6): the ledger lives under the
+       gitignored ``.keel/state/``, so a hosted ``evidence-verify`` or ``merge`` has no
+       same-head record at all and fell straight through to the verdict — the run's
+       fallback was outranked by a leftover comment on every machine except the one that
+       had no need of the rule. The closure comment is the *same statement* as the ledger
+       record it was rendered from, in the one place that travels with the pull request,
+       so it ranks with the ledger and above the verdict. It is silent — ``None`` — for a
+       run that shipped under a staffable panel, which renders no marker at all; that run
+       posts its ballots, and rank 5 reads them.
 
-    Both pins therefore run in the same direction: the strongest available statement about
+       Silent and refusing are different answers, and rank 4 gives both: no marker for this
+       head is silence and rank 5 gets its turn, while a marker that says ``block`` or
+       something unrecognised is a record that does not say the run shipped under a panel,
+       and :func:`recorded` returns ``None`` as the answer for the same reason rank 3 does.
+    5. **Only with no record of the run's own does a posted verdict pin**
+       (:func:`panel_sat`). Head-pinned ballots prove a panel *sat* for this head; they do
+       not prove this run's review **was** that panel, which is why they rank last.
+
+    Every pin therefore runs in the same direction: the strongest available statement about
     *this run at this head*, falling back to measuring rather than to guessing.
     """
     if not is_pinnable_head(head_sha):
         return None
     if is_ship_run_for_head(record, head_sha=head_sha):
         return shipped(record, head_sha=head_sha)
+    if closure_panel_decision is not None:
+        return recorded(closure_panel_decision)
     return panel_sat() if panel_verdict_posted else None
 
 

@@ -1729,6 +1729,85 @@ def panel_verdict_posted(
     )
 
 
+def shipped_panel_decision(
+    pr_comments: list[dict[str, Any]] | None = None,
+    *,
+    head_sha: str | None = None,
+    enforced: bool = True,
+) -> str | None:
+    """The panel decision **this run** recorded, read back off its closure comment (#1068).
+
+    The middle pin, and the one that makes the strongest pin work anywhere. The run's own
+    ``ship_run`` ledger record outranks a posted jury verdict — a comment records what
+    somebody put on the pull request, the ledger records what the run *did* — but the
+    ledger lives under the gitignored ``.keel/state/``, so on a hosted ``evidence-verify``
+    or ``merge`` there is no record to read and that precedence held on the shipping
+    workstation and nowhere else. A leftover or collaborator-posted ``keel.jury-verdict.v1``
+    then answered for a run that had fallen back, and took ``review-verdict-1..3`` off the
+    required set.
+
+    The run's decision is already on the pull request: s11 posts the closure comment keel
+    renders from that same ledger record, and since #1068 round 6 it carries
+    :data:`keel.closure.JURY_PANEL_MARKER` beside the human ``Jury panel:`` line. So this
+    reads the run's own statement from the one place that travels with the pull request.
+
+    Three conditions, and each is the same rule its siblings hold to:
+
+    * **Trusted author only** (:func:`_is_trusted_source`). keel posts the closure comment
+      on the operator's behalf, which is exactly the authority a posted jury verdict has —
+      no more. An untrusted author must not be able to relax the contract *in either
+      direction*: neither to claim a fallback that drops the panel item, nor to claim the
+      panel sat.
+    * **An actual closure comment** (:func:`_has_closure_marker`), so the marker counts only
+      inside the artifact that renders it — a reviewer quoting the marker while describing
+      this change is prose, the #1026 rule every marker here is read under.
+    * **Pinned to this head.** The marker names the head its record was written for and it
+      must be the head under verification, because a pull request outlives its heads and a
+      pin removes requirements.
+
+    ``None`` for everything else — no comment, an older head, a marker keel did not write —
+    and ``None`` means *this source is silent*, never a waiver: :func:`keel.juryavail.pin`
+    then goes on to the posted verdict exactly as it did before.
+    """
+    if not head_sha:
+        return None
+    for item in pr_comments or []:
+        if not _is_trusted_source(item, enforced=enforced):
+            continue
+        body = _body(item)
+        if not _has_closure_marker(body):
+            continue
+        decision = _jury_panel_decision(body, head_sha)
+        if decision is not None:
+            return decision
+    return None
+
+
+def _jury_panel_decision(body: str, head_sha: str) -> str | None:
+    """The decision ``body``'s panel marker records for ``head_sha``, or ``None``.
+
+    A token parser over one HTML-comment line, not a regex over Markdown: the line is
+    :func:`keel.closure._jury_panel_marker`'s exact render, so it unwraps with the same
+    :func:`_unwrap_html_comment` a header marker does and splits into
+    ``<marker> head=<sha> decision=<value>``. A line that is not that shape is prose and is
+    skipped, which is why the human sentence above it — which *names* neither field — can
+    never be mistaken for the record.
+    """
+    for raw_line in (body or "").splitlines():
+        tokens = _unwrap_html_comment(raw_line.strip()).split()
+        if not tokens or tokens[0] != closure.JURY_PANEL_MARKER:
+            continue
+        fields: dict[str, str] = {}
+        for token in tokens[1:]:
+            key, _, value = token.partition("=")
+            # First wins, the convention `_fields` already reads headers under, and a
+            # token carrying no `=` becomes a valueless key that matches neither field.
+            fields.setdefault(key, value)
+        if fields.get("head") == head_sha:
+            return fields.get("decision")
+    return None
+
+
 def _parse_vendor_count(raw: str | None) -> int | None:
     """Parse a declared vendor count, rejecting anything not a plain non-negative int."""
     if raw is None:

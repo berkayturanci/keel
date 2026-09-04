@@ -1140,6 +1140,39 @@ class TestTheRecordAReaderSees(unittest.TestCase):
         self.assertIn("- **Jury panel:** panel unavailable", rendered)
         self.assertNotIn("junk", rendered)
 
+    def test_the_line_carries_a_machine_readable_half_pinned_to_the_head(self):
+        """The run's decision has to be *parseable* where the ledger cannot be read (#1068).
+
+        `.keel/state/` is gitignored, so on a hosted `evidence-verify` the closure comment
+        is the only place this run still speaks. The prose stays for the human; the marker
+        beside it is what `evidence.shipped_panel_decision` reads, so the parser is a token
+        split over one HTML comment rather than a regex over Markdown.
+        """
+        rendered = closure.render_closure_comment(
+            {
+                "git": {"head_sha": "abc"},
+                "run_context": {"jury_panel": _assess(UNSTAFFED, min_vendors=2).as_dict()},
+            }
+        )
+
+        self.assertIn("- **Jury panel:** panel unavailable", rendered)
+        self.assertIn("<!-- keel.jury-panel.v1 head=abc decision=fallback -->", rendered)
+        self.assertEqual(closure.contract_as_dict()["jury_panel_marker"], "keel.jury-panel.v1")
+
+    def test_a_run_that_resolved_no_head_renders_the_prose_and_no_marker(self):
+        """Nothing is pinnable without a head, so a headless marker could only mislead."""
+        for git in (None, {"head_sha": None}, {"head_sha": "  "}, "not a mapping"):
+            with self.subTest(git=git):
+                rendered = closure.render_closure_comment(
+                    {
+                        "git": git,
+                        "run_context": {"jury_panel": _assess(UNSTAFFED, min_vendors=2).as_dict()},
+                    }
+                )
+
+                self.assertIn("- **Jury panel:** panel unavailable", rendered)
+                self.assertNotIn("keel.jury-panel.v1", rendered)
+
     def test_a_staffable_panel_adds_no_line_at_all(self):
         """Every closure comment keel has ever posted stays byte-identical."""
         for context in (
@@ -1612,13 +1645,41 @@ class TestTheContractIsPinnedToTheShipsMeasurement(unittest.TestCase):
         path.write_text(json.dumps(record) + "\n", encoding="utf-8")
         return str(path)
 
-    def _comments(self, *bodies):
-        path = self.root / "pr-comments.json"
-        path.write_text(
-            json.dumps([{"body": body, "author_association": "MEMBER"} for body in bodies]),
-            encoding="utf-8",
+    def _comments(self, *bodies, association="MEMBER"):
+        return self._comment_items(
+            *({"body": body, "author_association": association} for body in bodies)
         )
+
+    def _comment_items(self, *items):
+        """The PR comments as GitHub hands them over, association and all."""
+        path = self.root / "pr-comments.json"
+        path.write_text(json.dumps(list(items)), encoding="utf-8")
         return str(path)
+
+    def _closure_body(self, availability, *, head_sha="abc"):
+        """The s11 closure comment for that run, rendered from its own ledger record.
+
+        The copy of the run's record that travels with the pull request: `.keel/state/` is
+        gitignored, so this is the only place the run still speaks on a hosted verify.
+        """
+        return closure.render_closure_comment(
+            {
+                "git": {"head_sha": head_sha},
+                "run_context": {"jury_panel": availability},
+            }
+        )
+
+    def _forged_closure_body(self, decision, *, head_sha="abc"):
+        """A closure-marked comment somebody wrote by hand, marker and all."""
+        return (
+            "<!-- keel.closure-comment.v1 -->\n\n## Ship outcome\n\n"
+            "- **Jury panel:** panel unavailable — a host bench of the same size "
+            "reviewed instead\n"
+            f"<!-- keel.jury-panel.v1 head={head_sha} decision={decision} -->\n"
+        )
+
+    #: A trusted `keel.jury-verdict.v1` for the head under verification.
+    LEFTOVER_VERDICT = "keel.jury-verdict.v1\nhead: abc\npanelists: 2\nAI Jury LGTM"
 
     def _required(self, *, report, ledger_jsonl=None, comments=None, head_sha="abc"):
         argv = [
@@ -1835,6 +1896,166 @@ class TestTheContractIsPinnedToTheShipsMeasurement(unittest.TestCase):
         self.assertNotIn("jury-verdict", required)
         for slot in ("review-verdict-1", "review-verdict-2", "review-verdict-3"):
             self.assertIn(slot, required)
+
+    def test_the_closure_comment_pins_where_there_is_no_ledger_to_read(self):
+        """The #1068 round-6 major: the ledger pin cannot fire where it matters most.
+
+        Round 5 made the run's own `ship_run` record outrank a posted jury verdict, and
+        that is right — but the ledger lives under the gitignored `.keel/state/`, so on a
+        hosted `evidence-verify` or `merge` (the CI check, or any machine other than the
+        one that shipped) there is no same-head record and the pin fell straight through to
+        the verdict. A leftover `keel.jury-verdict.v1` then published `available`, kept
+        `review_panel: jury`, dropped `review-verdict-1..3` and satisfied the remaining
+        `jury-verdict` item with its own LGTM. The precedence held on the workstation that
+        shipped and nowhere else.
+
+        No ledger on disk here — exactly the hosted case — and the run's decision is read
+        from the closure comment it posted, which is the same statement from the copy that
+        travels with the pull request.
+        """
+        _shipped, contract = self._shipped_required(UNSTAFFED)
+        self.assertEqual(contract["jury"]["availability"]["decision"], "fallback")
+
+        required = self._required(
+            report=STAFFED,
+            comments=self._comments(
+                self._closure_body(contract["jury"]["availability"]),
+                self.LEFTOVER_VERDICT,
+            ),
+        )
+
+        self.assertNotIn("jury-verdict", required)
+        for slot in ("review-verdict-1", "review-verdict-2", "review-verdict-3"):
+            self.assertIn(slot, required)
+
+    def test_the_reverse_with_no_closure_comment_the_verdict_still_pins(self):
+        """The other half of the same rule: nothing about the hosted route changes.
+
+        No closure comment for this head, a head-pinned jury verdict on the pull request —
+        the panel sat, and the ballots are the only surviving proof of it. That still pins,
+        exactly as it did before the closure comment was ever consulted.
+        """
+        required = self._required(report=UNSTAFFED, comments=self._comments(self.LEFTOVER_VERDICT))
+
+        self.assertIn("jury-verdict", required)
+        # The panel's own ballots, not a host bench: the tier's third verdict is gone.
+        self.assertNotIn("review-verdict-3", required)
+
+    def test_an_untrusted_closure_comment_relaxes_nothing_in_either_shape(self):
+        """keel posts the closure comment on the operator's behalf — a stranger does not.
+
+        It carries exactly the authority a posted verdict has, which is the same
+        fail-closed `author_association` check, and no more. Both shapes are refused: a
+        forged `fallback` must not take the panel item off a head whose ballots are posted,
+        and a forged `available` must not take `review-verdict-1..3` off one whose panel
+        this machine cannot even staff.
+        """
+        relaxing_the_panel = self._required(
+            report=STAFFED,
+            comments=self._comment_items(
+                {"body": self._forged_closure_body("fallback"), "author_association": "NONE"},
+                {"body": self.LEFTOVER_VERDICT, "author_association": "MEMBER"},
+            ),
+        )
+        self.assertIn("jury-verdict", relaxing_the_panel)
+
+        relaxing_the_verdicts = self._required(
+            report=UNSTAFFED,
+            comments=self._comments(self._forged_closure_body("available"), association="NONE"),
+        )
+        self.assertNotIn("jury-verdict", relaxing_the_verdicts)
+        self.assertIn("review-verdict-3", relaxing_the_verdicts)
+
+    def test_the_closure_comment_ranks_with_the_ledger_and_above_the_verdict(self):
+        """`juryavail.pin` is still the single authority, and now ranks three sources."""
+        ledger_record = {
+            "git": {"head_sha": "abc"},
+            "run_context": {"jury_panel": _assess(UNSTAFFED, min_vendors=2).as_dict()},
+        }
+
+        # The ledger is the same statement, read from the stronger copy: it still wins.
+        self.assertEqual(
+            juryavail.pin(
+                ledger_record,
+                head_sha="abc",
+                panel_verdict_posted=True,
+                closure_panel_decision="available",
+            )["source"],
+            "run-ledger",
+        )
+        # With no record for this head, the run's own comment outranks somebody's verdict.
+        fell_back = juryavail.pin(
+            None, head_sha="abc", panel_verdict_posted=True, closure_panel_decision="fallback"
+        )
+        self.assertEqual(fell_back["source"], "closure-comment")
+        self.assertEqual(fell_back["decision"], "fallback")
+        self.assertFalse(fell_back["staffable"])
+        self.assertFalse(fell_back["probed"], "a pin is not a measurement and must not claim to be")
+        # …and it can say the panel sat, too.
+        sat = juryavail.pin(
+            None, head_sha="abc", panel_verdict_posted=False, closure_panel_decision="available"
+        )
+        self.assertEqual(sat["decision"], "available")
+        self.assertTrue(sat["staffable"])
+        # A record that does not say the run shipped under a panel silences the verdict,
+        # exactly as a same-head ledger record that says nothing does.
+        for decision in ("block", "nonsense"):
+            with self.subTest(decision=decision):
+                self.assertIsNone(
+                    juryavail.pin(
+                        None,
+                        head_sha="abc",
+                        panel_verdict_posted=True,
+                        closure_panel_decision=decision,
+                    )
+                )
+        # And no head, no pin — the rule above all three.
+        self.assertIsNone(
+            juryavail.pin(
+                None, head_sha="", panel_verdict_posted=True, closure_panel_decision="fallback"
+            )
+        )
+
+    def test_the_marker_is_read_only_from_a_trusted_closure_comment_for_this_head(self):
+        """`evidence.shipped_panel_decision` holds the same three rules its siblings do."""
+        body = self._closure_body(_assess(UNSTAFFED, min_vendors=2).as_dict())
+        trusted = {"body": body, "author_association": "MEMBER"}
+
+        self.assertEqual(evidence.shipped_panel_decision([trusted], head_sha="abc"), "fallback")
+        for case, comments, head_sha in (
+            ("another head", [trusted], "some-other-head"),
+            ("no head at all", [trusted], ""),
+            ("untrusted author", [{**trusted, "author_association": "NONE"}], "abc"),
+            ("no comments", None, "abc"),
+            (
+                "the marker quoted in prose, which is not a closure comment",
+                [{"body": f"I checked {body}", "author_association": "MEMBER"}],
+                "abc",
+            ),
+            (
+                "a closure comment whose run recorded no fallback",
+                [
+                    {
+                        "body": self._closure_body(_assess(STAFFED, min_vendors=2).as_dict()),
+                        "author_association": "MEMBER",
+                    }
+                ],
+                "abc",
+            ),
+            (
+                "a marker line keel did not write",
+                [
+                    {
+                        "body": "<!-- keel.closure-comment.v1 -->\n\n"
+                        "<!-- keel.jury-panel.v1 nonsense decision=fallback -->\n",
+                        "author_association": "MEMBER",
+                    }
+                ],
+                "abc",
+            ),
+        ):
+            with self.subTest(case=case):
+                self.assertIsNone(evidence.shipped_panel_decision(comments, head_sha=head_sha))
 
     def test_the_ledger_wins_at_the_unit_too_and_says_which_source_spoke(self):
         record = {

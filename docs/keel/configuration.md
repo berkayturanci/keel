@@ -371,8 +371,10 @@ unavailable and why — and travels with the run:
   `availability.inventory` says which of the two sources the vendor counts were read from;
 - the run ledger records it at `run_context.jury_panel`;
 - the closure comment renders a **Jury panel:** line saying the panel was unavailable and a
-  host bench reviewed instead, listing the seats. A run whose panel convened, and every run
-  of a project with no panel, posts the comment it always did, byte for byte.
+  host bench reviewed instead, listing the seats — followed, when the record carries a head,
+  by `<!-- keel.jury-panel.v1 head=… decision=… -->`, the machine-readable half a
+  verification surface elsewhere reads the run's decision from. A run whose panel convened,
+  and every run of a project with no panel, posts the comment it always did, byte for byte.
 
 That is the point: a reader can tell a jury-reviewed change from a fallback-reviewed one
 without re-deriving it. A panel that quietly collapses and still reports success is
@@ -393,12 +395,15 @@ change reviewed by". Both take the ship's decision instead, strongest source fir
 1. the `ship_run` ledger entry written for **this head** of that pull request
    (`run_context.jury_panel`), which carries the decision the shipping run measured,
    fallback included;
-2. failing that, a head-pinned `keel.jury-verdict.v1` posted on the pull request — the
+2. failing that, the same decision read back off the **closure comment** that run posted
+   on the pull request, which carries `<!-- keel.jury-panel.v1 head=… decision=… -->`
+   beside its human `Jury panel:` line;
+3. failing that, a head-pinned `keel.jury-verdict.v1` posted on the pull request — the
    panel sat, and the ballots prove it from the one place a bare runner can read.
 
-**The ledger outranks the posted verdict, and the order is load-bearing.** The ledger
-records what *this run actually did*; a posted verdict records what somebody put on the
-pull request, which is not the same claim. A run that shipped under the fallback seated
+**The run's own record outranks the posted verdict, and the order is load-bearing.** The
+run's record says what *this run actually did*; a posted verdict says what somebody put on
+the pull request, which is not the same claim. A run that shipped under the fallback seated
 three host reviewers and owes `review-verdict-1..3`, and a leftover jury verdict at that
 same head — from an earlier ship of the commit, a force-push back onto it, or a
 collaborator who ran `jury` by hand — is not that run's review. Taking the verdict first
@@ -406,14 +411,25 @@ dropped three required items on the strength of a comment no run had promised. A
 record that says nothing about a panel is likewise the run speaking: it did not ship under
 one, and no comment may say otherwise on its behalf.
 
-Only with no record for this head *and* no posted verdict does the verification surface
-probe on its own, which is what it did before. The published record says which it was:
-`availability.source` is `probe`, `pull-request` or `run-ledger`, and a pinned record
-carries `probed: false` — "we were told" and "we checked" are not the same claim. The whole
-precedence lives in one function, `keel.juryavail.pin`; `keel.cli._shipped_jury_availability`
-only reads the two artifacts and hands them over.
+**Why the closure comment is a source at all.** The ledger is the stronger copy and it does
+not travel: `.keel/state/` is gitignored, so a hosted `evidence-verify` or `merge` — the CI
+check, or any machine other than the one that shipped — has no same-head record to read, and
+the precedence above would hold on the shipping workstation and nowhere else. The closure
+comment is the *same statement*, rendered from that same record, in the one place that goes
+with the pull request. It is read only from a trusted author (the same fail-closed
+`author_association` check a posted verdict gets — keel posts it on the operator's behalf,
+which is that authority and no more), only inside an actual closure comment, and only when
+its marker names the head under verification. A run whose panel sat renders no marker at
+all: it posts its ballots, and rank 3 reads them.
 
-**Both sources are pinned to the exact head, and neither is read without one.** A pull
+Only with no record of the run's own *and* no posted verdict does the verification surface
+probe on its own, which is what it did before. The published record says which it was:
+`availability.source` is `probe`, `pull-request`, `run-ledger` or `closure-comment`, and a
+pinned record carries `probed: false` — "we were told" and "we checked" are not the same
+claim. The whole precedence lives in one function, `keel.juryavail.pin`;
+`keel.cli._shipped_jury_availability` only reads the three artifacts and hands them over.
+
+**Every source is pinned to the exact head, and none is read without one.** A pull
 request outlives its heads, so a ship of an earlier head may not answer for the head being
 verified now — that would be a stale run relaxing a live gate, since a pin can take
 `review-verdict-1..3` off the required set outright. A run that could not resolve a head at

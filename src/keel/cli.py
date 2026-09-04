@@ -1062,10 +1062,14 @@ def _shipped_jury_availability(
     place and forgotten in its twin, and the last of them was the *precedence* living in
     the order of two ``if``-statements right here, where no reader thought to look for it.
 
-    Everything below is the reading of the two artifacts that authority ranks:
+    Everything below is the reading of the three artifacts that authority ranks:
 
     * the ``ship_run`` ledger entry for this pull request (already loaded by the caller,
       because one surface treats an unreadable ledger as fatal and the other does not);
+    * the panel decision the run recorded in the closure comment it posted on the pull
+      request (:func:`keel.evidence.shipped_panel_decision`) — the same statement as the
+      ledger's, from the copy that travels, which is what makes the ledger's precedence
+      mean anything on a host that cannot read ``.keel/state/`` (#1068 round 6);
     * whether a head-pinned jury verdict is posted on the pull request.
 
     The verdict is asked for only against a pinnable head:
@@ -1074,12 +1078,21 @@ def _shipped_jury_availability(
     filter* — right for counting evidence, wrong for a pin. Both sites ask the one
     predicate, :func:`keel.juryavail.is_pinnable_head`, so hardening it hardens both, and
     :func:`keel.juryavail.pin` refuses a blank head again on its own account rather than
-    trusting this caller to have done it.
+    trusting this caller to have done it. The closure-comment read needs no such guard:
+    it matches the marker's ``head`` against this one, so a blank head matches nothing.
+
+    Trust is the evidence module's own rule at all three sources, and deliberately the
+    same one: keel posts the closure comment on the operator's behalf, which is exactly the
+    authority a posted jury verdict has — no more. An untrusted author's comment may not
+    relax the contract in either shape.
     """
     head_sha = artifacts["head_sha"]
     return juryavail.pin(
         ledger_record,
         head_sha=head_sha,
+        closure_panel_decision=evidence.shipped_panel_decision(
+            artifacts["pr_comments"], head_sha=head_sha
+        ),
         panel_verdict_posted=juryavail.is_pinnable_head(head_sha)
         and evidence.panel_verdict_posted(
             artifacts["pr_comments"], artifacts["pr_reviews"], head_sha=head_sha

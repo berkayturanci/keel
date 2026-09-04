@@ -127,11 +127,14 @@ in the run ledger.
 `result.run_ledger` block from `keel ship --json`. Do not infer ship outcomes by parsing
 free-form PR or issue comments. For live runs, append exactly one structured record with
 `keel ship .keel/project.yaml --root . --live --append-ledger --run-id <id> --issue <N>
---pull-request <PR> --capture-status <applied|deferred|skipped[:reason]> --capture-reason <reason>
+--pull-request <PR> --head-sha "$HEAD_SHA" --capture-status <applied|deferred|skipped[:reason]> --capture-reason <reason>
 --implementer <agent> --reviewer-agent <agent> --tester <agent>
 --host-agent <HOST_AGENT> --transport <gh|mcp> --profile <standard|compound>
 --approve-scope <scopes>
 --operator <operator> --json` after the ship assessment and capture status are known.
+Pass `--head-sha` the head the run produced: every panel pin is taken against an exact
+commit, so a record written without one can answer for no head at all — neither the ledger
+entry `evidence-verify` reads nor the marker the closure comment renders from it.
 Pass the s0 preflight **run context** through: `--host-agent` (the resolved `HOST_AGENT`)
 and `--transport` (the detected `gh`|`mcp` transport from s0); `--profile`, the jury mode,
 and the consent summary are already available from the run and are stamped onto the
@@ -776,7 +779,11 @@ CLIs on `PATH` with no `jury` to convene them is an inventory, not a panel.
   there is no panel to produce a verdict. Run those host reviewers, and **say so**: the
   record is written into the run ledger at `run_context.jury_panel`, so the s11 closure
   comment `keel` renders from it already carries a **Jury panel:** line naming the panel as
-  unavailable and listing the seats — do not paper over it in your own summary. Do not
+  unavailable and listing the seats — do not paper over it in your own summary. That line is
+  followed by `<!-- keel.jury-panel.v1 head=<sha> decision=<decision> -->`, which is how
+  `evidence-verify` and `merge` read this run's decision back on a host that cannot see
+  `.keel/state/`; post the rendered comment verbatim, marker included, or a later
+  verification will hold this change to the panel it could not run. Do not
   dispatch `jury`; do not invent a panel; do not lower the seat count. The fallback changes
   who sat, not how many.
 - `decision: "block"` — the project's policy is `block`, and the command already refused
