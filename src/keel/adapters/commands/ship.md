@@ -227,8 +227,9 @@ capture.
   the only review that tier has, so its verdict stays required.
 - `--hotfix` — audited merge-window bypass (s10). Use sparingly.
 - `--dry-run` — read-only rehearsal (see `--dry-run` section).
-- `--wizard` — interactive opt-in only; runs the guided pre-s1 config collector (see
-  `--wizard` section). In any non-interactive context it degrades to a logged no-op.
+- `--wizard` — interactive opt-in only; runs `keel ship --wizard`, the guided pre-s1
+  option picker (see `--wizard` section). In any non-interactive context it degrades to a
+  logged no-op. `--wizard-answer <key>=<value>` (repeatable) replays a recorded run.
 
 Reject unknown `--flags`, out-of-range `--reviewers`, an empty `ollama:`/`*-api:` model, a
 `--delegate`/`--review-delegate` value that is neither a built-in vendor nor a configured
@@ -1088,15 +1089,66 @@ no-op (`dry-run` marker).
 ## `--wizard` (interactive opt-in only)
 
 A pre-s1 front layer that collects the same options the grammar above produces — it adds no
-new pipeline behaviour and cannot produce a config the grammar could not. **Hard
-interactivity guard:** never enter the wizard in any non-interactive context (watch mode,
-overnight/background/headless runs); there it degrades to a logged no-op and proceeds with
-the literal flags as parsed (never a hang, never a rejection). Best-effort tool/model probe
-(installed CLIs + local models) builds the offered choices; detection failures just yield
-shorter lists. First question is a **Quick-start vs Customize** fast path (Quick-start
-resolves every option to its default and only still asks for Issues). Every question shows
-its `(default)` option first with a one-line description of what the default does. After
-collecting, echo the resolved config in the worked-example shape, then proceed to s1.
+new pipeline behaviour and cannot produce a config the grammar could not.
+
+**Do not improvise the questions.** Run the core picker and use what it prints:
+
+```bash
+keel ship <project.yaml> --root . --wizard [--wizard-answer key=value]...
+```
+
+Core owns the offered choices, and they come from one source: the provider probe behind
+`keel doctor --providers`. **A provider that probe did not mark available is never offered
+and cannot be selected** — so the wizard cannot propose a CLI the operator has not
+installed, which is exactly what an improvised list did.
+
+**Only an answered question becomes a flag.** Every option also has a default, read from
+`knobs.team` and the flags already on the command line, and core deliberately does *not*
+write those back: the offered reviewer bench is derived at a nominal tier (the real one is
+classified at s5, after the wizard) and the jury default is whatever the tier and
+`knobs.team` already say, so materialising them would override the policy they came from.
+Quick-start therefore emits **no flags at all** — pass none on, and let s1–s10 resolve the
+run exactly as they would have.
+
+The probe lists only providers keel can *dispatch* to, so a `subagent:` seat is never
+among them: on a project whose `knobs.team` names one, the implementer question shows the
+first dispatchable provider as its default. An operator who accepts it leaves `knobs.team`
+in charge of s4 — including `implement.by_role` and the `subagent:` seat. An operator who
+answers it gets `--delegate`, a per-run override that wins over `knobs.team.implement` and
+takes `implement.by_role` (and `--role`) out of the picture. Say so if they answer it.
+
+**Hard interactivity guard:** never enter the wizard in any non-interactive context (watch
+mode, overnight/background/headless runs); there it degrades to a logged no-op and proceeds
+with the literal flags as parsed (never a hang, never a rejection). Core enforces this
+itself through an `isatty` check, and a machine where no provider is usable is the same
+logged no-op — but do not pass `--wizard` from an unattended run just because core would
+survive it.
+
+First question is a **Quick-start vs Customize** fast path (Quick-start resolves every
+option to its default and only still asks for Issues). Every question shows its
+`(default)` option first with a one-line description. A run is asked `mode`,
+`implement.provider`, `implement.model`, `jury`, `review` (this run's bench) and
+`review_comments` — and nothing else, because every one of those lands on a real
+`keel ship` flag. The gate seat, the reasoning effort and the jury-as-panel are
+`keel init --wizard` questions: no run flag carries them (`--delegate` splits
+`provider:model`; `--reviewers` takes `1|2|3`), so a run neither asks them nor accepts
+them via `--wizard-answer`. The gate you dispatch at s7 is `assignment.gate`, exactly as
+before.
+
+Core echoes the resolved **flag set**; pass those flags on literally and proceed to s1:
+
+```text
+keel ship --wizard — resolved
+  flags : --delegate ollama:qwen2.5-coder --reviewers 1 --review-delegate claude --review-comments summary --jury-advisory
+  seats : implement=ollama:qwen2.5-coder · gate=claude (distinct from the implementer) · review=claude
+```
+
+The `seats` line restates the flags in seat form; it never carries a value the flags do
+not, so there is nothing on it to apply separately — read `assignment` for the gate seat
+and any per-seat effort, as you already do. A `flags` line reading `(none — every option
+kept its default …)` is the normal quick-start outcome, not a failure: pass no flags and
+proceed. A malformed or unofferable `--wizard-answer` exits 1 before any gate runs —
+surface that to the operator rather than retrying with a guess.
 
 ## Invariants (always)
 

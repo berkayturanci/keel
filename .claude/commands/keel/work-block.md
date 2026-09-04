@@ -1,6 +1,6 @@
 ---
 description: Daytime multi-issue work block — process an explicit issue list or queue selector through ship with per-issue isolation and operator-visible stopping points.
-argument-hint: "[issue numbers...] [--queue <selector>] [--max <N>] [--hours <H>] [--review-comments <inline|summary>]"
+argument-hint: "[issue numbers...] [--queue <selector>] [--max <N>] [--hours <H>] [--review-comments <inline|summary>] [--wizard]"
 allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Bash(jury:*), Read, Edit, Write, Agent
 ---
 
@@ -50,6 +50,13 @@ comments. If `requires_operator_consent` is true, STOP and ask the operator to r
 the required `--approve-scope` values. Pass
 `operator_consent.delegated_agent_scope` into every child `/keel:ship` handoff. Children
 may use only `approved_mutation_scopes`; scope expansion blocks or escalates.
+
+`--wizard` is interactive opt-in only. Pass it through to the same Step 0 command; core
+runs the picker described in `/keel:ship`'s `--wizard` section, from the same provider
+probe, and in any non-interactive context degrades to a logged no-op that leaves the
+parsed flags exactly as they are. Work-block has no implementer or jury flag of its own,
+so core echoes those choices in the resolved flag set — hand them to every child
+`/keel:ship` verbatim rather than re-deciding them per issue.
 
 Read `contract.session_contract.work_block`. It is the queue primitive shared with
 `/keel:overnight`: queue snapshot, readiness refresh, per-issue worktree isolation, ship
@@ -134,4 +141,4 @@ must include the fixed queue snapshot and these buckets:
 
 Also include open questions, consent gaps, and the next 1–3 operator actions.
 
-<!-- keel-generated: surface=claude command=work-block keel_version=1.19.3 source_sha256=41ac873337444a06bcbcfce7481c9b8dd379f8f5e0d167618ffefbfb3ccf49f7 generated_sha256=41ac873337444a06bcbcfce7481c9b8dd379f8f5e0d167618ffefbfb3ccf49f7 -->
+<!-- keel-generated: surface=claude command=work-block keel_version=1.19.3 source_sha256=0aae17b04383432c5924142872a2868ebdfafc39baeb837fe44f6ef490ed35ca generated_sha256=0aae17b04383432c5924142872a2868ebdfafc39baeb837fe44f6ef490ed35ca -->

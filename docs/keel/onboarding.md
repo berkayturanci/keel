@@ -41,12 +41,23 @@ keel setup --root .
 | `validate` | strict-validates config and extension references |
 | `plan` | renders the resolved backbone before any live workflow run |
 
-Use `--wizard` when the default base branch, build command, timezone, or merge window should
-be chosen interactively:
+Use `--wizard` when the default base branch, build command, timezone, merge window, or the
+**team** should be chosen interactively:
 
 ```bash
 keel setup --root . --wizard
 ```
+
+The wizard ends with a team step that writes [`knobs.team`](configuration.md#team) from
+the same probe [`keel doctor --providers`](cli.md#keel-doctor) runs: who implements, who
+gives the mandatory gate review, who reviews at each risk tier, and how the jury gates.
+Only providers that are usable **on this machine** are offered, so the scaffolded config
+cannot name a CLI nobody here has installed. The first question is quick-start (take every
+default, ask nothing else) vs customize. On a machine where nothing is usable yet the step
+is skipped and no `team` block is written — add one later, or re-run the wizard once the
+providers are installed. See [`keel init --wizard`](cli.md#init-team-step) for the full
+question list, and [`keel ship --wizard`](cli.md#ship-wizard) for the per-run picker that
+reads the same probe.
 
 Use `--adapter-target claude` or `--adapter-target skills` when only one discovery surface
 should be installed. The default is `all`.

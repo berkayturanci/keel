@@ -12,7 +12,7 @@ import os
 import sys
 
 from . import config as cfg
-from . import consent, contracts, github_transport, runtime
+from . import consent, contracts, github_transport, runtime, wizardrun
 from . import orchestrator as orch
 from .extensions import load_extensions
 from .gates import GateError
@@ -101,6 +101,12 @@ def cmd_standalone(args: argparse.Namespace) -> int:
         return 1
     except cfg.ConfigError as exc:
         print(str(exc), file=sys.stderr)
+        return 1
+
+    # `keel work-block --wizard` picks the seats each child ship inherits (#1018). A
+    # command without the flag never reaches the probe, and a non-interactive one is a
+    # logged no-op that leaves the parsed flags exactly as they are.
+    if wizardrun.run_option_wizard(args, config, command=command) != 0:
         return 1
 
     loaded, problems = load_extensions(config, args.root, strict=False)

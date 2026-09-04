@@ -1148,7 +1148,8 @@ Render the standalone daytime multi-issue work-block contract.
 keel work-block <project.yaml> [issues…] [--root DIR] [--queue SELECTOR] [--max N]
                 [--hours H] [--review-comments inline|summary] [--reviewers 1|2|3]
                 [--target TEXT] [--dry-run] [--live] [--approve-scope SCOPE]
-                [--operator ID] [--consent-mode MODE] [--json]
+                [--operator ID] [--consent-mode MODE]
+                [--wizard] [--wizard-answer KEY=VALUE]... [--json]
 ```
 
 | Flag | Type / values | Default | Effect |
@@ -1159,6 +1160,7 @@ keel work-block <project.yaml> [issues…] [--root DIR] [--queue SELECTOR] [--ma
 | `--hours H` | float | `None` | Optional time budget. |
 | `--review-comments` / `--reviewers` | shared | `inline` / unset | Passed through to each per-issue ship handoff contract. |
 | `--target TEXT` | string | `None` | Extra target text. |
+| `--wizard` / `--wizard-answer` | shared with `keel ship` | off | Same probe-backed picker. The implementer and jury choices have no work-block flag, so they are echoed in the resolved flag set for the adapter to hand to each child `keel ship`. |
 | `--root` / `--dry-run` / `--live` / consent flags / `--json` | shared | — | Shared semantics. |
 
 ### Details
@@ -1424,7 +1426,8 @@ keel ship <project.yaml> [--root DIR] [--pr N] [--hotfix] [--dry-run] [--live]
           [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL]
           [--review-comments inline|summary] [--reviewers 1|2|3]
           [--jury] [--no-jury] [--jury-advisory]
-          [--profile standard|compound] [--compound] [--json]
+          [--profile standard|compound] [--compound]
+          [--wizard] [--wizard-answer KEY=VALUE]... [--json]
 ```
 
 | Flag | Type / values | Default | Effect |
@@ -1458,6 +1461,8 @@ keel ship <project.yaml> [--root DIR] [--pr N] [--hotfix] [--dry-run] [--live]
 | `--tier` | `plan` | — | Risk tier the review contract and team assignment are resolved against before a diff exists. |
 | `--profile` | `standard` \| `compound` | `standard` | Workflow profile in the contract. |
 | `--compound` | flag | off | Alias for `--profile compound`. |
+| `--wizard` | flag | off | Interactive pre-s1 picker for the implementer/gate/reviewer seats, built from the `keel doctor --providers` probe. Only providers the probe found usable are offered. **Only an answered question becomes a flag** — an unanswered one is left to `knobs.team` and the risk tier, so quick-start changes nothing. With no terminal and no `--wizard-answer` it is a logged no-op and the parsed flags stand. |
+| `--wizard-answer KEY=VALUE` | repeatable, or `;`-separated | none | Pre-answer wizard questions without prompting (`mode`, `implement.provider`, `implement.model`, `jury`, `review`, `review_comments` — a run asks only what a run flag can carry, so `gate.provider` and `implement.effort` are `keel init --wizard` keys and `review=jury` is refused). Supplying any key but `mode` implies `mode=customize`; pass `mode=quick-start` explicitly to take every default. A malformed pair, or one naming a choice the wizard does not offer, exits 1 before any gate runs. |
 | `--json` | flag | off | `{contract, result}` with `result.artifact_bodies` (canonical PR body, issue update, review/jury verdict templates, extension result, ship-provenance stamp). |
 
 ### Details
@@ -1583,20 +1588,28 @@ keel ci-check .keel/project.yaml --root . --pr 104 --json
 Scaffold a default `.keel/project.yaml` from the detected stack.
 
 ```
-keel init [--root DIR] [--force] [--wizard]
+keel init [--root DIR] [--force] [--wizard] [--auto]
 ```
 
 | Flag | Type / values | Default | Effect |
 | --- | --- | --- | --- |
 | `--root DIR` | path | `.` | Repo root to scaffold into. |
 | `--force` | flag | off | Overwrite an existing config (warning printed; `.keel/extensions/` untouched). |
-| `--wizard` | flag | off | Prompt interactively (base branch, timezone, merge window `HH:MM-HH:MM`, build/lint commands); Enter accepts the stack default. |
+| `--wizard` | flag | off | Prompt interactively (base branch, timezone, merge window `HH:MM-HH:MM`, build/lint commands), then run the **team step**: `knobs.team` seats built from the `keel doctor --providers` probe, per risk tier. Enter accepts the stack default. |
+| `--auto` | flag | off | Detect stack, base branch, and test/lint gates without prompting. |
 
 ### Details
 
 Stack detection: `pubspec.yaml` → Flutter, `pyproject.toml`/`setup.py` → Python,
 `package.json` → Node, `build.gradle*` → Android, else generic. Refuses to overwrite an
 existing config without `--force` (exit 1). The generated config passes `keel validate`.
+
+The `--wizard` team step offers only providers the probe found usable on this machine, so
+a scaffolded `knobs.team` can never name a CLI nobody here has installed. Quick-start (the
+first question's default) takes every default and asks nothing else; customize walks the
+implementer provider/model/effort, the gate seat, the jury mode, and the reviewer bench for
+each of tiers 1–3. Nothing usable ⇒ the step is skipped and no `team` block is written.
+See [`cli.md`](cli.md#init-team-step).
 
 ### Examples
 
@@ -1976,10 +1989,21 @@ Interactive opt-in only: a pre-s1 front layer that collects the same options the
 produces — it adds no pipeline behavior and cannot produce a config the grammar could
 not. **Hard interactivity guard:** in any non-interactive context (watch mode,
 overnight/background/headless) it degrades to a logged no-op and proceeds with the
-literal flags as parsed — never a hang, never a rejection. It probes installed CLIs and
-local models best-effort to build the offered choices, offers a Quick-start vs Customize
-fast path, shows each question's default first, then echoes the resolved config and
-proceeds to s1.
+literal flags as parsed — never a hang, never a rejection.
+
+The adapter does not improvise the questions: it runs `keel ship --wizard`, whose choices
+come from the `keel doctor --providers` probe, and passes the echoed flag set on
+literally. A provider the probe did not find is never offered and cannot be selected. The
+first question is the Quick-start vs Customize fast path, every question shows its default
+first with a one-line description, and the defaults come from `knobs.team` plus the flags
+already on the command line. `--wizard-answer KEY=VALUE` replays a recorded run without
+prompting; supplying any key but `mode` implies `mode=customize`. Only a question the
+operator actually answered becomes a flag, so a quick-start run passes none and every
+option stays with `knobs.team` and the risk tier. The run picker cannot express a
+`subagent:` seat (the probe lists only dispatchable providers), so answering the
+implementer question emits `--delegate`, which overrides `knobs.team.implement` and with
+it `implement.by_role`; accepting the default leaves the policy in charge. See
+[`cli.md`](cli.md#ship-wizard).
 
 ### Examples
 

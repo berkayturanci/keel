@@ -54,6 +54,13 @@ the required `--approve-scope` values. Pass
 `operator_consent.delegated_agent_scope` into every child `/keel:ship` handoff. Children
 may use only `approved_mutation_scopes`; scope expansion blocks or escalates.
 
+`--wizard` is interactive opt-in only. Pass it through to the same Step 0 command; core
+runs the picker described in `/keel:ship`'s `--wizard` section, from the same provider
+probe, and in any non-interactive context degrades to a logged no-op that leaves the
+parsed flags exactly as they are. Work-block has no implementer or jury flag of its own,
+so core echoes those choices in the resolved flag set — hand them to every child
+`/keel:ship` verbatim rather than re-deciding them per issue.
+
 Read `contract.session_contract.work_block`. It is the queue primitive shared with
 `/keel:overnight`: queue snapshot, readiness refresh, per-issue worktree isolation, ship
 handoff, checkpoint/resume, run ledger, final report buckets, and stop conditions. Do not
@@ -137,4 +144,4 @@ must include the fixed queue snapshot and these buckets:
 
 Also include open questions, consent gaps, and the next 1–3 operator actions.
 
-<!-- keel-generated: surface=skills command=work-block keel_version=1.19.3 source_sha256=41ac873337444a06bcbcfce7481c9b8dd379f8f5e0d167618ffefbfb3ccf49f7 generated_sha256=b44d2933af86e8b3f3c43ea28cff29e5b83d5044a5d1b620db2223973b43560c -->
+<!-- keel-generated: surface=skills command=work-block keel_version=1.19.3 source_sha256=0aae17b04383432c5924142872a2868ebdfafc39baeb837fe44f6ef490ed35ca generated_sha256=81a2bceb1df366bc7438e2e7517662bcc4a4ffd0134591eea1d92908e9e685da -->
