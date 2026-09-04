@@ -923,7 +923,9 @@ def _bench_effort_issues(
             if bench.effort is None:
                 continue
             where = f"{source}.{table}.{name}.effort"
-            for seat_path, seat in _bench_effort_targets(policy, bench=bench, legacy=legacy):
+            for seat_path, seat in _bench_effort_targets(
+                policy, table=table, bench=bench, legacy=legacy
+            ):
                 # A seat naming its own effort never receives the bench's, so a bench
                 # effort it could not honour is not a defect — the seat's wins.
                 if seat.effort is not None:
@@ -951,16 +953,31 @@ def _bench_effort_issues(
 def _bench_effort_targets(
     policy: TeamPolicy,
     *,
+    table: str,
     bench: Bench,
     legacy: Mapping[str, Seat],
 ) -> list[tuple[str, Seat]]:
-    """Implementer seats a bench's ``effort`` could land on, with their config paths."""
+    """Implementer seats a bench's ``effort`` could land on, with their config paths.
+
+    *Reachable*, not merely *present*. One run resolves exactly one difficulty band and
+    at most one ``--team`` profile, so two entries of the same table never apply
+    together: a ``by_difficulty.hard`` effort can never meet ``by_difficulty.easy``'s
+    implementer. Checking against siblings reported errors for combinations no run can
+    produce, which is how a validator teaches people to ignore it.
+
+    What is left is genuinely reachable. A bench naming its own ``implement`` seat can
+    only land there. Otherwise the implementer comes from the *other* table (a ``--team``
+    profile supplying the seat while the band supplies the effort, or the reverse), or
+    from the role/default/legacy seats every run falls through to.
+    """
     if bench.implement is not None:
         return [("this bench's own implement seat", bench.implement)]
+    other = "profiles" if table == "by_difficulty" else "by_difficulty"
     targets = [
         (path, seat)
         for path, seat in _seat_paths(policy)
-        if path.startswith("implement") or path.endswith(".implement")
+        if path.startswith("implement")
+        or (path.startswith(f"{other}.") and path.endswith(".implement"))
     ]
     targets.extend(
         (f"knobs.implementer_agents.{role}", seat) for role, seat in sorted(legacy.items())

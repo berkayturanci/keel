@@ -1306,7 +1306,11 @@ pause, a consent gap, a non-ready or blocking finding, and merge-window close.
 **Staffing the children (#1017).** `--delegate <provider[:model]>`, `--review-delegate
 <provider>` (repeatable, positional per reviewer slot), `--effort low|medium|high`,
 `--team <profile>` and `--reviewers` are resolved once for the block and handed to **every**
-child `/keel:ship`. The contract publishes both halves under
+child `/keel:ship` — which accepts all five, so the handoff the contract publishes is one the
+child really parses. `--effort` and `--team` are also accepted by `plan`, `review`,
+`step-verify`, `evidence-verify` and `merge`, because a bench changes the reviewer count and
+all six of those commands resolve the same review contract; pass the same values to each, or
+the gate re-derives a bench the run never dispatched. The contract publishes both halves under
 `session_contract.work_block.delegation`: `effective` (what the operator passed) and
 `child_args` (the exact flag list to append to each handoff). `contract.assignment` shows
 what those values resolve to against `knobs.team` — `lead`, `implementer`, `effort`,

@@ -1947,6 +1947,14 @@ classified from the real diff.
 `work-block`, `overnight`, `swarm-plan`, `swarm-run` and `swarm-land` accept the same
 staffing flags and hand every one that was set to each child ship.
 
+`--effort` and `--team` additionally sit on **all six commands that resolve a review
+contract** — `ship`, `plan`, `review`, `step-verify`, `evidence-verify` and `merge` — and
+they have to. A bench changes the reviewer count, so one that reached only the dispatching
+half would let `keel ship` dispatch a one-seat bench while `keel evidence-verify` and
+`keel merge` still demanded the tier's three verdicts: a gate no run of that project could
+satisfy, which is the disagreement `cli._review_assignment` exists to prevent. Whenever a
+run is given either flag, pass the same values to every one of those six.
+
 | flag | values | default | effect |
 | --- | --- | --- | --- |
 | `--delegate` | provider or `provider:model` | `knobs.team` | Implementer for every child of the batch. |

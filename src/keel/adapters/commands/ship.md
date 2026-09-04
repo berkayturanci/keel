@@ -217,7 +217,31 @@ capture.
   `knobs.team.review` names for the tier, else the host agent.
 - `--role <label>` — the issue role label that selects
   `knobs.team.implement.by_role`. Default: the role label read off the issue in s1.
+- `--effort <low|medium|high>` — reasoning effort for the **implementer** seat, in keel's
+  vendor-neutral vocabulary. Wins over an `effort` the seat itself names and over one a
+  `knobs.team.by_difficulty` bench supplies. A provider with no spelling for reasoning
+  effort reports `effort_applied: false` rather than silently running at its default.
+  Default: the seat's own effort, else the bench's, else none.
+- `--team <profile>` — staff this run from the named `knobs.team.profiles` bench, which
+  can supply the implementer, the reviewer seats, the lead and an effort in one name.
+  Outranks a `knobs.team.by_difficulty` band; `--delegate` / `--review-delegate` still
+  outrank it. A name matching no configured profile is reported in `assignment.warnings`
+  and the run falls back to the configured policy. This is how a batch runner
+  (`/keel:work-block`, `/keel:overnight`, a `/keel:swarm` lead) hands its bench down: the
+  child re-resolves the **same** seats instead of deriving a different team from config
+  alone. Default: no profile.
 - `--review-comments <inline|summary>` — how reviewer findings post (s7). Default `inline`.
+
+**Carry `--effort` and `--team` to every command that resolves this contract.** Six do —
+`ship`, `plan`, `review`, `step-verify`, `evidence-verify` and `merge` — and they all read
+the *same* resolver. A bench that reaches only the dispatching half is the #1014 defect in
+a new spelling: a `--team` naming a one-seat bench dispatches one reviewer while
+`evidence-verify` and `merge` still demand the tier's three verdicts, and no run of that
+project can ever satisfy the gate. So whenever this run was given `--effort` or `--team`,
+pass the **same values** to `keel review` (s7), `keel step-verify`, `keel evidence-verify`
+(s10) and `keel merge` (s10/s12). `contract.assignment` is the source of truth: it names
+`team_profile`, `effort`, `lead`, `implementer` and `reviewers[]`, and every one of those
+six commands must resolve to the block this run published.
 - `--reviewers <1|2|3>` — override the resolved reviewer count. Default: the seats
   `knobs.team.review` names for the tier, else the tier-derived count. On a tier whose
   review policy is `jury` it is reported in `assignment.warnings` and not applied: the
@@ -637,7 +661,9 @@ a posted verdict declared, else the `min_vendors` floor). Read both from
 ### Step boundary verification
 At every successful backbone transition, persist the canonical JSON handoff produced from
 `keel.stepverifier.build_handoff`, write/update the checkpoint for the next safe boundary,
-and run `keel step-verify --step sN --handoff-file <file> --evidence-report <file>` before
+and run `keel step-verify --step sN --handoff-file <file> --evidence-report <file>`
+(plus this run's `--project` / `--tier` / `--effort` / `--team`, so it reads the same bench)
+before
 advancing. A failed step verification is a BLOCKER: do not continue, merge, or mark the
 step complete from chat prose alone.
 
@@ -853,6 +879,8 @@ head SHA, and posts them through the same `post-comment` path with stable
 item in `<reviews.json>` so the rendered verdicts carry vendor provenance. Add
 `--closure <ship-run.json> --issue <N>` to fold the
 s11 closure into the same call, and `--verify` to re-run `evidence-verify` immediately after
+Pass this run's `--effort` / `--team` on the `keel review` call too, so the reviewer count
+it fails closed against is the one `contract.assignment` published rather than the tier's.
 posting. This is the canonical way to collapse `render_review_verdict` + N× `post-comment`
 + `evidence-verify` into one deterministic, idempotent step; it never spawns reviewers — the
 host still produces the review content above.
@@ -1044,8 +1072,9 @@ gates-pass check must run deterministically inside core, not as adapter prose.
 
 - **Evidence gate — do this first, on every path (audit GAP-REV):** before *any*
   merge — including a raw `gh`/REST merge you might be tempted to use — run
-  `keel evidence-verify .keel/project.yaml --root . --pr <PR> --phase pre-merge` and confirm it
-  **exits 0**. It fails when the s7 review verdict (a posted PR comment/review
+  `keel evidence-verify .keel/project.yaml --root . --pr <PR> --phase pre-merge` — adding this
+  run's `--effort` / `--team` when it had them, or the gate re-derives a bench the run never
+  dispatched — and confirm it **exits 0**. It fails when the s7 review verdict (a posted PR comment/review
   carrying `keel.review-verdict.v1` for the **current head**) is not on the PR. A
   prior session's summary, a chat-only review, the rich PR body, and the `keel
   ship` assessment block do **not** satisfy it. If it fails, **STOP — do not
@@ -1064,7 +1093,9 @@ refuse to certify the run at s10. Then
   under the repo root and registered in `git worktree list` before removing (never call
   `git worktree remove --force` directly on an implementer-supplied path).
 - **Core-owned merge:** run
-  `keel merge .keel/project.yaml --root . --pr <PR> --run-id "$RUN_ID" --approve-scope <scopes> --operator <operator>`.
+  `keel merge .keel/project.yaml --root . --pr <PR> --run-id "$RUN_ID" --approve-scope <scopes> --operator <operator>`
+  — with this run's `--effort` / `--team` when it had them, for the same reason: `merge`
+  verifies the evidence contract itself and must resolve the bench this run dispatched.
   (The `--run-id` lets the merge advance the activity board to the merge step.)
   The command acquires the merge resource claim (atomic `mkdir`, single-host), re-checks
   the **merge window inside the claim**, reads the live PR check rollup with

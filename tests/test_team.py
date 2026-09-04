@@ -983,6 +983,64 @@ class TestBenchEffortValidation(unittest.TestCase):
         self.assertIn("implement.by_role.core", paths)
         self.assertIn("knobs.implementer_agents.docs", paths)
 
+    def test_a_band_is_never_judged_against_a_sibling_bands_implementer(self):
+        """One run resolves exactly one band, so two rows of the same table never meet.
+
+        The reviewer's example: `hard`'s effort can only ever land on `implement.default`
+        (codex, which honours effort), never on `easy`'s claude — reporting it taught an
+        operator that the validator cries wolf about combinations no run can produce.
+        """
+        errors = self.issues(
+            {
+                "implement": {"default": {"provider": "codex"}},
+                "by_difficulty": {
+                    "easy": {"implement": {"provider": "claude"}},
+                    "hard": {"effort": "high"},
+                },
+            }
+        )
+
+        self.assertEqual(errors, [])
+
+    def test_two_profiles_are_siblings_in_the_same_sense(self):
+        errors = self.issues(
+            {
+                "implement": {"default": {"provider": "codex"}},
+                "profiles": {
+                    "a": {"implement": {"provider": "claude"}},
+                    "b": {"effort": "high"},
+                },
+            }
+        )
+
+        self.assertEqual(errors, [])
+
+    def test_the_other_table_is_reachable_and_still_checked(self):
+        """A `--team` profile can supply the implementer while a band supplies the
+        effort, so that pairing is real and has to be caught."""
+        errors = self.issues(
+            {
+                "implement": {"default": {"provider": "codex"}},
+                "by_difficulty": {"hard": {"effort": "high"}},
+                "profiles": {"night": {"implement": {"provider": "claude"}}},
+            }
+        )
+
+        self.assertIn("knobs.team.by_difficulty.hard.effort", errors[0])
+        self.assertIn("applied to the implementer at profiles.night.implement", errors[0])
+
+    def test_the_pairing_is_caught_in_the_other_direction_too(self):
+        errors = self.issues(
+            {
+                "implement": {"default": {"provider": "codex"}},
+                "profiles": {"night": {"effort": "high"}},
+                "by_difficulty": {"hard": {"implement": {"provider": "claude"}}},
+            }
+        )
+
+        self.assertIn("knobs.team.profiles.night.effort", errors[0])
+        self.assertIn("applied to the implementer at by_difficulty.hard.implement", errors[0])
+
     def test_a_bench_with_no_effort_is_not_checked(self):
         self.assertEqual(
             self.issues({"by_difficulty": {"hard": {"implement": {"provider": "claude"}}}}), []

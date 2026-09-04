@@ -356,6 +356,12 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         delegate=args.delegate,
         review_delegates=tuple(args.review_delegate),
         tdd_override=args.tdd,
+        # `plan` accepts these, so `plan` has to resolve them. Accepting a flag and then
+        # not threading it published an assignment that disagreed with the one `ship`
+        # renders from the identical command line — two answers to the one question this
+        # resolver exists to answer once (#1014).
+        effort=args.effort,
+        team_profile=args.team_profile,
     )
     consent_ok, consent_message = consent.assert_operator_consent(contract["operator_consent"])
     if args.json:
@@ -1145,6 +1151,12 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         role=args.role,
         delegate=args.delegate,
         review_delegates=tuple(args.review_delegate),
+        # The preflight contract is the only one an operator sees when the run halts
+        # before gates (a consent gap, a contradictory ledger flag pair). Built without
+        # these, a halted run printed a contract naming no team while a completed run
+        # printed one naming a team, from the identical command line.
+        effort=args.effort,
+        team_profile=args.team_profile,
         host_agent=args.host_agent or agents.HOST_DEFAULT,
         tdd_override=args.tdd,
     )
@@ -6412,6 +6424,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_merge.add_argument("--gate-label", default=None, help="override evidence gate label")
     p_merge.add_argument("--json", action="store_true", help="emit structured JSON")
+    _add_bench_args(p_merge)
     p_merge.set_defaults(func=_cmd_merge)
 
     p_wr = sub.add_parser("worktree-remove", help="safely remove a registered nested worktree")
@@ -6663,6 +6676,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--not-enforced", action="store_true", help="verify with evidence requirements disabled"
     )
     p_step.add_argument("--json", action="store_true", help="emit structured JSON")
+    _add_bench_args(p_step)
     p_step.set_defaults(func=_cmd_step_verify)
 
     p_rc = sub.add_parser(
@@ -6904,6 +6918,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="override the project consent mode for this run",
     )
     p_review.add_argument("--json", action="store_true", help="emit structured JSON")
+    _add_bench_args(p_review)
     p_review.set_defaults(func=_cmd_review)
 
     p_rcs = sub.add_parser(
@@ -7059,6 +7074,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--waiver-label", default=None, help="override the operator-applied evidence waiver label"
     )
     p_evidence.add_argument("--json", action="store_true", help="emit structured JSON")
+    _add_bench_args(p_evidence)
     p_evidence.set_defaults(func=_cmd_evidence_verify)
 
     p_vm = sub.add_parser(
