@@ -20,8 +20,15 @@ from dataclasses import dataclass
 from typing import Any
 
 from . import agents, closure
+from . import team as team_policy
 
 SCHEMA_VERSION = "keel.evidence.v1"
+#: ``reviewers.panel`` when the cross-vendor jury *is* the review for this tier
+#: (``knobs.team``'s ``review.by_tier.<n>: jury``), and the minimum distinct
+#: vendors such a panel must span. Both come from :mod:`keel.team`, the leaf
+#: module that owns the team vocabulary, so the gate and the policy cannot drift.
+JURY_PANEL = team_policy.JURY_PANEL
+DEFAULT_MINIMUM_JURY_VENDORS = team_policy.DEFAULT_MIN_VENDORS
 AGENT_LABEL_PREFIX = "agent:"
 MODEL_LABEL_PREFIX = "model:"
 REVIEW_VERDICT_MARKER = "keel.review-verdict.v1"
@@ -59,8 +66,12 @@ CLASSIFICATION_MARKERS: tuple[str, ...] = (
 #: The finding raised for a comment whose header names more than one marker.
 MALFORMED_MARKER_FINDING = "malformed-evidence-comment"
 
+#: The header fields keel reads off an evidence comment. Closed by design: an
+#: unlisted ``key: value`` line is prose, and prose ends the header block (#932).
+#: ``panelists`` joins ``vendors`` as a jury-verdict field, because the size of a
+#: panel that *is* the review sets the required verdict count (#1015).
 _FIELD_RE = re.compile(
-    r"^\s*(?P<key>reviewer|head|vendor|model|vendors)\s*:\s*(?P<value>\S+)\s*$",
+    r"^\s*(?P<key>reviewer|head|vendor|model|vendors|panelists)\s*:\s*(?P<value>\S+)\s*$",
     re.IGNORECASE,
 )
 _HEADER_LINE_RE = re.compile(r"^[A-Za-z0-9_-]+\s*:")
@@ -306,13 +317,23 @@ def required_items(
             PHASE_POST_MERGE,
         ),
     ]
+    # A jury panel's verdicts are panelist ballots mapped onto s7 evidence by
+    # `keel review --from-jury` (#1015): same marker, same head binding, same
+    # requirement. The description names the panel that produced them so a
+    # missing one sends the operator to the jury run rather than to a host
+    # reviewer that was never dispatched.
+    review_description = (
+        "Distinct posted ai-jury panelist verdict for the current PR"
+        if review_panel(review_contract) == JURY_PANEL
+        else "Distinct posted s7 reviewer verdict for the current PR"
+    )
     for index in range(1, reviewer_count + 1):
         items.append(
             EvidenceItem(
                 f"review-verdict-{index}",
                 "review",
                 True,
-                "Distinct posted s7 reviewer verdict for the current PR",
+                review_description,
                 PHASE_PRE_MERGE,
             )
         )
@@ -493,6 +514,26 @@ def _require_distinct_vendors(review_contract: dict[str, Any]) -> bool:
     return bool(reviewers.get("require_distinct_vendors")) if isinstance(reviewers, dict) else False
 
 
+def review_panel(review_contract: dict[str, Any]) -> str:
+    """Who the reviewers are on this contract: ``reviewers`` or ``jury`` (#1015).
+
+    A missing or malformed ``reviewers`` block reads as the host bench, which is
+    the stricter of the two answers everywhere this is asked.
+    """
+    reviewers = review_contract.get("reviewers")
+    panel = reviewers.get("panel") if isinstance(reviewers, dict) else None
+    return panel if isinstance(panel, str) and panel else "reviewers"
+
+
+def _minimum_jury_vendors(review_contract: dict[str, Any]) -> int:
+    """``jury.minimum_vendors`` from the contract, with the schema floor as fallback."""
+    jury = review_contract.get("jury")
+    minimum = jury.get("minimum_vendors") if isinstance(jury, dict) else None
+    if isinstance(minimum, int) and not isinstance(minimum, bool) and minimum > 0:
+        return minimum
+    return DEFAULT_MINIMUM_JURY_VENDORS
+
+
 def _verdict_substance_findings(
     items: list[dict[str, Any]],
     *,
@@ -589,7 +630,14 @@ def _distinct_vendor_finding(
         head_sha=head_sha,
         enforced=enforced,
     )
-    result = distinct_vendor_check(list(provenance.values()), required_count=required)
+    if review_panel(review_contract) == JURY_PANEL:
+        result = panel_vendor_check(
+            list(provenance.values()),
+            required_count=required,
+            minimum_vendors=_minimum_jury_vendors(review_contract),
+        )
+    else:
+        result = distinct_vendor_check(list(provenance.values()), required_count=required)
     if result["ok"]:
         return None
     return {
@@ -1058,6 +1106,57 @@ def distinct_vendor_check(
             "missing_provenance": missing,
         }
     return {"ok": True, "reason": None, "duplicated": [], "missing_provenance": missing}
+
+
+def panel_vendor_check(
+    vendors: Sequence[str | None],
+    *,
+    required_count: int,
+    minimum_vendors: int,
+) -> dict[str, Any]:
+    """Cross-vendor check for a **jury panel**, whose size the panel sets (#1015).
+
+    :func:`distinct_vendor_check` asks for one distinct vendor per required
+    verdict, which is the right question for a bench keel staffs: keel chose the
+    seats, so keel can insist each one is a different vendor. It is the wrong
+    question for a panel, where the *panel* chose the seats and three ballots from
+    two vendors is a legitimate cross-vendor review — the same shape
+    :data:`keel.ship.MINIMUM_JURY_VENDORS` already accepts as a gating jury.
+
+    So the panel is held to the jury's own rule instead: every required ballot
+    must declare a vendor, and the ballots together must span at least
+    ``minimum_vendors`` distinct ones. A whole panel from one vendor is one
+    opinion N times and fails, which is precisely what the strict check would
+    have caught — the relaxation is only in *how many* distinct vendors are
+    demanded, never in whether provenance is required at all.
+
+    Returns the same ``{ok, reason, duplicated, missing_provenance}`` shape as
+    :func:`distinct_vendor_check`, so a caller renders one finding either way.
+    """
+    if required_count <= 0:
+        return {"ok": True, "reason": None, "duplicated": [], "missing_provenance": 0}
+    present = [vendor for vendor in vendors if vendor]
+    missing = len(vendors) - len(present)
+    distinct = sorted(set(present))
+    duplicated = sorted({vendor for vendor in present if present.count(vendor) > 1})
+    if len(present) < required_count:
+        return {
+            "ok": False,
+            "reason": "missing vendor provenance on required review verdict(s)",
+            "duplicated": duplicated,
+            "missing_provenance": missing,
+        }
+    if len(distinct) < minimum_vendors:
+        return {
+            "ok": False,
+            "reason": (
+                f"jury panel of {len(present)} ballot(s) spans "
+                f"{len(distinct)} distinct vendor(s), below the minimum of {minimum_vendors}"
+            ),
+            "duplicated": duplicated,
+            "missing_provenance": missing,
+        }
+    return {"ok": True, "reason": None, "duplicated": duplicated, "missing_provenance": missing}
 
 
 def _label_values(labels: Sequence[str] | None, prefix: str) -> list[str]:
@@ -1544,6 +1643,35 @@ def jury_participating_vendors(
         for item in [*(pr_comments or []), *(pr_reviews or [])]
         if _is_jury_verdict(item, head_sha=head_sha, enforced=enforced)
         if (parsed := _parse_vendor_count(_fields(_body(item)).get("vendors"))) is not None
+    ]
+    return max(counts) if counts else None
+
+
+def jury_panel_size(
+    pr_comments: list[dict[str, Any]] | None = None,
+    pr_reviews: list[dict[str, Any]] | None = None,
+    *,
+    head_sha: str | None = None,
+    enforced: bool = True,
+) -> int | None:
+    """Return the panel size declared by a posted jury verdict, or ``None`` (#1015).
+
+    Reads the ``panelists: <N>`` field the same way
+    :func:`jury_participating_vendors` reads ``vendors:``, and for the same
+    reason: when the jury **is** the review panel, the number of ballots is the
+    reviewer count the evidence gate must require, and a hosted runner can read
+    it from nowhere else.
+
+    ``None`` means "not declared", which leaves the gate on the contract's floor
+    rather than requiring nothing. The largest declared count wins, so a re-post
+    that completes a partial panel raises the requirement instead of being capped
+    by the stale verdict — the direction that fails closed.
+    """
+    counts = [
+        parsed
+        for item in [*(pr_comments or []), *(pr_reviews or [])]
+        if _is_jury_verdict(item, head_sha=head_sha, enforced=enforced)
+        if (parsed := _parse_vendor_count(_fields(_body(item)).get("panelists"))) is not None
     ]
     return max(counts) if counts else None
 

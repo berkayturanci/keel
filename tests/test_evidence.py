@@ -979,6 +979,127 @@ class TestDistinctVendorCheck(unittest.TestCase):
         self.assertEqual(result["duplicated"], ["claude"])
 
 
+class TestPanelVendorCheck(unittest.TestCase):
+    """A jury panel is held to the jury's own cross-vendor rule (#1015)."""
+
+    def test_a_panel_may_span_fewer_vendors_than_it_has_ballots(self):
+        result = evidence.panel_vendor_check(
+            ["anthropic", "google", "anthropic"], required_count=3, minimum_vendors=2
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertIsNone(result["reason"])
+        # …and the repetition is still reported, so a reader can see the shape.
+        self.assertEqual(result["duplicated"], ["anthropic"])
+
+    def test_one_vendor_for_the_whole_panel_is_one_opinion_n_times(self):
+        result = evidence.panel_vendor_check(
+            ["anthropic", "anthropic", "anthropic"], required_count=3, minimum_vendors=2
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertIn("1 distinct vendor(s)", result["reason"])
+        self.assertIn("minimum of 2", result["reason"])
+
+    def test_missing_provenance_still_fails(self):
+        """The relaxation is in how many vendors, never in whether they are declared."""
+        result = evidence.panel_vendor_check(
+            ["anthropic", None, "google"], required_count=3, minimum_vendors=2
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertIn("missing vendor provenance", result["reason"])
+        self.assertEqual(result["missing_provenance"], 1)
+
+    def test_nothing_required_passes(self):
+        result = evidence.panel_vendor_check([], required_count=0, minimum_vendors=2)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["missing_provenance"], 0)
+
+
+class TestJuryPanelDistinctnessInVerify(unittest.TestCase):
+    """`verify` asks the panel question of a panel, and the bench question of a bench."""
+
+    @staticmethod
+    def _panel_contract(*, panel_size=3, minimum_vendors=2):
+        from keel import team as team_policy
+
+        assignment = team_policy.resolve_assignment(
+            team_policy.parse_team(
+                {
+                    "review": {"by_tier": {"3": "jury"}},
+                    "jury": {"mode": "gating", "min_vendors": minimum_vendors},
+                }
+            ),
+            tier=3,
+            default_count=3,
+        )
+        return ship.resolve_review_contract(
+            tier=3,
+            assignment=assignment,
+            require_distinct_vendors=True,
+            jury_panel_size=panel_size,
+        )
+
+    def _verify(self, contract, vendors):
+        return evidence.verify(
+            contract,
+            pr_comments=[
+                _comment(closure.COMMENT_MARKER),
+                *(_verdict(f"panelist-{i}", vendor=vendor) for i, vendor in enumerate(vendors)),
+                _comment(
+                    f"{evidence.JURY_VERDICT_MARKER}\nhead: abc123\nvendors: 2\npanelists: 3\n"
+                ),
+            ],
+            issue_comments=[_comment(closure.COMMENT_MARKER)],
+            head_sha="abc123",
+        )
+
+    def test_three_ballots_from_two_vendors_pass(self):
+        """The strict per-slot rule would refuse this; a panel is not a bench (#1015)."""
+        report = self._verify(self._panel_contract(), ["anthropic", "google", "anthropic"])
+
+        self.assertEqual(report["status"], "pass")
+        self.assertFalse([f for f in report["findings"] if f["id"] == "review-vendor-distinctness"])
+
+    def test_a_panel_that_spans_one_vendor_is_refused(self):
+        report = self._verify(self._panel_contract(), ["anthropic", "anthropic", "anthropic"])
+
+        finding = next(f for f in report["findings"] if f["id"] == "review-vendor-distinctness")
+        self.assertEqual(report["status"], "fail")
+        self.assertIn("1 distinct vendor(s)", finding["message"])
+
+    def test_a_raised_minimum_is_honoured(self):
+        report = self._verify(
+            self._panel_contract(minimum_vendors=3), ["anthropic", "google", "anthropic"]
+        )
+
+        finding = next(f for f in report["findings"] if f["id"] == "review-vendor-distinctness")
+        self.assertIn("minimum of 3", finding["message"])
+
+    def test_a_contract_without_a_jury_block_falls_back_to_the_schema_floor(self):
+        """A hand-built contract still gets the documented minimum, not zero."""
+        contract = {
+            "reviewers": {"count": 2, "panel": "jury", "require_distinct_vendors": True},
+        }
+
+        report = self._verify(contract, ["anthropic", "anthropic"])
+
+        finding = next(f for f in report["findings"] if f["id"] == "review-vendor-distinctness")
+        self.assertIn("minimum of 2", finding["message"])
+
+
+class TestReviewPanelAccessor(unittest.TestCase):
+    def test_a_contract_without_a_reviewers_block_reads_as_the_host_bench(self):
+        for contract in ({}, {"reviewers": "jury"}, {"reviewers": {"panel": ""}}):
+            with self.subTest(contract=contract):
+                self.assertEqual(evidence.review_panel(contract), "reviewers")
+
+    def test_a_jury_panel_is_reported_as_one(self):
+        self.assertEqual(evidence.review_panel({"reviewers": {"panel": "jury"}}), "jury")
+
+
 class TestRequireDistinctVendors(unittest.TestCase):
     """The optional ``require_distinct_vendors`` evidence knob (default OFF)."""
 
@@ -1745,6 +1866,93 @@ class TestJuryParticipatingVendors(unittest.TestCase):
         ]
         self.assertNotIn("jury-verdict", ids)
         self.assertEqual(contract["jury"]["mode"], "advisory")
+
+
+class TestJuryPanelSize(unittest.TestCase):
+    """The panel's own size reaches a CI gate the way its vendor count does (#1015)."""
+
+    @staticmethod
+    def _verdict_comment(*, panelists=None, participants=(), head="abc"):
+        from keel import artifacts
+
+        return _comment(
+            artifacts.render_jury_verdict(
+                head_sha=head,
+                participants=participants,
+                panelists=panelists,
+            )
+        )
+
+    def test_reads_the_declared_size(self):
+        self.assertEqual(
+            evidence.jury_panel_size([self._verdict_comment(panelists=4)], head_sha="abc"), 4
+        )
+
+    def test_no_verdict_posted_is_undeclared(self):
+        self.assertIsNone(evidence.jury_panel_size([], head_sha="abc"))
+
+    def test_a_verdict_predating_the_field_is_undeclared(self):
+        body = f"{evidence.JURY_VERDICT_MARKER}\nhead: abc\nvendors: 2\n"
+
+        self.assertIsNone(evidence.jury_panel_size([_comment(body)], head_sha="abc"))
+
+    def test_size_is_inferred_from_participants_when_omitted(self):
+        got = evidence.jury_panel_size(
+            [self._verdict_comment(participants=["a", "b", "c"])], head_sha="abc"
+        )
+
+        self.assertEqual(got, 3)
+
+    def test_head_mismatch_is_ignored(self):
+        got = evidence.jury_panel_size(
+            [self._verdict_comment(panelists=3, head="stale")], head_sha="abc"
+        )
+
+        self.assertIsNone(got)
+
+    def test_reads_from_pr_reviews_too(self):
+        got = evidence.jury_panel_size(None, [self._verdict_comment(panelists=2)], head_sha="abc")
+
+        self.assertEqual(got, 2)
+
+    def test_the_largest_declared_size_wins(self):
+        """A re-post completing a partial panel raises the bar; it never lowers it."""
+        got = evidence.jury_panel_size(
+            [self._verdict_comment(panelists=2), self._verdict_comment(panelists=5)],
+            head_sha="abc",
+        )
+
+        self.assertEqual(got, 5)
+
+    def test_a_declared_panel_sizes_the_requirement_end_to_end(self):
+        from keel import ship as ship_mod
+        from keel import team as team_policy
+
+        assignment = team_policy.resolve_assignment(
+            team_policy.parse_team(
+                {"review": {"by_tier": {"3": "jury"}}, "jury": {"mode": "gating"}}
+            ),
+            tier=3,
+            default_count=3,
+        )
+        declared = evidence.jury_panel_size([self._verdict_comment(panelists=4)], head_sha="abc")
+        contract = ship_mod.resolve_review_contract(
+            tier=3, assignment=assignment, jury_panel_size=declared
+        )
+
+        items = evidence.required_items(contract, phase=evidence.PHASE_PRE_MERGE)
+        self.assertEqual(
+            [item.id for item in items],
+            [
+                "review-verdict-1",
+                "review-verdict-2",
+                "review-verdict-3",
+                "review-verdict-4",
+                "jury-verdict",
+            ],
+        )
+        # …and the requirement says which panel is expected to have posted them.
+        self.assertIn("ai-jury panelist", items[0].description)
 
 
 class TestEvidenceThreeWayStatus(unittest.TestCase):

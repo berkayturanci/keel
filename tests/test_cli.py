@@ -1102,7 +1102,12 @@ class TestShip(unittest.TestCase):
         self.assertEqual(assignment["tier"], 3)
         self.assertEqual(assignment["review_panel"], "jury")
         self.assertEqual(assignment["reviewers"], [])
-        self.assertEqual(review["reviewers"]["count"], 0)
+        # No host reviewer slot — and the required verdicts are the panel's ballots,
+        # which `keel review --from-jury` posts one per panelist (#1015). Nothing has
+        # declared the panel size yet, so the count rests on the jury's vendor floor.
+        self.assertEqual(review["reviewers"]["count"], 2)
+        self.assertEqual(review["reviewers"]["source"], "jury")
+        self.assertEqual(review["reviewers"]["panel"], "jury")
         self.assertEqual(review["reviewers"]["slots"], [])
         self.assertEqual(review["jury"]["mode"], "gating")
         self.assertTrue(review["reviewers"]["require_distinct_vendors"])

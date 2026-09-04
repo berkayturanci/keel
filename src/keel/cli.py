@@ -2115,9 +2115,90 @@ def _cmd_runcontrols(args: argparse.Namespace) -> int:
     return 0 if report["status"] == "pass" else 1
 
 
+def _panel_payload(panel: jury.Panel) -> dict[str, Any]:
+    """The jury panel as machine-readable s9 input: ballots plus gating findings."""
+    return {
+        "size": panel.size,
+        "vendors": list(panel.vendors),
+        "ballots": [
+            {
+                "reviewer": ballot.reviewer,
+                "verdict": ballot.verdict,
+                "vendor": ballot.vendor,
+                "model": ballot.model,
+                "verified_count": ballot.verified_count,
+            }
+            for ballot in panel.ballots
+        ],
+        "findings": [
+            {
+                "severity": finding.severity,
+                "message": finding.message,
+                "source": finding.source,
+                "path": finding.path,
+                "line": finding.line,
+                "decision": fnd.decision_for(finding.severity),
+            }
+            for finding in jury.verified_findings(panel)
+        ],
+    }
+
+
+def _bundle_flag(args: argparse.Namespace) -> str:
+    """Which flag supplied the review bundle, for error messages."""
+    return "from-jury" if args.from_jury is not None else "reviews"
+
+
+def _bundle_path(args: argparse.Namespace) -> str:
+    return args.from_jury if args.from_jury is not None else args.reviews
+
+
+def _review_bundle(
+    args: argparse.Namespace,
+) -> tuple[tuple[review.ReviewItem, ...], dict[str, Any] | None, jury.Panel | None]:
+    """The verdicts to post, and the jury record that accompanies them (#1015).
+
+    Two sources, never both. ``--reviews`` is the host-supplied bundle: the host
+    ran the reviewers and hands keel their content. ``--from-jury`` is an ai-jury
+    JSON report, whose per-reviewer ballots *are* the review on a tier whose
+    ``knobs.team`` policy makes the jury the panel — one head-pinned verdict per
+    ballot, carrying the vendor and model that actually produced it, plus the
+    panel's own consensus record as the jury verdict. That is the point of the
+    mapping: the panel is dispatched once and its ballots become s7 evidence,
+    instead of paying for host reviewers *and* a panel over the same diff.
+    """
+    if args.from_jury is None:
+        raw = json.loads(Path(args.reviews).read_text(encoding="utf-8"))
+        return review.parse_reviews(raw), None, None
+    panel = jury.parse_panel(Path(args.from_jury).read_text(encoding="utf-8"))
+    if panel is None:
+        raise ValueError(
+            f"--from-jury {args.from_jury} is not an ai-jury report carrying per-reviewer "
+            "ballots; produce one with `jury --format json` (report schema 1.1+), or supply "
+            "the ballots directly with --reviews"
+        )
+    if not panel.ballots:
+        raise ValueError(
+            f"--from-jury {args.from_jury} carries no panelist ballot; the panel returned no "
+            "review to post, so there is no s7 evidence to map"
+        )
+    return (
+        review.parse_reviews([dict(item) for item in panel.reviews()]),
+        jury.jury_verdict(panel),
+        panel,
+    )
+
+
 def _cmd_review(args: argparse.Namespace) -> int:
     if args.dry_run and args.live:
         print("--dry-run and --live cannot be used together", file=sys.stderr)
+        return 1
+    if (args.reviews is None) == (args.from_jury is None):
+        print(
+            "exactly one of --reviews or --from-jury is required: the review bundle is "
+            "either the host's or the jury panel's, never both",
+            file=sys.stderr,
+        )
         return 1
     dry_run = not args.live
     try:
@@ -2138,15 +2219,16 @@ def _cmd_review(args: argparse.Namespace) -> int:
         return 1
 
     try:
-        raw_reviews = json.loads(Path(args.reviews).read_text(encoding="utf-8"))
-        reviews = review.parse_reviews(raw_reviews)
+        reviews, jury_record, panel = _review_bundle(args)
     except OSError as exc:
-        print(f"cannot read --reviews {args.reviews}: {exc}", file=sys.stderr)
+        print(f"cannot read --{_bundle_flag(args)} {_bundle_path(args)}: {exc}", file=sys.stderr)
         return 1
     except json.JSONDecodeError as exc:
-        print(f"--reviews {args.reviews} is not valid JSON: {exc}", file=sys.stderr)
+        print(
+            f"--{_bundle_flag(args)} {_bundle_path(args)} is not valid JSON: {exc}", file=sys.stderr
+        )
         return 1
-    except review.ReviewError as exc:
+    except (review.ReviewError, jury.JuryReportError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
 
@@ -2229,6 +2311,10 @@ def _cmd_review(args: argparse.Namespace) -> int:
         policy_pack=config.policy_pack,
         require_distinct_vendors=config.knobs.evidence_require_distinct_vendors,
         assignment=_review_assignment(config, args, tier=tier),
+        # The panel that ran sizes the bench it has to fill: `--from-jury` knows how
+        # many ballots came back, so a jury-panel tier requires exactly those and the
+        # posting side cannot disagree with the gate that reads them back (#1015).
+        jury_panel_size=None if panel is None else panel.size,
     )
     required_count = review_contract["reviewers"]["count"]
 
@@ -2242,6 +2328,7 @@ def _cmd_review(args: argparse.Namespace) -> int:
             run_id=args.run_id,
             tier=tier,
             closure_record=closure_record,
+            jury_record=jury_record,
         )
     except review.ReviewError as exc:
         print(str(exc), file=sys.stderr)
@@ -2312,6 +2399,12 @@ def _cmd_review(args: argparse.Namespace) -> int:
         "posted": posted,
         "consent": operator_consent["status"],
         "verification": verification,
+        # The panel's verified consensus findings, already in keel's severity
+        # vocabulary, so s9 consumes a jury panel's output exactly as it consumes a
+        # host reviewer's: critical/major block, minor is a gated suggestion, nit is
+        # advisory. Absent (`None`) on the host-bundle path, where the host already
+        # holds the findings it supplied.
+        "panel": None if panel is None else _panel_payload(panel),
     }
     if args.json:
         print(json.dumps(result_payload, indent=2, sort_keys=True))
@@ -2683,6 +2776,15 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
                 artifacts["pr_reviews"],
                 head_sha=artifacts["head_sha"],
             )
+        ),
+        # The panel size the posted jury verdict declared. On a tier whose panel *is*
+        # the review this is the required verdict count, and it travels on the comment
+        # for the same reason the vendor count does: nothing under .keel/state/ is
+        # readable from a hosted runner (#1015).
+        jury_panel_size=evidence.jury_panel_size(
+            artifacts["pr_comments"],
+            artifacts["pr_reviews"],
+            head_sha=artifacts["head_sha"],
         ),
     )
     gate_label = args.gate_label or config.knobs.evidence_gate_label
@@ -3734,6 +3836,13 @@ def _verify_merge_evidence(
         # the same team. A merge gate that disagreed with the ship contract about the
         # reviewer bench would refuse a PR that satisfied every requirement it was given.
         assignment=_review_assignment(config, args, tier=tier),
+        # …and reads the panel size off the same posted jury verdict `evidence-verify`
+        # reads, so a jury-panel tier is held to the panel that actually ran (#1015).
+        jury_panel_size=evidence.jury_panel_size(
+            artifacts["pr_comments"],
+            artifacts["pr_reviews"],
+            head_sha=artifacts["head_sha"],
+        ),
     )
     gate_label = args.gate_label or config.knobs.evidence_gate_label
     waiver_label = getattr(args, "waiver_label", None) or evidence.DEFAULT_WAIVER_LABEL
@@ -6384,8 +6493,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_review.add_argument(
         "--reviews",
-        required=True,
+        default=None,
         help="JSON array of reviewer verdict objects supplied by the host",
+    )
+    p_review.add_argument(
+        "--from-jury",
+        default=None,
+        help=(
+            "ai-jury JSON report whose per-reviewer ballots are the review: posts one "
+            "head-pinned verdict per panelist with vendor provenance, plus the jury verdict"
+        ),
     )
     p_review.add_argument(
         "--issue",

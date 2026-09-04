@@ -33,10 +33,14 @@ knobs:
         # so it gets all three: the host lead, the second vendor, and a second Opus
         # reviewer — spelled `subagent:` because that is what it is, not a vendor keel
         # dispatches to. `"3": jury` (the cross-vendor panel *as* the review) is the
-        # intended future and is documented in docs/keel/configuration.md#team; it is
-        # not keel's live config until #1015 wires the jury into s7, because a tier-3
-        # policy of `jury` makes the pre-merge evidence gate require a jury verdict
-        # nobody posts yet.
+        # intended future and is documented in docs/keel/configuration.md#team.
+        #
+        # #1015 built the mechanism — s7 dispatches the panel and `keel review
+        # --from-jury` maps its ballots onto the review verdicts — but keel does not
+        # adopt it in the same change that ships it. On a panel tier no flag can take
+        # the panel back off (#1014 round 3), so the switch commits every tier-3 keel
+        # PR to a jury run; it is made deliberately, once `--from-jury` has been
+        # exercised on a real keel PR.
         "1": [{ provider: claude }]
         "2": [{ provider: claude }, { provider: agy }]
         "3":

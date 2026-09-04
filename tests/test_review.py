@@ -158,6 +158,9 @@ class TestRunIdSubKeys(unittest.TestCase):
     def test_closure_run_id(self):
         self.assertEqual(review.closure_run_id("run"), "run:closure")
 
+    def test_jury_run_id(self):
+        self.assertEqual(review.jury_run_id("run"), "run:jury")
+
 
 class TestBuildReviewPlan(unittest.TestCase):
     def _items(self):
@@ -289,6 +292,90 @@ class TestBuildReviewPlan(unittest.TestCase):
                 closure_record=["nope"],
             )
 
+    def test_a_jury_record_posts_the_panels_verdict_beside_its_ballots(self):
+        """One call posts the whole panel: N ballots plus the consensus record (#1015)."""
+        plan = review.build_review_plan(
+            self._items(),
+            required_count=2,
+            head_sha="abc123",
+            pull_request=9,
+            issue=None,
+            run_id="run",
+            tier=3,
+            jury_record={
+                "verdict": "REQUEST_CHANGES",
+                "participants": ["alpha (anthropic)", "beta (google)"],
+                "participating_vendors": 2,
+                "panelists": 2,
+                "findings_summary": ["major: a real one"],
+                "remaining_risks": None,
+            },
+        )
+
+        jury_posts = [post for post in plan.posts if post.artifact == "jury-verdict"]
+        self.assertEqual(len(jury_posts), 1)
+        post = jury_posts[0]
+        self.assertEqual(post.marker, evidence.JURY_VERDICT_MARKER)
+        self.assertEqual(post.run_id, "run:jury")
+        self.assertEqual(post.target_kind, "pr")
+        # Ballots and verdict are pinned to the same head by construction.
+        self.assertIn("head: abc123", post.body)
+        self.assertIn("vendors: 2", post.body)
+        self.assertIn("panelists: 2", post.body)
+        self.assertIn("AI Jury verdict: REQUEST_CHANGES.", post.body)
+
+    def test_a_jury_record_rides_before_the_closure(self):
+        plan = review.build_review_plan(
+            self._items(),
+            required_count=2,
+            head_sha="h",
+            pull_request=9,
+            issue=33,
+            run_id="run",
+            tier=3,
+            closure_record={"run_id": "RUN-1"},
+            jury_record={"verdict": "LGTM", "panelists": 2},
+        )
+
+        self.assertEqual(
+            [post.artifact for post in plan.posts],
+            [
+                "review-verdict",
+                "review-verdict",
+                "jury-verdict",
+                "closure-comment",
+                "closure-comment",
+            ],
+        )
+
+    def test_an_unknown_jury_field_is_dropped_rather_than_forwarded(self):
+        """The record comes from a parsed ai-jury report; the renderer takes keel's fields."""
+        plan = review.build_review_plan(
+            self._items(),
+            required_count=2,
+            head_sha="h",
+            pull_request=9,
+            issue=None,
+            run_id="run",
+            tier=3,
+            jury_record={"verdict": "LGTM", "panelists": 2, "surprise": "boom"},
+        )
+
+        self.assertIn("AI Jury verdict: LGTM.", plan.posts[-1].body)
+
+    def test_jury_record_must_be_object(self):
+        with self.assertRaises(review.ReviewError):
+            review.build_review_plan(
+                self._items(),
+                required_count=2,
+                head_sha="h",
+                pull_request=9,
+                issue=None,
+                run_id="run",
+                tier=3,
+                jury_record=["nope"],
+            )
+
     def test_as_dict_round_trips(self):
         plan = review.build_review_plan(
             self._items(),
@@ -303,6 +390,282 @@ class TestBuildReviewPlan(unittest.TestCase):
         self.assertEqual(data["schema_version"], review.SCHEMA_VERSION)
         self.assertEqual(data["tier"], 3)
         self.assertEqual(data["posts"][0]["target"], {"kind": "pr", "number": 9})
+
+
+#: A three-panelist, two-vendor ai-jury report (schema 1.1) with one verified
+#: consensus finding — the shape `keel review --from-jury` maps onto s7 evidence.
+JURY_REPORT = {
+    "schema_version": "1.1",
+    "findings": [
+        {
+            "severity": "major",
+            "file": "src/keel/review.py",
+            "line": 42,
+            "claim": "the closure path drops the jury post",
+            "reviewer": "alpha",
+        }
+    ],
+    "consensus": [
+        {
+            "representative": {
+                "severity": "major",
+                "file": "src/keel/review.py",
+                "line": 42,
+                "claim": "the closure path drops the jury post",
+                "reviewer": "alpha",
+            },
+            "reviewers": ["alpha", "gamma"],
+            "verification_status": "verified",
+        }
+    ],
+    "reviewers": [
+        {
+            "name": "alpha",
+            "vendor": "anthropic",
+            "model": "claude-opus-4",
+            "verdict": "REQUEST_CHANGES",
+            "findings": [0],
+            "round1_ok": True,
+            "verified_count": 1,
+        },
+        {
+            "name": "beta",
+            "vendor": "google",
+            "model": "gemini-3-pro",
+            "verdict": "COMMENT",
+            "findings": [],
+            "round1_ok": True,
+            "verified_count": 0,
+        },
+        {
+            "name": "gamma",
+            "vendor": "anthropic",
+            "model": "",
+            "verdict": "APPROVE",
+            "findings": [],
+            "round1_ok": True,
+            "verified_count": 1,
+        },
+        {
+            "name": "chair",
+            "role": "chair",
+            "vendor": "openai",
+            "model": "gpt-5",
+            "verdict": "REQUEST_CHANGES",
+        },
+    ],
+}
+
+JURY_PANEL_PROJECT = """
+extends: keel
+core_version: "^1.0"
+base_branch: main
+owner: acme
+repo: widget
+knobs:
+  build_gate_cmd: "true"
+  tier3_globs: ["src/**"]
+  team:
+    review:
+      by_tier:
+        "3": jury
+    jury: { mode: gating, min_vendors: 2 }
+"""
+
+
+def _jury_project() -> str:
+    path = Path(_TMP.name) / f"jury-project-{next(_TMP_COUNTER)}.yaml"
+    path.write_text(JURY_PANEL_PROJECT, encoding="utf-8")
+    return str(path)
+
+
+class TestReviewFromJury(unittest.TestCase):
+    """`keel review --from-jury`: the panel's ballots *are* the s7 evidence (#1015)."""
+
+    def _run(self, report=None, *, project=None, extra=()):
+        path = _write(JURY_REPORT if report is None else report)
+        with patch("keel.cli.runtime.detect", return_value=_capable_report()):
+            return run(
+                [
+                    "review",
+                    project or _jury_project(),
+                    "--pr",
+                    "42",
+                    "--from-jury",
+                    path,
+                    "--changed-file",
+                    "src/keel/review.py",
+                    "--head-sha",
+                    "abc123",
+                    "--run-id",
+                    "run",
+                    "--json",
+                    *extra,
+                ]
+            )
+
+    def test_each_ballot_becomes_a_head_pinned_verdict_with_provenance(self):
+        rc, out, err = self._run()
+
+        self.assertEqual(rc, 0, err)
+        data = json.loads(out)
+        posts = data["plan"]["posts"]
+        verdicts = [post for post in posts if post["artifact"] == "review-verdict"]
+        self.assertEqual(len(verdicts), 3)
+        self.assertEqual(
+            [post["run_id"] for post in verdicts],
+            ["run:rv-alpha", "run:rv-beta", "run:rv-gamma"],
+        )
+        for post in verdicts:
+            self.assertIn("head: abc123", post["body"])
+            self.assertIn("vendor: ", post["body"])
+        self.assertIn("vendor: anthropic", verdicts[0]["body"])
+        self.assertIn("model: claude-opus-4", verdicts[0]["body"])
+        self.assertIn("vendor: google", verdicts[1]["body"])
+
+    def test_the_jury_verdict_still_posts_as_the_consensus_record(self):
+        rc, out, err = self._run()
+
+        self.assertEqual(rc, 0, err)
+        posts = json.loads(out)["plan"]["posts"]
+        jury_posts = [post for post in posts if post["artifact"] == "jury-verdict"]
+        self.assertEqual(len(jury_posts), 1)
+        body = jury_posts[0]["body"]
+        self.assertIn("vendors: 2", body)
+        self.assertIn("panelists: 3", body)
+        self.assertIn("head: abc123", body)
+
+    def test_the_panel_that_ran_sizes_the_requirement_it_satisfies(self):
+        rc, out, err = self._run()
+
+        self.assertEqual(rc, 0, err)
+        plan = json.loads(out)["plan"]
+        self.assertEqual(plan["tier"], 3)
+        self.assertEqual(plan["required_count"], 3)
+        self.assertEqual(plan["supplied_count"], 3)
+
+    def test_the_panel_block_hands_s9_the_verified_findings(self):
+        rc, out, err = self._run()
+
+        self.assertEqual(rc, 0, err)
+        panel = json.loads(out)["panel"]
+        self.assertEqual(panel["size"], 3)
+        self.assertEqual(panel["vendors"], ["anthropic", "google"])
+        self.assertEqual(
+            panel["findings"],
+            [
+                {
+                    "severity": "major",
+                    "message": "the closure path drops the jury post",
+                    "source": "jury:alpha",
+                    "path": "src/keel/review.py",
+                    "line": 42,
+                    "decision": "block",
+                }
+            ],
+        )
+        self.assertEqual(
+            [ballot["verdict"] for ballot in panel["ballots"]],
+            ["REQUEST_CHANGES", "COMMENT", "LGTM"],
+        )
+
+    def test_a_host_bundle_reports_no_panel(self):
+        reviews = _write(_two_reviews())
+        with patch("keel.cli.runtime.detect", return_value=_capable_report()):
+            rc, out, _ = run(
+                ["review", ANDROID, "--pr", "1", "--reviews", reviews, "--head-sha", "h", "--json"]
+            )
+
+        self.assertEqual(rc, 0)
+        self.assertIsNone(json.loads(out)["panel"])
+
+    def test_both_sources_at_once_is_refused(self):
+        reviews = _write(_two_reviews())
+        report = _write(JURY_REPORT)
+        with patch("keel.cli.runtime.detect", return_value=_capable_report()):
+            rc, _, err = run(
+                [
+                    "review",
+                    ANDROID,
+                    "--pr",
+                    "1",
+                    "--reviews",
+                    reviews,
+                    "--from-jury",
+                    report,
+                    "--head-sha",
+                    "h",
+                ]
+            )
+
+        self.assertEqual(rc, 1)
+        self.assertIn("exactly one of --reviews or --from-jury", err)
+
+    def test_neither_source_is_refused(self):
+        with patch("keel.cli.runtime.detect", return_value=_capable_report()):
+            rc, _, err = run(["review", ANDROID, "--pr", "1", "--head-sha", "h"])
+
+        self.assertEqual(rc, 1)
+        self.assertIn("exactly one of --reviews or --from-jury", err)
+
+    def test_a_report_without_ballots_says_what_to_do_about_it(self):
+        rc, _, err = self._run({"findings": []})
+
+        self.assertEqual(rc, 1)
+        self.assertIn("per-reviewer ballots", err)
+        self.assertIn("--format json", err)
+
+    def test_a_panel_that_returned_nothing_is_not_a_review(self):
+        rc, _, err = self._run({"findings": [], "reviewers": []})
+
+        self.assertEqual(rc, 1)
+        self.assertIn("no panelist ballot", err)
+
+    def test_a_malformed_ballot_is_reported_not_dropped(self):
+        rc, _, err = self._run({"findings": [], "reviewers": [{"verdict": "APPROVE"}]})
+
+        self.assertEqual(rc, 1)
+        self.assertIn("non-empty 'name'", err)
+
+    def test_an_unreadable_report_names_the_flag_that_supplied_it(self):
+        with patch("keel.cli.runtime.detect", return_value=_capable_report()):
+            rc, _, err = run(
+                [
+                    "review",
+                    ANDROID,
+                    "--pr",
+                    "1",
+                    "--from-jury",
+                    str(PROJECTS / "does-not-exist.json"),
+                    "--head-sha",
+                    "h",
+                ]
+            )
+
+        self.assertEqual(rc, 1)
+        self.assertIn("cannot read --from-jury", err)
+
+    def test_a_malformed_json_report_names_the_flag_that_supplied_it(self):
+        path = Path(_TMP.name) / f"broken-{next(_TMP_COUNTER)}.json"
+        path.write_text("{not json", encoding="utf-8")
+        with patch("keel.cli.runtime.detect", return_value=_capable_report()):
+            rc, _, err = run(
+                [
+                    "review",
+                    ANDROID,
+                    "--pr",
+                    "1",
+                    "--from-jury",
+                    str(path),
+                    "--head-sha",
+                    "h",
+                ]
+            )
+
+        # A `--from-jury` file that is not JSON at all is "not a ballot report",
+        # which is the actionable message; the JSON decoder never sees it.
+        self.assertEqual(rc, 1)
+        self.assertIn("per-reviewer ballots", err)
 
 
 class TestReviewCli(unittest.TestCase):

@@ -98,7 +98,71 @@ itself exactly when review had not happened. The marker closes that hole.
 Only a **trusted** comment arms the gate — the same fail-closed `author_association` rule
 every other evidence source uses — so an outside contributor cannot manufacture provenance.
 
-### 4. Phase-Separated Verification Contract
+### 4. Who the Reviewers Are: the Bench, or the Panel
+
+The required `review-verdict` count comes from the review contract's `reviewers` block, and
+`knobs.team` decides what that block describes (see
+[configuration.md](configuration.md#team)):
+
+| `reviewers.panel` | `reviewers.source` | What must be posted |
+|---|---|---|
+| `reviewers` | `team.review.by_tier.<n>` / `risk-tier` / `override` | One verdict per staffed host seat. |
+| `jury` | `jury` | One verdict per **ai-jury panelist ballot**, plus the `jury-verdict` consensus record. |
+
+The bench is a pure function of **config + tier + role + `--reviewers` / `--review-delegate`**,
+and of nothing else — not a jury flag, and not the measured participating-vendor count. It
+has to be: the six commands that resolve this contract do not receive those inputs uniformly
+(`keel review` has no `--no-jury`; only `evidence-verify` and `keel merge` can read a posted
+vendor count), so a bench that moved with either would have one surface requiring the panel's
+ballots while another demanded a host bench of the same pull request.
+
+On a `review.by_tier.<n>: jury` tier the panel *is* the review: `s7` dispatches ai-jury once
+and `keel review --from-jury <report.json>` maps each ballot onto a head-pinned
+`keel.review-verdict.v1` carrying the vendor and model that produced it. Running host
+reviewers **and** the panel over the same diff is what this replaced — it paid twice for the
+same reading while the panel's per-reviewer ballots reached no gate at all.
+
+**How the requirement is sized.** The panel decides how many ballots there are, so the
+posted `keel.jury-verdict.v1` declares `panelists: <N>` beside `vendors: <N>`, and
+`evidence.jury_panel_size()` reads it back — the same channel, and for the same reason: the
+run ledger and the jury artifact live under the gitignored `.keel/state/`, so a hosted
+runner can read neither, while PR comments are always visible.
+
+`min_vendors` is a **floor, not a fallback**: the required count is
+`max(declared, min_vendors)`, so a declared count can only ever *raise* it. Before any
+verdict declares one, the floor stands on its own — an unmeasured panel cannot satisfy the
+gate by being unmeasured — and a verdict declaring fewer ballots than the floor does not
+lower it either. That asymmetry is deliberate: the count is read off a PR comment, and the
+one shape that means "the panel came back short" must not be the shape that relaxes the
+gate.
+
+It also means the surfaces size the requirement differently, convergently and on purpose.
+`keel plan`, `keel ship` and `keel step-verify` resolve the contract with no pull request in
+reach, so on a panel tier they publish the floor; `keel review`, `keel evidence-verify` and
+`keel merge` read the posted verdict and require the panel that actually sat. Because the
+count only rises, a planning surface can understate what will be required but never
+overstate it, and no two surfaces that can both see the panel disagree.
+
+**Vendor distinctness asks a panel the panel's own question.**
+`evidence_require_distinct_vendors` normally wants one distinct vendor per required verdict,
+which is the right question for a bench keel staffs. For a panel, keel did not pick the
+seats: every ballot must still declare a vendor, but the panel as a whole must span at least
+`jury.min_vendors` distinct ones. Three ballots from two vendors is a legitimate cross-vendor
+review; three from one vendor is one opinion three times and fails with
+`review-vendor-distinctness`.
+
+**A panel tier never downgrades.** Where the jury sits *beside* a host bench, a panel with
+fewer than `jury.min_vendors` participating vendors is downgraded `gating → advisory` and
+its verdict stops being required (see
+[cli.md](cli.md#--jury-vendors-n--the-panel-decides-whether-the-jury-gates)) — sound there,
+because the bench still reviewed the change. Where the panel **is** the review there is no
+bench behind it, so the downgrade is suppressed: the ballots stay required, the jury verdict
+stays required, and `jury.downgraded` reports `false`. A short panel does not get to excuse
+itself from the consensus record that says it was short; the shortfall is what the vendor
+check above reports. The requirement shrinks in no direction at all, which is what a moving
+bench could never have promised.
+
+### 5. Phase-Separated Verification Contract
 Evidence requirements are split by lifecycle phase:
 * **Pre-Merge Phase (`s10`)**: Requires verified `review-verdict` (from required risk-tier reviewer count)
   and passing gate results (`build`, `lint`, optional `jury`).
@@ -107,7 +171,7 @@ Evidence requirements are split by lifecycle phase:
 The pre-merge gate strictly validates what exists before the merge, preventing cyclical dependencies
 while guaranteeing full review compliance.
 
-### 5. Transparent Deferrals & Audit Trail
+### 6. Transparent Deferrals & Audit Trail
 In real engineering teams, legitimate exceptions occur (e.g. emergency hotfixes outside the merge window,
 or temporary gate waivers).
 
@@ -116,7 +180,7 @@ Rather than offering an unmonitored backdoor, Keel makes exceptions **first-clas
 * **Audit Record**: Every waiver requires an explicit `--operator` attribution and records a durable
   entry in `.keel/ledger/` and GitHub issue timeline, creating a tamper-evident record.
 
-### 6. Header-Anchored Marker Classification
+### 7. Header-Anchored Marker Classification
 What a comment *is* — a review verdict, a jury verdict, a closure comment, a ship-provenance stamp,
 a deferral — is decided by its **header line** and nothing else: the first non-empty line, which every
 Keel renderer emits as the marker alone, either bare (`keel.review-verdict.v1`) or wrapped in an HTML

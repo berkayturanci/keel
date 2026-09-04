@@ -227,15 +227,22 @@ tier; and a `review` value that is neither seats nor `jury`. A machine-level
 `~/.keel/providers.yaml` entry is deliberately **not** consulted: validation must give the
 same answer on every machine.
 
-**`"3": jury` is a policy, not a default — and keel itself defers it.** A tier whose review
-is the panel makes the pre-merge evidence gate require a **jury verdict**, and nothing else:
-that tier has no host reviewer slots to fall back on. So adopt it only once something
-actually dispatches the jury for that tier. keel's own `projects/keel.yaml` names three
-reviewer seats at tier-3 and keeps `jury.mode: advisory` for exactly that reason — the jury
-is not dispatched from s7 until #1015, and a policy that requires a verdict nobody posts is
-a tier that can never merge.
+**`"3": jury` means the panel is dispatched once and its ballots *are* the review.** On
+such a tier `s7` runs ai-jury and `keel review --from-jury <report.json>` posts one
+head-pinned `keel.review-verdict.v1` per panelist — carrying the vendor and model that
+produced that ballot — plus the `keel.jury-verdict.v1` consensus record. Host reviewers are
+**not** staffed as well: paying for three host readings *and* a four-agent panel over the
+same diff, while the panel's ballots reached no gate, is what this policy replaced. The
+required verdict count is the panel's own size, declared as `panelists: <N>` on the posted
+jury verdict; see [`evidence.md`](evidence.md#4-who-the-reviewers-are-the-bench-or-the-panel).
 
-Two consequences worth stating plainly:
+**Adopt it deliberately — and keel itself has not yet.** A panel tier commits every change
+at that tier to a jury run: it has no host reviewer slots to fall back on, and nothing
+per-run can take the panel away. keel's own `projects/keel.yaml` therefore keeps three
+reviewer seats at tier-3 with `jury.mode: advisory` until `keel review --from-jury` has been
+exercised on a real pull request.
+
+Three consequences worth stating plainly:
 
 - **No per-run flag can take the panel away.** `--no-jury` and `--jury-advisory` are
   recorded in `assignment.warnings` and not applied on a panel tier, because removing the
@@ -244,6 +251,15 @@ Two consequences worth stating plainly:
 - **`jury.mode: advisory` may not be combined with a jury panel.** "The panel is the
   review" and "the panel does not gate" together mean the tier requires nothing, so
   `keel validate` refuses the pair.
+- **A short panel changes nothing about what the tier owes.** Below `jury.min_vendors`
+  participating vendors a jury is downgraded `gating → advisory` only where it sits *beside*
+  a host bench. On a panel tier there is no bench behind it, so the downgrade is suppressed:
+  the verdict stays gating and required, and every ballot stays required. The shortfall is
+  refused by `evidence.panel_vendor_check` as `review-vendor-distinctness` instead — a short
+  panel does not get to excuse itself from the consensus record that says it was short. The
+  bench does not move with the vendor count either: only `evidence-verify` and `keel merge`
+  can read a count off a posted verdict, so a bench that followed it would put two surfaces
+  of the same run in disagreement about who reviews.
 
 **Tier keys are quoted strings** (`"1"`, `"2"`, `"3"`). YAML reads a bare `1:` as an
 integer key, which a JSON schema cannot describe; keel says so instead of accepting it and
@@ -253,8 +269,10 @@ meaning something else.
 the resolved team as `assignment` — `implementer`, `gate`, `reviewers[]` (with per-slot
 `provider`/`model`/`effort`), `jury`, `fix`, and a `warnings` list — and the same seats
 appear on `review_merge_contract.reviewers.slots`, so any host runs the same team. A tier
-whose review policy is `jury` yields `reviewers.count == 0` and a gating jury: the panel is
-the review, and the evidence gate requires its verdict instead of N review verdicts.
+whose review policy is `jury` yields empty `slots`, `reviewers.source: "jury"` and a gating
+jury: the panel is the review, `reviewers.count` is the number of ballots that must be
+posted, and the evidence gate requires that many review verdicts **plus** the jury verdict
+as the consensus record.
 
 **A committed policy may only name built-ins and `delegate_profiles`.** Validation does not
 consult the machine-level `~/.keel/providers.yaml`, so a registry entry named in

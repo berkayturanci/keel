@@ -191,7 +191,7 @@ class TestEveryCommandResolvesTheSameBench(unittest.TestCase):
         self.assertEqual(data["result"]["assessment"]["tier"], 3)
         return [item["id"] for item in data["contract"]["evidence"]["required"]], data
 
-    def _evidence_required(self, config, *flags):
+    def _evidence_required(self, config, *flags, pr_comments=None):
         rc, out, err = run(
             [
                 "evidence-verify",
@@ -209,7 +209,7 @@ class TestEveryCommandResolvesTheSameBench(unittest.TestCase):
                 "--pr-body-file",
                 str(self.root / "body.md"),
                 "--pr-comments-json",
-                str(self.root / "empty.json"),
+                str(pr_comments or self.root / "empty.json"),
                 "--issue-comments-json",
                 str(self.root / "empty.json"),
                 "--pr-reviews-json",
@@ -246,22 +246,39 @@ class TestEveryCommandResolvesTheSameBench(unittest.TestCase):
         return next(step for step in steps if step["step_id"] == "s7")["required_evidence"]
 
     def test_a_jury_panel_config_requires_the_panel_everywhere(self):
+        """Every surface requires the same panel: its ballots *and* its verdict (#1015).
+
+        The panel is the review, so its ballots are the s7 evidence — one
+        head-pinned `keel.review-verdict.v1` per panelist, posted by
+        `keel review --from-jury` — and the jury verdict stays as the separate
+        consensus record. Until a posted verdict declares the panel size, the
+        required ballot count is the jury's minimum vendor floor, which is the
+        answer that fails closed.
+        """
         config = self._config(JURY_PANEL_CONFIG)
 
         plan_required, plan_contract = self._plan_required(config)
         ship_required, ship_data = self._ship_required(config)
         evidence_required = self._evidence_required(config)
 
-        expected = ["closure-comment-pr", "closure-comment-issue", "jury-verdict"]
+        expected = [
+            "closure-comment-pr",
+            "closure-comment-issue",
+            "review-verdict-1",
+            "review-verdict-2",
+            "jury-verdict",
+        ]
         self.assertEqual(plan_required, expected)
         self.assertEqual(ship_required, expected)
         self.assertEqual(sorted(evidence_required), sorted(expected))
-        # …and no surface asks for a host review verdict that will never be posted.
-        for required in (plan_required, ship_required, evidence_required):
-            self.assertFalse([item for item in required if item.startswith("review-verdict")])
-        self.assertEqual(plan_contract["review_merge_contract"]["reviewers"]["count"], 0)
+        reviewers = plan_contract["review_merge_contract"]["reviewers"]
+        self.assertEqual(reviewers["count"], 2)
+        self.assertEqual(reviewers["source"], "jury")
+        self.assertEqual(reviewers["panel"], "jury")
+        # …and no host reviewer slot is staffed for a panel keel does not run.
+        self.assertEqual(reviewers["slots"], [])
         self.assertEqual(
-            ship_data["result"]["assessment"]["review_merge_contract"]["reviewers"]["count"], 0
+            ship_data["result"]["assessment"]["review_merge_contract"]["reviewers"]["count"], 2
         )
 
     def test_a_three_seat_config_requires_three_verdicts_everywhere(self):
@@ -290,8 +307,9 @@ class TestEveryCommandResolvesTheSameBench(unittest.TestCase):
 
         with_project = self._step_verify_s7("--project", config, "--tier", "3")
 
-        # The panel is the review at this tier, so s7 has no host verdict to require.
-        self.assertEqual(with_project, [])
+        # The panel is the review at this tier, so s7's verdicts are its ballots —
+        # two of them until a posted jury verdict declares a larger panel (#1015).
+        self.assertEqual(with_project, ["review-verdict-1", "review-verdict-2"])
         # Without a project there is no team to read, and the tier-derived bench stands —
         # which is exactly the answer that disagreed with `keel ship` before `--project`.
         self.assertEqual(self._step_verify_s7(), ["review-verdict-1", "review-verdict-2"])
@@ -311,12 +329,21 @@ class TestEveryCommandResolvesTheSameBench(unittest.TestCase):
         self.assertEqual(contract["review_merge_contract"], review)
         self.assertEqual(
             [item["id"] for item in contract["evidence"]["required"]],
-            ["closure-comment-pr", "closure-comment-issue", "jury-verdict"],
+            [
+                "closure-comment-pr",
+                "closure-comment-issue",
+                "review-verdict-1",
+                "review-verdict-2",
+                "jury-verdict",
+            ],
         )
         s7 = next(
             step for step in contract["step_verification"]["steps"] if step["step_id"] == "s7"
         )
-        self.assertFalse([item for item in s7["required_evidence"] if "review-verdict" in item])
+        self.assertEqual(
+            [item for item in s7["required_evidence"] if "review-verdict" in item],
+            ["review-verdict-1", "review-verdict-2"],
+        )
 
     def _review_required_count(self, config, supplied):
         """`keel review` has no jury flags at all — the bench must not need them.
@@ -368,7 +395,16 @@ class TestEveryCommandResolvesTheSameBench(unittest.TestCase):
             (
                 "jury panel",
                 JURY_PANEL_CONFIG,
-                ["closure-comment-pr", "closure-comment-issue", "jury-verdict"],
+                # The panel's ballots are the required review verdicts (#1015); before a
+                # posted verdict declares the panel size that count is the min_vendors
+                # floor. The jury verdict stays, as the consensus record.
+                [
+                    "closure-comment-pr",
+                    "closure-comment-issue",
+                    "review-verdict-1",
+                    "review-verdict-2",
+                    "jury-verdict",
+                ],
             ),
             (
                 "three seats",
@@ -437,6 +473,89 @@ class TestEveryCommandResolvesTheSameBench(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("invalid keel config", err)
 
+    def test_the_posted_panel_count_governs_and_the_contract_publishes_the_floor(self):
+        """The one place the surfaces legitimately differ, pinned rather than assumed.
+
+        `keel plan` / `keel ship` / `keel step-verify` publish the **floor** on a
+        panel tier — `jury.min_vendors` ballots — while `keel review`,
+        `keel evidence-verify` and `keel merge` read the posted
+        `keel.jury-verdict.v1` and require the panel that actually sat.
+
+        `plan` is offline by construction and has no pull request to read. `ship
+        --pr N` does, and could read the count beside its CI reads; it
+        deliberately does not, because the floor is provably conservative
+        (`_jury_panel_size` only ever raises, so a planning surface can
+        under-state what will be required and never over-state it) and because
+        `ship` without `--pr`, and every dry run, has to resolve the same contract
+        with no verdict in reach anyway. Convergent, never contradictory: every
+        surface that *can* see the panel agrees with every other one. The adapter
+        is told the same thing in s7: post one verdict per ballot the panel
+        returned, not `reviewers.count` verdicts.
+        """
+        config = self._config(JURY_PANEL_CONFIG)
+        verdict = self.root / "jury-comments.json"
+        verdict.write_text(
+            json.dumps(
+                [
+                    {
+                        "body": (
+                            "keel.jury-verdict.v1\nhead: abc\nvendors: 2\npanelists: 3\n\n"
+                            "AI Jury verdict: LGTM.\n"
+                        ),
+                        "author_association": "OWNER",
+                        "user": {"login": "orchestrator"},
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        plan_required, _ = self._plan_required(config)
+        ship_required, _ = self._ship_required(config)
+        with_verdict = self._evidence_required(config, pr_comments=verdict)
+
+        # No panel has been measured here: the contract publishes the floor.
+        floor = ["review-verdict-1", "review-verdict-2"]
+        self.assertEqual([item for item in plan_required if "review-verdict" in item], floor)
+        self.assertEqual([item for item in ship_required if "review-verdict" in item], floor)
+        self.assertEqual(self._step_verify_s7("--project", config, "--tier", "3"), floor)
+        # …and the posted verdict raises it to the panel that actually sat.
+        self.assertEqual(
+            [item for item in with_verdict if "review-verdict" in item],
+            ["review-verdict-1", "review-verdict-2", "review-verdict-3"],
+        )
+        # Convergent, not contradictory: the gate only ever asks for more.
+        self.assertTrue(set(floor) < set(with_verdict))
+
+    def test_a_declared_count_below_the_floor_cannot_lower_the_requirement(self):
+        """`min_vendors` is a floor: a short panel's own verdict may not relax it."""
+        config = self._config(JURY_PANEL_CONFIG)
+        verdict = self.root / "short-jury-comments.json"
+        verdict.write_text(
+            json.dumps(
+                [
+                    {
+                        "body": (
+                            "keel.jury-verdict.v1\nhead: abc\nvendors: 1\npanelists: 1\n\n"
+                            "AI Jury verdict: LGTM.\n"
+                        ),
+                        "author_association": "OWNER",
+                        "user": {"login": "orchestrator"},
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        required = self._evidence_required(config, pr_comments=verdict)
+
+        self.assertEqual(
+            [item for item in required if "review-verdict" in item],
+            ["review-verdict-1", "review-verdict-2"],
+        )
+        # …and the short panel does not drop the verdict it is short on, either.
+        self.assertIn("jury-verdict", required)
+
     def test_no_jury_is_recorded_and_not_applied_on_a_jury_tier(self):
         """`--no-jury` must not remove the only review a jury tier has.
 
@@ -464,11 +583,21 @@ class TestEveryCommandResolvesTheSameBench(unittest.TestCase):
         self.assertEqual(rc, 0, err)
         contract = json.loads(out)["contract"]
         self.assertEqual(contract["assignment"]["review_panel"], "jury")
-        self.assertEqual(contract["review_merge_contract"]["reviewers"]["count"], 0)
+        self.assertEqual(contract["review_merge_contract"]["reviewers"]["count"], 2)
+        self.assertEqual(contract["review_merge_contract"]["reviewers"]["source"], "jury")
         self.assertEqual(contract["review_merge_contract"]["jury"]["mode"], "gating")
         self.assertIn("--no-jury does not apply", contract["assignment"]["warnings"][0])
         required = [item["id"] for item in contract["evidence"]["required"]]
-        self.assertEqual(required, ["closure-comment-pr", "closure-comment-issue", "jury-verdict"])
+        self.assertEqual(
+            required,
+            [
+                "closure-comment-pr",
+                "closure-comment-issue",
+                "review-verdict-1",
+                "review-verdict-2",
+                "jury-verdict",
+            ],
+        )
 
     def test_no_jury_keeps_its_meaning_where_the_panel_is_not_the_review(self):
         config = self._config(THREE_SEAT_CONFIG)

@@ -360,7 +360,7 @@ keel render-report --kind coverage --payload coverage.json > body.md
 keel render-report --kind triage-audit --payload audit.json --json
 ```
 
-## `keel review <project.yaml> --pr N --reviews FILE [--root DIR] [--issue N] [--closure FILE] [--reviewers 1|2|3] [--head-sha SHA] [--changed-file PATH] [--run-id ID] [--verify] [--dry-run] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--json]`
+## `keel review <project.yaml> --pr N (--reviews FILE | --from-jury FILE) [--root DIR] [--issue N] [--closure FILE] [--reviewers 1|2|3] [--head-sha SHA] [--changed-file PATH] [--run-id ID] [--verify] [--dry-run] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--json]`
 
 Orchestrate a supplied review *evidence bundle* in one deterministic command. The host
 agent runs the actual reviewers and produces the review content; `keel review` is **not**
@@ -383,6 +383,39 @@ The required reviewer count is resolved from the live diff tier using the exact 
 `keel evidence-verify` uses (`ship.resolve_review_contract`). If fewer reviews are supplied
 than the tier requires, the command fails rather than silently under-posting evidence; an
 exact count or more is allowed. `--reviewers` overrides the required count.
+
+### `--from-jury FILE` — the ai-jury panel *is* the review
+
+Exactly one of `--reviews` and `--from-jury` is required: the bundle is the host's, or the
+panel's. `--from-jury` takes an **ai-jury JSON report** (`jury --format json`, report schema
+1.1+, which carries the top-level `reviewers` ballot array) and maps it onto the same bundle:
+
+- one head-pinned `keel.review-verdict.v1` per panelist, carrying the `vendor:` and `model:`
+  that actually produced that ballot — the chair is not a panelist and does not get one;
+- the panel's own `keel.jury-verdict.v1` consensus comment, in the same call, so ballots and
+  verdict are pinned to the same head SHA by construction. It declares `panelists: <N>`
+  beside `vendors: <N>`, which is how the panel's size reaches a later evidence check;
+- a `panel` block in the `--json` result — the ballots, the distinct vendors, and the
+  **verified** consensus findings in keel's severity vocabulary (`critical`/`major` ⇒
+  `block`). That block is the s9 fix-loop input, so a panel's findings gate exactly as a
+  host reviewer's do.
+
+`scope` and `testing` are synthesised from the ballot itself — the files it named, and what
+the verification round upheld — because the JSON report carries no per-ballot prose. They are
+written to satisfy `verdict_substance` by construction, so a clean ballot is still a
+postable verdict.
+
+On a tier whose `knobs.team` review policy is `jury`, the required verdict count *is* the
+panel size, so a report with fewer ballots than the panel declared fails closed. A report
+that carries no ballots at all is refused with the command that produces one, rather than
+posting a thinner review.
+
+```bash
+# s7 on a `review: jury` tier: one panel run, then one posting call.
+jury --format json --diff-file "$DIFF" -o ".keel/state/jury/$RUN_ID.json"
+keel review .keel/project.yaml --root . --pr 456 \
+  --from-jury ".keel/state/jury/$RUN_ID.json" --run-id "$RUN_ID" --live
+```
 
 ```bash
 # Dry by default: render and print what it WOULD post, no network.
@@ -620,6 +653,14 @@ drops `jury-verdict` from the required set:
 | `1` | advisory | no |
 | `2`+ | gating | yes |
 
+**Except on a tier whose review policy is the panel** (`knobs.team`'s
+`review.by_tier.<n>: jury`), where the downgrade is suppressed entirely and the verdict
+stays required whatever the count. The table above describes a jury sitting *beside* a host
+bench: downgrading is sound there because the bench still reviewed the change. A panel tier
+has no bench behind it, so a short panel excusing itself from its own consensus record would
+leave the run with the one artifact missing that says the panel was short. The shortfall is
+reported instead — as `review-vendor-distinctness` from `evidence-verify`.
+
 `0` is not a special case — it is the run where no agent returned output, which is how the
 contract's "a jury that did not complete cleanly never gates" falls out of the same
 comparison rather than needing its own branch.
@@ -630,7 +671,11 @@ enforced. An explicit `--jury-advisory` is *not* reported as a downgrade — it 
 gating — and `--no-jury` is untouched.
 
 **Where the count comes from when the flag is omitted.** The verifier reads `vendors: <N>`
-from a trusted, head-bound `keel.jury-verdict.v1` comment on the PR. That is the only
+from a trusted, head-bound `keel.jury-verdict.v1` comment on the PR. The same comment
+carries `panelists: <N>`, read the same way, which sizes the required reviewer count on a
+tier whose panel *is* the review — as a **floor raised, never lowered**:
+`max(declared, jury.min_vendors)`, so a verdict declaring a short panel cannot shrink what
+the tier owes (see `docs/keel/evidence.md`). That is the only
 channel available to a hosted runner: the run ledger and the jury artifact both live under
 the gitignored `.keel/state/`, so CI can read neither, while PR comments are always
 visible. `keel.artifacts.render_jury_verdict()` emits the field, inferring it from
