@@ -8,6 +8,7 @@ same command graph without re-deriving keel behavior from prose.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -241,6 +242,7 @@ def build_command_contract(
     tdd_override: bool = False,
     effort: str | None = None,
     team_profile: str | None = None,
+    jury_availability: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the stable adapter contract shared by ``plan --json`` and dry-run commands.
 
@@ -359,6 +361,12 @@ def build_command_contract(
             jury_advisory=jury_advisory,
             team_profile=team_profile,
             effort=effort,
+            # The panel-availability probe, measured by
+            # `keel.providerprobe.jury_availability` and handed to every resolver
+            # (#1066). This is one more site that resolves a bench, and it has to see
+            # the same measurement as the rest or `keel plan` publishes a panel the run
+            # it plans cannot convene.
+            jury_availability=jury_availability,
         )
         contract["assignment"] = assignment
         contract["review_merge_contract"] = ship_decisions.resolve_review_contract(

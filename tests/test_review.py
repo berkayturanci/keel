@@ -11,8 +11,50 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from keel import cli, closure, evidence, review, runtime
+from keel import cli, closure, evidence, juryavail, review, runtime
 from keel.runner import CommandResult
+
+#: A canned ``keel doctor --providers`` report in which the panel *is* staffable (#1066).
+#: s7 probes provider availability before it dispatches the panel, and that probe is the
+#: one machine-dependent input to the reviewer bench — so an offline suite has to supply
+#: it, or these tests resolve one bench on a laptop with three agent CLIs installed and a
+#: different one on a CI runner with none.
+_STAFFED_PANEL_REPORT = {
+    "schema_version": "keel.providers.v1",
+    "providers": [
+        {"name": "claude", "vendor": "claude", "available": True, "reason": "/usr/bin/claude"},
+        {"name": "codex", "vendor": "codex", "available": True, "reason": "/usr/bin/codex"},
+    ],
+    "available": 2,
+    "total": 2,
+}
+
+#: …and the `jury` binary s7 would dispatch, present and runnable. Both halves have to be
+#: answered from memory: the probe asks the runner as well as the inventory (#1066 round 2),
+#: and a suite that let the real `jury --doctor` run would resolve a different bench on a
+#: machine that happens to have ai-jury installed.
+_STAFFED_RUNNER = juryavail.Runner(True, "/usr/bin/jury (ai-jury 1.16.0)")
+
+_NO_REAL_PROVIDER_PROBE: list = []
+
+
+def setUpModule():
+    """Answer the s7 panel-availability probe from memory, never from this machine."""
+    _NO_REAL_PROVIDER_PROBE.extend(
+        [
+            patch("keel.providerprobe.collect", lambda *_a, **_kw: dict(_STAFFED_PANEL_REPORT)),
+            patch("keel.providerprobe.probe_jury_runner", lambda **_kw: _STAFFED_RUNNER),
+        ]
+    )
+    for entry in _NO_REAL_PROVIDER_PROBE:
+        entry.start()
+
+
+def tearDownModule():
+    for entry in _NO_REAL_PROVIDER_PROBE:
+        entry.stop()
+    _NO_REAL_PROVIDER_PROBE.clear()
+
 
 PROJECTS = Path(__file__).resolve().parent.parent / "projects"
 ANDROID = str(PROJECTS / "example-android.yaml")

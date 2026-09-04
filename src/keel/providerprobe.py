@@ -31,7 +31,7 @@ import urllib.request
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 
-from . import api_delegate, providers, runner
+from . import api_delegate, juryavail, providers, runner, team
 from .providers import Provider, Registry
 
 #: Wall-clock seconds a single provider subprocess may take.
@@ -252,6 +252,251 @@ def build_report(
         "available": sum(1 for row in rows if row["available"]),
         "total": len(rows),
     }
+
+
+#: Wall-clock seconds ``jury --doctor`` may take. Longer than :data:`PROBE_TIMEOUT_S`
+#: because the runner probes its *own* panel behind that one call — one ``--version`` per
+#: configured agent — where keel's per-provider probes each get their own budget.
+JURY_DOCTOR_TIMEOUT_S = 30
+
+#: ai-jury's readiness document announces itself with this. Checked rather than assumed, so
+#: some other ``jury`` on ``PATH`` printing JSON cannot be read as a panel report.
+JURY_DOCTOR_SCHEMA_PREFIX = "ai-jury.doctor."
+
+
+def probe_jury_runner(
+    *,
+    _which: Callable[[str], str | None] = shutil.which,
+    _run: Callable[..., runner.CommandResult] = runner.run_argv,
+) -> juryavail.Runner:
+    """Is the ``jury`` binary s7 dispatches usable here, and what panel does it hold?
+
+    s7 does not convene a panel out of keel's delegate inventory — it runs ``jury``
+    (``src/keel/adapters/commands/ship.md``), which carries its own configured panel. A
+    probe that only counted keel's providers answered a different question than the one it
+    was asked: on a host with ``claude`` and ``codex`` installed and no ``jury``, it
+    reported the panel available, published the panel bench, and left s7 to fail at the
+    invocation instead of taking the project's configured fallback or block path.
+
+    So ask the runner. ``jury --doctor --json`` is ai-jury's own readiness document
+    (``schema_version: ai-jury.doctor.v1``): it establishes that the binary is present and
+    runnable, and reports which of *its* agents are usable — the panel that would actually
+    sit. Fail-soft in the same way every other probe here is: a missing binary, a timeout,
+    a crash and unreadable output are each a :class:`keel.juryavail.Runner` saying so, never
+    an exception out of a resolver.
+
+    **The document is how the binary identifies itself, so no document is not usable**
+    (#1068). This branch previously read a clean exit with unreadable output as a usable
+    runner, on the reasoning that an ai-jury too old for ``--doctor --json`` still convenes
+    panels and should not be called broken. That reasoning does not survive contact with
+    the older runner: ai-jury parses its arguments strictly, so a version that predates the
+    flag exits **2** on ``--doctor --json`` (``unrecognized arguments: --json``) and is
+    already reported unusable by the exit-code branch below. What the fallback actually
+    granted was the one case it was not written for — a binary that accepts the flag, exits
+    0, and then declines to say it is ai-jury. That is a stranger named ``jury`` on
+    ``PATH``, and calling it usable reintroduced exactly the failure this probe exists to
+    prevent: the panel bench published, s7 failing at the invocation, past the point where
+    ``on_unavailable`` could still choose fallback or block.
+
+    No second identity probe is taken. ``jury --version`` prints ``%(prog)s <version>`` —
+    the program name it was invoked as — so it identifies the file, not the tool, and a
+    check built on it would pass for any binary of that name. :func:`_doctor_report`'s
+    ``schema_version`` prefix is the identity claim ai-jury actually makes, and one probe
+    that asks for it is better than two that guess.
+
+    Identity and *inventory* stay separate, and the fallback that matters is the second
+    one: a runner that identified itself but reported no ``agents`` is usable, and
+    :func:`keel.juryavail.assess` then reads keel's own delegate inventory
+    (:func:`collect`) for the vendor count. So a quiet-but-real ai-jury can still staff a
+    panel through keel's proxy; what can no longer staff one is a binary that never said
+    what it was.
+    """
+    command = juryavail.JURY_RUNNER_COMMAND
+    found, reason, _ = _probe_command_only(command, which=_which)
+    if not found:
+        return juryavail.Runner(False, reason)
+    return _probe_jury_doctor(command, reason, run=_run)
+
+
+def _probe_jury_doctor(
+    command: str,
+    path: str,
+    *,
+    run: Callable[..., runner.CommandResult],
+) -> juryavail.Runner:
+    """Run ``jury --doctor --json`` and read what came back. Never raises.
+
+    Through :func:`keel.runner.run_argv` like every other probe in this module, which
+    closes the child's standard input: a readiness check that stopped on a login prompt
+    would hang the resolver it is called from.
+
+    Usable **only** with a readable ai-jury doctor document; see
+    :func:`probe_jury_runner` for why a clean exit is not on its own an identity.
+    """
+    result = run([command, "--doctor", "--json"], timeout=JURY_DOCTOR_TIMEOUT_S)
+    if getattr(result, "timed_out", False):
+        return juryavail.Runner(
+            False, f"{command} --doctor timed out after {JURY_DOCTOR_TIMEOUT_S}s"
+        )
+    doctor = _doctor_report(result.stdout or result.output)
+    if doctor is not None:
+        version = doctor.get("tool_version")
+        version = version if isinstance(version, str) and version.strip() else "unknown version"
+        return juryavail.Runner(True, f"{path} (ai-jury {version})", doctor)
+    if not result.ok:
+        return juryavail.Runner(False, f"{command} --doctor --json failed (exit {result.code})")
+    return juryavail.Runner(
+        False,
+        f"{path} exited 0 but printed no {JURY_DOCTOR_SCHEMA_PREFIX}* report, so it did "
+        f"not identify itself as the ai-jury panel runner",
+    )
+
+
+def _doctor_report(text: str) -> dict[str, object] | None:
+    """ai-jury's ``--doctor --json`` document, or ``None`` when the output is not one.
+
+    ``raw_decode`` rather than ``json.loads`` for the same reason
+    :func:`keel.jury.parse_report` uses it: :func:`keel.runner.run_argv` hands back stdout
+    and stderr concatenated, so a real report can be followed by log lines.
+    """
+    try:
+        data, _end = json.JSONDecoder().raw_decode((text or "").lstrip())
+    except ValueError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    schema = data.get("schema_version")
+    if isinstance(schema, str) and schema.startswith(JURY_DOCTOR_SCHEMA_PREFIX):
+        return data
+    return None
+
+
+def jury_availability(
+    config,
+    *,
+    tier: int | None,
+    difficulty: str | None = None,
+    profile: str | None = None,
+    any_difficulty: bool = False,
+    _probe=None,
+    _runner_probe=None,
+) -> dict[str, object] | None:
+    """Can this machine convene the panel this run's review policy names? (#1066)
+
+    ``None`` when the question does not arise — this run's review is a host bench, so
+    nothing about the panel can change the answer and nothing is spent asking. That keeps
+    the whole feature inert for every project that has not made the panel its review,
+    keel's own ``projects/keel.yaml`` included.
+
+    *This run's* review, not the tier's: ``team.by_difficulty.<band>.review`` and
+    ``team.profiles.<name>.review`` may each name the panel, and the resolver applies them
+    over the tier's policy. So the predicate is :func:`keel.team.panel_review_source` — the
+    same overlay :func:`keel.team._review_seats` resolves the bench with, asked once and in
+    one place. Read from ``review.by_tier`` alone it was narrower than the resolver it
+    guards: ``keel ship --team-profile strict`` on an unstaffable host published
+    ``review_panel: jury`` with ``availability: null`` and was stuck exactly as the issue
+    describes, and the call-site sweep could not see it because that site *was* handed a
+    measurement — a ``None`` one.
+
+    ``difficulty`` and ``profile`` are the run's own coordinates, the ones handed to
+    :func:`keel.team.resolve_assignment`. ``any_difficulty`` is for a caller that cannot
+    name the band yet; see :func:`jury_availability_for_any_tier`.
+
+    On a panel tier it asks the panel runner first (:func:`probe_jury_runner`), because the
+    runner is what s7 dispatches and it holds the configured panel. Its own report is the
+    inventory when it produced one; otherwise keel falls back to :func:`collect` — the
+    machinery ``keel doctor --providers`` already prints, reused rather than
+    re-implemented — and :func:`keel.juryavail.assess` reads whichever answered. Both probes
+    are local: ``PATH`` lookups and ``--version``-shaped calls, an env-var *name* check per
+    hosted API, and one loopback request for Ollama. No key value is read, and no address a
+    config names is dialled.
+
+    **This is the one machine-dependent input to the reviewer bench, and it is
+    deliberate.** Every other input is config; this one is a fact about the world, which is
+    why it is allowed to move the outcome — #1014 round 3 closed the *flag* route, not this
+    one — and why :meth:`keel.juryavail.Availability.as_dict` travels with it into the
+    assignment, the review contract, the run ledger and the closure comment. Two machines
+    can resolve the same tier differently: a runner with no ``jury`` installed falls back
+    where a workstation convenes the panel, and each says which it did rather than either
+    quietly claiming the other's provenance. What a *verification* surface does with that
+    is :func:`keel.juryavail.pin`'s question, not this one's: it pins to what the ship
+    measured rather than re-measuring on a different machine.
+
+    **This function measures; it does not refuse** (#1068). Under ``on_unavailable:
+    block`` the ``block`` decision travels in the record, and
+    :func:`keel.team._review_seats` raises :class:`keel.juryavail.JuryUnavailableError` on
+    the cluster or command whose review really *is* the panel. Refusing here was narrower
+    than it looked: one measurement staffs many benches, and
+    :func:`jury_availability_for_any_tier` takes it before any of them is known — so a
+    ``block`` project could not plan a swarm of entirely non-panel work on an unstaffable
+    host, the panel never entering into it. Nothing is lost by deferring the refusal:
+    ``_review_seats`` is reached from exactly one function,
+    :func:`keel.team.resolve_assignment`, which is every place a bench is resolved.
+    """
+    if (
+        team.panel_review_source(
+            config.knobs.team,
+            tier=tier,
+            difficulty=difficulty,
+            profile=profile,
+            any_difficulty=any_difficulty,
+        )
+        is None
+    ):
+        return None
+    jury_runner = (probe_jury_runner if _runner_probe is None else _runner_probe)()
+    probe = collect if _probe is None else _probe
+    # Only when the runner could not name its own panel: two sweeps of the same agent CLIs
+    # is twice the subprocess cost for a second opinion keel would then have to reconcile.
+    report = None if jury_runner.panel_rows is not None else probe(config)
+    return juryavail.assess(
+        report,
+        runner=jury_runner,
+        min_vendors=config.knobs.team.jury_min_vendors or team.DEFAULT_MIN_VENDORS,
+        policy=config.knobs.team.jury_on_unavailable,
+    ).as_dict()
+
+
+def jury_availability_for_any_tier(
+    config, *, profile: str | None = None, **kwargs
+) -> dict[str, object] | None:
+    """The panel probe for a surface that resolves *several* tiers in one call (#1066).
+
+    :func:`keel.swarm.build_swarm_plan` scores each cluster's risk tier while it partitions,
+    so its caller cannot name the tier before the plan exists — but every cluster in that
+    plan resolves a bench, and a swarm that skipped the probe published ``review_panel:
+    jury`` for a tier-3 cluster while the child ``keel ship`` it launched on the same machine
+    seated three host reviewers. That is the in-process disagreement #1066 exists to close,
+    one layer up.
+
+    Availability is a fact about the *machine*, not about a tier: the tier only decides
+    whether the question arises. So this asks it once, for the first tier whose review policy
+    names the panel, and hands the one record to every cluster. A project with no panel at
+    any tier probes nothing, exactly as before — :func:`jury_availability` returns ``None``
+    without measuring when the run's review is a host bench, so the loop below costs a
+    config lookup per tier and no subprocess at all.
+
+    The difficulty band is unknowable here for the same reason the tier is — the scorer runs
+    inside the partition this record is being measured *for* — so the sweep widens the same
+    way: ``any_difficulty`` asks whether any band this policy configures could make the panel
+    the review. ``profile`` is the operator's ``--team``, which *is* known, and is passed so
+    the profile's own precedence over the band holds here exactly as it does in the resolver.
+
+    Being a superset is exactly why the ``block`` refusal does not live on this path
+    (#1068). "Some tier or band of this project could name the panel" is not "this swarm's
+    work does": a project with ``by_tier.3: jury`` and ``on_unavailable: block`` may
+    legitimately plan a wave of tier-1 docs clusters on a host with no panel, and a refusal
+    taken here — before the partition has scored a single cluster — refused it. The record
+    carries ``decision: block`` to every cluster instead, and
+    :func:`keel.team._review_seats` refuses on the ones whose review really is the panel.
+    """
+    for tier in (None, *(int(name) for name in team.TIERS)):
+        record = jury_availability(
+            config, tier=tier, profile=profile, any_difficulty=True, **kwargs
+        )
+        if record is not None:
+            return record
+    return None
 
 
 def collect(

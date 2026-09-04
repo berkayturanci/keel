@@ -51,6 +51,7 @@ from . import (
     guard,
     install,
     jury,
+    juryavail,
     ledger,
     lock,
     mergeverify,
@@ -356,6 +357,13 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         delegate=args.delegate,
         review_delegates=tuple(args.review_delegate),
         tdd_override=args.tdd,
+        # The panel-availability probe for the tier this contract is being built at
+        # (#1066) — the same measurement `_review_assignment` hands the other six
+        # surfaces, so `keel plan` cannot publish a panel the run it plans could not
+        # staff.
+        jury_availability=providerprobe.jury_availability(
+            config, tier=args.review_tier, profile=args.team_profile
+        ),
         # `plan` accepts these, so `plan` has to resolve them. Accepting a flag and then
         # not threading it published an assignment that disagreed with the one `ship`
         # renders from the identical command line — two answers to the one question this
@@ -1030,11 +1038,74 @@ def _cmd_merge(args: argparse.Namespace) -> int:
         lock.release_resource(_lock_root(args.root), "merge", owner=owner, best_effort=True)
 
 
+def _shipped_jury_availability(
+    artifacts: dict[str, Any],
+    ledger_record: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """What the *ship* measured about the panel, for a surface that only verifies (#1066).
+
+    ``None`` when nothing pins this head, which leaves the caller to probe exactly as it
+    did before.
+
+    A machine-dependent probe is right for a surface about to *dispatch* a panel. It is
+    wrong for one checking evidence somebody else produced: ``keel evidence-verify`` and
+    ``keel merge`` run wherever CI puts them, so a change juried on a workstation and
+    checked on a bare runner had its own contract quietly rewritten — the panel item dropped
+    from the required set and ``review-verdict-1..3`` demanded instead, holding it to a host
+    bench nobody ever sat. Re-measuring answers "could *this* machine convene a panel"; the
+    question is "what was this change reviewed by".
+
+    **This function is I/O only, and deliberately holds no rule of its own.** Which source
+    wins, what a blank head does, what a same-head record that says nothing about a panel
+    means — all of it is :func:`keel.juryavail.pin`, the single authority on "what did this
+    run ship under". Read that docstring; #1068 rounds 2–5 were each a rule written in one
+    place and forgotten in its twin, and the last of them was the *precedence* living in
+    the order of two ``if``-statements right here, where no reader thought to look for it.
+
+    Everything below is the reading of the three artifacts that authority ranks:
+
+    * the ``ship_run`` ledger entry for this pull request (already loaded by the caller,
+      because one surface treats an unreadable ledger as fatal and the other does not);
+    * the panel decision the run recorded in the closure comment it posted on the pull
+      request (:func:`keel.evidence.shipped_panel_decision`) — the same statement as the
+      ledger's, from the copy that travels, which is what makes the ledger's precedence
+      mean anything on a host that cannot read ``.keel/state/`` (#1068 round 6);
+    * whether a head-pinned jury verdict is posted on the pull request.
+
+    The verdict is asked for only against a pinnable head:
+    :func:`keel.evidence.panel_verdict_posted` documents that as its precondition, since it
+    goes through :func:`keel.evidence._matches_head`, which reads a blank head as *no head
+    filter* — right for counting evidence, wrong for a pin. Both sites ask the one
+    predicate, :func:`keel.juryavail.is_pinnable_head`, so hardening it hardens both, and
+    :func:`keel.juryavail.pin` refuses a blank head again on its own account rather than
+    trusting this caller to have done it. The closure-comment read needs no such guard:
+    it matches the marker's ``head`` against this one, so a blank head matches nothing.
+
+    Trust is the evidence module's own rule at all three sources, and deliberately the
+    same one: keel posts the closure comment on the operator's behalf, which is exactly the
+    authority a posted jury verdict has — no more. An untrusted author's comment may not
+    relax the contract in either shape.
+    """
+    head_sha = artifacts["head_sha"]
+    return juryavail.pin(
+        ledger_record,
+        head_sha=head_sha,
+        closure_panel_decision=evidence.shipped_panel_decision(
+            artifacts["pr_comments"], head_sha=head_sha
+        ),
+        panel_verdict_posted=juryavail.is_pinnable_head(head_sha)
+        and evidence.panel_verdict_posted(
+            artifacts["pr_comments"], artifacts["pr_reviews"], head_sha=head_sha
+        ),
+    )
+
+
 def _review_assignment(
     config: cfg.ProjectConfig,
     args: argparse.Namespace,
     *,
     tier: int | None,
+    pinned: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The one resolution of ``knobs.team`` every review-aware command reads (#1014).
 
@@ -1054,6 +1125,18 @@ def _review_assignment(
     must not depend on which command is asking.
     """
     review_delegates = tuple(getattr(args, "review_delegate", None) or ())
+    # The probe #1066 asks for, at the one place all six surfaces pass through. It runs
+    # *only* on a tier whose review policy is the panel, so a project that never convenes
+    # one pays nothing and behaves exactly as before — and not at all when the caller
+    # already knows what the ship measured (`_shipped_jury_availability`), because a
+    # surface that only verifies must be held to that run's decision, not to this host's.
+    availability = (
+        pinned
+        if pinned is not None
+        else providerprobe.jury_availability(
+            config, tier=tier, profile=getattr(args, "team_profile", None)
+        )
+    )
     return team.resolve_assignment(
         config.knobs.team,
         tier=tier,
@@ -1074,6 +1157,7 @@ def _review_assignment(
         # parent's clusters and silently drop out of the child's own assignment.
         team_profile=getattr(args, "team_profile", None),
         effort=getattr(args, "effort", None),
+        jury_availability=availability,
     )
 
 
@@ -1159,6 +1243,13 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         team_profile=args.team_profile,
         host_agent=args.host_agent or agents.HOST_DEFAULT,
         tdd_override=args.tdd,
+        # The preflight contract is built before s5 classifies, so its tier is
+        # unresolved and no tier's policy can be the panel yet; this probes only when
+        # a `review.default: jury` — or the `--team` profile's own `review` — makes the
+        # panel the review whatever the tier turns out to be (#1066).
+        jury_availability=providerprobe.jury_availability(
+            config, tier=None, profile=args.team_profile
+        ),
     )
     consent_ok, consent_message = consent.assert_operator_consent(contract["operator_consent"])
     if not consent_ok:
@@ -1328,6 +1419,10 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         review_delegates=tuple(args.review_delegate),
         team_profile=args.team_profile,
         effort=args.effort,
+        # The same measurement `_review_assignment` took above, handed to the resolver
+        # that produces the *assessed* contract — the one the ledger, the closure comment
+        # and `evidence-verify` all read (#1066).
+        jury_availability=review_contract["jury"]["availability"],
         host_agent=args.host_agent or agents.HOST_DEFAULT,
         require_distinct_vendors=config.knobs.evidence_require_distinct_vendors,
     )
@@ -1398,6 +1493,11 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         transport=args.transport or transport.name,
         profile=profile,
         jury_mode=a.review_contract["jury"]["mode"],
+        # …and, when the tier named a panel, what the availability probe found (#1066).
+        # The ledger is what the closure comment is rendered from, so recording it here
+        # is what lets the posted comment say the panel was unavailable and a host bench
+        # reviewed instead, rather than leaving a reader to infer it from a seat count.
+        jury_panel=a.review_contract["jury"]["availability"],
         implement_mode=mode.name if mode.is_tdd else None,
         implement_phases=tdd.phase_records(
             tdd_result,
@@ -2976,6 +3076,13 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
         if changed_files
         else None
     )
+    # Loaded before the contract, not after it: `run_context.jury_panel` is what pins the
+    # required evidence to the panel decision this pull request was *shipped* under (#1066).
+    try:
+        ledger_record = _evidence_ledger_record(args, config)
+    except ledger.LedgerError as exc:
+        print(f"invalid run ledger: {exc}", file=sys.stderr)
+        return 1
     review_contract = ship.resolve_review_contract(
         tier=tier,
         reviewer_override=args.reviewers,
@@ -2988,7 +3095,16 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
         # The same team `keel ship` resolved. Without it a `review.by_tier."3": jury`
         # project fails its own gate forever: ship publishes zero reviewer slots and
         # this side demands review-verdict-1..3.
-        assignment=_review_assignment(config, args, tier=tier),
+        assignment=_review_assignment(
+            config,
+            args,
+            tier=tier,
+            # …and the same *panel decision* it resolved that team under. This surface
+            # verifies; it does not dispatch. Re-probing here answers "could this runner
+            # convene a panel", which silently rewrites the contract of a change juried
+            # somewhere else.
+            pinned=_shipped_jury_availability(artifacts, ledger_record),
+        ),
         # `or None` keeps the knob tri-state: an unset knob and an unset flag leave the
         # claim unmade, while --require-distinct-vendors forces it on.
         require_distinct_vendors=(
@@ -3029,11 +3145,6 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
         pr_reviews=artifacts["pr_reviews"],
     )
     enforced = gate["enforced"]
-    try:
-        ledger_record = _evidence_ledger_record(args, config)
-    except ledger.LedgerError as exc:
-        print(f"invalid run ledger: {exc}", file=sys.stderr)
-        return 1
     report = evidence.verify(
         review_contract,
         pr_comments=artifacts["pr_comments"],
@@ -4064,9 +4175,16 @@ def _verify_merge_evidence(
         jury_advisory=args.jury_advisory,
         require_distinct_vendors=config.knobs.evidence_require_distinct_vendors,
         # `keel merge` verifies the same evidence contract ship produced, so it resolves
-        # the same team. A merge gate that disagreed with the ship contract about the
-        # reviewer bench would refuse a PR that satisfied every requirement it was given.
-        assignment=_review_assignment(config, args, tier=tier),
+        # the same team — and, for the same reason, under the same panel decision that ship
+        # measured rather than one taken again here (#1066). A merge gate that disagreed
+        # with the ship contract about the reviewer bench, or about whether a panel sat,
+        # would refuse a PR that satisfied every requirement it was given.
+        assignment=_review_assignment(
+            config,
+            args,
+            tier=tier,
+            pinned=_shipped_jury_availability(artifacts, _merge_ledger_record(args, config)),
+        ),
         # …and reads the panel size off the same posted jury verdict `evidence-verify`
         # reads, so a jury-panel tier is held to the panel that actually ran (#1015).
         jury_panel_size=evidence.jury_panel_size(
@@ -4237,6 +4355,24 @@ def _evidence_ledger_record(
     else:
         records = ledger.read_records(ledger.resolve_path(args.root, config))
     return ledger.latest_ship_run_for_pr(records, args.pr)
+
+
+def _merge_ledger_record(
+    args: argparse.Namespace,
+    config: cfg.ProjectConfig,
+) -> dict[str, object] | None:
+    """The same ship_run record, for the merge gate, and never fatal there (#1066).
+
+    ``keel merge`` reads the ledger only to learn which panel decision this pull request was
+    shipped under. That sharpens the contract when the record is readable and is nothing at
+    all when it is not — an unreadable or malformed ledger must not turn the merge gate into
+    a refusal, where ``evidence-verify`` (which reads the record as *evidence*) rightly
+    still fails on one.
+    """
+    try:
+        return _evidence_ledger_record(args, config)
+    except ledger.LedgerError:
+        return None
 
 
 def _label_names(labels: object) -> list[str]:
@@ -5684,8 +5820,21 @@ def _cmd_swarm_plan(args: argparse.Namespace) -> int:
             )
         )
 
+    overrides = _swarm_overrides(args)
     plan = swarm.build_swarm_plan(
-        scopes, swarm_id=args.swarm_id, config=config, overrides=_swarm_overrides(args)
+        scopes,
+        swarm_id=args.swarm_id,
+        config=config,
+        overrides=overrides,
+        # The seventh resolver (#1066). A swarm scores each cluster's tier *and* its
+        # difficulty band while it partitions, so neither can be named before the plan
+        # exists — but every cluster in it resolves a bench, and without this a panel
+        # project's tier-3 cluster published `review_panel: jury` while the child `keel
+        # ship` launched on the same machine seated three host reviewers. The `--team`
+        # profile is known, and carries its own `review`, so it goes with the question.
+        jury_availability=providerprobe.jury_availability_for_any_tier(
+            config, profile=overrides.team_profile
+        ),
     )
 
     if args.json:
@@ -5781,8 +5930,21 @@ def _cmd_swarm_run(args: argparse.Namespace) -> int:
             )
         )
 
+    overrides = _swarm_overrides(args)
     plan = swarm.build_swarm_plan(
-        scopes, swarm_id=args.swarm_id, config=config, overrides=_swarm_overrides(args)
+        scopes,
+        swarm_id=args.swarm_id,
+        config=config,
+        overrides=overrides,
+        # The seventh resolver (#1066). A swarm scores each cluster's tier *and* its
+        # difficulty band while it partitions, so neither can be named before the plan
+        # exists — but every cluster in it resolves a bench, and without this a panel
+        # project's tier-3 cluster published `review_panel: jury` while the child `keel
+        # ship` launched on the same machine seated three host reviewers. The `--team`
+        # profile is known, and carries its own `review`, so it goes with the question.
+        jury_availability=providerprobe.jury_availability_for_any_tier(
+            config, profile=overrides.team_profile
+        ),
     )
 
     from . import swarm_runtime
@@ -5994,8 +6156,15 @@ def _cmd_swarm_land(args: argparse.Namespace) -> int:
             )
         )
 
+    overrides = _swarm_overrides(args)
     plan = swarm.build_swarm_plan(
-        scopes, swarm_id=swarm_id, config=config, overrides=_swarm_overrides(args)
+        scopes,
+        swarm_id=swarm_id,
+        config=config,
+        overrides=overrides,
+        jury_availability=providerprobe.jury_availability_for_any_tier(
+            config, profile=overrides.team_profile
+        ),
     )
 
     from . import swarm_landing
@@ -8569,4 +8738,12 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     except checkpoint.CheckpointError as exc:
         print(f"invalid checkpoint path: {exc}", file=sys.stderr)
+        return 1
+    except juryavail.JuryUnavailableError as exc:
+        # `knobs.team.jury.on_unavailable: block` and the panel cannot be staffed here
+        # (#1066). Raised at the probe — the only place the measurement is taken — and
+        # caught once here, so every review-aware surface refuses identically. Six
+        # near-copies of the same check would drift, and a surface that missed it would
+        # review a jury tier with a bench the project's policy refused.
+        print(str(exc), file=sys.stderr)
         return 1

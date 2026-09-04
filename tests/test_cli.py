@@ -21,6 +21,7 @@ from keel import (
     cli,
     evidence,
     install,
+    juryavail,
     ledger,
     model,
     runtime,
@@ -139,6 +140,12 @@ def _detect_without_probing_gh(root=".", **kwargs):
     return _REAL_DETECT(root, **kwargs)
 
 
+#: A `jury` binary that is present and answers. The panel's *seats* still come from
+#: `_WIZARD_PROBE_REPORT` above; this only settles the question the runner probe asks,
+#: which is whether the command s7 dispatches exists at all.
+_RUNNER = juryavail.Runner(True, "/usr/bin/jury (stubbed for this module)")
+
+
 def setUpModule():
     """Keep this module off the two external CLIs the code under test can reach.
 
@@ -162,7 +169,7 @@ def setUpModule():
     ``tests/test_jury.py`` and ``tests/test_runtime.py`` both drive the real functions
     through their injection seams.
     """
-    global _NO_REAL_JURY, _NO_GH_AUTH_PROBE, _NO_REAL_PROVIDER_PROBE
+    global _NO_REAL_JURY, _NO_GH_AUTH_PROBE, _NO_REAL_PROVIDER_PROBE, _NO_REAL_JURY_RUNNER
     _NO_REAL_JURY = patch("keel.jury.available", return_value=False)
     _NO_REAL_JURY.start()
     _NO_GH_AUTH_PROBE = patch("keel.runtime.detect", _detect_without_probing_gh)
@@ -171,9 +178,17 @@ def setUpModule():
         "keel.providerprobe.collect", lambda *_a, **_kw: dict(_WIZARD_PROBE_REPORT)
     )
     _NO_REAL_PROVIDER_PROBE.start()
+    # Stubbing `collect` alone is not enough any more. Since #1066 the panel probe
+    # also runs the `jury` binary, so a bench resolved here depended on whether this
+    # machine happens to have one: `jury` present resolved the panel, a bare runner
+    # resolved the fallback bench. That is a test reading its host rather than its
+    # subject, and it failed on CI while passing on a workstation.
+    _NO_REAL_JURY_RUNNER = patch("keel.providerprobe.probe_jury_runner", lambda **_kw: _RUNNER)
+    _NO_REAL_JURY_RUNNER.start()
 
 
 def tearDownModule():
+    _NO_REAL_JURY_RUNNER.stop()
     _NO_REAL_PROVIDER_PROBE.stop()
     _NO_GH_AUTH_PROBE.stop()
     _NO_REAL_JURY.stop()

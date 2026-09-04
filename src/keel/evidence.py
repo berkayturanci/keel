@@ -1536,6 +1536,27 @@ def _reviewer_key(item: dict[str, Any], body: str) -> str:
 
 
 def _matches_head(item: dict[str, Any], body: str, head_sha: str | None) -> bool:
+    """Does this comment answer for ``head_sha``? A blank head means *do not filter*.
+
+    **Deliberately not :func:`keel.juryavail.is_pinnable_head`'s rule, and the difference
+    is worth stating** (#1068). This one filters *evidence items* inside a gate that, with
+    no head resolved, is head-agnostic from end to end — every review verdict counts, so
+    holding jury verdicts alone to a head nobody knows would refuse a gate the rest of
+    which is already unfiltered. Nothing reached through here removes a requirement:
+    :func:`_review_evidence_keys` and :func:`_review_vendor_provenance` count verdicts
+    towards one, and :func:`jury_panel_size` feeds ``max(declared, minimum_vendors)``, so a
+    stale ``panelists:`` can only ever raise the bar.
+
+    The exception is :func:`jury_participating_vendors`, whose count can downgrade a gating
+    jury to advisory (#1015) — a stale ``vendors:`` relaxes there, on a blank head and on a
+    matching one alike, so it is that function's own head-independence and not this rule's.
+
+    A *pin* is the case that cannot use this reading, because it does remove requirements —
+    it takes ``review-verdict-1..3`` off the required set entirely. So the pin
+    (:func:`keel.juryavail.pin`, read by :func:`keel.cli._shipped_jury_availability`)
+    refuses a blank head before :func:`panel_verdict_posted` is asked at all, rather than
+    this predicate changing under the surfaces that need the permissive one.
+    """
     if not head_sha:
         return True
     fields = _fields(body)
@@ -1674,6 +1695,130 @@ def jury_panel_size(
         if (parsed := _parse_vendor_count(_fields(_body(item)).get("panelists"))) is not None
     ]
     return max(counts) if counts else None
+
+
+def panel_verdict_posted(
+    pr_comments: list[dict[str, Any]] | None = None,
+    pr_reviews: list[dict[str, Any]] | None = None,
+    *,
+    head_sha: str | None = None,
+    enforced: bool = True,
+) -> bool:
+    """Is a head-pinned jury verdict already on this pull request? (#1066)
+
+    Proof that the panel *sat*, from the one place a bare CI runner can read it: the run
+    ledger and the jury artifact both live under the gitignored ``.keel/state/``, while PR
+    comments are always visible. A verification surface uses it to pin the contract to what
+    the ship measured rather than re-measuring the panel on its own machine. It is the
+    *weaker* of the two pins and speaks only when the run left no ledger record for this
+    head; :func:`keel.juryavail.pin` owns that order and is the one place it is written.
+
+    Distinct from :func:`jury_panel_size`, which answers *how many* ballots and is ``None``
+    for a verdict predating the ``panelists:`` field. Presence is the weaker question, and
+    the one that must not depend on an optional field.
+
+    **Call this only with a head you actually resolved.** Like every reader here it goes
+    through :func:`_matches_head`, which reads a blank ``head_sha`` as "do not filter" —
+    right for counting evidence, wrong for a pin, which is why the caller refuses a blank
+    head first (:func:`keel.juryavail.is_pinnable_head`) rather than this function carrying
+    a second rule its siblings do not share.
+    """
+    return any(
+        _is_jury_verdict(item, head_sha=head_sha, enforced=enforced)
+        for item in [*(pr_comments or []), *(pr_reviews or [])]
+    )
+
+
+def shipped_panel_decision(
+    pr_comments: list[dict[str, Any]] | None = None,
+    *,
+    head_sha: str | None = None,
+    enforced: bool = True,
+) -> str | None:
+    """The panel decision **this run** recorded, read back off its closure comment (#1068).
+
+    The middle pin, and the one that makes the strongest pin work anywhere. The run's own
+    ``ship_run`` ledger record outranks a posted jury verdict — a comment records what
+    somebody put on the pull request, the ledger records what the run *did* — but the
+    ledger lives under the gitignored ``.keel/state/``, so on a hosted ``evidence-verify``
+    or ``merge`` there is no record to read and that precedence held on the shipping
+    workstation and nowhere else. A leftover or collaborator-posted ``keel.jury-verdict.v1``
+    then answered for a run that had fallen back, and took ``review-verdict-1..3`` off the
+    required set.
+
+    The run's decision is already on the pull request: s11 posts the closure comment keel
+    renders from that same ledger record, and since #1068 round 6 it carries
+    :data:`keel.closure.JURY_PANEL_MARKER` beside the human ``Jury panel:`` line. So this
+    reads the run's own statement from the one place that travels with the pull request.
+
+    Three conditions, and each is the same rule its siblings hold to:
+
+    * **Trusted author only** (:func:`_is_trusted_source`). keel posts the closure comment
+      on the operator's behalf, which is exactly the authority a posted jury verdict has —
+      no more. An untrusted author must not be able to relax the contract *in either
+      direction*: neither to claim a fallback that drops the panel item, nor to claim the
+      panel sat.
+    * **An actual closure comment** (:func:`_has_closure_marker`), so the marker counts only
+      inside the artifact that renders it — a reviewer quoting the marker while describing
+      this change is prose, the #1026 rule every marker here is read under.
+    * **Pinned to this head.** The marker names the head its record was written for and it
+      must be the head under verification, because a pull request outlives its heads and a
+      pin removes requirements.
+
+    **The latest such comment is the answer, not the first** (#1068 round 7). One head can
+    be shipped more than once — a re-run, a force-push back onto the same commit, a second
+    ship on a different machine — and each ship posts its own closure comment. ``pr_comments``
+    arrives in GitHub's order, oldest first, so this walks the whole list and keeps the last
+    match: the newest statement wins, which is the same direction
+    :func:`keel.ledger.latest_ship_run_for_pr` selects the ledger record in, and
+    :func:`keel.juryavail.pin` ranks the two sources on the premise that they agree about it.
+    Returning the first match meant an older ``decision=fallback`` outranked the panel-sat
+    ship that followed it — and round 6 emitted no marker at all for a panel that sat, so the
+    later run had nothing to outrank the older one *with*. :func:`keel.closure._jury_panel`
+    now renders ``decision=available`` too, which is what makes last-wins well defined here.
+
+    ``None`` for everything else — no comment, an older head, a marker keel did not write —
+    and ``None`` means *this source is silent*, never a waiver: :func:`keel.juryavail.pin`
+    then goes on to the posted verdict exactly as it did before.
+    """
+    if not head_sha:
+        return None
+    latest: str | None = None
+    for item in pr_comments or []:
+        if not _is_trusted_source(item, enforced=enforced):
+            continue
+        body = _body(item)
+        if not _has_closure_marker(body):
+            continue
+        decision = _jury_panel_decision(body, head_sha)
+        if decision is not None:
+            latest = decision
+    return latest
+
+
+def _jury_panel_decision(body: str, head_sha: str) -> str | None:
+    """The decision ``body``'s panel marker records for ``head_sha``, or ``None``.
+
+    A token parser over one HTML-comment line, not a regex over Markdown: the line is
+    :func:`keel.closure._jury_panel_marker`'s exact render, so it unwraps with the same
+    :func:`_unwrap_html_comment` a header marker does and splits into
+    ``<marker> head=<sha> decision=<value>``. A line that is not that shape is prose and is
+    skipped, which is why the human sentence above it — which *names* neither field — can
+    never be mistaken for the record.
+    """
+    for raw_line in (body or "").splitlines():
+        tokens = _unwrap_html_comment(raw_line.strip()).split()
+        if not tokens or tokens[0] != closure.JURY_PANEL_MARKER:
+            continue
+        fields: dict[str, str] = {}
+        for token in tokens[1:]:
+            key, _, value = token.partition("=")
+            # First wins, the convention `_fields` already reads headers under, and a
+            # token carrying no `=` becomes a valueless key that matches neither field.
+            fields.setdefault(key, value)
+        if fields.get("head") == head_sha:
+            return fields.get("decision")
+    return None
 
 
 def _parse_vendor_count(raw: str | None) -> int | None:

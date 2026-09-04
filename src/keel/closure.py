@@ -76,10 +76,15 @@ def contract_as_dict() -> dict[str, Any]:
             "transport",
             "profile",
             "jury_mode",
+            "jury_panel",
             "implement_mode",
             "consent",
         ],
         "jury_label": JURY_LABEL,
+        # Published so a consumer reading the closure comment back — keel's own
+        # verification surfaces included — has the marker name from the contract
+        # rather than from a literal (#1068).
+        "jury_panel_marker": JURY_PANEL_MARKER,
         "watermark_marker": WATERMARK_MARKER,
     }
 
@@ -106,9 +111,21 @@ def render_closure_comment(record: dict[str, Any]) -> str:
     lines.append(f"- **Docs touched:** {_docs_touched(record.get('changes'))}")
     lines.append(f"- **Capture:** {_capture(record.get('capture'))}")
     lines.append(f"- **Run id:** {_value(record.get('run_id'))}")
-    lines.extend(_run_context(record.get("run_context")))
+    lines.extend(_run_context(record.get("run_context"), _head_sha(record)))
     lines.extend(_watermark(record.get("watermark")))
     return "\n".join(lines) + "\n"
+
+
+def _head_sha(record: dict[str, Any]) -> Any:
+    """``git.head_sha`` off the record, or ``None`` when the block is unreadable.
+
+    The head the ship produced, which is the head every pin is taken against. Read
+    defensively for the same reason every other field here is: the renderer's contract
+    is "plain dict in, markdown out", and a malformed block degrades to no marker
+    rather than to an exception on the one artifact a human reads.
+    """
+    git = record.get("git")
+    return git.get("head_sha") if isinstance(git, dict) else None
 
 
 def _fix_rounds(actors: dict[str, Any]) -> list[str]:
@@ -234,7 +251,7 @@ def _learning(learning: Any) -> str | None:
     return decision.strip()
 
 
-def _run_context(run_context: Any) -> list[str]:
+def _run_context(run_context: Any, head_sha: Any = None) -> list[str]:
     """Render the deterministic preflight Run context block.
 
     Always emitted (additive section, appended after the existing lines). Each
@@ -251,9 +268,109 @@ def _run_context(run_context: Any) -> list[str]:
         f"- **Transport:** {_unknown(block.get('transport'))}",
         f"- **Profile:** {_unknown(block.get('profile'))}",
         f"- **Jury:** {_jury_mode(block.get('jury_mode'))}",
+        *_jury_panel(block, head_sha),
         *_implement_mode(block),
         f"- **Consent:** {_consent(block.get('consent'))}",
     ]
+
+
+#: How a run whose panel could not be staffed names that in the closure comment
+#: (#1066). The point of the line is that a reader can tell a jury-reviewed change
+#: from a fallback-reviewed one without re-deriving it — ai-jury #682 is what a
+#: panel that quietly collapsed and still reported success costs.
+PANEL_UNAVAILABLE_LABEL = "panel unavailable"
+
+#: How a run whose panel *did* sit names that (#1068 round 7). Round 6 emitted the
+#: line only for the two unavailable decisions, on the reasoning that a run whose
+#: panel convened should post the comment it always did. That reasoning was wrong for
+#: the marker below: silence is not a statement, so the *latest* closure comment for a
+#: head could not outrank an earlier one. See :func:`_jury_panel`.
+PANEL_AVAILABLE_LABEL = "panel sat"
+
+#: How a run's panel decision reads to a machine (#1068 round 6). The prose above is
+#: for a human; this is for :func:`keel.evidence.shipped_panel_decision`, which reads
+#: the run's own panel decision back off the pull request on a host that cannot see the
+#: run ledger — ``.keel/state/`` is gitignored, so a hosted ``evidence-verify`` or
+#: ``merge`` has no ledger to pin to and the closure comment is the only place this
+#: run still speaks. Both halves are always emitted together: the marker is the
+#: parser's input so nothing downstream has to regex over Markdown, and the sentence
+#: stays because the comment is read by people.
+#:
+#: Deliberately **not** one of :data:`keel.evidence.CLASSIFICATION_MARKERS`: it does
+#: not classify a comment (the closure marker in the header already did that), it is
+#: a field inside one. It is head-pinned for the same reason every pin is — a pull
+#: request outlives its heads — and is emitted only when the record carries a head.
+JURY_PANEL_MARKER = "keel.jury-panel.v1"
+
+#: Every panel decision that renders a line. ``available`` is here since #1068 round 7,
+#: which is the whole of that round's fix: see :func:`_jury_panel`.
+PANEL_DECISIONS: dict[str, tuple[str, str]] = {
+    "available": (PANEL_AVAILABLE_LABEL, "the cross-vendor panel reviewed this change"),
+    "fallback": (PANEL_UNAVAILABLE_LABEL, "a host bench of the same size reviewed instead"),
+    "block": (
+        PANEL_UNAVAILABLE_LABEL,
+        "the run was refused (knobs.team.jury.on_unavailable: block)",
+    ),
+}
+
+
+def _jury_panel(block: dict[str, Any], head_sha: Any) -> list[str]:
+    """The s7 panel-availability line — emitted for **every** panel decision (#1068).
+
+    Conditional, like the s4 profile line, but only on whether this run resolved a
+    panel at all: a project that has no panel posts the comment it always did, byte
+    for byte, and a run that did resolve one says which way it went and names the
+    seats.
+
+    **Why ``available`` renders too, since round 7.** The line is followed by the
+    machine-readable :data:`JURY_PANEL_MARKER`, which is the run's own record of its
+    panel decision in the one place that travels with the pull request, and
+    :func:`keel.juryavail.pin` ranks that record above a posted verdict. Round 6
+    emitted it only for ``fallback`` and ``block``, so a run whose panel *sat* left no
+    marker — and "no marker" is indistinguishable from "no run". Ship a commit once
+    under the fallback and again on a machine where the panel convenes, and the older
+    ``decision=fallback`` marker was still the only statement on the pull request: on
+    CI, where there is no ledger, it pinned the host-bench contract onto a change the
+    panel had just reviewed. Last-wins needs both runs to speak, so both do.
+
+    The marker is a mirror of the ledger record like every other line here, never a
+    second source of truth.
+    """
+    panel = block.get("jury_panel")
+    panel = panel if isinstance(panel, dict) else {}
+    decision = panel.get("decision")
+    if decision not in PANEL_DECISIONS:
+        return []
+    label, outcome = PANEL_DECISIONS[decision]
+    return [
+        f"- **Jury panel:** {label} — {outcome}{_panel_detail(panel)}",
+        *_jury_panel_marker(head_sha, decision),
+    ]
+
+
+def _jury_panel_marker(head_sha: Any, decision: str) -> list[str]:
+    """``<!-- keel.jury-panel.v1 head=… decision=… -->``, or nothing without a head.
+
+    A record whose run resolved no head is not pinnable by anything (see
+    :func:`keel.juryavail.is_pinnable_head`), so a marker naming no head could only
+    ever be noise a reader has to ignore. Omitted, the comment is exactly the one this
+    renderer wrote before the marker existed.
+    """
+    head = head_sha.strip() if isinstance(head_sha, str) and head_sha.strip() else None
+    if head is None:
+        return []
+    return [f"<!-- {JURY_PANEL_MARKER} head={head} decision={decision} -->"]
+
+
+def _panel_detail(panel: dict[str, Any]) -> str:
+    """`` (claude: not found on PATH; …)`` — the seats, or nothing when none named."""
+    unavailable = panel.get("unavailable")
+    seats = [
+        f"{seat.get('provider')}: {seat.get('reason')}"
+        for seat in (unavailable if isinstance(unavailable, list) else [])
+        if isinstance(seat, dict)
+    ]
+    return f" ({'; '.join(seats)})" if seats else ""
 
 
 #: How a test-first run names itself in the closure comment (#1020).

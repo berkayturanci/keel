@@ -196,7 +196,10 @@ knobs:
         "1": [{ provider: claude }]
         "2": [{ provider: claude }, { provider: grok-via-openai-compatible }]
         "3": jury                          # the panel is the review (see the caveat below)
-    jury: { mode: gating, min_vendors: 2 }
+    jury:
+      mode: gating
+      min_vendors: 2
+      on_unavailable: fallback       # or `block` — what to do when the panel cannot sit
     fix: { provider: implementer }         # who applies review findings
     lead: { provider: claude }             # coordinates a batch; workers report through it
     by_difficulty:                         # how much work it is -> which bench staffs it
@@ -293,6 +296,186 @@ Three consequences worth stating plainly:
   of the same run in disagreement about who reviews. Every review-aware surface *accepts*
   the jury flags — `keel review` included, since #1043 — but nothing makes a run pass them
   to all six, which is the other half of why the bench may not follow them.
+
+### `jury.on_unavailable` — when the panel cannot be staffed here
+
+A panel tier commits every change at that tier to a jury run, and no per-run flag can take
+the panel away. That is the right shape while the panel can actually run. When it cannot —
+an agent CLI is not installed, is unauthenticated, or the account is out of quota — the
+tier would otherwise be simply stuck: the only review it has is one this machine cannot
+convene. A single-maintainer project hits that routinely.
+
+So **before s7 dispatches the panel, keel probes it** — the panel s7 would actually
+dispatch, which is the `jury` binary and the agents *it* is configured with, not keel's own
+delegate list. The probe asks the runner first (`jury --doctor --json`, ai-jury's own
+readiness document): that establishes the binary is present and runnable, and reports which
+of its agents are usable. For a runner that answers but names no agents, keel falls back to
+the inventory `keel doctor --providers` already collects — one `PATH` lookup and one
+`--version` call per CLI vendor, an env-var *name* check per hosted API, one loopback
+request for Ollama — so keel keeps one answer to "is this provider usable here" instead of
+two that drift.
+
+**That document is also how the binary identifies itself.** A `jury` on `PATH` that exits 0
+without printing an `ai-jury.doctor.*` report is *not* a usable runner, and keel's own
+inventory cannot make the panel staffable behind it: the fallback stands in for a panel
+ai-jury declined to enumerate, never for a panel runner nobody established is there. An
+ai-jury genuinely too old for the flag does not land in that case — it parses arguments
+strictly and exits non-zero on an unrecognized `--json`, which is already reported as an
+unusable runner naming the exit code.
+
+The panel is *staffable* when **both** halves hold: the `jury` runner is usable here, and
+at least `jury.min_vendors` distinct vendors are available to it. Two entries that shell out
+to the same CLI are one vendor and one opinion, exactly as they are everywhere else — and
+agent CLIs on `PATH` with no `jury` to convene them are an inventory, not a panel, so a host
+with `claude` and `codex` and no ai-jury installed is *not* staffable.
+
+`on_unavailable` is what happens when it is not:
+
+| value | behaviour |
+| --- | --- |
+| `fallback` *(default)* | Staff a **host bench of the same size the tier requires** — three seats at tier-3, exactly as a tier without a panel resolves — and record why. |
+| `block` | Refuse the run, with a message naming each unavailable provider and the reason the probe reported. |
+
+**`block` refuses the work the panel would have reviewed, not everything on the machine.**
+The probe is a measurement of the *host* and one measurement can staff many benches, so the
+refusal is taken where the bench is resolved rather than where the panel was measured. For
+`keel ship`, `plan`, `review`, `step-verify`, `evidence-verify` and `merge` that is the same
+moment and nothing looks different. It matters for `keel swarm plan`, which scores every
+cluster's tier *while* it partitions and so must measure before any cluster exists: a
+project with `by_tier."3": jury` and `on_unavailable: block` can plan and run a wave of
+tier-1 work on a host with no panel installed, and is refused the moment a cluster whose
+review *is* the panel comes up. The measurement still travels to every cluster either way —
+`assignment.jury.availability.decision` reads `block` on all of them.
+
+A missing runner is a seat like any other: it is listed first under
+`availability.unavailable` as `jury`, so the message an operator reads names the thing to
+install rather than sending them to chase a panelist that was never the problem.
+
+`fallback` is the sensible default for a solo project: the panel is the better review when
+it is available and should not become a wall when it is not. `block` preserves the strict
+behaviour for a project whose product claim *is* cross-vendor review.
+
+**The fallback changes who sat, never how many.** It seats the tier's own reviewer count
+and publishes the tier's own required evidence: three `review-verdict-*` items at tier-3,
+not two. What it does drop is `jury-verdict`, and it must — there is no panel to produce
+one, and requiring it would leave the tier stuck one layer down.
+
+**Nothing about it is silent.** The probe's verdict is recorded in full — which seats were
+unavailable and why — and travels with the run:
+
+- `assignment.jury.availability` and `review_merge_contract.jury.availability` carry the
+  whole record; `assignment.reviewer_source` reads `jury-fallback` rather than `risk-tier`,
+  so a fallback bench is distinguishable from a tier that never had a panel;
+- `assignment.warnings` names the unavailable seats in one sentence;
+- `availability.runner` says whether the `jury` binary itself was usable, and
+  `availability.inventory` says which of the two sources the vendor counts were read from;
+- the run ledger records it at `run_context.jury_panel`;
+- the closure comment renders a **Jury panel:** line — `panel unavailable — a host bench of
+  the same size reviewed instead`, listing the seats, or `panel sat — the cross-vendor panel
+  reviewed this change` — followed, when the record carries a head, by
+  `<!-- keel.jury-panel.v1 head=… decision=… -->`, the machine-readable half a verification
+  surface elsewhere reads the run's decision from. **Every** panel decision renders the
+  line, `available` included: the marker is the run's record where the ledger cannot be
+  read, and a run that said nothing could not outrank an earlier ship of the same commit
+  that had. Only a run of a project with no panel posts the comment it always did, byte for
+  byte.
+
+That is the point: a reader can tell a jury-reviewed change from a fallback-reviewed one
+without re-deriving it. A panel that quietly collapses and still reports success is
+[ai-jury #682](https://github.com/berkayturanci/ai-jury/issues/682), and this must not
+reintroduce it on keel's side.
+
+**Availability is measured, never asserted.** There is no flag that says "the panel is
+fine", and #1014's rule survives intact: what may not take the panel off is an operator's
+*preference*. Availability is a fact about the world, and it is allowed to change the
+outcome precisely because it is recorded.
+
+**A surface that only verifies is pinned to what the ship measured.** The probe is right for
+a surface about to *dispatch* a panel and wrong for one checking evidence somebody else
+produced: `keel evidence-verify` and `keel merge` run wherever CI puts them, so re-measuring
+there would answer "could *this* runner convene a panel" when the question is "what was this
+change reviewed by". Both take the ship's decision instead, strongest source first:
+
+1. the `ship_run` ledger entry written for **this head** of that pull request
+   (`run_context.jury_panel`), which carries the decision the shipping run measured,
+   fallback included;
+2. failing that, the same decision read back off the **closure comment** that run posted
+   on the pull request, which carries `<!-- keel.jury-panel.v1 head=… decision=… -->`
+   beside its human `Jury panel:` line;
+3. failing that, a head-pinned `keel.jury-verdict.v1` posted on the pull request — the
+   panel sat, and the ballots prove it from the one place a bare runner can read.
+
+**The run's own record outranks the posted verdict, and the order is load-bearing.** The
+run's record says what *this run actually did*; a posted verdict says what somebody put on
+the pull request, which is not the same claim. A run that shipped under the fallback seated
+three host reviewers and owes `review-verdict-1..3`, and a leftover jury verdict at that
+same head — from an earlier ship of the commit, a force-push back onto it, or a
+collaborator who ran `jury` by hand — is not that run's review. Taking the verdict first
+dropped three required items on the strength of a comment no run had promised. A same-head
+record that says nothing about a panel is likewise the run speaking: it did not ship under
+one, and no comment may say otherwise on its behalf.
+
+**With one exception, and it is the difference between a `null` and a missing key.** A row
+this feature wrote always carries `run_context.jury_panel`, because keel always writes the
+key — `null` there is the run answering "this tier named no panel", and it silences the two
+lower sources. A ledger row written *before* #1066 has no such key at all: missing
+vocabulary, not a statement. Silencing on its behalf would answer a question that run was
+never asked, so on a workstation still carrying one, a change the panel really did jury
+would have had its posted ballots ignored and `review-verdict-1..3` demanded by a probe of
+the local machine. Those rows fall through to the closure comment and then to the ballots,
+exactly as they did before #1066 existed.
+
+**Why the closure comment is a source at all.** The ledger is the stronger copy and it does
+not travel: `.keel/state/` is gitignored, so a hosted `evidence-verify` or `merge` — the CI
+check, or any machine other than the one that shipped — has no same-head record to read, and
+the precedence above would hold on the shipping workstation and nowhere else. The closure
+comment is the *same statement*, rendered from that same record, in the one place that goes
+with the pull request. It is read only from a trusted author (the same fail-closed
+`author_association` check a posted verdict gets — keel posts it on the operator's behalf,
+which is that authority and no more), only inside an actual closure comment, and only when
+its marker names the head under verification.
+
+**Both run-record sources select the *latest* record for the head, and that direction is
+itself the rule.** One head can be shipped more than once — a re-run, a force-push back onto
+the commit, a second ship on another machine — and each ship writes a ledger row and posts a
+closure comment. The ledger source keeps the **last** matching row (records are appended
+chronologically); the closure source keeps the **last** matching comment (GitHub returns
+them oldest first). They have to agree about *which ship they are quoting*, or ranking them
+against each other means nothing: the machine with a ledger would answer for the newest ship
+and the machine without it for the oldest. Reading the closure comments first-match did
+exactly that, and a run whose panel sat rendered no marker to outrank the older one with —
+so a commit shipped once under the fallback and again where the panel convened left one
+marker saying `fallback`, and CI pinned the host-bench contract onto a panel-reviewed
+change. Every panel decision now renders its marker, `available` included, and both sources
+are last-wins.
+
+Only with no record of the run's own *and* no posted verdict does the verification surface
+probe on its own, which is what it did before. The published record says which it was:
+`availability.source` is `probe`, `pull-request`, `run-ledger` or `closure-comment`, and a
+pinned record carries `probed: false` — "we were told" and "we checked" are not the same
+claim. The whole precedence lives in one function, `keel.juryavail.pin`;
+`keel.cli._shipped_jury_availability` only reads the three artifacts and hands them over.
+
+**Every source is pinned to the exact head, and none is read without one.** A pull
+request outlives its heads, so a ship of an earlier head may not answer for the head being
+verified now — that would be a stale run relaxing a live gate, since a pin can take
+`review-verdict-1..3` off the required set outright. A run that could not resolve a head at
+all — a detached checkout, an API answer with no `headRefOid` — therefore pins *nothing*
+from either source and measures its own machine, the same answer a record from another head
+already got.
+
+Two machines can still resolve the *same tier* differently when they are each about to
+dispatch — a CI runner with no agent CLI plans a fallback where a workstation plans the
+panel — and each says which it did rather than quietly claiming the other's provenance. What
+they can no longer do is disagree about a change that has already been reviewed. The residue
+is narrow and fails closed: a fallback-shipped change verified, with no readable ledger, on a
+machine that *can* staff the panel is held to the panel it did not run.
+
+**`config_hash`.** `on_unavailable` is absent from the canonical `team` block when it is
+unset, like every other optional field there, so a project that never names the setting
+keeps the `config_hash` it had before the setting existed. Writing it explicitly — even as
+`fallback`, the value it would default to — is a config change and rotates the hash, which
+is the guarantee `knobs.team` has made since #1014: the hash changes *iff* `team` does.
 
 **Tier keys are quoted strings** (`"1"`, `"2"`, `"3"`). YAML reads a bare `1:` as an
 integer key, which a JSON schema cannot describe; keel says so instead of accepting it and

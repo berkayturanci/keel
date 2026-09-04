@@ -40,7 +40,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from keel import cli
+from keel import cli, juryavail
 from keel.runner import CommandResult
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -89,6 +89,32 @@ _REAL_DETECT = None
 _PATCHES: list = []
 
 
+#: A canned `keel doctor --providers` report in which the panel *is* staffable (#1066).
+#: s7 probes provider availability before it dispatches a jury panel, and the probe is the
+#: one machine-dependent input to the reviewer bench — so an offline suite has to supply
+#: it, or these tests would resolve a different bench on a laptop with three agent CLIs
+#: than on a CI runner with none.
+STAFFED_PANEL_REPORT = {
+    "schema_version": "keel.providers.v1",
+    "providers": [
+        {"name": "claude", "vendor": "claude", "available": True, "reason": "/usr/bin/claude"},
+        {"name": "codex", "vendor": "codex", "available": True, "reason": "/usr/bin/codex"},
+    ],
+    "available": 2,
+    "total": 2,
+}
+
+
+def _staffed_panel_probe(_config=None, **_kwargs):
+    return dict(STAFFED_PANEL_REPORT)
+
+
+#: …and the `jury` binary s7 would dispatch. The probe asks the runner as well as the
+#: inventory (#1066 round 2), so both halves come from memory or the bench would move with
+#: whether this machine happens to have ai-jury installed.
+STAFFED_RUNNER = juryavail.Runner(True, "/usr/bin/jury (ai-jury 1.16.0)")
+
+
 def setUpModule():
     global _REAL_DETECT
     from keel import runtime
@@ -103,6 +129,8 @@ def setUpModule():
             patch("keel.cli.run_argv", _recording_run_argv),
             patch("keel.git.run_argv", _recording_run_argv),
             patch("keel.github.run_argv", _recording_run_argv),
+            patch("keel.providerprobe.collect", _staffed_panel_probe),
+            patch("keel.providerprobe.probe_jury_runner", lambda **_kw: STAFFED_RUNNER),
         ]
     )
     for entry in _PATCHES:

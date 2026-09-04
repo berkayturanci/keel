@@ -188,7 +188,8 @@
               "description": "Cross-vendor jury policy.",
               "properties": {
                 "mode": { "enum": ["gating", "advisory"], "description": "How an enabled jury lands: 'gating' blocks the merge on a blocking verdict, 'advisory' reports only. It can soften an enabled jury; it never enables one." },
-                "min_vendors": { "type": "integer", "minimum": 2, "description": "Distinct vendors the panel needs before its verdict gates; below it a gating jury is downgraded to advisory. Raises keel's floor of 2, never lowers it." }
+                "min_vendors": { "type": "integer", "minimum": 2, "description": "Distinct vendors the panel needs before its verdict gates; below it a gating jury is downgraded to advisory. Raises keel's floor of 2, never lowers it." },
+                "on_unavailable": { "enum": ["fallback", "block"], "description": "What a tier whose review is the panel does when the probe finds the panel cannot be staffed here (an agent CLI missing, unauthenticated, or out of quota). 'fallback' (the default) seats a host bench of the same size and records why; 'block' refuses the run. Availability is measured runner-first and never asserted by a flag: keel asks the panel s7 would dispatch (jury --doctor --json, ai-jury's own readiness document, which is also how the binary identifies itself) and falls back to the inventory keel doctor --providers prints only for a runner that answers but names no agents." }
               }
             },
             "fix": {

@@ -575,6 +575,7 @@ def resolve_cluster_assignment(
     *,
     config: ProjectConfig | None = None,
     overrides: AssignmentOverrides | None = None,
+    jury_availability: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Who runs this cluster: :func:`keel.team.resolve_assignment`, per cluster.
 
@@ -582,6 +583,14 @@ def resolve_cluster_assignment(
     other command calls, with *this cluster's* role, risk tier and difficulty band — so a
     cluster's lead can hand the assignment straight to ``keel ship`` and the child run
     resolves the same team from the same config.
+
+    ``jury_availability`` is the s7 panel probe (#1066), measured once per plan by
+    :func:`keel.providerprobe.jury_availability_for_any_tier` and passed in rather than taken
+    here: this module is pure, and the measurement is the one machine-dependent input the
+    resolver has. Passing it is not optional in spirit — without it a swarm on a panel
+    project publishes ``review_panel: jury`` for a tier-3 cluster while the child ``keel
+    ship`` it launches on the same machine seats three host reviewers, which is exactly the
+    in-process disagreement #1066 closed one layer down.
     """
     settings = overrides or AssignmentOverrides()
     policy = config.knobs.team if config is not None else team_policy.TeamPolicy()
@@ -598,6 +607,7 @@ def resolve_cluster_assignment(
         difficulty=difficulty.band,
         team_profile=settings.team_profile,
         effort=settings.effort,
+        jury_availability=jury_availability,
     )
     # A role keel will not hand to a child is an operator-visible fact, not a silent
     # omission: `assignment.warnings` is where a lead is told to look before launching.
@@ -700,6 +710,7 @@ def build_swarm_plan(
     swarm_id: str | None = None,
     config: ProjectConfig | None = None,
     overrides: AssignmentOverrides | None = None,
+    jury_availability: Mapping[str, Any] | None = None,
 ) -> SwarmPlan:
     """Deterministically partition candidate issues into orthogonal Waves and Clusters.
 
@@ -709,6 +720,9 @@ def build_swarm_plan(
     independently reviewable: re-staffing a backlog — a new ``team.by_difficulty`` row, a
     ``--team`` profile, a ``--delegate`` — moves who runs a cluster and cannot move which
     wave it lands in.
+
+    ``jury_availability`` rides through to every cluster's staffing (#1066); it is measured
+    once, by the caller, because it is a fact about the machine and not about a cluster.
     """
     if not issue_scopes:
         now_id = swarm_id or (
@@ -811,7 +825,11 @@ def build_swarm_plan(
                 replace(
                     cluster,
                     assignment=resolve_cluster_assignment(
-                        cluster, difficulty, config=config, overrides=overrides
+                        cluster,
+                        difficulty,
+                        config=config,
+                        overrides=overrides,
+                        jury_availability=jury_availability,
                     ),
                 )
             )
