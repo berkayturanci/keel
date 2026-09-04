@@ -2240,6 +2240,7 @@ never one copy per agent (that would re-introduce file-copy drift):
 | `skills` | `.agents/skills/keel-<cmd>/SKILL.md` | **every non-Claude agent** (Codex, Antigravity, Gemini, …) via its skill discovery / chat-command wrapper — **one shared copy** |
 | `all` | both of the above | |
 | `plugin` | `commands/<cmd>.md` (repo root) | the committed [Claude Code plugin](plugin.md) — `/plugin install keel` exposes `/keel:<cmd>` |
+| `site` | `website/params.js` (repo root) | the static site's `window.KEEL_ARGS` — each command's description, `argument-hint` and flag chips |
 
 ```bash
 keel install-adapter claude          # → /keel:ship, /keel:regression, …
@@ -2247,12 +2248,21 @@ keel install-adapter skills          # → one shared keel-<cmd> skill set under
 keel install-adapter all             # both surfaces
 keel install-adapter claude --force  # overwrite existing adapters
 keel install-adapter plugin          # regenerate the committed plugin command files (commands/)
+keel install-adapter site            # regenerate the site's argument surface (website/params.js)
 ```
 
 The `plugin` target is **repo-level**, not per-project: it regenerates the committed
 `commands/<cmd>.md` files that the Claude Code plugin ships (see [plugin.md](plugin.md)).
 `make plugin` is the same command; a drift test fails if the committed files diverge from the
 `src/keel/adapters/commands/` source bodies.
+
+The `site` target is repo-level for the same reason: it renders `website/params.js` out of the
+same frontmatter, and `make site-params` is the same command. Every published field is derived
+— `desc` is the frontmatter `description`, `hint` is its `argument-hint`, and the flag chips
+are that hint's top-level `[...]` groups — so the file has no hand-maintained region, and
+`tests/test_install.py::TestSiteParamsGenerator` fails if the committed copy is not
+byte-identical to the generator's output. Neither repo-level target is written by
+`install-adapter all`, which installs the per-project surfaces only.
 
 The `skills` surface is a **single** universal skill set (`keel-<cmd>`), not a dir per agent:
 non-Claude agents all read `.agents/skills/`, so one copy serves Codex, Antigravity and Gemini

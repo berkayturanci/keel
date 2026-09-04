@@ -297,12 +297,18 @@ class TestTheSiteStatesTheRealBackboneShape(unittest.TestCase):
 class TestTheSiteArgumentHintsAreTheAdapters(unittest.TestCase):
     """`website/params.js` opens with "generated from src/keel/adapters/commands frontmatter".
 
-    No generator exists — the file is hand-maintained under a comment claiming it is not,
-    which is the most reliable way to drift. It already had: `/keel:swarm` advertising
-    `--rebalance` and `--landing <batch|funnel|auto>` (the adapter body defines and acts
-    on neither) plus a `--dry-run` the frontmatter never listed, while the two flags the
-    body *does* branch on were absent. Comparing the file to its stated source is the
-    check the comment implies and nothing performed.
+    For a long time no generator existed — the file was hand-maintained under a comment
+    claiming it was not, which is the most reliable way to drift. It had: `/keel:swarm`
+    advertising `--rebalance` and `--landing <batch|funnel|auto>` (the adapter body defines
+    and acts on neither) plus a `--dry-run` the frontmatter never listed, while the two flags
+    the body *does* branch on were absent; later a `--review-delegate` hint change never
+    reached the site at all.
+
+    `keel.install.site_params_files()` now renders the file (issue #1051, `make site-params`),
+    and `tests/test_install.py::TestSiteParamsGenerator` locks the committed copy byte-for-byte
+    against that generator. These checks are kept as the independent second opinion: they read
+    the frontmatter with their own regexes rather than through the generator, so a bug in the
+    generator cannot make them vacuous the way a shared helper would.
     """
 
     def _site_args(self) -> dict[str, dict]:

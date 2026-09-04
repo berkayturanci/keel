@@ -16,6 +16,7 @@ never one copy per agent (that would re-introduce the very file-copy drift keel 
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -41,6 +42,17 @@ PLUGIN_MANIFEST = ".claude-plugin/plugin.json"
 PLUGIN_MARKETPLACE = ".claude-plugin/marketplace.json"
 #: the committed Codex plugin manifest — same shape, reuses the same ./skill.
 CODEX_PLUGIN_MANIFEST = ".codex-plugin/plugin.json"
+
+#: the static site's published argument surface, generated from the same frontmatter.
+SITE_PARAMS_PATH = "website/params.js"
+#: the header the generated ``params.js`` opens with. It must contain no ``=``: the site's
+#: own drift check parses the file by splitting on the first one.
+SITE_PARAMS_HEADER = (
+    "/* generated from src/keel/adapters/commands frontmatter — do not hand-edit.\n"
+    "   Regenerate with `make site-params` (keel install-adapter site --root .). */"
+)
+#: the global the site's renderers read the argument surface from.
+SITE_PARAMS_GLOBAL = "window.KEEL_ARGS"
 
 #: the logical install surfaces (``all`` fans over these).
 TARGETS: tuple[str, ...] = ("claude", "skills")
@@ -487,6 +499,99 @@ def install_plugin(
     installed: list[str] = []
     skipped: list[str] = []
     for rel, content in plugin_files(_src=_src).items():
+        dest = root_path / rel
+        existing = dest.read_text(encoding="utf-8") if dest.exists() else None
+        if existing == content and not force:
+            skipped.append(rel)
+            continue
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(content, encoding="utf-8")
+        installed.append(rel)
+    return installed, skipped
+
+
+def hint_flags(hint: str) -> list[str]:
+    """Split an ``argument-hint`` into the flag chips the site renders (pure).
+
+    A hint is a sequence of bracketed groups — ``"[issue numbers...] [--tdd] [--dry-run]"`` —
+    and each top-level group is one chip. Brackets nested inside a group belong to that group
+    (they are part of a placeholder, not a chip of their own), text outside any bracket is
+    prose rather than an argument, and an empty or unclosed group yields nothing. The chips
+    were hand-typed before this function existed, which is how the ``ship`` card grew a
+    ``--compound`` chip its own hint had already folded into ``--compound|--profile``.
+    """
+    flags: list[str] = []
+    depth = 0
+    start = 0
+    for index, char in enumerate(hint):
+        if char == "[":
+            if depth == 0:
+                start = index + 1
+            depth += 1
+        elif char == "]" and depth:
+            depth -= 1
+            if depth == 0:
+                chip = hint[start:index].strip()
+                if chip:
+                    flags.append(chip)
+    return flags
+
+
+def site_params_entry(adapter_text: str) -> dict[str, object]:
+    """Render one command's site entry from its adapter frontmatter (pure).
+
+    Every published field is derived: ``desc`` is the frontmatter ``description``, ``hint`` is
+    its ``argument-hint``, and ``flags`` is that hint split into chips. Whitespace is collapsed
+    so a folded YAML scalar publishes as the one line the site renders.
+    """
+    meta, _body = _split_frontmatter(adapter_text)
+    hint = " ".join(str(meta.get("argument-hint", "")).split())
+    return {
+        "desc": " ".join(str(meta.get("description", "")).split()),
+        "hint": hint,
+        "flags": hint_flags(hint),
+    }
+
+
+def render_site_params(entries: dict[str, dict[str, object]]) -> str:
+    """Render ``website/params.js`` from ``command -> entry`` (pure).
+
+    The site reads the object by key, so the ordering is free; commands are emitted in the
+    order given (the caller sorts by adapter filename, the same rule every other generated
+    surface uses) to keep the output byte-stable.
+    """
+    body = json.dumps(entries, indent=1, ensure_ascii=False)
+    return f"{SITE_PARAMS_HEADER}\n{SITE_PARAMS_GLOBAL} = {body};\n"
+
+
+def site_params_files(*, _src: Path | None = None) -> dict[str, str]:
+    """Render the committed site argument surface (``website/params.js``).
+
+    Returns a mapping of relative path → file content, generated from the same
+    ``adapters/commands/*.md`` frontmatter that drives every other surface — so the header
+    the file has always carried is finally true. A drift test asserts the committed file is
+    byte-identical to this output.
+    """
+    src = _src or ADAPTERS
+    entries = {
+        f.stem: site_params_entry(f.read_text(encoding="utf-8")) for f in sorted(src.glob("*.md"))
+    }
+    return {SITE_PARAMS_PATH: render_site_params(entries)}
+
+
+def install_site_params(
+    root: str | Path, *, force: bool = False, _src: Path | None = None
+) -> tuple[list[str], list[str]]:
+    """Write the generated ``website/params.js`` into ``root`` (idempotent).
+
+    Used by ``keel install-adapter site`` and ``make site-params``. Like the plugin surface
+    this writes a repo-level file, not a per-project one, so it is never installed by
+    ``install-adapter all``.
+    """
+    root_path = Path(root)
+    installed: list[str] = []
+    skipped: list[str] = []
+    for rel, content in site_params_files(_src=_src).items():
         dest = root_path / rel
         existing = dest.read_text(encoding="utf-8") if dest.exists() else None
         if existing == content and not force:

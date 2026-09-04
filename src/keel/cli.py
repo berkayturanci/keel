@@ -5378,13 +5378,22 @@ def _cmd_install_adapter(args: argparse.Namespace) -> int:
             "install via /plugin marketplace add berkayturanci/keel; /plugin install keel"
         )
         return 0
+    if args.agent == "site":
+        installed, skipped = install.install_site_params(args.root, force=args.force)
+        _report_install("site", installed, skipped)
+        print(
+            f"{len(installed)} site file(s) written — "
+            f"{install.SITE_PARAMS_PATH} now matches the adapter frontmatter"
+        )
+        return 0
     if args.agent == "all":
         results = install.install_all(args.root, force=args.force)
     elif args.agent in install.TARGETS:
         results = {args.agent: install.install(args.agent, args.root, force=args.force)}
     else:
         print(
-            f"unknown target {args.agent!r}; valid: all, plugin, {', '.join(install.TARGETS)}",
+            f"unknown target {args.agent!r}; "
+            f"valid: all, plugin, site, {', '.join(install.TARGETS)}",
             file=sys.stderr,
         )
         return 1
@@ -7964,7 +7973,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_setup.set_defaults(func=_cmd_setup)
 
     p_ia = sub.add_parser("install-adapter", help="install the /keel:<command> adapters")
-    p_ia.add_argument("agent", help=f"'all', 'plugin', or one of: {', '.join(install.TARGETS)}")
+    p_ia.add_argument(
+        "agent", help=f"'all', 'plugin', 'site', or one of: {', '.join(install.TARGETS)}"
+    )
     p_ia.add_argument("--root", default=".", help="project root to install into")
     p_ia.add_argument("--force", action="store_true", help="overwrite existing adapters")
     p_ia.set_defaults(func=_cmd_install_adapter)

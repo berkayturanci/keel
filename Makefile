@@ -9,6 +9,9 @@
 #                  (.claude/commands/keel/ + the shared .agents/skills/keel-* skill set)
 #   make plugin    regenerate the committed Claude Code plugin command files (commands/*.md)
 #                  from src/keel/adapters/commands/ — the drift test locks these byte-for-byte
+#   make site-params
+#                  regenerate website/params.js (the site's argument hints + flag chips) from
+#                  the same adapter frontmatter — also locked byte-for-byte by a drift test
 #   make release-check
 #                  refuse a release that does not agree with itself: CHANGELOG top
 #                  released section == declared version, every release surface in
@@ -39,7 +42,7 @@ PY = $(error no usable Python — see the find_python message above, or set PY=/
 endif
 endif
 
-.PHONY: test lint coverage validate site adapters plugin release-check release-bump doctor-python clean
+.PHONY: test lint coverage validate site site-params adapters plugin release-check release-bump doctor-python clean
 
 test:
 	PYTHONPATH=src $(PY) -m unittest discover -s tests -v
@@ -65,6 +68,9 @@ adapters:
 
 plugin:
 	PYTHONPATH=src $(PY) -m keel install-adapter plugin --root . --force
+
+site-params:
+	PYTHONPATH=src $(PY) -m keel install-adapter site --root . --force
 
 release-check:
 	$(PY) scripts/release_check.py

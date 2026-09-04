@@ -1,5 +1,6 @@
 """Unit tests for `keel install-adapter` (packaged command adapters → two surfaces)."""
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -695,6 +696,133 @@ class TestClaudeCodePlugin(unittest.TestCase):
                 if term in text:
                     offenders.append(f"{path.name}: {term}")
         self.assertEqual(offenders, [])
+
+
+class TestSiteParamsGenerator(unittest.TestCase):
+    """`website/params.js` is generated, not hand-synced (issue #1051).
+
+    The file has opened with "generated from src/keel/adapters/commands frontmatter" since it
+    was written, with no generator in the tree. It drifted twice under that comment — a
+    `--review-delegate` hint change that never reached the site, and a `--compound` flag chip
+    the hint had already folded into `--compound|--profile`. These tests lock the generator's
+    pure part and assert the committed file is byte-identical to its output.
+    """
+
+    def _adapter(self, front: str) -> str:
+        return f"---\n{front}\n---\n\nbody\n"
+
+    def test_flags_are_the_hints_top_level_groups(self):
+        self.assertEqual(
+            install.hint_flags("[issue numbers...] [--tdd] [--dry-run]"),
+            ["issue numbers...", "--tdd", "--dry-run"],
+        )
+
+    def test_nested_brackets_stay_inside_their_chip(self):
+        self.assertEqual(
+            install.hint_flags("[--delegate <a[b]c>] [--tdd]"),
+            ["--delegate <a[b]c>", "--tdd"],
+        )
+
+    def test_prose_outside_brackets_is_not_a_chip(self):
+        self.assertEqual(install.hint_flags("usage [--tdd] trailing"), ["--tdd"])
+
+    def test_empty_and_unclosed_groups_yield_nothing(self):
+        self.assertEqual(install.hint_flags("[] [   ] [--unclosed"), [])
+
+    def test_a_stray_closing_bracket_is_ignored(self):
+        self.assertEqual(install.hint_flags("] [--tdd]"), ["--tdd"])
+
+    def test_an_entry_is_derived_from_the_frontmatter(self):
+        entry = install.site_params_entry(
+            self._adapter('description: Does a thing.\nargument-hint: "[n] [--dry-run]"')
+        )
+        self.assertEqual(
+            entry,
+            {"desc": "Does a thing.", "hint": "[n] [--dry-run]", "flags": ["n", "--dry-run"]},
+        )
+
+    def test_missing_frontmatter_fields_publish_empty_values(self):
+        entry = install.site_params_entry(self._adapter("allowed-tools: Read"))
+        self.assertEqual(entry, {"desc": "", "hint": "", "flags": []})
+
+    def test_folded_scalars_publish_as_one_line(self):
+        entry = install.site_params_entry(
+            self._adapter('description: >-\n  one\n  two\nargument-hint: "[--a]\\n  [--b]"')
+        )
+        self.assertEqual(entry["desc"], "one two")
+        self.assertEqual(entry["hint"], "[--a] [--b]")
+
+    def test_render_is_valid_javascript_assigning_the_site_global(self):
+        text = install.render_site_params({"ship": {"desc": "d", "hint": "", "flags": []}})
+        self.assertTrue(text.startswith(install.SITE_PARAMS_HEADER))
+        self.assertTrue(text.endswith(";\n"))
+        self.assertIn(f"{install.SITE_PARAMS_GLOBAL} = ", text)
+        payload = json.loads(text.split("=", 1)[1].strip().rstrip(";"))
+        self.assertEqual(payload, {"ship": {"desc": "d", "hint": "", "flags": []}})
+
+    def test_the_header_carries_no_equals_sign(self):
+        """The site's own drift check parses the file by splitting on the first `=`."""
+        self.assertNotIn("=", install.SITE_PARAMS_HEADER)
+
+    def test_generated_entries_are_sorted_by_adapter_filename(self):
+        names = list(
+            json.loads(
+                install.site_params_files()[install.SITE_PARAMS_PATH]
+                .split("=", 1)[1]
+                .strip()
+                .rstrip(";")
+            )
+        )
+        self.assertEqual(names, sorted(p.stem for p in install.ADAPTERS.glob("*.md")))
+
+    def test_committed_site_params_matches_generator(self):
+        """Drift guard: the committed `website/params.js` must equal the generator output."""
+        for rel, expected in install.site_params_files().items():
+            path = REPO_ROOT / rel
+            self.assertTrue(path.exists(), f"missing: {rel}")
+            self.assertEqual(
+                path.read_text(encoding="utf-8"),
+                expected,
+                "run `make site-params` to regenerate the site's argument surface",
+            )
+
+    def test_install_site_params_is_idempotent_and_force_rewrites(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            installed, skipped = install.install_site_params(root)
+            self.assertEqual(installed, [install.SITE_PARAMS_PATH])
+            self.assertEqual(skipped, [])
+            again_installed, again_skipped = install.install_site_params(root)
+            self.assertEqual(again_installed, [])
+            self.assertEqual(again_skipped, [install.SITE_PARAMS_PATH])
+            params = root / install.SITE_PARAMS_PATH
+            params.write_text("local edit\n", encoding="utf-8")
+            forced_installed, forced_skipped = install.install_site_params(root, force=True)
+            self.assertEqual(forced_installed, [install.SITE_PARAMS_PATH])
+            self.assertEqual(forced_skipped, [])
+            self.assertNotEqual(params.read_text(encoding="utf-8"), "local edit\n")
+
+    def test_install_site_params_rewrites_a_drifted_file_without_force(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            install.install_site_params(root)
+            params = root / install.SITE_PARAMS_PATH
+            params.write_text("drifted\n", encoding="utf-8")
+            installed, _skipped = install.install_site_params(root)
+            self.assertEqual(installed, [install.SITE_PARAMS_PATH])
+            self.assertNotEqual(params.read_text(encoding="utf-8"), "drifted\n")
+
+    def test_a_custom_source_dir_drives_the_output(self):
+        with tempfile.TemporaryDirectory() as d:
+            src = Path(d)
+            (src / "solo.md").write_text(
+                self._adapter('description: Solo.\nargument-hint: "[--only]"'), encoding="utf-8"
+            )
+            text = install.site_params_files(_src=src)[install.SITE_PARAMS_PATH]
+            payload = json.loads(text.split("=", 1)[1].strip().rstrip(";"))
+            self.assertEqual(
+                payload, {"solo": {"desc": "Solo.", "hint": "[--only]", "flags": ["--only"]}}
+            )
 
 
 class TestDefaultKnownCommands(unittest.TestCase):

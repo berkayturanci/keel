@@ -24,8 +24,12 @@ flow keeps working.
   summary, body, optional `source` link). It automatically appears in the docs sidebar,
   search, and the page. No HTML edits needed.
 - **Add/edit a command** → `KEEL.commands[]` (slug, name, group, one, detail, scene)
-  plus its flags in `params.js` (`KEEL_ARGS`, generated from the frontmatter of
-  `src/keel/adapters/commands/*.md`). The showcase tab, scene, and docs table follow.
+  plus its flags in `params.js` (`KEEL_ARGS`). The showcase tab, scene, and docs table follow.
+  **`params.js` is generated, not edited**: run `make site-params` (equivalently
+  `keel install-adapter site --root .`) and commit the result — it is rendered from the
+  frontmatter of `src/keel/adapters/commands/*.md`, and
+  `tests/test_install.py::TestSiteParamsGenerator` fails if the committed file is not
+  byte-identical to the generator's output.
   If the command count changes, also update the static spots that spell it out: the
   Overview stat card and the commands kicker in `index.html`, the sidebar badge in
   `index.html` + `docs.html` + `coverage.html`, the `og:`/`twitter:` image alt text on
