@@ -363,10 +363,10 @@ def _review_seats(
 
     **The bench is a pure function of config + tier + role + the explicit ``--reviewers``
     and ``--review-delegate`` overrides, and of nothing else.** In particular it does not
-    depend on the jury flags. It cannot: the six commands that resolve a review contract
-    do not all receive them — ``keel review`` has no ``--no-jury`` at all, and keel's CI
-    passes ``--no-jury`` to ``evidence-verify`` on every run while passing it to neither
-    ``ship`` nor ``plan``. A bench that moved with that flag would have ``plan`` requiring
+    depend on the jury flags. It cannot: every surface accepts them since #1043, but
+    nothing makes a *run* pass them uniformly — keel's CI passes ``--no-jury`` to
+    ``evidence-verify`` on every run while passing it to neither ``ship`` nor ``plan``.
+    A bench that moved with that flag would have ``plan`` requiring
     a jury verdict from zero reviewers while ``evidence-verify`` demanded three host
     verdicts of the same PR, which is the same contract disagreement in a new place.
 

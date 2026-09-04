@@ -1930,9 +1930,10 @@ and `keel ship --json`:
 The bench is a pure function of **config + tier + role + `--reviewers` +
 `--review-delegate`**, and of nothing else — in particular not of the jury flags. It has to
 be: `keel ship`, `keel plan`, `keel review`, `keel step-verify`, `keel evidence-verify` and
-`keel merge` all resolve this contract and do not all receive the same flags (`keel review`
-has no `--no-jury` at all), so a bench that moved with one would make the gate demand
-verdicts the ship run told the adapter never to produce.
+`keel merge` all resolve this contract and all accept the same jury flags (#1043), but
+nothing makes a run *pass* them uniformly — keel's CI passes `--no-jury` to
+`evidence-verify` on every run and to `ship`/`plan` on none — so a bench that moved with one
+would make the gate demand verdicts the ship run told the adapter never to produce.
 
 `keel plan` takes `--tier` (plus `--role` / `--delegate` / `--review-delegate`) to render
 the assignment for a tier before a diff exists; `keel ship` resolves it against the tier it
