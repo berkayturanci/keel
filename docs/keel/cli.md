@@ -721,7 +721,15 @@ Precedence and failure modes:
 - a verdict that omits the field, sits on a stale head, or comes from an untrusted author
   is **not** read — the count stays undeclared and the jury mode is left alone. Only a
   verdict that actually states the panel size may relax the gate;
-- a non-numeric or negative value is rejected the same way.
+- a non-numeric or negative value is rejected the same way;
+- **and a run that resolved no head reads no count at all** (#1069). `--head-sha` defaults
+  to unset, and offline nothing fills it in; every other evidence reader treats an unknown
+  head as "do not filter", which is right where the gate is head-agnostic end to end and
+  wrong here. This is the one reader whose answer can *remove* a requirement, so it takes
+  the panel pins' rule — `keel.juryavail.is_pinnable_head`, an exact commit or nothing —
+  and a `vendors: 1` verdict posted against an earlier head can no longer make the current
+  head's jury advisory. `panelists:` deliberately keeps the permissive reading, because
+  `max(declared, jury.min_vendors)` can only ever raise the bar.
 
 `0` is a real answer, not a missing one: it is the run where no agent returned output, and
 it must downgrade rather than read as "unknown".

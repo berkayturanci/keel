@@ -33,7 +33,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from keel import cli, closure, evidence, juryavail, ledger, providerprobe, runtime, ship
+from keel import artifacts, cli, closure, evidence, juryavail, ledger, providerprobe, runtime, ship
 from keel import config as cfg
 from keel import team as team_policy
 
@@ -2214,6 +2214,123 @@ class TestTheContractIsPinnedToTheShipsMeasurement(unittest.TestCase):
         with self.assertRaises(ledger.LedgerError):
             cli._evidence_ledger_record(args, config)
         self.assertIsNone(cli._merge_ledger_record(args, config))
+
+
+#: A plain tier-3 project: no `knobs.team` at all, so the jury is on by `tier-3 auto` and
+#: sits *beside* a host bench rather than being the review. That is the one shape where
+#: `resolve_jury`'s participating-vendor downgrade applies (#1069) — on a panel tier it is
+#: suppressed — and the probe never fires for it, so nothing here is machine-dependent.
+BESIDE_BENCH_CONFIG = """
+extends: keel
+core_version: "^1.0"
+base_branch: main
+owner: acme
+repo: widget
+knobs:
+  build_gate_cmd: "true"
+  tier3_globs: ["src/**"]
+"""
+
+
+class TestAStaleVendorCountCannotRelaxAGate(unittest.TestCase):
+    """The third head-comparison site #1068 named and left alone (#1069).
+
+    `evidence._matches_head` reads a blank head as *do not filter*, which is right for the
+    two panel-shaped readers that cannot remove a requirement and wrong for the one that
+    can: `jury_participating_vendors` downgrades a gating jury to advisory below
+    `jury.min_vendors` (#1015), and a downgraded jury drops `jury-verdict` from the
+    required evidence entirely.
+
+    Reachable on the surface a project actually runs in CI. `keel evidence-verify`'s
+    `--head-sha` defaults to `None`, and offline — the mode a fixture-driven check uses —
+    nothing fills it in. A `vendors: 1` verdict posted against an earlier head of the same
+    pull request then answered for a head this run never resolved.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = pathlib.Path(self._tmp.name)
+        (self.root / "empty.json").write_text("[]", encoding="utf-8")
+        (self.root / "body.md").write_text("Closes #1", encoding="utf-8")
+        path = self.root / "project.yaml"
+        path.write_text(BESIDE_BENCH_CONFIG, encoding="utf-8")
+        self.config = str(path)
+
+    def _stale_verdict(self, *, head="three-heads-ago", vendors=1):
+        """A trusted jury verdict for an *earlier* head, declaring a short panel."""
+        body = artifacts.render_jury_verdict(
+            head_sha=head, participants=(), participating_vendors=vendors
+        )
+        path = self.root / "pr-comments.json"
+        path.write_text(
+            json.dumps([{"body": body, "author_association": "MEMBER"}]), encoding="utf-8"
+        )
+        return str(path)
+
+    def _required(self, *, head_args, comments):
+        argv = [
+            "evidence-verify",
+            self.config,
+            "--root",
+            str(self.root),
+            "--pr",
+            "1",
+            "--changed-file",
+            "src/a.py",
+            *head_args,
+            "--pr-label",
+            "keel:ship",
+            "--pr-body-file",
+            str(self.root / "body.md"),
+            "--pr-comments-json",
+            comments,
+            "--issue-comments-json",
+            str(self.root / "empty.json"),
+            "--pr-reviews-json",
+            str(self.root / "empty.json"),
+            "--json",
+        ]
+        rc, out, err = run(argv)
+        self.assertIn(rc, (0, 1), err)
+        return [item["id"] for item in json.loads(out)["contract"]["required"]]
+
+    def test_a_verdict_for_an_earlier_head_cannot_downgrade_this_ones_jury(self):
+        """The `--head-sha` a project's CI omits, which is the default."""
+        comments = self._stale_verdict()
+
+        self.assertIn("jury-verdict", self._required(head_args=[], comments=comments))
+        self.assertIn(
+            "jury-verdict", self._required(head_args=["--head-sha", ""], comments=comments)
+        )
+
+    def test_the_gate_is_unchanged_where_a_head_was_resolved(self):
+        """Both directions of the exact match, so the guard is not a blanket refusal.
+
+        A stale verdict is refused at a resolved head (it always was — `_matches_head` is
+        exact once a head is known), and a verdict *for* that head still relaxes the gate,
+        which is #1015's behaviour and stays.
+        """
+        self.assertIn(
+            "jury-verdict",
+            self._required(
+                head_args=["--head-sha", "current-head"], comments=self._stale_verdict()
+            ),
+        )
+        self.assertNotIn(
+            "jury-verdict",
+            self._required(
+                head_args=["--head-sha", "current-head"],
+                comments=self._stale_verdict(head="current-head"),
+            ),
+        )
+
+    def test_the_jury_gates_when_no_verdict_says_otherwise(self):
+        """The control: a tier-3 change with nothing posted requires the verdict."""
+        required = self._required(head_args=[], comments=str(self.root / "empty.json"))
+
+        self.assertIn("jury-verdict", required)
+        self.assertIn("review-verdict-3", required)
 
 
 #: One head, shipped more than once. Every test below is about which of those ships gets
