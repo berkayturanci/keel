@@ -20,7 +20,7 @@ def _commit(sha, *files, subject="work", merge=False, status=tdd.MODIFIED):
     changes = tuple(
         tdd.Change(*entry) if isinstance(entry, tuple) else tdd.Change(status, entry)
         for entry in files
-    )
+    )  # a pair is (status, path); a triple adds a rename source
     return tdd.Commit(sha=sha, subject=subject, changes=changes, merge=merge)
 
 
@@ -196,8 +196,14 @@ class TestParseCommits(unittest.TestCase):
         )
         commit = tdd.parse_commits(text)[0]
         self.assertEqual(
-            [(c.status, c.path) for c in commit.changes],
-            [("A", "tests/new.py"), ("D", "tests/old.py"), ("R", "tests/b.py")],
+            [(c.status, c.path, c.source) for c in commit.changes],
+            [
+                ("A", "tests/new.py", None),
+                ("D", "tests/old.py", None),
+                # The origin is kept: after a move out of the test tree it is the only
+                # mention of the test that was removed.
+                ("R", "tests/b.py", "tests/a.py"),
+            ],
         )
         # `present` is "the path exists after this commit" — everything but a delete, so a
         # rename counts as written rather than as removing its source.
@@ -233,7 +239,7 @@ class TestParseCommits(unittest.TestCase):
             {
                 "sha": "abc",
                 "subject": "test: a",
-                "changes": [{"status": "A", "path": "tests/a.py"}],
+                "changes": [{"status": "A", "path": "tests/a.py", "source": None}],
                 "files": ["tests/a.py"],
                 "merge": False,
             },
@@ -338,13 +344,87 @@ class TestCheckOrder(unittest.TestCase):
     def test_a_rename_counts_as_written_not_as_deleted(self):
         result = tdd.check_order(
             [
-                _commit("a" * 40, ("R", "tests/test_b.py")),
+                _commit("a" * 40, ("R", "tests/test_b.py", "tests/test_a.py")),
                 _commit("b" * 40, ("M", "src/x.py")),
             ],
             test_globs=TESTS,
             gates_green=True,
         )
         self.assertTrue(result.ok)
+
+    def test_renaming_a_test_out_of_the_test_tree_is_a_removal(self):
+        # `git mv tests/test_a.py src/legacy_test_a.py` is `git rm` wearing a rename: the
+        # suite that was red in phase A stops collecting the test either way, and the
+        # destination path alone cannot show it.
+        result = tdd.check_order(
+            [
+                _commit("a" * 40, ("A", "tests/test_a.py")),
+                _commit(
+                    "b" * 40,
+                    ("M", "src/x.py"),
+                    ("R", "src/legacy_test_a.py", "tests/test_a.py"),
+                ),
+            ],
+            test_globs=TESTS,
+            gates_green=True,
+        )
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, tdd.TESTS_DELETED)
+        # The *source* is named: it is the path that stopped being a test.
+        self.assertEqual(result.offending, ("tests/test_a.py",))
+        self.assertIn("renamed out of the test paths", result.message)
+
+    def test_a_rename_within_the_test_tree_stays_ordinary(self):
+        result = tdd.check_order(
+            [
+                _commit("a" * 40, ("A", "tests/test_a.py")),
+                _commit(
+                    "b" * 40,
+                    ("M", "src/x.py"),
+                    ("R", "tests/unit/test_a.py", "tests/test_a.py"),
+                ),
+            ],
+            test_globs=TESTS,
+            gates_green=True,
+        )
+        self.assertTrue(result.ok)
+
+    def test_a_copy_out_of_the_test_tree_is_not_a_removal(self):
+        # `C` leaves the source in place, so nothing was removed — unlike `R`.
+        result = tdd.check_order(
+            [
+                _commit("a" * 40, ("A", "tests/test_a.py")),
+                _commit("b" * 40, ("M", "src/x.py"), ("C", "src/copy.py", "tests/test_a.py")),
+            ],
+            test_globs=TESTS,
+            gates_green=True,
+        )
+        self.assertTrue(result.ok)
+
+    def test_renaming_a_non_test_path_out_is_ordinary_work(self):
+        result = tdd.check_order(
+            [
+                _commit("a" * 40, ("A", "tests/test_a.py")),
+                _commit("b" * 40, ("R", "src/new.py", "src/old.py")),
+            ],
+            test_globs=TESTS,
+            gates_green=True,
+        )
+        self.assertTrue(result.ok)
+
+    def test_a_first_commit_renaming_a_test_out_blocks_as_implementation_first(self):
+        # Rule 4 needs no change: the destination is not a test path, so the first-commit
+        # rule already refuses it — with the message that names the path to move.
+        result = tdd.check_order(
+            [
+                _commit("a" * 40, ("R", "src/legacy_test_a.py", "tests/test_a.py")),
+                _commit("b" * 40, ("M", "src/x.py")),
+            ],
+            test_globs=TESTS,
+            gates_green=True,
+        )
+        self.assertEqual(result.code, tdd.IMPLEMENTATION_FIRST)
+        self.assertEqual(result.offending, ("src/legacy_test_a.py",))
 
     def test_deleting_the_failing_tests_in_the_implementation_commit_blocks(self):
         result = tdd.check_order(

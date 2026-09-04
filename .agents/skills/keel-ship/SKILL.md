@@ -580,16 +580,18 @@ Rules for the two phases:
 - **Never weaken a test to make it pass, and never delete one.** If a criterion turns out
   to be wrong, say so in the PR body under `Testing` and change the *test* in a commit of
   its own with the reason — do not quietly delete an assertion in the implementation
-  commit. Deleting a test path after the tests commit is a **blocking** gate failure, not
-  a style note.
+  commit. Removing a test path after the tests commit is a **blocking** gate failure, not
+  a style note — deleting it and renaming it out of the test paths count the same, so
+  moving a test into the implementation tree does not get around the gate.
 - **Everything else about s4 is unchanged**: the same dispatch table, the same retry and
   fall-back policy, the same attribution, the same declared-scope self-check.
 
 At **s8** the pure `tdd-order` gate then verifies what actually happened, from the commit
 list and the path policy alone: the first non-merge commit on the branch touches only test
-paths **and adds or modifies at least one of them**, no later commit deletes a test, a
-later commit touches an implementation path, and the gate run is green. It is
-`on_fail: block` like `build`; its message names the offending paths, the deleted tests,
+paths **and adds or modifies at least one of them**, no later commit removes a test
+(deleted, or renamed out of the test paths), a later commit touches an implementation
+path, and the gate run is green. It is
+`on_fail: block` like `build`; its message names the offending paths, the removed tests,
 the test globs it matched against, or the missing half. A project whose `test_groups`
 declare no paths fails the gate closed rather than passing vacuously — declare
 `policy_pack.test_groups.<group>.test_paths` before asking for the profile.
@@ -1286,4 +1288,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=skills command=ship keel_version=1.19.3 source_sha256=e4086b979e2775c7bfa3b49fa8692822e903dc461e72e9dc94f5f5e8863dc826 generated_sha256=0d120e4ef3ad0146e0cfcff827a46e098d8183e0e24ad599dac480ec51b7f050 -->
+<!-- keel-generated: surface=skills command=ship keel_version=1.19.3 source_sha256=7cc76354564a2a3e420fa49e4775a147adffa3da92083731a93106b03d9e8ccd generated_sha256=c85025bcb6a7fcb32e53014c1c4b8c924782b815e10cc42c5a641e5a403eb2c3 -->

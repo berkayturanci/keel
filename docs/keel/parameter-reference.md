@@ -1326,8 +1326,8 @@ gated by the findings above`), so it wires directly into CI.
 Under `implement_mode: tdd` (or `--tdd`) the run also carries the pure **`tdd-order`**
 gate, evaluated **after** every other gate because its verdict includes theirs: it passes
 when the first non-merge commit on the branch touches only the project's test paths and
-adds or modifies at least one of them, no later commit deletes a test, a later commit
-touches an implementation path, and the rest of the gate run is green. It reads the branch
+adds or modifies at least one of them, no later commit removes a test (deleted or renamed
+out of the test paths), a later commit touches an implementation path, and the rest of the gate run is green. It reads the branch
 through one `git log --topo-order --first-parent --name-status` and decides in `keel.tdd`
 — order by ancestry, not by commit date, so integrating the base branch cannot make one of
 its commits the "first" one. It checks order and paths only, never whether phase A's tests

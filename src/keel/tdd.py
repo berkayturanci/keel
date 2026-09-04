@@ -179,6 +179,11 @@ class Change:
 
     status: str
     path: str
+    #: Where a rename or copy came *from*; ``None`` for every other status. Recorded
+    #: because a path that left the test tree is missing from ``path`` by construction:
+    #: after ``git mv tests/test_a.py src/legacy.py`` the only mention of the test is
+    #: here. :func:`check_order` needs it to tell a move-out from an ordinary rename.
+    source: str | None = None
 
     @property
     def deleted(self) -> bool:
@@ -213,7 +218,9 @@ class Commit:
         return {
             "sha": self.sha,
             "subject": self.subject,
-            "changes": [{"status": c.status, "path": c.path} for c in self.changes],
+            "changes": [
+                {"status": c.status, "path": c.path, "source": c.source} for c in self.changes
+            ],
             "files": list(self.files),
             "merge": self.merge,
         }
@@ -222,22 +229,24 @@ class Commit:
 def _change(line: str) -> Change | None:
     """One ``--name-status`` line -> a :class:`Change` (``None`` when it is not one).
 
-    A rename or copy prints ``R100<TAB>old<TAB>new``; the destination is the path that
-    exists afterwards, so that is the one recorded. **A rename is a move, not a
-    deletion** — renaming ``tests/test_a.py`` is not the evasion the deletion rule looks
-    for. The corollary, stated because it is a real boundary: renaming a test *out of*
-    the test tree is neither an added test nor a deleted one here, and stays a reviewer's
-    catch.
+    A rename or copy prints ``R100<TAB>old<TAB>new``. The destination is the path that
+    exists afterwards, so that is ``path``; the origin is kept as ``source``, because a
+    rename *out of* the test tree removes a test as surely as ``git rm`` does and the
+    destination alone cannot show it.
+
+    Deliberately glob-free: this turns git's output into records, and *which* paths are
+    tests is :func:`check_order`'s question against the project's policy.
     """
     fields = line.split("\t")
     if len(fields) < 2 or not fields[0].strip():
         return None
     status = fields[0].strip()[0].upper()
-    path = fields[2] if status in (RENAMED, COPIED) and len(fields) > 2 else fields[1]
-    path = path.strip()
+    renamed = status in (RENAMED, COPIED) and len(fields) > 2
+    path = (fields[2] if renamed else fields[1]).strip()
+    source = fields[1].strip() if renamed else None
     if not path:
         return None
-    return Change(status, path)
+    return Change(status, path, source or None)
 
 
 def parse_commits(text: str | None) -> tuple[Commit, ...] | None:
@@ -317,6 +326,28 @@ class OrderResult:
         }
 
 
+def removed_test(change: Change, globs: Sequence[str]) -> str | None:
+    """The test path this change *removed*, or ``None`` — deletions and moves-out.
+
+    Two spellings of the same act, and the gate has to see both. ``git rm
+    tests/test_a.py`` is the obvious one. ``git mv tests/test_a.py src/legacy_test_a.py``
+    is the same act wearing a rename: the test stops being collected by the suite that
+    was red in phase A, and the destination path alone cannot show it because the only
+    mention of the test is the rename's *source*.
+
+    A rename **within** the test tree is an ordinary move and stays fine. A **copy**
+    (``C``) is not a removal at all — its source still exists after the commit — so it is
+    excluded even when the destination lands outside the test tree.
+    """
+    if change.deleted:
+        return change.path if is_test_path(change.path, globs) else None
+    if change.status != RENAMED or change.source is None:
+        return None
+    if is_test_path(change.source, globs) and not is_test_path(change.path, globs):
+        return change.source
+    return None
+
+
 def check_order(
     commits: Sequence[Commit] | None,
     *,
@@ -333,8 +364,10 @@ def check_order(
     3. the first non-merge commit touches at least one path, and **only** test paths;
     4. that commit *adds or modifies* at least one test — a first commit that only
        deletes tests is the opposite of writing them;
-    5. no later commit deletes a test path — deleting the failing tests is the cheapest
-       way to make phase B "pass", and it is the one this gate exists to refuse;
+    5. no later commit *removes* a test — deleted outright, or renamed out of the test
+       paths, which stops the suite collecting it just as surely. Making the failing
+       tests go away is the cheapest way to make phase B "pass", and it is the move this
+       gate exists to refuse;
     6. a later commit touches a non-test path — the implementation the tests were
        written for;
     7. the gate run is green, when the caller measured one.
@@ -367,6 +400,10 @@ def check_order(
             "naming the paths the tests live in",
             test_globs=globs,
         )
+    # Merges are skipped throughout, which also means the deletion scan below never
+    # judges what a merge commit brought in. That is safe for the reason the skip itself
+    # is: a merge can be neither the tests commit nor the implementation commit, so the
+    # only paths it carries are the base's, already reviewed on their own way in.
     work = [commit for commit in commits if not commit.merge]
     if not work:
         return OrderResult(
@@ -416,18 +453,18 @@ def check_order(
             test_globs=globs,
         )
     deleted = tuple(
-        change.path
+        removed
         for commit in work[1:]
         for change in commit.changes
-        if change.deleted and is_test_path(change.path, globs)
+        if (removed := removed_test(change, globs)) is not None
     )
     if deleted:
         return OrderResult(
             False,
             TESTS_DELETED,
-            f"a commit after the tests commit {first.short} deletes tests, which is the "
-            "cheapest way to make phase B pass without implementing anything: "
-            f"{', '.join(deleted)}",
+            f"a commit after the tests commit {first.short} removes tests (deleted, or "
+            "renamed out of the test paths), which is the cheapest way to make phase B "
+            f"pass without implementing anything: {', '.join(deleted)}",
             tests_commit=first.sha,
             offending=deleted,
             test_globs=globs,

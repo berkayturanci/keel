@@ -13503,7 +13503,68 @@ class TestTddOrderGateOnTheCli(unittest.TestCase):
             rc, out, _ = run(["run-gates", self._config(), "--root", d, "--tdd"])
 
         self.assertEqual(rc, 1)
-        self.assertIn("deletes tests", out)
+        self.assertIn("removes tests", out)
+        self.assertIn("tests/test_a.py", out)
+
+    def test_moving_a_test_out_of_the_test_tree_blocks_like_deleting_it(self):
+        """`git mv tests/… src/…` is `git rm` wearing a rename (#1020 review, round 3).
+
+        The byte-identical branch with `git rm` already blocked; this one passed, because
+        a rename is recorded at its destination and the destination is not a test path.
+        Driven through the real CLI so the rename detection git actually emits (`R100`,
+        which needs the similarity index to fire) is what is under test.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _run_git(root, "init", "-b", "main")
+            _run_git(root, "config", "user.email", "test@example.com")
+            _run_git(root, "config", "user.name", "Test User")
+            (root / "README.md").write_text("base\n", encoding="utf-8")
+            _run_git(root, "add", "README.md")
+            _run_git(root, "commit", "-m", "base")
+            _run_git(root, "checkout", "-b", "feature")
+            (root / "tests").mkdir()
+            (root / "src").mkdir()
+            (root / "tests/test_a.py").write_text("assert False\n" * 20, encoding="utf-8")
+            _run_git(root, "add", "tests/test_a.py")
+            _run_git(root, "commit", "-m", "test: failing test")
+            _run_git(root, "mv", "tests/test_a.py", "src/legacy_test_a.py")
+            (root / "src/a.py").write_text("a = 1\n", encoding="utf-8")
+            _run_git(root, "add", "src/a.py")
+            _run_git(root, "commit", "-m", "feat: a (and the test is not a test any more)")
+
+            rc, out, _ = run(["run-gates", self._config(), "--root", d, "--tdd"])
+
+        self.assertEqual(rc, 1)
+        self.assertIn("renamed out of the test paths", out)
+        self.assertIn("tests/test_a.py", out)
+
+    def test_moving_a_test_within_the_test_tree_stays_fine(self):
+        """The control case the fix must not break: an ordinary reorganisation."""
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _run_git(root, "init", "-b", "main")
+            _run_git(root, "config", "user.email", "test@example.com")
+            _run_git(root, "config", "user.name", "Test User")
+            (root / "README.md").write_text("base\n", encoding="utf-8")
+            _run_git(root, "add", "README.md")
+            _run_git(root, "commit", "-m", "base")
+            _run_git(root, "checkout", "-b", "feature")
+            (root / "tests").mkdir()
+            (root / "src").mkdir()
+            (root / "tests/test_a.py").write_text("assert False\n" * 20, encoding="utf-8")
+            _run_git(root, "add", "tests/test_a.py")
+            _run_git(root, "commit", "-m", "test: failing test")
+            (root / "tests/unit").mkdir()
+            _run_git(root, "mv", "tests/test_a.py", "tests/unit/test_a.py")
+            (root / "src/a.py").write_text("a = 1\n", encoding="utf-8")
+            _run_git(root, "add", "src/a.py")
+            _run_git(root, "commit", "-m", "feat: a, tests reorganised")
+
+            rc, out, _ = run(["run-gates", self._config(), "--root", d, "--tdd"])
+
+        self.assertEqual(rc, 0)
+        self.assertNotIn("FAIL", out)
 
     def test_ship_records_the_implementer_of_each_phase(self):
         with tempfile.TemporaryDirectory() as d:

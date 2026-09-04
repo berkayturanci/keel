@@ -664,13 +664,18 @@ through a single `git log` and decides in `keel.tdd`, with no other I/O. It pass
 2. the first non-merge commit touches at least one path, and **only** test paths;
 3. that commit *adds or modifies* at least one test — a first commit that only runs
    `git rm` over the suite is the opposite of writing it;
-4. no later commit deletes a test path — deleting the failing tests is the cheapest way to
-   make phase B "pass";
+4. no later commit *removes* a test — deleted outright, **or renamed out of the test
+   paths**, which stops the suite collecting it just as surely (`git mv tests/test_a.py
+   src/legacy_test_a.py` is `git rm` wearing a rename). A rename *within* the test paths
+   is an ordinary move and stays fine, and a copy is not a removal at all — its source
+   still exists. Making the failing tests go away is the cheapest way to make phase B
+   "pass";
 5. a later commit touches a non-test path — the implementation the tests were written for;
 6. the rest of the gate run is green.
 
 Otherwise it blocks and names what to fix: the offending paths in the first commit, the
-deleted tests to restore, the test globs it matched against, or the missing half of s4.
+removed tests to restore (a rename-out is named by the path it *left*, the one that
+stopped being a test), the test globs it matched against, or the missing half of s4.
 
 The branch is read with `git log --topo-order --first-parent --reverse --name-status
 base..HEAD`. Ancestry order, not commit-date order: once a branch integrates its base at
