@@ -62,7 +62,7 @@ from .team import JuryUnavailableError as JuryUnavailableError
 from .team import refusal_message as refusal_message
 
 #: The module's public surface, in definition order (#1070). It is declared because the
-#: ``X as X`` re-exports above are read only from *other* modules — a use CodeQL's
+#: ``X as X`` re-exports above are read from *other* modules — a use CodeQL's
 #: ``py/unused-import`` cannot see, since it counts same-module uses only. A name listed
 #: in ``__all__`` is used by definition, so the declaration answers the scanner with the
 #: language's own statement of intent rather than with a dismissal. Being a real
