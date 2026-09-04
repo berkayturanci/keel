@@ -11494,11 +11494,28 @@ class TestInstallAdapter(unittest.TestCase):
             self.assertEqual(rc, 0)
             self.assertIn("0 plugin command file(s) written", out)
 
-    def test_install_adapter_unknown_target_lists_plugin(self):
+    def test_installs_the_site_argument_surface(self):
+        import tempfile
+
+        from keel import install
+
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = run(["install-adapter", "site", "--root", d])
+            self.assertEqual(rc, 0)
+            self.assertIn("1 site file(s) written", out)
+            self.assertIn(install.SITE_PARAMS_PATH, out)
+            self.assertTrue((Path(d) / install.SITE_PARAMS_PATH).exists())
+            # second run is a no-op (idempotent generator).
+            rc, out, _ = run(["install-adapter", "site", "--root", d])
+            self.assertEqual(rc, 0)
+            self.assertIn("0 site file(s) written", out)
+
+    def test_install_adapter_unknown_target_lists_plugin_and_site(self):
         rc, _, err = run(["install-adapter", "codex"])
         self.assertEqual(rc, 1)
         self.assertIn("unknown target", err)
         self.assertIn("plugin", err)
+        self.assertIn("site", err)
 
     def test_adapter_status_unknown_target(self):
         rc, _, err = run(["adapter-status", "codex"])
