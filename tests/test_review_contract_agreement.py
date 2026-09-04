@@ -11,6 +11,15 @@ These tests hold the two halves together from the outside (same required evidenc
 `plan`, `ship`, `review`, `evidence-verify` and `step-verify`) and from the inside (an AST
 sweep, so a *new* call site added later cannot quietly reintroduce the fallback).
 
+#1043 closed the last residual divergence, which was jury-only rather than bench: `keel
+review` defined none of `--jury` / `--no-jury` / `--jury-advisory` and hardcoded them
+false, so with a jury flag on the run it resolved a *different jury line* from every other
+surface — permissive-only (its `--verify` could require a `jury-verdict` the
+`keel ship --no-jury` run was told never to post), but a divergence all the same. The
+cross-product below now drives `keel review` with the flags too and compares the whole
+`jury` block, and `TestEverySurfaceDefinesTheSameJuryFlags` pins the sixth surface
+(`keel merge`) at the parser.
+
 **Offline and deterministic**, per AGENTS.md: every subprocess these commands can reach
 sits behind an injectable seam, and `setUpModule` fills all of them. Three of the five
 legs shell out on a real host — `plan`, `ship` and `review` each probe `gh auth status`
@@ -21,6 +30,7 @@ so the JSON parse below raised `JSONDecodeError`). `_recording_run_argv` raises 
 argv the module has no canned answer for, so a *new* subprocess cannot appear unnoticed.
 """
 
+import argparse
 import ast
 import contextlib
 import io
@@ -140,6 +150,21 @@ knobs:
     jury: { mode: advisory }
 """
 
+#: No `knobs.team` at all — the pre-#1014 shape, and the one the jury flags actually move.
+#: On a jury *panel* tier the panel outranks every flag, so a config with a panel can never
+#: show the divergence #1043 closed; this one can, because at tier-3 the auto-jury is on by
+#: default and `--no-jury` genuinely turns it off.
+PLAIN_TIER3_CONFIG = """
+extends: keel
+core_version: "^1.0"
+base_branch: main
+owner: acme
+repo: widget
+knobs:
+  build_gate_cmd: "true"
+  tier3_globs: ["src/**"]
+"""
+
 
 def run(argv):
     out, err = io.StringIO(), io.StringIO()
@@ -192,6 +217,10 @@ class TestEveryCommandResolvesTheSameBench(unittest.TestCase):
         return [item["id"] for item in data["contract"]["evidence"]["required"]], data
 
     def _evidence_required(self, config, *flags, pr_comments=None):
+        payload = self._evidence_payload(config, *flags, pr_comments=pr_comments)
+        return [result["id"] for result in payload["verification"]["results"]]
+
+    def _evidence_payload(self, config, *flags, pr_comments=None):
         rc, out, err = run(
             [
                 "evidence-verify",
@@ -219,20 +248,23 @@ class TestEveryCommandResolvesTheSameBench(unittest.TestCase):
             ]
         )
         self.assertIn(rc, (0, 1), err)
-        verification = json.loads(out)["verification"]
-        self.assertTrue(verification["enforced"])
-        return [result["id"] for result in verification["results"]]
+        payload = json.loads(out)
+        self.assertTrue(payload["verification"]["enforced"])
+        return payload
 
     def _step_verify_s7(self, *extra):
+        return self._step_verify_step("s7", *extra)
+
+    def _step_verify_step(self, step, *extra):
         handoff = self.root / "handoff.json"
-        handoff.write_text(json.dumps({"step_id": "s7"}), encoding="utf-8")
+        handoff.write_text(json.dumps({"step_id": step}), encoding="utf-8")
         report = self.root / "report.json"
         report.write_text(json.dumps({"results": []}), encoding="utf-8")
         rc, out, _ = run(
             [
                 "step-verify",
                 "--step",
-                "s7",
+                step,
                 "--handoff-file",
                 str(handoff),
                 "--evidence-report",
@@ -243,7 +275,7 @@ class TestEveryCommandResolvesTheSameBench(unittest.TestCase):
         )
         self.assertIn(rc, (0, 1))
         steps = json.loads(out)["contract"]["steps"]
-        return next(step for step in steps if step["step_id"] == "s7")["required_evidence"]
+        return next(entry for entry in steps if entry["step_id"] == step)["required_evidence"]
 
     def test_a_jury_panel_config_requires_the_panel_everywhere(self):
         """Every surface requires the same panel: its ballots *and* its verdict (#1015).
@@ -345,12 +377,14 @@ class TestEveryCommandResolvesTheSameBench(unittest.TestCase):
             ["review-verdict-1", "review-verdict-2"],
         )
 
-    def _review_required_count(self, config, supplied):
-        """`keel review` has no jury flags at all — the bench must not need them.
+    def _review_result(self, config, supplied, *flags):
+        """Drive `keel review` and return its whole `--json` payload.
 
         It is handed exactly the verdicts the other surfaces say are required: this is the
         command that *posts* the evidence, so if it under-posts, it refuses (and the
-        assertion below fails) rather than leaving a PR that can never clear its own gate.
+        assertions below fail) rather than leaving a PR that can never clear its own gate.
+        Since #1043 it also takes the jury flags, so it can be driven through the same
+        cross-product as everything else and its `review_contract` compared directly.
         """
         reviews = self.root / "reviews.json"
         reviews.write_text(
@@ -362,7 +396,7 @@ class TestEveryCommandResolvesTheSameBench(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        rc, out, _ = run(
+        rc, out, err = run(
             [
                 "review",
                 config,
@@ -378,18 +412,22 @@ class TestEveryCommandResolvesTheSameBench(unittest.TestCase):
                 "abc",
                 "--dry-run",
                 "--json",
+                *flags,
             ]
         )
-        self.assertIn(rc, (0, 1))
-        return json.loads(out)["plan"]["required_count"]
+        self.assertIn(rc, (0, 1), err)
+        return json.loads(out)
+
+    def _review_required_count(self, config, supplied, *flags):
+        return self._review_result(config, supplied, *flags)["plan"]["required_count"]
 
     def test_the_bench_is_identical_across_every_no_jury_state(self):
         """The cross-product the lead pinned: the flag must not move the contract.
 
-        `keel review` never sees a jury flag, keel's CI passes `--no-jury` to
-        `evidence-verify` on every run and to `ship`/`plan` on none. If the bench moved
-        with the flag, CI would demand three verdicts the ship run told the adapter never
-        to produce.
+        keel's CI passes `--no-jury` to `evidence-verify` on every run and to `ship`/`plan`
+        on none. If the bench moved with the flag, CI would demand three verdicts the ship
+        run told the adapter never to produce. Every surface accepts the flags since #1043,
+        which is why `keel review` is driven *with* them here rather than bare.
         """
         for name, config_text, expected in (
             (
@@ -419,7 +457,7 @@ class TestEveryCommandResolvesTheSameBench(unittest.TestCase):
             ),
         ):
             config = self._config(config_text)
-            for flags in ((), ("--no-jury",), ("--jury-advisory",)):
+            for flags in ((), ("--jury",), ("--no-jury",), ("--jury-advisory",)):
                 with self.subTest(config=name, flags=flags):
                     plan_required, plan_contract = self._plan_required(config, *flags)
                     ship_required, ship_data = self._ship_required(config, *flags)
@@ -439,12 +477,20 @@ class TestEveryCommandResolvesTheSameBench(unittest.TestCase):
                         plan_contract["review_merge_contract"]["reviewers"]["slots"],
                         ship_reviewers["slots"],
                     )
-                    # `keel review` takes no jury flag at all, so it is the fixed point
-                    # every flagged run has to match: it posts exactly the verdicts the
-                    # evidence gate will then require.
+                    # `keel review` gets the same flags and must reach the same place:
+                    # it posts exactly the verdicts the evidence gate will then require,
+                    # and resolves the same jury line as `plan`/`ship` (#1043).
+                    review_payload = self._review_result(config, ship_reviewers["count"], *flags)
                     self.assertEqual(
-                        self._review_required_count(config, ship_reviewers["count"]),
-                        ship_reviewers["count"],
+                        review_payload["plan"]["required_count"], ship_reviewers["count"]
+                    )
+                    self.assertEqual(
+                        review_payload["review_contract"]["jury"],
+                        plan_contract["review_merge_contract"]["jury"],
+                    )
+                    self.assertEqual(
+                        review_payload["review_contract"]["reviewers"]["slots"],
+                        ship_reviewers["slots"],
                     )
 
     def test_step_verify_refuses_an_unreadable_project_rather_than_guessing(self):
@@ -598,6 +644,86 @@ class TestEveryCommandResolvesTheSameBench(unittest.TestCase):
                 "jury-verdict",
             ],
         )
+
+    def test_keel_review_resolves_the_same_jury_line_as_every_other_surface(self):
+        """The #1043 divergence, on the only config that can show it.
+
+        A jury *panel* tier can never expose it — the panel outranks every flag — and the
+        810-evaluation sweep that found this reported it as jury-only and permissive-only
+        for exactly that reason. On a plain, teamless tier-3 project the flags bite: the
+        tier-3 auto-jury is on by default and `--no-jury` turns it off. Before #1043
+        `keel review` defined none of the three, so on `--no-jury` it kept resolving
+        `mode: gating` while `plan`, `ship`, `evidence-verify` and `step-verify` all
+        resolved `off` — and its `--verify` re-check then demanded a `jury-verdict` the
+        run had been told never to post.
+
+        The bench is asserted alongside on purpose: this closes a jury divergence, and it
+        would be a poor trade to close it by making the flags move the reviewer count.
+        """
+        config = self._config(PLAIN_TIER3_CONFIG)
+
+        for flags, expected_mode in (
+            ((), "gating"),
+            (("--jury",), "gating"),
+            (("--no-jury",), "off"),
+            (("--jury-advisory",), "advisory"),
+        ):
+            with self.subTest(flags=flags):
+                plan_required, plan_contract = self._plan_required(config, *flags)
+                ship_required, ship_data = self._ship_required(config, *flags)
+                evidence_required = self._evidence_required(config, *flags)
+                ship_contract = ship_data["result"]["assessment"]["review_merge_contract"]
+                review_payload = self._review_result(
+                    config, ship_contract["reviewers"]["count"], *flags
+                )
+                review_contract = review_payload["review_contract"]
+
+                # One jury line, resolved four times from the same inputs.
+                self.assertEqual(
+                    plan_contract["review_merge_contract"]["jury"]["mode"], expected_mode
+                )
+                self.assertEqual(ship_contract["jury"], review_contract["jury"])
+                self.assertEqual(
+                    plan_contract["review_merge_contract"]["jury"], review_contract["jury"]
+                )
+                # …and the gate derived from it agrees on both remaining surfaces: a
+                # `jury-verdict` is required exactly when the resolved mode gates.
+                gating = expected_mode == "gating"
+                self.assertEqual("jury-verdict" in plan_required, gating)
+                self.assertEqual("jury-verdict" in ship_required, gating)
+                self.assertEqual("jury-verdict" in evidence_required, gating)
+                self.assertEqual(
+                    self._step_verify_step("s8", "--project", config, "--tier", "3", *flags)
+                    == ["jury-verdict"],
+                    gating,
+                )
+                # The bench did not move to buy that agreement.
+                self.assertEqual(review_contract["reviewers"]["count"], 3)
+                self.assertEqual(ship_contract["reviewers"]["count"], 3)
+                self.assertEqual(review_payload["plan"]["required_count"], 3)
+
+    def test_the_jury_flags_used_to_be_rejected_by_keel_review(self):
+        """Non-vacuity: the argv this suite now drives was an *argparse error* before.
+
+        Without this, every assertion above could be satisfied by a `keel review` that
+        still ignores the flags — the sweep would pass while proving nothing. Pinned two
+        ways: the three flags parse (they did not, pre-#1043), and a flag that really does
+        not exist still fails, so this is not asserting that the parser accepts anything.
+        """
+        parser = cli.build_parser()
+
+        for flag in ("--jury", "--no-jury", "--jury-advisory"):
+            with self.subTest(flag=flag):
+                args = parser.parse_args(
+                    ["review", "p.yaml", "--pr", "1", "--reviews", "r.json", flag]
+                )
+                self.assertTrue(getattr(args, flag[2:].replace("-", "_")))
+
+        with self.assertRaises(SystemExit):
+            with contextlib.redirect_stderr(io.StringIO()):
+                parser.parse_args(
+                    ["review", "p.yaml", "--pr", "1", "--reviews", "r.json", "--jury-blind"]
+                )
 
     def test_no_jury_keeps_its_meaning_where_the_panel_is_not_the_review(self):
         config = self._config(THREE_SEAT_CONFIG)
@@ -795,6 +921,68 @@ class TestNoCallSiteFallsBackToTheTier(unittest.TestCase):
                         "team assignment; it will disagree with `keel ship` on any project "
                         "using knobs.team",
                     )
+
+
+class TestEverySurfaceDefinesTheSameJuryFlags(unittest.TestCase):
+    """The sixth surface, pinned where it can be seen without a merge.
+
+    `keel merge` verifies evidence rather than resolving a contract for a host to execute,
+    so it is not one of the CLI legs driven above; what it shares with the other five is
+    the flag group, which `cli._add_jury_flags` now defines once. This test is what makes
+    that single definition load-bearing: a surface that re-spelled one of the three, or
+    picked up only two, is a divergence again — which is how `keel review` came to have
+    none of them at all.
+    """
+
+    SURFACES = ("plan", "ship", "review", "step-verify", "evidence-verify", "merge")
+    GROUP = ("--jury", "--jury-advisory", "--no-jury")
+
+    def _subparsers(self):
+        parser = cli.build_parser()
+        action = next(
+            entry
+            for entry in parser._actions
+            if isinstance(entry, argparse._SubParsersAction)  # noqa: SLF001
+        )
+        return action.choices
+
+    def test_all_six_review_aware_surfaces_accept_the_same_three_flags(self):
+        subparsers = self._subparsers()
+
+        for name in self.SURFACES:
+            with self.subTest(surface=name):
+                actions = {
+                    option: entry
+                    for entry in subparsers[name]._actions  # noqa: SLF001
+                    for option in entry.option_strings
+                    if option in self.GROUP
+                }
+                self.assertEqual(tuple(sorted(actions)), self.GROUP)
+                for option, entry in actions.items():
+                    self.assertIs(entry.default, False, option)
+                    self.assertEqual(entry.nargs, 0, option)
+
+    def test_the_group_is_defined_in_exactly_one_place(self):
+        """An AST sweep, the same shape as the `resolve_review_contract` one below it.
+
+        Six copies of one flag group is how the review parser ended up with zero: nothing
+        failed when a surface was added without them. `--jury` may now be spelled only
+        inside `_add_jury_flags`.
+        """
+        tree = ast.parse((REPO_ROOT / "src/keel/cli.py").read_text(encoding="utf-8"))
+        definitions = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Constant) and node.value in ("--jury", "--no-jury")
+        ]
+        helper = next(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef) and node.name == "_add_jury_flags"
+        )
+        span = range(helper.lineno, helper.end_lineno + 1)
+        stray = [node.lineno for node in definitions if node.lineno not in span]
+        self.assertEqual(stray, [], "jury flags declared outside cli._add_jury_flags")
 
 
 if __name__ == "__main__":

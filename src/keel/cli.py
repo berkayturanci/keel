@@ -2494,9 +2494,21 @@ def _cmd_review(args: argparse.Namespace) -> int:
         policy_pack=config.policy_pack,
         require_distinct_vendors=config.knobs.evidence_require_distinct_vendors,
         assignment=_review_assignment(config, args, tier=tier),
+        # The same three flags every other review-aware surface accepts (#1043). They
+        # never move the bench — that is a pure function of config + tier + role +
+        # `--reviewers` / `--review-delegate` — but they own the jury line, and a
+        # surface that cannot hear them resolves a different one: on a plain tier-3
+        # config `keel review --verify` reported `jury-verdict` as required while the
+        # `keel ship --no-jury` run that produced the PR was told never to post it.
+        jury=args.jury,
+        no_jury=args.no_jury,
+        jury_advisory=args.jury_advisory,
         # The panel that ran sizes the bench it has to fill: `--from-jury` knows how
         # many ballots came back, so a jury-panel tier requires exactly those and the
         # posting side cannot disagree with the gate that reads them back (#1015).
+        # Orthogonal to the flags above: `--from-jury` says where the verdicts come
+        # from, the flags say whether the contract requires a jury verdict at all, and
+        # a jury-panel tier outranks both (`ship.resolve_jury`).
         jury_panel_size=None if panel is None else panel.size,
     )
     required_count = review_contract["reviewers"]["count"]
@@ -2564,9 +2576,11 @@ def _cmd_review(args: argparse.Namespace) -> int:
                 root=args.root,
                 reviewers=args.reviewers,
                 review_comments="inline",
-                jury=False,
-                no_jury=False,
-                jury_advisory=False,
+                # What the operator typed, not a hardcoded false: the re-verification
+                # has to be the same contract this command just posted against (#1043).
+                jury=args.jury,
+                no_jury=args.no_jury,
+                jury_advisory=args.jury_advisory,
                 gate_label=None,
                 waiver_label=None,
             ),
@@ -2576,6 +2590,10 @@ def _cmd_review(args: argparse.Namespace) -> int:
 
     result_payload = {
         "schema_version": review.SCHEMA_VERSION,
+        # The contract this posting run resolved, published for the same reason `plan`
+        # and `ship` publish theirs: the six review-aware surfaces are only checkable
+        # against each other if each one says which contract it resolved (#1043).
+        "review_contract": review_contract,
         "plan": plan.as_dict(),
         "dry_run": dry_run,
         "transport": transport.name,
@@ -2596,6 +2614,8 @@ def _cmd_review(args: argparse.Namespace) -> int:
         print(f"keel review — {mode}  PR #{args.pr}")
         print(f"  tier          : {tier if tier is not None else 'unresolved'}")
         print(f"  required      : {required_count}")
+        jury_line = review_contract["jury"]
+        print(f"  jury          : {jury_line['mode']} ({jury_line['reason']})")
         print(f"  supplied      : {plan.supplied_count}")
         print(f"  posts         : {len(plan.posts)}")
         if verification is not None:
@@ -6140,12 +6160,10 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="override the resolved reviewer count",
     )
-    p_plan.add_argument("--jury", action="store_true", help="enable the cross-vendor jury contract")
-    p_plan.add_argument(
-        "--no-jury", action="store_true", help="disable the cross-vendor jury contract"
-    )
-    p_plan.add_argument(
-        "--jury-advisory", action="store_true", help="run jury in advisory mode when enabled"
+    _add_jury_flags(
+        p_plan,
+        noun="the cross-vendor jury contract",
+        advisory_help="run jury in advisory mode when enabled",
     )
     p_plan.add_argument(
         "--run-id",
@@ -6348,10 +6366,10 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="override required reviewer count",
     )
-    p_merge.add_argument("--jury", action="store_true", help="enable jury evidence")
-    p_merge.add_argument("--no-jury", action="store_true", help="disable jury evidence")
-    p_merge.add_argument(
-        "--jury-advisory", action="store_true", help="make jury advisory for evidence verification"
+    _add_jury_flags(
+        p_merge,
+        noun="jury evidence",
+        advisory_help="make jury advisory for evidence verification",
     )
     p_merge.add_argument("--gate-label", default=None, help="override evidence gate label")
     p_merge.add_argument("--json", action="store_true", help="emit structured JSON")
@@ -6594,16 +6612,10 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="override the required reviewer verdict count",
     )
-    p_step.add_argument(
-        "--jury", action="store_true", help="enable the cross-vendor jury requirement"
-    )
-    p_step.add_argument(
-        "--no-jury", action="store_true", help="disable the cross-vendor jury requirement"
-    )
-    p_step.add_argument(
-        "--jury-advisory",
-        action="store_true",
-        help="make an enabled jury advisory instead of required",
+    _add_jury_flags(
+        p_step,
+        noun="the cross-vendor jury requirement",
+        advisory_help="make an enabled jury advisory instead of required",
     )
     p_step.add_argument(
         "--dry-run", action="store_true", help="verify with dry-run evidence requirements"
@@ -6807,6 +6819,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="override the required reviewer verdict count",
     )
+    _add_jury_flags(
+        p_review,
+        noun="the cross-vendor jury requirement",
+        advisory_help="make an enabled jury advisory instead of required",
+    )
     p_review.add_argument(
         "--head-sha", default=None, help="offline PR head SHA used to pin verdict evidence"
     )
@@ -6912,16 +6929,10 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="override the required reviewer verdict count",
     )
-    p_evidence.add_argument(
-        "--jury", action="store_true", help="enable the cross-vendor jury requirement"
-    )
-    p_evidence.add_argument(
-        "--no-jury", action="store_true", help="disable the cross-vendor jury requirement"
-    )
-    p_evidence.add_argument(
-        "--jury-advisory",
-        action="store_true",
-        help="make an enabled jury advisory instead of required",
+    _add_jury_flags(
+        p_evidence,
+        noun="the cross-vendor jury requirement",
+        advisory_help="make an enabled jury advisory instead of required",
     )
     p_evidence.add_argument(
         "--jury-vendors",
@@ -8112,6 +8123,27 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _add_jury_flags(parser: argparse.ArgumentParser, *, noun: str, advisory_help: str) -> None:
+    """Define the one jury flag group every review-aware surface accepts (#1043).
+
+    ``--jury`` / ``--no-jury`` / ``--jury-advisory`` are read by
+    :func:`ship.resolve_jury` through :func:`_review_assignment`, and a surface that
+    does not define them resolves the jury line of the review contract from defaults
+    instead of from what the operator typed. That was the last residual asymmetry left
+    by #1014/#1039: ``keel review`` had no jury flags, so its ``--verify`` report could
+    require a ``jury-verdict`` that the ``keel ship --no-jury`` run which produced the PR
+    was told never to produce. Defining the group once means a *new* review-aware
+    subcommand cannot pick up two of the three, or spell one of them differently.
+
+    ``noun`` and ``advisory_help`` keep each surface's existing wording — the jury is an
+    "evidence" requirement to ``keel merge`` and a "gate" to ``keel ship`` — while the
+    flag names, actions and defaults come from here.
+    """
+    parser.add_argument("--jury", action="store_true", help=f"enable {noun}")
+    parser.add_argument("--no-jury", action="store_true", help=f"disable {noun}")
+    parser.add_argument("--jury-advisory", action="store_true", help=advisory_help)
+
+
 def _add_ship_parser(parser: argparse.ArgumentParser, *, command: str) -> None:
     parser.add_argument("path", help="path to project.yaml")
     parser.add_argument("--root", default=".", help="repo root for git, gates + extensions")
@@ -8305,12 +8337,10 @@ def _add_ship_parser(parser: argparse.ArgumentParser, *, command: str) -> None:
         default=None,
         help="override the risk-derived reviewer count",
     )
-    parser.add_argument("--jury", action="store_true", help="enable the cross-vendor jury gate")
-    parser.add_argument("--no-jury", action="store_true", help="disable the cross-vendor jury gate")
-    parser.add_argument(
-        "--jury-advisory",
-        action="store_true",
-        help="make an enabled jury advisory instead of merge-gating",
+    _add_jury_flags(
+        parser,
+        noun="the cross-vendor jury gate",
+        advisory_help="make an enabled jury advisory instead of merge-gating",
     )
     parser.add_argument(
         "--profile",
