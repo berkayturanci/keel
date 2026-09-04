@@ -131,7 +131,10 @@ Conversely, naive "swarm" systems (CrewAI, AutoGen, OpenAI Swarm) attempt uncons
 
 ### 4.2. Isolated Worktree Execution Runtime
 - **Physical Workspace**: Each worker runs in `.keel/workspaces/swarm-<issue_id>/` created via `git worktree add`.
-- **Concurrency Control**: `--max-workers N` (defaults to `knobs.swarm_concurrency` or CPU core budget).
+- **Concurrency Control**: `--max-workers N` (proposed default: `knobs.swarm_concurrency` or a
+  CPU core budget). *Aspirational as written:* the flag shipped on `keel swarm-run` with a
+  fixed default of **4**. `knobs.swarm_concurrency` was never implemented and is not in the
+  bundled schema, so `keel validate` rejects it.
 - **Fail-Soft Isolation**: If Worker 1 fails a quality gate, Worker 2 and Worker 3 continue unimpeded.
 
 ### 4.3. Dynamic Scope Expansion & Rebalancing

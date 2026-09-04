@@ -33,10 +33,10 @@ window.KEEL = {
     { id: "s1",  name: "select",    blurb: "Pick the unit of work — a GitHub issue — from the backlog.", slots: ["before:select", "select", "after:select"] },
     { id: "s2",  name: "branch",    blurb: "Cut a work branch off the project's base branch.", slots: ["before:branch", "after:branch"] },
     { id: "s3",  name: "guard",     blurb: "Enforce preflight rules before any code is written.", slots: ["guard"], slot: true, block: true },
-    { id: "s4",  name: "implement", blurb: "The coding agent writes the change.", slots: ["before:implement", "after-implement"], agent: true, slot: true },
+    { id: "s4",  name: "implement", blurb: "The coding agent writes the change — in one pass, or test-first under <code>implement_mode: tdd</code>.", slots: ["before:implement", "after-implement"], agent: true, slot: true },
     { id: "s5",  name: "classify",  blurb: "Classify risk tier from the touched paths.", slots: ["classify", "after:classify"], agent: true },
     { id: "s6",  name: "ci",        blurb: "Wait on the project's CI workflows.", slots: ["before:ci", "after:ci"] },
-    { id: "s7",  name: "review",    blurb: "Parallel reviewers — plus the opt-in <a href='https://github.com/berkayturanci/ai-jury' target='_blank' rel='noopener'>jury</a> gate.", slots: ["reviewers", "after:review"], agent: true, slot: true },
+    { id: "s7",  name: "review",    blurb: "Parallel reviewers — plus the opt-in <a href='https://github.com/berkayturanci/ai-jury' target='_blank' rel='noopener'>jury</a> gate, or the panel <i>as</i> the review.", slots: ["reviewers", "after:review"], agent: true, slot: true },
     { id: "s8",  name: "test",      blurb: "Run the build / lint / test gates.", slots: ["tester", "test", "after:test"], slot: true, block: true },
     { id: "s9",  name: "fixloop",   blurb: "Bounded rounds of fixes until gates pass.", slots: ["before:fixloop", "fixloop", "after:fixloop"] },
     { id: "s10", name: "merge",     blurb: "Merge — inside the window, behind the lock, after pre-merge gates.", slots: ["pre-merge", "after:merge"], slot: true, block: true },
@@ -59,7 +59,7 @@ window.KEEL = {
       cmd: "keel:ship",
       one: "Drive a GitHub issue end-to-end through the whole backbone.",
       detail:
-        "Select → branch → implement → CI → review → test → merge → close → capture. The full flow: per-round review, inline file:line comments, --delegate / --review-delegate (incl. hosted-API anthropic-api:MODEL / openai-api:MODEL / google-api:MODEL — no agent CLI, just an API key; plus generic OpenAI-compatible and CLI profiles), --reviewers N, the <a href='https://github.com/berkayturanci/ai-jury' target='_blank' rel='noopener'>ai-jury</a> gate, the timezone-aware merge window + mkdir merge lock, and vendor+model attribution. <b>--compound</b> selects the compound-engineering profile — same backbone and safety primitives, with implement / review / fixloop / capture (s4·s7·s9·s11) as compound step overrides.",
+        "Select → branch → implement → CI → review → test → merge → close → capture. The full flow: per-round review, inline file:line comments, --delegate / --review-delegate (incl. hosted-API anthropic-api:MODEL / openai-api:MODEL / google-api:MODEL — no agent CLI, just an API key; plus generic OpenAI-compatible and CLI profiles), --reviewers N, the <a href='https://github.com/berkayturanci/ai-jury' target='_blank' rel='noopener'>ai-jury</a> gate, the timezone-aware merge window + mkdir merge lock, and vendor+model attribution. <b>--compound</b> selects the compound-engineering profile — same backbone and safety primitives, with implement / review / fixloop / capture (s4·s7·s9·s11) as compound step overrides. <b>--tdd</b> (<code>knobs.implement_mode: tdd</code>) selects the test-first s4 profile: a test-only commit carrying the issue's acceptance criteria, then the implementation, verified at s8 by the blocking <code>tdd-order</code> gate. <b>--team</b> and <b>--effort</b> staff the run from a named <code>knobs.team</code> bench.",
     },
     {
       slug: "swarm", name: "/keel:swarm", group: "Flagship", flagship: true, featured: true, scene: "swarm",
@@ -197,6 +197,9 @@ window.KEEL = {
     ["keel window <cfg>", "is the merge window open right now?"],
     ["keel ship <cfg>", "full dry assessment: tier, window, gates, decision"],
     ["keel merge <cfg> --pr N", "fail-closed core-owned merge: lock → window re-check → CI rollup → evidence → gh merge"],
+    ["keel review <cfg> --pr N --reviews FILE", "render, post and re-verify a review evidence bundle in one idempotent step"],
+    ["keel review <cfg> --pr N --from-jury REPORT", "the ai-jury panel IS the review: one head-pinned verdict per ballot, with its vendor + model, plus the panel's consensus record"],
+    ["keel fixloop brief --findings FILE", "s9: render the round's fix brief and name its fixer, walking the implementer → gate → host ladder"],
     ["keel evidence-verify <cfg> --pr N", "verify the PR carries the required public evidence (closure markers, reviewer verdicts, jury)"],
     ["keel status [--json]", "progress snapshot for long work blocks (checkpoint + run ledger)"],
     ["keel checkpoint / keel resume", "write the safe resume point at step boundaries; render a dry-run resume plan after interruption"],
@@ -226,6 +229,8 @@ window.KEEL = {
     ["timezone · merge_window", "Timezone-aware HH:MM–HH:MM window; merges only happen inside it."],
     ["gates", "Built-in build / lint / test gates run at the s8 test step."],
     ["knobs", "Runnable commands, risk globs, docs paths, CI workflow mapping, local agent roles, runtime capabilities."],
+    ["knobs.team", "The whole team as values: who implements (per issue role, model and reasoning effort), the mandatory gate reviewer from a different vendor, the reviewer seats per risk tier — or <code>jury</code>, when the cross-vendor panel <b>is</b> the review — who applies the findings, and named benches selected with <code>--team</code>."],
+    ["knobs.implement_mode", "<code>default</code> or <code>tdd</code>. Test-first splits s4 into a test-only commit and the implementation, and adds the blocking <code>tdd-order</code> gate at s8."],
     ["extensions", "Add-only hooks — your Lego — snapped into named backbone slots."],
     ["policy_pack", "Durable project data: labels, lifecycle, risk rules, test groups, docs policy, health providers, review rubric."],
   ],
@@ -252,6 +257,9 @@ window.KEEL = {
     ["Do projects ever fork the backbone?", "No — that's the whole point. The ordered step machine and its invariants live in keel-core, which is installed and pinned, never copied. Projects only ever touch Layer 2 (values in project.yaml) and Layer 3 (add-only extensions). Changing the backbone is a keel-core change."],
     ["What does a command actually read?", "Every command is project-neutral. It never hardcodes a branch, build/lint command, agent, glob, timezone or window — it references the knob by name and asks the keel CLI for the value, so the same /keel:ship behaves differently in each repo purely from that repo's .keel/project.yaml."],
     ["What's the jury gate?", "An opt-in review gate that runs the <a href='https://github.com/berkayturanci/ai-jury' target='_blank' rel='noopener'>ai-jury</a> multi-agent reviewer on the diff when it's installed, and is a fail-soft no-op otherwise. It snaps into the s7 review step."],
+    ["Who implements, reviews and fixes — and can I change it?", "<code>knobs.team</code> states the whole team as values: the implementer per issue role (with model and reasoning effort), one mandatory gate reviewer from a <i>different</i> vendor, the reviewer seats for each risk tier, and the seat that applies the findings in the s9 fix loop. <code>keel plan</code> / <code>keel ship --json</code> render it as one resolved <code>assignment</code>, so every host runs the same team, and <code>keel validate</code> refuses a policy keel cannot execute — an unknown provider, a reasoning effort a vendor has no spelling for, or a gate reviewer that is the implementer. <code>--team &lt;profile&gt;</code> and <code>--effort</code> pick a named bench for one run."],
+    ["Can the jury panel be the review itself, not an extra gate?", "Yes — set a tier's seats to the string <code>jury</code> (<code>knobs.team.review.by_tier.\"3\": jury</code>) and s7 dispatches the <a href='https://github.com/berkayturanci/ai-jury' target='_blank' rel='noopener'>ai-jury</a> panel <b>once</b> instead of running host readers beside it. <code>keel review --from-jury &lt;report.json&gt;</code> then turns the panel's report into the run's public evidence: one head-pinned review verdict per panelist ballot, carrying the vendor and model that produced it, plus the panel's consensus record — in one call, so everything is pinned to the same head SHA. The panel's <i>verified</i> findings are what the fix loop receives. Adopt it deliberately: on a panel tier no per-run flag can take the panel back off."],
+    ["Can keel write the tests first?", "Yes. <code>knobs.implement_mode: tdd</code> (or <code>--tdd</code> for one run) splits s4 into two phases — a test-only commit carrying the issue's acceptance criteria, then the implementation — and s8 gains the pure, blocking <code>tdd-order</code> gate, which checks that commit order against the project's <code>test_groups</code> paths. So “tests first” is verified, not asserted."],
     ["Does keel use itself?", "Yes. keel drives itself: its config is .keel/project.yaml (Python, make test + make lint gates) and CI runs keel on keel-core on every push. If a gate fails, keel blocks its own merge — the same backbone every consumer gets."],
     ["What do I need installed?", "Python 3.11+ and PyYAML — that's the one runtime dependency (on Windows, also tzdata for the timezone database). It runs on Linux, macOS, and Windows. The pure core is stdlib-first. Adapters install the /keel:&lt;command&gt; workflows into the surfaces your agents already read."],
   ],
@@ -345,16 +353,18 @@ window.KEEL = {
     },
     {
       group: "Reference", title: "Parameter reference", slug: "parameter-reference",
-      summary: "The exhaustive per-flag reference: every flag's type, default, the contract fields it changes, precedence rules, and exit codes.",
+      summary: "Per-flag depth for the /keel:ship grammar and the subcommands a ship run drives: type, default, the contract fields each flag changes, precedence rules, and exit codes.",
       body:
-        "<p>One level deeper than the CLI quick reference: every flag's type and allowed values, its default, the exact contract fields and gates it changes, precedence and interaction rules (e.g. <code>--no-jury</code> &gt; <code>--jury</code> &gt; tier-3 auto-on), and what makes a command exit non-zero. Covers the shared flag families — <code>--root</code>, <code>--json</code>, <code>--live</code> / <code>--dry-run</code>, the consent flags, issue-intake flags, and the review / jury family — plus every subcommand from <code>keel setup</code> to <code>keel resume</code>. Every claim is grounded in <code>src/keel/cli.py</code> and the pure modules it calls.</p>",
+        "<p>One level deeper than the CLI quick reference: every flag's type and allowed values, its default, the exact contract fields and gates it changes, precedence and interaction rules (e.g. <code>--no-jury</code> &gt; <code>--jury</code> &gt; tier-3 auto-on), and what makes a command exit non-zero. Covers the shared flag families — <code>--root</code>, <code>--json</code>, <code>--live</code> / <code>--dry-run</code>, the consent flags, issue-intake flags, and the review / jury family — plus the subcommands a ship run drives, including <code>keel review</code> (with <code>--from-jury</code>) and <code>keel fixloop brief</code>. It is not yet a per-flag reference for the whole CLI: eighteen subcommands are covered in the CLI reference only, and the page names them. Every claim is grounded in <code>src/keel/cli.py</code> and the pure modules it calls.</p>",
       source: "https://github.com/berkayturanci/keel/blob/main/docs/keel/parameter-reference.md",
     },
     {
       group: "Reference", title: "Configuration", slug: "configuration",
       summary: "project.yaml fields: core, base_branch, timezone/merge_window, gates, knobs, extensions, policy_pack.",
       body:
-        "<p>A keel consumer is configured with <b>values, not copied command bodies</b>. Top-level fields choose the core version, repository, base branch, timezone, merge window, built-in gates, extension directory and add-only hooks. <code>knobs</code> declares runnable commands, risk globs, docs paths, CI workflow mapping, local agent roles and runtime capabilities. <code>policy_pack</code> is durable project-owned data. Unknown keys are rejected by the bundled schema, so the reference is intentionally strict.</p>",
+        "<p>A keel consumer is configured with <b>values, not copied command bodies</b>. Top-level fields choose the core version, repository, base branch, timezone, merge window, built-in gates, extension directory and add-only hooks. <code>knobs</code> declares runnable commands, risk globs, docs paths, CI workflow mapping, local agent roles and runtime capabilities. <code>policy_pack</code> is durable project-owned data. Unknown keys are rejected by the bundled schema, so the reference is intentionally strict.</p>" +
+        "<p><b><code>knobs.team</code> is the whole team as values.</b> Who implements (per issue role, with model and reasoning effort), the one mandatory gate reviewer from a <i>different</i> vendor, the reviewer seats per risk tier — or the string <code>jury</code>, when the cross-vendor panel <b>is</b> that tier's review — who applies the findings in the s9 fix loop, and named benches an operator selects with <code>--team &lt;profile&gt;</code>. It resolves into a single <code>assignment</code> that <code>keel plan</code> and <code>keel ship --json</code> publish, so every host runs the same team, and <code>keel validate</code> refuses a policy keel cannot execute.</p>" +
+        "<p><b><code>knobs.implement_mode</code></b> chooses the s4 profile: <code>default</code> (one pass) or <code>tdd</code> (test-first — a test-only commit carrying the issue's acceptance criteria, then the implementation, with the blocking <code>tdd-order</code> gate added at s8). <code>--tdd</code> is the per-run spelling.</p>",
       render: "config",
       source: "https://github.com/berkayturanci/keel/blob/main/docs/keel/configuration.md",
     },
@@ -369,7 +379,8 @@ window.KEEL = {
       group: "Architecture", title: "Supported AI models & providers", slug: "models",
       summary: "How to use any AI model: hosted APIs (Claude, OpenAI, Gemini), OpenAI-compatible gateways (OpenRouter, Groq, DeepSeek), local Ollama/vLLM, and agent CLIs.",
       body:
-        "<p>Keel is model-neutral. Drive implementations (<code>s4</code>) or reviews (<code>s7</code>) using direct hosted APIs (<code>anthropic-api:</code>, <code>openai-api:</code>, <code>google-api:</code>), OpenAI-compatible profiles for OpenRouter, DeepSeek, Groq, Together AI and local vLLM, local offline Ollama models, or official agent CLIs (Claude, Codex, Antigravity).</p>",
+        "<p>Keel is model-neutral. Drive implementations (<code>s4</code>) or reviews (<code>s7</code>) using direct hosted APIs (<code>anthropic-api:</code>, <code>openai-api:</code>, <code>google-api:</code>), OpenAI-compatible profiles for OpenRouter, DeepSeek, Groq, Together AI and local vLLM, local offline Ollama models, or official agent CLIs (Claude, Codex, Antigravity).</p>" +
+        "<p>A project states its seats in <code>knobs.team</code> — or hands a whole tier to the panel with <code>knobs.team.review.by_tier.\"3\": jury</code>, after which <code>keel review --from-jury &lt;report.json&gt;</code> maps each panelist's ballot onto a head-pinned review verdict carrying the vendor and model that produced it, alongside the panel's consensus record. Adopt it deliberately: a panel tier has no host seats to fall back on, and no per-run flag can take the panel away.</p>",
       source: "https://github.com/berkayturanci/keel/blob/main/docs/keel/models.md",
     },
     {
@@ -380,7 +391,7 @@ window.KEEL = {
         "<h3>1. Static Dependency DAG & Wave Partitioning</h3>" +
         "<p>Swarm computes file-overlap conflict graphs and explicit issue dependencies (<code>blocks #N</code> / <code>depends on #N</code>) without executing code. Orthogonal clusters are scheduled in parallel in <b>Wave 1</b>, while dependent or overlapping clusters are sequenced into subsequent waves (<code>Wave 2</code>, <code>Wave 3</code>).</p>" +
         "<h3>2. Cross-Model Routing & Unified AI Jury Panel</h3>" +
-        "<p>Different clusters can be assigned to different models and agent vendors concurrently via <code>knobs.implementer_agents</code> and <code>knobs.delegate_profiles</code>:</p>" +
+        "<p>Different clusters can be assigned to different models and agent vendors concurrently via <code>knobs.team.implement.by_role</code> and <code>knobs.delegate_profiles</code>:</p>" +
         "<ul>" +
         "<li><b>Core / Architecture</b>: Claude 3.7 Sonnet / Claude Code (<code>claude</code>)</li>" +
         "<li><b>Frontend / Visual</b>: Google Gemini 2.5 Flash / Antigravity (<code>agy</code> / <code>google-api:</code>)</li>" +

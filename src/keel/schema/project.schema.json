@@ -58,7 +58,7 @@
         "team": {
           "type": "object",
           "additionalProperties": false,
-          "description": "Team policy: which provider implements (per issue role), which one gives the mandatory gate review, which ones review (per risk tier, or 'jury' for the cross-vendor panel), and how the jury gates. Rendered as 'assignment' by keel plan / keel ship --json so any host runs the same team. Provider names resolve through the same registry keel delegate run uses: a built-in vendor, a knobs.delegate_profiles entry, a machine-level ~/.keel/providers.yaml entry, or 'subagent:<name>' for a host subagent.",
+          "description": "Team policy: which provider implements (per issue role), which one gives the mandatory gate review, which ones review (per risk tier, or 'jury' for the cross-vendor panel), which one applies the review findings in the s9 fix loop ('fix', defaulting to the alias 'implementer'), and how the jury gates. Rendered as 'assignment' by keel plan / keel ship --json so any host runs the same team. Provider names resolve through the same registry keel delegate run uses: a built-in vendor, a knobs.delegate_profiles entry, a machine-level ~/.keel/providers.yaml entry, or 'subagent:<name>' for a host subagent.",
           "properties": {
             "implement": {
               "type": "object",

@@ -641,6 +641,39 @@ Explicit operator deferrals must be passed as
 `--deferral <id|kind|all>` and should be recorded in the PR/issue conversation before
 branch protection is bypassed.
 
+## Panel-sourced review evidence
+
+The evidence block above describes the same required *shapes* whether a tier's reviewers
+are host seats or the cross-vendor panel — what changes is who produces them, and that is
+a config decision, not a contract one.
+
+A project sets `knobs.team.review.by_tier."<tier>": jury` (the string `jury` in place of a
+seat list) to make the panel that tier's whole review. `assignment.review_panel` then reads
+`jury` instead of `reviewers`, and `keel review --from-jury <report.json>` is the command
+that turns an ai-jury JSON report (`jury --format json`, report schema 1.1+) into the
+contract's artifacts: one head-pinned `keel.review-verdict.v1` per panelist ballot —
+carrying the `vendor:` and `model:` that produced that ballot — plus the panel's own
+`keel.jury-verdict.v1` consensus record, posted in the same call so both bind to the same
+head SHA. `--reviews` and `--from-jury` are mutually exclusive: the bundle is the host's or
+the panel's. The `--json` result adds a `panel` block (`ballots`, `size`, `vendors`, and
+the **verified** consensus `findings` in keel's severity vocabulary), which is the
+[fix-loop block](#fix-loop-block) input — it is already the `{"findings": […]}` envelope
+`keel fixloop brief --findings` reads.
+
+The evidence set reflects the choice in its item descriptions rather than its ids. Measured
+on a tier-3 PR: a panel tier requires `review-verdict-N` items described as *"Distinct
+posted ai-jury panelist verdict for the current PR"* plus a required `jury-verdict`; a tier
+staffed with named seats requires `review-verdict-N` items described as *"Distinct posted
+s7 reviewer verdict for the current PR"*. Where the panel is the review its declared size
+is the required verdict count, and the per-run jury flags cannot take it away —
+`--no-jury` / `--jury-advisory` land in `assignment.warnings` unapplied, because a tier
+whose only review is the panel would otherwise require no review evidence at all.
+
+**keel's own project config does not use this.** `projects/keel.yaml` staffs tier 3 with
+three named seats (`claude`, `agy`, `subagent:opus-reviewer`) and `jury.mode: advisory`,
+and records in the file why the switch is deliberate and still pending. The paragraphs
+above describe a mechanism available to consumers, not keel's current posture.
+
 ## Branch-scope verification
 
 `keel scope-verify <project.yaml> --pr <N>` is keel's enforceable defence against branch

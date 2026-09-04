@@ -14,8 +14,10 @@ The `keel` CLI does the deterministic work (config resolution, gate planning/exe
 risk-tier classification, merge window + lock, attribution); these commands are the **agentic**
 flows the host agent runs (per-round review, inline comments, delegation). Every command is
 **project-neutral** — it reads each project value (`base_branch`, `build_gate_cmd`, `lint_cmd`,
-`implementer_agents`, `tier3_globs`, `ci_workflows`, `timezone`, `merge_window`, …) from that
-project's `.keel/project.yaml`.
+`team`, `tier3_globs`, `ci_workflows`, `timezone`, `merge_window`, …) from that project's
+`.keel/project.yaml`. (`knobs.implementer_agents` is still accepted and mapped onto
+`knobs.team.implement.by_role`, but it is **deprecated** — see
+[configuration.md](configuration.md#implementer_agents).)
 
 Keel's product model is work ownership, not isolated automation. `/keel:ship` is the
 one-issue "own this until done" flow; `/keel:swarm` coordinates multi-agent concurrency;
