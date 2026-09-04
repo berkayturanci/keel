@@ -9,7 +9,7 @@ flow keeps working.
 
 | file | what it is |
 |---|---|
-| `index.html` | Landing page, workspace-style: Overview, What it is, The backbone, How it compares, Workflow commands (16, each with an animated scene + args/flags), CLI, Configuration, Dogfooding, FAQ |
+| `index.html` | Landing page, workspace-style: Overview, What it is, The backbone, How it compares, Workflow commands (17, each with an animated scene + args/flags), CLI, Configuration, Dogfooding, FAQ |
 | `docs.html` | Documentation — generated entirely from `content.js` (`KEEL.docs[]`) |
 | `coverage.html` | Animated coverage report with a per-module table |
 | `silent-revert.html` | Article: a squash merge silently reverted a release |
@@ -26,9 +26,12 @@ flow keeps working.
 - **Add/edit a command** → `KEEL.commands[]` (slug, name, group, one, detail, scene)
   plus its flags in `params.js` (`KEEL_ARGS`, generated from the frontmatter of
   `src/keel/adapters/commands/*.md`). The showcase tab, scene, and docs table follow.
-  If the command count changes, also update the **three static "16" spots**:
-  the Overview stat card and commands kicker in `index.html`, and the sidebar badge in
-  `docs.html` + `coverage.html`.
+  If the command count changes, also update the static spots that spell it out: the
+  Overview stat card and the commands kicker in `index.html`, the sidebar badge in
+  `index.html` + `docs.html` + `coverage.html`, the `og:`/`twitter:` image alt text on
+  every page, and `llms.txt`. Do not hunt for them by hand —
+  `tests/test_docs_claims.py::TestTheStatedCommandCountIsReal` names every one and fails
+  if any disagrees with `src/keel/adapters/commands/`.
 - **CLI table** → `KEEL.cli[]`. Angle brackets are fine — renderers escape them.
 - **Version** → fetched automatically from the GitHub releases API (fallback: PyPI),
   cached 6 h in localStorage. `KEEL.meta.version` in `content.js` is only the static

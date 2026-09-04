@@ -74,7 +74,7 @@ Before any worker is spawned, `keel swarm-plan` inspects the issue set to predic
 and build a conflict matrix:
 
 ```bash
-keel swarm-plan .keel/project.yaml --root . 714 715 716 717 720 721 --tree
+keel swarm-plan .keel/project.yaml --issues 714,715,716,717,720,721 --tree
 ```
 
 ### Scope Prediction Heuristics
@@ -118,7 +118,7 @@ The `--tree` flag renders a full terminal diagram:
 Parallel execution runs across isolated git worktrees created under `.keel/worktrees/swarm/<cluster_id>/`:
 
 ```bash
-keel swarm-run .keel/project.yaml --root . 714 715 716 717 --rebalance
+keel swarm-run .keel/project.yaml --root . --issues 714,715,716,717 --live
 ```
 
 ### Worktree Lifecycle & Isolation
@@ -145,7 +145,7 @@ Landing is coordinated by `src/keel/swarm_landing.py` protected by the atomic `m
 (`.keel/state/merge.lock`):
 
 ```bash
-keel swarm-land .keel/project.yaml --root . --mode auto
+keel swarm-land .keel/project.yaml --root . --wave 1 --live
 ```
 
 ### Landing Modes:
@@ -160,6 +160,22 @@ keel swarm-land .keel/project.yaml --root . --mode auto
    - **Self-Healing Rebase**: If `git rebase` succeeds cleanly, the merge proceeds. If an unresolvable
      conflict occurs, `git rebase --abort` is immediately executed, leaving `main` and the worktree clean,
      while recording a structured failure report.
+
+### Review Evidence Gate (`knobs.swarm_review_evidence`)
+
+Before a **live** landing, every cluster branch's open PR must pass the same pre-merge
+review-evidence verification `keel merge` enforces at ship s10 (#828): an armed gate,
+the tier-derived verdict count, and verdicts pinned to the PR head. A cluster that does
+not verify is **held** — reported with its reason, never merged — and a live wave with
+any held cluster exits non-zero, so automation cannot read "refused to land unreviewed
+code" as success. The gate also runs in dry runs (the checks are read-only), which report
+`would hold: <reason>` per cluster.
+
+`knobs.swarm_review_evidence: false` is the explicit opt-out, and it is loud: a live
+`swarm-land` prints `swarm review evidence: OFF by config` to stderr, because `swarm-land`
+runs no CI of its own — with the gate off, clusters land unverified. See
+[configuration.md](configuration.md#swarm_review_evidence) and the
+`keel swarm-land` section of [cli.md](cli.md).
 
 ---
 

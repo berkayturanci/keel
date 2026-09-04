@@ -41,7 +41,7 @@ to `ship`.
 keel validate .keel/project.yaml --root .
 keel plan     .keel/project.yaml --root . --command work-block --live --json
 keel work-block .keel/project.yaml --root . --live --json
-keel window   .keel/project.yaml --root .
+keel window   .keel/project.yaml
 ```
 
 Parse `contract.operator_consent` before selecting work, creating branches/worktrees,

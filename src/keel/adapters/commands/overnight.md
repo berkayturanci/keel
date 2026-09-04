@@ -49,7 +49,7 @@ policy).
 keel validate .keel/project.yaml --root .
 keel plan     .keel/project.yaml --root .
 keel plan     .keel/project.yaml --root . --command overnight --live --json
-keel window   .keel/project.yaml --root .   # OPEN (merge-as-you-go) or CLOSED (no-merge)
+keel window   .keel/project.yaml   # OPEN (merge-as-you-go) or CLOSED (no-merge)
 ```
 
 The live plan is the operator-consent preflight. Before selecting work, spawning

@@ -25,11 +25,13 @@ class TestWebsiteSwarmSimulator(unittest.TestCase):
         self.assertIn("fullstack", sim_js)
         self.assertIn("conflict", sim_js)
 
-        # Multi-model and multi-vendor references
-        self.assertIn("claude-3-7-sonnet", sim_js)
-        self.assertIn("gemini-2.5-flash", sim_js)
+        # Multi-model and multi-vendor references. Asserted by *vendor*, not by
+        # model id: pinning two ids here made a model-id refresh (#1019) fail a
+        # test whose subject is "the simulator shows more than one vendor", and
+        # a vendor's catalogue is not this repo's to keep current.
+        for vendor in ("Anthropic", "Google", "OpenAI", "DeepSeek"):
+            self.assertIn(f'vendor: "{vendor}"', sim_js)
         self.assertIn("codex", sim_js)
-        self.assertIn("deepseek-r1", sim_js)
 
         # Styles present
         self.assertIn(".swarm-sandbox", styles_css)

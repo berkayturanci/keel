@@ -42,8 +42,8 @@ self-healing funnel rebases.
 ```bash
 keel validate .keel/project.yaml --root .
 keel plan     .keel/project.yaml --root . --command swarm --live --json
-keel window   .keel/project.yaml --root .
-keel swarm-plan .keel/project.yaml --root . <issue-numbers...> --tree
+keel window   .keel/project.yaml
+keel swarm-plan .keel/project.yaml --issues <n,n,n> --tree
 ```
 
 Parse `contract.operator_consent` before selecting work, creating branches/worktrees,
@@ -58,7 +58,7 @@ may use only `approved_mutation_scopes`; scope expansion blocks or escalates.
 Run static dependency analysis and scope prediction across the target issue set:
 
 ```bash
-keel swarm-plan .keel/project.yaml --root . <issue-numbers...> --tree --json
+keel swarm-plan .keel/project.yaml --issues <n,n,n> --tree --json
 ```
 
 - Inspect the generated waves, disjoint clusters, conflict edges, and direct landing eligibility.
@@ -69,7 +69,7 @@ keel swarm-plan .keel/project.yaml --root . <issue-numbers...> --tree --json
 Launch parallel workers per cluster in dedicated git worktrees under `.keel/worktrees/swarm/`:
 
 ```bash
-keel swarm-run .keel/project.yaml --root . <issue-numbers...> --rebalance
+keel swarm-run .keel/project.yaml --root . --issues <n,n,n> --live
 ```
 
 - Each cluster worker drives standard `keel ship` backbone steps (`s0`–`s12`) in its isolated worktree.
@@ -81,9 +81,10 @@ keel swarm-run .keel/project.yaml --root . <issue-numbers...> --rebalance
 When an execution wave completes, land all passing clusters onto `main`:
 
 ```bash
-keel swarm-land .keel/project.yaml --root . --mode auto
+keel swarm-land .keel/project.yaml --root . --wave <n> --live
 ```
 
+- The landing mode is **derived from the wave's diff map**, not passed on the command line.
 - **Orthogonal Batch Landing**: Disjoint diff trees are fast-forwarded or batch-merged concurrently under atomic `merge_lock`.
 - **Adaptive Funnel Landing**: If overlapping file trees exist, sequential cherry-pick/rebase is executed with fail-soft self-healing.
 
@@ -96,7 +97,7 @@ keel swarm-status .keel/project.yaml --root .
 keel-visual swarm .keel/project.yaml --root . --out keel-swarm.html
 ```
 
-Optionally launch the localhost visualizer dashboard:
+When `--visual` was requested, launch the localhost visualizer dashboard:
 ```bash
 keel-visual swarm .keel/project.yaml --root . --serve --port 8766
 ```
@@ -111,4 +112,4 @@ Compile the overall multi-agent swarm outcome:
 - Record final completion:
   `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
 
-<!-- keel-generated: surface=skills command=swarm keel_version=1.19.3 source_sha256=e2c2ce49a7841788c5f69e401f238846c7b59fcee47fb532ef4a4d1e281be856 generated_sha256=bab54f776eb3baed061daf5a6fac2717f8be4bafdd45c572fac2d6aad5a08421 -->
+<!-- keel-generated: surface=skills command=swarm keel_version=1.19.3 source_sha256=7fc3850cb93df674e5481d7bc80f9f19572ed386a779ee5c0cfad34ad90a0550 generated_sha256=0819faf72ed04a66c6687feecfce863f2ea364bf2c572cd2c69dfda5c13dbd5f -->

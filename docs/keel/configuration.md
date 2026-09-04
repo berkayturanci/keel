@@ -145,6 +145,7 @@ contracts, but executable project behavior remains in extension files or project
 | `optional_capabilities` | string[] | | runtime capabilities that may degrade explicitly when unavailable |
 | `evidence_gate_label` | string | | Legacy PR label that also arms the required pre-merge evidence gate (default `keel:ship`); ship provenance now arms the gate by default |
 | `evidence_require_distinct_vendors` | boolean | | requires each required review verdict to carry vendor provenance, and no two to share a vendor. **Unset resolves from the risk tier — on from TIER-2 up**; set it to `false` to opt out |
+| `swarm_review_evidence` | boolean | | Swarm landings enforce the same per-PR review-evidence contract as ship s10 (default `true`); `false` is the explicit, logged opt-out |
 | `gate_timeout_s` | integer ≥ 1 | | wall-clock seconds a command gate may run before it is killed (default `600`) |
 | `jury_timeout_s` | integer ≥ 1 | | wall-clock seconds the `jury` built-in may run before it is killed (default `600`) |
 
@@ -648,6 +649,28 @@ operational failure that will otherwise recur silently on every run.)
 A nonzero exit that *does* carry a parseable report is a completed review — ai-jury signals
 "request changes" that way — so its findings are used as-is. The test is deliberately
 "did we parse a verdict", not "was the exit code zero".
+
+#### `swarm_review_evidence`
+
+Whether `keel swarm-land` holds a cluster whose open PR does not pass the same pre-merge
+review-evidence verification `keel merge` enforces at s10 (#828). Default `true`.
+
+```yaml
+knobs:
+  swarm_review_evidence: false   # clusters land on CI alone — see below
+```
+
+Setting it `false` is the **explicit, logged** opt-out, not a quiet one: a live
+`swarm-land` prints `swarm review evidence: OFF by config` to stderr before landing
+anything, because skipping review has to be a visible configured exception rather than a
+driver's judgement call. `swarm-land` runs no CI of its own, so with the gate off a
+cluster lands unverified.
+
+Left on, the gate runs in dry runs too — the checks are read-only — so a preview reports
+`would hold: <reason>` per cluster instead of promising a landing a live run would refuse.
+A *live* wave with any held cluster exits non-zero. See
+the `keel swarm-land` section of [cli.md](cli.md)
+for what each hold reason means and [swarm.md](swarm.md) for the landing modes.
 
 ## `policy_pack`
 

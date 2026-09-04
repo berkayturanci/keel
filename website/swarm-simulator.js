@@ -13,20 +13,20 @@
       name: "Microservices & Core Refactor",
       description: "5 issues partitioned into 2 waves across Claude, Gemini & Codex with direct batch landing.",
       issues: [
-        { id: 742, title: "Viral PR watermark & SVG badges", files: ["src/keel/closure.py", "docs/badges.md"], model: "gemini-2.5-flash", vendor: "Google", wave: 1 },
-        { id: 740, title: "Smart stack init auto-detector", files: ["src/keel/scaffold.py", "src/keel/cli.py"], model: "claude-3-7-sonnet", vendor: "Anthropic", wave: 1 },
+        { id: 742, title: "Viral PR watermark & SVG badges", files: ["src/keel/closure.py", "docs/badges.md"], model: "gemini-3.8-flash-high", vendor: "Google", wave: 1 },
+        { id: 740, title: "Smart stack init auto-detector", files: ["src/keel/scaffold.py", "src/keel/cli.py"], model: "claude-opus-5", vendor: "Anthropic", wave: 1 },
         { id: 741, title: "Homebrew tap formula & curl script", files: ["Formula/keel.rb", "scripts/install.sh"], model: "codex", vendor: "OpenAI", wave: 1 },
-        { id: 745, title: "Conflict self-healing rebase engine", files: ["src/keel/swarm_landing.py"], model: "claude-3-7-sonnet", vendor: "Anthropic", wave: 2, dependsOn: [740] },
-        { id: 743, title: "Post-merge canary & rollback guard", files: ["src/keel/canary.py"], model: "gemini-2.5-pro", vendor: "Google", wave: 2, dependsOn: [740] }
+        { id: 745, title: "Conflict self-healing rebase engine", files: ["src/keel/swarm_landing.py"], model: "claude-opus-5", vendor: "Anthropic", wave: 2, dependsOn: [740] },
+        { id: 743, title: "Post-merge canary & rollback guard", files: ["src/keel/canary.py"], model: "gemini-3-pro", vendor: "Google", wave: 2, dependsOn: [740] }
       ]
     },
     fullstack: {
       name: "Full-Stack AI Monorepo",
       description: "4 concurrent sub-agents in parallel worktrees converging into an integration test wave.",
       issues: [
-        { id: 750, title: "High-throughput API Gateway", files: ["api/gateway.py"], model: "claude-3-7-sonnet", vendor: "Anthropic", wave: 1 },
+        { id: 750, title: "High-throughput API Gateway", files: ["api/gateway.py"], model: "claude-opus-5", vendor: "Anthropic", wave: 1 },
         { id: 751, title: "Vector Embedding & RAG Pipeline", files: ["core/rag.py"], model: "codex", vendor: "OpenAI", wave: 1 },
-        { id: 752, title: "Spatial Canvas & Topology UI", files: ["ui/canvas.ts"], model: "gemini-2.5-flash", vendor: "Google", wave: 1 },
+        { id: 752, title: "Spatial Canvas & Topology UI", files: ["ui/canvas.ts"], model: "gemini-3.8-flash-high", vendor: "Google", wave: 1 },
         { id: 753, title: "E2E Cross-Agent Test Matrix", files: ["tests/e2e.py"], model: "deepseek-r1", vendor: "DeepSeek", wave: 2, dependsOn: [750, 751, 752] }
       ]
     },
@@ -34,8 +34,8 @@
       name: "Adjacent Conflict Self-Healing",
       description: "2 workers touching overlapping routes healed automatically by AST-aware rebase funnel.",
       issues: [
-        { id: 760, title: "OAuth 2.0 PKCE Auth Provider", files: ["auth/routes.py"], model: "claude-3-7-sonnet", vendor: "Anthropic", wave: 1 },
-        { id: 761, title: "Passkey & WebAuthn Handler", files: ["auth/routes.py"], model: "gemini-2.5-pro", vendor: "Google", wave: 1, hasConflict: true },
+        { id: 760, title: "OAuth 2.0 PKCE Auth Provider", files: ["auth/routes.py"], model: "claude-opus-5", vendor: "Anthropic", wave: 1 },
+        { id: 761, title: "Passkey & WebAuthn Handler", files: ["auth/routes.py"], model: "gemini-3-pro", vendor: "Google", wave: 1, hasConflict: true },
         { id: 762, title: "Zero-Trust Session Audit Log", files: ["audit/session.py"], model: "codex", vendor: "OpenAI", wave: 2, dependsOn: [760] }
       ]
     }

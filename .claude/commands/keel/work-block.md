@@ -41,7 +41,7 @@ to `ship`.
 keel validate .keel/project.yaml --root .
 keel plan     .keel/project.yaml --root . --command work-block --live --json
 keel work-block .keel/project.yaml --root . --live --json
-keel window   .keel/project.yaml --root .
+keel window   .keel/project.yaml
 ```
 
 Parse `contract.operator_consent` before selecting work, creating branches/worktrees,
@@ -134,4 +134,4 @@ must include the fixed queue snapshot and these buckets:
 
 Also include open questions, consent gaps, and the next 1–3 operator actions.
 
-<!-- keel-generated: surface=claude command=work-block keel_version=1.19.3 source_sha256=9ac541b04fd4df257005468d50f4b3827d75d98b6ad3a0bdf3a2c060bb2aac21 generated_sha256=9ac541b04fd4df257005468d50f4b3827d75d98b6ad3a0bdf3a2c060bb2aac21 -->
+<!-- keel-generated: surface=claude command=work-block keel_version=1.19.3 source_sha256=41ac873337444a06bcbcfce7481c9b8dd379f8f5e0d167618ffefbfb3ccf49f7 generated_sha256=41ac873337444a06bcbcfce7481c9b8dd379f8f5e0d167618ffefbfb3ccf49f7 -->

@@ -132,7 +132,7 @@ jobs:
         with:
           command: ship
           issue: ${{ github.event.issue.number }}
-          delegate: "google-api:gemini-2.5-pro"
+          delegate: "anthropic-api:claude-opus-5"
           github-token: ${{ secrets.GITHUB_TOKEN }}
           gemini-api-key: ${{ secrets.GEMINI_API_KEY }}
 ```

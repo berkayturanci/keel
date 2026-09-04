@@ -1053,7 +1053,7 @@ keel gc <project.yaml> [--root DIR] [--keep-activity N]
 | --- | --- | --- | --- |
 | `path` | file path | required | Project config. |
 | `--root DIR` | path | `.` | Repo root under which `.keel` runtime artifacts live. |
-| `--keep-activity N` | non-negative int | `200` | Number of newest activity records to retain. |
+| `--keep-activity N` | non-negative int | `50` | Number of newest activity records to retain (`cli.DEFAULT_GC_KEEP_ACTIVITY`). |
 | `--no-scratch` | flag | off | Skip emptying `.keel/scratch`. |
 | `--no-activity` | flag | off | Skip pruning `.keel/activity`. |
 | `--dry-run` | flag | off | Report what would be reclaimed without removing anything. |
@@ -1734,6 +1734,58 @@ keel install-legacy-wrappers <agent> [--root DIR] [--force]
 keel install-legacy-wrappers all --command ship=ship
 keel install-legacy-wrappers skills --command ship=ship --command morning=morning
 keel install-legacy-wrappers all --force
+```
+
+## `keel swarm-land`
+
+Land the passing cluster branches of a completed execution wave into the project's base
+branch under the atomic `merge_lock`. Documented here — ahead of the other `swarm-*`
+commands — because it is the surface that carries the `knobs.swarm_review_evidence`
+contract described below.
+
+```
+keel swarm-land <project.yaml> [--root DIR] [--wave N] [--issues N,N,…] [--issue N]
+                [--declared-file PATH] [--issue-title TITLE] [--issue-body BODY]
+                [--issue-label LABEL] [--swarm-id ID] [--live] [--json]
+```
+
+| Flag | Type / values | Default | Effect |
+| --- | --- | --- | --- |
+| `path` | file path | required | Project config. |
+| `--root DIR` | path | `.` | Repo root for git, the swarm state and the merge lock. |
+| `--wave N` | int | `1` | Which execution wave to land. |
+| `--issues N,N` / `--issue N` | comma list / repeatable int | plan's own set | Issue set the wave was planned from. |
+| `--swarm-id ID` | string | derived | Reuse an existing swarm's plan/state. |
+| `--live` | flag | off | Actually merge. Without it the command reports what it would land, including `would hold: <reason>` per cluster. |
+| `--json` | flag | off | Structured landing result. |
+
+There is **no `--mode` flag**: `evaluate_wave_landing_mode` derives batch or funnel from
+the wave's diff map, so the mode cannot be asserted against what the diffs actually are.
+
+### Details — `knobs.swarm_review_evidence`
+
+Default `true`. Before a live landing, every cluster branch's open PR must pass the same
+pre-merge review-evidence verification `keel merge` enforces at ship s10 (#828): an armed
+gate, the tier-derived verdict count, and verdicts pinned to the PR head. A cluster that
+does not verify is **held** — reported with its reason, never merged. Held clusters
+degrade the wave status like failures without being counted as one, and a *live* wave with
+any held cluster exits non-zero, so automation cannot read "refused to land unreviewed
+code" as success.
+
+The gate also runs in dry runs, because the checks are read-only: a preview that could not
+see the gate would promise a landing a live run refuses.
+
+`knobs.swarm_review_evidence: false` is the explicit opt-out and it is announced on stderr
+(`swarm review evidence: OFF by config`) before anything lands. `swarm-land` runs no CI of
+its own, so with the gate off clusters land unverified — which is why the exception lives
+in committed config rather than in a driver's judgement call. Full field documentation:
+[configuration.md](configuration.md#swarm_review_evidence).
+
+### Examples
+
+```bash
+keel swarm-land .keel/project.yaml --root . --wave 1
+keel swarm-land .keel/project.yaml --root . --wave 1 --live --json
 ```
 
 ## `/keel:ship` adapter arguments
