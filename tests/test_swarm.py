@@ -32,6 +32,7 @@ from keel.swarm import (
     render_swarm_status_dashboard,
     resolve_cluster_assignment,
     resolve_swarm_state_dir,
+    safe_role,
     save_swarm_state,
     scopes_have_conflict,
     scopes_intersect,
@@ -677,16 +678,40 @@ class TestDifficultyScoring(unittest.TestCase):
         self.assertEqual(difficulty.signals, (("tier-2", 2), ("files:2", 1)))
         self.assertEqual(difficulty.band, "standard")
 
-    def test_dependency_depth_counts_but_is_capped(self):
-        """Past a few dependencies it is the same problem, not a worse one."""
+    def test_dependency_depth_is_recorded_raw_and_only_its_points_are_capped(self):
+        """Past a few dependencies it is the same problem, not a worse one — but a
+        cluster sitting on nine earlier issues is still not one sitting on three, and
+        clamping the recorded depth threw that away where a reader would have seen it."""
         scope = IssueScope(issue=1, predicted_files=("a.py",))
 
-        capped = score_difficulty((scope,), dependency_depth=9)
+        deep = score_difficulty((scope,), dependency_depth=9)
+        at_cap = score_difficulty((scope,), dependency_depth=3)
         negative = score_difficulty((scope,), dependency_depth=-3)
 
-        self.assertEqual(capped.dependency_depth, 3)
-        self.assertEqual(capped.signals, (("tier-2", 2), ("depends-on:3", 3)))
+        self.assertEqual(deep.dependency_depth, 9)
+        self.assertEqual(deep.signals, (("tier-2", 2), ("depends-on:9", 3)))
+        self.assertEqual(deep.score, at_cap.score)
         self.assertEqual(negative.dependency_depth, 0)
+
+    def test_the_planner_scores_a_cluster_from_the_cluster_own_issue_list(self):
+        """The scorer's contract is "how much work is *this cluster*", and the planner
+        reads the cluster's `issues` rather than the issue its loop happens to be on."""
+        cluster = SwarmCluster("c1", (102, 101), "core", ())
+        scopes = {scope.issue: scope for scope in BACKLOG}
+
+        self.assertEqual(
+            [scope.issue for scope in swarm_module.cluster_scopes(cluster, scopes)], [102, 101]
+        )
+
+    def test_an_issue_the_planner_never_analysed_is_skipped_not_faked(self):
+        """An invented empty scope would quietly lower the band of a cluster whose
+        largest issue went missing."""
+        cluster = SwarmCluster("c1", (101, 999), "core", ())
+        scopes = {scope.issue: scope for scope in BACKLOG}
+
+        self.assertEqual(
+            [scope.issue for scope in swarm_module.cluster_scopes(cluster, scopes)], [101]
+        )
 
     def test_a_cluster_is_scored_as_one_piece_of_work(self):
         """Three small issues handed to one lead are not three small pieces of work."""
@@ -839,7 +864,10 @@ class TestShipHandoff(unittest.TestCase):
 
         self.assertIn("--delegate", args)
         self.assertEqual(args[args.index("--delegate") + 1], "codex")
-        self.assertEqual(args[-2:], ("--role", "core"))
+        self.assertEqual(args[args.index("--role") + 1], "core")
+        # The bench rides along so the child reproduces the parent's resolution rather
+        # than deriving a different team from config alone.
+        self.assertEqual(args[args.index("--effort") + 1], "high")
 
     def test_a_model_rides_along_on_the_delegate_token(self):
         cluster = self.assignment(team=BY_DIFFICULTY)["cluster-1-102"]
@@ -871,6 +899,37 @@ class TestShipHandoff(unittest.TestCase):
 
     def test_no_assignment_is_no_flags(self):
         self.assertEqual(ship_handoff_args(None), ())
+
+    def test_a_role_that_would_parse_as_a_flag_is_dropped_and_reported(self):
+        """`role:--live` on one issue would break argparse in every child of the batch.
+
+        There is no quoting that stops `--live` being a flag, so it is dropped — and said
+        out loud in `assignment.warnings`, which is where a lead is told to look.
+        """
+        cluster = SwarmCluster("c1", (1,), "--live", ("a.py",))
+        difficulty = Difficulty(score=0, band="easy", tier=1, file_count=1, dependency_depth=0)
+
+        assignment = resolve_cluster_assignment(cluster, difficulty)
+
+        self.assertNotIn("--role", ship_handoff_args(assignment))
+        self.assertIn("is not passed to the child ship", assignment["warnings"][-1])
+
+    def test_the_safe_role_class_admits_ordinary_labels_and_refuses_argv_bait(self):
+        for role in ("core", "docs", "keel-visual", "api.v2", "role_1"):
+            with self.subTest(role=role):
+                self.assertEqual(safe_role(role), (role, ()))
+        for role in ("--live", "-x", "a b", "core;rm", "", None):
+            with self.subTest(role=role):
+                self.assertIsNone(safe_role(role)[0])
+
+    def test_the_warning_is_deterministic(self):
+        self.assertEqual(safe_role("--live")[1], safe_role("--live")[1])
+
+    def test_a_clean_role_adds_no_warning(self):
+        cluster = SwarmCluster("c1", (1,), "core", ("a.py",))
+        difficulty = Difficulty(score=0, band="easy", tier=1, file_count=1, dependency_depth=0)
+
+        self.assertEqual(resolve_cluster_assignment(cluster, difficulty)["warnings"], [])
 
 
 class TestWorkerSeeding(unittest.TestCase):

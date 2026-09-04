@@ -370,6 +370,21 @@ beats the bench's; only the `--effort` flag beats the seat.
 A `--team` name with no matching profile is reported in `assignment.warnings` and the run
 falls back to the configured policy — it is never silently ignored.
 
+**A child ship inherits the bench.** `--effort` and `--team` are accepted by `keel ship` and
+`keel plan`, not only by the batch commands, and a batch hands them to every child. That is
+what makes a difficulty bench survive the handoff: the child re-resolves the *same* bench
+from the *same* config instead of falling back to the role default. The parent may still
+override what the bench chose — `--delegate` and `--review-delegate` on the child's command
+line win over any bench, exactly as they do on the parent's.
+
+**A bench `effort` is validated against every seat it could land on.** A seat's own `effort`
+sits beside its provider, so an operator reading one line sees both halves. A bench's does
+not — it lands on whichever implementer resolves for that band, written somewhere else — so
+`keel validate` checks it against each candidate implementer under the same rules: an `agy`
+seat needs the `model` its effort suffix rides on, a provider with no effort dial is
+refused, and a `subagent:` implementer (which has no dial at all) is refused too. A seat
+naming its own `effort` never receives the bench's, so it is not flagged.
+
 `team` participates in `config_hash` only when it is present, so adding the knob does not
 rotate the hash for a project that has not adopted it — and `config_hash` changes whenever
 `team` does.

@@ -15,7 +15,7 @@ import fnmatch
 import json
 import posixpath
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -478,6 +478,18 @@ def difficulty_band(score: int) -> str:
     return team_policy.DIFFICULTY_BANDS[-1]
 
 
+def cluster_scopes(
+    cluster: SwarmCluster, scopes: Mapping[int, IssueScope]
+) -> tuple[IssueScope, ...]:
+    """The issue scopes a cluster covers, in the cluster's own order.
+
+    An issue with no scope in the map is skipped rather than faked: a scoreable cluster
+    is one whose issues the planner actually analysed, and inventing an empty scope would
+    quietly lower the band of a cluster whose largest issue went missing.
+    """
+    return tuple(scopes[issue] for issue in cluster.issues if issue in scopes)
+
+
 def score_difficulty(
     scopes: Sequence[IssueScope],
     *,
@@ -502,12 +514,18 @@ def score_difficulty(
         docs_globs=docs_globs,
         allowlist_globs=allowlist_globs,
     )
-    depth = min(max(dependency_depth, 0), MAX_DEPENDENCY_POINTS)
+    # The observed depth is recorded and the *points* are what the cap bites: a cluster
+    # sitting on nine earlier issues and one sitting on three are not the same situation,
+    # and reporting both as `depends-on:3` threw away the difference at the only place a
+    # reader could have seen it. Capping the points still says "past a few dependencies
+    # it is the same problem, not a worse one".
+    depth = max(dependency_depth, 0)
+    depth_points = min(depth, MAX_DEPENDENCY_POINTS)
     candidates: list[tuple[str, int]] = [
         (f"tier-{tier}", _TIER_POINTS.get(tier, 2)),
         (f"files:{len(files)}", _file_count_points(len(files))),
         *((label, _LABEL_POINTS[label]) for label in labels if label in _LABEL_POINTS),
-        (f"depends-on:{depth}", depth),
+        (f"depends-on:{depth}", depth_points),
     ]
     # Only what actually moved the score is recorded: a signal worth zero points is not
     # evidence, and a reader who has to filter them out is reading noise.
@@ -567,7 +585,7 @@ def resolve_cluster_assignment(
     """
     settings = overrides or AssignmentOverrides()
     policy = config.knobs.team if config is not None else team_policy.TeamPolicy()
-    return team_policy.resolve_assignment(
+    assignment = team_policy.resolve_assignment(
         policy,
         tier=difficulty.tier,
         role=cluster.role,
@@ -581,6 +599,36 @@ def resolve_cluster_assignment(
         team_profile=settings.team_profile,
         effort=settings.effort,
     )
+    # A role keel will not hand to a child is an operator-visible fact, not a silent
+    # omission: `assignment.warnings` is where a lead is told to look before launching.
+    assignment["warnings"] = [*assignment["warnings"], *safe_role(assignment["role"])[1]]
+    return assignment
+
+
+#: Characters a role may contribute to a child's argv. A role is read off an issue label,
+#: which anyone with triage rights can write; `--role` hands it to a child `argparse`,
+#: where a value opening with `-` is parsed as a flag rather than as the option's value.
+#: `role:--live` on one issue would therefore break every child ship in the batch.
+_SAFE_ROLE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+
+
+def safe_role(role: str | None) -> tuple[str | None, tuple[str, ...]]:
+    """``(role, warnings)`` — the role if it can be an argv token, else ``None`` and why.
+
+    Dropped rather than escaped or quoted: there is no quoting that makes `--live` stop
+    being a flag to `argparse`, and a role keel cannot pass is a role the child resolves
+    from config on its own — a smaller loss than a batch that dies on argument parsing.
+    The warning is deterministic so two runs of the same plan report it identically.
+    """
+    if role is None or not role:
+        return None, ()
+    if _SAFE_ROLE.match(role):
+        return role, ()
+    return None, (
+        f"role {role!r} is not passed to the child ship: a role becomes a `--role` argv "
+        "token, and this one is not [A-Za-z0-9][A-Za-z0-9._-]*. The child resolves its "
+        "role from the issue's own labels instead",
+    )
 
 
 def ship_handoff_args(assignment: dict[str, Any] | None) -> tuple[str, ...]:
@@ -592,6 +640,13 @@ def ship_handoff_args(assignment: dict[str, Any] | None) -> tuple[str, ...]:
     passed to the parent. Only flags ``keel ship`` actually defines are emitted; a seat
     that is a host subagent rather than a provider is left to the adapter, which is the
     layer that knows how to spawn one.
+
+    The vocabulary is :data:`keel.workblock.DELEGATION_FLAGS` — the same five a work block
+    hands down — because the child is the same `keel ship` either way. The two differ only
+    in *what* they carry: a work block passes the operator's flags through unresolved,
+    while a lead has already resolved its cluster's bench and passes the seats that came
+    out. ``--effort`` and ``--team`` ride along so the child's own resolution reproduces
+    the parent's rather than re-deriving a different one from config alone.
     """
     if assignment is None:
         return ()
@@ -604,8 +659,13 @@ def ship_handoff_args(assignment: dict[str, Any] | None) -> tuple[str, ...]:
         if reviewer["kind"] == "provider":
             model = reviewer["model"]
             args += ["--review-delegate", reviewer["provider"] + (f":{model}" if model else "")]
-    if assignment["role"]:
-        args += ["--role", assignment["role"]]
+    role, _warnings = safe_role(assignment["role"])
+    if role:
+        args += ["--role", role]
+    if assignment["effort"]:
+        args += ["--effort", assignment["effort"]]
+    if assignment["team_profile"]:
+        args += ["--team", assignment["team_profile"]]
     return tuple(args)
 
 
@@ -727,21 +787,26 @@ def build_swarm_plan(
                     if dep in assigned_prior_issues
                 )
             )
-            difficulty = score_difficulty(
-                (sc,),
-                tier3_globs=tier3_globs,
-                docs_globs=docs_globs,
-                allowlist_globs=allowlist_globs,
-                dependency_depth=len(deps),
-            )
             cluster = SwarmCluster(
                 cluster_id=f"cluster-{wave_idx}-{issue_num}",
                 issues=(issue_num,),
                 role=sc.role,
                 combined_scope=sc.predicted_files,
                 depends_on_issues=deps,
-                difficulty=difficulty,
             )
+            # Scored from the cluster's own issue list rather than from the issue this
+            # loop happens to be on. The partition emits one issue per cluster today, so
+            # the two are the same tuple — but the scorer's contract is "how much work is
+            # *this cluster*", and a caller that hand-rolled the single-issue case would
+            # be the thing to fix on the day clusters group.
+            difficulty = score_difficulty(
+                cluster_scopes(cluster, scope_by_id),
+                tier3_globs=tier3_globs,
+                docs_globs=docs_globs,
+                allowlist_globs=allowlist_globs,
+                dependency_depth=len(deps),
+            )
+            cluster = replace(cluster, difficulty=difficulty)
             clusters.append(
                 replace(
                     cluster,

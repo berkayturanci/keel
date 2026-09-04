@@ -629,6 +629,12 @@ def assess(
     role: str | None = None,
     delegate: str | None = None,
     review_delegates: Sequence[str] = (),
+    #: ``--team`` / ``--effort``: the bench this run is staffed from (#1017). Resolved
+    #: here as well as in ``cli._review_assignment`` because ``keel ship`` *replaces* the
+    #: planned assignment with this one once the real tier is known — dropping them here
+    #: published a ship contract whose team disagreed with the plan the operator read.
+    team_profile: str | None = None,
+    effort: str | None = None,
     host_agent: str = team_policy.HOST_DEFAULT,
     require_distinct_vendors: bool | None = None,
 ) -> ShipAssessment:
@@ -674,6 +680,8 @@ def assess(
         legacy=legacy_agents,
         jury_disabled=no_jury,
         jury_advisory=jury_advisory,
+        team_profile=team_profile,
+        effort=effort,
     )
     reviewers = assignment["reviewer_count"]
     window_open = (

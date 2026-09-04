@@ -101,11 +101,22 @@ keel swarm-run .keel/project.yaml --root . --issues <n,n,n> --live
 - Spawn **one team lead subagent per cluster**, briefed with that cluster's `assignment`
   and `difficulty` verbatim. The lead runs the cluster's issues through the standard
   `keel ship` backbone steps (`s0`–`s12`) in the cluster's isolated worktree.
-- The lead passes its cluster's team to every child ship it starts:
-  `--delegate <assignment.implementer>`, one `--review-delegate` per staffed reviewer slot,
-  and `--role <assignment.role>`. `keel swarm-run` already appends these for the runs it
-  starts itself; a lead driving ships by hand must append the same flags, or the child
-  re-resolves from config alone and quietly runs a different team.
+- The lead passes its cluster's team to every child ship it starts, using the **same five
+  flags a work block hands down** — `keel ship` accepts all of them:
+
+  ```
+  keel ship <project.yaml> --issue <N> --delegate <assignment.implementer> [--review-delegate <provider>]... [--role <assignment.role>] [--effort <assignment.effort>] [--team <assignment.team_profile>]
+  ```
+
+  One `--review-delegate` per staffed reviewer slot, in slot order. `--effort` and
+  `--team` carry the bench the cluster was staffed from, so the child's own resolution
+  reproduces the parent's instead of re-deriving a different one from config alone.
+  `keel swarm-run` appends exactly this set for the runs it starts itself; a lead driving
+  ships by hand appends the same. A seat that is a host `subagent:` rather than a provider
+  is not a `--delegate` value — spawn it as a subagent instead.
+- A role that is not `[A-Za-z0-9][A-Za-z0-9._-]*` is **not** passed: it would be parsed as
+  a flag by the child and break the run. Core drops it and says so in
+  `assignment.warnings`; the child resolves its role from the issue's own labels.
 - A lead never re-scores its cluster and never re-staffs it. If the work turns out heavier
   than the band said, it reports that through the worker record and the CTO re-plans.
 - If runtime file modification divergence is detected, dynamic rebalancing partitions overlapping branches to the next wave tier.
@@ -150,4 +161,4 @@ Compile the overall multi-agent swarm outcome:
 - Record final completion:
   `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
 
-<!-- keel-generated: surface=claude command=swarm keel_version=1.19.3 source_sha256=59fe137ba554f65db429ca4b45485e4a4ff134184b61a1ccfdb3265b2413faba generated_sha256=59fe137ba554f65db429ca4b45485e4a4ff134184b61a1ccfdb3265b2413faba -->
+<!-- keel-generated: surface=claude command=swarm keel_version=1.19.3 source_sha256=98c145b2deac422004958fe48286f3b0bffb49c7905dd856a0df4f0a4e248b67 generated_sha256=98c145b2deac422004958fe48286f3b0bffb49c7905dd856a0df4f0a4e248b67 -->

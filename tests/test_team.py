@@ -877,5 +877,122 @@ class TestBenchValidation(unittest.TestCase):
         self.assertIn("by_difficulty.hard.implement", errors[0])
 
 
+class TestBenchEffortValidation(unittest.TestCase):
+    """A bench `effort` is action at a distance, so it is checked where it lands (#1017).
+
+    A seat's own `effort` sits next to its provider — one line, both halves visible.
+    `by_difficulty.hard.effort` lands on whichever implementer resolves for that band,
+    written somewhere else entirely, so it bypassed every rule `implement.default.effort`
+    has faced since #1014: an agy seat with no model, a provider with no effort dial, a
+    host subagent with no dial at all — all validated clean and all silently dropped.
+    """
+
+    def issues(self, raw):
+        return team.team_issues(raw, source="knobs.team")
+
+    def test_agy_still_needs_the_model_its_effort_suffix_rides_on(self):
+        errors = self.issues(
+            {
+                "implement": {"default": {"provider": "agy"}},
+                "by_difficulty": {"hard": {"effort": "high"}},
+            }
+        )
+
+        self.assertIn("knobs.team.by_difficulty.hard.effort", errors[0])
+        self.assertIn("agy spells reasoning effort as a model suffix", errors[0])
+        self.assertIn("applied to the implementer at implement.default", errors[0])
+
+    def test_a_subagent_implementer_has_no_dial_to_set(self):
+        errors = self.issues(
+            {
+                "implement": {"default": {"provider": "subagent:backend-developer"}},
+                "by_difficulty": {"hard": {"effort": "high"}},
+            }
+        )
+
+        self.assertIn("is a host subagent", errors[0])
+        self.assertIn("silently dropped", errors[0])
+
+    def test_a_seat_level_subagent_effort_is_still_tolerated(self):
+        """#1014's choice, and the distinction this check turns on: there the operator
+        wrote both halves on one line and could see the pairing."""
+        self.assertEqual(self.issues({"fix": {"provider": "subagent:x", "effort": "high"}}), [])
+
+    def test_a_provider_with_no_effort_spelling_is_reported(self):
+        errors = self.issues(
+            {
+                "implement": {"default": {"provider": "claude"}},
+                "profiles": {"night": {"effort": "low"}},
+            }
+        )
+
+        self.assertIn("knobs.team.profiles.night.effort", errors[0])
+        self.assertIn("has no spelling for reasoning effort", errors[0])
+
+    def test_an_unknown_bench_effort_is_reported_like_a_seat_one(self):
+        errors = self.issues(
+            {
+                "implement": {"default": {"provider": "codex"}},
+                "by_difficulty": {"hard": {"effort": "extreme"}},
+            }
+        )
+
+        self.assertIn("unknown effort 'extreme'", errors[0])
+
+    def test_a_seat_that_names_its_own_effort_never_receives_the_bench_one(self):
+        self.assertEqual(
+            self.issues(
+                {
+                    "implement": {
+                        "default": {
+                            "provider": "agy",
+                            "model": "gemini-3.8-flash-high",
+                            "effort": "high",
+                        }
+                    },
+                    "by_difficulty": {"hard": {"effort": "high"}},
+                }
+            ),
+            [],
+        )
+
+    def test_a_bench_naming_its_own_implementer_is_checked_against_that_seat_alone(self):
+        """It can only land there, so an unrelated role seat must not be dragged in."""
+        errors = self.issues(
+            {
+                "implement": {"default": {"provider": "claude"}},
+                "by_difficulty": {"hard": {"implement": {"provider": "codex"}, "effort": "high"}},
+            }
+        )
+
+        self.assertEqual(errors, [])
+
+    def test_every_implementer_a_band_could_reach_is_checked(self):
+        """With no bench implementer the band lands on whichever seat resolves, so all of
+        them — including the deprecated knob's — are candidates."""
+        errors = team.team_issues(
+            {
+                "implement": {"by_role": {"core": {"provider": "claude"}}},
+                "by_difficulty": {"hard": {"effort": "high"}},
+            },
+            source="knobs.team",
+            implementer_agents={"docs": "ollama"},
+        )
+
+        paths = " ".join(errors)
+        self.assertIn("implement.by_role.core", paths)
+        self.assertIn("knobs.implementer_agents.docs", paths)
+
+    def test_a_bench_with_no_effort_is_not_checked(self):
+        self.assertEqual(
+            self.issues({"by_difficulty": {"hard": {"implement": {"provider": "claude"}}}}), []
+        )
+
+    def test_a_policy_with_no_implementer_at_all_leans_on_the_host_and_says_nothing(self):
+        """The host is a per-run flag; validating against one operator's default is the
+        kind of machine-dependent rule #1014 refused."""
+        self.assertEqual(self.issues({"by_difficulty": {"hard": {"effort": "high"}}}), [])
+
+
 if __name__ == "__main__":
     unittest.main()

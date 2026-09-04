@@ -824,7 +824,6 @@ def team_issues(
     # real cycle, so the import moves instead of the vocabulary (the pattern
     # `keel.config._validate_delegate_profiles` already uses).
     from .agents import BUILTIN_DELEGATE_VENDORS
-    from .delegate import EFFORTS, supports_effort
 
     if not isinstance(raw, Mapping):
         return []  # the schema already reported the wrong shape
@@ -839,26 +838,134 @@ def team_issues(
         vendor = _seat_vendor(seat, path=path, known=known, where=where, errors=errors)
         if seat.effort is None:
             continue
-        if seat.effort not in EFFORTS:
-            errors.append(f"{where}: unknown effort {seat.effort!r}; valid: {', '.join(EFFORTS)}")
-        elif vendor is None:
-            continue  # the provider is already reported; do not pile on
-        elif not supports_effort(vendor):
-            errors.append(
-                f"{where}: provider {seat.provider!r} ({vendor}) has no spelling for "
-                f"reasoning effort, so effort {seat.effort!r} would be silently dropped "
-                "— drop the field, or name a provider that can honour it"
-            )
-        elif effort_needs_model(vendor) and seat.model is None:
-            errors.append(
-                f"{where}: agy spells reasoning effort as a model suffix "
-                f"(e.g. gemini-3.8-flash-high), so effort {seat.effort!r} needs a "
-                "'model' beside it"
-            )
+        errors.extend(_effort_issues(seat.effort, seat=seat, vendor=vendor, where=where))
     legacy = legacy_seats(implementer_agents or {}, provider_names=known)
+    errors.extend(_bench_effort_issues(policy, source=source, known=known, legacy=legacy))
     errors.extend(_gate_issues(policy, source=source, legacy=legacy))
     errors.extend(_review_issues(policy, source=source))
     return errors
+
+
+def _effort_issues(
+    effort: str,
+    *,
+    seat: Seat,
+    vendor: str | None,
+    where: str,
+    applies_to: str | None = None,
+) -> list[str]:
+    """The ways an ``effort`` is not honourable by ``seat``, worded the same everywhere.
+
+    Extracted so a bench-level ``effort`` (:func:`_bench_effort_issues`) is judged by
+    exactly the rules a seat-level one is, in exactly the same words. Two copies of these
+    three sentences is how ``by_difficulty.hard.effort`` came to bypass the checks
+    ``implement.default.effort`` has passed since #1014.
+
+    ``applies_to`` names the seat the effort would land on, for the bench case where the
+    effort and the seat it breaks are written in different places.
+
+    These are #1014's three rules and only those, so the two callers cannot drift. The
+    subagent rule is deliberately *not* here: it applies to a bench effort alone, and
+    :func:`_bench_effort_issues` says why.
+    """
+    from .delegate import EFFORTS, supports_effort
+
+    tail = "" if applies_to is None else f" (applied to the implementer at {applies_to})"
+    if effort not in EFFORTS:
+        return [f"{where}: unknown effort {effort!r}; valid: {', '.join(EFFORTS)}{tail}"]
+    if vendor is None:
+        return []  # an unresolvable provider is already reported; do not pile on
+    if not supports_effort(vendor):
+        return [
+            f"{where}: provider {seat.provider!r} ({vendor}) has no spelling for "
+            f"reasoning effort, so effort {effort!r} would be silently dropped "
+            f"— drop the field, or name a provider that can honour it{tail}"
+        ]
+    if effort_needs_model(vendor) and seat.model is None:
+        return [
+            f"{where}: agy spells reasoning effort as a model suffix "
+            f"(e.g. gemini-3.8-flash-high), so effort {effort!r} needs a "
+            f"'model' beside it{tail}"
+        ]
+    return []
+
+
+def _bench_effort_issues(
+    policy: TeamPolicy,
+    *,
+    source: str,
+    known: Mapping[str, str],
+    legacy: Mapping[str, Seat],
+) -> list[str]:
+    """A bench ``effort`` has to be honourable by every implementer it could land on.
+
+    A seat's own ``effort`` sits next to the provider it applies to, so an operator
+    reading one line sees both halves. A bench's does not: ``by_difficulty.hard.effort``
+    lands on whichever implementer resolves for that band, which may be written in
+    another file's worth of config — action at a distance, and exactly the case where a
+    silently-dropped effort is invisible. So it is checked against every seat it could
+    reach, by the same rules and in the same words.
+
+    Which seats those are follows the resolution order. A bench naming its own
+    ``implement`` seat can only land there. One that does not falls through to the
+    role/default/legacy implementers, and any of them is reachable. The host-agent
+    fallback is deliberately not checked: the host is a per-run flag, and a policy that
+    only validates against one operator's default is the kind of rule #1014 refused.
+
+    A **subagent** target is an error here and not at seat level, and the difference is
+    the point. ``fix: {provider: "subagent:x", effort: high}`` pairs the two on one line:
+    the operator saw both halves and #1014 chose to tolerate it. A bench effort lands on
+    a seat written somewhere else entirely, so the same pairing is one nobody ever read.
+    """
+    errors: list[str] = []
+    for table, benches in (("by_difficulty", policy.by_difficulty), ("profiles", policy.profiles)):
+        for name, bench in sorted(benches.items()):
+            if bench.effort is None:
+                continue
+            where = f"{source}.{table}.{name}.effort"
+            for seat_path, seat in _bench_effort_targets(policy, bench=bench, legacy=legacy):
+                # A seat naming its own effort never receives the bench's, so a bench
+                # effort it could not honour is not a defect — the seat's wins.
+                if seat.effort is not None:
+                    continue
+                if seat.kind == "subagent":
+                    errors.append(
+                        f"{where}: {seat.provider!r} is a host subagent, which has no "
+                        f"reasoning-effort dial keel can set, so effort {bench.effort!r} "
+                        "would be silently dropped — drop the field, or name a provider "
+                        f"that can honour it (applied to the implementer at {seat_path})"
+                    )
+                    continue
+                errors.extend(
+                    _effort_issues(
+                        bench.effort,
+                        seat=seat,
+                        vendor=known.get(seat.provider),
+                        where=where,
+                        applies_to=seat_path,
+                    )
+                )
+    return errors
+
+
+def _bench_effort_targets(
+    policy: TeamPolicy,
+    *,
+    bench: Bench,
+    legacy: Mapping[str, Seat],
+) -> list[tuple[str, Seat]]:
+    """Implementer seats a bench's ``effort`` could land on, with their config paths."""
+    if bench.implement is not None:
+        return [("this bench's own implement seat", bench.implement)]
+    targets = [
+        (path, seat)
+        for path, seat in _seat_paths(policy)
+        if path.startswith("implement") or path.endswith(".implement")
+    ]
+    targets.extend(
+        (f"knobs.implementer_agents.{role}", seat) for role, seat in sorted(legacy.items())
+    )
+    return targets
 
 
 def _seat_vendor(

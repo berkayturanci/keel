@@ -120,10 +120,16 @@ inputs that already exist — no model is asked, and the same backlog always sco
 | predicted file count | `≥2` → `1`, `≥4` → `2`, `≥8` → `3` |
 | `priority:` label | `priority:high` `1`, `priority:critical` `2` |
 | `size:` label | `size:m` `1`, `size:l` `2`, `size:xl` `3` |
-| dependency depth (issues in earlier waves this cluster conflicts with) | `1` each, capped at `3` |
+| dependency depth (issues in earlier waves this cluster conflicts with) | `1` each, **points** capped at `3` |
 
 Bands: `0–2` **easy**, `3–5` **standard**, `6+` **hard**. Only signals worth non-zero points
 are recorded, so a surprising band can be read back rather than guessed at.
+
+The cap bites the *points*, never the recorded number: `dependency_depth` and the
+`depends-on:<n>` signal both carry the depth actually observed. A cluster sitting on nine
+earlier issues and one sitting on three score the same — past a few dependencies it is the
+same problem, not a worse one — but they do not *read* the same, because the difference is
+real and the plan is the only place anyone would see it.
 
 The band selects a bench from
 [`knobs.team.by_difficulty`](configuration.md#teamlead-teamby_difficulty-and-teamprofiles--staffing-a-batch);
@@ -191,8 +197,10 @@ keel swarm-run .keel/project.yaml --root . --issues 714,715,716,717 --live
 1. **Creation**: Dedicated worktrees are branched from `origin/main` (e.g. `swarm/cluster-1`).
 2. **Execution**: One **team lead** per cluster dispatches the implementer its `assignment`
    named, to execute steps `s0` through `s9`. The lead appends the cluster's team to every
-   child ship — `--delegate <implementer>`, one `--review-delegate` per staffed reviewer slot,
-   and `--role` — so the child cannot quietly re-resolve a different team from config alone.
+   child ship — `--delegate <implementer>`, one `--review-delegate` per staffed reviewer
+   slot, `--role`, and `--effort`/`--team` for the bench the cluster was staffed from — so
+   the child reproduces the parent's resolution instead of quietly deriving a different
+   team from config alone. `keel ship` accepts all five.
 3. **Dynamic Rebalancing**: If a worker modifies files outside its predicted scope that overlap with another
    active cluster, the rebalancer detects the drift, halts conflicting execution in the current wave,
    and reschedules the cluster to the next wave tier.

@@ -18,7 +18,7 @@ import argparse
 import unittest
 from pathlib import Path
 
-from keel import cli, workblock
+from keel import cli, swarm, team, workblock
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -34,7 +34,21 @@ _SURFACE_PATTERNS = (
 _BATCH_ADAPTERS = ("work-block", "overnight")
 
 #: The CLI subcommands that must accept what the adapters say they accept.
-_STAFFED_COMMANDS = ("work-block", "overnight", "swarm-plan", "swarm-run", "swarm-land")
+#:
+#: ``ship`` and ``plan`` are in this list because they are the *children*. The published
+#: `child_args` named `--effort` and `--team`, the adapters told every batch to append
+#: them verbatim to `/keel:ship`, and `keel ship`'s own parser answered
+#: `unrecognized arguments: --effort high --team hardening` — a promise in the contract
+#: the parser could not keep, and the sweep passed because it only ever asked the parents.
+_STAFFED_COMMANDS = (
+    "work-block",
+    "overnight",
+    "swarm-plan",
+    "swarm-run",
+    "swarm-land",
+    "ship",
+    "plan",
+)
 
 
 def _surfaces(name: str) -> list[Path]:
@@ -44,6 +58,43 @@ def _surfaces(name: str) -> list[Path]:
         for path in [REPO_ROOT / pattern.format(name=name)]
         if path.exists()
     ]
+
+
+def _flags(argv) -> set[str]:
+    """The option strings in an emitted argv fragment."""
+    return {token for token in argv if token.startswith("--")}
+
+
+def _fully_staffed_assignment() -> dict:
+    """An assignment with every seat and both bench selectors filled in.
+
+    Built through the real resolver rather than hand-written, so a field renamed in
+    `keel.team` fails here instead of quietly shrinking what this sweep checks.
+    """
+    return team.resolve_assignment(
+        team.parse_team(
+            {
+                "implement": {"default": {"provider": "codex"}},
+                "review": {"default": [{"provider": "claude"}]},
+            }
+        ),
+        tier=2,
+        role="core",
+        difficulty="hard",
+        team_profile="night-shift",
+        effort="high",
+    )
+
+
+def _fully_staffed_child_args() -> tuple[str, ...]:
+    """What a work block appends when the operator passed every staffing flag."""
+    return workblock.child_ship_args(
+        delegate="codex",
+        review_delegates=("claude",),
+        effort="high",
+        team_profile="night-shift",
+        reviewer_override=2,
+    )
 
 
 def _parser_flags(command: str) -> set[str]:
@@ -106,6 +157,61 @@ class StaffingFlagsReachTheChildren(unittest.TestCase):
                 with self.subTest(path=str(path.relative_to(REPO_ROOT))):
                     self.assertIn("staffing", text)
                     self.assertIn("session report", text)
+
+    def test_both_handoffs_carry_the_whole_bench_choice(self):
+        """Pinned, not derived — and deliberately so.
+
+        The sweep below asks "is everything the emitter emits named in the adapter",
+        which cannot notice an emitter that stopped emitting something: dropping a flag
+        shrinks the expectation too and the check goes quiet. This is the other
+        direction. The four flags below are the ones that carry *which bench ran this
+        change*; a handoff missing any of them silently re-staffs the child from config.
+
+        The two emitters differ past that, and legitimately: a work block passes the
+        operator's `--reviewers` through, while a lead lets the child derive the count
+        from its own tier; a lead resolved a per-cluster `--role`, while a work block
+        has not looked at the issue yet.
+        """
+        bench_choice = {"--delegate", "--review-delegate", "--effort", "--team"}
+        lead = _flags(swarm.ship_handoff_args(_fully_staffed_assignment()))
+        block = _flags(_fully_staffed_child_args())
+
+        self.assertEqual(sorted(bench_choice - lead), [])
+        self.assertEqual(sorted(bench_choice - block), [])
+        self.assertIn("--role", lead)
+        self.assertIn("--reviewers", block)
+        self.assertEqual(sorted(set(workblock.DELEGATION_FLAGS) - (lead | block)), [])
+
+    def test_each_adapter_names_every_flag_its_own_core_helper_emits(self):
+        """The two families disagreed about the child handoff: `work-block`/`overnight`
+        told children to append the full set while `swarm` named only
+        `--delegate`/`--review-delegate`/`--role`, so a lead and a work block handed the
+        same child two different teams.
+
+        The expected set is *derived from the emitting code*, not written down here. A
+        list in a test drifts from the code the same way the two adapters drifted from
+        each other — and it was a hard-coded expectation that let the contradiction pass.
+        """
+        expected = {
+            "swarm": _flags(swarm.ship_handoff_args(_fully_staffed_assignment())),
+            **{name: _flags(_fully_staffed_child_args()) for name in _BATCH_ADAPTERS},
+        }
+        for name, flags in expected.items():
+            self.assertTrue(flags, f"{name}: the helper emitted no flags to check")
+            for path in _surfaces(name):
+                text = path.read_text(encoding="utf-8")
+                for flag in sorted(flags):
+                    with self.subTest(path=str(path.relative_to(REPO_ROOT)), flag=flag):
+                        self.assertIn(flag, text)
+
+    def test_every_flag_the_helpers_emit_is_one_the_child_parses(self):
+        """The end of the chain: whatever core hands a child, `keel ship` must accept."""
+        emitted = _flags(swarm.ship_handoff_args(_fully_staffed_assignment())) | _flags(
+            _fully_staffed_child_args()
+        )
+        ship_flags = _parser_flags("ship")
+
+        self.assertEqual(sorted(emitted - ship_flags), [])
 
     def test_the_swarm_adapter_states_the_three_level_hierarchy(self):
         for path in _surfaces("swarm"):
