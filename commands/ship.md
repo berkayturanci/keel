@@ -772,7 +772,12 @@ runner and keel's own inventory cannot staff a panel behind it. The verdict is o
 `runner.usable: false` is its own answer, and it is listed first under `unavailable`: agent
 CLIs on `PATH` with no `jury` to convene them is an inventory, not a panel.
 
-- `decision: "available"` — dispatch the panel exactly as above. Nothing changes.
+- `decision: "available"` — dispatch the panel exactly as above; the bench is unchanged. The
+  s11 closure comment records this too, as a **Jury panel:** line saying the panel sat
+  followed by `<!-- keel.jury-panel.v1 head=<sha> decision=available -->`. Post it verbatim:
+  that marker is how a later `evidence-verify` or `merge` knows *this* ship convened the
+  panel, and without it an earlier fallback ship of the same commit would still be the only
+  statement on the pull request and would answer for this one.
 - `decision: "fallback"` — `knobs.team.jury.on_unavailable` is `fallback` and the panel
   cannot sit. Core has already moved the bench for you: `reviewers.panel` reads
   `reviewers`, `reviewers.slots` carries the tier's **own** seat count (three at tier-3),
@@ -1398,4 +1403,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=plugin command=ship keel_version=1.20.0 source_sha256=b1dfbf54822f6a7c2db537cec3440405daa722af01079a0e6790d57cf3e330bd generated_sha256=b1dfbf54822f6a7c2db537cec3440405daa722af01079a0e6790d57cf3e330bd -->
+<!-- keel-generated: surface=plugin command=ship keel_version=1.20.0 source_sha256=3663073bd1f0023a3b161c2b90527024606a08b323eb89f00ee15a8b42526801 generated_sha256=3663073bd1f0023a3b161c2b90527024606a08b323eb89f00ee15a8b42526801 -->

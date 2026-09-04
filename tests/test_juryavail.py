@@ -1173,17 +1173,50 @@ class TestTheRecordAReaderSees(unittest.TestCase):
                 self.assertIn("- **Jury panel:** panel unavailable", rendered)
                 self.assertNotIn("keel.jury-panel.v1", rendered)
 
-    def test_a_staffable_panel_adds_no_line_at_all(self):
-        """Every closure comment keel has ever posted stays byte-identical."""
+    def test_a_run_that_resolved_no_panel_adds_no_line_at_all(self):
+        """A project without a panel posts the comment it always did, byte for byte."""
         for context in (
             {"jury_mode": "gating"},
-            {"jury_mode": "gating", "jury_panel": _assess(STAFFED).as_dict()},
+            {"jury_mode": "gating", "jury_panel": None},
             {"jury_mode": "gating", "jury_panel": "nonsense"},
+            {"jury_mode": "gating", "jury_panel": {"decision": "who knows"}},
         ):
             with self.subTest(context=context):
                 rendered = closure.render_closure_comment({"run_context": context})
 
                 self.assertNotIn("Jury panel", rendered)
+
+    def test_a_staffable_panel_records_that_it_sat(self):
+        """A panel that sat has to *say* so, or last-wins has nothing to compare (#1068 r7).
+
+        Round 6 rendered the line only for `fallback` and `block`, reasoning that a run
+        whose panel convened should leave the comment untouched. But the marker is this
+        run's record where the ledger cannot be read, and silence is not a record: ship a
+        commit under the fallback, then ship it again where the panel convenes, and the
+        only marker on the pull request said `fallback`.
+        """
+        rendered = closure.render_closure_comment(
+            {
+                "git": {"head_sha": "abc"},
+                "run_context": {"jury_mode": "gating", "jury_panel": _assess(STAFFED).as_dict()},
+            }
+        )
+
+        self.assertIn(
+            "- **Jury panel:** panel sat — the cross-vendor panel reviewed this change",
+            rendered,
+        )
+        self.assertIn("<!-- keel.jury-panel.v1 head=abc decision=available -->", rendered)
+
+    def test_a_staffable_panel_still_names_a_seat_it_could_not_use(self):
+        """`available` is not `everything worked` — ai-jury #682 is what hiding it costs."""
+        panel = _assess(STAFFED).as_dict()
+        panel["unavailable"] = [{"provider": "gemini", "reason": "not found on PATH"}]
+
+        rendered = closure.render_closure_comment({"run_context": {"jury_panel": panel}})
+
+        self.assertIn("panel sat — the cross-vendor panel reviewed this change ", rendered)
+        self.assertIn("(gemini: not found on PATH)", rendered)
 
     def test_the_ledger_carries_the_probe_and_degrades_to_none(self):
         record = ledger.build_ship_run_record(
@@ -2022,6 +2055,12 @@ class TestTheContractIsPinnedToTheShipsMeasurement(unittest.TestCase):
         trusted = {"body": body, "author_association": "MEMBER"}
 
         self.assertEqual(evidence.shipped_panel_decision([trusted], head_sha="abc"), "fallback")
+        # …and a run whose panel sat says so too, since #1068 round 7.
+        sat = {
+            "body": self._closure_body(_assess(STAFFED, min_vendors=2).as_dict()),
+            "author_association": "MEMBER",
+        }
+        self.assertEqual(evidence.shipped_panel_decision([sat], head_sha="abc"), "available")
         for case, comments, head_sha in (
             ("another head", [trusted], "some-other-head"),
             ("no head at all", [trusted], ""),
@@ -2033,13 +2072,8 @@ class TestTheContractIsPinnedToTheShipsMeasurement(unittest.TestCase):
                 "abc",
             ),
             (
-                "a closure comment whose run recorded no fallback",
-                [
-                    {
-                        "body": self._closure_body(_assess(STAFFED, min_vendors=2).as_dict()),
-                        "author_association": "MEMBER",
-                    }
-                ],
+                "a closure comment whose run resolved no panel at all",
+                [{"body": self._closure_body(None), "author_association": "MEMBER"}],
                 "abc",
             ),
             (
@@ -2180,6 +2214,317 @@ class TestTheContractIsPinnedToTheShipsMeasurement(unittest.TestCase):
         with self.assertRaises(ledger.LedgerError):
             cli._evidence_ledger_record(args, config)
         self.assertIsNone(cli._merge_ledger_record(args, config))
+
+
+#: One head, shipped more than once. Every test below is about which of those ships gets
+#: to answer for it.
+HEAD = "abc"
+
+
+#: The probe verdicts the two decisions are actually written from, so a record here has the
+#: shape `Availability.as_dict` publishes rather than a hand-built stub of it.
+PANEL_VERDICTS = {
+    "available": lambda: _assess(STAFFED, min_vendors=2).as_dict(),
+    "fallback": lambda: _assess(UNSTAFFED, min_vendors=2).as_dict(),
+}
+
+
+def _ship_record(decision, *, head_sha=HEAD, pr_number=7):
+    """A `ship_run` ledger row for one ship of `head_sha`, as `ledger._run_context` writes it.
+
+    The `jury_panel` key is always present — that is the point of `juryavail.states_panel`
+    — carrying `None` when the run resolved no panel.
+    """
+    return {
+        "record_type": ledger.RECORD_TYPE_SHIP_RUN,
+        "pull_request": {"number": pr_number},
+        "git": {"head_sha": head_sha},
+        "run_context": {
+            "transport": "gh",
+            "jury_panel": None if decision is None else PANEL_VERDICTS[decision](),
+        },
+    }
+
+
+def _closure_comment(record, *, author="MEMBER"):
+    """The s11 closure comment keel renders from `record` — the copy that travels."""
+    return {"body": closure.render_closure_comment(record), "author_association": author}
+
+
+class TestTheLatestClosureCommentIsTheStatement(unittest.TestCase):
+    """One head can be shipped twice, and the *newer* ship answers for it (#1068 round 7).
+
+    Round 6 made the closure comment a pin source and read it first-match over
+    `pr_comments`, which GitHub returns oldest first — so the *oldest* ship answered. Worse,
+    a run whose panel sat rendered no marker at all, so the newer ship had nothing to
+    outrank the older one with even in principle. On a hosted `evidence-verify` or `merge`,
+    where `.keel/state/` does not exist and the closure comment is the run's only voice, an
+    old `decision=fallback` therefore pinned the host-bench contract onto a change the panel
+    had just reviewed: `review-verdict-1..3` satisfied by leftover LGTMs, and the panel's own
+    `keel.jury-verdict.v1` — which may be a rejection — not required at all.
+
+    The suite never fed two same-head closures in API order, which is how it survived six
+    rounds. It does now, both ways round.
+    """
+
+    def _hosted(self, comments, *, head_sha=HEAD, posted=False):
+        """`pin` as CI sees it: the pull request's comments and no ledger to read."""
+        return juryavail.pin(
+            None,
+            head_sha=head_sha,
+            panel_verdict_posted=posted,
+            closure_panel_decision=evidence.shipped_panel_decision(comments, head_sha=head_sha),
+        )
+
+    def test_the_newer_panel_sat_ship_outranks_the_older_fallback(self):
+        comments = [
+            _closure_comment(_ship_record("fallback")),
+            _closure_comment(_ship_record("available")),
+        ]
+
+        self.assertEqual(evidence.shipped_panel_decision(comments, head_sha=HEAD), "available")
+        pinned = self._hosted(comments)
+        self.assertEqual(pinned["decision"], "available")
+        self.assertTrue(pinned["staffable"])
+        self.assertEqual(pinned["source"], "closure-comment")
+
+    def test_the_newer_fallback_ship_outranks_the_older_panel_sat(self):
+        """The reverse order of shipping, which must reverse the answer and nothing else."""
+        comments = [
+            _closure_comment(_ship_record("available")),
+            _closure_comment(_ship_record("fallback")),
+        ]
+
+        self.assertEqual(evidence.shipped_panel_decision(comments, head_sha=HEAD), "fallback")
+        pinned = self._hosted(comments, posted=True)
+        self.assertEqual(pinned["decision"], "fallback")
+        self.assertFalse(pinned["staffable"])
+        self.assertEqual(
+            pinned["source"],
+            "closure-comment",
+            "a leftover jury verdict does not answer for the run that fell back",
+        )
+
+    def test_a_panel_that_sat_leaves_a_marker_to_outrank_the_older_one_with(self):
+        """Silence cannot win a last-wins contest, so `available` is rendered too."""
+        rendered = closure.render_closure_comment(_ship_record("available"))
+
+        self.assertIn(
+            f"<!-- {closure.JURY_PANEL_MARKER} head={HEAD} decision=available -->", rendered
+        )
+
+    def test_only_the_latest_trusted_same_head_closure_counts(self):
+        """The three sibling rules still filter *before* recency picks a winner."""
+        latest = _closure_comment(_ship_record("available"))
+        for case, noise in (
+            (
+                "an untrusted author posting later",
+                _closure_comment(_ship_record("fallback"), author="NONE"),
+            ),
+            (
+                "a later ship of a different head",
+                _closure_comment(_ship_record("fallback", head_sha="def")),
+            ),
+            (
+                "the marker quoted in prose after the fact",
+                {
+                    "body": "I read " + closure.render_closure_comment(_ship_record("fallback")),
+                    "author_association": "MEMBER",
+                },
+            ),
+        ):
+            with self.subTest(case=case):
+                self.assertEqual(
+                    evidence.shipped_panel_decision([latest, noise], head_sha=HEAD),
+                    "available",
+                )
+
+
+class TestBothRunRecordSourcesSelectTheLatest(unittest.TestCase):
+    """The twin this branch kept breaking: the *direction* of "latest wins" (#1068 round 7).
+
+    `juryavail.pin` ranks the ledger record above the closure comment on the premise that
+    they are two copies of one statement. That premise only holds if they quote the *same*
+    ship. `ledger.latest_ship_run_for_pr` walks the chronologically appended records and
+    keeps the last match; `evidence.shipped_panel_decision` must walk GitHub's oldest-first
+    comments and keep the last match too. Written in one place and forgotten in the other,
+    the machine with a ledger would answer for the newest ship and the machine without it
+    for the oldest — and the ranking between them would mean nothing.
+
+    So this drives both from *one* sequence of ships and asserts they agree, for every
+    ordering, rather than asserting each one's direction separately.
+    """
+
+    SEQUENCES = (
+        ("fallback", "available"),
+        ("available", "fallback"),
+        ("fallback", "fallback", "available"),
+        ("available", "available", "fallback"),
+        ("fallback", "available", "fallback"),
+    )
+
+    def test_the_two_sources_quote_the_same_ship(self):
+        for sequence in self.SEQUENCES:
+            with self.subTest(sequence=sequence):
+                records = [_ship_record(decision) for decision in sequence]
+                comments = [_closure_comment(record) for record in records]
+
+                from_ledger = juryavail.shipped(
+                    ledger.latest_ship_run_for_pr(records, 7), head_sha=HEAD
+                )
+                from_comment = juryavail.recorded(
+                    evidence.shipped_panel_decision(comments, head_sha=HEAD)
+                )
+
+                self.assertEqual(from_ledger["decision"], sequence[-1], "the ledger is last-wins")
+                self.assertEqual(
+                    from_comment["decision"],
+                    from_ledger["decision"],
+                    "both run-record sources must select the latest record for this head",
+                )
+                self.assertEqual(from_ledger["staffable"], from_comment["staffable"])
+
+    def test_the_agreement_survives_the_surfaces_that_read_them(self):
+        """The same sequence, through `pin` with the ledger and without it (hosted CI)."""
+        for sequence in self.SEQUENCES:
+            with self.subTest(sequence=sequence):
+                records = [_ship_record(decision) for decision in sequence]
+                comments = [_closure_comment(record) for record in records]
+                decision = evidence.shipped_panel_decision(comments, head_sha=HEAD)
+
+                on_the_workstation = juryavail.pin(
+                    ledger.latest_ship_run_for_pr(records, 7),
+                    head_sha=HEAD,
+                    panel_verdict_posted=True,
+                    closure_panel_decision=decision,
+                )
+                on_ci = juryavail.pin(
+                    None, head_sha=HEAD, panel_verdict_posted=True, closure_panel_decision=decision
+                )
+
+                self.assertEqual(on_the_workstation["source"], "run-ledger")
+                self.assertEqual(on_ci["source"], "closure-comment")
+                self.assertEqual(on_the_workstation["decision"], on_ci["decision"])
+                self.assertEqual(on_the_workstation["staffable"], on_ci["staffable"])
+
+    def test_reversing_the_ships_reverses_both_answers_together(self):
+        """Sensitivity: an agreement that survived a first-match reader would not be one."""
+        records = [_ship_record("fallback"), _ship_record("available")]
+        comments = [_closure_comment(record) for record in records]
+
+        forward = evidence.shipped_panel_decision(comments, head_sha=HEAD)
+        backward = evidence.shipped_panel_decision(list(reversed(comments)), head_sha=HEAD)
+
+        self.assertEqual(forward, "available")
+        self.assertEqual(backward, "fallback")
+        self.assertEqual(
+            ledger.latest_ship_run_for_pr(records, 7)["run_context"]["jury_panel"]["decision"],
+            forward,
+        )
+        self.assertEqual(
+            ledger.latest_ship_run_for_pr(list(reversed(records)), 7)["run_context"]["jury_panel"][
+                "decision"
+            ],
+            backward,
+        )
+
+
+class TestARecordWithoutTheWordIsNotAStatement(unittest.TestCase):
+    """A pre-#1066 ledger row has no `jury_panel` key, and that is not the run speaking.
+
+    Rank 3 silences the lower sources for a same-head record whose `jury_panel` says
+    nothing: the run left a record here and it does not say it shipped under a panel. That
+    is right for every record this feature writes, because `ledger._run_context` always
+    writes the key — `None` included — so `null` there is an answer.
+
+    A row written before the field existed has no key at all. That is missing vocabulary,
+    not a statement, and reading it as one answers a question the run was never asked: on a
+    workstation still carrying such a row, a change the panel really did jury would have its
+    posted ballots ignored and `review-verdict-1..3` demanded by a probe of the local
+    machine. Those rows fall through, exactly as they did before #1066.
+    """
+
+    VERDICT = [
+        {
+            "body": f"keel.jury-verdict.v1\nhead: {HEAD}\npanelists: 2\nAI Jury LGTM",
+            "author_association": "MEMBER",
+        }
+    ]
+
+    def test_key_present_but_null_silences_the_lower_sources(self):
+        record = _ship_record(None)
+
+        self.assertTrue(juryavail.states_panel(record))
+        self.assertIsNone(
+            juryavail.pin(
+                record,
+                head_sha=HEAD,
+                panel_verdict_posted=True,
+                closure_panel_decision="available",
+            ),
+            "this run was asked and said it shipped under no panel",
+        )
+
+    def test_key_absent_falls_through_to_the_closure_comment_then_the_ballots(self):
+        legacy = {
+            "record_type": ledger.RECORD_TYPE_SHIP_RUN,
+            "pull_request": {"number": 7},
+            "git": {"head_sha": HEAD},
+            "run_context": {"transport": "gh", "jury_mode": "gating"},
+        }
+
+        self.assertFalse(juryavail.states_panel(legacy))
+        self.assertTrue(
+            juryavail.is_ship_run_for_head(legacy, head_sha=HEAD),
+            "it is still this head's record — it just has no word for the panel",
+        )
+        to_the_comment = juryavail.pin(
+            legacy, head_sha=HEAD, panel_verdict_posted=True, closure_panel_decision="fallback"
+        )
+        self.assertEqual(to_the_comment["source"], "closure-comment")
+        self.assertEqual(to_the_comment["decision"], "fallback")
+
+        to_the_ballots = juryavail.pin(
+            legacy, head_sha=HEAD, panel_verdict_posted=True, closure_panel_decision=None
+        )
+        self.assertEqual(to_the_ballots["source"], "pull-request")
+        self.assertTrue(to_the_ballots["staffable"])
+
+    def test_an_unreadable_run_context_has_no_word_either(self):
+        for context in (None, "nonsense", ["jury_panel"], 3):
+            with self.subTest(run_context=context):
+                record = {
+                    "record_type": ledger.RECORD_TYPE_SHIP_RUN,
+                    "pull_request": {"number": 7},
+                    "git": {"head_sha": HEAD},
+                    "run_context": context,
+                }
+
+                self.assertFalse(juryavail.states_panel(record))
+                pinned = juryavail.pin(
+                    record, head_sha=HEAD, panel_verdict_posted=True, closure_panel_decision=None
+                )
+                self.assertEqual(pinned["source"], "pull-request")
+        self.assertFalse(juryavail.states_panel(None))
+
+    def test_the_legacy_row_reaches_the_fall_through_over_the_whole_surface(self):
+        """End to end through `cli._shipped_jury_availability`, not just the pure core."""
+        legacy = {
+            "record_type": ledger.RECORD_TYPE_SHIP_RUN,
+            "pull_request": {"number": 7},
+            "git": {"head_sha": HEAD},
+            "run_context": {"transport": "gh"},
+        }
+        artifacts = {"pr_comments": self.VERDICT, "pr_reviews": [], "head_sha": HEAD}
+
+        pinned = cli._shipped_jury_availability(artifacts, legacy)
+
+        self.assertEqual(pinned["source"], "pull-request")
+        self.assertTrue(pinned["staffable"])
+        self.assertIsNone(
+            cli._shipped_jury_availability(artifacts, _ship_record(None)),
+            "…while a record that was asked and answered null still silences it",
+        )
 
 
 if __name__ == "__main__":

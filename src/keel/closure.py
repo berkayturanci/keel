@@ -280,9 +280,16 @@ def _run_context(run_context: Any, head_sha: Any = None) -> list[str]:
 #: panel that quietly collapsed and still reported success costs.
 PANEL_UNAVAILABLE_LABEL = "panel unavailable"
 
-#: The machine-readable half of that line (#1068 round 6). The prose above is for a
-#: human; this is for :func:`keel.evidence.shipped_panel_decision`, which reads the
-#: run's own panel decision back off the pull request on a host that cannot see the
+#: How a run whose panel *did* sit names that (#1068 round 7). Round 6 emitted the
+#: line only for the two unavailable decisions, on the reasoning that a run whose
+#: panel convened should post the comment it always did. That reasoning was wrong for
+#: the marker below: silence is not a statement, so the *latest* closure comment for a
+#: head could not outrank an earlier one. See :func:`_jury_panel`.
+PANEL_AVAILABLE_LABEL = "panel sat"
+
+#: How a run's panel decision reads to a machine (#1068 round 6). The prose above is
+#: for a human; this is for :func:`keel.evidence.shipped_panel_decision`, which reads
+#: the run's own panel decision back off the pull request on a host that cannot see the
 #: run ledger — ``.keel/state/`` is gitignored, so a hosted ``evidence-verify`` or
 #: ``merge`` has no ledger to pin to and the closure comment is the only place this
 #: run still speaks. Both halves are always emitted together: the marker is the
@@ -295,31 +302,48 @@ PANEL_UNAVAILABLE_LABEL = "panel unavailable"
 #: request outlives its heads — and is emitted only when the record carries a head.
 JURY_PANEL_MARKER = "keel.jury-panel.v1"
 
+#: Every panel decision that renders a line. ``available`` is here since #1068 round 7,
+#: which is the whole of that round's fix: see :func:`_jury_panel`.
+PANEL_DECISIONS: dict[str, tuple[str, str]] = {
+    "available": (PANEL_AVAILABLE_LABEL, "the cross-vendor panel reviewed this change"),
+    "fallback": (PANEL_UNAVAILABLE_LABEL, "a host bench of the same size reviewed instead"),
+    "block": (
+        PANEL_UNAVAILABLE_LABEL,
+        "the run was refused (knobs.team.jury.on_unavailable: block)",
+    ),
+}
+
 
 def _jury_panel(block: dict[str, Any], head_sha: Any) -> list[str]:
-    """The s7 panel-availability line — emitted only when the panel could not sit.
+    """The s7 panel-availability line — emitted for **every** panel decision (#1068).
 
-    Conditional, like the s4 profile line: a run whose panel convened (and every run
-    of a project that has no panel) posts the comment it always did, byte for byte.
-    The exception is the case worth naming, and it names the seats.
+    Conditional, like the s4 profile line, but only on whether this run resolved a
+    panel at all: a project that has no panel posts the comment it always did, byte
+    for byte, and a run that did resolve one says which way it went and names the
+    seats.
 
-    A ``fallback`` is also the decision a verification surface elsewhere has to be
-    held to, so the line is followed by the machine-readable
-    :data:`JURY_PANEL_MARKER` naming the head and the decision — a mirror of the
-    record like every other line here, never a second source of truth.
+    **Why ``available`` renders too, since round 7.** The line is followed by the
+    machine-readable :data:`JURY_PANEL_MARKER`, which is the run's own record of its
+    panel decision in the one place that travels with the pull request, and
+    :func:`keel.juryavail.pin` ranks that record above a posted verdict. Round 6
+    emitted it only for ``fallback`` and ``block``, so a run whose panel *sat* left no
+    marker — and "no marker" is indistinguishable from "no run". Ship a commit once
+    under the fallback and again on a machine where the panel convenes, and the older
+    ``decision=fallback`` marker was still the only statement on the pull request: on
+    CI, where there is no ledger, it pinned the host-bench contract onto a change the
+    panel had just reviewed. Last-wins needs both runs to speak, so both do.
+
+    The marker is a mirror of the ledger record like every other line here, never a
+    second source of truth.
     """
     panel = block.get("jury_panel")
     panel = panel if isinstance(panel, dict) else {}
     decision = panel.get("decision")
-    if decision not in ("fallback", "block"):
+    if decision not in PANEL_DECISIONS:
         return []
-    outcome = (
-        "a host bench of the same size reviewed instead"
-        if decision == "fallback"
-        else "the run was refused (knobs.team.jury.on_unavailable: block)"
-    )
+    label, outcome = PANEL_DECISIONS[decision]
     return [
-        f"- **Jury panel:** {PANEL_UNAVAILABLE_LABEL} — {outcome}{_panel_detail(panel)}",
+        f"- **Jury panel:** {label} — {outcome}{_panel_detail(panel)}",
         *_jury_panel_marker(head_sha, decision),
     ]
 

@@ -370,11 +370,15 @@ unavailable and why — and travels with the run:
 - `availability.runner` says whether the `jury` binary itself was usable, and
   `availability.inventory` says which of the two sources the vendor counts were read from;
 - the run ledger records it at `run_context.jury_panel`;
-- the closure comment renders a **Jury panel:** line saying the panel was unavailable and a
-  host bench reviewed instead, listing the seats — followed, when the record carries a head,
-  by `<!-- keel.jury-panel.v1 head=… decision=… -->`, the machine-readable half a
-  verification surface elsewhere reads the run's decision from. A run whose panel convened,
-  and every run of a project with no panel, posts the comment it always did, byte for byte.
+- the closure comment renders a **Jury panel:** line — `panel unavailable — a host bench of
+  the same size reviewed instead`, listing the seats, or `panel sat — the cross-vendor panel
+  reviewed this change` — followed, when the record carries a head, by
+  `<!-- keel.jury-panel.v1 head=… decision=… -->`, the machine-readable half a verification
+  surface elsewhere reads the run's decision from. **Every** panel decision renders the
+  line, `available` included: the marker is the run's record where the ledger cannot be
+  read, and a run that said nothing could not outrank an earlier ship of the same commit
+  that had. Only a run of a project with no panel posts the comment it always did, byte for
+  byte.
 
 That is the point: a reader can tell a jury-reviewed change from a fallback-reviewed one
 without re-deriving it. A panel that quietly collapses and still reports success is
@@ -411,6 +415,16 @@ dropped three required items on the strength of a comment no run had promised. A
 record that says nothing about a panel is likewise the run speaking: it did not ship under
 one, and no comment may say otherwise on its behalf.
 
+**With one exception, and it is the difference between a `null` and a missing key.** A row
+this feature wrote always carries `run_context.jury_panel`, because keel always writes the
+key — `null` there is the run answering "this tier named no panel", and it silences the two
+lower sources. A ledger row written *before* #1066 has no such key at all: missing
+vocabulary, not a statement. Silencing on its behalf would answer a question that run was
+never asked, so on a workstation still carrying one, a change the panel really did jury
+would have had its posted ballots ignored and `review-verdict-1..3` demanded by a probe of
+the local machine. Those rows fall through to the closure comment and then to the ballots,
+exactly as they did before #1066 existed.
+
 **Why the closure comment is a source at all.** The ledger is the stronger copy and it does
 not travel: `.keel/state/` is gitignored, so a hosted `evidence-verify` or `merge` — the CI
 check, or any machine other than the one that shipped — has no same-head record to read, and
@@ -419,8 +433,21 @@ comment is the *same statement*, rendered from that same record, in the one plac
 with the pull request. It is read only from a trusted author (the same fail-closed
 `author_association` check a posted verdict gets — keel posts it on the operator's behalf,
 which is that authority and no more), only inside an actual closure comment, and only when
-its marker names the head under verification. A run whose panel sat renders no marker at
-all: it posts its ballots, and rank 3 reads them.
+its marker names the head under verification.
+
+**Both run-record sources select the *latest* record for the head, and that direction is
+itself the rule.** One head can be shipped more than once — a re-run, a force-push back onto
+the commit, a second ship on another machine — and each ship writes a ledger row and posts a
+closure comment. The ledger source keeps the **last** matching row (records are appended
+chronologically); the closure source keeps the **last** matching comment (GitHub returns
+them oldest first). They have to agree about *which ship they are quoting*, or ranking them
+against each other means nothing: the machine with a ledger would answer for the newest ship
+and the machine without it for the oldest. Reading the closure comments first-match did
+exactly that, and a run whose panel sat rendered no marker to outrank the older one with —
+so a commit shipped once under the fallback and again where the panel convened left one
+marker saying `fallback`, and CI pinned the host-bench contract onto a panel-reviewed
+change. Every panel decision now renders its marker, `available` included, and both sources
+are last-wins.
 
 Only with no record of the run's own *and* no posted verdict does the verification surface
 probe on its own, which is what it did before. The published record says which it was:

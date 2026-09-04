@@ -1765,12 +1765,25 @@ def shipped_panel_decision(
       must be the head under verification, because a pull request outlives its heads and a
       pin removes requirements.
 
+    **The latest such comment is the answer, not the first** (#1068 round 7). One head can
+    be shipped more than once — a re-run, a force-push back onto the same commit, a second
+    ship on a different machine — and each ship posts its own closure comment. ``pr_comments``
+    arrives in GitHub's order, oldest first, so this walks the whole list and keeps the last
+    match: the newest statement wins, which is the same direction
+    :func:`keel.ledger.latest_ship_run_for_pr` selects the ledger record in, and
+    :func:`keel.juryavail.pin` ranks the two sources on the premise that they agree about it.
+    Returning the first match meant an older ``decision=fallback`` outranked the panel-sat
+    ship that followed it — and round 6 emitted no marker at all for a panel that sat, so the
+    later run had nothing to outrank the older one *with*. :func:`keel.closure._jury_panel`
+    now renders ``decision=available`` too, which is what makes last-wins well defined here.
+
     ``None`` for everything else — no comment, an older head, a marker keel did not write —
     and ``None`` means *this source is silent*, never a waiver: :func:`keel.juryavail.pin`
     then goes on to the posted verdict exactly as it did before.
     """
     if not head_sha:
         return None
+    latest: str | None = None
     for item in pr_comments or []:
         if not _is_trusted_source(item, enforced=enforced):
             continue
@@ -1779,8 +1792,8 @@ def shipped_panel_decision(
             continue
         decision = _jury_panel_decision(body, head_sha)
         if decision is not None:
-            return decision
-    return None
+            latest = decision
+    return latest
 
 
 def _jury_panel_decision(body: str, head_sha: str) -> str | None:

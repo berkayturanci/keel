@@ -772,7 +772,12 @@ runner and keel's own inventory cannot staff a panel behind it. The verdict is o
 `runner.usable: false` is its own answer, and it is listed first under `unavailable`: agent
 CLIs on `PATH` with no `jury` to convene them is an inventory, not a panel.
 
-- `decision: "available"` — dispatch the panel exactly as above. Nothing changes.
+- `decision: "available"` — dispatch the panel exactly as above; the bench is unchanged. The
+  s11 closure comment records this too, as a **Jury panel:** line saying the panel sat
+  followed by `<!-- keel.jury-panel.v1 head=<sha> decision=available -->`. Post it verbatim:
+  that marker is how a later `evidence-verify` or `merge` knows *this* ship convened the
+  panel, and without it an earlier fallback ship of the same commit would still be the only
+  statement on the pull request and would answer for this one.
 - `decision: "fallback"` — `knobs.team.jury.on_unavailable` is `fallback` and the panel
   cannot sit. Core has already moved the bench for you: `reviewers.panel` reads
   `reviewers`, `reviewers.slots` carries the tier's **own** seat count (three at tier-3),

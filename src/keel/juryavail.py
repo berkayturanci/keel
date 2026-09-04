@@ -397,7 +397,12 @@ def shipped(record: Mapping[str, Any] | None, *, head_sha: str | None) -> dict[s
     Read out of that run's ``ship_run`` ledger entry at ``run_context.jury_panel``, which
     :func:`keel.ledger.build_ship_run_record` writes for exactly this purpose. Total: a
     record from before the field existed, or one whose run resolved no panel, reads as
-    ``None`` and leaves the caller to probe as it did before.
+    ``None``.
+
+    What that ``None`` then means is :func:`pin`'s to decide and not this function's, and
+    the two cases part there rather than here: a run that *was* asked and answered ``null``
+    silences the lower sources, while a record that never carried the key
+    (:func:`states_panel`) is not consulted at all and the lower sources get their turn.
 
     **Pinned to the exact head, the way the posted-verdict path is.** The record is selected
     by pull-request number (:func:`keel.ledger.latest_ship_run_for_pr`), and a pull request
@@ -437,12 +442,38 @@ def is_ship_run_for_head(record: Mapping[str, Any] | None, *, head_sha: Any) -> 
     """Did a ``ship_run`` for **this exact head** leave a record? (#1068)
 
     Presence, not content: the run's ``run_context.jury_panel`` may say ``fallback``,
-    ``block``, or nothing at all, and this still answers ``True``. That separation is the
+    ``block``, or ``None``, and this still answers ``True``. That separation is the
     whole point — :func:`pin` needs to know *whether the run left a record here* before it
     reads what the record says, because a record that says nothing about a panel is still
     a run that did not ship under one.
     """
     return isinstance(record, Mapping) and _matches_head(record, head_sha)
+
+
+def states_panel(record: Mapping[str, Any] | None) -> bool:
+    """Does this record carry the ``jury_panel`` **key** at all? (#1068 round 7)
+
+    Not what it says — whether the run that wrote it had the word. The distinction is
+    between a run that was *asked* about the panel and answered (even by answering
+    ``None``: "this tier named no panel") and a record written before the field existed,
+    which was never asked.
+
+    :func:`keel.ledger._run_context` always writes the key, ``None`` included, so for every
+    record this feature produces the answer is ``True`` and rank 3 of :func:`pin` is
+    unchanged: a same-head record whose ``jury_panel`` is ``null`` is the run saying it did
+    not ship under a panel, and it silences the lower sources. A ledger row from before
+    #1066 has no such key — missing vocabulary, not a statement — and silencing on its
+    behalf would put words in a run's mouth: on a workstation carrying one, a change the
+    panel really did jury would have had its posted ballots ignored and
+    ``review-verdict-1..3`` demanded by a probe of the local machine. Those rows fall
+    through to the closure comment and then to the ballots, which is exactly what they did
+    before #1066 existed.
+
+    A record whose ``run_context`` is missing or unreadable has no key either, and reads the
+    same way, for the same reason: absence of vocabulary, not a statement.
+    """
+    context = record.get("run_context") if isinstance(record, Mapping) else None
+    return isinstance(context, Mapping) and "jury_panel" in context
 
 
 def pin(
@@ -465,6 +496,24 @@ def pin(
     as it did before either pin existed. That is the fail-closed answer, never a waiver —
     a probe can only add the panel requirement back or demand the tier's host verdicts.
 
+    **Both run-record sources select the *latest* record for this head, and that direction
+    is the rule** (#1068 round 7). The ledger source resolves through
+    :func:`keel.ledger.latest_ship_run_for_pr`, which walks the chronologically appended
+    records and keeps the **last** match; the closure source resolves through
+    :func:`keel.evidence.shipped_panel_decision`, which walks ``pr_comments`` in GitHub's
+    oldest-first order and keeps the **last** match. They are two copies of one statement —
+    ranks 2 and 4 are the same sentence read off two artifacts — so if they disagreed about
+    which run they were quoting, the precedence between them would be meaningless: the
+    machine with the ledger would answer for the newest ship and the machine without it for
+    the oldest. Round 6 had exactly that, and worse: the closure source was first-match
+    *and* a run whose panel sat rendered no marker, so a commit shipped once under the
+    fallback and then again on a machine that could staff the panel left one marker on the
+    pull request saying ``fallback``, and CI — where there is no ledger — pinned the
+    host-bench contract onto a panel-reviewed change and never asked for the panel's own
+    verdict. :func:`keel.closure._jury_panel` now emits ``decision=available`` too, so every
+    ship speaks and "latest wins" is well defined on both sides.
+    ``tests/test_juryavail.py::TestBothRunRecordSourcesSelectTheLatest`` holds them to it.
+
     The order, and why it is this way round:
 
     1. **No head, no pin.** :func:`is_pinnable_head`. A pin removes requirements — it takes
@@ -481,11 +530,22 @@ def pin(
        from a force-push back onto it, or from a collaborator who ran ``jury`` by hand —
        is not that run's review. Letting the verdict win dropped three required items on
        the strength of a comment nobody's run had promised.
-    3. **A same-head record that says nothing about a panel still speaks.** :func:`shipped`
-       returns ``None`` for a record whose ``run_context.jury_panel`` is missing,
-       malformed, or ``block``, and that ``None`` is returned as-is rather than falling
-       through to a comment: this run left a record here and it does not say the run
+    3. **A same-head record that says nothing about a panel still speaks — if it had the
+       word.** :func:`shipped` returns ``None`` for a record whose ``run_context.jury_panel``
+       is ``null``, malformed, or ``block``, and that ``None`` is returned as-is rather than
+       falling through to a comment: this run left a record here and it does not say the run
        shipped under a panel, so nobody may say otherwise on its behalf.
+
+       The one record that does *not* speak is one whose ``run_context`` never carried the
+       key (:func:`states_panel`) — a ledger row written before #1066, or one whose
+       ``run_context`` is unreadable. That is missing vocabulary, not a statement, and
+       silencing the lower sources on its behalf would answer a question the run was never
+       asked: a change the panel really did jury, verified on the workstation that still
+       has that row, would have had its posted ballots ignored and ``review-verdict-1..3``
+       demanded by a probe of *this* machine. Such a record falls through to rank 4 and then
+       rank 5, which is what it did before #1066 existed. Every record this feature writes
+       carries the key — :func:`keel.ledger._run_context` always writes it, ``None``
+       included — so the fall-through applies to legacy rows and to nothing else.
     4. **Failing that, the run's own closure comment** (:func:`recorded`), whose decision
        :func:`keel.evidence.shipped_panel_decision` has already held to a trusted author,
        to an actual closure comment, and to this head. This rank is what makes rank 2 mean
@@ -495,9 +555,10 @@ def pin(
        fallback was outranked by a leftover comment on every machine except the one that
        had no need of the rule. The closure comment is the *same statement* as the ledger
        record it was rendered from, in the one place that travels with the pull request,
-       so it ranks with the ledger and above the verdict. It is silent — ``None`` — for a
-       run that shipped under a staffable panel, which renders no marker at all; that run
-       posts its ballots, and rank 5 reads them.
+       so it ranks with the ledger and above the verdict. Since round 7 it is silent only
+       for a head no keel closure comment names — a run that shipped under a staffable panel
+       records ``decision=available`` and pins the panel here rather than leaving rank 5 to
+       infer it from ballots.
 
        Silent and refusing are different answers, and rank 4 gives both: no marker for this
        head is silence and rank 5 gets its turn, while a marker that says ``block`` or
@@ -512,7 +573,7 @@ def pin(
     """
     if not is_pinnable_head(head_sha):
         return None
-    if is_ship_run_for_head(record, head_sha=head_sha):
+    if is_ship_run_for_head(record, head_sha=head_sha) and states_panel(record):
         return shipped(record, head_sha=head_sha)
     if closure_panel_decision is not None:
         return recorded(closure_panel_decision)
