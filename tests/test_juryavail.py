@@ -937,35 +937,105 @@ class TestEverySiteThatResolvesABenchSeesTheProbe(unittest.TestCase):
     #: a question whose answer cannot matter.
     UNCONFIGURED_POLICY = "TeamPolicy"
 
-    def _call_sites(self):
-        root = pathlib.Path(cli.__file__).resolve().parent
+    RESOLVER = "resolve_assignment"
+
+    @staticmethod
+    def _is_call_to(node, name, bound=()):
+        """Does this call reach ``name`` — through an attribute, or through a bound name?
+
+        Matching `attr` alone was a hole: `from keel.team import resolve_assignment as
+        resolve` then `resolve(policy, tier=3)` is an `ast.Name` call, invisible to a sweep
+        that only reads attributes — so a future resolver could omit the measurement with
+        this guard still green (#1068 round 2). `bound` is the set of local names an
+        `import ... as ...` in *this module* tied to the target; a bare `ast.Name` spelling
+        the target itself counts too, so a direct `from ... import resolve_assignment` is
+        seen whether or not the sweep could follow the binding.
+        """
+        func = node.func
+        if isinstance(func, ast.Attribute):
+            return func.attr == name
+        if isinstance(func, ast.Name):
+            return func.id == name or func.id in bound
+        return False
+
+    def _bound_names(self, tree):
+        """Local names this module ties to `team.resolve_assignment`, aliases included."""
+        return {
+            alias.asname or alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom)
+            for alias in node.names
+            if alias.name == self.RESOLVER
+        }
+
+    def _call_sites(self, root=None):
+        root = pathlib.Path(cli.__file__).resolve().parent if root is None else root
         for path in sorted(root.rglob("*.py")):
             tree = ast.parse(path.read_text(encoding="utf-8"))
+            bound = self._bound_names(tree)
             for node in ast.walk(tree):
-                if isinstance(node, ast.Call) and getattr(
-                    node.func, "attr", None
-                ) == "resolve_assignment":
+                if isinstance(node, ast.Call) and self._is_call_to(node, self.RESOLVER, bound):
                     yield path, node
 
-    def test_every_resolver_is_handed_the_measurement(self):
+    def _offenders(self, root=None):
         offenders = []
         sites = 0
-        for path, node in self._call_sites():
+        for path, node in self._call_sites(root):
             sites += 1
             if any(keyword.arg == "jury_availability" for keyword in node.keywords):
                 continue
             policy = node.args[0] if node.args else None
             unconfigured = (
                 isinstance(policy, ast.Call)
-                and getattr(policy.func, "attr", policy.func) == self.UNCONFIGURED_POLICY
+                and self._is_call_to(policy, self.UNCONFIGURED_POLICY)
                 and not policy.args
                 and not policy.keywords
             )
             if not unconfigured:
                 offenders.append(f"{path.name}:{node.lineno}")
+        return offenders, sites
+
+    def test_every_resolver_is_handed_the_measurement(self):
+        offenders, sites = self._offenders()
 
         self.assertEqual([], offenders, "a bench is resolved without the panel probe")
         self.assertGreaterEqual(sites, 5, "the sweep found no call sites to sweep")
+
+    def test_the_sweep_sees_an_aliased_import(self):
+        """The guard the guard needed: an alias must not walk past it."""
+        root = pathlib.Path(tempfile.mkdtemp())
+        (root / "aliased.py").write_text(
+            "from keel.team import resolve_assignment as resolve\n"
+            "\n"
+            "def staff(policy):\n"
+            "    return resolve(policy, tier=3)\n",
+            encoding="utf-8",
+        )
+
+        offenders, sites = self._offenders(root)
+
+        self.assertEqual(1, sites, "the aliased call site was invisible to the sweep")
+        self.assertEqual(["aliased.py:4"], offenders)
+
+    def test_the_sweep_sees_a_direct_import_and_accepts_the_measurement(self):
+        """A direct-name call is a call site; handed the probe, it is not an offender."""
+        root = pathlib.Path(tempfile.mkdtemp())
+        (root / "direct.py").write_text(
+            "from keel.team import resolve_assignment\n"
+            "from keel.team import TeamPolicy\n"
+            "\n"
+            "def staff(policy, availability):\n"
+            "    return resolve_assignment(policy, tier=3, jury_availability=availability)\n"
+            "\n"
+            "def unconfigured():\n"
+            "    return resolve_assignment(TeamPolicy(), tier=3)\n",
+            encoding="utf-8",
+        )
+
+        offenders, sites = self._offenders(root)
+
+        self.assertEqual(2, sites)
+        self.assertEqual([], offenders)
 
 
 class TestTheRecordAReaderSees(unittest.TestCase):
