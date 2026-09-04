@@ -752,8 +752,9 @@ reviewers on your own; a tier's reviewers are what its config says they are.
 **When the panel cannot be staffed here, core has already decided — read the contract.**
 Before it publishes the bench, keel probes the panel *you would dispatch*: it asks the
 `jury` runner itself (`jury --doctor --json` — is the binary there, and which of its agents
-are usable), and reads the `keel doctor --providers` inventory only when the runner is too
-old to answer. The verdict is on the contract at `review_merge_contract.jury.availability`
+are usable), and reads the `keel doctor --providers` inventory only for a runner that
+answers but names no agents. A `jury` that prints no readable report is *not* a usable
+runner and keel's own inventory cannot staff a panel behind it. The verdict is on the contract at `review_merge_contract.jury.availability`
 (`null` when no panel was configured for this tier, so nothing was asked):
 
 ```json
