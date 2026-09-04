@@ -50,7 +50,7 @@ keel validate projects/*.yaml                 # schema only
 keel validate .claude/project.yaml --root .   # schema + extensions (use in CI)
 ```
 
-## `keel plan <project.yaml> [--root DIR] [--command COMMAND] [--tier 1|2|3] [--role LABEL] [--delegate PROVIDER] [--review-delegate PROVIDER]... [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--target TARGET] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--run-id ID] [--issue N] [--pull-request N] [--json]`
+## `keel plan <project.yaml> [--root DIR] [--command COMMAND] [--tier 1|2|3] [--role LABEL] [--delegate PROVIDER] [--review-delegate PROVIDER]... [--effort low|medium|high] [--team PROFILE] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--target TARGET] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--run-id ID] [--issue N] [--pull-request N] [--json]`
 
 Render the backbone plan for a project: the fixed steps with the project's built-in gates
 and extensions slotted in. This is the dry-run view — what an actual run would execute.
@@ -163,7 +163,7 @@ Override the defaults under `policy_pack.blocker_rules` (each rule needs an `id`
 `kind` of `label` (with `labels`) or `title-regex` (with `pattern`)); see
 [configuration.md](configuration.md).
 
-## `keel merge <project.yaml> --pr N [--root DIR] [--method squash|merge|rebase] [--dry-run]`
+## `keel merge <project.yaml> --pr N [--root DIR] [--method squash|merge|rebase] [--dry-run] [--effort low|medium|high] [--team PROFILE]`
 
 Perform the sanctioned core-owned PR merge path. `keel merge` acquires the merge resource
 claim, re-checks the merge window inside that claim, reads the live PR check rollup with
@@ -360,7 +360,7 @@ keel render-report --kind coverage --payload coverage.json > body.md
 keel render-report --kind triage-audit --payload audit.json --json
 ```
 
-## `keel review <project.yaml> --pr N (--reviews FILE | --from-jury FILE) [--root DIR] [--issue N] [--closure FILE] [--reviewers 1|2|3] [--jury] [--no-jury] [--jury-advisory] [--head-sha SHA] [--changed-file PATH] [--run-id ID] [--verify] [--dry-run] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--json]`
+## `keel review <project.yaml> --pr N (--reviews FILE | --from-jury FILE) [--root DIR] [--issue N] [--closure FILE] [--reviewers 1|2|3] [--jury] [--no-jury] [--jury-advisory] [--head-sha SHA] [--changed-file PATH] [--run-id ID] [--verify] [--dry-run] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--effort low|medium|high] [--team PROFILE] [--json]`
 
 Orchestrate a supplied review *evidence bundle* in one deterministic command. The host
 agent runs the actual reviewers and produces the review content; `keel review` is **not**
@@ -638,7 +638,7 @@ The after read is **fail-closed**: a corrupt ledger or a failed `git`/`gh` read 
 rather than reporting a clean diff, because an empty-on-error snapshot would mask a real
 leak (`after − before = ∅`). Exit 1 on any leak, 0 when the rehearsal left no trace.
 
-## `keel evidence-verify <project.yaml> --pr <N> [--issue <N>] [--json]`
+## `keel evidence-verify <project.yaml> --pr <N> [--issue <N>] [--effort low|medium|high] [--team PROFILE] [--json]`
 
 Verify that a PR has the public evidence required by the ship contract before merge.
 
@@ -937,7 +937,7 @@ and offline CI harnesses can supply every fact directly with `--offline` plus `-
 `--base-tip-sha`, `--merge-base-sha`, `--base-distance`, `--worktree-path`, `--repo-root`, and
 `--linked-worktree true|false`; the same pure verifier path is used either way.
 
-## `keel step-verify --step sN --handoff-file handoff.json --evidence-report evidence.json`
+## `keel step-verify --step sN --handoff-file handoff.json --evidence-report evidence.json [--effort low|medium|high] [--team PROFILE]`
 
 Verify a persisted step handoff before an adapter advances the ship backbone. The handoff
 must be the JSON object produced by `keel.stepverifier.build_handoff`; the evidence report
@@ -1813,7 +1813,7 @@ keel window .keel/project.yaml
 # merge window OPEN  [Europe/Istanbul 07:00-01:30]
 ```
 
-## `keel ship <project.yaml> [--root DIR] [--pr N] [--compound|--profile standard|compound] [--tdd] [--role LABEL] [--delegate PROVIDER] [--review-delegate PROVIDER]... [--dry-run] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--target TARGET] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--review-comments inline|summary] [--reviewers 1|2|3] [--jury|--no-jury] [--jury-advisory] [--json] [--wizard] [--wizard-answer KEY=VALUE]...`
+## `keel ship <project.yaml> [--root DIR] [--pr N] [--compound|--profile standard|compound] [--tdd] [--role LABEL] [--delegate PROVIDER] [--review-delegate PROVIDER]... [--effort low|medium|high] [--team PROFILE] [--dry-run] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--target TARGET] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--review-comments inline|summary] [--reviewers 1|2|3] [--jury|--no-jury] [--jury-advisory] [--json] [--wizard] [--wizard-answer KEY=VALUE]...`
 
 Run the **deterministic slice of a ship** against the current checkout and print the
 assessment: how many files changed vs. the base branch, the **risk tier** (→ reviewer

@@ -6423,8 +6423,8 @@ def build_parser() -> argparse.ArgumentParser:
         advisory_help="make jury advisory for evidence verification",
     )
     p_merge.add_argument("--gate-label", default=None, help="override evidence gate label")
-    p_merge.add_argument("--json", action="store_true", help="emit structured JSON")
     _add_bench_args(p_merge)
+    p_merge.add_argument("--json", action="store_true", help="emit structured JSON")
     p_merge.set_defaults(func=_cmd_merge)
 
     p_wr = sub.add_parser("worktree-remove", help="safely remove a registered nested worktree")
@@ -6675,8 +6675,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_step.add_argument(
         "--not-enforced", action="store_true", help="verify with evidence requirements disabled"
     )
-    p_step.add_argument("--json", action="store_true", help="emit structured JSON")
     _add_bench_args(p_step)
+    p_step.add_argument("--json", action="store_true", help="emit structured JSON")
     p_step.set_defaults(func=_cmd_step_verify)
 
     p_rc = sub.add_parser(
@@ -6917,8 +6917,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="override the project consent mode for this run",
     )
-    p_review.add_argument("--json", action="store_true", help="emit structured JSON")
     _add_bench_args(p_review)
+    p_review.add_argument("--json", action="store_true", help="emit structured JSON")
     p_review.set_defaults(func=_cmd_review)
 
     p_rcs = sub.add_parser(
@@ -7073,8 +7073,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_evidence.add_argument(
         "--waiver-label", default=None, help="override the operator-applied evidence waiver label"
     )
-    p_evidence.add_argument("--json", action="store_true", help="emit structured JSON")
     _add_bench_args(p_evidence)
+    p_evidence.add_argument("--json", action="store_true", help="emit structured JSON")
     p_evidence.set_defaults(func=_cmd_evidence_verify)
 
     p_vm = sub.add_parser(
