@@ -10,10 +10,15 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
+from keel import swarm as swarm_module
+from keel import team as team_module
 from keel.cli import main
 from keel.config import Knobs, ProjectConfig
 from keel.swarm import (
+    AssignmentOverrides,
+    Difficulty,
     IssueScope,
+    SwarmCluster,
     SwarmRunState,
     SwarmWorkerStatus,
     _normalize_path,
@@ -25,11 +30,18 @@ from keel.swarm import (
     render_swarm_plan_text,
     render_swarm_plan_tree,
     render_swarm_status_dashboard,
+    resolve_cluster_assignment,
     resolve_swarm_state_dir,
+    safe_role,
     save_swarm_state,
     scopes_have_conflict,
     scopes_intersect,
+    score_difficulty,
+    ship_handoff_args,
+    update_worker_state,
+    worker_seed,
 )
+from keel.team import parse_team
 
 
 class TestSwarmPathExtraction(unittest.TestCase):
@@ -583,6 +595,443 @@ class TestSwarmCLI(unittest.TestCase):
             self.assertEqual(code, 0)
             parsed = json.loads(buf_id_json.getvalue())
             self.assertEqual(parsed["swarm_id"], "swarm-live-999")
+
+
+def _config(team=None, tier3_globs=("src/keel/**",)) -> ProjectConfig:
+    """A config whose only interesting parts are the tier globs and the team policy."""
+    return ProjectConfig(
+        extends="base",
+        core_version="^1.0",
+        base_branch="main",
+        knobs=Knobs(
+            build_gate_cmd="make test",
+            tier3_globs=tuple(tier3_globs),
+            docs_gate_paths=("docs/**",),
+            team=parse_team(team),
+        ),
+    )
+
+
+#: A backlog whose two issues touch disjoint trees, so the waves are fixed and any
+#: change in staffing has to be visible without moving them.
+BACKLOG = (
+    IssueScope(
+        issue=101,
+        title="Rework the scheduler",
+        labels=("priority:high", "role:core", "size:l"),
+        predicted_files=("src/keel/a.py", "src/keel/b.py", "src/keel/c.py", "src/keel/d.py"),
+        role="core",
+    ),
+    IssueScope(
+        issue=102,
+        title="Fix a typo",
+        labels=("role:docs",),
+        predicted_files=("docs/keel/cli.md",),
+        role="docs",
+    ),
+)
+
+BY_DIFFICULTY = {
+    "implement": {"default": {"provider": "claude"}},
+    "by_difficulty": {
+        "easy": {"implement": {"provider": "ollama", "model": "qwen"}},
+        "hard": {
+            "lead": {"provider": "codex"},
+            "implement": {"provider": "codex"},
+            "effort": "high",
+        },
+    },
+}
+
+
+class TestDifficultyScoring(unittest.TestCase):
+    """Difficulty is *how much work*, scored from inputs that already exist (#1017)."""
+
+    def test_a_docs_one_liner_is_easy(self):
+        difficulty = score_difficulty(
+            (BACKLOG[1],), tier3_globs=("src/keel/**",), docs_globs=("docs/**",)
+        )
+
+        self.assertEqual(difficulty.band, "easy")
+        self.assertEqual(difficulty.score, 0)
+        self.assertEqual(difficulty.tier, 1)
+        self.assertEqual(difficulty.signals, ())
+
+    def test_a_wide_high_priority_core_change_is_hard(self):
+        difficulty = score_difficulty(
+            (BACKLOG[0],), tier3_globs=("src/keel/**",), docs_globs=("docs/**",)
+        )
+
+        self.assertEqual(difficulty.band, "hard")
+        self.assertEqual(difficulty.tier, 3)
+        self.assertEqual(difficulty.file_count, 4)
+        self.assertEqual(
+            difficulty.signals,
+            (("tier-3", 4), ("files:4", 2), ("priority:high", 1), ("size:l", 2)),
+        )
+        self.assertEqual(difficulty.score, 9)
+
+    def test_only_signals_that_moved_the_score_are_recorded(self):
+        """A signal worth zero points is not evidence; recording it is recording noise."""
+        difficulty = score_difficulty((IssueScope(issue=1, predicted_files=("a.py", "b.py")),))
+
+        self.assertEqual(difficulty.signals, (("tier-2", 2), ("files:2", 1)))
+        self.assertEqual(difficulty.band, "standard")
+
+    def test_dependency_depth_is_recorded_raw_and_only_its_points_are_capped(self):
+        """Past a few dependencies it is the same problem, not a worse one — but a
+        cluster sitting on nine earlier issues is still not one sitting on three, and
+        clamping the recorded depth threw that away where a reader would have seen it."""
+        scope = IssueScope(issue=1, predicted_files=("a.py",))
+
+        deep = score_difficulty((scope,), dependency_depth=9)
+        at_cap = score_difficulty((scope,), dependency_depth=3)
+        negative = score_difficulty((scope,), dependency_depth=-3)
+
+        self.assertEqual(deep.dependency_depth, 9)
+        self.assertEqual(deep.signals, (("tier-2", 2), ("depends-on:9", 3)))
+        self.assertEqual(deep.score, at_cap.score)
+        self.assertEqual(negative.dependency_depth, 0)
+
+    def test_the_planner_scores_a_cluster_from_the_cluster_own_issue_list(self):
+        """The scorer's contract is "how much work is *this cluster*", and the planner
+        reads the cluster's `issues` rather than the issue its loop happens to be on."""
+        cluster = SwarmCluster("c1", (102, 101), "core", ())
+        scopes = {scope.issue: scope for scope in BACKLOG}
+
+        self.assertEqual(
+            [scope.issue for scope in swarm_module.cluster_scopes(cluster, scopes)], [102, 101]
+        )
+
+    def test_an_issue_the_planner_never_analysed_is_skipped_not_faked(self):
+        """An invented empty scope would quietly lower the band of a cluster whose
+        largest issue went missing."""
+        cluster = SwarmCluster("c1", (101, 999), "core", ())
+        scopes = {scope.issue: scope for scope in BACKLOG}
+
+        self.assertEqual(
+            [scope.issue for scope in swarm_module.cluster_scopes(cluster, scopes)], [101]
+        )
+
+    def test_a_cluster_is_scored_as_one_piece_of_work(self):
+        """Three small issues handed to one lead are not three small pieces of work."""
+        together = score_difficulty(BACKLOG, tier3_globs=("src/keel/**",))
+        alone = score_difficulty((BACKLOG[1],), tier3_globs=("src/keel/**",))
+
+        self.assertEqual(together.file_count, 5)
+        self.assertGreater(together.score, alone.score)
+
+    def test_labels_are_read_case_insensitively(self):
+        scope = IssueScope(issue=1, labels=("Priority:Critical",), predicted_files=("a.py",))
+
+        self.assertIn(("priority:critical", 2), score_difficulty((scope,)).signals)
+
+    def test_the_band_boundaries_are_the_documented_ones(self):
+        bands = [swarm_module.difficulty_band(score) for score in range(0, 8)]
+
+        self.assertEqual(
+            bands,
+            ["easy", "easy", "easy", "standard", "standard", "standard", "hard", "hard"],
+        )
+
+
+class TestClusterAssignment(unittest.TestCase):
+    """Per-cluster staffing, resolved by the same resolver every other command uses."""
+
+    def plan(self, **kwargs):
+        return build_swarm_plan(BACKLOG, swarm_id="swarm-test", **kwargs)
+
+    def clusters(self, plan):
+        return {c.cluster_id: c for wave in plan.waves for c in wave.clusters}
+
+    def test_every_cluster_comes_out_scored_and_staffed(self):
+        clusters = self.clusters(self.plan(config=_config()))
+
+        for cluster in clusters.values():
+            self.assertIsNotNone(cluster.difficulty)
+            self.assertIsNotNone(cluster.assignment)
+            self.assertEqual(cluster.assignment["difficulty"], cluster.difficulty.band)
+            self.assertEqual(cluster.assignment["role"], cluster.role)
+            self.assertEqual(cluster.assignment["tier"], cluster.difficulty.tier)
+
+    def test_the_plan_is_deterministic_for_the_same_backlog(self):
+        self.assertEqual(
+            self.plan(config=_config()).to_dict(), self.plan(config=_config()).to_dict()
+        )
+
+    def test_changing_by_difficulty_changes_assignments_and_not_waves(self):
+        """The acceptance criterion, asserted as one comparison.
+
+        Scoring and staffing run after the partition and never feed back into it, so
+        re-staffing a backlog can only move who runs a cluster.
+        """
+        plain = self.plan(config=_config())
+        benched = self.plan(config=_config(team=BY_DIFFICULTY))
+
+        waves = lambda plan: [  # noqa: E731
+            [(c.cluster_id, c.issues, c.combined_scope) for c in wave.clusters]
+            for wave in plan.waves
+        ]
+        self.assertEqual(waves(plain), waves(benched))
+        self.assertNotEqual(
+            [c.assignment["implementer"] for c in self.clusters(plain).values()],
+            [c.assignment["implementer"] for c in self.clusters(benched).values()],
+        )
+
+    def test_the_hard_cluster_draws_the_strong_implementer_and_the_easy_one_the_cheap_model(self):
+        clusters = self.clusters(self.plan(config=_config(team=BY_DIFFICULTY)))
+        hard = clusters["cluster-1-101"]
+        easy = clusters["cluster-1-102"]
+
+        self.assertEqual(hard.difficulty.band, "hard")
+        self.assertEqual(hard.assignment["implementer"]["provider"], "codex")
+        self.assertEqual(hard.assignment["effort"], "high")
+        self.assertEqual(hard.assignment["lead"]["provider"], "codex")
+        self.assertEqual(easy.difficulty.band, "easy")
+        self.assertEqual(easy.assignment["implementer"]["model"], "qwen")
+
+    def test_per_run_overrides_reach_every_cluster(self):
+        plan = self.plan(
+            config=_config(team=BY_DIFFICULTY),
+            overrides=AssignmentOverrides(
+                delegate="agy:gemini-3.8-pro",
+                review_delegates=("codex",),
+                effort="low",
+                team_profile="weekend",
+                reviewers=1,
+                host_agent="agy",
+            ),
+        )
+
+        for cluster in self.clusters(plan).values():
+            self.assertEqual(cluster.assignment["implementer"]["provider"], "agy")
+            self.assertEqual(cluster.assignment["effort"], "low")
+            self.assertEqual(cluster.assignment["reviewer_count"], 1)
+            self.assertEqual(cluster.assignment["reviewers"][0]["provider"], "codex")
+            self.assertTrue(any("--team" in w for w in cluster.assignment["warnings"]))
+        # The lead is staffing, not an override: the hard band names one, the easy band
+        # does not and falls through to the host the operator is running as.
+        clusters = self.clusters(plan)
+        self.assertEqual(clusters["cluster-1-101"].assignment["lead"]["provider"], "codex")
+        self.assertEqual(clusters["cluster-1-102"].assignment["lead"]["provider"], "agy")
+
+    def test_a_plan_built_without_a_config_still_scores_and_staffs(self):
+        """`swarm-plan` has to answer even where no project policy was loaded."""
+        cluster = self.clusters(self.plan())["cluster-1-101"]
+
+        self.assertEqual(cluster.difficulty.tier, 2)
+        self.assertFalse(cluster.assignment["configured"])
+        self.assertEqual(cluster.assignment["lead"]["provider"], "claude")
+
+    def test_resolve_cluster_assignment_defaults_to_an_unconfigured_policy(self):
+        cluster = SwarmCluster("c1", (1,), "core", ("a.py",))
+        difficulty = Difficulty(score=0, band="easy", tier=1, file_count=1, dependency_depth=0)
+
+        assignment = resolve_cluster_assignment(cluster, difficulty)
+
+        self.assertEqual(assignment["tier"], 1)
+        self.assertEqual(assignment["reviewer_count"], 1)
+
+    def test_overrides_serialise_for_the_published_contract(self):
+        self.assertEqual(
+            AssignmentOverrides(delegate="codex", review_delegates=("agy",)).to_dict(),
+            {
+                "delegate": "codex",
+                "review_delegates": ["agy"],
+                "effort": None,
+                "team": None,
+                "reviewers": None,
+                "host_agent": "claude",
+            },
+        )
+
+
+class TestShipHandoff(unittest.TestCase):
+    """What a lead appends to its cluster's child ship runs."""
+
+    def assignment(self, **kwargs):
+        clusters = [
+            c
+            for wave in build_swarm_plan(BACKLOG, swarm_id="s", config=_config(**kwargs)).waves
+            for c in wave.clusters
+        ]
+        return {c.cluster_id: c for c in clusters}
+
+    def test_the_resolved_team_becomes_child_ship_flags(self):
+        cluster = self.assignment(team=BY_DIFFICULTY)["cluster-1-101"]
+
+        args = ship_handoff_args(cluster.assignment)
+
+        self.assertIn("--delegate", args)
+        self.assertEqual(args[args.index("--delegate") + 1], "codex")
+        self.assertEqual(args[args.index("--role") + 1], "core")
+        # The bench rides along so the child reproduces the parent's resolution rather
+        # than deriving a different team from config alone.
+        self.assertEqual(args[args.index("--effort") + 1], "high")
+
+    def test_a_model_rides_along_on_the_delegate_token(self):
+        cluster = self.assignment(team=BY_DIFFICULTY)["cluster-1-102"]
+
+        self.assertIn("ollama:qwen", ship_handoff_args(cluster.assignment))
+
+    def test_a_host_subagent_seat_is_left_to_the_adapter(self):
+        """`keel ship --delegate` names a provider; spawning a subagent is the host's job."""
+        team = {"implement": {"default": {"provider": "subagent:backend-developer"}}}
+        cluster = self.assignment(team=team)["cluster-1-101"]
+
+        self.assertNotIn("--delegate", ship_handoff_args(cluster.assignment))
+        self.assertIn("--review-delegate", ship_handoff_args(cluster.assignment))
+
+    def test_a_subagent_reviewer_slot_is_skipped_like_a_subagent_implementer(self):
+        team = {
+            "implement": {"default": {"provider": "codex"}},
+            "review": {"default": [{"provider": "subagent:reviewer-a"}]},
+        }
+        cluster = self.assignment(team=team)["cluster-1-101"]
+
+        self.assertNotIn("--review-delegate", ship_handoff_args(cluster.assignment))
+        self.assertIn("--delegate", ship_handoff_args(cluster.assignment))
+
+    def test_an_assignment_with_no_role_carries_no_role_flag(self):
+        assignment = team_module.resolve_assignment(team_module.TeamPolicy(), tier=2)
+
+        self.assertNotIn("--role", ship_handoff_args(assignment))
+
+    def test_no_assignment_is_no_flags(self):
+        self.assertEqual(ship_handoff_args(None), ())
+
+    def test_a_role_that_would_parse_as_a_flag_is_dropped_and_reported(self):
+        """`role:--live` on one issue would break argparse in every child of the batch.
+
+        There is no quoting that stops `--live` being a flag, so it is dropped — and said
+        out loud in `assignment.warnings`, which is where a lead is told to look.
+        """
+        cluster = SwarmCluster("c1", (1,), "--live", ("a.py",))
+        difficulty = Difficulty(score=0, band="easy", tier=1, file_count=1, dependency_depth=0)
+
+        assignment = resolve_cluster_assignment(cluster, difficulty)
+
+        self.assertNotIn("--role", ship_handoff_args(assignment))
+        self.assertIn("is not passed to the child ship", assignment["warnings"][-1])
+
+    def test_the_safe_role_class_admits_ordinary_labels_and_refuses_argv_bait(self):
+        for role in ("core", "docs", "keel-visual", "api.v2", "role_1"):
+            with self.subTest(role=role):
+                self.assertEqual(safe_role(role), (role, ()))
+        for role in ("--live", "-x", "a b", "core;rm", "", None):
+            with self.subTest(role=role):
+                self.assertIsNone(safe_role(role)[0])
+
+    def test_the_warning_is_deterministic(self):
+        self.assertEqual(safe_role("--live")[1], safe_role("--live")[1])
+
+    def test_a_clean_role_adds_no_warning(self):
+        cluster = SwarmCluster("c1", (1,), "core", ("a.py",))
+        difficulty = Difficulty(score=0, band="easy", tier=1, file_count=1, dependency_depth=0)
+
+        self.assertEqual(resolve_cluster_assignment(cluster, difficulty)["warnings"], [])
+
+
+class TestWorkerSeeding(unittest.TestCase):
+    """The board reports the team the planner resolved, not the record's defaults."""
+
+    def cluster(self, **kwargs):
+        plan = build_swarm_plan(BACKLOG, swarm_id="s", config=_config(**kwargs))
+        return plan.waves[0].clusters[0]
+
+    def test_a_worker_is_seeded_from_its_cluster_assignment(self):
+        worker = worker_seed(self.cluster(team=BY_DIFFICULTY), updated_at="2026-09-04T00:00:00Z")
+
+        self.assertEqual(worker.agent, "codex")
+        self.assertEqual(worker.model, "default")
+        self.assertEqual(worker.lead, "codex")
+        self.assertEqual(worker.difficulty, "hard")
+        self.assertEqual(worker.step, "s0")
+
+    def test_a_seat_with_a_model_reports_it(self):
+        plan = build_swarm_plan(BACKLOG, swarm_id="s", config=_config(team=BY_DIFFICULTY))
+        worker = worker_seed(plan.waves[0].clusters[1])
+
+        self.assertEqual((worker.agent, worker.model), ("ollama", "qwen"))
+
+    def test_an_unstaffed_cluster_falls_back_to_the_record_defaults(self):
+        worker = worker_seed(SwarmCluster("c1", (7,), "core", ("a.py",)))
+
+        self.assertEqual(
+            (worker.agent, worker.model, worker.lead, worker.difficulty),
+            ("claude", "default", "", ""),
+        )
+
+    def test_a_cluster_with_no_issues_seeds_issue_zero(self):
+        self.assertEqual(worker_seed(SwarmCluster("c1", (), "core", ())).issue, 0)
+
+    def test_a_status_update_keeps_the_lead_and_band(self):
+        """The rebuild used to reset every field it did not name."""
+        state = SwarmRunState(
+            swarm_id="s",
+            total_workers=1,
+            workers=(worker_seed(self.cluster(team=BY_DIFFICULTY)),),
+        )
+
+        updated = update_worker_state(state, "cluster-1-101", step="s4", status="running")
+
+        self.assertEqual(updated.workers[0].lead, "codex")
+        self.assertEqual(updated.workers[0].difficulty, "hard")
+        self.assertEqual(updated.workers[0].status, "running")
+
+    def test_a_saved_state_round_trips_the_new_fields(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state = SwarmRunState(
+                swarm_id="swarm-rt",
+                total_workers=1,
+                workers=(worker_seed(self.cluster(team=BY_DIFFICULTY)),),
+            )
+            save_swarm_state(state, root=tmpdir)
+
+            loaded = load_swarm_state("swarm-rt", root=tmpdir)
+
+        self.assertEqual(loaded.workers[0].lead, "codex")
+        self.assertEqual(loaded.workers[0].difficulty, "hard")
+
+
+class TestStaffedRendering(unittest.TestCase):
+    """Both renderers describe one cluster the same way."""
+
+    def plan(self):
+        return build_swarm_plan(
+            BACKLOG, swarm_id="swarm-render", config=_config(team=BY_DIFFICULTY)
+        )
+
+    def test_the_table_shows_the_band_and_the_team(self):
+        rendered = render_swarm_plan_text(self.plan())
+
+        self.assertIn("Difficulty: hard (score 9, tier 3, 4 file(s), depth 0)", rendered)
+        self.assertIn("Team: lead codex → implementer codex@high", rendered)
+
+    def test_the_tree_shows_the_same_rows_and_closes_its_branches(self):
+        rendered = render_swarm_plan_tree(self.plan())
+
+        self.assertIn("Difficulty: hard", rendered)
+        # The team row is the last child of every cluster here, so it is the one that
+        # closes the branch — which is the property the assembled-children rewrite buys.
+        self.assertEqual(rendered.count("└── Team: lead "), 2)
+        self.assertEqual(rendered.count("├── Difficulty: "), 2)
+
+    def test_an_unstaffed_cluster_renders_without_the_rows(self):
+        plan = build_swarm_plan(())
+        cluster = SwarmCluster("c1", (1,), "core", ("a.py",))
+
+        self.assertEqual(swarm_module.cluster_staffing_lines(cluster), [])
+        self.assertIn("0 issues", render_swarm_plan_tree(plan))
+
+    def test_a_jury_panel_renders_as_the_panel_rather_than_an_empty_bench(self):
+        config = _config(team={"review": {"by_tier": {"3": "jury"}}})
+        plan = build_swarm_plan(BACKLOG, swarm_id="s", config=config)
+
+        self.assertIn("review jury", render_swarm_plan_text(plan))
+
+    def test_seat_label_reports_an_unassigned_seat(self):
+        self.assertEqual(swarm_module.seat_label(None), "unassigned")
 
 
 if __name__ == "__main__":

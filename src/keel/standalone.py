@@ -12,7 +12,7 @@ import os
 import sys
 
 from . import config as cfg
-from . import consent, contracts, github_transport, runtime, wizardrun
+from . import consent, contracts, github_transport, runtime, wizardrun, workblock
 from . import orchestrator as orch
 from .extensions import load_extensions
 from .gates import GateError
@@ -160,6 +160,19 @@ def cmd_standalone(args: argparse.Namespace) -> int:
     except GateError as exc:
         print(str(exc), file=sys.stderr)
         return 1
+    # Resolved once and handed to both the contract and the result: the two are read side
+    # by side out of one `--json` blob, and a staffing record that appeared in one of them
+    # only would be read as "the children were told something else".
+    review_delegates = tuple(getattr(args, "review_delegate", None) or ())
+    effort = getattr(args, "effort", None)
+    team_profile = getattr(args, "team_profile", None)
+    delegation = workblock.delegation_as_dict(
+        delegate=getattr(args, "delegate", None),
+        review_delegates=review_delegates,
+        effort=effort,
+        team_profile=team_profile,
+        reviewer_override=getattr(args, "reviewers", None),
+    )
     contract = contracts.build_command_contract(
         command=command,
         config=config,
@@ -180,6 +193,11 @@ def cmd_standalone(args: argparse.Namespace) -> int:
         issue_title=getattr(args, "issue_title", None),
         issue_body=getattr(args, "issue_body", None),
         issue_labels=_issue_labels(args),
+        role=getattr(args, "role", None),
+        delegate=getattr(args, "delegate", None),
+        review_delegates=review_delegates,
+        effort=effort,
+        team_profile=team_profile,
     )
     consent_ok, consent_message = consent.assert_operator_consent(contract["operator_consent"])
     result = contracts.standalone_result_as_dict(
@@ -189,6 +207,7 @@ def cmd_standalone(args: argparse.Namespace) -> int:
         delegate=getattr(args, "delegate", None),
         transport=transport,
         evaluation=evaluation,
+        delegation=delegation,
     )
     if not consent_ok:
         if args.json:
@@ -249,6 +268,9 @@ def cmd_standalone(args: argparse.Namespace) -> int:
         report_names = ", ".join(session["reports"]) or "not configured"
         print(f"  reports       : {report_names}")
         print(f"  deferrals     : {session['deferral_queue']['status']}")
+        if command in {"work-block", "overnight"}:
+            child_args = session["work_block"]["delegation"]["child_args"]
+            print(f"  staffing      : {' '.join(child_args) or 'project team policy'}")
         if command == "wrap":
             linked_required = session["wrap"]["workspace_preflight"][
                 "must_run_from_linked_worktree"

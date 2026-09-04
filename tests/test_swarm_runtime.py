@@ -133,6 +133,28 @@ class TestSwarmRuntimeHelpers(unittest.TestCase):
             self.assertIn("--dry-run", calls[0])
             self.assertIn("--jury", calls[0])
 
+    def test_a_worker_with_no_staffing_flags_runs_the_bare_ship_argv(self):
+        """An unstaffed cluster hands down nothing rather than an empty flag."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p_root = Path(tmpdir)
+            calls: list[list[str]] = []
+
+            def mock_runner(cmd: list[str], cwd: Path) -> CommandResult:
+                calls.append(cmd)
+                return CommandResult(ok=True, code=0, output="{}")
+
+            execute_cluster_worker(
+                ".keel/project.yaml",
+                715,
+                p_root,
+                p_root / "missing",
+                dry_run=False,
+                extra_args=[],
+                runner=mock_runner,
+            )
+
+            self.assertEqual(calls[0][-1], "--json")
+
 
 class TestSwarmOrchestration(unittest.TestCase):
     def test_orchestration_success_and_fail_soft_rebalance(self):

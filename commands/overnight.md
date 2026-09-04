@@ -1,6 +1,6 @@
 ---
 description: Unattended overnight work block — time-aware merge mode keyed on the merge window; runs /keel:ship over the queue until the window closes, then writes a session/morning report. Project-neutral; reads .keel/project.yaml.
-argument-hint: "[hours] [--max <N>] [--review-comments <inline|summary>]"
+argument-hint: "[hours] [--max <N>] [--review-comments <inline|summary>] [--delegate <provider>] [--review-delegate <provider>] [--effort <low|medium|high>] [--team <profile>]"
 allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Bash(jury:*), Read, Edit, Write, Agent
 ---
 
@@ -84,6 +84,32 @@ final report write. Use `--checkpoint-command overnight`, keep the active issue 
 `--issue-queue`, set `--active-issue` for the current issue, and preserve branch,
 worktree, PR, merge, capture, and close state when a child ship run has created them.
 The checkpoint is the active resume point; the run ledger remains append-only history.
+
+## Staffing: who runs the children
+
+This block accepts `--delegate <provider[:model]>`, `--review-delegate <provider>`
+(repeatable, positional per reviewer slot), `--effort <low|medium|high>`,
+`--team <profile>` and `--reviewers <n>`, and hands **every one of them that was set** to
+**every** child `/keel:ship`. Resolve them once, from the same preflight the rest of this
+command reads:
+
+```bash
+keel overnight .keel/project.yaml --root . --live --json \
+  --delegate "$DELEGATE" --review-delegate "$REVIEWER" --effort "$EFFORT" --team "$TEAM"
+```
+
+`contract.session_contract.work_block.delegation` comes back with the effective values and
+with `child_args` — the exact flag list to append. Append it verbatim to each handoff:
+
+```
+/keel:ship <issue> [--delegate <provider[:model]>] [--review-delegate <provider>] [--effort <low|medium|high>] [--team <profile>] [--reviewers <n>]
+```
+
+A flag the operator did not pass is simply absent; never invent one, and never drop one the
+operator did pass. `contract.assignment` shows what those values resolve to
+(`lead`, `implementer`, `effort`, `reviewers`, `review_panel`) — read it, do not re-derive
+it. Record the effective values, and the `assignment` they produced, in the session report:
+an unattended block whose report does not say which team ran it cannot be audited later.
 
 ## Two non-negotiable rules
 
@@ -169,7 +195,8 @@ the project's plans directory, use it as the queue instead.
    session report, then continue to the next candidate when policy allows. Only `ready`
    issues may proceed.
 3. Run `/keel:ship` for it (full backbone, inline-hybrid review, `jury` gate if
-   configured in `gates:`), respecting `--review-comments`.
+   configured in `gates:`), respecting `--review-comments` and appending the staffing
+   `child_args` resolved above.
 4. On a blocking failure that can't be auto-fixed within the round budget,
    **defer** it to the cross-session morning queue (for `/keel:morning`) and move
    on — never force a risky merge.
@@ -183,8 +210,9 @@ Write to the project's reports path (do not `git add` a gitignored reports path)
 - **Day mode** → a `session-<DATE>-<HH>` report.
 
 Sections: PRs Created · PRs Touched (existing) · Skipped / Deferred (with
-reasons) · Time Budget (planned vs actual per tier) · Open Questions · Next Steps
-(1–3 concrete actions). Output the file path when done.
+reasons) · Staffing (the effective `--delegate` / `--review-delegate` / `--effort` /
+`--team` / `--reviewers` handed to the children) · Time Budget (planned vs actual per
+tier) · Open Questions · Next Steps (1–3 concrete actions). Output the file path when done.
 
 ## Stop conditions
 
@@ -200,4 +228,4 @@ When stopped, write the session report immediately, even if partial.
 Never merge outside the window · merge lock · fail-soft per issue (one failure
 never aborts the loop) · attribute the effective agents (vendor + base model).
 
-<!-- keel-generated: surface=plugin command=overnight keel_version=1.19.3 source_sha256=a2a44fc92eb7f6f27d7e3ec01eb7b333524761f73d2c4365b3a6697582f71934 generated_sha256=a2a44fc92eb7f6f27d7e3ec01eb7b333524761f73d2c4365b3a6697582f71934 -->
+<!-- keel-generated: surface=plugin command=overnight keel_version=1.19.3 source_sha256=1ef71b848eb1601717321f872ce13efc4a2318b3a73de4293f7aa8a941e42e27 generated_sha256=1ef71b848eb1601717321f872ce13efc4a2318b3a73de4293f7aa8a941e42e27 -->

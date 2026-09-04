@@ -2,7 +2,7 @@
 window.KEEL_ARGS = {
  "ship": {
   "desc": "Drive a GitHub issue end-to-end through the keel backbone (select → branch → implement → CI → review → test → merge → close → capture), reading every project value from .keel/project.yaml via the keel CLI.",
-  "hint": "[issue numbers...] [--compound|--profile <standard|compound>] [--delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL|google-api:MODEL|PROFILE>] [--review-delegate <...> (repeatable, one per reviewer slot)] [--review-comments <inline|summary>] [--reviewers <1|2|3>] [--jury|--no-jury|--jury-advisory] [--tdd] [--hotfix] [--dry-run] [--wizard]",
+  "hint": "[issue numbers...] [--compound|--profile <standard|compound>] [--delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL|google-api:MODEL|PROFILE>] [--review-delegate <...> (repeatable, one per reviewer slot)] [--review-comments <inline|summary>] [--reviewers <1|2|3>] [--effort <low|medium|high>] [--team <profile>] [--jury|--no-jury|--jury-advisory] [--tdd] [--hotfix] [--dry-run] [--wizard]",
   "flags": [
    "issue numbers...",
    "--compound|--profile <standard|compound>",
@@ -10,6 +10,8 @@ window.KEEL_ARGS = {
    "--review-delegate <...> (repeatable, one per reviewer slot)",
    "--review-comments <inline|summary>",
    "--reviewers <1|2|3>",
+   "--effort <low|medium|high>",
+   "--team <profile>",
    "--jury|--no-jury|--jury-advisory",
    "--compound",
    "--tdd",
@@ -82,23 +84,31 @@ window.KEEL_ARGS = {
  },
  "work-block": {
   "desc": "Daytime multi-issue work block — process an explicit issue list or queue selector through ship with per-issue isolation and operator-visible stopping points.",
-  "hint": "[issue numbers...] [--queue <selector>] [--max <N>] [--hours <H>] [--review-comments <inline|summary>] [--wizard]",
+  "hint": "[issue numbers...] [--queue <selector>] [--max <N>] [--hours <H>] [--review-comments <inline|summary>] [--delegate <provider>] [--review-delegate <provider>] [--effort <low|medium|high>] [--team <profile>] [--wizard]",
   "flags": [
    "issue numbers...",
    "--queue <selector>",
    "--max <N>",
    "--hours <H>",
    "--review-comments <inline|summary>",
+   "--delegate <provider>",
+   "--review-delegate <provider>",
+   "--effort <low|medium|high>",
+   "--team <profile>",
    "--wizard"
   ]
  },
  "overnight": {
   "desc": "Unattended overnight work block — time-aware merge mode keyed on the merge window; runs /keel:ship over the queue until the window closes, then writes a session/morning report. Project-neutral; reads .keel/project.yaml.",
-  "hint": "[hours] [--max <N>] [--review-comments <inline|summary>]",
+  "hint": "[hours] [--max <N>] [--review-comments <inline|summary>] [--delegate <provider>] [--review-delegate <provider>] [--effort <low|medium|high>] [--team <profile>]",
   "flags": [
    "hours",
    "--max <N>",
-   "--review-comments <inline|summary>"
+   "--review-comments <inline|summary>",
+   "--delegate <provider>",
+   "--review-delegate <provider>",
+   "--effort <low|medium|high>",
+   "--team <profile>"
   ]
  },
  "wrap": {
@@ -160,12 +170,16 @@ window.KEEL_ARGS = {
  },
  "swarm": {
   "desc": "Multi-agent swarm coordinator — cluster backlog issues, execute parallel waves in isolated worktrees, and land orthogonal batches with self-healing rebase.",
-  "hint": "[issue numbers...] [--plan-only] [--tree] [--visual]",
+  "hint": "[issue numbers...] [--plan-only] [--tree] [--visual] [--delegate <provider>] [--review-delegate <provider>] [--effort <low|medium|high>] [--team <profile>]",
   "flags": [
    "issue numbers...",
    "--plan-only",
    "--tree",
-   "--visual"
+   "--visual",
+   "--delegate <provider>",
+   "--review-delegate <provider>",
+   "--effort <low|medium|high>",
+   "--team <profile>"
   ]
  }
 };

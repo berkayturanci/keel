@@ -134,6 +134,9 @@ contracts, but executable project behavior remains in extension files or project
 | `build_gate_cmd` | string | ✅ | command the `build` gate runs |
 | `lint_cmd` | string | | command the `lint` gate runs (gate skipped if absent) |
 | `implementer_agents` | map role→agent | | **deprecated** by `team.implement.by_role`: role to local agent mapping (still accepted and mapped onto it) |
+| `team.lead` | seat | | seat that coordinates a batch of ships; workers report through it |
+| `team.by_difficulty` | map band→bench | | `easy`/`standard`/`hard` → the bench that staffs work of that weight |
+| `team.profiles` | map name→bench | | operator-selectable benches, chosen with `--team <name>` |
 | `team` | object | | who implements / gates / reviews per role and risk tier, and how the jury gates |
 | `delegate_profiles` | map name→profile | | named generic delegate vendors, referenced as `--delegate <name>` |
 | `tier3_globs` | string[] | | high-risk paths that force full scrutiny |
@@ -195,6 +198,17 @@ knobs:
         "3": jury                          # the panel is the review (see the caveat below)
     jury: { mode: gating, min_vendors: 2 }
     fix: { provider: implementer }         # who applies review findings
+    lead: { provider: claude }             # coordinates a batch; workers report through it
+    by_difficulty:                         # how much work it is -> which bench staffs it
+      easy: { implement: { provider: ollama, model: qwen2.5-coder } }
+      hard:
+        lead: { provider: claude, model: opus }
+        implement: { provider: codex, effort: high }
+        review: jury
+    profiles:                              # operator-selectable benches (--team <name>)
+      night-shift:
+        implement: { provider: codex, effort: medium }
+        review: [{ provider: agy, model: gemini-3.8-pro }]
 ```
 
 **`review.default` and `review.by_tier`.** `by_tier` names the seats for a specific risk
@@ -305,6 +319,71 @@ to a `delegate_profiles` entry when the whole team should share it.
 `--review-delegate` is repeatable and **positional per slot** (first flag = slot A, second
 = slot B). `--reviewers N` overrides the seat count, except on a `jury` tier, where it is
 reported in `assignment.warnings` rather than silently replacing the panel.
+
+##### `team.lead`, `team.by_difficulty` and `team.profiles` — staffing a batch
+
+The seats above answer *who runs a ship*. These three answer *who runs a **batch** of
+ships* — a swarm cluster, a work block, an overnight session.
+
+**`lead`** is the seat that coordinates the batch and that its workers report through: a
+swarm spawns one lead per cluster, and the cluster's workers show that lead on
+`keel swarm-status`. Unset, the lead is the host agent driving the run.
+
+**`by_difficulty`** keys a bench on how much work something is. A **difficulty band** is
+not a risk tier:
+
+| | asks | read from | used for |
+| :--- | :--- | :--- | :--- |
+| risk tier | how dangerous is this change | `knobs.tier3_globs` + the changed files | how much review it needs |
+| difficulty band | how much work is this | tier, predicted file count, `priority:*`/`size:*` labels, dependency depth | which bench is worth spending on it |
+
+A one-line fix to a tier-3 glob is dangerous and trivial; a twelve-file docs migration is
+safe and long. Keeping them apart is what lets one backlog say *the hard cluster gets the
+strong implementer at high effort, the easy ones go to the cheap local model*.
+`keel swarm-plan` scores every cluster and prints the band with the signals that produced
+it; the bands are `easy`, `standard` and `hard`, and `keel validate` rejects any other key.
+
+**`profiles`** are benches an operator picks by name with `--team <profile>` on
+`work-block`, `overnight` and the `swarm` commands. A profile **outranks** the scored band
+— it is the operator naming the bench for this batch — but it does not replace it: each of
+`lead`, `implement`, `review` and `effort` resolves down the list on its own, so a profile
+that names only reviewers leaves the band's implementer standing.
+
+Resolution, most specific first, for each field independently:
+
+```
+--delegate / --review-delegate / --effort   (per-run flags)
+  > team.profiles.<--team>                  (operator-named bench)
+  > team.by_difficulty.<band>               (scored bench)
+  > team.implement.by_role.<role>           (which part of the system)
+  > team.implement.default
+  > knobs.implementer_agents.<role>         (deprecated)
+  > the host agent
+```
+
+A bench outranks `by_role` deliberately: the role says *which part of the system this is*,
+the band says *what this piece of work costs*, and only the second can express "the hard
+ones get the strong implementer". `effort` is the one exception to "most specific first" —
+a seat that names both a provider and an effort is one statement, so the seat's own effort
+beats the bench's; only the `--effort` flag beats the seat.
+
+A `--team` name with no matching profile is reported in `assignment.warnings` and the run
+falls back to the configured policy — it is never silently ignored.
+
+**A child ship inherits the bench.** `--effort` and `--team` are accepted by `keel ship` and
+`keel plan`, not only by the batch commands, and a batch hands them to every child. That is
+what makes a difficulty bench survive the handoff: the child re-resolves the *same* bench
+from the *same* config instead of falling back to the role default. The parent may still
+override what the bench chose — `--delegate` and `--review-delegate` on the child's command
+line win over any bench, exactly as they do on the parent's.
+
+**A bench `effort` is validated against every seat it could land on.** A seat's own `effort`
+sits beside its provider, so an operator reading one line sees both halves. A bench's does
+not — it lands on whichever implementer resolves for that band, written somewhere else — so
+`keel validate` checks it against each candidate implementer under the same rules: an `agy`
+seat needs the `model` its effort suffix rides on, a provider with no effort dial is
+refused, and a `subagent:` implementer (which has no dial at all) is refused too. A seat
+naming its own `effort` never receives the bench's, so it is not flagged.
 
 `team` participates in `config_hash` only when it is present, so adding the knob does not
 rotate the hash for a project that has not adopted it — and `config_hash` changes whenever

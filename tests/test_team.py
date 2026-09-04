@@ -625,5 +625,432 @@ class TestTeamIssues(unittest.TestCase):
         self.assertEqual(self.issues(raw), [])
 
 
+BENCHED = {
+    "implement": {
+        "default": {"provider": "claude"},
+        "by_role": {"core": {"provider": "claude", "effort": "medium"}},
+    },
+    "lead": {"provider": "claude", "model": "opus"},
+    "by_difficulty": {
+        "easy": {
+            "implement": {"provider": "ollama", "model": "qwen"},
+            "review": [{"provider": "claude"}],
+        },
+        "hard": {
+            "lead": {"provider": "codex"},
+            "implement": {"provider": "codex"},
+            "review": "jury",
+            "effort": "high",
+        },
+    },
+    "profiles": {
+        "night-shift": {"implement": {"provider": "agy", "model": "gemini-3.8-pro"}},
+    },
+}
+
+
+class TestBench(unittest.TestCase):
+    """``team.by_difficulty`` / ``team.profiles`` — the benches a batch staffs from (#1017)."""
+
+    def policy(self, raw=None):
+        return team.parse_team(BENCHED if raw is None else raw)
+
+    def test_a_band_names_the_bench_that_staffs_that_weight_of_work(self):
+        assignment = team.resolve_assignment(self.policy(), tier=2, role="core", difficulty="hard")
+
+        self.assertEqual(assignment["implementer"]["provider"], "codex")
+        self.assertEqual(assignment["implementer"]["source"], "team.by_difficulty.hard.implement")
+        self.assertEqual(assignment["difficulty"], "hard")
+        self.assertEqual(assignment["bench"], ["team.by_difficulty.hard"])
+
+    def test_a_bench_outranks_the_role_because_it_is_the_more_specific_statement(self):
+        """`by_role` says which part of the system; a band says what the work costs.
+
+        "The hard ones go to the strong implementer" is only expressible if the second
+        wins — otherwise every role keeps its default seat and the table does nothing.
+        """
+        easy = team.resolve_assignment(self.policy(), tier=2, role="core", difficulty="easy")
+        unbanded = team.resolve_assignment(self.policy(), tier=2, role="core")
+
+        self.assertEqual(easy["implementer"]["provider"], "ollama")
+        self.assertEqual(unbanded["implementer"]["source"], "team.implement.by_role.core")
+
+    def test_a_named_profile_outranks_the_scored_band(self):
+        assignment = team.resolve_assignment(
+            self.policy(), tier=2, role="core", difficulty="hard", team_profile="night-shift"
+        )
+
+        self.assertEqual(assignment["implementer"]["provider"], "agy")
+        self.assertEqual(assignment["team_profile"], "night-shift")
+        self.assertEqual(
+            assignment["bench"], ["team.profiles.night-shift", "team.by_difficulty.hard"]
+        )
+
+    def test_a_profile_that_names_only_an_implementer_leaves_the_band_reviewers_standing(self):
+        """Each field resolves down the bench list on its own.
+
+        A profile is not a replacement policy: taking the whole bench from the first match
+        would silently drop the band's reviewers the moment an operator passed --team.
+        """
+        assignment = team.resolve_assignment(
+            self.policy(), tier=2, role="core", difficulty="hard", team_profile="night-shift"
+        )
+
+        self.assertEqual(assignment["review_panel"], "jury")
+        self.assertEqual(assignment["reviewer_source"], "team.by_difficulty.hard.review")
+
+    def test_a_bench_review_list_replaces_the_tier_bench(self):
+        assignment = team.resolve_assignment(self.policy(), tier=3, role="core", difficulty="easy")
+
+        self.assertEqual([seat["provider"] for seat in assignment["reviewers"]], ["claude"])
+        self.assertEqual(assignment["reviewer_source"], "team.by_difficulty.easy.review")
+
+    def test_an_unknown_profile_is_reported_rather_than_silently_ignored(self):
+        assignment = team.resolve_assignment(self.policy(), tier=2, team_profile="weekend")
+        warning = next(w for w in assignment["warnings"] if "--team" in w)
+
+        self.assertIn("--team 'weekend'", warning)
+        self.assertIn("night-shift", warning)
+
+    def test_an_unknown_profile_on_a_project_with_no_profiles_says_none_are_known(self):
+        assignment = team.resolve_assignment(team.TeamPolicy(), tier=2, team_profile="weekend")
+
+        self.assertIn("Known: none", next(w for w in assignment["warnings"] if "--team" in w))
+
+    def test_the_lead_comes_from_the_bench_then_the_policy_then_the_host(self):
+        policy = self.policy()
+
+        self.assertEqual(
+            team.resolve_assignment(policy, tier=2, difficulty="hard")["lead"]["provider"], "codex"
+        )
+        self.assertEqual(team.resolve_assignment(policy, tier=2)["lead"]["source"], "team.lead")
+        self.assertEqual(
+            team.resolve_assignment(team.TeamPolicy(), tier=2, host_agent="agy")["lead"],
+            {
+                "provider": "agy",
+                "name": "agy",
+                "kind": "provider",
+                "model": None,
+                "effort": None,
+                "source": "host",
+            },
+        )
+
+    def test_effort_is_the_flag_then_the_seat_then_the_bench(self):
+        policy = self.policy()
+
+        # The bench names an effort and its seat does not: the bench fills it in.
+        self.assertEqual(
+            team.resolve_assignment(policy, tier=2, difficulty="hard")["effort"], "high"
+        )
+        # The role seat names its own: no bench applies, so the seat stands.
+        self.assertEqual(team.resolve_assignment(policy, tier=2, role="core")["effort"], "medium")
+        # The flag is the operator speaking about this run and outranks both.
+        self.assertEqual(
+            team.resolve_assignment(policy, tier=2, role="core", effort="low")["effort"], "low"
+        )
+
+    def test_the_fix_seat_inherits_the_implementer_effort_through_the_alias(self):
+        policy = team.parse_team({**BENCHED, "fix": {"provider": "implementer"}})
+
+        assignment = team.resolve_assignment(policy, tier=2, difficulty="hard", effort="low")
+
+        self.assertEqual(assignment["fix"]["provider"], "codex")
+        self.assertEqual(assignment["fix"]["effort"], "low")
+
+    def test_a_bench_field_the_profile_omits_falls_through_to_the_band(self):
+        """Resolution walks the whole bench list per field, not just the first bench."""
+        policy = team.parse_team(
+            {
+                **BENCHED,
+                "profiles": {"reviewers-only": {"review": [{"provider": "claude"}]}},
+            }
+        )
+
+        assignment = team.resolve_assignment(
+            policy, tier=2, difficulty="hard", team_profile="reviewers-only"
+        )
+
+        self.assertEqual(assignment["implementer"]["source"], "team.by_difficulty.hard.implement")
+        self.assertEqual(assignment["reviewer_source"], "team.profiles.reviewers-only.review")
+
+    def test_a_bench_that_names_nothing_is_absent_rather_than_an_empty_override(self):
+        policy = team.parse_team({**BENCHED, "by_difficulty": {"hard": {}}, "profiles": "nope"})
+
+        self.assertEqual(policy.by_difficulty, {})
+        self.assertEqual(policy.profiles, {})
+
+    def test_a_malformed_bench_entry_is_dropped(self):
+        self.assertEqual(team.parse_team({"by_difficulty": {"hard": "codex"}}).by_difficulty, {})
+
+    def test_a_bench_canonicalises_only_the_fields_it_names(self):
+        policy = team.parse_team({"by_difficulty": {"easy": {"lead": {"provider": "claude"}}}})
+
+        self.assertEqual(
+            team.canonical(policy)["team"]["by_difficulty"],
+            {"easy": {"lead": {"provider": "claude", "model": None, "effort": None}}},
+        )
+
+    def test_canonical_round_trips_every_bench_field(self):
+        policy = self.policy()
+
+        canonical = team.canonical(policy)["team"]
+
+        self.assertEqual(canonical["lead"], {"provider": "claude", "model": "opus", "effort": None})
+        self.assertEqual(canonical["by_difficulty"]["hard"]["review"], "jury")
+        self.assertEqual(canonical["by_difficulty"]["hard"]["effort"], "high")
+        self.assertEqual(
+            canonical["by_difficulty"]["easy"]["review"],
+            [{"provider": "claude", "model": None, "effort": None}],
+        )
+        self.assertEqual(
+            canonical["profiles"]["night-shift"]["implement"],
+            {"provider": "agy", "model": "gemini-3.8-pro", "effort": None},
+        )
+        self.assertEqual(team.parse_team(canonical), policy)
+
+    def test_an_unconfigured_policy_still_canonicalises_to_nothing(self):
+        """The `config_hash` guarantee: it changes iff `team` does."""
+        self.assertEqual(team.canonical(team.TeamPolicy()), {})
+        self.assertNotIn("lead", team.canonical(team.parse_team({}))["team"])
+
+
+class TestBenchValidation(unittest.TestCase):
+    def issues(self, raw):
+        return team.team_issues(raw, source="knobs.team")
+
+    def test_a_band_key_the_scorer_never_emits_is_an_error(self):
+        errors = self.issues({"by_difficulty": {"medium": {"implement": {"provider": "codex"}}}})
+
+        self.assertIn("'medium' is not a difficulty band", errors[0])
+        self.assertIn("easy, standard, hard", errors[0])
+
+    def test_the_default_lead_seat_is_validated_like_any_other(self):
+        errors = self.issues({"lead": {"provider": "nope"}})
+
+        self.assertIn("knobs.team.lead: unknown provider 'nope'", errors[0])
+
+    def test_a_non_mapping_by_difficulty_is_left_to_the_schema(self):
+        self.assertEqual(self.issues({"by_difficulty": "hard"}), [])
+
+    def test_an_unknown_provider_in_a_bench_seat_is_reported_with_its_path(self):
+        errors = self.issues(
+            {
+                "by_difficulty": {"hard": {"lead": {"provider": "nope"}}},
+                "profiles": {"night": {"implement": {"provider": "alsonope"}}},
+            }
+        )
+
+        self.assertIn("knobs.team.by_difficulty.hard.lead: unknown provider 'nope'", errors[0])
+        self.assertIn("knobs.team.profiles.night.implement", errors[1])
+
+    def test_a_bench_reviewer_bench_obeys_the_same_rules_as_a_tier_bench(self):
+        errors = self.issues(
+            {
+                "by_difficulty": {"easy": {"review": []}},
+                "profiles": {
+                    "wide": {
+                        "review": [
+                            {"provider": "claude"},
+                            {"provider": "codex"},
+                            {"provider": "agy"},
+                            {"provider": "ollama"},
+                        ]
+                    }
+                },
+            }
+        )
+
+        self.assertIn("by_difficulty.easy.review: an empty reviewer list", errors[0])
+        self.assertIn("profiles.wide.review: 4 reviewer seats", errors[1])
+
+    def test_a_bench_implementer_is_an_implementer_for_the_distinct_gate_check(self):
+        """A gate that matches a bench seat is the first opinion wearing a newer spelling."""
+        errors = self.issues(
+            {
+                "gate": {"provider": "codex", "distinct_from": "implementer"},
+                "by_difficulty": {"hard": {"implement": {"provider": "codex"}}},
+            }
+        )
+
+        self.assertIn("is also the implementer at", errors[0])
+        self.assertIn("by_difficulty.hard.implement", errors[0])
+
+
+class TestBenchEffortValidation(unittest.TestCase):
+    """A bench `effort` is action at a distance, so it is checked where it lands (#1017).
+
+    A seat's own `effort` sits next to its provider — one line, both halves visible.
+    `by_difficulty.hard.effort` lands on whichever implementer resolves for that band,
+    written somewhere else entirely, so it bypassed every rule `implement.default.effort`
+    has faced since #1014: an agy seat with no model, a provider with no effort dial, a
+    host subagent with no dial at all — all validated clean and all silently dropped.
+    """
+
+    def issues(self, raw):
+        return team.team_issues(raw, source="knobs.team")
+
+    def test_agy_still_needs_the_model_its_effort_suffix_rides_on(self):
+        errors = self.issues(
+            {
+                "implement": {"default": {"provider": "agy"}},
+                "by_difficulty": {"hard": {"effort": "high"}},
+            }
+        )
+
+        self.assertIn("knobs.team.by_difficulty.hard.effort", errors[0])
+        self.assertIn("agy spells reasoning effort as a model suffix", errors[0])
+        self.assertIn("applied to the implementer at implement.default", errors[0])
+
+    def test_a_subagent_implementer_has_no_dial_to_set(self):
+        errors = self.issues(
+            {
+                "implement": {"default": {"provider": "subagent:backend-developer"}},
+                "by_difficulty": {"hard": {"effort": "high"}},
+            }
+        )
+
+        self.assertIn("is a host subagent", errors[0])
+        self.assertIn("silently dropped", errors[0])
+
+    def test_a_seat_level_subagent_effort_is_still_tolerated(self):
+        """#1014's choice, and the distinction this check turns on: there the operator
+        wrote both halves on one line and could see the pairing."""
+        self.assertEqual(self.issues({"fix": {"provider": "subagent:x", "effort": "high"}}), [])
+
+    def test_a_provider_with_no_effort_spelling_is_reported(self):
+        errors = self.issues(
+            {
+                "implement": {"default": {"provider": "claude"}},
+                "profiles": {"night": {"effort": "low"}},
+            }
+        )
+
+        self.assertIn("knobs.team.profiles.night.effort", errors[0])
+        self.assertIn("has no spelling for reasoning effort", errors[0])
+
+    def test_an_unknown_bench_effort_is_reported_like_a_seat_one(self):
+        errors = self.issues(
+            {
+                "implement": {"default": {"provider": "codex"}},
+                "by_difficulty": {"hard": {"effort": "extreme"}},
+            }
+        )
+
+        self.assertIn("unknown effort 'extreme'", errors[0])
+
+    def test_a_seat_that_names_its_own_effort_never_receives_the_bench_one(self):
+        self.assertEqual(
+            self.issues(
+                {
+                    "implement": {
+                        "default": {
+                            "provider": "agy",
+                            "model": "gemini-3.8-flash-high",
+                            "effort": "high",
+                        }
+                    },
+                    "by_difficulty": {"hard": {"effort": "high"}},
+                }
+            ),
+            [],
+        )
+
+    def test_a_bench_naming_its_own_implementer_is_checked_against_that_seat_alone(self):
+        """It can only land there, so an unrelated role seat must not be dragged in."""
+        errors = self.issues(
+            {
+                "implement": {"default": {"provider": "claude"}},
+                "by_difficulty": {"hard": {"implement": {"provider": "codex"}, "effort": "high"}},
+            }
+        )
+
+        self.assertEqual(errors, [])
+
+    def test_every_implementer_a_band_could_reach_is_checked(self):
+        """With no bench implementer the band lands on whichever seat resolves, so all of
+        them — including the deprecated knob's — are candidates."""
+        errors = team.team_issues(
+            {
+                "implement": {"by_role": {"core": {"provider": "claude"}}},
+                "by_difficulty": {"hard": {"effort": "high"}},
+            },
+            source="knobs.team",
+            implementer_agents={"docs": "ollama"},
+        )
+
+        paths = " ".join(errors)
+        self.assertIn("implement.by_role.core", paths)
+        self.assertIn("knobs.implementer_agents.docs", paths)
+
+    def test_a_band_is_never_judged_against_a_sibling_bands_implementer(self):
+        """One run resolves exactly one band, so two rows of the same table never meet.
+
+        The reviewer's example: `hard`'s effort can only ever land on `implement.default`
+        (codex, which honours effort), never on `easy`'s claude — reporting it taught an
+        operator that the validator cries wolf about combinations no run can produce.
+        """
+        errors = self.issues(
+            {
+                "implement": {"default": {"provider": "codex"}},
+                "by_difficulty": {
+                    "easy": {"implement": {"provider": "claude"}},
+                    "hard": {"effort": "high"},
+                },
+            }
+        )
+
+        self.assertEqual(errors, [])
+
+    def test_two_profiles_are_siblings_in_the_same_sense(self):
+        errors = self.issues(
+            {
+                "implement": {"default": {"provider": "codex"}},
+                "profiles": {
+                    "a": {"implement": {"provider": "claude"}},
+                    "b": {"effort": "high"},
+                },
+            }
+        )
+
+        self.assertEqual(errors, [])
+
+    def test_the_other_table_is_reachable_and_still_checked(self):
+        """A `--team` profile can supply the implementer while a band supplies the
+        effort, so that pairing is real and has to be caught."""
+        errors = self.issues(
+            {
+                "implement": {"default": {"provider": "codex"}},
+                "by_difficulty": {"hard": {"effort": "high"}},
+                "profiles": {"night": {"implement": {"provider": "claude"}}},
+            }
+        )
+
+        self.assertIn("knobs.team.by_difficulty.hard.effort", errors[0])
+        self.assertIn("applied to the implementer at profiles.night.implement", errors[0])
+
+    def test_the_pairing_is_caught_in_the_other_direction_too(self):
+        errors = self.issues(
+            {
+                "implement": {"default": {"provider": "codex"}},
+                "profiles": {"night": {"effort": "high"}},
+                "by_difficulty": {"hard": {"implement": {"provider": "claude"}}},
+            }
+        )
+
+        self.assertIn("knobs.team.profiles.night.effort", errors[0])
+        self.assertIn("applied to the implementer at by_difficulty.hard.implement", errors[0])
+
+    def test_a_bench_with_no_effort_is_not_checked(self):
+        self.assertEqual(
+            self.issues({"by_difficulty": {"hard": {"implement": {"provider": "claude"}}}}), []
+        )
+
+    def test_a_policy_with_no_implementer_at_all_leans_on_the_host_and_says_nothing(self):
+        """The host is a per-run flag; validating against one operator's default is the
+        kind of machine-dependent rule #1014 refused."""
+        self.assertEqual(self.issues({"by_difficulty": {"hard": {"effort": "high"}}}), [])
+
+
 if __name__ == "__main__":
     unittest.main()

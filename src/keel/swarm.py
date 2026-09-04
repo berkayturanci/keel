@@ -15,12 +15,45 @@ import fnmatch
 import json
 import posixpath
 import re
-from dataclasses import dataclass, field
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from . import workspace
+from . import agents, classify, ship, workspace
+from . import team as team_policy
 from .config import ProjectConfig
+
+#: Difficulty points by resolved risk tier. A tier-3 cluster is not merely riskier, it
+#: is more *work*: it touches the globs the project declared load-bearing, so the change
+#: has to be argued for as well as written.
+_TIER_POINTS = {1: 0, 2: 2, 3: 4}
+
+#: ``(at least this many predicted files, points)``, widest first. Predicted breadth is
+#: the only size signal available before a line is written, and it is the one that decides
+#: whether a cluster is one edit or a refactor.
+_FILE_COUNT_POINTS = ((8, 3), (4, 2), (2, 1))
+
+#: Label -> points. Only labels a human deliberately set count: ``priority:`` says how
+#: much it matters (and so how much review attention it will draw), ``size:`` is the
+#: estimate a human already made and is worth more than any heuristic here.
+_LABEL_POINTS = {
+    "priority:critical": 2,
+    "priority:high": 1,
+    "size:m": 1,
+    "size:l": 2,
+    "size:xl": 3,
+}
+
+#: Cap on the points a cluster earns for depending on already-scheduled work. Depth says
+#: the cluster lands on a tree someone else just moved; past a few dependencies that is
+#: the same problem, not a worse one.
+MAX_DEPENDENCY_POINTS = 3
+
+#: ``(highest score still in this band, band)``, lightest first; anything above the last
+#: ceiling is the heaviest band. The bands themselves are :data:`keel.team.DIFFICULTY_BANDS`,
+#: because a band's whole purpose is to name a ``knobs.team.by_difficulty`` bench.
+_BAND_CEILINGS = ((2, "easy"), (5, "standard"))
 
 #: Regex to capture backticked file paths or common file paths in issue text
 _PATH_BACKTICK_RE = re.compile(r"`([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9_\-]+)`")
@@ -53,6 +86,37 @@ class IssueScope:
 
 
 @dataclass(frozen=True)
+class Difficulty:
+    """How much work a cluster is, and the evidence that says so (#1017).
+
+    Deliberately not the risk tier. A tier answers *how dangerous is this change* and is
+    read off the files it touches; a band answers *how much work is it*, which is what
+    decides whether the strong implementer is worth spending on it. A one-line fix to a
+    tier-3 glob is dangerous and trivial; a twelve-file docs migration is safe and long.
+    Keeping them apart is what lets ``knobs.team`` staff on one and gate on the other.
+    """
+
+    score: int
+    band: str
+    tier: int
+    file_count: int
+    dependency_depth: int
+    #: ``(name, points)`` for every input that contributed, so a surprising band can be
+    #: read back rather than guessed at.
+    signals: tuple[tuple[str, int], ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "score": self.score,
+            "band": self.band,
+            "tier": self.tier,
+            "file_count": self.file_count,
+            "dependency_depth": self.dependency_depth,
+            "signals": [{"name": name, "points": points} for name, points in self.signals],
+        }
+
+
+@dataclass(frozen=True)
 class SwarmCluster:
     """A unit of work within a Swarm Wave consisting of one or more related issues."""
 
@@ -61,6 +125,10 @@ class SwarmCluster:
     role: str
     combined_scope: tuple[str, ...]
     depends_on_issues: tuple[int, ...] = ()
+    #: How much work this cluster is (:func:`score_difficulty`).
+    difficulty: Difficulty | None = None
+    #: Who runs it (:func:`keel.team.resolve_assignment`) — lead, implementer, reviewers.
+    assignment: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -69,6 +137,8 @@ class SwarmCluster:
             "role": self.role,
             "combined_scope": list(self.combined_scope),
             "depends_on_issues": list(self.depends_on_issues),
+            "difficulty": None if self.difficulty is None else self.difficulty.to_dict(),
+            "assignment": self.assignment,
         }
 
 
@@ -123,6 +193,12 @@ class SwarmWorkerStatus:
     status: str = "queued"  # queued, running, passed, failed, merged, held
     updated_at: str = ""
     details: str = ""
+    #: The team lead this worker reports through — the CTO/lead/worker hierarchy is only
+    #: legible on the board if a worker record says which lead owns it (#1017).
+    lead: str = ""
+    #: The difficulty band the worker was staffed from, so a status board shows *why*
+    #: this cluster drew this provider.
+    difficulty: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -135,6 +211,8 @@ class SwarmWorkerStatus:
             "status": self.status,
             "updated_at": self.updated_at,
             "details": self.details,
+            "lead": self.lead,
+            "difficulty": self.difficulty,
         }
 
 
@@ -384,13 +462,254 @@ def scopes_have_conflict(scope_a: IssueScope, scope_b: IssueScope) -> bool:
     return _normalized_scopes_conflict(_normalized_files(scope_a), _normalized_files(scope_b))
 
 
+def _file_count_points(count: int) -> int:
+    """Points for a scope of ``count`` predicted files (the widest threshold it reaches)."""
+    for threshold, points in _FILE_COUNT_POINTS:
+        if count >= threshold:
+            return points
+    return 0
+
+
+def difficulty_band(score: int) -> str:
+    """The band a difficulty ``score`` falls in."""
+    for ceiling, band in _BAND_CEILINGS:
+        if score <= ceiling:
+            return band
+    return team_policy.DIFFICULTY_BANDS[-1]
+
+
+def cluster_scopes(
+    cluster: SwarmCluster, scopes: Mapping[int, IssueScope]
+) -> tuple[IssueScope, ...]:
+    """The issue scopes a cluster covers, in the cluster's own order.
+
+    An issue with no scope in the map is skipped rather than faked: a scoreable cluster
+    is one whose issues the planner actually analysed, and inventing an empty scope would
+    quietly lower the band of a cluster whose largest issue went missing.
+    """
+    return tuple(scopes[issue] for issue in cluster.issues if issue in scopes)
+
+
+def score_difficulty(
+    scopes: Sequence[IssueScope],
+    *,
+    tier3_globs: tuple[str, ...] = (),
+    docs_globs: tuple[str, ...] = (),
+    allowlist_globs: tuple[str, ...] = (),
+    dependency_depth: int = 0,
+) -> Difficulty:
+    """How much work one cluster of issues is — pure, and the same answer every run.
+
+    Takes the cluster's scopes rather than one issue's, because a cluster is the unit a
+    lead is handed and a cluster of three small issues is not three small pieces of work.
+    Every input is already deterministic: the risk tier from ``knobs.tier3_globs``, the
+    predicted blast radius the planner computed, labels a human set, and how much
+    already-scheduled work this cluster lands on top of.
+    """
+    files = sorted({path for scope in scopes for path in scope.predicted_files})
+    labels = sorted({label.lower() for scope in scopes for label in scope.labels})
+    tier = classify.tier_for_files(
+        files,
+        tier3_globs=tier3_globs,
+        docs_globs=docs_globs,
+        allowlist_globs=allowlist_globs,
+    )
+    # The observed depth is recorded and the *points* are what the cap bites: a cluster
+    # sitting on nine earlier issues and one sitting on three are not the same situation,
+    # and reporting both as `depends-on:3` threw away the difference at the only place a
+    # reader could have seen it. Capping the points still says "past a few dependencies
+    # it is the same problem, not a worse one".
+    depth = max(dependency_depth, 0)
+    depth_points = min(depth, MAX_DEPENDENCY_POINTS)
+    candidates: list[tuple[str, int]] = [
+        (f"tier-{tier}", _TIER_POINTS.get(tier, 2)),
+        (f"files:{len(files)}", _file_count_points(len(files))),
+        *((label, _LABEL_POINTS[label]) for label in labels if label in _LABEL_POINTS),
+        (f"depends-on:{depth}", depth_points),
+    ]
+    # Only what actually moved the score is recorded: a signal worth zero points is not
+    # evidence, and a reader who has to filter them out is reading noise.
+    signals = tuple((name, points) for name, points in candidates if points)
+    score = sum(points for _name, points in signals)
+    return Difficulty(
+        score=score,
+        band=difficulty_band(score),
+        tier=tier,
+        file_count=len(files),
+        dependency_depth=depth,
+        signals=signals,
+    )
+
+
+@dataclass(frozen=True)
+class AssignmentOverrides:
+    """Per-run staffing a batch runner passes down to every cluster it launches.
+
+    The command-line half of the team contract: ``--delegate``, ``--review-delegate``,
+    ``--effort``, ``--team`` and ``--reviewers`` as one value, so ``swarm-plan``,
+    ``swarm-run`` and a work block hand the same object to the same resolver instead of
+    each threading five arguments and dropping a different one.
+    """
+
+    delegate: str | None = None
+    review_delegates: tuple[str, ...] = ()
+    effort: str | None = None
+    team_profile: str | None = None
+    reviewers: int | None = None
+    host_agent: str = team_policy.HOST_DEFAULT
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "delegate": self.delegate,
+            "review_delegates": list(self.review_delegates),
+            "effort": self.effort,
+            "team": self.team_profile,
+            "reviewers": self.reviewers,
+            "host_agent": self.host_agent,
+        }
+
+
+def resolve_cluster_assignment(
+    cluster: SwarmCluster,
+    difficulty: Difficulty,
+    *,
+    config: ProjectConfig | None = None,
+    overrides: AssignmentOverrides | None = None,
+) -> dict[str, Any]:
+    """Who runs this cluster: :func:`keel.team.resolve_assignment`, per cluster.
+
+    The swarm does not get its own idea of who implements. It calls the resolver every
+    other command calls, with *this cluster's* role, risk tier and difficulty band — so a
+    cluster's lead can hand the assignment straight to ``keel ship`` and the child run
+    resolves the same team from the same config.
+    """
+    settings = overrides or AssignmentOverrides()
+    policy = config.knobs.team if config is not None else team_policy.TeamPolicy()
+    assignment = team_policy.resolve_assignment(
+        policy,
+        tier=difficulty.tier,
+        role=cluster.role,
+        default_count=ship.reviewer_count(difficulty.tier),
+        reviewer_override=settings.reviewers,
+        delegate=settings.delegate,
+        review_delegates=settings.review_delegates,
+        host_agent=settings.host_agent,
+        legacy=None if config is None else agents.legacy_team_seats(config),
+        difficulty=difficulty.band,
+        team_profile=settings.team_profile,
+        effort=settings.effort,
+    )
+    # A role keel will not hand to a child is an operator-visible fact, not a silent
+    # omission: `assignment.warnings` is where a lead is told to look before launching.
+    assignment["warnings"] = [*assignment["warnings"], *safe_role(assignment["role"])[1]]
+    return assignment
+
+
+#: Characters a role may contribute to a child's argv. A role is read off an issue label,
+#: which anyone with triage rights can write; `--role` hands it to a child `argparse`,
+#: where a value opening with `-` is parsed as a flag rather than as the option's value.
+#: `role:--live` on one issue would therefore break every child ship in the batch.
+_SAFE_ROLE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+
+
+def safe_role(role: str | None) -> tuple[str | None, tuple[str, ...]]:
+    """``(role, warnings)`` — the role if it can be an argv token, else ``None`` and why.
+
+    Dropped rather than escaped or quoted: there is no quoting that makes `--live` stop
+    being a flag to `argparse`, and a role keel cannot pass is a role the child resolves
+    from config on its own — a smaller loss than a batch that dies on argument parsing.
+    The warning is deterministic so two runs of the same plan report it identically.
+    """
+    if role is None or not role:
+        return None, ()
+    if _SAFE_ROLE.match(role):
+        return role, ()
+    return None, (
+        f"role {role!r} is not passed to the child ship: a role becomes a `--role` argv "
+        "token, and this one is not [A-Za-z0-9][A-Za-z0-9._-]*. The child resolves its "
+        "role from the issue's own labels instead",
+    )
+
+
+def ship_handoff_args(assignment: dict[str, Any] | None) -> tuple[str, ...]:
+    """A resolved assignment as ``keel ship`` flags for the child run.
+
+    One place, because every batch runner has the same job — a swarm lead launching its
+    cluster's ships, a work block handing over the next issue — and a child that resolves
+    its own team from config alone would silently drop the per-run overrides the operator
+    passed to the parent. Only flags ``keel ship`` actually defines are emitted; a seat
+    that is a host subagent rather than a provider is left to the adapter, which is the
+    layer that knows how to spawn one.
+
+    The vocabulary is :data:`keel.workblock.DELEGATION_FLAGS` — the same five a work block
+    hands down — because the child is the same `keel ship` either way. The two differ only
+    in *what* they carry: a work block passes the operator's flags through unresolved,
+    while a lead has already resolved its cluster's bench and passes the seats that came
+    out. ``--effort`` and ``--team`` ride along so the child's own resolution reproduces
+    the parent's rather than re-deriving a different one from config alone.
+    """
+    if assignment is None:
+        return ()
+    args: list[str] = []
+    implementer = assignment["implementer"]
+    if implementer["kind"] == "provider":
+        model = implementer["model"]
+        args += ["--delegate", implementer["provider"] + (f":{model}" if model else "")]
+    for reviewer in assignment["reviewers"]:
+        if reviewer["kind"] == "provider":
+            model = reviewer["model"]
+            args += ["--review-delegate", reviewer["provider"] + (f":{model}" if model else "")]
+    role, _warnings = safe_role(assignment["role"])
+    if role:
+        args += ["--role", role]
+    if assignment["effort"]:
+        args += ["--effort", assignment["effort"]]
+    if assignment["team_profile"]:
+        args += ["--team", assignment["team_profile"]]
+    return tuple(args)
+
+
+def worker_seed(cluster: SwarmCluster, *, updated_at: str = "") -> SwarmWorkerStatus:
+    """The queued worker record for a cluster, staffed from the cluster's assignment.
+
+    Pure, and separate from the runtime that persists it, because *which provider is
+    running this cluster and which lead owns it* is a fact of the plan. The runtime used
+    to seed every worker with the ``claude``/``default`` field defaults, so a swarm that
+    had resolved a real team still reported the placeholder one on the board.
+    """
+    assignment = cluster.assignment
+    implementer = None if assignment is None else assignment["implementer"]
+    model = None if implementer is None else implementer["model"]
+    return SwarmWorkerStatus(
+        cluster_id=cluster.cluster_id,
+        issue=cluster.issues[0] if cluster.issues else 0,
+        role=cluster.role,
+        agent="claude" if implementer is None else implementer["name"],
+        model=model or "default",
+        lead="" if assignment is None else assignment["lead"]["name"],
+        difficulty="" if cluster.difficulty is None else cluster.difficulty.band,
+        step="s0",
+        status="queued",
+        updated_at=updated_at,
+    )
+
+
 def build_swarm_plan(
     issue_scopes: list[IssueScope] | tuple[IssueScope, ...],
     *,
     swarm_id: str | None = None,
     config: ProjectConfig | None = None,
+    overrides: AssignmentOverrides | None = None,
 ) -> SwarmPlan:
-    """Deterministically partition candidate issues into orthogonal Waves and Clusters."""
+    """Deterministically partition candidate issues into orthogonal Waves and Clusters.
+
+    Every cluster comes out scored (:func:`score_difficulty`) and staffed
+    (:func:`resolve_cluster_assignment`). Scoring and staffing happen *after* the
+    partition and never feed back into it, which is the property that makes the two
+    independently reviewable: re-staffing a backlog — a new ``team.by_difficulty`` row, a
+    ``--team`` profile, a ``--delegate`` — moves who runs a cluster and cannot move which
+    wave it lands in.
+    """
     if not issue_scopes:
         now_id = swarm_id or (
             "swarm-" + datetime.datetime.now(datetime.UTC).strftime("%Y%m%d-%H%M%S")
@@ -402,6 +721,10 @@ def build_swarm_plan(
             conflict_map={},
             issue_scopes={},
         )
+
+    tier3_globs = () if config is None else config.knobs.tier3_globs
+    docs_globs = () if config is None else config.knobs.docs_gate_paths
+    allowlist_globs = () if config is None else config.knobs.docs_only_allowlist
 
     # Sort issues for determinism
     sorted_scopes = sorted(issue_scopes, key=lambda s: s.issue)
@@ -464,13 +787,32 @@ def build_swarm_plan(
                     if dep in assigned_prior_issues
                 )
             )
+            cluster = SwarmCluster(
+                cluster_id=f"cluster-{wave_idx}-{issue_num}",
+                issues=(issue_num,),
+                role=sc.role,
+                combined_scope=sc.predicted_files,
+                depends_on_issues=deps,
+            )
+            # Scored from the cluster's own issue list rather than from the issue this
+            # loop happens to be on. The partition emits one issue per cluster today, so
+            # the two are the same tuple — but the scorer's contract is "how much work is
+            # *this cluster*", and a caller that hand-rolled the single-issue case would
+            # be the thing to fix on the day clusters group.
+            difficulty = score_difficulty(
+                cluster_scopes(cluster, scope_by_id),
+                tier3_globs=tier3_globs,
+                docs_globs=docs_globs,
+                allowlist_globs=allowlist_globs,
+                dependency_depth=len(deps),
+            )
+            cluster = replace(cluster, difficulty=difficulty)
             clusters.append(
-                SwarmCluster(
-                    cluster_id=f"cluster-{wave_idx}-{issue_num}",
-                    issues=(issue_num,),
-                    role=sc.role,
-                    combined_scope=sc.predicted_files,
-                    depends_on_issues=deps,
+                replace(
+                    cluster,
+                    assignment=resolve_cluster_assignment(
+                        cluster, difficulty, config=config, overrides=overrides
+                    ),
                 )
             )
 
@@ -496,6 +838,43 @@ def build_swarm_plan(
         conflict_map=frozen_conflicts,
         issue_scopes=scope_by_id,
     )
+
+
+def seat_label(seat: dict[str, Any] | None) -> str:
+    """A resolved seat as ``provider:model@effort`` — the short form both renderers use."""
+    if seat is None:
+        return "unassigned"
+    label = seat["name"]
+    if seat["model"]:
+        label += f":{seat['model']}"
+    if seat["effort"]:
+        label += f"@{seat['effort']}"
+    return label
+
+
+def cluster_staffing_lines(cluster: SwarmCluster) -> list[str]:
+    """The difficulty and team rows for a cluster, or nothing when it has neither.
+
+    Shared by both plan renderers so the tree and the table cannot describe the same
+    cluster differently — the tree existing to be read *instead of* the table is exactly
+    why they must agree.
+    """
+    rows: list[str] = []
+    if cluster.difficulty is not None:
+        d = cluster.difficulty
+        rows.append(
+            f"Difficulty: {d.band} (score {d.score}, tier {d.tier}, "
+            f"{d.file_count} file(s), depth {d.dependency_depth})"
+        )
+    if cluster.assignment is not None:
+        assignment = cluster.assignment
+        reviewers = ", ".join(seat_label(seat) for seat in assignment["reviewers"])
+        panel = reviewers or assignment["review_panel"]
+        rows.append(
+            f"Team: lead {seat_label(assignment['lead'])} → "
+            f"implementer {seat_label(assignment['implementer'])}, review {panel}"
+        )
+    return rows
 
 
 def render_swarm_plan_text(plan: SwarmPlan) -> str:
@@ -525,6 +904,8 @@ def render_swarm_plan_text(plan: SwarmPlan) -> str:
             lines.append(
                 f"  • Cluster {c.cluster_id}: {issues_str} [{c.role}] → {scope_str}{dep_str}"
             )
+            for detail in cluster_staffing_lines(c):
+                lines.append(f"      {detail}")
         lines.append("")
     return "\n".join(lines).strip()
 
@@ -563,17 +944,20 @@ def render_swarm_plan_tree(plan: SwarmPlan) -> str:
             lines.append(f"{c_prefix}📦 Cluster {c.cluster_id} ({issues_str}) [{c.role}]")
 
             scope_items = list(c.combined_scope)
-            has_deps = bool(c.depends_on_issues)
-
-            scope_branch = "├── " if has_deps else "└── "
-            lines.append(
-                f"{c_indent}{scope_branch}Scope: {', '.join(scope_items[:3])}"
-                f"{'...' if len(scope_items) > 3 else ''}"
-            )
-
-            if has_deps:
+            children = [
+                f"Scope: {', '.join(scope_items[:3])}{'...' if len(scope_items) > 3 else ''}",
+                *cluster_staffing_lines(c),
+            ]
+            if c.depends_on_issues:
                 dep_issues = ", ".join(f"#{d}" for d in c.depends_on_issues)
-                lines.append(f"{c_indent}└── ⛓️ Depends on: {dep_issues}")
+                children.append(f"⛓️ Depends on: {dep_issues}")
+            # The connector is decided from the assembled list rather than from each
+            # optional row in turn: every added row used to mean another place that had to
+            # know whether something came after it, and one that guessed wrong drew a tree
+            # with two last branches.
+            for index, child in enumerate(children):
+                branch = "└── " if index == len(children) - 1 else "├── "
+                lines.append(f"{c_indent}{branch}{child}")
         lines.append("")
 
     return "\n".join(lines).rstrip()
@@ -597,17 +981,21 @@ def render_swarm_status_dashboard(state: SwarmRunState | None) -> str:
         f"│ Active Wave: {state.active_wave:<3} │ Total Workers: {state.total_workers:<3} "
         f"│ Started: {start_str:<24} │"
     )
+    # The lead and the band it staffed from sit beside the worker, because the board is
+    # where an operator asks "who is running this, and why that provider?" — the answer
+    # was in the plan JSON and nowhere a running swarm could be watched (#1017).
     cols_hdr = (
         f"│ {'Cluster':<16} │ {'Issue':<6} │ {'Role':<8} │ {'Step':<5} "
-        f"│ {'Agent / Model':<16} │ {'Status':<10} │"
+        f"│ {'Lead':<12} │ {'Band':<8} │ {'Agent / Model':<16} │ {'Status':<10} │"
     )
+    width = len(cols_hdr) - 2
     lines = [
-        "╭" + "─" * 74 + "╮",
-        f"│ 🐝 Keel Swarm Live Status — {state.swarm_id:<44} │",
-        hdr_info,
-        "├" + "─" * 74 + "┤",
+        "╭" + "─" * width + "╮",
+        f"│ 🐝 Keel Swarm Live Status — {state.swarm_id:<{width - 30}} │",
+        f"{hdr_info[:-1]}{' ' * (width - len(hdr_info) + 2)}│",
+        "├" + "─" * width + "┤",
         cols_hdr,
-        "├" + "─" * 74 + "┤",
+        "├" + "─" * width + "┤",
     ]
 
     for w in state.workers:
@@ -615,11 +1003,11 @@ def render_swarm_status_dashboard(state: SwarmRunState | None) -> str:
         agent_str = f"{w.agent}:{w.model}"[:16]
         row_str = (
             f"│ {w.cluster_id:<16} │ #{w.issue:<5} │ {w.role:<8} │ {w.step:<5} "
-            f"│ {agent_str:<16} │ {badge:<10} │"
+            f"│ {w.lead[:12]:<12} │ {w.difficulty[:8]:<8} │ {agent_str:<16} │ {badge:<10} │"
         )
         lines.append(row_str)
 
-    lines.append("╰" + "─" * 74 + "╯")
+    lines.append("╰" + "─" * width + "╯")
     return "\n".join(lines)
 
 
@@ -661,6 +1049,8 @@ def load_swarm_state(swarm_id: str, root: str | Path = ".") -> SwarmRunState | N
                 status=str(w.get("status", "queued")),
                 updated_at=str(w.get("updated_at", "")),
                 details=str(w.get("details", "")),
+                lead=str(w.get("lead", "")),
+                difficulty=str(w.get("difficulty", "")),
             )
             for w in data.get("workers", [])
         )
@@ -685,24 +1075,21 @@ def update_worker_state(
     details: str | None = None,
 ) -> SwarmRunState:
     """Return a new SwarmRunState with the specified worker's fields updated."""
-    updated_workers = []
-    for w in state.workers:
-        if w.cluster_id == cluster_id:
-            updated_workers.append(
-                SwarmWorkerStatus(
-                    cluster_id=w.cluster_id,
-                    issue=w.issue,
-                    role=w.role,
-                    agent=w.agent,
-                    model=w.model,
-                    step=step if step is not None else w.step,
-                    status=status if status is not None else w.status,
-                    updated_at=datetime.datetime.now(datetime.UTC).isoformat(),
-                    details=details if details is not None else w.details,
-                )
-            )
-        else:
-            updated_workers.append(w)
+    # `replace` rather than a field-by-field rebuild: the rebuild had to name every
+    # field, so each field added to the record (the lead and difficulty band a worker
+    # reports, #1017) was silently reset to its default by the first status update.
+    updated_workers = [
+        replace(
+            w,
+            step=step if step is not None else w.step,
+            status=status if status is not None else w.status,
+            updated_at=datetime.datetime.now(datetime.UTC).isoformat(),
+            details=details if details is not None else w.details,
+        )
+        if w.cluster_id == cluster_id
+        else w
+        for w in state.workers
+    ]
 
     return SwarmRunState(
         swarm_id=state.swarm_id,

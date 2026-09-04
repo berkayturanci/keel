@@ -166,6 +166,38 @@ knobs:
 """
 
 
+#: A tier-3 bench of three seats, plus a `--team` profile that staffs **one**. The two
+#: numbers differ on purpose: a profile with fewer reviewers than the tier is the case
+#: that makes the gate unsatisfiable if one surface honours it and another does not —
+#: ship dispatches one reviewer while evidence-verify demands three verdicts nobody will
+#: ever post (#1017).
+PROFILE_CONFIG = """
+extends: keel
+core_version: "^1.0"
+base_branch: main
+owner: acme
+repo: widget
+knobs:
+  build_gate_cmd: "true"
+  tier3_globs: ["src/**"]
+  team:
+    implement:
+      default: { provider: codex }
+    review:
+      by_tier:
+        "3":
+          - { provider: claude }
+          - { provider: codex }
+          - { provider: "subagent:opus-reviewer" }
+    profiles:
+      hardening:
+        implement: { provider: codex, effort: high }
+        review:
+          - { provider: codex }
+    jury: { mode: advisory }
+"""
+
+
 def run(argv):
     out, err = io.StringIO(), io.StringIO()
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
@@ -333,6 +365,123 @@ class TestEveryCommandResolvesTheSameBench(unittest.TestCase):
         self.assertEqual(plan_contract["review_merge_contract"]["reviewers"]["count"], 3)
         # An advisory jury is not a required verdict.
         self.assertNotIn("jury-verdict", plan_required)
+
+    def test_a_team_profile_moves_the_bench_on_every_surface_at_once(self):
+        """`--team` selects a bench, so it changes what the gate requires.
+
+        Every command that resolves this contract has to see the same profile. When only
+        the dispatching half did, a `--team` naming a one-seat bench dispatched one
+        reviewer while `evidence-verify` and `keel merge` still demanded the tier's three
+        verdicts — a gate no run of that project could satisfy, which is the #1014 defect
+        wearing a #1017 flag.
+        """
+        config = self._config(PROFILE_CONFIG)
+        flags = ("--team", "hardening")
+
+        plan_required, _ = self._plan_required(config, *flags)
+        ship_required, _ = self._ship_required(config, *flags)
+        evidence_required = self._evidence_required(config, *flags)
+        step_required = self._step_verify_s7("--project", config, "--tier", "3", *flags)
+
+        expected = ["closure-comment-pr", "closure-comment-issue", "review-verdict-1"]
+        self.assertEqual(plan_required, expected)
+        self.assertEqual(ship_required, expected)
+        self.assertEqual(sorted(evidence_required), sorted(expected))
+        self.assertEqual(step_required, ["review-verdict-1"])
+
+    def test_without_the_profile_the_same_config_keeps_the_tiers_three_seats(self):
+        """The other half of the pair: the profile has to be what moved the bench."""
+        config = self._config(PROFILE_CONFIG)
+
+        plan_required, _ = self._plan_required(config)
+        ship_required, _ = self._ship_required(config)
+
+        self.assertEqual(
+            plan_required,
+            [
+                "closure-comment-pr",
+                "closure-comment-issue",
+                "review-verdict-1",
+                "review-verdict-2",
+                "review-verdict-3",
+            ],
+        )
+        self.assertEqual(ship_required, plan_required)
+
+    def test_plan_and_ship_publish_the_same_assignment_for_the_bench_flags(self):
+        """`plan` accepted `--effort`/`--team` and threw them away.
+
+        It parsed both, never passed them to the resolver, and published
+        `effort: null` / `team_profile: null` / `bench: []` with no unknown-profile
+        warning — while `keel ship` on the identical command line published all four.
+        Two answers to the one question this contract exists to answer once.
+        """
+        config = self._config(PROFILE_CONFIG)
+        flags = ("--effort", "high", "--team", "hardening")
+
+        _, plan_contract = self._plan_required(config, *flags)
+        _, ship_data = self._ship_required(config, *flags)
+        ship_assignment = ship_data["contract"]["assignment"]
+
+        for field in ("effort", "team_profile", "bench", "lead", "implementer"):
+            with self.subTest(field=field):
+                self.assertEqual(plan_contract["assignment"][field], ship_assignment[field])
+        self.assertEqual(plan_contract["assignment"]["effort"], "high")
+        self.assertEqual(plan_contract["assignment"]["team_profile"], "hardening")
+        self.assertEqual(plan_contract["assignment"]["bench"], ["team.profiles.hardening"])
+
+    def test_an_unknown_profile_warns_on_plan_exactly_as_it_does_on_ship(self):
+        config = self._config(PROFILE_CONFIG)
+        flags = ("--team", "nope")
+
+        _, plan_contract = self._plan_required(config, *flags)
+        _, ship_data = self._ship_required(config, *flags)
+
+        for contract in (plan_contract["assignment"], ship_data["contract"]["assignment"]):
+            with self.subTest():
+                self.assertTrue([w for w in contract["warnings"] if "--team 'nope'" in w])
+
+    def test_the_ship_preflight_contract_agrees_with_the_assessed_one(self):
+        """`keel ship` publishes a contract *before* it assesses and replaces it after.
+
+        The preflight one is the only contract an operator sees when the run halts before
+        gates — a consent gap, a contradictory ledger flag pair. It was built without the
+        bench flags, so a halted run printed a contract naming no team while a completed
+        run printed one naming a team, from the identical command line.
+
+        The halt used here is the `--capture-status not-run` / `--capture-artifact`
+        contradiction: it is offline, deterministic, and reached before any assessment.
+        """
+        config = self._config(PROFILE_CONFIG)
+        flags = ("--effort", "high", "--team", "hardening")
+
+        rc, out, err = run(
+            [
+                "ship",
+                config,
+                "--root",
+                str(self.root),
+                "--capture-status",
+                "not-run",
+                "--capture-artifact",
+                "report.md",
+                "--json",
+                *flags,
+            ]
+        )
+        self.assertEqual(rc, 1, err)
+        halted = json.loads(out)
+        self.assertIn("contradicts", halted["error"])
+        preflight = halted["contract"]["assignment"]
+
+        _, ship_data = self._ship_required(config, *flags)
+        assessed = ship_data["result"]["assessment"]["assignment"]
+
+        for field in ("effort", "team_profile", "bench", "implementer"):
+            with self.subTest(field=field):
+                self.assertEqual(preflight[field], assessed[field])
+        self.assertEqual(preflight["effort"], "high")
+        self.assertEqual(preflight["team_profile"], "hardening")
 
     def test_step_verify_reads_the_projects_team_when_given_one(self):
         config = self._config(JURY_PANEL_CONFIG)

@@ -239,6 +239,8 @@ def build_command_contract(
     review_delegates: tuple[str, ...] = (),
     host_agent: str = agents.HOST_DEFAULT,
     tdd_override: bool = False,
+    effort: str | None = None,
+    team_profile: str | None = None,
 ) -> dict[str, Any]:
     """Build the stable adapter contract shared by ``plan --json`` and dry-run commands.
 
@@ -318,6 +320,13 @@ def build_command_contract(
             command=command,
             config=config,
             transport=transport,
+            delegation=workblock.delegation_as_dict(
+                delegate=delegate,
+                review_delegates=review_delegates,
+                effort=effort,
+                team_profile=team_profile,
+                reviewer_override=reviewer_override,
+            ),
         )
     if command in {"regression", "review-all-day"}:
         contract["scan_contract"] = scan_contract_as_dict(
@@ -348,6 +357,8 @@ def build_command_contract(
             legacy=agents.legacy_team_seats(config),
             jury_disabled=no_jury,
             jury_advisory=jury_advisory,
+            team_profile=team_profile,
+            effort=effort,
         )
         contract["assignment"] = assignment
         contract["review_merge_contract"] = ship_decisions.resolve_review_contract(
@@ -1046,6 +1057,7 @@ def standalone_result_as_dict(
     delegate: str | None = None,
     transport: github_transport.GitHubTransport | None = None,
     evaluation: runtime.CapabilityEvaluation | None = None,
+    delegation: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Deterministic dry-run result records for standalone non-ship commands."""
     if command == "implement":
@@ -1120,6 +1132,7 @@ def standalone_result_as_dict(
                 command=command,
                 config=config,
                 transport=transport,
+                delegation=delegation,
             ),
             "execution": {
                 "runs_gates": False,
@@ -1325,6 +1338,7 @@ def session_contract_as_dict(
     command: str,
     config: cfg.ProjectConfig,
     transport: github_transport.GitHubTransport | None = None,
+    delegation: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Project-neutral session workflow contract for session/work-block commands."""
     pack = config.policy_pack or {}
@@ -1353,6 +1367,7 @@ def session_contract_as_dict(
             config=config,
             mode="overnight" if command == "overnight" else "daytime",
             transport=github,
+            delegation=delegation,
         )
     if command == "wrap":
         base["wrap"] = {

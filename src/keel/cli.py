@@ -356,6 +356,12 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         delegate=args.delegate,
         review_delegates=tuple(args.review_delegate),
         tdd_override=args.tdd,
+        # `plan` accepts these, so `plan` has to resolve them. Accepting a flag and then
+        # not threading it published an assignment that disagreed with the one `ship`
+        # renders from the identical command line — two answers to the one question this
+        # resolver exists to answer once (#1014).
+        effort=args.effort,
+        team_profile=args.team_profile,
     )
     consent_ok, consent_message = consent.assert_operator_consent(contract["operator_consent"])
     if args.json:
@@ -1062,6 +1068,12 @@ def _review_assignment(
         # role + the explicit --reviewers / --review-delegate overrides.
         jury_disabled=bool(getattr(args, "no_jury", False)),
         jury_advisory=bool(getattr(args, "jury_advisory", False)),
+        # A child ship inherits its parent's bench through these two (#1017). They are
+        # read here rather than only on the batch commands because the batch hands them
+        # *down*: a `--team` the child parses but does not resolve would staff the
+        # parent's clusters and silently drop out of the child's own assignment.
+        team_profile=getattr(args, "team_profile", None),
+        effort=getattr(args, "effort", None),
     )
 
 
@@ -1139,6 +1151,12 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         role=args.role,
         delegate=args.delegate,
         review_delegates=tuple(args.review_delegate),
+        # The preflight contract is the only one an operator sees when the run halts
+        # before gates (a consent gap, a contradictory ledger flag pair). Built without
+        # these, a halted run printed a contract naming no team while a completed run
+        # printed one naming a team, from the identical command line.
+        effort=args.effort,
+        team_profile=args.team_profile,
         host_agent=args.host_agent or agents.HOST_DEFAULT,
         tdd_override=args.tdd,
     )
@@ -1308,6 +1326,8 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         role=args.role,
         delegate=args.delegate,
         review_delegates=tuple(args.review_delegate),
+        team_profile=args.team_profile,
+        effort=args.effort,
         host_agent=args.host_agent or agents.HOST_DEFAULT,
         require_distinct_vendors=config.knobs.evidence_require_distinct_vendors,
     )
@@ -5586,6 +5606,22 @@ def _capability_requirement(
     return runtime.build_capability_requirement(command, config, loaded, pr=pr)
 
 
+def _swarm_overrides(args: argparse.Namespace) -> swarm.AssignmentOverrides:
+    """The per-run staffing every swarm subcommand resolves its clusters with.
+
+    Read the same way in all three, so ``swarm-plan`` shows the team ``swarm-run`` will
+    actually dispatch and ``swarm-land`` verifies the same one.
+    """
+    return swarm.AssignmentOverrides(
+        delegate=getattr(args, "delegate", None),
+        review_delegates=tuple(getattr(args, "review_delegate", None) or ()),
+        effort=getattr(args, "effort", None),
+        team_profile=getattr(args, "team_profile", None),
+        reviewers=getattr(args, "reviewers", None),
+        host_agent=getattr(args, "host_agent", None) or agents.HOST_DEFAULT,
+    )
+
+
 def _cmd_swarm_plan(args: argparse.Namespace) -> int:
     try:
         config = cfg.load_config(args.path)
@@ -5639,7 +5675,9 @@ def _cmd_swarm_plan(args: argparse.Namespace) -> int:
             )
         )
 
-    plan = swarm.build_swarm_plan(scopes, swarm_id=args.swarm_id, config=config)
+    plan = swarm.build_swarm_plan(
+        scopes, swarm_id=args.swarm_id, config=config, overrides=_swarm_overrides(args)
+    )
 
     if args.json:
         print(json.dumps(plan.to_dict(), indent=2))
@@ -5734,7 +5772,9 @@ def _cmd_swarm_run(args: argparse.Namespace) -> int:
             )
         )
 
-    plan = swarm.build_swarm_plan(scopes, swarm_id=args.swarm_id, config=config)
+    plan = swarm.build_swarm_plan(
+        scopes, swarm_id=args.swarm_id, config=config, overrides=_swarm_overrides(args)
+    )
 
     from . import swarm_runtime
 
@@ -5945,7 +5985,9 @@ def _cmd_swarm_land(args: argparse.Namespace) -> int:
             )
         )
 
-    plan = swarm.build_swarm_plan(scopes, swarm_id=swarm_id, config=config)
+    plan = swarm.build_swarm_plan(
+        scopes, swarm_id=swarm_id, config=config, overrides=_swarm_overrides(args)
+    )
 
     from . import swarm_landing
 
@@ -6147,6 +6189,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="per-run reviewer override, positional per slot: the first flag is slot A, "
         "the second slot B; repeatable",
     )
+    _add_bench_args(p_plan)
     p_plan.add_argument(
         "--tier",
         dest="review_tier",
@@ -6380,6 +6423,7 @@ def build_parser() -> argparse.ArgumentParser:
         advisory_help="make jury advisory for evidence verification",
     )
     p_merge.add_argument("--gate-label", default=None, help="override evidence gate label")
+    _add_bench_args(p_merge)
     p_merge.add_argument("--json", action="store_true", help="emit structured JSON")
     p_merge.set_defaults(func=_cmd_merge)
 
@@ -6631,6 +6675,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_step.add_argument(
         "--not-enforced", action="store_true", help="verify with evidence requirements disabled"
     )
+    _add_bench_args(p_step)
     p_step.add_argument("--json", action="store_true", help="emit structured JSON")
     p_step.set_defaults(func=_cmd_step_verify)
 
@@ -6872,6 +6917,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="override the project consent mode for this run",
     )
+    _add_bench_args(p_review)
     p_review.add_argument("--json", action="store_true", help="emit structured JSON")
     p_review.set_defaults(func=_cmd_review)
 
@@ -7027,6 +7073,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_evidence.add_argument(
         "--waiver-label", default=None, help="override the operator-applied evidence waiver label"
     )
+    _add_bench_args(p_evidence)
     p_evidence.add_argument("--json", action="store_true", help="emit structured JSON")
     p_evidence.set_defaults(func=_cmd_evidence_verify)
 
@@ -7560,6 +7607,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="reviewer override for ship handoff contracts",
     )
+    _add_staffing_args(p_work_block)
     p_work_block.add_argument(
         "--target", default=None, help="target text to include in the work-block contract"
     )
@@ -7619,6 +7667,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="reviewer override for ship handoff contracts",
     )
+    _add_staffing_args(p_overnight)
     p_overnight.add_argument(
         "--target", default=None, help="target text to include in the overnight contract"
     )
@@ -8008,6 +8057,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--issue-label", action="append", default=[], help="issue label; repeat or comma-separate"
     )
     p_sp.add_argument("--swarm-id", default=None, help="custom swarm ID")
+    _add_staffing_args(p_sp, reviewers=True)
     p_sp.add_argument("--tree", action="store_true", help="render visual ASCII/Unicode DAG tree")
     p_sp.add_argument("--json", action="store_true", help="emit structured JSON")
     p_sp.set_defaults(func=_cmd_swarm_plan)
@@ -8050,6 +8100,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--issue-label", action="append", default=[], help="issue label; repeat or comma-separate"
     )
     p_sr.add_argument("--swarm-id", default=None, help="custom swarm ID")
+    _add_staffing_args(p_sr, reviewers=True)
     p_sr.add_argument(
         "--max-workers", type=_positive_int, default=4, help="maximum parallel workers (default: 4)"
     )
@@ -8089,6 +8140,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--issue-label", action="append", default=[], help="issue label; repeat or comma-separate"
     )
     p_sl.add_argument("--swarm-id", default=None, help="custom swarm ID")
+    _add_staffing_args(p_sl, reviewers=True)
     p_sl.add_argument("--live", action="store_true", help="run live mutating git landing")
     p_sl.add_argument("--json", action="store_true", help="emit structured JSON")
     p_sl.set_defaults(func=_cmd_swarm_land)
@@ -8150,6 +8202,61 @@ def _add_jury_flags(parser: argparse.ArgumentParser, *, noun: str, advisory_help
     parser.add_argument("--jury", action="store_true", help=f"enable {noun}")
     parser.add_argument("--no-jury", action="store_true", help=f"disable {noun}")
     parser.add_argument("--jury-advisory", action="store_true", help=advisory_help)
+
+
+def _add_bench_args(parser: argparse.ArgumentParser) -> None:
+    """``--effort`` and ``--team`` — the two per-run overrides that pick a bench (#1017).
+
+    Defined once and added to the batch commands **and** to ``ship``/``plan``, because a
+    batch hands these down verbatim. When only the parents accepted them, the published
+    ``child_args`` named two flags the child's own parser rejected, so every propagated
+    handoff died on ``unrecognized arguments`` — the promise was in the contract and the
+    parser could not keep it.
+    """
+    parser.add_argument(
+        "--effort",
+        choices=delegate.EFFORTS,
+        default=None,
+        help="reasoning effort for the implementer seat; wins over the seat's own and "
+        "over knobs.team.by_difficulty",
+    )
+    parser.add_argument(
+        "--team",
+        dest="team_profile",
+        default=None,
+        metavar="PROFILE",
+        help="knobs.team.profiles entry that staffs this run; outranks team.by_difficulty",
+    )
+
+
+def _add_staffing_args(parser: argparse.ArgumentParser, *, reviewers: bool = False) -> None:
+    """The staffing flags a batch runner accepts and hands to every child ship (#1017).
+
+    One definition for every batch command, because these are propagated verbatim: a
+    command that spelled ``--team`` differently would hand its children a flag the child
+    does not have, and the failure would look like the child ignoring the operator.
+    """
+    parser.add_argument(
+        "--delegate",
+        default=None,
+        help="per-run implementer override (provider or provider:model) for every child ship",
+    )
+    parser.add_argument(
+        "--review-delegate",
+        action="append",
+        default=[],
+        metavar="PROVIDER",
+        help="per-run reviewer override, positional per slot; repeatable",
+    )
+    _add_bench_args(parser)
+    if reviewers:
+        parser.add_argument(
+            "--reviewers",
+            type=int,
+            choices=(1, 2, 3),
+            default=None,
+            help="override the risk-derived reviewer count for every child ship",
+        )
 
 
 def _add_ship_parser(parser: argparse.ArgumentParser, *, command: str) -> None:
@@ -8332,6 +8439,7 @@ def _add_ship_parser(parser: argparse.ArgumentParser, *, command: str) -> None:
         help="per-run reviewer override, positional per slot: the first flag is slot A, "
         "the second slot B; repeatable",
     )
+    _add_bench_args(parser)
     parser.add_argument(
         "--review-comments",
         choices=("inline", "summary"),
