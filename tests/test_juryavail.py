@@ -525,13 +525,38 @@ class TestTheBenchTheProbeSeats(unittest.TestCase):
         self.assertNotIn("name the extra seats", warning)
         self.assertEqual(assignment["jury"]["availability"]["decision"], "fallback")
 
-    def test_block_keeps_the_panel_and_the_run_is_refused_above(self):
-        assignment = self._resolve(UNSTAFFED, policy="block")
+    def test_block_refuses_here_rather_than_seating_anything(self):
+        """The resolver is where the refusal lives (#1068), because it is where the panel is.
 
-        self.assertEqual(assignment["review_panel"], "jury")
-        self.assertEqual(assignment["reviewer_count"], 0)
+        Under `block` the panel stays the panel and there is no bench to seat, so the one
+        place that would have seated one is the one place that can refuse — and it refuses
+        naming the config path *it* resolved the panel from.
+        """
+        with self.assertRaises(juryavail.JuryUnavailableError) as raised:
+            self._resolve(UNSTAFFED, policy="block")
+
+        self.assertIn("team.review.by_tier.3", str(raised.exception))
+        self.assertIn("codex: codex not found on PATH", str(raised.exception))
+
+    def test_the_refusal_class_is_one_class_under_two_names(self):
+        """`keel.team` owns it because `_review_seats` cannot import `keel.juryavail`."""
+        self.assertIs(juryavail.JuryUnavailableError, team_policy.JuryUnavailableError)
+        self.assertIs(juryavail.refusal_message, team_policy.refusal_message)
+        self.assertEqual(juryavail.JURY_RUNNER_COMMAND, team_policy.JURY_RUNNER_COMMAND)
+
+    def test_a_blocked_record_does_not_refuse_a_tier_that_never_wanted_the_panel(self):
+        """The #1068 rule: the record travels everywhere, the refusal fires where it applies."""
+        assignment = team_policy.resolve_assignment(
+            self._policy(mode="gating"),
+            tier=1,
+            default_count=2,
+            jury_availability=_assess(UNSTAFFED, min_vendors=2, policy="block").as_dict(),
+        )
+
+        self.assertEqual(assignment["review_panel"], "reviewers")
+        self.assertEqual(assignment["reviewer_count"], 2)
+        self.assertFalse(assignment["jury"]["panel_configured"])
         self.assertEqual(assignment["jury"]["availability"]["decision"], "block")
-        self.assertEqual(assignment["jury"]["on_unavailable"], "fallback")
 
     def test_reviewers_cannot_shrink_the_fallback_bench(self):
         """The guarantee: a fallback changes *who* sat, never *how many*.
@@ -857,18 +882,27 @@ class TestTheProbeAsksWhatTheResolverAsks(unittest.TestCase):
             encoding="utf-8",
         )
         config = cfg.load_config(str(path))
-        for kwargs, named in (
-            ({"profile": "strict"}, "team.profiles.strict.review"),
-            ({"difficulty": "hard"}, "team.by_difficulty.hard.review"),
+        for kwargs, resolved, named in (
+            ({"profile": "strict"}, {"team_profile": "strict"}, "team.profiles.strict.review"),
+            ({"difficulty": "hard"}, {"difficulty": "hard"}, "team.by_difficulty.hard.review"),
         ):
             with self.subTest(**kwargs):
+                record = providerprobe.jury_availability(
+                    config,
+                    tier=3,
+                    _probe=lambda _c: UNSTAFFED,
+                    _runner_probe=_runner_probe(NO_RUNNER),
+                    **kwargs,
+                )
+                self.assertEqual(record["decision"], "block")
+
                 with self.assertRaises(juryavail.JuryUnavailableError) as raised:
-                    providerprobe.jury_availability(
-                        config,
+                    team_policy.resolve_assignment(
+                        config.knobs.team,
                         tier=3,
-                        _probe=lambda _c: UNSTAFFED,
-                        _runner_probe=_runner_probe(NO_RUNNER),
-                        **kwargs,
+                        default_count=3,
+                        jury_availability=record,
+                        **resolved,
                     )
 
                 self.assertIn(named, str(raised.exception))
@@ -1419,6 +1453,62 @@ class TestTheWholeRunEndToEnd(unittest.TestCase):
         with self._probe(UNSTAFFED):
             rc, _out, err = run(
                 ["swarm-plan", config, "--issue", "1", "--declared-file", "src/a.py", "--json"]
+            )
+
+        self.assertEqual(rc, 1)
+        self.assertIn("cannot be staffed here", err)
+
+    def test_a_swarm_of_non_panel_clusters_plans_under_block(self):
+        """The #1068 major: the any-tier sweep refused work the panel never touches.
+
+        `jury_availability_for_any_tier` walks `(None, *TIERS)` with `any_difficulty=True`
+        and stops at the first route that names the panel — which on this project is
+        tier 3, a tier none of these clusters is. Refusing on that measurement refused a
+        swarm of entirely docs-tier work on a host with no panel installed, before the
+        partition had scored a single cluster. The measurement is still taken once and
+        still travels to every cluster; only the refusal moved to the cluster it is about.
+        """
+        config = self._config(PANEL_CONFIG % "\n      on_unavailable: block")
+        with self._probe(UNSTAFFED):
+            rc, out, err = run(
+                [
+                    "swarm-plan",
+                    config,
+                    "--issue",
+                    "1",
+                    "--issue-title",
+                    "tidy the docs",
+                    "--declared-file",
+                    "docs/keel/configuration.md",
+                    "--json",
+                ]
+            )
+
+        self.assertEqual(rc, 0, err)
+        cluster = json.loads(out)["waves"][0]["clusters"][0]["assignment"]
+        self.assertEqual(cluster["review_panel"], "reviewers")
+        self.assertFalse(cluster["jury"]["panel_configured"])
+        # Measured once and carried, exactly as before — the refusal is what moved.
+        self.assertEqual(cluster["jury"]["availability"]["decision"], "block")
+
+    def test_a_swarm_that_mixes_them_refuses_on_the_panel_cluster(self):
+        """One blocked cluster refuses the plan; the probe is still taken only once."""
+        config = self._config(PANEL_CONFIG % "\n      on_unavailable: block")
+        with self._probe(UNSTAFFED):
+            rc, _out, err = run(
+                [
+                    "swarm-plan",
+                    config,
+                    "--issue",
+                    "1",
+                    "--declared-file",
+                    "docs/keel/configuration.md",
+                    "--issue",
+                    "2",
+                    "--declared-file",
+                    "src/a.py",
+                    "--json",
+                ]
             )
 
         self.assertEqual(rc, 1)

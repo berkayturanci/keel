@@ -393,34 +393,40 @@ def jury_availability(
     quietly claiming the other's provenance. What a *verification* surface does with that
     is :func:`keel.cli._shipped_jury_availability`'s question, not this one's: it pins to
     what the ship measured rather than re-measuring on a different machine.
+
+    **This function measures; it does not refuse** (#1068). Under ``on_unavailable:
+    block`` the ``block`` decision travels in the record, and
+    :func:`keel.team._review_seats` raises :class:`keel.juryavail.JuryUnavailableError` on
+    the cluster or command whose review really *is* the panel. Refusing here was narrower
+    than it looked: one measurement staffs many benches, and
+    :func:`jury_availability_for_any_tier` takes it before any of them is known — so a
+    ``block`` project could not plan a swarm of entirely non-panel work on an unstaffable
+    host, the panel never entering into it. Nothing is lost by deferring the refusal:
+    ``_review_seats`` is reached from exactly one function,
+    :func:`keel.team.resolve_assignment`, which is every place a bench is resolved.
     """
-    source = team.panel_review_source(
-        config.knobs.team,
-        tier=tier,
-        difficulty=difficulty,
-        profile=profile,
-        any_difficulty=any_difficulty,
-    )
-    if source is None:
+    if (
+        team.panel_review_source(
+            config.knobs.team,
+            tier=tier,
+            difficulty=difficulty,
+            profile=profile,
+            any_difficulty=any_difficulty,
+        )
+        is None
+    ):
         return None
     jury_runner = (probe_jury_runner if _runner_probe is None else _runner_probe)()
     probe = collect if _probe is None else _probe
     # Only when the runner could not name its own panel: two sweeps of the same agent CLIs
     # is twice the subprocess cost for a second opinion keel would then have to reconcile.
     report = None if jury_runner.panel_rows is not None else probe(config)
-    record = juryavail.assess(
+    return juryavail.assess(
         report,
         runner=jury_runner,
         min_vendors=config.knobs.team.jury_min_vendors or team.DEFAULT_MIN_VENDORS,
         policy=config.knobs.team.jury_on_unavailable,
     ).as_dict()
-    if record["decision"] == juryavail.DECISION_BLOCK:
-        # Raised at the probe rather than at each caller: this is the *only* place the
-        # measurement is taken, so it is the only place that cannot be forgotten. A check
-        # copied to seven resolution sites is seven chances for a new surface to review a
-        # jury tier with a bench the project's policy refused.
-        raise juryavail.JuryUnavailableError(juryavail.refusal_message(record, source=source))
-    return record
 
 
 def jury_availability_for_any_tier(
@@ -447,6 +453,14 @@ def jury_availability_for_any_tier(
     way: ``any_difficulty`` asks whether any band this policy configures could make the panel
     the review. ``profile`` is the operator's ``--team``, which *is* known, and is passed so
     the profile's own precedence over the band holds here exactly as it does in the resolver.
+
+    Being a superset is exactly why the ``block`` refusal does not live on this path
+    (#1068). "Some tier or band of this project could name the panel" is not "this swarm's
+    work does": a project with ``by_tier.3: jury`` and ``on_unavailable: block`` may
+    legitimately plan a wave of tier-1 docs clusters on a host with no panel, and a refusal
+    taken here — before the partition has scored a single cluster — refused it. The record
+    carries ``decision: block`` to every cluster instead, and
+    :func:`keel.team._review_seats` refuses on the ones whose review really is the panel.
     """
     for tier in (None, *(int(name) for name in team.TIERS)):
         record = jury_availability(

@@ -83,6 +83,38 @@ JURY_ON_UNAVAILABLE_DEFAULT = "fallback"
 #: fallback bench from a tier that simply never had a panel.
 JURY_FALLBACK_SOURCE = "jury-fallback"
 
+#: The binary s7 dispatches to convene the panel. Here rather than in
+#: :mod:`keel.juryavail` — which re-exports it — only because :func:`refusal_message` names
+#: it and that module imports this one, never the reverse. It is the same string as
+#: :data:`JURY_PANEL` and deliberately a separate name: one is a *review policy value*, the
+#: other is a *command*, and a project could not rename either without the other.
+JURY_RUNNER_COMMAND = "jury"
+
+
+class JuryUnavailableError(RuntimeError):
+    """``on_unavailable: block`` and the panel cannot be staffed — the run refuses.
+
+    Raised from :func:`_review_seats`, which is reached from exactly one function
+    (:func:`resolve_assignment`), and caught centrally in :func:`keel.cli.main`. Every
+    review-aware surface therefore refuses identically rather than each carrying its own
+    near-copy of the check.
+
+    **Raised where the panel is resolved, not where it is measured** (#1068). The probe
+    (:func:`keel.providerprobe.jury_availability`) answers one question about the
+    *machine*, and a surface may resolve several benches from that one answer: a swarm
+    scores each cluster's tier while it partitions and asks the probe the widest question
+    it can — *could any tier or band make the panel the review* — before any cluster
+    exists. Refusing there refused a plan of entirely non-panel clusters on an unstaffable
+    host, because "some tier could name the panel" is not "this work does". Here the
+    question is already narrowed to the cluster or command being staffed, so the run
+    refuses exactly when the panel really is its review.
+
+    Re-exported as ``keel.juryavail.JuryUnavailableError``: this module may not import
+    that one (:mod:`keel.juryavail` imports the policy vocabulary from here), and the
+    refusal has to live on the resolver's side of that edge.
+    """
+
+
 #: ``by_difficulty`` bands, lightest first. A band names the bench that staffs work of
 #: that weight; :func:`keel.swarm.score_difficulty` decides which band a cluster is, and
 #: the same resolver seats it. Unlike a tier — which is *how risky the change is* and is
@@ -513,10 +545,59 @@ def _panel_falls_back(availability: Mapping[str, Any] | None) -> bool:
     return availability.get("decision") == JURY_ON_UNAVAILABLE[0]
 
 
+def _panel_refuses(availability: Mapping[str, Any] | None) -> bool:
+    """True when a measured probe says the panel is unstaffable *and* the policy refuses.
+
+    The mirror of :func:`_panel_falls_back`, written the same way and for the same reason:
+    ``decision`` was already resolved by :meth:`keel.juryavail.Availability.decision`, so
+    the two branches of ``team.jury.on_unavailable`` are read in one module and nowhere
+    else. ``None`` — no probe ran — is False: the panel stands.
+    """
+    if not isinstance(availability, Mapping):
+        return False
+    return availability.get("decision") == JURY_ON_UNAVAILABLE[1]
+
+
 def _availability_reason(availability: Mapping[str, Any] | None) -> str:
     """The probe's own sentence, so the warning names the seats rather than summarising."""
     reason = availability.get("reason") if isinstance(availability, Mapping) else None
     return reason if isinstance(reason, str) and reason.strip() else "the probe reported no detail"
+
+
+def refusal_message(availability: Mapping[str, Any], *, source: str) -> str:
+    """The message an ``on_unavailable: block`` run refuses with.
+
+    It names the unavailable seats, because "the panel is unavailable" without them sends
+    the operator to ``keel doctor --providers`` to learn what this run already measured.
+
+    ``source`` is the config path that made the panel this run's review — the resolver's
+    own reading (:func:`configured_review`), so the overlay that selected the panel is
+    named rather than the tier's policy under it. Re-exported as
+    ``keel.juryavail.refusal_message``.
+    """
+    unavailable = availability.get("unavailable")
+    unavailable = unavailable if isinstance(unavailable, Sequence) else ()
+    seats = [
+        f"  - {seat.get('provider')}: {seat.get('reason')}"
+        for seat in unavailable
+        if isinstance(seat, Mapping)
+    ]
+    listed = "\n".join(seats) or "  - (no provider was probed)"
+    vendors = availability.get("available_vendors")
+    if not isinstance(vendors, Sequence) or isinstance(vendors, (str, bytes)):
+        vendors = []
+    return (
+        f"{source} makes the cross-vendor jury the review for this tier, and the panel "
+        f"cannot be staffed here: {len(vendors)} vendor(s) available "
+        f"({', '.join(str(v) for v in vendors) or 'none'}), "
+        f"{availability.get('required_vendors')} required.\n"
+        f"Unavailable:\n{listed}\n"
+        "knobs.team.jury.on_unavailable is 'block', so this run refuses rather than "
+        "reviewing with a bench the policy did not ask for. Install or authenticate what "
+        f"is missing — the panel runner answers `{JURY_RUNNER_COMMAND} --doctor` and keel's "
+        "own delegates answer `keel doctor --providers` — or set on_unavailable: fallback "
+        "to let a host bench of the same size review instead."
+    )
 
 
 def configured_review(
@@ -604,8 +685,11 @@ def _review_seats(
     is why ``--reviewers`` stays ignored on a fallback bench exactly as it is ignored while
     the panel sits. A flag that was inert on a staffable panel and *lowered* the tier's
     requirement the moment the probe failed would make a failed probe a policy change.
-    Under ``block`` the panel stays the panel and the run never reaches here:
-    :func:`keel.providerprobe.jury_availability` refuses at the probe.
+    Under ``block`` the panel stays the panel and the run refuses — *here*, on the first
+    line, with :class:`JuryUnavailableError` (#1068). The probe only measures; it is asked
+    once per surface and may staff many benches, so it cannot know whether this particular
+    cluster's review is the panel. This can, and it is the only place that resolves a
+    bench, so it is the only place the check can neither be forgotten nor over-reach.
 
     **The bench is a pure function of config + tier + role + the explicit ``--reviewers``
     and ``--review-delegate`` overrides, and of nothing else.** In particular it does not
@@ -623,6 +707,16 @@ def _review_seats(
     """
     configured, source = configured_review(policy, tier=tier, benches=benches)
     warnings: list[str] = []
+    if configured == JURY_PANEL and _panel_refuses(jury_availability):
+        # The one place the run refuses (#1068). Not at the probe: the probe answers a
+        # question about the *machine*, and a caller may resolve many benches from one
+        # answer. `keel swarm plan` measures before it has scored a single cluster, asking
+        # the widest question there is — could *any* tier or band name the panel — so a
+        # refusal there refused a swarm of entirely non-panel clusters on an unstaffable
+        # host. By here `configured` is this cluster's own resolved review, so the run
+        # refuses when the panel really is what it would have dispatched, and `source`
+        # names the config path that made it so.
+        raise JuryUnavailableError(refusal_message(jury_availability, source=source))
     fell_back = configured == JURY_PANEL and _panel_falls_back(jury_availability)
     if fell_back:
         # The panel is this tier's review and this machine cannot convene it. Fall through

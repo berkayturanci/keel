@@ -47,12 +47,25 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from .team import DEFAULT_MIN_VENDORS, JURY_ON_UNAVAILABLE_DEFAULT, jury_on_unavailable
+from .team import (
+    DEFAULT_MIN_VENDORS,
+    JURY_ON_UNAVAILABLE_DEFAULT,
+    jury_on_unavailable,
+)
+from .team import JURY_RUNNER_COMMAND as JURY_RUNNER_COMMAND
+from .team import JuryUnavailableError as JuryUnavailableError
+from .team import refusal_message as refusal_message
 
-#: The binary a jury-panel tier's s7 actually dispatches. Not a delegate keel runs itself:
-#: keel does not depend on ai-jury, and every path through this module stays total when it
-#: is absent — absent simply means the panel cannot sit here.
-JURY_RUNNER_COMMAND = "jury"
+#: Re-exported from :mod:`keel.team`, which owns them because :func:`_review_seats` — the
+#: one place a bench is resolved, and so the one place a blocked panel can refuse the work
+#: it is actually about to review — cannot import this module: the import runs the other
+#: way. They keep their names here because this is the module the feature is named for and
+#: where a reader looks for them; ``keel.juryavail.JuryUnavailableError`` and
+#: ``keel.team.JuryUnavailableError`` are one class, not two.
+#:
+#: ``JURY_RUNNER_COMMAND`` is the binary a jury-panel tier's s7 actually dispatches. Not a
+#: delegate keel runs itself: keel does not depend on ai-jury, and every path through this
+#: module stays total when it is absent — absent simply means the panel cannot sit here.
 
 #: The vendor the runner seat is attributed to, so a reader of ``unavailable`` can tell the
 #: missing *panel* apart from a missing *panelist*.
@@ -69,15 +82,6 @@ DECISION_AVAILABLE = "available"
 DECISION_FALLBACK = "fallback"
 #: The panel is not staffable and the policy refuses the run.
 DECISION_BLOCK = "block"
-
-
-class JuryUnavailableError(RuntimeError):
-    """``on_unavailable: block`` and the panel cannot be staffed — the run refuses.
-
-    Raised out of the one place every review-aware surface resolves its team, and caught
-    centrally in :func:`keel.cli.main`, so all six of them refuse identically rather than
-    six near-copies of the same check drifting apart.
-    """
 
 
 @dataclass(frozen=True)
@@ -362,37 +366,6 @@ def _matches_head(record: Mapping[str, Any], head_sha: str | None) -> bool:
     git = record.get("git")
     recorded = git.get("head_sha") if isinstance(git, Mapping) else None
     return isinstance(recorded, str) and recorded == head_sha
-
-
-def refusal_message(availability: Mapping[str, Any], *, source: str) -> str:
-    """The message an ``on_unavailable: block`` run refuses with.
-
-    It names the unavailable seats, because "the panel is unavailable" without them sends
-    the operator to ``keel doctor --providers`` to learn what this run already measured.
-    """
-    unavailable = availability.get("unavailable")
-    unavailable = unavailable if isinstance(unavailable, Sequence) else ()
-    seats = [
-        f"  - {seat.get('provider')}: {seat.get('reason')}"
-        for seat in unavailable
-        if isinstance(seat, Mapping)
-    ]
-    listed = "\n".join(seats) or "  - (no provider was probed)"
-    vendors = availability.get("available_vendors")
-    if not isinstance(vendors, Sequence) or isinstance(vendors, (str, bytes)):
-        vendors = []
-    return (
-        f"{source} makes the cross-vendor jury the review for this tier, and the panel "
-        f"cannot be staffed here: {len(vendors)} vendor(s) available "
-        f"({', '.join(str(v) for v in vendors) or 'none'}), "
-        f"{availability.get('required_vendors')} required.\n"
-        f"Unavailable:\n{listed}\n"
-        "knobs.team.jury.on_unavailable is 'block', so this run refuses rather than "
-        "reviewing with a bench the policy did not ask for. Install or authenticate what "
-        f"is missing — the panel runner answers `{JURY_RUNNER_COMMAND} --doctor` and keel's "
-        "own delegates answer `keel doctor --providers` — or set on_unavailable: fallback "
-        "to let a host bench of the same size review instead."
-    )
 
 
 def _text(value: Any) -> str | None:

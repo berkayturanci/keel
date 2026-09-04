@@ -327,6 +327,17 @@ with `claude` and `codex` and no ai-jury installed is *not* staffable.
 | `fallback` *(default)* | Staff a **host bench of the same size the tier requires** — three seats at tier-3, exactly as a tier without a panel resolves — and record why. |
 | `block` | Refuse the run, with a message naming each unavailable provider and the reason the probe reported. |
 
+**`block` refuses the work the panel would have reviewed, not everything on the machine.**
+The probe is a measurement of the *host* and one measurement can staff many benches, so the
+refusal is taken where the bench is resolved rather than where the panel was measured. For
+`keel ship`, `plan`, `review`, `step-verify`, `evidence-verify` and `merge` that is the same
+moment and nothing looks different. It matters for `keel swarm plan`, which scores every
+cluster's tier *while* it partitions and so must measure before any cluster exists: a
+project with `by_tier."3": jury` and `on_unavailable: block` can plan and run a wave of
+tier-1 work on a host with no panel installed, and is refused the moment a cluster whose
+review *is* the panel comes up. The measurement still travels to every cluster either way —
+`assignment.jury.availability.decision` reads `block` on all of them.
+
 A missing runner is a seat like any other: it is listed first under
 `availability.unavailable` as `jury`, so the message an operator reads names the thing to
 install rather than sending them to chase a panelist that was never the problem.
