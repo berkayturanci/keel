@@ -25,6 +25,39 @@ from .vocab import BUILTIN_DELEGATE_VENDORS as BUILTIN_DELEGATE_VENDORS
 from .vocab import CLI_VENDORS as CLI_VENDORS
 from .vocab import LOCAL_VENDORS as LOCAL_VENDORS
 
+#: The module's public surface, in definition order (#1070). It is declared because the
+#: ``X as X`` re-exports above are read from *other* modules — a use CodeQL's
+#: ``py/unused-import`` cannot see, since it counts same-module uses only. A name listed
+#: in ``__all__`` is used by definition, so the declaration answers the scanner with the
+#: language's own statement of intent rather than with a dismissal. Being a real
+#: declaration it has to be the *whole* surface, not the re-exports alone;
+#: ``tests/test_reexport_surface.py`` holds it to that in both directions.
+__all__ = [
+    "API_VENDORS",
+    "BUILTIN_DELEGATE_VENDORS",
+    "CLI_VENDORS",
+    "LOCAL_VENDORS",
+    "HOST_DEFAULT",
+    "split_delegate",
+    "known_vendors",
+    "is_api_delegate",
+    "resolve_delegate_profile",
+    "is_profile_delegate",
+    "resolve_agent",
+    "provider_names",
+    "legacy_team_seats",
+    "LOCAL_TRANSPORTS",
+    "strip_transport",
+    "model_base",
+    "agent_label",
+    "model_label",
+    "attribution_labels",
+    "attribution",
+    "attribution_from_implementer",
+    "profile_attribution",
+    "is_safe_model_token",
+]
+
 #: Default host agent when nothing else is resolved.
 HOST_DEFAULT = "claude"
 

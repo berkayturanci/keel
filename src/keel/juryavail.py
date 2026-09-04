@@ -61,6 +61,41 @@ from .team import JURY_RUNNER_COMMAND as JURY_RUNNER_COMMAND
 from .team import JuryUnavailableError as JuryUnavailableError
 from .team import refusal_message as refusal_message
 
+#: The module's public surface, in definition order (#1070). It is declared because the
+#: ``X as X`` re-exports above are read from *other* modules — a use CodeQL's
+#: ``py/unused-import`` cannot see, since it counts same-module uses only. A name listed
+#: in ``__all__`` is used by definition, so the declaration answers the scanner with the
+#: language's own statement of intent rather than with a dismissal. Being a real
+#: declaration it has to be the *whole* surface, not the re-exports alone;
+#: ``tests/test_reexport_surface.py`` holds it to that in both directions.
+__all__ = [
+    "JURY_RUNNER_COMMAND",
+    "JuryUnavailableError",
+    "refusal_message",
+    "JURY_RUNNER_VENDOR",
+    "INVENTORY_RUNNER",
+    "INVENTORY_PROVIDERS",
+    "DECISION_AVAILABLE",
+    "DECISION_FALLBACK",
+    "DECISION_BLOCK",
+    "Seat",
+    "Runner",
+    "RUNNER_UNPROBED",
+    "Availability",
+    "assess",
+    "SOURCE_PROBE",
+    "SOURCE_PULL_REQUEST",
+    "SOURCE_RUN_LEDGER",
+    "SOURCE_CLOSURE_COMMENT",
+    "panel_sat",
+    "recorded",
+    "shipped",
+    "is_ship_run_for_head",
+    "states_panel",
+    "pin",
+    "is_pinnable_head",
+]
+
 #: Re-exported from :mod:`keel.team`, which owns them because :func:`_review_seats` — the
 #: one place a bench is resolved, and so the one place a blocked panel can refuse the work
 #: it is actually about to review — cannot import this module: the import runs the other

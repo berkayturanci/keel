@@ -46,6 +46,27 @@ from . import config
 # package reads it.
 from .vocab import OPENAI_COMPATIBLE as OPENAI_COMPATIBLE
 
+#: The module's public surface, in definition order (#1070). It is declared because the
+#: ``X as X`` re-exports above are read from *other* modules — a use CodeQL's
+#: ``py/unused-import`` cannot see, since it counts same-module uses only. A name listed
+#: in ``__all__`` is used by definition, so the declaration answers the scanner with the
+#: language's own statement of intent rather than with a dismissal. Being a real
+#: declaration it has to be the *whole* surface, not the re-exports alone;
+#: ``tests/test_reexport_surface.py`` holds it to that in both directions.
+__all__ = [
+    "OPENAI_COMPATIBLE",
+    "DEFAULT_MAX_TOKENS",
+    "DEFAULT_TIMEOUT",
+    "ApiResult",
+    "env_key_name",
+    "has_api_token",
+    "present_key_names",
+    "merge_payload",
+    "GuardedAddressError",
+    "build_http_only_opener",
+    "generate",
+]
+
 #: Response cap for a single unattended completion; overridable per call.
 DEFAULT_MAX_TOKENS = 16384
 #: Per-request timeout in seconds; overridable per call.
