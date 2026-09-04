@@ -45,8 +45,9 @@ CODEX_PLUGIN_MANIFEST = ".codex-plugin/plugin.json"
 
 #: the static site's published argument surface, generated from the same frontmatter.
 SITE_PARAMS_PATH = "website/params.js"
-#: the header the generated ``params.js`` opens with. It must contain no ``=``: the site's
-#: own drift check parses the file by splitting on the first one.
+#: the header the generated ``params.js`` opens with. It must contain no ``=``: this
+#: repository's drift checks read the file by splitting on the first one — nothing
+#: under ``website/`` parses it, the browser just runs the assignment.
 SITE_PARAMS_HEADER = (
     "/* generated from src/keel/adapters/commands frontmatter — do not hand-edit.\n"
     "   Regenerate with `make site-params` (keel install-adapter site --root .). */"
