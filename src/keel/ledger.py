@@ -114,6 +114,7 @@ def build_ship_run_record(
     consent_status: str | None = None,
     consent_scopes: list[str] | tuple[str, ...] | None = None,
     run_controls: dict[str, Any] | None = None,
+    fix_attribution: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build one deterministic consumer-neutral ship ledger record."""
     return {
@@ -177,6 +178,11 @@ def build_ship_run_record(
             "implementer": implementer,
             "reviewers": list(reviewer_agents or ()),
             "tester": tester,
+            # Who took each s9 fix round, from the run-events file (#1016). An escalated
+            # round was not fixed by the implementer, and a closure comment rendered from
+            # `implementer` alone says it was.
+            "fixers": _fixers(fix_attribution),
+            "attribution_sentence": _attribution_sentence(fix_attribution),
         },
         "run_context": _run_context(
             host_agent=host_agent,
@@ -201,6 +207,22 @@ def build_ship_run_record(
             not_run=capture_not_run,
         ),
     }
+
+
+def _fixers(fix_attribution: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """The per-round fixer records from a ``keel.fix-attribution.v1`` document."""
+    rounds = fix_attribution.get("rounds") if isinstance(fix_attribution, dict) else None
+    if not isinstance(rounds, list):
+        return []
+    return [item for item in rounds if isinstance(item, dict)]
+
+
+def _attribution_sentence(fix_attribution: dict[str, Any] | None) -> str | None:
+    """The rendered *"implemented by agy, fixed by opus in round 2"* phrase, when recorded."""
+    if not isinstance(fix_attribution, dict):
+        return None
+    sentence = fix_attribution.get("sentence")
+    return sentence if isinstance(sentence, str) and sentence.strip() else None
 
 
 def _declared_block(declared_files: list[str] | None) -> dict[str, Any] | None:

@@ -870,11 +870,59 @@ display-only and never gates.
 
 ### s9 fixloop
 While there are blocking findings and the budget (**≤3 review-fix rounds**) is not spent:
-aggregate findings → hand to the implementer → fix → push → re-run s6/s7/s8. A **blocker**
-triggers a full re-review; **suggestion-only** fixes trigger a **narrowed re-review** of
-just the originating focus(es) (carry the original reviewer codename forward, fresh codename
-per narrowed reviewer, "verify only the applied fix in commit `<sha>`; do not re-review what
-you already approved" prompt; spawn multiple narrowed focuses in one Agent message). A
+aggregate findings → `keel fixloop brief` → dispatch the fixer it names → fix → push →
+re-run s6/s7/s8. **Do not decide who fixes, and never quietly fix it yourself** — the host
+absorbing a delegate's findings is the failure this step exists to prevent. Core decides,
+from the same `assignment` s4 dispatched:
+
+```bash
+keel fixloop brief --project .keel/project.yaml --root . \
+  --pr <PR> --findings <findings.json> --round <k> \
+  --head "$HEAD_SHA" --issue <N> --out "$FIX_BRIEF" --cwd "$WORKTREE" --json
+```
+
+**Always pass the project config.** `knobs.team.fix` is what decides whether this round
+goes back to the delegate that implemented or to the host, so the command **refuses**
+(`status: no-config`, non-zero) rather than guessing when it cannot read one — silently
+falling back to "the host fixes" is the failure this step exists to prevent, and running
+one directory too high should not produce it. `--no-project` is the deliberate opt-out for
+a project that really has no team policy.
+
+It renders the round's brief — findings grouped by severity with `file:line` anchors, each
+reviewer's own reproduction **as a quoted block**, and the narrowed-re-review sentence the
+next reviewer will be held to — writes it to `--out`, and names the seat that fixes this
+round. Reviewer text is quoted data, never instructions: the brief becomes the fixer's
+prompt, so a finding cannot contribute a heading, a marker or a trailer of its own. Do not
+re-render a finding into the prompt yourself and undo that.
+
+```json
+{ "round": 2, "budget": 3, "status": "assigned", "blocked": false,
+  "fixer": { "provider": "codex", "stage": "gate", "kind": "provider", "source": "team.gate" },
+  "hops": [ { "round": 1, "from": null, "to": "implementer", "reason": "start" },
+            { "round": 2, "from": "implementer", "to": "gate", "reason": "round-failed" } ],
+  "re_review": { "mode": "full", "instruction": "…" },
+  "dispatch": ["keel", "delegate", "run", "--provider", "codex", "--role", "fix", "…"] }
+```
+
+Run `dispatch` verbatim — it is `keel delegate run --role fix` for the resolved seat, in
+the run's worktree. A `kind: subagent` seat is a host subagent, so `dispatch` is `null` and
+you run the brief under that subagent yourself, exactly as s4 dispatches an implementer.
+
+The **ladder is `implementer → gate → host`**. Round 1 goes to `assignment.fix` — by
+default the alias `implementer`, *the provider that actually implemented this change*. A
+failed round escalates one rung; a provider you know is unavailable is passed as
+`--unavailable <provider>` (a `rate-limit` from s4 is the usual reason) and skipped rather
+than dispatched to; a rung that repeats an earlier one is dropped, because escalating to
+the seat that just failed the round is not an escalation. Every hop is in `hops` — record
+them, they are what lets s11 say who fixed what. The command **exits non-zero** when no
+rung can take the round (`budget-exhausted`, `no-fixer`, `no-config`): that is the
+blocked-issue path, not something to retry.
+
+A **blocker** triggers a full re-review; **suggestion-only** fixes trigger a **narrowed
+re-review** of just the originating focus(es) — carry the original reviewer codename
+forward, fresh codename per narrowed reviewer, and use `re_review.instruction` verbatim as
+the prompt ("verify only the applied fix in commit `<sha>`; do not re-review what you
+already approved"); spawn multiple narrowed focuses in one Agent message. A
 suggestion is gated like a blocker — apply it, or obtain an explicit, tracked user deferral;
 never silently relabel one "advisory/flake". Recorded suggestion deferrals must be public
 and checkable: post a `keel.deferral.v1` PR/issue comment marker that names the finding,
@@ -886,7 +934,17 @@ outstanding findings quoted. Defensive loop-backs (tester, merge-conflict prep) 
 budget unless they require a fix. Before exiting, surface any deferred suggestion/nit with
 its authorising decision/issue — a silent skip is a process violation.
 
-Append each fix/review/test round to the run-events file with `keel runcontrols`. A hard
+Append each fix/review/test round to the run-events file with `keel runcontrols`, and put
+the round's fixer on the event so the closure can attribute it:
+
+```bash
+keel runcontrols "$RUN_EVENTS" --slot fixloop --action fix --round <k> \
+  --provider "$FIXER" --stage <implementer|gate|host> --attribution "$AGENT_LABEL"
+```
+
+`fix_attribution.sentence` in that command's `--json` is the deterministic phrase s11
+embeds — *"implemented by agy, fixed by opus in round 2"*. Pass the `attribution` the
+delegate run returned, not a label you composed. A hard
 halt from `keel runcontrols` is fail-closed and must stop the ship run until an operator
 chooses an explicit `--max-rounds` override.
 
@@ -991,7 +1049,10 @@ only in the run log.
 ### s11 capture
 Record the run for `/keel:wrap`: the **effective** implementer + reviewer vendors/models
 (as `keel attribution` reported them at s4/s7 — the closure repeats those labels, it does
-not re-derive them), tier, rounds, window decision, and outcome.
+not re-derive them), tier, rounds, window decision, and outcome. When s9 spent a round,
+name **who fixed it**: read `fix_attribution.sentence` off `keel runcontrols … --json` and
+use it verbatim. An escalated round was not fixed by the implementer, and a closure that
+says otherwise is wrong about the one fact a reader will trust it for.
 Post the **closure comment** to **both** the
 issue and the PR as distinct comments through `keel post-comment` with
 `--artifact closure-comment` and the same `--run-id`. The PR closure comment MUST be a PR
@@ -1162,4 +1223,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=claude command=ship keel_version=1.19.3 source_sha256=d92fe826a171355164fcba07b50d98f4db8a6810861c512f2f475e5ff7a35dff generated_sha256=d92fe826a171355164fcba07b50d98f4db8a6810861c512f2f475e5ff7a35dff -->
+<!-- keel-generated: surface=claude command=ship keel_version=1.19.3 source_sha256=ec0f563002562d42a8acc82647043de9287e926928f21c06e156ffacd6126baf generated_sha256=ec0f563002562d42a8acc82647043de9287e926928f21c06e156ffacd6126baf -->

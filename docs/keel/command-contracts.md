@@ -330,7 +330,14 @@ The block records:
   comment so external evidence checks can distinguish the actual s11 closure comment from
   PR bodies, chat summaries, and automated assessment comments
 - `heading` (`Ship outcome`) and the ordered `sections`: implementer, reviewers, tester,
-  pull_request, changed_files, docs_touched, capture, run_id, run_context
+  fix_rounds, pull_request, changed_files, docs_touched, capture, run_id, run_context
+- a **Fix rounds** line after `tester`, listing who took each s9 fix round
+  (`round 2: opus (gate)`) from the ledger record's `actors.fixers`. It is **omitted
+  entirely** on a run that spent no fix round — most of them — so every existing line of
+  every existing closure comment stays byte-identical, and it appears exactly when the
+  implementer is no longer the whole answer: an escalated round was fixed by another seat,
+  and a closure rendered from `actors.implementer` alone would say otherwise. `keel ship`
+  populates it from `--run-events-file` through `keel.runcontrols.fix_attribution`
 - the `run_context` section renders a deterministic **Run context** block appended after
   the `run_id` line, surfacing the s0 preflight as durable PR evidence: host agent,
   transport (`gh`|`mcp`), profile (`standard`|`compound`), jury mode
@@ -435,6 +442,43 @@ parsing prose.
 `keel runcontrols` is the CLI enforcement surface for this block. It appends/evaluates the
 run-events JSON file and exits non-zero on hard halt; `keel ship --run-events-file` stamps
 the evaluated round counts and cap outcome into the `ship_run` ledger record.
+
+The same events carry **who ran them**. An event may name a `provider`, the `attribution`
+label `keel delegate run` computed for it, the fix-ladder `stage`, and its `round`;
+`keel.runcontrols.fix_attribution` reads them back as `keel.fix-attribution.v1` — the
+implementation actor, one record per fix round, and the deterministic `sentence` the s11
+closure comment embeds ("implemented by agy, fixed by opus in round 2"). An escalated fix
+round has a different actor from the implementer, and the closure has to be able to say so.
+
+## Fix-loop block
+
+`keel fixloop brief` publishes `keel.fixloop.v1`: the pure-core answer to *who fixes this
+review finding, and with what words*.
+
+- the **brief** — findings grouped by severity with `file:line` anchors, each reviewer's
+  reproduction, the round and its budget, and the narrowed-re-review instruction the next
+  reviewer is held to. Deterministic: identical findings render byte-identical text.
+- the **escalation ladder** `implementer → gate → host`, a pure function of the round, the
+  named unavailable providers, and the budget. Round 1 is `assignment.fix` (by default the
+  alias `implementer`, resolved to the seat that implemented); a failed round escalates one
+  rung; an unavailable rung is skipped; a repeated rung is dropped; a round past the last
+  rung stays with the last usable fixer.
+- the **budget**, unchanged at three review-fix rounds. Past it there is no fixer:
+  `status: budget-exhausted`, and the command exits non-zero, which is the blocked-issue
+  path. Every rung unavailable is `status: no-fixer`, the same fail-closed exit.
+- the **dispatch** — the `keel delegate run --role fix` argv for the resolved seat, or
+  `null` for a `kind: subagent` seat the host runs itself.
+- **reviewer text is quoted data.** The brief becomes the fixer's prompt and findings are
+  the one part of it keel did not write, so every reviewer-supplied string is rendered as a
+  blockquote — one `> ` per line, the HTML-comment opener defanged, a leading `#` escaped, a
+  line reading as one of the brief's trailer keys rendered as inline code, and the field
+  capped. A finding cannot contribute a heading, a second brief marker or a forged trailer.
+- a fourth status, `no-config`: `knobs.team.fix` decides whether the round goes back to the
+  delegate or to the host, so an unreadable project config is a **refusal** (non-zero), not
+  a silent fallback to the host. `--no-project` is the deliberate opt-out.
+
+Severity semantics are `keel.findings`': `critical`/`major` block, `minor` is a gated
+suggestion, `nit` is advisory. The fix loop has no severity vocabulary of its own.
 
 ## Work Creation Policy
 

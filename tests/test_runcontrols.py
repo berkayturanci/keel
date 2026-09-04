@@ -263,6 +263,91 @@ class TestRunControlEvaluation(unittest.TestCase):
         self.assertEqual(report["summary"]["event_count"], 1)
 
 
+class TestFixAttribution(unittest.TestCase):
+    """Who fixed which round — the sentence the s11 closure comment embeds (#1016)."""
+
+    def test_the_contract_advertises_the_attribution_reader(self):
+        block = runcontrols.contract_as_dict()["attribution"]
+
+        self.assertEqual(block["schema_version"], "keel.fix-attribution.v1")
+        self.assertEqual(block["reader"], "keel.runcontrols.fix_attribution")
+        self.assertIn("provider", block["event_fields"])
+        self.assertEqual(block["fix_event"], {"slot": "fixloop", "step_id": "s9"})
+
+    def test_the_worked_example_from_the_issue(self):
+        report = runcontrols.fix_attribution(
+            [
+                {"slot": "implement", "provider": "agy", "attribution": {"agent_label": "agy"}},
+                {"slot": "fixloop", "provider": "anthropic-api", "attribution": "opus", "round": 2},
+            ]
+        )
+
+        self.assertEqual(report["sentence"], "implemented by agy, fixed by opus in round 2")
+        self.assertEqual(report["implementer"]["provider"], "agy")
+        self.assertEqual(report["rounds"][0]["round"], 2)
+        self.assertEqual(report["rounds"][0]["provider"], "anthropic-api")
+
+    def test_step_ids_identify_the_events_when_slots_do_not(self):
+        report = runcontrols.fix_attribution(
+            [
+                {"step_id": "s4", "provider": "codex"},
+                {"step_id": "s9", "provider": "codex", "stage": "implementer"},
+                {"step_id": "s9", "provider": "claude", "stage": "gate"},
+            ]
+        )
+
+        self.assertEqual(
+            report["sentence"],
+            "implemented by codex, fixed by codex in round 1 and claude in round 2",
+        )
+        self.assertEqual([item["stage"] for item in report["rounds"]], ["implementer", "gate"])
+
+    def test_rounds_without_an_explicit_number_are_numbered_by_position(self):
+        report = runcontrols.fix_attribution(
+            [{"slot": "fixloop", "provider": "agy"}, {"slot": "fixloop", "provider": "agy"}]
+        )
+
+        self.assertEqual([item["round"] for item in report["rounds"]], [1, 2])
+        self.assertEqual(report["sentence"], "fixed by agy in round 1 and agy in round 2")
+
+    def test_an_actorless_event_records_nothing(self):
+        report = runcontrols.fix_attribution(
+            [
+                {"slot": "implement"},
+                {"slot": "fixloop", "attribution": {"model_label": "gemini-3.8-flash"}},
+                {"slot": "reviewers", "provider": "codex"},
+                "not an event",
+                {"slot": "fixloop", "provider": "  ", "round": 0},
+            ]
+        )
+
+        self.assertIsNone(report["implementer"])
+        self.assertEqual([item["actor"] for item in report["rounds"]], ["gemini-3.8-flash"])
+        self.assertEqual(report["sentence"], "fixed by gemini-3.8-flash in round 1")
+
+    def test_the_first_implement_event_wins(self):
+        report = runcontrols.fix_attribution(
+            [{"slot": "implement", "provider": "agy"}, {"slot": "implement", "provider": "codex"}]
+        )
+
+        self.assertEqual(report["implementer"]["provider"], "agy")
+        self.assertIsNone(report["implementer"]["attribution"])
+        self.assertEqual(report["sentence"], "implemented by agy")
+
+    def test_an_empty_run_says_so_rather_than_guessing(self):
+        self.assertEqual(
+            runcontrols.fix_attribution([])["sentence"], "no implementer or fixer recorded"
+        )
+
+    def test_an_unusable_attribution_object_falls_back_to_the_provider(self):
+        report = runcontrols.fix_attribution(
+            [{"slot": "fixloop", "provider": "codex", "attribution": {"system": "codex-cli"}}]
+        )
+
+        self.assertEqual(report["rounds"][0]["actor"], "codex")
+        self.assertIsNone(report["rounds"][0]["attribution"])
+
+
 class TestRunControlRenderer(unittest.TestCase):
     def test_run_control_halt_renderer_has_stable_shape(self):
         body = artifacts.render_run_control_halt(

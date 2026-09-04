@@ -12,6 +12,7 @@
 1. [Architecture & Roles](#architecture--roles)
 2. [How to Select Models](#how-to-select-models)
 3. [One Executor: `keel delegate run`](#one-executor-keel-delegate-run)
+   - [Who fixes a review finding](#who-fixes-a-review-finding)
 4. [Hosted API Delegates (Zero-CLI)](#1-hosted-api-delegates-zero-cli)
    - [Anthropic (Claude)](#anthropic-claude)
    - [OpenAI](#openai)
@@ -108,6 +109,37 @@ knobs:
     frontend: anthropic-api:claude-sonnet-5  # -> anthropic-api, model claude-sonnet-5
     docs: agy:gemini-3.8-flash-high          # -> agy, model gemini-3.8-flash-high
 ```
+
+### Who fixes a review finding
+
+`knobs.team.fix` names the seat that takes a review finding back. Its default is the
+reserved provider `implementer` — an **alias**, not a vendor: *whoever implemented this
+change*, resolved to the seat s4 actually dispatched. That default is the point. A
+delegated implementation whose findings come back to the host is a delegation that saved
+nobody's quota, and it is what happened before there was a rule.
+
+```yaml
+knobs:
+  team:
+    fix: { provider: implementer }   # the default; omit the block entirely for the same
+    # fix: { provider: codex }       # or pin a named provider for every fix round
+```
+
+`implementer` is valid **only** at `team.fix.provider` (and as `gate.distinct_from`);
+anywhere else it would name a provider that does not exist, and `keel validate` says so.
+
+s9 does not read this block itself — `keel fixloop brief` does, and hands back the round's
+brief plus the seat, walking the ladder `implementer → gate → host` when a round fails or
+a provider is unavailable:
+
+```bash
+keel fixloop brief --pr 1042 --findings findings.json --round 2 \
+  --out fix-2.md --cwd "$WORKTREE" --json
+# -> fixer: { provider: codex, stage: gate }, dispatch: [keel, delegate, run, …, --role, fix, …]
+```
+
+The budget is unchanged at three rounds: the ladder decides *who* fixes, never *how often*.
+Full flags: [`cli.md`](cli.md), under `keel fixloop brief`.
 
 ---
 

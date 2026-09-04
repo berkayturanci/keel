@@ -8,6 +8,18 @@ from typing import Any
 from . import artifacts, model
 
 SCHEMA_VERSION = "keel.run-controls.v1"
+
+#: Schema of :func:`fix_attribution` — who implemented, and who fixed which round (#1016).
+FIX_ATTRIBUTION_SCHEMA_VERSION = "keel.fix-attribution.v1"
+
+#: Slot (or step id) an s4 implementation event carries.
+IMPLEMENT_SLOT = "implement"
+IMPLEMENT_STEP = "s4"
+
+#: Slot (or step id) an s9 fix-round event carries.
+FIX_SLOT = "fixloop"
+FIX_STEP = "s9"
+
 DEFAULT_RUN_BUDGET = 250
 DEFAULT_STEP_CAP = 1
 DEFAULT_FIXLOOP_CAP = 3
@@ -85,6 +97,13 @@ def contract_as_dict() -> dict[str, Any]:
             "halt_reason": "keel.artifacts.render_run_control_halt",
             "marker": artifacts.RUN_CONTROL_HALT_MARKER,
         },
+        "attribution": {
+            "schema_version": FIX_ATTRIBUTION_SCHEMA_VERSION,
+            "reader": "keel.runcontrols.fix_attribution",
+            "event_fields": ["provider", "attribution", "stage", "round"],
+            "implement_event": {"slot": IMPLEMENT_SLOT, "step_id": IMPLEMENT_STEP},
+            "fix_event": {"slot": FIX_SLOT, "step_id": FIX_STEP},
+        },
     }
 
 
@@ -121,6 +140,88 @@ def evaluate_run_controls(
     }
 
 
+def _is_fix_event(event: dict[str, Any]) -> bool:
+    return event["slot"] == FIX_SLOT or event["step_id"] == FIX_STEP
+
+
+def _is_implement_event(event: dict[str, Any]) -> bool:
+    return event["slot"] == IMPLEMENT_SLOT or event["step_id"] == IMPLEMENT_STEP
+
+
+def _actor(event: dict[str, Any]) -> str:
+    """What to call whoever ran this event: the attribution label, else the provider."""
+    return event["attribution"] or event["provider"]
+
+
+def fix_attribution(
+    events: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+) -> dict[str, Any]:
+    """Who implemented, and who fixed which round (#1016).
+
+    s9 could escalate a failed round to a different provider — implementer, then the gate
+    seat, then the host — and nothing wrote down which of them actually produced the
+    change that merged. The closure comment then attributed the whole run to the
+    implementer, which is exactly the sentence a reader trusts and exactly the one that
+    was wrong.
+
+    So the run-events file carries ``provider`` and ``attribution`` on the events it
+    already appends, and this reads them back: the implementation actor from the s4
+    event, one record per s9 round, and the deterministic ``sentence`` the s11 closure
+    comment embeds. A round without an explicit ``round`` is numbered by its position
+    among the fix events, so an adapter that only appends events still gets stable
+    numbering.
+    """
+    normalized = [_normalize_event(event) for event in events if isinstance(event, dict)]
+    implementer = None
+    for event in normalized:
+        if _is_implement_event(event) and _actor(event):
+            implementer = {
+                "provider": event["provider"] or _actor(event),
+                "attribution": event["attribution"] or None,
+                "actor": _actor(event),
+            }
+            break
+    rounds: list[dict[str, Any]] = []
+    for event in normalized:
+        if not _is_fix_event(event) or not _actor(event):
+            continue
+        rounds.append(
+            {
+                "round": event["round"] if event["round"] is not None else len(rounds) + 1,
+                "provider": event["provider"] or _actor(event),
+                "attribution": event["attribution"] or None,
+                "stage": event["stage"] or None,
+                "actor": _actor(event),
+            }
+        )
+    return {
+        "schema_version": FIX_ATTRIBUTION_SCHEMA_VERSION,
+        "implementer": implementer,
+        "rounds": rounds,
+        "sentence": attribution_sentence(implementer, rounds),
+    }
+
+
+def attribution_sentence(
+    implementer: dict[str, Any] | None,
+    rounds: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+) -> str:
+    """``implemented by agy, fixed by opus in round 2`` — deterministic, never a guess."""
+    parts = []
+    if implementer is not None:
+        parts.append(f"implemented by {implementer['actor']}")
+    clauses = [f"{item['actor']} in round {item['round']}" for item in rounds]
+    if clauses:
+        if len(clauses) == 1:
+            fixed = clauses[0]
+        else:
+            fixed = f"{', '.join(clauses[:-1])} and {clauses[-1]}"
+        parts.append(f"fixed by {fixed}")
+    if not parts:
+        return "no implementer or fixer recorded"
+    return ", ".join(parts)
+
+
 def _default_step_caps() -> dict[str, int]:
     return {
         "fixloop": DEFAULT_FIXLOOP_CAP,
@@ -139,7 +240,29 @@ def _normalize_event(event: dict[str, Any]) -> dict[str, Any]:
         "diff_fingerprint": _string(event.get("diff_fingerprint")),
         "work_units": _positive_int(event.get("work_units"), default=1),
         "soft_failure": bool(event.get("soft_failure")),
+        "provider": _string(event.get("provider")),
+        "attribution": _attribution_label(event.get("attribution")),
+        "stage": _string(event.get("stage")),
+        "round": event.get("round") if _is_round(event.get("round")) else None,
     }
+
+
+def _is_round(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _attribution_label(value: Any) -> str:
+    """The human label for who ran a step.
+
+    ``keel delegate run`` returns ``attribution`` as the object core computed
+    (``agent_label`` / ``model_label`` / ``system``); an operator appending an event by
+    hand passes a bare string. Both are accepted so the adapter can pass the delegate's
+    own document through without reshaping it — the whole point of computing attribution
+    in core was that the label written down and the label that ran cannot drift.
+    """
+    if isinstance(value, dict):
+        return _string(value.get("agent_label")) or _string(value.get("model_label"))
+    return _string(value)
 
 
 def _budget_halt(events: list[dict[str, Any]], max_work_units: int) -> HaltReason | None:

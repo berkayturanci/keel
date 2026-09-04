@@ -933,6 +933,84 @@ keel runcontrols .keel/run/events.json --slot fixloop --action fix
 keel runcontrols .keel/run/events.json --step-cap fixloop=3 --json
 ```
 
+`--provider`, `--attribution`, `--stage` and `--round` record **who** ran the event, which
+is what lets the s11 closure comment attribute an escalated fix round to the seat that
+actually took it. Every result — JSON and human — carries `fix_attribution`: the
+implementation actor read off the `s4`/`implement` event, one record per `s9`/`fixloop`
+round, and the deterministic `sentence` the closure embeds.
+
+```bash
+keel runcontrols .keel/run/events.json --slot implement --provider agy --attribution agy
+keel runcontrols .keel/run/events.json --slot fixloop --round 2 \
+  --provider anthropic-api --stage gate --attribution opus --json
+# fix_attribution.sentence: "implemented by agy, fixed by opus in round 2"
+```
+
+`--attribution` takes the label `keel delegate run` computed (a bare string, or that
+command's whole `attribution` object through `--event-json`) — never one you composed, so
+the label written down and the model that ran cannot drift.
+
+## `keel fixloop brief --findings FILE [--pr N] [--round K] [--budget N] [--unavailable PROVIDER] [--out FILE] [--cwd DIR] [--head SHA] [--issue N] [--fix-sha SHA] [--tier N] [--role LABEL] [--delegate TOKEN] [--host-agent NAME] [--timeout S] [--root DIR] [--project project.yaml] [--json]`
+
+Route review findings back to a fixer — the s9 half of the review loop. It renders the
+round's fix brief and resolves **who fixes it**, both deterministically, so two hosts
+running the same round produce the same words and dispatch the same seat.
+
+The brief groups findings by severity, anchors each on its `file:line`, carries the
+reviewer's own `reproduction`, and states the re-review the push will get: a blocking
+finding means a full re-review, a suggestion-only round means the narrowed one, whose
+instruction (*"verify only the applied fix in commit `<sha>`; do not re-review what you
+already approved"*) is rendered verbatim for the next reviewer's prompt.
+
+`--findings` is a JSON array of findings — `severity` (required: `critical`, `major`,
+`minor`, `nit`), `message`, `source`, `path`, `line`, `anchorable`, `reproduction` — or an
+object with a `findings` array, so a `keel review` bundle can be passed straight through.
+
+**Reviewer text is quoted data, never instructions.** The brief becomes the fixer's
+`--prompt-file`, and findings are the one part of it keel did not write, so every
+reviewer-supplied string is rendered as a blockquote: one `> ` per line (nothing a reviewer
+wrote can sit at the start of a line, which is where every structural token of this format
+lives), the HTML-comment opener defanged so a second brief marker cannot be forged, a
+leading `#` escaped, a line reading as one of the brief's trailer keys rendered as inline
+code, and the field capped — a prompt has a budget. A finding whose message carries its own
+`## Rules for this round` section appears inside the quote and nowhere else.
+
+**The project config is required.** `knobs.team.fix` is what decides whether the round goes
+back to the delegate that implemented or to the host, so a config the command cannot read
+is a **refusal** — `status: no-config` and a non-zero exit — rather than a silent
+resolution against an empty policy, which answers "the host fixes" and is the failure this
+command exists to prevent. `--project` / `--root` name it; `--no-project` is the deliberate
+opt-out for a project that really has no team policy.
+
+The fixer is the **escalation ladder** `implementer → gate → host`, a pure function of the
+round, provider availability, and the budget:
+
+| round | seat | source |
+| --- | --- | --- |
+| 1 | `assignment.fix` | `knobs.team.fix`, defaulting to the alias `implementer` — the provider that implemented this change |
+| 2 | `assignment.gate` | `knobs.team.gate`, the mandatory second opinion |
+| 3 | the host agent | the CLI driving the run |
+
+A rung repeating an earlier one is dropped (escalating to the seat that just failed the
+round is not an escalation), a provider named by `--unavailable` is skipped rather than
+dispatched to, and a round past the last rung stays with the last usable fixer. The
+`--budget` (default 3) is unchanged by the ladder: past it there is no fixer, and the
+command **exits non-zero** (`status: budget-exhausted`, or `no-fixer` when every rung is
+unavailable) so a spent loop cannot be mistaken for a round to run. A further round needs
+an explicit `--budget` — that flag, not `keel ship --max-rounds`, which is the run budget.
+
+```bash
+keel fixloop brief --pr 1042 --findings .keel/run/findings.json --round 2 \
+  --head "$HEAD_SHA" --issue 1016 --out .keel/run/fix-2.md --cwd "$WORKTREE" --json
+```
+
+`--json` prints the whole document: `fixer`, the `ladder` with each rung's availability,
+the `hops` walked to reach this round (`start`, `round-failed`, `provider-unavailable`,
+`ladder-exhausted`), the finding counts, `re_review`, the rendered `brief`, and `dispatch`
+— the ready-made `keel delegate run --role fix` argv for the resolved seat. `dispatch` is
+`null` for a `kind: subagent` seat: a host subagent is run by the host agent and never
+reaches `keel delegate run`.
+
 ## `keel checkpoint <project.yaml> [--root DIR] [--json]`
 
 Read the current resumable checkpoint. The default path is

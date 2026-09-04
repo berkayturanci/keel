@@ -42,6 +42,7 @@ from . import (
     doctor,
     dryrunverify,
     evidence,
+    fixloop,
     flows,
     gates,
     git,
@@ -1275,6 +1276,9 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         run_control_events,
         max_work_units=args.max_rounds or runcontrols.DEFAULT_RUN_BUDGET,
     )
+    # The same events say *who* ran each round, which is what lets the closure comment
+    # name the seat an s9 escalation handed the fix to (#1016).
+    run_fix_attribution = runcontrols.fix_attribution(run_control_events)
     ledger_record = ledger.build_ship_run_record(
         command=command,
         base_branch=config.base_branch,
@@ -1301,6 +1305,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         existing_records=existing_ledger_records,
         config=config,
         implementer=args.implementer,
+        fix_attribution=run_fix_attribution,
         reviewer_agents=args.reviewer_agent,
         tester=args.tester,
         host_agent=args.host_agent,
@@ -2101,12 +2106,14 @@ def _cmd_runcontrols(args: argparse.Namespace) -> int:
         identical_action_threshold=args.identical_action_threshold,
         alternating_diff_window=args.alternating_diff_window,
     )
+    attribution = runcontrols.fix_attribution(events)
     payload = {
         "contract": runcontrols.contract_as_dict(),
         "path": args.events_file,
         "appended": bool(event) and not args.dry_run,
         "event": event,
         "run_controls": report,
+        "fix_attribution": attribution,
     }
     if args.json:
         print(json.dumps(payload, indent=2, sort_keys=True))
@@ -2114,10 +2121,107 @@ def _cmd_runcontrols(args: argparse.Namespace) -> int:
         print(f"keel runcontrols — {report['status']}  {args.events_file}")
         print(f"  events        : {report['summary']['event_count']}")
         print(f"  work units    : {report['summary']['work_units']}")
+        print(f"  attribution   : {attribution['sentence']}")
         if report["reason"]:
             reason = report["reason"]
             print(f"  halt          : {reason['reason']} ({reason['scope']})")
     return 0 if report["status"] == "pass" else 1
+
+
+def _fixloop_config_path(args: argparse.Namespace) -> str:
+    return args.path or str(Path(args.root) / ".keel" / "project.yaml")
+
+
+def _fixloop_assignment(args: argparse.Namespace) -> tuple[dict[str, Any] | None, str | None]:
+    """``(assignment, error)`` — the resolved team for a fix round, or why there is none.
+
+    The same resolution every review-aware command reads (:func:`_review_assignment`),
+    because the fix seat *is* part of the review contract: ``team.fix`` defaults to the
+    alias ``implementer``, and the seat it resolves to is whoever s4 dispatched.
+
+    **An unreadable config is a refusal, not a default.** Falling back to an unconfigured
+    policy here answers "the host fixes" — silently, and identically to a project that
+    really has no policy. That is the failure #1016 exists to prevent, reached by a
+    missing file instead of by a decision: run the command one directory too high and a
+    delegate's findings land on the host with `warnings: []` and exit 0. An operator who
+    means it says so with ``--no-project``.
+    """
+    if args.no_project:
+        return (
+            team.resolve_assignment(
+                team.TeamPolicy(),
+                tier=args.tier,
+                role=args.role,
+                default_count=ship.reviewer_count(args.tier or 2),
+                delegate=args.delegate,
+                host_agent=args.host_agent or agents.HOST_DEFAULT,
+            ),
+            None,
+        )
+    try:
+        config = cfg.load_config(_fixloop_config_path(args))
+    except FileNotFoundError:
+        return None, "no such file"
+    except cfg.ConfigError as exc:
+        return None, str(exc)
+    return _review_assignment(config, args, tier=args.tier), None
+
+
+def _cmd_fixloop_brief(args: argparse.Namespace) -> int:
+    """Render the s9 fix brief and name the seat that fixes this round."""
+    try:
+        raw = json.loads(Path(args.findings).read_text(encoding="utf-8"))
+        parsed = fixloop.parse_findings(raw)
+    except OSError as exc:
+        print(f"cannot read --findings {args.findings}: {exc}", file=sys.stderr)
+        return 1
+    except json.JSONDecodeError as exc:
+        print(f"--findings {args.findings} is not valid JSON: {exc}", file=sys.stderr)
+        return 1
+    except fixloop.FixloopError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    assignment, config_error = _fixloop_assignment(args)
+    if config_error is not None:
+        document = fixloop.no_config_document(
+            path=_fixloop_config_path(args), reason=config_error, round_number=args.round
+        )
+        if args.json:
+            print(json.dumps(document, indent=2, sort_keys=True))
+        print(document["next_action"], file=sys.stderr)
+        return 1
+    try:
+        document = fixloop.brief_document(
+            assignment=assignment,
+            findings=parsed,
+            pr_number=args.pr,
+            round_number=args.round,
+            budget=args.budget,
+            unavailable=tuple(args.unavailable),
+            host_agent=args.host_agent or agents.HOST_DEFAULT,
+            head_sha=args.head,
+            issue_number=args.issue,
+            fix_sha=args.fix_sha,
+            prompt_file=args.out or "-",
+            cwd=args.cwd,
+            timeout=args.timeout,
+            project=args.path,
+        )
+    except fixloop.FixloopError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if args.out:
+        out = Path(args.out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(document["brief"], encoding="utf-8")
+    if args.json:
+        print(json.dumps(document, indent=2, sort_keys=True))
+    else:
+        print(document["brief"], end="")
+    for warning in document["warnings"]:
+        print(f"warning: {warning}", file=sys.stderr)
+    # Fail closed: a spent budget or an unreachable ladder is not a round to dispatch.
+    return 1 if document["blocked"] else 0
 
 
 def _panel_payload(panel: jury.Panel) -> dict[str, Any]:
@@ -4215,6 +4319,11 @@ def _event_from_args(args: argparse.Namespace) -> dict[str, object] | None:
             "output_fingerprint": args.output_fingerprint,
             "diff_fingerprint": args.diff_fingerprint,
             "work_units": args.work_units,
+            # Who ran the round, so `keel runcontrols` can answer "fixed by whom" (#1016).
+            "provider": args.provider,
+            "attribution": args.attribution,
+            "stage": args.stage,
+            "round": args.round,
         }
         event = {key: value for key, value in fields.items() if value not in (None, "")}
         if args.soft_failure:
@@ -6420,6 +6529,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_rc.add_argument("--work-units", type=int, default=None, help="event work-unit count")
     p_rc.add_argument("--soft-failure", action="store_true", help="mark event as soft failure")
     p_rc.add_argument(
+        "--provider", default=None, help="provider that ran the event (s4 implement, s9 fix)"
+    )
+    p_rc.add_argument(
+        "--attribution",
+        default=None,
+        help="attribution label for that provider, as keel delegate run computed it",
+    )
+    p_rc.add_argument("--stage", default=None, help="fix-ladder stage: implementer, gate or host")
+    p_rc.add_argument("--round", type=int, default=None, help="fix round this event records")
+    p_rc.add_argument(
         "--max-work-units",
         type=int,
         default=runcontrols.DEFAULT_RUN_BUDGET,
@@ -6452,6 +6571,50 @@ def build_parser() -> argparse.ArgumentParser:
     p_rc.add_argument("--dry-run", action="store_true", help="evaluate without appending the event")
     p_rc.add_argument("--json", action="store_true", help="emit structured JSON")
     p_rc.set_defaults(func=_cmd_runcontrols)
+
+    p_fix = sub.add_parser(
+        "fixloop",
+        help="route review findings back to a fixer (s9)",
+    )
+    p_fix_sub = p_fix.add_subparsers(dest="fixloop_command", metavar="<subcommand>")
+    p_fb = p_fix_sub.add_parser("brief", help="render one round's fix brief and name its fixer")
+    p_fb.add_argument("--pr", type=int, default=None, help="pull request the findings are on")
+    p_fb.add_argument("--findings", required=True, help="JSON findings file (array or envelope)")
+    p_fb.add_argument("--round", type=int, default=1, help="fix round (1-based)")
+    p_fb.add_argument(
+        "--budget",
+        type=int,
+        default=fixloop.DEFAULT_ROUND_BUDGET,
+        help=f"review-fix round budget (default {fixloop.DEFAULT_ROUND_BUDGET})",
+    )
+    p_fb.add_argument(
+        "--unavailable",
+        action="append",
+        default=[],
+        help="provider that cannot take this round; repeatable, skipped on the ladder",
+    )
+    p_fb.add_argument("--issue", type=int, default=None, help="issue the change closes")
+    p_fb.add_argument("--head", default=None, help="current PR head SHA")
+    p_fb.add_argument("--fix-sha", default=None, help="fix commit SHA, once it exists")
+    p_fb.add_argument("--tier", type=int, default=None, help="risk tier resolved at s5")
+    p_fb.add_argument("--role", default=None, help="issue role label selecting the team seat")
+    p_fb.add_argument("--delegate", default=None, help="implementer override, as ship's")
+    p_fb.add_argument("--host-agent", default=None, help="host agent driving this run")
+    p_fb.add_argument("--out", default=None, help="write the brief here (a delegate prompt file)")
+    p_fb.add_argument("--cwd", default=None, help="worktree the fix runs in, for the dispatch")
+    p_fb.add_argument("--timeout", type=int, default=None, help="dispatch timeout in seconds")
+    p_fb.add_argument("--root", default=".", help="project root")
+    p_fb.add_argument(
+        "--project", dest="path", default=None, help="project.yaml holding knobs.team"
+    )
+    p_fb.add_argument(
+        "--no-project",
+        action="store_true",
+        help="deliberately resolve without a team policy: no knobs.team, so the host "
+        "agent fixes. Without it an unreadable config is a refusal, not a default",
+    )
+    p_fb.add_argument("--json", action="store_true", help="emit the structured document")
+    p_fb.set_defaults(func=_cmd_fixloop_brief)
 
     p_attr = sub.add_parser(
         "attribution",
