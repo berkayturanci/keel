@@ -1394,15 +1394,17 @@ keel plan — example-flutter
     ...
 ```
 
-## `keel run-gates <project.yaml> [--root DIR] [--concurrency N] [--tdd] [--run-id ID] [--command CMD] [--phase PHASE] [--issue N] [--pull-request N]`
+## `keel run-gates <project.yaml> [--root DIR] [--tdd] [--run-id ID] [--command CMD] [--phase PHASE] [--issue N] [--pull-request N]`
 
 Run the project's **command gates** (the `command`/`build`/`lint` Lego) under `--root DIR`
 (default `.`) and report each as a structured finding. Agentic gates (review, design
 parity) are not run here — this is the deterministic, runnable slice of the test step (s8).
 
-**Concurrent Gate Execution (1.13.0+).** Pass `--concurrency N` (or set `concurrency: N` in `knobs`)
-to execute independent command gates concurrently via a worker thread pool while strictly
-preserving deterministic finding ordering, fail-soft behavior, and execution timeouts.
+**Concurrent execution is a library capability, not a CLI one (1.13.0+).**
+`keel.gates.run_gates(..., concurrency=N)` runs independent command gates on a worker
+thread pool while strictly preserving deterministic outcome ordering, fail-soft behaviour
+and execution timeouts. There is no `--concurrency` flag and no `knobs.concurrency` key —
+this subcommand always runs the gates serially.
 
 **Activity auto-stamp (1.6.4+).** Pass `--run-id` and `run-gates` advances the
 [keel-visual](keel-visual.md) board to the test phase (`--phase`, default `s8`; `--command`
