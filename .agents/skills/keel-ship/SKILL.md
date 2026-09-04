@@ -963,6 +963,15 @@ keel fixloop brief --project .keel/project.yaml --root . \
   --head "$HEAD_SHA" --issue <N> --out "$FIX_BRIEF" --cwd "$WORKTREE" --json
 ```
 
+**Where `<findings.json>` comes from on a panel tier.** When `reviewers.panel` is `jury`,
+s7 already produced it: write the `panel.findings` array from `keel review --from-jury
+--json` to a file and pass that file as `--findings` (the whole `panel` block works too —
+`--findings` reads a `{"findings": [...]}` envelope, so it needs no reshaping). That array
+is the panel's **verified** consensus already in keel's severity vocabulary, so
+`critical`/`major` open a round exactly as a host reviewer's findings do. Take them from
+there and never from the panel's prose — a claim its verification round did not uphold is
+not in that array, and must not hold a merge.
+
 **Always pass the project config.** `knobs.team.fix` is what decides whether this round
 goes back to the delegate that implemented or to the host, so the command **refuses**
 (`status: no-config`, non-zero) rather than guessing when it cannot read one — silently
@@ -1305,4 +1314,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=skills command=ship keel_version=1.19.3 source_sha256=e6b0e5aea7dd8f168e10a58faf90c6b5e4b2892217c841e4dd900986be24560b generated_sha256=e49b49f490b18d24fccc6f1ed870aa1724b504bb9f6164c32861167d37804832 -->
+<!-- keel-generated: surface=skills command=ship keel_version=1.19.3 source_sha256=cf5ffc0c9d4a12e3bdd19323b8db16217f9ac5899436a862b98b16b5d79abc2a generated_sha256=cd65de7dc249055907a37a0c3f9a9408a9e218f2d91e3aa5699164bd16ac3380 -->

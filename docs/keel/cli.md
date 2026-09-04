@@ -428,7 +428,9 @@ panel's. `--from-jury` takes an **ai-jury JSON report** (`jury --format json`, r
 - a `panel` block in the `--json` result — the ballots, the distinct vendors, and the
   **verified** consensus findings in keel's severity vocabulary (`critical`/`major` ⇒
   `block`). That block is the s9 fix-loop input, so a panel's findings gate exactly as a
-  host reviewer's do.
+  host reviewer's do: write that block to a file and hand it to `keel fixloop brief
+  --findings` to open the round — the block is a `{"findings": [...]}` envelope, which is
+  a shape `--findings` reads as-is, so its array needs no reshaping.
 
 `scope` and `testing` are synthesised from the ballot itself — the files it named, and what
 the verification round upheld — because the JSON report carries no per-ballot prose. They are
