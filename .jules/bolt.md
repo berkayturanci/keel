@@ -89,3 +89,7 @@ line is hot — a tight loop over thousands of items, called repeatedly. Do not 
 code that runs a handful of times per command, and especially not in
 `src/keel/evidence.py`, which decides whether a PR may merge: churn there needs to buy
 something. keel#789 proposed exactly that and was closed. See keel#791.
+## 2026-08-25 - Redundant truthiness checks with issuperset
+
+**Learning:** When refactoring generator expressions like `all(x in target for x in iterable)` to C-level `target_set.issuperset(iterable)` for performance, avoid introducing redundant truthiness checks (e.g., `iterable and target_set.issuperset(iterable)`). Both `all()` and `.issuperset()` natively evaluate to `True` for empty iterables. Adding a truthiness guard (like `tokens and ...`) introduces a logic regression because it evaluates to `False` on an empty iterable, whereas the original code evaluated to `True`.
+**Action:** When replacing `all(item in allowed for item in items)` with `allowed_set.issuperset(items)`, do not add truthiness guards like `items and ...` unless the original code specifically accounted for empty states differently. Keep the logical equivalence exact.
