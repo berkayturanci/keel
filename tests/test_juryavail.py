@@ -23,6 +23,7 @@ one on a CI runner with none.
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import io
 import json
@@ -742,6 +743,70 @@ class TestTheProbeIsOnlyRunWhenItMatters(unittest.TestCase):
         self.assertTrue(collect.called)
         self.assertTrue(result["staffable"])
 
+    def test_a_many_tier_surface_finds_the_panel_wherever_it_is_named(self):
+        """The swarm scores each cluster's tier itself, so it cannot name one up front."""
+        result = providerprobe.jury_availability_for_any_tier(
+            self._config(PANEL_CONFIG % ""),
+            _probe=lambda _c: UNSTAFFED,
+            _runner_probe=_runner_probe(),
+        )
+
+        self.assertEqual(result["decision"], "fallback")
+
+    def test_a_many_tier_surface_probes_nothing_on_a_project_with_no_panel(self):
+        result = providerprobe.jury_availability_for_any_tier(
+            self._config(BENCH_CONFIG),
+            _probe=lambda _c: self.fail("probed a project that names no panel"),
+            _runner_probe=lambda: self.fail("probed the runner for a project with no panel"),
+        )
+
+        self.assertIsNone(result)
+
+
+class TestEverySiteThatResolvesABenchSeesTheProbe(unittest.TestCase):
+    """The seventh resolver was missed once; this is the rule, not the site (#1066).
+
+    `_review_seats` is reached from exactly one function — `team.resolve_assignment` — so
+    the call sites of *that* are the complete list of places a bench is resolved. Each has
+    to see the measurement or it publishes a panel the machine beside it cannot convene.
+    """
+
+    #: The one documented exception: `keel fixloop --no-project` resolves against an
+    #: *empty* `TeamPolicy`, which has no `review.by_tier` and so can never name the panel.
+    #: There is nothing for a probe to measure, and running one would spend subprocesses on
+    #: a question whose answer cannot matter.
+    UNCONFIGURED_POLICY = "TeamPolicy"
+
+    def _call_sites(self):
+        root = pathlib.Path(cli.__file__).resolve().parent
+        for path in sorted(root.rglob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Call) and getattr(
+                    node.func, "attr", None
+                ) == "resolve_assignment":
+                    yield path, node
+
+    def test_every_resolver_is_handed_the_measurement(self):
+        offenders = []
+        sites = 0
+        for path, node in self._call_sites():
+            sites += 1
+            if any(keyword.arg == "jury_availability" for keyword in node.keywords):
+                continue
+            policy = node.args[0] if node.args else None
+            unconfigured = (
+                isinstance(policy, ast.Call)
+                and getattr(policy.func, "attr", policy.func) == self.UNCONFIGURED_POLICY
+                and not policy.args
+                and not policy.keywords
+            )
+            if not unconfigured:
+                offenders.append(f"{path.name}:{node.lineno}")
+
+        self.assertEqual([], offenders, "a bench is resolved without the panel probe")
+        self.assertGreaterEqual(sites, 5, "the sweep found no call sites to sweep")
+
 
 class TestTheRecordAReaderSees(unittest.TestCase):
     """The ledger and the closure comment say plainly which review this was."""
@@ -1071,6 +1136,65 @@ class TestTheWholeRunEndToEnd(unittest.TestCase):
 
         self.assertEqual(plan["assignment"]["review_panel"], "jury")
         self.assertEqual(plan["assignment"]["jury"]["on_unavailable"], "block")
+
+    def _swarm_plan(self, config):
+        rc, out, err = run(
+            [
+                "swarm-plan",
+                config,
+                "--issue",
+                "1",
+                "--issue-title",
+                "fix core",
+                "--declared-file",
+                "src/a.py",
+                "--json",
+            ]
+        )
+        self.assertEqual(rc, 0, err)
+        return json.loads(out)
+
+    def test_the_swarm_seats_the_same_bench_the_child_ship_will(self):
+        """Round 2's third finding: the swarm was the seventh resolver, and it was missed.
+
+        `swarm-plan` published `review_panel: jury` with `reviewer_count: 0` and
+        `availability: null` for a tier-3 cluster, while `keel ship` on the same machine,
+        from the same config, seated three host reviewers and recorded why — the same
+        in-process disagreement this issue closed one layer down.
+        """
+        config = self._config(PANEL_CONFIG % "")
+        with self._probe(UNSTAFFED):
+            plan = self._swarm_plan(config)
+            ship_data = self._ship(config)
+
+        cluster = plan["waves"][0]["clusters"][0]["assignment"]
+        self.assertEqual(cluster["review_panel"], "reviewers")
+        self.assertEqual(cluster["reviewer_count"], 3)
+        self.assertEqual(cluster["reviewer_source"], "jury-fallback")
+        self.assertEqual(cluster["jury"]["availability"]["decision"], "fallback")
+        # The point of the finding: the two agree, seat for seat.
+        child = ship_data["result"]["assessment"]["assignment"]
+        self.assertEqual(cluster["review_panel"], child["review_panel"])
+        self.assertEqual(cluster["reviewer_count"], child["reviewer_count"])
+
+    def test_the_swarm_keeps_the_panel_when_the_panel_can_sit(self):
+        config = self._config(PANEL_CONFIG % "")
+        with self._probe(STAFFED):
+            plan = self._swarm_plan(config)
+
+        cluster = plan["waves"][0]["clusters"][0]["assignment"]
+        self.assertEqual(cluster["review_panel"], "jury")
+        self.assertTrue(cluster["jury"]["availability"]["staffable"])
+
+    def test_the_swarm_refuses_under_block_like_every_other_surface(self):
+        config = self._config(PANEL_CONFIG % "\n      on_unavailable: block")
+        with self._probe(UNSTAFFED):
+            rc, _out, err = run(
+                ["swarm-plan", config, "--issue", "1", "--declared-file", "src/a.py", "--json"]
+            )
+
+        self.assertEqual(rc, 1)
+        self.assertIn("cannot be staffed here", err)
 
     def test_a_project_with_no_panel_is_untouched(self):
         """The probe never fires, so nothing about this project's runs can move."""

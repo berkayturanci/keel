@@ -398,6 +398,30 @@ def jury_availability(
     return record
 
 
+def jury_availability_for_any_tier(config, **kwargs) -> dict[str, object] | None:
+    """The panel probe for a surface that resolves *several* tiers in one call (#1066).
+
+    :func:`keel.swarm.build_swarm_plan` scores each cluster's risk tier while it partitions,
+    so its caller cannot name the tier before the plan exists — but every cluster in that
+    plan resolves a bench, and a swarm that skipped the probe published ``review_panel:
+    jury`` for a tier-3 cluster while the child ``keel ship`` it launched on the same machine
+    seated three host reviewers. That is the in-process disagreement #1066 exists to close,
+    one layer up.
+
+    Availability is a fact about the *machine*, not about a tier: the tier only decides
+    whether the question arises. So this asks it once, for the first tier whose review policy
+    names the panel, and hands the one record to every cluster. A project with no panel at
+    any tier probes nothing, exactly as before — :func:`jury_availability` returns ``None``
+    without measuring when the tier's review is a host bench, so the loop below costs a
+    config lookup per tier and no subprocess at all.
+    """
+    for tier in (None, *(int(name) for name in team.TIERS)):
+        record = jury_availability(config, tier=tier, **kwargs)
+        if record is not None:
+            return record
+    return None
+
+
 def collect(
     config,
     *,

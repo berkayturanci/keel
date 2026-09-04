@@ -5709,7 +5709,16 @@ def _cmd_swarm_plan(args: argparse.Namespace) -> int:
         )
 
     plan = swarm.build_swarm_plan(
-        scopes, swarm_id=args.swarm_id, config=config, overrides=_swarm_overrides(args)
+        scopes,
+        swarm_id=args.swarm_id,
+        config=config,
+        overrides=_swarm_overrides(args),
+        # The seventh resolver (#1066). A swarm scores each cluster's tier while it
+        # partitions, so the tier cannot be named before the plan exists — but every
+        # cluster in it resolves a bench, and without this a panel project's tier-3
+        # cluster published `review_panel: jury` while the child `keel ship` launched
+        # on the same machine seated three host reviewers.
+        jury_availability=providerprobe.jury_availability_for_any_tier(config),
     )
 
     if args.json:
@@ -5806,7 +5815,16 @@ def _cmd_swarm_run(args: argparse.Namespace) -> int:
         )
 
     plan = swarm.build_swarm_plan(
-        scopes, swarm_id=args.swarm_id, config=config, overrides=_swarm_overrides(args)
+        scopes,
+        swarm_id=args.swarm_id,
+        config=config,
+        overrides=_swarm_overrides(args),
+        # The seventh resolver (#1066). A swarm scores each cluster's tier while it
+        # partitions, so the tier cannot be named before the plan exists — but every
+        # cluster in it resolves a bench, and without this a panel project's tier-3
+        # cluster published `review_panel: jury` while the child `keel ship` launched
+        # on the same machine seated three host reviewers.
+        jury_availability=providerprobe.jury_availability_for_any_tier(config),
     )
 
     from . import swarm_runtime
@@ -6019,7 +6037,11 @@ def _cmd_swarm_land(args: argparse.Namespace) -> int:
         )
 
     plan = swarm.build_swarm_plan(
-        scopes, swarm_id=swarm_id, config=config, overrides=_swarm_overrides(args)
+        scopes,
+        swarm_id=swarm_id,
+        config=config,
+        overrides=_swarm_overrides(args),
+        jury_availability=providerprobe.jury_availability_for_any_tier(config),
     )
 
     from . import swarm_landing
