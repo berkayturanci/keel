@@ -720,7 +720,7 @@ class TestEveryCommandResolvesTheSameBench(unittest.TestCase):
             ["review-verdict-1", "review-verdict-2", "review-verdict-3"],
         )
         # Convergent, not contradictory: the gate only ever asks for more.
-        self.assertTrue(set(floor) < set(with_verdict))
+        self.assertLess(set(floor), set(with_verdict))
 
     def test_a_declared_count_below_the_floor_cannot_lower_the_requirement(self):
         """`min_vendors` is a floor: a short panel's own verdict may not relax it."""

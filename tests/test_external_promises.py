@@ -312,12 +312,21 @@ class TestHomebrewPromise(unittest.TestCase):
             _could_not_look(self, "the tap formula's tarball", exc)
         except (urllib.error.URLError, OSError) as exc:
             _could_not_look(self, "the tap formula's tarball", exc)
-        self.assertEqual(
-            hashlib.sha256(payload).hexdigest(),
-            declared.group(1),
-            "the tap's sha256 is not the digest of the tarball it points at; "
-            "brew install would refuse",
-        )
+        else:
+            # `else`, not a trailing statement: the digest comparison is reached
+            # only on the path that actually bound `payload`. Every handler above
+            # ends in a call that never returns, but that guarantee lives in
+            # `self.fail`/`_could_not_look` rather than here, so neither a reader
+            # nor a static analyser could see it at the point of use
+            # (`py/uninitialized-local-variable`, #1063). The three outcomes stay
+            # distinct: a wrong digest fails here, an unreadable tarball fails in
+            # the handler, and only a fetch that succeeded reaches this block.
+            self.assertEqual(
+                hashlib.sha256(payload).hexdigest(),
+                declared.group(1),
+                "the tap's sha256 is not the digest of the tarball it points at; "
+                "brew install would refuse",
+            )
 
 
 class TestTheTapReadsTheReleaseAsset(unittest.TestCase):
@@ -398,16 +407,21 @@ class TestPublishedVersion(unittest.TestCase):
                 published = set(json.load(response)["releases"])
         except OSError as exc:
             _could_not_look(self, "the versions published on PyPI", exc)
-
-        latest = max(published, key=lambda v: [int(p) for p in v.split(".") if p.isdigit()])
-        current = [int(p) for p in __version__.split(".") if p.isdigit()]
-        newest = [int(p) for p in latest.split(".") if p.isdigit()]
-        self.assertGreaterEqual(
-            current,
-            newest,
-            f"the repo says {__version__} but PyPI has published {latest}. Either a "
-            "release was reverted on main (see #772) or the bump was never committed.",
-        )
+        else:
+            # See the note in `test_the_tap_serves_an_installable_formula`: the
+            # comparison lives in the `else` so `published` is provably bound
+            # where it is read. `_could_not_look` never returns — pinned by
+            # `TestNotLookingIsNotAPass` above — so "could not ask PyPI" still
+            # fails rather than reaching this block and passing.
+            latest = max(published, key=lambda v: [int(p) for p in v.split(".") if p.isdigit()])
+            current = [int(p) for p in __version__.split(".") if p.isdigit()]
+            newest = [int(p) for p in latest.split(".") if p.isdigit()]
+            self.assertGreaterEqual(
+                current,
+                newest,
+                f"the repo says {__version__} but PyPI has published {latest}. Either a "
+                "release was reverted on main (see #772) or the bump was never committed.",
+            )
 
     def test_documented_git_pins_point_at_the_current_version(self):
         stale = {
