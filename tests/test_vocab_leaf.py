@@ -12,11 +12,15 @@ paying off, and each is a test here:
 
 1. :mod:`keel.vocab` imports nothing from keel — a single import added there re-opens
    the cycle from the other end.
-2. No module reaches the vocabulary function-locally again. The whole point is that the
-   names are importable at module scope; a future local import would silently restore
-   the alert *and* the confusion.
+2. No module reaches the vocabulary function-locally again — whether it imports a moved
+   name directly or imports a module and reads the name off it, which is the same edge
+   wearing a different spelling. The whole point is that the names are importable at
+   module scope; a future local reach would silently restore the alert *and* the
+   confusion.
 3. The package's real module graph — every import, module-scope and function-local, the
-   way a scanner reads it — has no cycle through ``keel.team`` at all.
+   way a scanner reads it — has no cycle through ``keel.team`` at all, of *any* length.
+   The search is exhaustive on purpose: a depth bound would let a cycle one edge longer
+   than the bound report clean, which is the failure mode a guard exists to prevent.
 
 Plus the boring but load-bearing one: the re-exports are the same objects, so
 ``agents.BUILTIN_DELEGATE_VENDORS`` and ``delegate.EFFORTS`` did not become copies that
@@ -52,13 +56,42 @@ MOVED_NAMES = frozenset(
     }
 )
 
-#: Modules of the keel package, by name.
+#: Modules of the keel package, by name. ``keel`` is flat today; a test below asserts the
+#: glob really covers every ``.py`` under ``src/keel`` so a future subpackage cannot hide.
 MODULES = {path.stem: path for path in sorted(SRC.glob("*.py")) if path.stem != "__init__"}
 
 
-def _imports(path: Path, *, module_scope_only: bool) -> set[str]:
-    """Intra-package modules ``path`` imports, optionally counting module scope only."""
+def _dotted(node: ast.AST) -> str | None:
+    """``"keel.vocab.EFFORTS"`` for an attribute chain rooted at a plain name, else ``None``."""
+    parts: list[str] = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if not isinstance(node, ast.Name):
+        return None
+    parts.append(node.id)
+    return ".".join(reversed(parts))
+
+
+def _imports_in(source: str, *, module_scope_only: bool) -> set[str]:
+    """Intra-package modules ``source`` imports, optionally counting module scope only.
+
+    Every spelling that makes an edge counts, not only the ones this package happens to
+    use today: ``from . import x``, ``from .x import y``, ``from keel import x``,
+    ``import keel.x`` — and a bare ``import keel`` followed by a ``keel.x`` attribute
+    read, which is an edge no import *name* ever spells out.
+    """
+    tree = ast.parse(source)
     found: set[str] = set()
+    #: Names bound to the *package* (``import keel`` / ``import keel as k``), whose
+    #: attribute chains resolve to sibling modules.
+    package_bindings = {
+        alias.asname or "keel"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+        if alias.name == "keel"
+    }
 
     def visit(node: ast.AST) -> None:
         for child in ast.iter_child_nodes(node):
@@ -71,32 +104,69 @@ def _imports(path: Path, *, module_scope_only: bool) -> set[str]:
                     found.update(alias.name for alias in child.names if alias.name in MODULES)
                 elif child.module.split(".")[0] in MODULES:
                     found.add(child.module.split(".")[0])
+            elif isinstance(child, ast.ImportFrom) and child.module == "keel":
+                found.update(alias.name for alias in child.names if alias.name in MODULES)
             elif isinstance(child, ast.Import):
                 found.update(
-                    alias.name.split(".")[1]
+                    parts[1]
                     for alias in child.names
-                    if alias.name.startswith("keel.")
+                    if (parts := alias.name.split("."))[0] == "keel"
+                    and len(parts) > 1
+                    and parts[1] in MODULES
                 )
+            elif (
+                isinstance(child, ast.Attribute)
+                and child.attr in MODULES
+                and isinstance(child.value, ast.Name)
+                and child.value.id in package_bindings
+            ):
+                found.add(child.attr)
             visit(child)
 
-    visit(ast.parse(path.read_text(encoding="utf-8")))
+    visit(tree)
     return found
 
 
-def _local_imports_of_moved_names(path: Path) -> list[str]:
-    """``"<function>: <name>"`` for every function-local import of a moved name."""
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+def _imports(path: Path, *, module_scope_only: bool) -> set[str]:
+    """:func:`_imports_in` for a file on disk."""
+    return _imports_in(path.read_text(encoding="utf-8"), module_scope_only=module_scope_only)
+
+
+def _local_vocabulary_reaches(source: str) -> list[str]:
+    """``"<function>: <what>"`` for every function-local reach for a moved name.
+
+    Two shapes put the vocabulary back inside a function body and both count. The loud
+    one imports a moved name directly (``from .vocab import EFFORTS``). The quiet one
+    imports a *module* and reads the name off it (``from . import vocab`` …
+    ``vocab.EFFORTS``, or ``import keel.vocab`` … ``keel.vocab.EFFORTS``) — matching on
+    the imported name alone never sees that, and it restores exactly the same edge.
+    """
+    tree = ast.parse(source)
     offenders: list[str] = []
     for node in ast.walk(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
+        bound: set[str] = set()
         for inner in ast.walk(node):
-            if isinstance(inner, (ast.Import, ast.ImportFrom)):
-                for alias in inner.names:
-                    name = alias.name.split(".")[-1]
-                    if name in MOVED_NAMES:
-                        offenders.append(f"{node.name}: {name}")
-    return offenders
+            if not isinstance(inner, (ast.Import, ast.ImportFrom)):
+                continue
+            for alias in inner.names:
+                name = alias.name.split(".")[-1]
+                if name in MOVED_NAMES:
+                    offenders.append(f"{node.name}: {name}")
+                bound.add(alias.asname or alias.name.split(".")[0])
+        for inner in ast.walk(node):
+            if not isinstance(inner, ast.Attribute) or inner.attr not in MOVED_NAMES:
+                continue
+            dotted = _dotted(inner)
+            if dotted is not None and dotted.split(".")[0] in bound:
+                offenders.append(f"{node.name}: {dotted}")
+    return sorted(offenders)
+
+
+def _local_imports_of_moved_names(path: Path) -> list[str]:
+    """:func:`_local_vocabulary_reaches` for a file on disk."""
+    return _local_vocabulary_reaches(path.read_text(encoding="utf-8"))
 
 
 class VocabIsALeaf(unittest.TestCase):
@@ -153,6 +223,52 @@ class NoFunctionLocalVocabularyImports(unittest.TestCase):
         )
 
 
+class TheLocalVocabularyCheckSeesModuleAttributeReads(unittest.TestCase):
+    """Matching the imported *name* only catches the loud half of the smell.
+
+    ``from .vocab import EFFORTS`` inside a function is the shape everyone pictures.
+    ``from . import vocab`` inside a function and then ``vocab.EFFORTS`` restores the
+    identical edge without ever spelling a moved name in an import, so the check has to
+    follow the binding, not just read the alias list.
+    """
+
+    def test_a_direct_local_import_is_caught(self) -> None:
+        for source in (
+            "def f():\n    from .vocab import EFFORTS\n",
+            "def f():\n    from .vocab import EFFORTS as E\n",
+            "async def f():\n    from keel.vocab import EFFORTS\n",
+        ):
+            with self.subTest(source=source.replace("\n", " ")):
+                self.assertEqual(_local_vocabulary_reaches(source), ["f: EFFORTS"])
+
+    def test_a_module_import_read_off_the_module_is_caught(self) -> None:
+        """The reviewer's hole: the import names a module, the read names the vocabulary."""
+        cases = {
+            "def f():\n    from . import vocab\n    return vocab.EFFORTS\n": "f: vocab.EFFORTS",
+            "def f():\n    from . import vocab as v\n    return v.EFFORTS\n": "f: v.EFFORTS",
+            "def f():\n    import keel.vocab\n    return keel.vocab.EFFORTS\n": (
+                "f: keel.vocab.EFFORTS"
+            ),
+            "def f():\n    from . import delegate\n    return delegate.supports_effort('x')\n": (
+                "f: delegate.supports_effort"
+            ),
+        }
+        for source, expected in cases.items():
+            with self.subTest(source=source.replace("\n", " ")):
+                self.assertEqual(_local_vocabulary_reaches(source), [expected])
+
+    def test_module_scope_imports_are_left_alone(self) -> None:
+        """The point of the move was to make exactly this shape legal — do not flag it."""
+        for source in (
+            "from . import vocab\n\n\ndef f():\n    return vocab.EFFORTS\n",
+            "from .vocab import EFFORTS\n\n\ndef f():\n    return EFFORTS\n",
+            "def f():\n    from . import evidence\n    return evidence.render()\n",
+            "def f():\n    return some_other.EFFORTS\n",
+        ):
+            with self.subTest(source=source.replace("\n", " ")):
+                self.assertEqual(_local_vocabulary_reaches(source), [])
+
+
 class TheGraphHasNoCycleThroughTeam(unittest.TestCase):
     """The property the CodeQL alerts were about, asserted on the real module graph."""
 
@@ -163,13 +279,20 @@ class TheGraphHasNoCycleThroughTeam(unittest.TestCase):
         }
 
     def _cycles_through(self, graph: dict[str, set[str]], target: str) -> list[tuple[str, ...]]:
+        """Every simple cycle through ``target``, of any length.
+
+        Deliberately unbounded: ``seen`` already keeps each path simple, so the search
+        terminates, and the package is small enough that enumerating the simple paths out
+        of one module costs nothing. A depth bound here would be worse than no test —
+        a cycle one edge longer than the bound would report clean.
+        """
         found: set[tuple[str, ...]] = set()
 
         def walk(node: str, path: tuple[str, ...], seen: frozenset[str]) -> None:
             for nxt in sorted(graph.get(node, ())):
                 if nxt == target:
                     found.add(path + (nxt,))
-                elif nxt not in seen and len(path) < 6:
+                elif nxt not in seen:
                     walk(nxt, path + (nxt,), seen | {nxt})
 
         walk(target, (target,), frozenset({target}))
@@ -193,6 +316,58 @@ class TheGraphHasNoCycleThroughTeam(unittest.TestCase):
         graph = self._graph(module_scope_only=False)
         self.assertNotIn("agents", graph["config"])
         self.assertNotIn("delegate", graph["wizard"])
+
+    def test_the_search_finds_a_cycle_of_any_length(self) -> None:
+        """A depth-bounded search is a guard-shaped test: one edge past the bound, silence.
+
+        This walks the bound past where any bound would have sat, so a reintroduced
+        bound fails here rather than passing quietly on the real graph.
+        """
+        for hops in range(1, 13):
+            chain = ["team", *(f"m{i}" for i in range(1, hops + 1)), "team"]
+            graph = {a: {b} for a, b in zip(chain, chain[1:], strict=False)}
+            with self.subTest(intermediates=hops):
+                self.assertEqual(self._cycles_through(graph, "team"), [tuple(chain)])
+
+    def test_the_search_finds_a_long_cycle_hidden_among_dead_ends(self) -> None:
+        """The long way round is found even when shorter branches leave the target alone."""
+        graph: dict[str, set[str]] = {
+            "team": {"vocab", "a1"},
+            "vocab": set(),
+            **{f"a{i}": {f"a{i + 1}", "vocab"} for i in range(1, 8)},
+        }
+        graph["a8"] = {"team"}
+        self.assertEqual(
+            self._cycles_through(graph, "team"),
+            [("team", "a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8", "team")],
+        )
+
+    def test_the_graph_sees_a_bare_package_import(self) -> None:
+        """``import keel`` names no module; the attribute read is still the edge."""
+        for source in (
+            "import keel\nX = keel.team.ROLES\n",
+            "import keel as k\nX = k.team.ROLES\n",
+            "import keel.team\n",
+            "from keel import team\n",
+            "from . import team\n",
+            "from .team import ROLES\n",
+        ):
+            with self.subTest(source=source.replace("\n", " ")):
+                self.assertEqual(_imports_in(source, module_scope_only=False), {"team"})
+
+    def test_the_graph_ignores_look_alike_names(self) -> None:
+        """No edge from an unrelated ``team`` attribute or a third-party ``keel``-ish import."""
+        for source in ("import os\nX = os.team\n", "obj = object()\nX = obj.team\n"):
+            with self.subTest(source=source.replace("\n", " ")):
+                self.assertEqual(_imports_in(source, module_scope_only=False), set())
+
+    def test_module_map_covers_every_file_in_the_package(self) -> None:
+        """A future subpackage must not be invisible to the graph because of a flat glob."""
+        self.assertEqual(
+            sorted(p.relative_to(SRC).as_posix() for p in SRC.rglob("*.py")),
+            sorted([*(f"{name}.py" for name in MODULES), "__init__.py"]),
+            "keel is flat; a nested module would need MODULES to walk the tree",
+        )
 
 
 class ImportingTeamFirstPullsNothingElse(unittest.TestCase):

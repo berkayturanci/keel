@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import capabilities
+from .vocab import API_VENDORS, CLI_VENDORS, LOCAL_VENDORS
 
 KNOWN_CAPABILITIES = capabilities.KNOWN_CAPABILITIES
 
@@ -281,14 +282,14 @@ def _provider_capabilities(
     ``keel doctor --providers`` is the deep probe (versions, model listings, the local
     Ollama server), and it is the only place that pays for them.
     """
-    from . import agents, providers
+    from . import providers
     from .api_delegate import env_key_name
 
-    tool_capable = tuple(vendor for vendor in agents.CLI_VENDORS if which(vendor))
-    local = tuple(vendor for vendor in agents.LOCAL_VENDORS if which(vendor))
+    tool_capable = tuple(vendor for vendor in CLI_VENDORS if which(vendor))
+    local = tuple(vendor for vendor in LOCAL_VENDORS if which(vendor))
     hosted = tuple(
         vendor
-        for vendor in agents.API_VENDORS
+        for vendor in API_VENDORS
         if (name := env_key_name(vendor)) and env.get(name, "").strip()
     )
     vendors = tool_capable + local + hosted
@@ -298,7 +299,7 @@ def _provider_capabilities(
             bool(tool_capable),
             ", ".join(tool_capable)
             if tool_capable
-            else f"no tool-capable agent CLI on PATH ({', '.join(agents.CLI_VENDORS)})",
+            else f"no tool-capable agent CLI on PATH ({', '.join(CLI_VENDORS)})",
             "PATH",
         ),
         Capability(
