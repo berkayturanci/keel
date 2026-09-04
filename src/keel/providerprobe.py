@@ -419,8 +419,8 @@ def jury_availability(
     can resolve the same tier differently: a runner with no ``jury`` installed falls back
     where a workstation convenes the panel, and each says which it did rather than either
     quietly claiming the other's provenance. What a *verification* surface does with that
-    is :func:`keel.cli._shipped_jury_availability`'s question, not this one's: it pins to
-    what the ship measured rather than re-measuring on a different machine.
+    is :func:`keel.juryavail.pin`'s question, not this one's: it pins to what the ship
+    measured rather than re-measuring on a different machine.
 
     **This function measures; it does not refuse** (#1068). Under ``on_unavailable:
     block`` the ``block`` decision travels in the record, and

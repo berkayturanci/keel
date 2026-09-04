@@ -1553,9 +1553,9 @@ def _matches_head(item: dict[str, Any], body: str, head_sha: str | None) -> bool
 
     A *pin* is the case that cannot use this reading, because it does remove requirements —
     it takes ``review-verdict-1..3`` off the required set entirely. So the pin
-    (:func:`keel.cli._shipped_jury_availability`) refuses a blank head before it calls
-    :func:`panel_verdict_posted` at all, rather than this predicate changing under the
-    surfaces that need the permissive one.
+    (:func:`keel.juryavail.pin`, read by :func:`keel.cli._shipped_jury_availability`)
+    refuses a blank head before :func:`panel_verdict_posted` is asked at all, rather than
+    this predicate changing under the surfaces that need the permissive one.
     """
     if not head_sha:
         return True
@@ -1709,8 +1709,9 @@ def panel_verdict_posted(
     Proof that the panel *sat*, from the one place a bare CI runner can read it: the run
     ledger and the jury artifact both live under the gitignored ``.keel/state/``, while PR
     comments are always visible. A verification surface uses it to pin the contract to what
-    the ship measured rather than re-measuring the panel on its own machine — see
-    :func:`keel.cli._shipped_jury_availability`.
+    the ship measured rather than re-measuring the panel on its own machine. It is the
+    *weaker* of the two pins and speaks only when the run left no ledger record for this
+    head; :func:`keel.juryavail.pin` owns that order and is the one place it is written.
 
     Distinct from :func:`jury_panel_size`, which answers *how many* ballots and is ``None``
     for a verdict predating the ``panelists:`` field. Presence is the weaker question, and

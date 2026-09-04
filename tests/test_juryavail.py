@@ -1783,15 +1783,26 @@ class TestTheContractIsPinnedToTheShipsMeasurement(unittest.TestCase):
         self.assertIn("jury-verdict", required)
         self.assertNotIn("review-verdict-3", required)
 
-    def test_a_posted_verdict_outranks_the_ledger(self):
+    def _leftover_verdict(self, head_sha="abc"):
+        """A trusted `keel.jury-verdict.v1` pinned to `head_sha`, posted by somebody else."""
+        return [
+            {
+                "body": f"keel.jury-verdict.v1\nhead: {head_sha}\nAI Jury LGTM",
+                "author_association": "MEMBER",
+            }
+        ]
+
+    def test_a_posted_verdict_pins_only_where_the_run_left_no_record_for_this_head(self):
+        """The hosted-runner route: `.keel/state/` is gitignored, so CI reads the ballots.
+
+        The record here carries no `git` block at all, so it is not a `ship_run` for this
+        head and the posted verdict is the only thing that speaks. That is *why* this test
+        could never have caught the round-5 major: it never exercised a valid same-head
+        pin losing to a verdict, because the pin it offered was invalid to begin with.
+        """
         record = {"run_context": {"jury_panel": _assess(UNSTAFFED, min_vendors=2).as_dict()}}
         artifacts = {
-            "pr_comments": [
-                {
-                    "body": "keel.jury-verdict.v1\nhead: abc\nAI Jury LGTM",
-                    "author_association": "MEMBER",
-                }
-            ],
+            "pr_comments": self._leftover_verdict(),
             "pr_reviews": [],
             "head_sha": "abc",
         }
@@ -1800,6 +1811,85 @@ class TestTheContractIsPinnedToTheShipsMeasurement(unittest.TestCase):
 
         self.assertEqual(pinned["source"], "pull-request")
         self.assertFalse(pinned["probed"], "a pin is not a measurement and must not claim to be")
+
+    def test_a_same_head_fallback_record_outranks_a_leftover_posted_verdict(self):
+        """The #1068 round-5 major: the ledger is the record of what *this run* did.
+
+        A run shipped under the fallback — the panel could not be staffed, three host
+        reviewers sat, and its own `ship_run` record at this exact head says so. A jury
+        verdict for the same head is also on the pull request: a leftover from an earlier
+        ship of this commit, a force-push back onto it, or a collaborator who ran `jury` by
+        hand. Ranked first, that comment replaced the run's own contract and took
+        `review-verdict-1..3` off the required set — three items dropped on the strength of
+        something nobody's run had promised.
+        """
+        _shipped, contract = self._shipped_required(UNSTAFFED)
+        self.assertEqual(contract["jury"]["availability"]["decision"], "fallback")
+
+        required = self._required(
+            report=STAFFED,
+            ledger_jsonl=self._ledger(contract["jury"]["availability"]),
+            comments=self._comments("keel.jury-verdict.v1\nhead: abc\npanelists: 2\nAI Jury LGTM"),
+        )
+
+        self.assertNotIn("jury-verdict", required)
+        for slot in ("review-verdict-1", "review-verdict-2", "review-verdict-3"):
+            self.assertIn(slot, required)
+
+    def test_the_ledger_wins_at_the_unit_too_and_says_which_source_spoke(self):
+        record = {
+            "git": {"head_sha": "abc"},
+            "run_context": {"jury_panel": _assess(UNSTAFFED, min_vendors=2).as_dict()},
+        }
+        artifacts = {
+            "pr_comments": self._leftover_verdict(),
+            "pr_reviews": [],
+            "head_sha": "abc",
+        }
+
+        pinned = cli._shipped_jury_availability(artifacts, record)
+
+        self.assertEqual(pinned["decision"], "fallback")
+        self.assertEqual(pinned["source"], "run-ledger")
+
+    def test_a_same_head_record_that_names_no_panel_still_silences_the_verdict(self):
+        """This run left a record here and it does not say it shipped under a panel.
+
+        `juryavail.shipped` reads `None` from a record whose `run_context.jury_panel` is
+        missing, malformed or `block`. That `None` is the answer — the surface measures —
+        rather than falling through to a comment, which would let somebody else's posting
+        answer for a run that recorded no panel of its own.
+        """
+        for panel in (None, "nonsense", {"decision": "block"}):
+            with self.subTest(panel=panel):
+                record = {"git": {"head_sha": "abc"}, "run_context": {"jury_panel": panel}}
+                artifacts = {
+                    "pr_comments": self._leftover_verdict(),
+                    "pr_reviews": [],
+                    "head_sha": "abc",
+                }
+
+                self.assertIsNone(cli._shipped_jury_availability(artifacts, record))
+
+    def test_the_precedence_is_one_function_not_an_order_of_ifs(self):
+        """`juryavail.pin` is the single authority, and answers without any CLI plumbing."""
+        fallback = {
+            "git": {"head_sha": "abc"},
+            "run_context": {"jury_panel": _assess(UNSTAFFED, min_vendors=2).as_dict()},
+        }
+
+        self.assertEqual(
+            juryavail.pin(fallback, head_sha="abc", panel_verdict_posted=True)["source"],
+            "run-ledger",
+        )
+        self.assertEqual(
+            juryavail.pin(None, head_sha="abc", panel_verdict_posted=True)["source"],
+            "pull-request",
+        )
+        self.assertIsNone(juryavail.pin(None, head_sha="abc", panel_verdict_posted=False))
+        self.assertTrue(juryavail.is_ship_run_for_head(fallback, head_sha="abc"))
+        self.assertFalse(juryavail.is_ship_run_for_head(fallback, head_sha="other"))
+        self.assertFalse(juryavail.is_ship_run_for_head(None, head_sha="abc"))
 
     def test_neither_pin_is_taken_without_a_head(self):
         """The #1068 minor: one blank-head rule, read by both pins (#1068).
@@ -1834,6 +1924,14 @@ class TestTheContractIsPinnedToTheShipsMeasurement(unittest.TestCase):
                 self.assertFalse(juryavail.is_pinnable_head(head_sha))
                 self.assertIsNone(
                     juryavail.shipped({"git": {"head_sha": head_sha}}, head_sha=head_sha)
+                )
+                self.assertIsNone(
+                    juryavail.pin(
+                        {"git": {"head_sha": head_sha}},
+                        head_sha=head_sha,
+                        panel_verdict_posted=True,
+                    ),
+                    "a blank head pins nothing, whatever is posted on the pull request",
                 )
         self.assertTrue(juryavail.is_pinnable_head("abc"))
 

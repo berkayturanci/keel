@@ -299,7 +299,12 @@ def panel_sat(
     change juried on a workstation and checked on a bare runner would otherwise have its
     required evidence quietly rewritten — the panel item dropped, three host verdicts
     demanded that nobody was ever asked to post. The ballots are already on the pull
-    request; that is the measurement, and it outranks anything this host can observe.
+    request; that outranks anything *this host* can observe.
+
+    It does **not** outrank the shipping run's own record of what it did
+    (:func:`shipped`), and :func:`pin` — not this function — owns that order. A posted
+    verdict establishes that a panel sat for this head; it does not establish that this
+    run's review *was* that panel.
 
     ``probed: False`` says plainly that nothing was measured here. Everything else keeps the
     shape :meth:`Availability.as_dict` publishes, so every reader downstream is unchanged.
@@ -343,8 +348,8 @@ def shipped(record: Mapping[str, Any] | None, *, head_sha: str | None) -> dict[s
     can land are the refusing one: a fallback-shipped change verified where the panel *can*
     be staffed is held to a panel it did not run, and a panel-shipped change verified on a
     bare runner is held to host verdicts nobody posted. A run that genuinely convened the
-    panel at this head is unaffected either way — its ballots are on the pull request, and
-    :func:`panel_sat` answers before this is ever consulted.
+    panel at this head is unaffected either way — this record then says ``available`` and
+    its ballots are on the pull request, so both sources agree.
 
     ``probed: False`` for the same reason :func:`panel_sat` sets it: this is a record being
     republished, not a measurement taken here. The ledger's own copy carries ``probed: True``
@@ -364,6 +369,73 @@ def shipped(record: Mapping[str, Any] | None, *, head_sha: str | None) -> dict[s
     return {**dict(panel), "probed": False, "source": SOURCE_RUN_LEDGER}
 
 
+def is_ship_run_for_head(record: Mapping[str, Any] | None, *, head_sha: Any) -> bool:
+    """Did a ``ship_run`` for **this exact head** leave a record? (#1068)
+
+    Presence, not content: the run's ``run_context.jury_panel`` may say ``fallback``,
+    ``block``, or nothing at all, and this still answers ``True``. That separation is the
+    whole point — :func:`pin` needs to know *whether the run left a record here* before it
+    reads what the record says, because a record that says nothing about a panel is still
+    a run that did not ship under one.
+    """
+    return isinstance(record, Mapping) and _matches_head(record, head_sha)
+
+
+def pin(
+    record: Mapping[str, Any] | None,
+    *,
+    head_sha: Any,
+    panel_verdict_posted: bool,
+) -> dict[str, Any] | None:
+    """**The single authority on "what did this run ship under".** (#1066, #1068)
+
+    Every verification surface — ``keel evidence-verify``, ``keel merge``, and
+    :func:`keel.cli._shipped_jury_availability`, which is only this function's thin-I/O
+    wrapper — resolves that question here and nowhere else. It is one function rather than
+    an order of ``if``-statements at a call site because the *precedence* between the two
+    pins is itself a rule, and #1068 rounds 2–4 each found a rule written in one place and
+    forgotten in its twin. There is one place now, and this docstring is it.
+
+    ``None`` means "nothing pins this head": the caller measures its own machine, exactly
+    as it did before either pin existed. That is the fail-closed answer, never a waiver —
+    a probe can only add the panel requirement back or demand the tier's host verdicts.
+
+    The order, and why it is this way round:
+
+    1. **No head, no pin.** :func:`is_pinnable_head`. A pin removes requirements — it takes
+       ``review-verdict-1..3`` off the required set outright — so it may only ever be taken
+       against an exact commit. ``panel_verdict_posted`` is ignored here even when ``True``,
+       because :func:`keel.evidence.panel_verdict_posted` reads a blank head as *no head
+       filter*: right for counting evidence, wrong for a pin.
+    2. **The run's own ledger record for this head wins** (:func:`is_ship_run_for_head`,
+       then :func:`shipped`). The ledger records what *this run actually did*; a posted
+       verdict records what somebody put on the pull request. At the same head the two can
+       disagree, and then the ledger is the one that is evidence of the run: a ship that
+       measured ``fallback`` seated three host reviewers and owes ``review-verdict-1..3``,
+       and a leftover jury verdict at that head — from an earlier ship of the same commit,
+       from a force-push back onto it, or from a collaborator who ran ``jury`` by hand —
+       is not that run's review. Letting the verdict win dropped three required items on
+       the strength of a comment nobody's run had promised.
+    3. **A same-head record that says nothing about a panel still speaks.** :func:`shipped`
+       returns ``None`` for a record whose ``run_context.jury_panel`` is missing,
+       malformed, or ``block``, and that ``None`` is returned as-is rather than falling
+       through to the verdict: this run left a record here and it does not say the run
+       shipped under a panel, so no comment may say otherwise on its behalf.
+    4. **Only with no record for this head does a posted verdict pin** (:func:`panel_sat`).
+       This is the hosted-runner route and the common one: ``.keel/state/`` is gitignored,
+       so CI usually cannot read the ledger at all, and the head-pinned ballots on the pull
+       request are then the only surviving proof that the panel sat.
+
+    Both pins therefore run in the same direction: the strongest available statement about
+    *this run at this head*, falling back to measuring rather than to guessing.
+    """
+    if not is_pinnable_head(head_sha):
+        return None
+    if is_ship_run_for_head(record, head_sha=head_sha):
+        return shipped(record, head_sha=head_sha)
+    return panel_sat() if panel_verdict_posted else None
+
+
 def is_pinnable_head(head_sha: Any) -> bool:
     """Is ``head_sha`` a head a pin may be taken against? (#1068)
 
@@ -374,8 +446,8 @@ def is_pinnable_head(head_sha: Any) -> bool:
     gate to this, and :func:`shipped` to the ledger pin; round 3 hardened those and left
     the posted-verdict pin reading :func:`keel.evidence._matches_head`, which treats a
     blank head as *unfiltered* and so counted any trusted jury marker on the pull request
-    as this head's. Written twice, hardened once. It is written here now, and
-    :func:`keel.cli._shipped_jury_availability` asks it before either source is consulted.
+    as this head's. Written twice, hardened once. It is written here now, and :func:`pin`
+    — the one place the two sources are ranked — asks it before either is consulted.
 
     ``keel.evidence``'s own rule is deliberately the other one and stays that way: it
     filters *evidence items* inside a gate that, with no head resolved, runs head-agnostic

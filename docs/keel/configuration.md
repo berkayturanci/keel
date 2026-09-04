@@ -390,15 +390,28 @@ produced: `keel evidence-verify` and `keel merge` run wherever CI puts them, so 
 there would answer "could *this* runner convene a panel" when the question is "what was this
 change reviewed by". Both take the ship's decision instead, strongest source first:
 
-1. a head-pinned `keel.jury-verdict.v1` already posted on the pull request — the panel sat,
-   and the ballots prove it from the one place a bare runner can read;
-2. the `ship_run` ledger entry for that pull request (`run_context.jury_panel`), which
-   carries the decision the shipping run measured, fallback included.
+1. the `ship_run` ledger entry written for **this head** of that pull request
+   (`run_context.jury_panel`), which carries the decision the shipping run measured,
+   fallback included;
+2. failing that, a head-pinned `keel.jury-verdict.v1` posted on the pull request — the
+   panel sat, and the ballots prove it from the one place a bare runner can read.
 
-Only with neither does the verification surface probe on its own, which is what it did
-before. The published record says which it was: `availability.source` is `probe`,
-`pull-request` or `run-ledger`, and a pinned record carries `probed: false` — "we were told"
-and "we checked" are not the same claim.
+**The ledger outranks the posted verdict, and the order is load-bearing.** The ledger
+records what *this run actually did*; a posted verdict records what somebody put on the
+pull request, which is not the same claim. A run that shipped under the fallback seated
+three host reviewers and owes `review-verdict-1..3`, and a leftover jury verdict at that
+same head — from an earlier ship of the commit, a force-push back onto it, or a
+collaborator who ran `jury` by hand — is not that run's review. Taking the verdict first
+dropped three required items on the strength of a comment no run had promised. A same-head
+record that says nothing about a panel is likewise the run speaking: it did not ship under
+one, and no comment may say otherwise on its behalf.
+
+Only with no record for this head *and* no posted verdict does the verification surface
+probe on its own, which is what it did before. The published record says which it was:
+`availability.source` is `probe`, `pull-request` or `run-ledger`, and a pinned record
+carries `probed: false` — "we were told" and "we checked" are not the same claim. The whole
+precedence lives in one function, `keel.juryavail.pin`; `keel.cli._shipped_jury_availability`
+only reads the two artifacts and hands them over.
 
 **Both sources are pinned to the exact head, and neither is read without one.** A pull
 request outlives its heads, so a ship of an earlier head may not answer for the head being

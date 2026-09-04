@@ -1044,8 +1044,8 @@ def _shipped_jury_availability(
 ) -> dict[str, Any] | None:
     """What the *ship* measured about the panel, for a surface that only verifies (#1066).
 
-    ``None`` when this pull request says nothing about it, which leaves the caller to probe
-    exactly as it did before.
+    ``None`` when nothing pins this head, which leaves the caller to probe exactly as it
+    did before.
 
     A machine-dependent probe is right for a surface about to *dispatch* a panel. It is
     wrong for one checking evidence somebody else produced: ``keel evidence-verify`` and
@@ -1055,47 +1055,36 @@ def _shipped_jury_availability(
     bench nobody ever sat. Re-measuring answers "could *this* machine convene a panel"; the
     question is "what was this change reviewed by".
 
-    Two sources, strongest first:
+    **This function is I/O only, and deliberately holds no rule of its own.** Which source
+    wins, what a blank head does, what a same-head record that says nothing about a panel
+    means — all of it is :func:`keel.juryavail.pin`, the single authority on "what did this
+    run ship under". Read that docstring; #1068 rounds 2–5 were each a rule written in one
+    place and forgotten in its twin, and the last of them was the *precedence* living in
+    the order of two ``if``-statements right here, where no reader thought to look for it.
 
-    * a head-pinned jury verdict already posted on the pull request — the panel sat, and the
-      ballots prove it from the one place a bare runner can read;
-    * the ``ship_run`` ledger entry written for **this head** of this pull request, which
-      carries the decision the shipping run measured (fallback included, so a
-      fallback-reviewed change is not held to a panel a workstation *could* have convened).
+    Everything below is the reading of the two artifacts that authority ranks:
 
-    Both sources are pinned to the current head, and for one reason: a pull request outlives
-    its heads. A ship of an earlier head that fell back would otherwise still be answering
-    for the head being verified now — a stale run relaxing a live gate. A record from any
-    other head is no record at all (:func:`keel.juryavail.shipped`), and the caller measures
-    this machine instead, which is the fail-closed answer both ways round.
+    * the ``ship_run`` ledger entry for this pull request (already loaded by the caller,
+      because one surface treats an unreadable ledger as fatal and the other does not);
+    * whether a head-pinned jury verdict is posted on the pull request.
 
-    The ledger lives under the gitignored ``.keel/state/``, so on a hosted runner the first
-    source is usually the only one. That is less a gap than the shape of the thing: a run
-    that convened the panel leaves its ballots on the pull request, and a run that fell back
-    leaves host verdicts and no jury verdict — which is what a re-probe on a bare runner
-    resolves to anyway. The residue is a fallback-shipped change verified, with no readable
-    ledger, on a machine that *can* staff the panel; that one is held to the panel it did not
-    run, which fails closed rather than open.
-
-    **Neither source is consulted at all without a head** (#1068), which is why the guard
-    is one line above both rather than inside each. ``keel evidence-verify`` and ``keel
-    merge`` can reach here with no head resolved — a detached checkout, a pull request the
-    API answered without ``headRefOid`` — and the two pins then disagreed:
-    :func:`keel.juryavail.shipped` refused, while ``panel_verdict_posted`` fell through to
-    :func:`keel.evidence._matches_head`, which reads a blank head as *no head filter* and
-    so counted **any** trusted jury marker on the pull request as this head's. A verdict
-    from three heads ago could take ``review-verdict-1..3`` off the required set. With no
-    head this surface pins nothing and the caller measures its own machine — the same
-    answer a stale ledger record already got (:func:`keel.juryavail.is_pinnable_head`).
+    The verdict is asked for only against a pinnable head:
+    :func:`keel.evidence.panel_verdict_posted` documents that as its precondition, since it
+    goes through :func:`keel.evidence._matches_head`, which reads a blank head as *no head
+    filter* — right for counting evidence, wrong for a pin. Both sites ask the one
+    predicate, :func:`keel.juryavail.is_pinnable_head`, so hardening it hardens both, and
+    :func:`keel.juryavail.pin` refuses a blank head again on its own account rather than
+    trusting this caller to have done it.
     """
     head_sha = artifacts["head_sha"]
-    if not juryavail.is_pinnable_head(head_sha):
-        return None
-    if evidence.panel_verdict_posted(
-        artifacts["pr_comments"], artifacts["pr_reviews"], head_sha=head_sha
-    ):
-        return juryavail.panel_sat()
-    return juryavail.shipped(ledger_record, head_sha=head_sha)
+    return juryavail.pin(
+        ledger_record,
+        head_sha=head_sha,
+        panel_verdict_posted=juryavail.is_pinnable_head(head_sha)
+        and evidence.panel_verdict_posted(
+            artifacts["pr_comments"], artifacts["pr_reviews"], head_sha=head_sha
+        ),
+    )
 
 
 def _review_assignment(
