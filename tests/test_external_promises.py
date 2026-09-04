@@ -270,8 +270,12 @@ class TestNotLookingIsNotAPass(unittest.TestCase):
           shape is shown rather than inferred from the check above.
 
         Sensitivity is established by mutation, one handler at a time:
-        substituting a returning stub for a handler's failure call makes the
-        corresponding row fail. The runs are recorded in the pull request.
+        substituting a returning stub for a handler's failure call makes every
+        row that reaches it fail. Rows and handlers are not one to one, and the
+        two PyPI rows are why — they reach the same `except OSError` and the same
+        helper call by different error types, so a single stub turns both red
+        together. The three tap rows do map to distinct handlers. The runs are
+        recorded in the pull request.
 
         **What this does not pin.** Not the `else` bodies: a wrong digest and a
         repo version behind PyPI are the online checks' own subject. Not
