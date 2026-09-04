@@ -22,8 +22,16 @@ This module is the pure half — the mode resolution, the commit parser, and the
 * :func:`test_globs` — where a project says its tests live, read off
   ``policy_pack.test_groups``;
 * :func:`parse_commits` — ``git log`` output -> :class:`Commit` records;
-* :func:`check_order` — the gate: the first non-merge commit on the branch touches only
-  test paths, an implementation commit follows it, and the gate run is green.
+* :func:`check_order` — the gate: the first non-merge commit on the branch adds or
+  modifies test paths and touches nothing else, an implementation commit follows it, no
+  later commit deletes a test, and the gate run is green.
+
+**What this gate does not do.** It reads *commit order and paths*, and nothing else. It
+does not run phase A's tests, does not verify they were red, and cannot tell whether the
+committed tests assert anything at all — a first commit adding an empty file under
+``tests/`` satisfies it. Those are a reviewer's questions (and, for the red-then-green
+half, the implementer's brief). The gate exists to make the *shape* of a test-first run
+checkable by a machine, not to certify that the tests are good.
 
 Pure and deterministic: no wall-clock, no randomness, no I/O, and — at module scope — no
 keel imports at all. The one git read the gate needs is :func:`keel.git.commit_log`, the
@@ -151,13 +159,44 @@ def is_test_path(path: str, globs: Sequence[str]) -> bool:
     return any(fnmatch.fnmatch(path, glob) for glob in globs)
 
 
+#: ``--name-status`` letters this module reasons about. Only ``D`` is load-bearing: every
+#: other status leaves the path present in the tree after the commit.
+ADDED = "A"
+MODIFIED = "M"
+DELETED = "D"
+RENAMED = "R"
+COPIED = "C"
+
+
+@dataclass(frozen=True)
+class Change:
+    """One path a commit touched, and what it did to it.
+
+    ``--name-only`` cannot tell an addition from a deletion, which made a first commit
+    that only ran ``git rm`` over the test suite look exactly like one that wrote it. The
+    status is what separates "wrote the failing tests" from "removed the failing tests".
+    """
+
+    status: str
+    path: str
+
+    @property
+    def deleted(self) -> bool:
+        return self.status == DELETED
+
+    @property
+    def present(self) -> bool:
+        """Does the path exist in the tree after this commit? (Everything but ``D``.)"""
+        return not self.deleted
+
+
 @dataclass(frozen=True)
 class Commit:
-    """One commit on the branch: what it is, and which paths it touched."""
+    """One commit on the branch: what it is, and what it did to which paths."""
 
     sha: str
     subject: str = ""
-    files: tuple[str, ...] = ()
+    changes: tuple[Change, ...] = ()
     merge: bool = False
 
     @property
@@ -165,17 +204,44 @@ class Commit:
         """The 7-character sha operators read in a gate message."""
         return self.sha[:7]
 
+    @property
+    def files(self) -> tuple[str, ...]:
+        """Every path the commit touched, in commit order, deletions included."""
+        return tuple(change.path for change in self.changes)
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "sha": self.sha,
             "subject": self.subject,
+            "changes": [{"status": c.status, "path": c.path} for c in self.changes],
             "files": list(self.files),
             "merge": self.merge,
         }
 
 
+def _change(line: str) -> Change | None:
+    """One ``--name-status`` line -> a :class:`Change` (``None`` when it is not one).
+
+    A rename or copy prints ``R100<TAB>old<TAB>new``; the destination is the path that
+    exists afterwards, so that is the one recorded. **A rename is a move, not a
+    deletion** — renaming ``tests/test_a.py`` is not the evasion the deletion rule looks
+    for. The corollary, stated because it is a real boundary: renaming a test *out of*
+    the test tree is neither an added test nor a deleted one here, and stays a reviewer's
+    catch.
+    """
+    fields = line.split("\t")
+    if len(fields) < 2 or not fields[0].strip():
+        return None
+    status = fields[0].strip()[0].upper()
+    path = fields[2] if status in (RENAMED, COPIED) and len(fields) > 2 else fields[1]
+    path = path.strip()
+    if not path:
+        return None
+    return Change(status, path)
+
+
 def parse_commits(text: str | None) -> tuple[Commit, ...] | None:
-    """Parse :data:`LOG_FORMAT` + ``--name-only`` output, oldest commit first.
+    """Parse :data:`LOG_FORMAT` + ``--name-status`` output, oldest commit first.
 
     ``None`` in, ``None`` out — :func:`keel.git.commit_log` reports an unreadable
     history as ``None``, and that must stay distinct from "the branch has no commits"
@@ -197,7 +263,11 @@ def parse_commits(text: str | None) -> tuple[Commit, ...] | None:
             Commit(
                 sha=sha,
                 subject=subject.strip(),
-                files=tuple(line.strip() for line in body.splitlines() if line.strip()),
+                changes=tuple(
+                    change
+                    for change in (_change(line) for line in body.splitlines() if line.strip())
+                    if change is not None
+                ),
                 # A merge has more than one parent. Merges are skipped rather than
                 # judged: a merge from the base branch carries every path the base
                 # moved, which is not this implementer's commit order.
@@ -215,6 +285,8 @@ NO_TEST_PATHS = "no-test-paths"
 NO_COMMITS = "no-commits"
 EMPTY_FIRST_COMMIT = "empty-first-commit"
 IMPLEMENTATION_FIRST = "implementation-first"
+NO_TESTS_ADDED = "no-tests-added"
+TESTS_DELETED = "tests-deleted"
 NO_IMPLEMENTATION_COMMIT = "no-implementation-commit"
 GATES_RED = "gates-red"
 
@@ -228,7 +300,8 @@ class OrderResult:
     message: str
     tests_commit: str | None = None
     implementation_commit: str | None = None
-    #: Non-test paths in the first commit, in commit order — what to move out of it.
+    #: The paths that decided a failure, in commit order: the non-test paths to move out
+    #: of the first commit, or the deleted tests to restore.
     offending: tuple[str, ...] = ()
     test_globs: tuple[str, ...] = field(default_factory=tuple)
 
@@ -258,13 +331,23 @@ def check_order(
     2. the project says where its tests live (see :func:`test_globs`) — without that
        there is nothing to check against, and a gate that cannot look must not pass;
     3. the first non-merge commit touches at least one path, and **only** test paths;
-    4. a later commit touches a non-test path — the implementation the tests were
+    4. that commit *adds or modifies* at least one test — a first commit that only
+       deletes tests is the opposite of writing them;
+    5. no later commit deletes a test path — deleting the failing tests is the cheapest
+       way to make phase B "pass", and it is the one this gate exists to refuse;
+    6. a later commit touches a non-test path — the implementation the tests were
        written for;
-    5. the gate run is green, when the caller measured one.
+    7. the gate run is green, when the caller measured one.
 
     ``gates_green`` is tri-state. ``None`` means the caller made no gate observation, so
     only the commit order is judged; ``False`` blocks, because a branch whose tests were
     committed first and are still red has not finished phase B.
+
+    **The boundary.** This reads commit order and paths, and nothing else. It never runs
+    phase A's tests, so it cannot report that they were red, and it cannot tell whether
+    the committed tests assert anything — an empty file under ``tests/`` satisfies rule 4.
+    Those remain a reviewer's questions; the gate makes the *shape* of a test-first run
+    machine-checkable, not the quality of the tests.
     """
     globs = tuple(test_globs)
     if commits is None:
@@ -294,7 +377,7 @@ def check_order(
             test_globs=globs,
         )
     first = work[0]
-    if not first.files:
+    if not first.changes:
         return OrderResult(
             False,
             EMPTY_FIRST_COMMIT,
@@ -303,7 +386,9 @@ def check_order(
             tests_commit=first.sha,
             test_globs=globs,
         )
-    offending = tuple(path for path in first.files if not is_test_path(path, globs))
+    offending = tuple(
+        change.path for change in first.changes if not is_test_path(change.path, globs)
+    )
     if offending:
         return OrderResult(
             False,
@@ -315,11 +400,43 @@ def check_order(
             offending=offending,
             test_globs=globs,
         )
+    if not any(change.present for change in first.changes):
+        # Every path in the first commit is a test path *and* every one of them is a
+        # deletion: `git rm` over the suite, which reads as "tests first" to anything
+        # that only looks at names. Writing the failing tests is the phase; removing
+        # them is its inverse.
+        removed = tuple(change.path for change in first.changes)
+        return OrderResult(
+            False,
+            NO_TESTS_ADDED,
+            f"the first commit {first.short} only deletes tests and adds none, so there "
+            f"are no failing tests for phase B to satisfy: {', '.join(removed)}",
+            tests_commit=first.sha,
+            offending=removed,
+            test_globs=globs,
+        )
+    deleted = tuple(
+        change.path
+        for commit in work[1:]
+        for change in commit.changes
+        if change.deleted and is_test_path(change.path, globs)
+    )
+    if deleted:
+        return OrderResult(
+            False,
+            TESTS_DELETED,
+            f"a commit after the tests commit {first.short} deletes tests, which is the "
+            "cheapest way to make phase B pass without implementing anything: "
+            f"{', '.join(deleted)}",
+            tests_commit=first.sha,
+            offending=deleted,
+            test_globs=globs,
+        )
     implementation = next(
         (
             commit
             for commit in work[1:]
-            if any(not is_test_path(path, globs) for path in commit.files)
+            if any(not is_test_path(change.path, globs) for change in commit.changes)
         ),
         None,
     )
@@ -352,16 +469,56 @@ def check_order(
     )
 
 
-def phase_records(result: OrderResult | None) -> list[dict[str, Any]] | None:
+def phase_implementers(
+    pairs: Iterable[tuple[str, str]] = (),
+    *,
+    default: str | None = None,
+) -> dict[str, str | None]:
+    """``--phase-implementer <phase>=<label>`` pairs -> one label per phase.
+
+    ``default`` is the run's ``--implementer``, used for any phase not named explicitly —
+    which is the ordinary case, because the profile requires both phases to run on the
+    same provider. The point of allowing them to differ is that a run where they *did*
+    differ records the fact instead of quietly presenting a single label for both.
+    Unknown phase names are dropped here; the CLI rejects them at parse time.
+    """
+    resolved: dict[str, str | None] = {phase: default for phase in PHASES}
+    for phase, label in pairs:
+        if phase in resolved:
+            resolved[phase] = label
+    return resolved
+
+
+def phase_records(
+    result: OrderResult | None,
+    *,
+    implementers: Mapping[str, str | None] | None = None,
+) -> list[dict[str, Any]] | None:
     """The two s4 phases as ledger records, or ``None`` when the run had no TDD phases.
 
     A phase whose commit could not be identified records ``commit: null`` rather than
     being dropped: the ledger says a TDD run happened and which half of it is missing,
     which is the question a closure comment is read for.
+
+    Each record also carries the ``implementer`` that ran that phase, so *"the same
+    provider wrote the tests and the implementation"* — the rule the profile rests on and
+    which nothing else in the record could show — is auditable after the fact rather than
+    assumed. It is emit-only, like the gate seat in ``knobs.team``: keel records what the
+    orchestrator reports, and two different labels are a finding for a reader, not
+    something core can independently prove.
     """
     if result is None:
         return None
+    seats = implementers or {}
     return [
-        {"phase": PHASE_TESTS, "commit": result.tests_commit},
-        {"phase": PHASE_IMPLEMENTATION, "commit": result.implementation_commit},
+        {
+            "phase": PHASE_TESTS,
+            "commit": result.tests_commit,
+            "implementer": seats.get(PHASE_TESTS),
+        },
+        {
+            "phase": PHASE_IMPLEMENTATION,
+            "commit": result.implementation_commit,
+            "implementer": seats.get(PHASE_IMPLEMENTATION),
+        },
     ]

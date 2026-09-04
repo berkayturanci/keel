@@ -11,8 +11,17 @@ import unittest
 from keel import tdd
 
 
-def _commit(sha, *files, subject="work", merge=False):
-    return tdd.Commit(sha=sha, subject=subject, files=tuple(files), merge=merge)
+def _commit(sha, *files, subject="work", merge=False, status=tdd.MODIFIED):
+    """A commit touching ``files``; every path gets ``status`` unless it is a pair.
+
+    ``_commit("a", "tests/x.py", ("D", "tests/y.py"))`` — a bare string is the common
+    case (the path was written), a ``(status, path)`` pair spells the status out.
+    """
+    changes = tuple(
+        tdd.Change(*entry) if isinstance(entry, tuple) else tdd.Change(status, entry)
+        for entry in files
+    )
+    return tdd.Commit(sha=sha, subject=subject, changes=changes, merge=merge)
 
 
 class TestResolveMode(unittest.TestCase):
@@ -86,6 +95,26 @@ class TestTestGlobs(unittest.TestCase):
         }
         self.assertEqual(tdd.test_globs(pack), ("tests/**",))
 
+    def test_the_fallback_is_whole_config_not_per_group(self):
+        """The documented rule, pinned: one `test_paths` silences every group's `paths`.
+
+        `configuration.md` says so explicitly because the alternative reading — per-group
+        fallback — is the natural one and is wrong: it would re-import exactly the
+        implementation surface `test_paths` exists to exclude. A group whose tests should
+        count declares its own `test_paths`.
+        """
+        pack = {
+            "test_groups": {
+                "unit": {"command": "x", "paths": ["src/**"], "test_paths": ["tests/**"]},
+                "e2e": {"command": "y", "paths": ["e2e/**"]},
+            }
+        }
+        self.assertEqual(tdd.test_globs(pack), ("tests/**",))
+
+        # …and with no `test_paths` anywhere, every group's selectors count.
+        del pack["test_groups"]["unit"]["test_paths"]
+        self.assertEqual(tdd.test_globs(pack), ("e2e/**", "src/**"))
+
     def test_duplicate_globs_collapse_in_declaration_order(self):
         pack = {
             "test_groups": {
@@ -120,8 +149,13 @@ class TestParseCommits(unittest.TestCase):
         return "".join(records)
 
     def _record(self, sha, parents, subject, files):
+        """One `--format` header plus its `--name-status` body.
+
+        ``files`` entries are paths (status ``M``) or ``"<status>\t<path>"`` lines.
+        """
         head = f"{tdd.RECORD_SEP}{sha}{tdd.FIELD_SEP}{parents}{tdd.FIELD_SEP}{subject}\n"
-        return head + "\n" + "".join(f"{path}\n" for path in files)
+        body = "".join(f"{path}\n" if "\t" in path else f"M\t{path}\n" for path in files)
+        return head + "\n" + body
 
     def test_unreadable_history_stays_none(self):
         # `None` is git failing. Collapsing it to () here would let an unreadable branch
@@ -151,6 +185,35 @@ class TestParseCommits(unittest.TestCase):
     def test_a_commit_touching_nothing_keeps_an_empty_file_list(self):
         text = self._record("d" * 40, "a" * 40, "chore: empty", [])
         self.assertEqual(tdd.parse_commits(text)[0].files, ())
+        self.assertEqual(tdd.parse_commits(text)[0].changes, ())
+
+    def test_statuses_are_parsed_and_a_rename_records_its_destination(self):
+        text = self._record(
+            "f" * 40,
+            "a" * 40,
+            "refactor: move",
+            ["A\ttests/new.py", "D\ttests/old.py", "R100\ttests/a.py\ttests/b.py"],
+        )
+        commit = tdd.parse_commits(text)[0]
+        self.assertEqual(
+            [(c.status, c.path) for c in commit.changes],
+            [("A", "tests/new.py"), ("D", "tests/old.py"), ("R", "tests/b.py")],
+        )
+        # `present` is "the path exists after this commit" — everything but a delete, so a
+        # rename counts as written rather than as removing its source.
+        self.assertEqual([c.present for c in commit.changes], [True, False, True])
+        self.assertTrue(commit.changes[1].deleted)
+
+    def test_a_body_line_that_is_not_a_change_is_skipped(self):
+        # A bare line with no status column cannot be a `--name-status` change; git does
+        # not emit one, and reading it as a path would invent a touched file.
+        head = f"{tdd.RECORD_SEP}{'g' * 40}{tdd.FIELD_SEP}{'a' * 40}{tdd.FIELD_SEP}feat: x\n"
+        text = head + "\nno-tab-here\nA\tsrc/x.py\n"
+        self.assertEqual(tdd.parse_commits(text)[0].files, ("src/x.py",))
+
+    def test_a_change_line_with_a_blank_status_or_path_is_skipped(self):
+        self.assertIsNone(tdd._change("\ttests/x.py"))
+        self.assertIsNone(tdd._change("A\t   "))
 
     def test_a_record_without_a_sha_is_skipped(self):
         # Both spellings of "nothing to read here": a chunk that is only separators
@@ -166,8 +229,14 @@ class TestParseCommits(unittest.TestCase):
 
     def test_as_dict_is_json_stable(self):
         self.assertEqual(
-            _commit("abc", "tests/a.py", subject="test: a").as_dict(),
-            {"sha": "abc", "subject": "test: a", "files": ["tests/a.py"], "merge": False},
+            _commit("abc", ("A", "tests/a.py"), subject="test: a").as_dict(),
+            {
+                "sha": "abc",
+                "subject": "test: a",
+                "changes": [{"status": "A", "path": "tests/a.py"}],
+                "files": ["tests/a.py"],
+                "merge": False,
+            },
         )
 
 
@@ -239,6 +308,83 @@ class TestCheckOrder(unittest.TestCase):
         self.assertIn("src/x.py", result.message)
         self.assertIn("tests/**", result.message)
 
+    def test_a_first_commit_that_only_deletes_tests_is_not_writing_them(self):
+        # `git rm tests/test_a.py` then edit src: every path in the first commit is a test
+        # path, so a name-only view called this test-first. Removing the failing tests is
+        # the inverse of the phase.
+        result = tdd.check_order(
+            [
+                _commit("a" * 40, ("D", "tests/test_a.py")),
+                _commit("b" * 40, ("M", "src/x.py")),
+            ],
+            test_globs=TESTS,
+            gates_green=True,
+        )
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, tdd.NO_TESTS_ADDED)
+        self.assertEqual(result.offending, ("tests/test_a.py",))
+
+    def test_a_first_commit_may_delete_a_test_while_adding_one(self):
+        result = tdd.check_order(
+            [
+                _commit("a" * 40, ("A", "tests/test_new.py"), ("D", "tests/test_old.py")),
+                _commit("b" * 40, ("M", "src/x.py")),
+            ],
+            test_globs=TESTS,
+            gates_green=True,
+        )
+        self.assertTrue(result.ok)
+
+    def test_a_rename_counts_as_written_not_as_deleted(self):
+        result = tdd.check_order(
+            [
+                _commit("a" * 40, ("R", "tests/test_b.py")),
+                _commit("b" * 40, ("M", "src/x.py")),
+            ],
+            test_globs=TESTS,
+            gates_green=True,
+        )
+        self.assertTrue(result.ok)
+
+    def test_deleting_the_failing_tests_in_the_implementation_commit_blocks(self):
+        result = tdd.check_order(
+            [
+                _commit("a" * 40, ("A", "tests/test_a.py")),
+                _commit("b" * 40, ("M", "src/x.py"), ("D", "tests/test_a.py")),
+            ],
+            test_globs=TESTS,
+            gates_green=True,
+        )
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, tdd.TESTS_DELETED)
+        self.assertEqual(result.offending, ("tests/test_a.py",))
+        self.assertIn("tests/test_a.py", result.message)
+
+    def test_deleting_the_tests_in_any_later_commit_blocks(self):
+        # Not only "the implementation commit": a third commit that quietly removes them
+        # is the same evasion one step further along.
+        result = tdd.check_order(
+            [
+                _commit("a" * 40, ("A", "tests/test_a.py")),
+                _commit("b" * 40, ("M", "src/x.py")),
+                _commit("c" * 40, ("D", "tests/test_a.py")),
+            ],
+            test_globs=TESTS,
+            gates_green=True,
+        )
+        self.assertEqual(result.code, tdd.TESTS_DELETED)
+
+    def test_deleting_a_non_test_path_later_is_ordinary_work(self):
+        result = tdd.check_order(
+            [
+                _commit("a" * 40, ("A", "tests/test_a.py")),
+                _commit("b" * 40, ("M", "src/x.py"), ("D", "src/old.py")),
+            ],
+            test_globs=TESTS,
+            gates_green=True,
+        )
+        self.assertTrue(result.ok)
+
     def test_tests_only_branch_never_reached_phase_b(self):
         result = tdd.check_order(
             [_commit("a" * 40, "tests/test_x.py"), _commit("b" * 40, "tests/test_y.py")],
@@ -284,6 +430,26 @@ class TestCheckOrder(unittest.TestCase):
         self.assertIsNone(record["implementation_commit"])
 
 
+class TestPhaseImplementers(unittest.TestCase):
+    def test_the_run_implementer_covers_both_phases(self):
+        self.assertEqual(
+            tdd.phase_implementers(default="codex (gpt-5)"),
+            {"tests": "codex (gpt-5)", "implementation": "codex (gpt-5)"},
+        )
+
+    def test_a_named_phase_overrides_the_default(self):
+        self.assertEqual(
+            tdd.phase_implementers([("implementation", "claude")], default="codex"),
+            {"tests": "codex", "implementation": "claude"},
+        )
+
+    def test_an_unknown_phase_name_is_dropped(self):
+        self.assertEqual(
+            tdd.phase_implementers([("review", "claude")], default=None),
+            {"tests": None, "implementation": None},
+        )
+
+
 class TestPhaseRecords(unittest.TestCase):
     def test_no_result_means_the_run_had_no_tdd_phases(self):
         self.assertIsNone(tdd.phase_records(None))
@@ -297,18 +463,31 @@ class TestPhaseRecords(unittest.TestCase):
         self.assertEqual(
             tdd.phase_records(result),
             [
-                {"phase": "tests", "commit": "a" * 40},
-                {"phase": "implementation", "commit": "b" * 40},
+                {"phase": "tests", "commit": "a" * 40, "implementer": None},
+                {"phase": "implementation", "commit": "b" * 40, "implementer": None},
             ],
         )
+
+    def test_each_phase_records_the_implementer_that_ran_it(self):
+        result = tdd.check_order(
+            [_commit("a" * 40, ("A", "tests/test_x.py")), _commit("b" * 40, ("M", "src/x.py"))],
+            test_globs=TESTS,
+            gates_green=True,
+        )
+        seats = tdd.phase_implementers([("implementation", "claude")], default="codex")
+        records = tdd.phase_records(result, implementers=seats)
+        # Two different providers is exactly what the record has to be able to show:
+        # "the same provider wrote the tests and the implementation" is the profile's
+        # premise, and nothing else in the ledger could contradict it.
+        self.assertEqual([r["implementer"] for r in records], ["codex", "claude"])
 
     def test_a_missing_half_records_null_rather_than_vanishing(self):
         result = tdd.check_order([], test_globs=TESTS)
         self.assertEqual(
             tdd.phase_records(result),
             [
-                {"phase": "tests", "commit": None},
-                {"phase": "implementation", "commit": None},
+                {"phase": "tests", "commit": None, "implementer": None},
+                {"phase": "implementation", "commit": None, "implementer": None},
             ],
         )
 

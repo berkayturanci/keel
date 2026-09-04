@@ -2010,7 +2010,9 @@ is the per-project spelling of the same thing (see
 a separate command: the backbone step ids are unchanged, s4 simply runs in two phases — a
 test-only commit carrying the failing tests derived from the issue's acceptance criteria,
 then the implementation that turns them green — and s8 gains the pure, blocking
-`tdd-order` gate that verifies that commit order actually happened.
+`tdd-order` gate that verifies that commit order actually happened. The gate checks
+**order and paths only**: it never runs phase A's tests and cannot report that they were
+red.
 
 ```bash
 keel ship .keel/project.yaml --root . --tdd --dry-run --json
@@ -2022,8 +2024,12 @@ The same block is rendered by `keel plan --tdd`, and `keel run-gates --tdd` adds
 on its own. There is no `--no-tdd`: a project that configured the contract has said the
 contract is the policy, and a flag that switched it off from a command line would make it
 advisory. A `--live --append-ledger` run records `run_context.implement_mode: "tdd"` and one
-`run_context.implement_phases` entry per phase with its commit, which the closure comment
-renders as `Implement: TDD (tests <sha> → implementation <sha>)`.
+`run_context.implement_phases` entry per phase with its commit and the implementer that
+ran it (`--phase-implementer tests=<label>` when a phase really did run on a different
+provider), which the closure comment renders as
+`Implement: TDD (tests <sha> by <implementer> → implementation <sha> by <implementer>)`.
+A run that does not use the profile records `implement_mode: null` and
+`implement_phases: []`, and its closure comment is unchanged.
 
 ## `keel implement <project.yaml> <issue> [--root DIR] [--delegate AGENT] [--dry-run] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--json]`
 

@@ -272,12 +272,24 @@ def _implement_mode(block: dict[str, Any]) -> list[str]:
         return []
     phases = block.get("implement_phases")
     parts = [
-        f"{phase.get('phase')} {_short(phase.get('commit'))}"
+        f"{phase.get('phase')} {_short(phase.get('commit'))}{_by(phase.get('implementer'))}"
         for phase in (phases if isinstance(phases, list) else [])
         if isinstance(phase, dict)
     ]
     detail = f" ({' → '.join(parts)})" if parts else ""
     return [f"- **Implement:** {TDD_LABEL}{detail}"]
+
+
+def _by(implementer: Any) -> str:
+    """`` by <implementer>``, or nothing when the phase records none.
+
+    Rendered per phase rather than once for the run: the profile's whole premise is that
+    one provider wrote the tests it then had to satisfy, so two different names here are
+    the finding a reader is looking for.
+    """
+    if isinstance(implementer, str) and implementer.strip():
+        return f" by {implementer.strip()}"
+    return ""
 
 
 def _short(sha: Any) -> str:

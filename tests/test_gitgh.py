@@ -90,10 +90,19 @@ class TestGit(unittest.TestCase):
             [
                 "git",
                 "log",
+                # Ancestry, not commit date: once a branch integrates its base, a base
+                # commit dated before the tests commit would otherwise sort first and be
+                # judged as this implementer's first commit.
+                "--topo-order",
+                # …and the commits that base merge brought in are not on this branch's
+                # own line at all.
+                "--first-parent",
                 "--reverse",
                 "--no-color",
                 f"--format={tdd.LOG_FORMAT}",
-                "--name-only",
+                # Not --name-only: a name cannot tell an addition from a deletion, and
+                # the gate has to separate writing the tests from `git rm`-ing them.
+                "--name-status",
                 # Two dots, not three: the tdd-order gate asks in which order *this
                 # branch's* commits were written, and the symmetric range would also
                 # list the base's side of the fork.

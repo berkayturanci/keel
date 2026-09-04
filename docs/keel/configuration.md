@@ -662,29 +662,61 @@ through a single `git log` and decides in `keel.tdd`, with no other I/O. It pass
 
 1. the branch history is readable at all (an unreadable one blocks — it is not an empty branch);
 2. the first non-merge commit touches at least one path, and **only** test paths;
-3. a later commit touches a non-test path — the implementation the tests were written for;
-4. the rest of the gate run is green.
+3. that commit *adds or modifies* at least one test — a first commit that only runs
+   `git rm` over the suite is the opposite of writing it;
+4. no later commit deletes a test path — deleting the failing tests is the cheapest way to
+   make phase B "pass";
+5. a later commit touches a non-test path — the implementation the tests were written for;
+6. the rest of the gate run is green.
 
 Otherwise it blocks and names what to fix: the offending paths in the first commit, the
-test globs it matched against, or the missing half of s4. Merge commits are skipped rather
-than judged — a merge from the base branch carries every path the base moved.
+deleted tests to restore, the test globs it matched against, or the missing half of s4.
 
-**Where the test paths come from.** The union of `policy_pack.test_groups.*.test_paths`,
-falling back to a group's `paths` when it declares no `test_paths`, and **once any group
-declares `test_paths`, only the declared ones count**. Group `paths` are *selectors* —
-the paths that make the group relevant — and on a real project they routinely include the
-implementation surface (keel's own `unit` group selects `src/**` as well as `tests/**`).
-Read as test paths they would make the gate vacuous. A project that declares no path at
-all fails the gate **closed**, with a message naming the key to add: a gate that cannot
-look must not pass.
+The branch is read with `git log --topo-order --first-parent --reverse --name-status
+base..HEAD`. Ancestry order, not commit-date order: once a branch integrates its base at
+s10, a base commit dated *before* the tests commit would otherwise sort ahead of it and be
+judged as this implementer's first commit. `--first-parent` follows only this branch's own
+line, so the commits a base merge brought in are not on it at all; the merge commits
+themselves stay and are skipped rather than judged.
+
+> **What the gate does not check.** It reads commit **order and paths**, and nothing else.
+> It never runs phase A's tests, so it cannot report that they were red, and it cannot tell
+> whether the committed tests assert anything — a first commit adding an empty file under
+> `tests/` satisfies rule 3. Those stay a reviewer's questions. The gate makes the *shape*
+> of a test-first run machine-checkable; it does not certify that the tests are good.
+
+**Where the test paths come from.** The fallback is **whole-config, not per-group**, and
+that distinction matters when you write the config:
+
+- if **no** group declares `test_paths`, the globs are the union of every group's `paths`;
+- if **any** group declares `test_paths`, the globs are the union of the declared
+  `test_paths` **only** — every group that declares none contributes nothing, including
+  its `paths`.
+
+So `{unit: {paths, test_paths}, e2e: {paths}}` yields `unit.test_paths` alone, and `e2e`'s
+selectors are dropped: give `e2e` its own `test_paths` if its tests should count. This is
+deliberate rather than incidental. Group `paths` are *selectors* — the paths that make the
+group relevant — and on a real project they routinely include the implementation surface
+(keel's own `unit` group selects `src/**` as well as `tests/**`). Mixing the remaining
+groups' selectors back in would re-import exactly the surface `test_paths` exists to
+exclude, and a gate whose "test paths" include `src/**` is vacuous.
+
+A project that declares no path at all fails the gate **closed**, with a message naming
+the key to add: a gate that cannot look must not pass.
 
 `--tdd` selects the profile for a single run of `keel ship`, `keel plan` or
 `keel run-gates`. There is no `--no-tdd`: a project that configured the contract has said
 the contract is the policy, and a flag that switched it off from a command line would make
 it advisory. The resolved profile is published as `contract.implement_mode` by
 `keel plan`/`keel ship --json` (`mode`, `source`, `phases`, `gate`), the ledger records
-`run_context.implement_mode` plus one `run_context.implement_phases` entry per phase, and
-the closure comment says `Implement: TDD (tests <sha> → implementation <sha>)`.
+`run_context.implement_mode` plus one `run_context.implement_phases` entry per phase —
+each carrying that phase's commit **and the implementer that ran it**, so "the same
+provider wrote the tests and the implementation" is auditable rather than assumed
+(`keel ship --phase-implementer tests=<label>` records a phase whose implementer differed
+from `--implementer`). The closure comment says
+`Implement: TDD (tests <sha> by <implementer> → implementation <sha> by <implementer>)`.
+A `default` run records neither key's value — `implement_mode` is `null` and
+`implement_phases` is `[]` — and its closure comment is unchanged.
 
 Backbone step ids are unchanged: `tdd` is an s4 profile the way `compound` is a workflow
 profile. Setting it to `default` (or leaving it out) does not change `config_hash`.

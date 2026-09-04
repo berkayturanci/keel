@@ -574,23 +574,35 @@ Rules for the two phases:
 - **Phase A's red gates are not a failure.** Do not run the fix loop against them, and do
   not let a red phase-A gate run trigger a fall-back to `HOST_AGENT`. Run the gates after
   phase B.
-- **Never weaken a test to make it pass.** If a criterion turns out to be wrong, say so in
-  the PR body under `Testing` and change the *test* in a commit of its own with the reason
-  — do not quietly delete an assertion in the implementation commit.
+- **Never weaken a test to make it pass, and never delete one.** If a criterion turns out
+  to be wrong, say so in the PR body under `Testing` and change the *test* in a commit of
+  its own with the reason — do not quietly delete an assertion in the implementation
+  commit. Deleting a test path after the tests commit is a **blocking** gate failure, not
+  a style note.
 - **Everything else about s4 is unchanged**: the same dispatch table, the same retry and
   fall-back policy, the same attribution, the same declared-scope self-check.
 
 At **s8** the pure `tdd-order` gate then verifies what actually happened, from the commit
 list and the path policy alone: the first non-merge commit on the branch touches only test
-paths, a later commit touches an implementation path, and the gate run is green. It is
-`on_fail: block` like `build`; its message names the offending paths, the test globs it
-matched against, or the missing half. A project whose `test_groups` declare no paths fails
-the gate closed rather than passing vacuously — declare
+paths **and adds or modifies at least one of them**, no later commit deletes a test, a
+later commit touches an implementation path, and the gate run is green. It is
+`on_fail: block` like `build`; its message names the offending paths, the deleted tests,
+the test globs it matched against, or the missing half. A project whose `test_groups`
+declare no paths fails the gate closed rather than passing vacuously — declare
 `policy_pack.test_groups.<group>.test_paths` before asking for the profile.
 
+**What the gate does not check.** It reads commit *order and paths*. It does not run phase
+A's tests and cannot report that they were red, and it cannot tell whether the committed
+tests assert anything. Phase A's red run is *your* evidence: say in the PR body's `Testing`
+section what phase A ran and that it failed. The gate is the shape check, not the substance
+one.
+
 Both phases are recorded: the ledger's `run_context.implement_mode` is `tdd` and
-`run_context.implement_phases` carries one record per phase with its commit, and the
-rendered closure comment says **`Implement: TDD (tests <sha> → implementation <sha>)`**.
+`run_context.implement_phases` carries one record per phase with its commit **and the
+implementer that ran it** — pass `keel ship --phase-implementer tests=<label>` when a phase
+really did run on a different provider, rather than letting one `--implementer` stand for
+both. The rendered closure comment says
+**`Implement: TDD (tests <sha> by <implementer> → implementation <sha> by <implementer>)`**.
 
 ### s5 classify
 `keel ship .keel/project.yaml --root .` prints, deterministically: the **risk tier** (from
@@ -1271,4 +1283,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=claude command=ship keel_version=1.19.3 source_sha256=3d8a873aa3a644f13e0261ce71815f2ee080fcd2e03a1c8a81df8ec00ed0642f generated_sha256=3d8a873aa3a644f13e0261ce71815f2ee080fcd2e03a1c8a81df8ec00ed0642f -->
+<!-- keel-generated: surface=claude command=ship keel_version=1.19.3 source_sha256=e4086b979e2775c7bfa3b49fa8692822e903dc461e72e9dc94f5f5e8863dc826 generated_sha256=e4086b979e2775c7bfa3b49fa8692822e903dc461e72e9dc94f5f5e8863dc826 -->

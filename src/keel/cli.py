@@ -1379,7 +1379,13 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         profile=profile,
         jury_mode=a.review_contract["jury"]["mode"],
         implement_mode=mode.name if mode.is_tdd else None,
-        implement_phases=tdd.phase_records(tdd_result),
+        implement_phases=tdd.phase_records(
+            tdd_result,
+            implementers=tdd.phase_implementers(
+                getattr(args, "phase_implementer", None) or (),
+                default=args.implementer,
+            ),
+        ),
         consent_status=contract["operator_consent"]["status"],
         consent_scopes=contract["operator_consent"]["effective_approved_scope"],
         run_controls=run_control_report,
@@ -4446,6 +4452,21 @@ def _gate_result_arg(value: str) -> tuple[str, str]:
             f"--gate-result verdict must be one of {', '.join(GATE_RESULTS)}"
         )
     return gate_id, verdict
+
+
+def _phase_implementer_arg(value: str) -> tuple[str, str]:
+    """Parse ``--phase-implementer PHASE=LABEL`` (PHASE one of the two s4 phases)."""
+    if "=" not in value:
+        raise argparse.ArgumentTypeError("--phase-implementer must use PHASE=LABEL")
+    phase, _, label = value.partition("=")
+    phase, label = phase.strip().lower(), label.strip()
+    if phase not in tdd.PHASES:
+        raise argparse.ArgumentTypeError(
+            f"--phase-implementer phase must be one of {', '.join(tdd.PHASES)}"
+        )
+    if not label:
+        raise argparse.ArgumentTypeError("--phase-implementer requires an implementer label")
+    return phase, label
 
 
 def _gh_json(args: list[str], *, cwd: str) -> dict[str, object]:
@@ -8200,6 +8221,15 @@ def _add_ship_parser(parser: argparse.ArgumentParser, *, command: str) -> None:
     )
     parser.add_argument(
         "--implementer", default=None, help="effective implementer codename or vendor/model label"
+    )
+    parser.add_argument(
+        "--phase-implementer",
+        action="append",
+        default=[],
+        type=_phase_implementer_arg,
+        metavar="PHASE=LABEL",
+        help="effective implementer for one implement_mode: tdd phase "
+        "(tests|implementation); defaults to --implementer for both; repeatable",
     )
     parser.add_argument(
         "--reviewer-agent",

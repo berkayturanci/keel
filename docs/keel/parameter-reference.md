@@ -1325,10 +1325,13 @@ gated by the findings above`), so it wires directly into CI.
 
 Under `implement_mode: tdd` (or `--tdd`) the run also carries the pure **`tdd-order`**
 gate, evaluated **after** every other gate because its verdict includes theirs: it passes
-when the first non-merge commit on the branch touches only the project's test paths, a
-later commit touches an implementation path, and the rest of the gate run is green. It
-reads the branch through one `git log` and decides in `keel.tdd`; see
-[`knobs.implement_mode`](configuration.md#implement_mode).
+when the first non-merge commit on the branch touches only the project's test paths and
+adds or modifies at least one of them, no later commit deletes a test, a later commit
+touches an implementation path, and the rest of the gate run is green. It reads the branch
+through one `git log --topo-order --first-parent --name-status` and decides in `keel.tdd`
+— order by ancestry, not by commit date, so integrating the base branch cannot make one of
+its commits the "first" one. It checks order and paths only, never whether phase A's tests
+were red; see [`knobs.implement_mode`](configuration.md#implement_mode).
 
 ### Examples
 
@@ -1459,6 +1462,7 @@ keel ship <project.yaml> [--root DIR] [--pr N] [--hotfix] [--dry-run] [--live]
 | `--capture-status` | `applied` \| `deferred` \| `skipped:<reason>` \| `not-run` | `None` | Capture outcome for the ledger record. **Required** when `--live --append-ledger` (exit 1 otherwise). Allowed skip reasons: `dry-run`, `deferred`, `merge-failed`, `recursion-guard`, `capability-unavailable`, `no-policy`. `not-run` is not an outcome — it records that this run never reached capture, so the record carries no marker; use it to re-record gates for a rebased head. |
 | `--capture-reason TEXT` | string | `None` | Capture outcome reason. |
 | `--capture-artifact REF` | string (path or hash) | `None` | Durable capture artifact reference proving an `applied` capture; `keel capture-verify` reconcile flags `applied` records with no artifact. |
+| `--phase-implementer PHASE=LABEL` | repeatable | `--implementer` for both | Effective implementer for one `implement_mode: tdd` phase (`tests` \| `implementation`), recorded on that phase's `run_context.implement_phases` entry so a run where the two phases differed says so. |
 | `--implementer LABEL` | string | `None` | Effective implementer codename or `vendor:model` label for attribution. Its vendor slug is what `keel evidence-verify` cross-checks against the PR's `agent:<vendor>` label when the gate is enforced (`attribution-label` finding on mismatch). |
 | `--reviewer-agent LABEL` | string, repeatable | none | Effective reviewer labels (order-preserving parallel array). |
 | `--tester LABEL` | string | `None` | Effective tester label. |
