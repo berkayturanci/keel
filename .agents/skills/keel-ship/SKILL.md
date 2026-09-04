@@ -863,9 +863,9 @@ comment shape: keep `keel.review-verdict.v1`, `reviewer: <stable-id>`, and `head
 intact, then fill in the reviewer-specific verdict, scope, findings, and testing notes.
 Carry the **effective** reviewer `vendor` (and `model` when known) on each verdict — the
 same attribution computed at s7 — so `evidence_require_distinct_vendors` can verify the
-verdicts came from distinct vendors. That knob is **on by default from TIER-2 up** (a
-project that has decided otherwise sets it to `false` explicitly), so a verdict without
-`vendor:` provenance blocks the pre-merge evidence gate on most changes. This is jury-agnostic: a plain
+verdicts came from distinct vendors. That knob is **opt-in and off unless the project set
+it** (#1065), so a verdict without `vendor:` provenance blocks the pre-merge evidence gate
+only where the project asked for the check. This is jury-agnostic: a plain
 host-agent reviewer carrying distinct vendor provenance satisfies the check just as a
 cross-vendor panel would; keel takes no dependency on any review vendor.
 Post each review verdict through `keel post-comment` with a reviewer-scoped run id
@@ -1345,4 +1345,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=skills command=ship keel_version=1.20.0 source_sha256=14f781a4e0cb3a464990e015abae9cba0eb424327ff98e7884bb20ceeb9acace generated_sha256=34c22dace51c7ec4f4fc729db5fac9069cea0a76c5b8c306480e99a36799a084 -->
+<!-- keel-generated: surface=skills command=ship keel_version=1.20.0 source_sha256=6545723dcc568aa337df962712a2bc47fe94c9bda212902816a92dee9976f2ab generated_sha256=e1091d68526e24832c38af56a7b05428bb01c014100dda92eb2ec24e888fe0f2 -->

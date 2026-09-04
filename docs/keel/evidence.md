@@ -146,12 +146,14 @@ count only rises, a planning surface can understate what will be required but ne
 overstate it, and no two surfaces that can both see the panel disagree.
 
 **Vendor distinctness asks a panel the panel's own question.**
-`evidence_require_distinct_vendors` normally wants one distinct vendor per required verdict,
-which is the right question for a bench keel staffs. For a panel, keel did not pick the
-seats: every ballot must still declare a vendor, but the panel as a whole must span at least
-`jury.min_vendors` distinct ones. Three ballots from two vendors is a legitimate cross-vendor
-review; three from one vendor is one opinion three times and fails with
-`review-vendor-distinctness`.
+`evidence_require_distinct_vendors` is **opt-in and off unless the project sets it** — unset
+is `false` on every risk tier (#1065), because the independence claim it enforces is one a
+project makes, not one keel makes for it. Where a project *has* set it, it normally wants one
+distinct vendor per required verdict, which is the right question for a bench keel staffs. For
+a panel, keel did not pick the seats: every ballot must still declare a vendor, but the panel
+as a whole must span at least `jury.min_vendors` distinct ones. Three ballots from two vendors
+is a legitimate cross-vendor review; three from one vendor is one opinion three times and
+fails with `review-vendor-distinctness`.
 
 **A panel tier never downgrades.** Where the jury sits *beside* a host bench, a panel with
 fewer than `jury.min_vendors` participating vendors is downgraded `gating → advisory` and
