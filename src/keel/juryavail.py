@@ -13,9 +13,14 @@ that binary holds its own configured panel. So the probe asks the runner first �
 ``jury --doctor --json``, ai-jury's own readiness document, which reports both that the
 binary is there and which of *its* agents are usable — and only falls back to
 :func:`keel.providerprobe.collect` (what ``keel doctor --providers`` prints) for a runner
-that could not produce one. A machine with ``claude`` and ``codex`` on ``PATH`` and no
+whose document named no agents. A machine with ``claude`` and ``codex`` on ``PATH`` and no
 ``jury`` is **not** staffable, however healthy keel's own inventory looks: the panel s7
 would dispatch cannot run.
+
+That document is also the binary's *identity*, and no document is no identity (#1068):
+a ``jury`` on ``PATH`` that exits 0 without one has not established that it is ai-jury, so
+it is unusable and keel's inventory cannot make it staffable. The proxy stands in for a
+panel ai-jury declined to enumerate, never for a panel runner nobody established is there.
 
 Two answers to one question is what this ordering avoids. keel's delegate inventory is a
 proxy for the panel, ai-jury's is the panel; when the panel can speak for itself it is the
@@ -101,9 +106,11 @@ class Runner:
     """The ``jury`` CLI itself: can s7 dispatch it here, and what panel does it hold?
 
     Produced by :func:`keel.providerprobe.probe_jury_runner` — the thin-I/O half — and
-    consumed here. ``doctor`` is ai-jury's own ``jury --doctor --json`` document when the
-    binary produced a readable one; a runner that ran but could not report its panel is
-    still *usable*, and the verdict then reads keel's own delegate inventory instead.
+    consumed here. ``doctor`` is ai-jury's own ``jury --doctor --json`` document, which is
+    both the panel it holds and the way the binary identifies itself: without a readable
+    one the probe reports ``usable=False`` (#1068). A document that identifies ai-jury but
+    names no ``agents`` still means *usable*, and the verdict then reads keel's own
+    delegate inventory for the vendor count instead.
     """
 
     usable: bool
@@ -219,7 +226,9 @@ def assess(
     The vendor inventory is the runner's own when ``jury --doctor --json`` reported one:
     ai-jury is the authority on the panel it would convene, and keel's delegate list is only
     a proxy for it. ``report`` — :func:`keel.providerprobe.build_report`'s document — is the
-    fallback for an older or quieter runner. Either way a panel spans *vendors*, so two rows
+    fallback for a runner that identified itself and named no agents — never for one that
+    produced no document at all, which is not established to be ai-jury and reaches here
+    as ``usable=False``. Either way a panel spans *vendors*, so two rows
     that shell out to the same CLI are one opinion (the rule
     :func:`keel.providers.distinct_vendors` states), and a hosted API with its key set is as
     real a panelist as a CLI on ``PATH``.

@@ -105,7 +105,7 @@ UNSTAFFED = _report(
 #: The `jury` binary s7 dispatches, present and runnable but reporting no panel of its own
 #: — an ai-jury too old for `--doctor --json`, so the verdict reads keel's inventory. That
 #: is the shape most of these tests want: they are about the *vendor* half.
-RUNNER = juryavail.Runner(True, "/usr/bin/jury (no readable --doctor report)")
+RUNNER = juryavail.Runner(True, "/usr/bin/jury (ai-jury 1.16.0)")
 
 #: …and the host the second review round is about: agent CLIs installed, no panel runner.
 NO_RUNNER = juryavail.Runner(False, "jury not found on PATH")
@@ -297,18 +297,50 @@ class TestTheRunnerProbe(unittest.TestCase):
         self.assertFalse(runner.usable)
         self.assertIn("failed (exit 2)", runner.reason)
 
-    def test_unreadable_output_from_a_clean_exit_is_still_a_usable_runner(self):
+    def test_a_clean_exit_with_no_report_did_not_identify_itself_as_ai_jury(self):
+        """The #1068 round-5 minor: exit 0 is not an identity.
+
+        Every one of these is *some* `jury` on `PATH` that took the flags and then declined
+        to say it is ai-jury. Reading that as usable let keel's own delegate inventory staff
+        a panel s7 could not convene — the exact failure `probe_jury_runner` exists to
+        prevent. The runner ai-jury versions too old for the flag produce is not here: they
+        parse strictly and exit 2, which the crash branch above already reports.
+        """
         for stdout in (
             "",
             "not json",
             "[1, 2]",
             json.dumps({"schema_version": "something.else"}),
+            "jury duty scheduler v3",
         ):
             with self.subTest(stdout=stdout):
                 runner, _calls = self._probe(result=self._result(stdout=stdout))
 
-                self.assertTrue(runner.usable)
+                self.assertFalse(runner.usable)
                 self.assertIsNone(runner.panel_rows)
+                self.assertIn("did not identify itself", runner.reason)
+
+    def test_keels_own_inventory_cannot_staff_a_runner_that_never_said_what_it_was(self):
+        """The half of the minor that reaches the verdict: no identity, no panel."""
+        runner, _calls = self._probe(result=self._result(stdout="jury duty scheduler v3"))
+
+        verdict = _assess(STAFFED, runner=runner, min_vendors=2)
+
+        self.assertFalse(verdict.staffable)
+        self.assertEqual(verdict.decision, juryavail.DECISION_FALLBACK)
+        self.assertIn("is not usable here", verdict.reason)
+
+    def test_a_runner_that_identified_itself_and_named_no_agents_still_staffs(self):
+        """The fallback that survives: ai-jury spoke, it just did not enumerate its panel."""
+        stdout = json.dumps({"schema_version": "ai-jury.doctor.v1", "tool_version": "9.9.9"})
+
+        runner, _calls = self._probe(result=self._result(stdout=stdout))
+
+        self.assertTrue(runner.usable)
+        self.assertIsNone(runner.panel_rows)
+        verdict = _assess(STAFFED, runner=runner, min_vendors=2)
+        self.assertTrue(verdict.staffable)
+        self.assertEqual(verdict.inventory, "keel doctor --providers")
 
     def test_a_report_with_no_version_still_names_the_path(self):
         stdout = json.dumps({"schema_version": "ai-jury.doctor.v1", "agents": []})

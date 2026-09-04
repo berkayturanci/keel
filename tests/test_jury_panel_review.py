@@ -44,7 +44,7 @@ _STAFFED_PANEL_REPORT = {
 #: answered from memory: the probe asks the runner as well as the inventory (#1066 round 2),
 #: and a suite that let the real `jury --doctor` run would resolve a different bench on a
 #: machine that happens to have ai-jury installed.
-_STAFFED_RUNNER = juryavail.Runner(True, "/usr/bin/jury (no readable --doctor report)")
+_STAFFED_RUNNER = juryavail.Runner(True, "/usr/bin/jury (ai-jury 1.16.0)")
 
 _NO_REAL_PROVIDER_PROBE: list = []
 

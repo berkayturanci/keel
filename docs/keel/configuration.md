@@ -309,10 +309,19 @@ So **before s7 dispatches the panel, keel probes it** — the panel s7 would act
 dispatch, which is the `jury` binary and the agents *it* is configured with, not keel's own
 delegate list. The probe asks the runner first (`jury --doctor --json`, ai-jury's own
 readiness document): that establishes the binary is present and runnable, and reports which
-of its agents are usable. For a runner too old to answer, keel falls back to the inventory
-`keel doctor --providers` already collects — one `PATH` lookup and one `--version` call per
-CLI vendor, an env-var *name* check per hosted API, one loopback request for Ollama — so
-keel keeps one answer to "is this provider usable here" instead of two that drift.
+of its agents are usable. For a runner that answers but names no agents, keel falls back to
+the inventory `keel doctor --providers` already collects — one `PATH` lookup and one
+`--version` call per CLI vendor, an env-var *name* check per hosted API, one loopback
+request for Ollama — so keel keeps one answer to "is this provider usable here" instead of
+two that drift.
+
+**That document is also how the binary identifies itself.** A `jury` on `PATH` that exits 0
+without printing an `ai-jury.doctor.*` report is *not* a usable runner, and keel's own
+inventory cannot make the panel staffable behind it: the fallback stands in for a panel
+ai-jury declined to enumerate, never for a panel runner nobody established is there. An
+ai-jury genuinely too old for the flag does not land in that case — it parses arguments
+strictly and exits non-zero on an unrecognized `--json`, which is already reported as an
+unusable runner naming the exit code.
 
 The panel is *staffable* when **both** halves hold: the `jury` runner is usable here, and
 at least `jury.min_vendors` distinct vendors are available to it. Two entries that shell out

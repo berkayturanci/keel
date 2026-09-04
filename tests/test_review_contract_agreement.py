@@ -112,7 +112,7 @@ def _staffed_panel_probe(_config=None, **_kwargs):
 #: …and the `jury` binary s7 would dispatch. The probe asks the runner as well as the
 #: inventory (#1066 round 2), so both halves come from memory or the bench would move with
 #: whether this machine happens to have ai-jury installed.
-STAFFED_RUNNER = juryavail.Runner(True, "/usr/bin/jury (no readable --doctor report)")
+STAFFED_RUNNER = juryavail.Runner(True, "/usr/bin/jury (ai-jury 1.16.0)")
 
 
 def setUpModule():

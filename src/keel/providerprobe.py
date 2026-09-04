@@ -285,10 +285,31 @@ def probe_jury_runner(
     a crash and unreadable output are each a :class:`keel.juryavail.Runner` saying so, never
     an exception out of a resolver.
 
-    A runner that ran but printed no readable report is still **usable** — keel does not
-    require a particular ai-jury version, and an older one that has no ``--doctor --json``
-    still convenes panels. Its inventory then falls back to :func:`collect`, which is what
-    this probe read before it read anything.
+    **The document is how the binary identifies itself, so no document is not usable**
+    (#1068). This branch previously read a clean exit with unreadable output as a usable
+    runner, on the reasoning that an ai-jury too old for ``--doctor --json`` still convenes
+    panels and should not be called broken. That reasoning does not survive contact with
+    the older runner: ai-jury parses its arguments strictly, so a version that predates the
+    flag exits **2** on ``--doctor --json`` (``unrecognized arguments: --json``) and is
+    already reported unusable by the exit-code branch below. What the fallback actually
+    granted was the one case it was not written for — a binary that accepts the flag, exits
+    0, and then declines to say it is ai-jury. That is a stranger named ``jury`` on
+    ``PATH``, and calling it usable reintroduced exactly the failure this probe exists to
+    prevent: the panel bench published, s7 failing at the invocation, past the point where
+    ``on_unavailable`` could still choose fallback or block.
+
+    No second identity probe is taken. ``jury --version`` prints ``%(prog)s <version>`` —
+    the program name it was invoked as — so it identifies the file, not the tool, and a
+    check built on it would pass for any binary of that name. :func:`_doctor_report`'s
+    ``schema_version`` prefix is the identity claim ai-jury actually makes, and one probe
+    that asks for it is better than two that guess.
+
+    Identity and *inventory* stay separate, and the fallback that matters is the second
+    one: a runner that identified itself but reported no ``agents`` is usable, and
+    :func:`keel.juryavail.assess` then reads keel's own delegate inventory
+    (:func:`collect`) for the vendor count. So a quiet-but-real ai-jury can still staff a
+    panel through keel's proxy; what can no longer staff one is a binary that never said
+    what it was.
     """
     command = juryavail.JURY_RUNNER_COMMAND
     found, reason, _ = _probe_command_only(command, which=_which)
@@ -308,6 +329,9 @@ def _probe_jury_doctor(
     Through :func:`keel.runner.run_argv` like every other probe in this module, which
     closes the child's standard input: a readiness check that stopped on a login prompt
     would hang the resolver it is called from.
+
+    Usable **only** with a readable ai-jury doctor document; see
+    :func:`probe_jury_runner` for why a clean exit is not on its own an identity.
     """
     result = run([command, "--doctor", "--json"], timeout=JURY_DOCTOR_TIMEOUT_S)
     if getattr(result, "timed_out", False):
@@ -321,7 +345,11 @@ def _probe_jury_doctor(
         return juryavail.Runner(True, f"{path} (ai-jury {version})", doctor)
     if not result.ok:
         return juryavail.Runner(False, f"{command} --doctor --json failed (exit {result.code})")
-    return juryavail.Runner(True, f"{path} (no readable --doctor report)")
+    return juryavail.Runner(
+        False,
+        f"{path} exited 0 but printed no {JURY_DOCTOR_SCHEMA_PREFIX}* report, so it did "
+        f"not identify itself as the ai-jury panel runner",
+    )
 
 
 def _doctor_report(text: str) -> dict[str, object] | None:
