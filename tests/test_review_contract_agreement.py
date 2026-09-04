@@ -702,6 +702,120 @@ class TestEveryCommandResolvesTheSameBench(unittest.TestCase):
                 self.assertEqual(ship_contract["reviewers"]["count"], 3)
                 self.assertEqual(review_payload["plan"]["required_count"], 3)
 
+    def _jury_report(self, vendors):
+        """An ai-jury JSON report (schema 1.1) with one ballot per entry in `vendors`."""
+        path = self.root / "jury-report.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "1.1",
+                    "findings": [],
+                    "consensus": [],
+                    "reviewers": [
+                        {
+                            "name": f"panelist-{position}",
+                            "vendor": vendor,
+                            "model": f"{vendor}-model",
+                            "verdict": "LGTM",
+                            "findings": [],
+                            "round1_ok": True,
+                            "verified_count": 0,
+                        }
+                        for position, vendor in enumerate(vendors, start=1)
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return str(path)
+
+    def _review_from_jury(self, config, report, *flags):
+        rc, out, err = run(
+            [
+                "review",
+                config,
+                "--root",
+                str(self.root),
+                "--pr",
+                "1",
+                "--from-jury",
+                report,
+                "--changed-file",
+                "src/a.py",
+                "--head-sha",
+                "abc",
+                "--dry-run",
+                "--json",
+                *flags,
+            ]
+        )
+        self.assertIn(rc, (0, 1), err)
+        return json.loads(out)
+
+    def test_a_short_panel_downgrades_the_same_on_review_as_on_evidence_verify(self):
+        """`--from-jury` must hand over the panel's *vendor span*, not only its size.
+
+        On a non-panel tier a jury that spans fewer than `min_vendors` vendors is
+        downgraded `gating -> advisory`, which drops `jury-verdict` from the required
+        evidence: it sits beside a host bench that reviewed the change anyway.
+        `evidence-verify` performs that downgrade from the `vendors: N` line the posted
+        jury verdict carries. `keel review` holds the panel itself and so can measure the
+        same number directly — and when it passed only `jury_panel_size` it measured
+        nothing: a three-ballot single-vendor panel had this surface resolving `gating`
+        with `jury-verdict` required while the gate reading the verdict it had just
+        written resolved `advisory` and required no such thing.
+
+        The two-vendor case is asserted alongside so this pins the *agreement*, not
+        merely the downgrade — a surface that always reported `advisory` would satisfy
+        half of it.
+        """
+        config = self._config(PLAIN_TIER3_CONFIG)
+
+        for vendors, expected_mode in (
+            (["claude", "claude", "claude"], "advisory"),
+            (["claude", "codex", "claude"], "gating"),
+        ):
+            with self.subTest(vendors=vendors):
+                report = self._jury_report(vendors)
+                distinct = len(dict.fromkeys(vendors))
+                comments = self.root / f"jury-comments-{distinct}.json"
+                comments.write_text(
+                    json.dumps(
+                        [
+                            {
+                                "body": (
+                                    "keel.jury-verdict.v1\nhead: abc\n"
+                                    f"vendors: {distinct}\npanelists: {len(vendors)}\n\n"
+                                    "AI Jury verdict: LGTM.\n"
+                                ),
+                                "author_association": "OWNER",
+                                "user": {"login": "orchestrator"},
+                            }
+                        ]
+                    ),
+                    encoding="utf-8",
+                )
+
+                review_payload = self._review_from_jury(config, report)
+                evidence_payload = self._evidence_payload(config, pr_comments=comments)
+                evidence_ids = [
+                    result["id"] for result in evidence_payload["verification"]["results"]
+                ]
+
+                review_jury = review_payload["review_contract"]["jury"]
+                self.assertEqual(review_jury["mode"], expected_mode)
+                self.assertEqual(review_jury["participating_vendors"], distinct)
+                # The gate reading back the verdict this run would post agrees, and the
+                # requirement derived from the mode agrees with it on both surfaces.
+                gating = expected_mode == "gating"
+                self.assertEqual(review_jury["downgraded"], not gating)
+                self.assertEqual("jury-verdict" in evidence_ids, gating)
+                self.assertEqual(
+                    evidence_payload["contract"]["required"][-1]["id"] == "jury-verdict", gating
+                )
+                # The bench is untouched by any of it: a plain tier-3 bench is three.
+                self.assertEqual(review_payload["plan"]["required_count"], 3)
+
     def test_the_jury_flags_used_to_be_rejected_by_keel_review(self):
         """Non-vacuity: the argv this suite now drives was an *argparse error* before.
 

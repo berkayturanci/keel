@@ -2510,6 +2510,14 @@ def _cmd_review(args: argparse.Namespace) -> int:
         # from, the flags say whether the contract requires a jury verdict at all, and
         # a jury-panel tier outranks both (`ship.resolve_jury`).
         jury_panel_size=None if panel is None else panel.size,
+        # …and the panel's vendor span travels with its size, for the same reason. The
+        # panel is right here, so this run can measure what `evidence-verify` will later
+        # recompute from the `vendors: N` line `jury_verdict` posts. Passing the size
+        # alone left the two disagreeing on a *non-panel* tier: a short panel's
+        # `jury-verdict` is downgraded gating -> advisory and dropped from the required
+        # evidence by the gate, while this surface — seeing no vendor count — kept
+        # resolving `gating` and reported a requirement the gate would not enforce.
+        jury_participating_vendors=None if panel is None else len(panel.vendors),
     )
     required_count = review_contract["reviewers"]["count"]
 
