@@ -25,6 +25,7 @@ import hashlib
 import json
 import os
 import re
+import sys
 import unittest
 import unittest.mock
 import urllib.error
@@ -145,6 +146,23 @@ def _reachable(url: str) -> bool:
         ) from exc
 
 
+#: A tap formula body shaped like the real one: the assertions that run before
+#: the tarball fetch read a keel tag archive and a top-level sha256 out of it and
+#: nothing else. The digest is deliberately wrong, so a run that reached the
+#: comparison would fail loudly instead of passing by accident.
+_STUB_FORMULA = (
+    '  url "https://github.com/berkayturanci/keel/archive/refs/tags/v1.0.0.tar.gz"\n'
+    f'  sha256 "{"0" * 64}"\n'
+).encode()
+
+
+def _stub_fetch(body: bytes) -> unittest.mock.MagicMock:
+    """A stand-in for one `urlopen` call: a context manager whose body is `body`."""
+    response = unittest.mock.MagicMock()
+    response.__enter__.return_value.read.return_value = body
+    return response
+
+
 class TestNotLookingIsNotAPass(unittest.TestCase):
     """The rule itself, asserted hermetically.
 
@@ -199,6 +217,66 @@ class TestNotLookingIsNotAPass(unittest.TestCase):
                     # guard, so the guard would hide it.
                     continue
                 self.fail("the guard raised nothing at all")
+
+    def test_a_fetch_that_could_not_happen_fails_at_the_call_sites_too(self):
+        """The callers, pinned the way `_could_not_look` itself is pinned above.
+
+        The two online checks below read a name bound inside a `try` and used in
+        that `try`'s `else`. The `else` is what makes the binding provable to a
+        reader and to CodeQL (#1063), and it is load-bearing in one direction
+        only: it is reached solely on the path that bound the name, so if a
+        handler ever stopped ending in a call that never returns, the read would
+        be *skipped* and the check would pass without having looked — the
+        fail-open #933 is about, arriving quietly instead of as a loud
+        unbound-name error the way it would have before the restructuring.
+
+        The guards above pin the helper, which is where the never-returns
+        guarantee lives; this pins the call sites, which is where the `else`
+        depends on it. Both online classes are gated behind
+        `KEEL_CHECK_EXTERNAL=1` and that job is not a required check, so no
+        blocking signal would catch the regression. This test is not gated: it
+        drives those checks itself with the network stubbed to raise.
+        """
+        for case_class, name, responses in (
+            (
+                TestHomebrewPromise,
+                "test_the_tap_serves_an_installable_formula",
+                # The tap read succeeds so the tarball fetch is reached at all;
+                # that second call — the one the restructured `try` wraps — is
+                # the outage.
+                [_stub_fetch(_STUB_FORMULA), OSError("simulated outage")],
+            ),
+            (
+                TestPublishedVersion,
+                "test_the_version_is_not_one_pypi_already_published_differently",
+                [OSError("simulated outage")],
+            ),
+        ):
+            with self.subTest(check=name):
+                online = unittest.mock.patch.object(sys.modules[__name__], "ONLINE", True)
+                outage = unittest.mock.patch.object(
+                    urllib.request, "urlopen", side_effect=responses
+                )
+                outcome = unittest.TestResult()
+                with online, outage:
+                    case_class(name).run(outcome)
+                self.assertEqual(
+                    outcome.errors,
+                    [],
+                    f"{name} raised instead of reporting a failure: {outcome.errors}",
+                )
+                self.assertEqual(
+                    outcome.skipped,
+                    [],
+                    f"{name} skipped rather than failing when it could not look: {outcome.skipped}",
+                )
+                self.assertEqual(
+                    len(outcome.failures),
+                    1,
+                    f"{name} passed on a fetch that never happened: the `else` was skipped "
+                    "and no handler failed the test, so 'could not look' read as a pass",
+                )
+                self.assertIn("reads as a pass", outcome.failures[0][1])
 
 
 class TestActionReferences(unittest.TestCase):
