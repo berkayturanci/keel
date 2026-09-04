@@ -81,13 +81,14 @@ window.KEEL_ARGS = {
  },
  "work-block": {
   "desc": "Daytime multi-issue work block — process an explicit issue list or queue selector through ship with per-issue isolation and operator-visible stopping points.",
-  "hint": "[issue numbers...] [--queue <selector>] [--max <N>] [--hours <H>] [--review-comments <inline|summary>]",
+  "hint": "[issue numbers...] [--queue <selector>] [--max <N>] [--hours <H>] [--review-comments <inline|summary>] [--wizard]",
   "flags": [
    "issue numbers...",
    "--queue <selector>",
    "--max <N>",
    "--hours <H>",
-   "--review-comments <inline|summary>"
+   "--review-comments <inline|summary>",
+   "--wizard"
   ]
  },
  "overnight": {
