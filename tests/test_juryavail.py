@@ -23,6 +23,7 @@ one on a CI runner with none.
 
 from __future__ import annotations
 
+import argparse
 import ast
 import contextlib
 import io
@@ -1204,6 +1205,205 @@ class TestTheWholeRunEndToEnd(unittest.TestCase):
 
         self.assertEqual(plan["assignment"]["review_panel"], "reviewers")
         self.assertIsNone(plan["review_merge_contract"]["jury"]["availability"])
+
+
+class TestTheContractIsPinnedToTheShipsMeasurement(unittest.TestCase):
+    """A surface that only *verifies* must not re-measure the panel (#1066 round 2).
+
+    Every surface re-called the probe, so the same pull request resolved a different
+    required-evidence set depending on which machine asked. A panel project whose ship
+    measured two available vendors requires the panel verdict; the same PR checked on a bare
+    runner measured one, so `review-verdict-1..3` was required instead and the panel item
+    disappeared — a workstation-juried change held to a host bench nobody sat.
+
+    **Every test here stubs the probe per surface**, not once for the whole run: a fixture
+    that shares one stub across plan, ship and verify cannot see the divergence, and a test
+    that cannot see it cannot guard against it.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = pathlib.Path(self._tmp.name)
+        (self.root / "empty.json").write_text("[]", encoding="utf-8")
+        (self.root / "body.md").write_text("Closes #1", encoding="utf-8")
+        path = self.root / "project.yaml"
+        path.write_text(PANEL_CONFIG % "", encoding="utf-8")
+        self.config = str(path)
+
+    @contextlib.contextmanager
+    def _probe(self, report):
+        with (
+            patch("keel.providerprobe.collect", lambda *_a, **_kw: dict(report)),
+            patch("keel.providerprobe.probe_jury_runner", lambda **_kw: RUNNER),
+        ):
+            yield
+
+    def _ledger(self, availability):
+        """A `ship_run` record for PR 1 carrying what that run measured, as ship writes it."""
+        record = ledger.build_ship_run_record(
+            command="ship",
+            run_id="r1",
+            base_branch="main",
+            changed_files=["src/a.py"],
+            declared_files=None,
+            issue_intake=None,
+            outcomes=(),
+            verdict=_verdict(),
+            assessment=_assessment(),
+            pr_number=1,
+            jury_panel=availability,
+        )
+        path = self.root / "ledger.jsonl"
+        path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+        return str(path)
+
+    def _comments(self, *bodies):
+        path = self.root / "pr-comments.json"
+        path.write_text(
+            json.dumps([{"body": body, "author_association": "MEMBER"} for body in bodies]),
+            encoding="utf-8",
+        )
+        return str(path)
+
+    def _required(self, *, report, ledger_jsonl=None, comments=None):
+        argv = [
+            "evidence-verify",
+            self.config,
+            "--root",
+            str(self.root),
+            "--pr",
+            "1",
+            "--changed-file",
+            "src/a.py",
+            "--head-sha",
+            "abc",
+            "--pr-label",
+            "keel:ship",
+            "--pr-body-file",
+            str(self.root / "body.md"),
+            "--pr-comments-json",
+            comments or str(self.root / "empty.json"),
+            "--issue-comments-json",
+            str(self.root / "empty.json"),
+            "--pr-reviews-json",
+            str(self.root / "empty.json"),
+            "--json",
+        ]
+        if ledger_jsonl is not None:
+            argv += ["--ledger-jsonl", ledger_jsonl]
+        with self._probe(report):
+            rc, out, err = run(argv)
+        self.assertIn(rc, (0, 1), err)
+        payload = json.loads(out)
+        return [item["id"] for item in payload["contract"]["required"]]
+
+    def _shipped_required(self, report):
+        """What the *ship* published as required, measured on the ship's own machine."""
+        with self._probe(report):
+            rc, out, err = run(["ship", self.config, "--root", str(self.root), "--json"])
+        self.assertEqual(rc, 0, err)
+        contract = json.loads(out)["result"]["assessment"]["review_merge_contract"]
+        return [item.id for item in evidence.required_items(contract)], contract
+
+    def test_a_panel_ship_checked_on_a_bare_runner_keeps_its_panel_requirement(self):
+        shipped, contract = self._shipped_required(STAFFED)
+        self.assertIn("jury-verdict", shipped)
+
+        # …and now the *other* machine: one vendor, where the ship saw two.
+        required = self._required(
+            report=UNSTAFFED,
+            ledger_jsonl=self._ledger(contract["jury"]["availability"]),
+        )
+
+        self.assertIn("jury-verdict", required)
+        self.assertNotIn("review-verdict-3", required)
+        self.assertEqual(sorted(shipped), sorted(required))
+
+    def test_a_posted_panel_verdict_pins_it_with_no_ledger_at_all(self):
+        """The route a hosted runner actually has: `.keel/state/` is not readable there."""
+        required = self._required(
+            report=UNSTAFFED,
+            comments=self._comments("keel.jury-verdict.v1\nhead: abc\npanelists: 2\nAI Jury LGTM"),
+        )
+
+        self.assertIn("jury-verdict", required)
+
+    def test_a_fallback_shipped_change_is_not_held_to_a_panel_it_never_ran(self):
+        """The other direction, which fails the same way: the ship fell back, CI did not."""
+        shipped, contract = self._shipped_required(UNSTAFFED)
+        self.assertNotIn("jury-verdict", shipped)
+
+        required = self._required(
+            report=STAFFED,
+            ledger_jsonl=self._ledger(contract["jury"]["availability"]),
+        )
+
+        self.assertNotIn("jury-verdict", required)
+        self.assertIn("review-verdict-3", required)
+        self.assertEqual(sorted(shipped), sorted(required))
+
+    def test_with_nothing_to_pin_to_the_surface_still_probes(self):
+        """The documented residue: no posted verdict and no readable ledger."""
+        self.assertIn("jury-verdict", self._required(report=STAFFED))
+        self.assertNotIn("jury-verdict", self._required(report=UNSTAFFED))
+
+    def test_a_ledger_record_that_says_nothing_about_the_panel_pins_nothing(self):
+        for availability in (None, "nonsense", {"decision": "block"}):
+            with self.subTest(availability=availability):
+                required = self._required(
+                    report=UNSTAFFED, ledger_jsonl=self._ledger(availability)
+                )
+
+                self.assertNotIn("jury-verdict", required)
+
+    def test_the_merge_gate_reads_the_same_pin(self):
+        record = {"run_context": {"jury_panel": _assess(STAFFED, min_vendors=2).as_dict()}}
+        artifacts = {"pr_comments": [], "pr_reviews": [], "head_sha": "abc"}
+
+        pinned = cli._shipped_jury_availability(artifacts, record)
+
+        self.assertEqual(pinned["decision"], "available")
+        self.assertEqual(pinned["source"], "run-ledger")
+
+    def test_a_posted_verdict_outranks_the_ledger(self):
+        record = {"run_context": {"jury_panel": _assess(UNSTAFFED, min_vendors=2).as_dict()}}
+        artifacts = {
+            "pr_comments": [
+                {"body": "keel.jury-verdict.v1\nhead: abc\nAI Jury LGTM",
+                 "author_association": "MEMBER"}
+            ],
+            "pr_reviews": [],
+            "head_sha": "abc",
+        }
+
+        pinned = cli._shipped_jury_availability(artifacts, record)
+
+        self.assertEqual(pinned["source"], "pull-request")
+        self.assertFalse(pinned["probed"], "a pin is not a measurement and must not claim to be")
+
+    def test_a_verdict_pinned_to_another_head_is_not_this_changes_panel(self):
+        artifacts = {
+            "pr_comments": [
+                {"body": "keel.jury-verdict.v1\nhead: stale\nAI Jury LGTM",
+                 "author_association": "MEMBER"}
+            ],
+            "pr_reviews": [],
+            "head_sha": "abc",
+        }
+
+        self.assertIsNone(cli._shipped_jury_availability(artifacts, None))
+
+    def test_an_unreadable_ledger_refuses_evidence_verify_but_not_merge(self):
+        """The record is *evidence* on one surface and only a hint on the other."""
+        path = self.root / "broken.jsonl"
+        path.write_text("{not json\n", encoding="utf-8")
+        args = argparse.Namespace(ledger_jsonl=str(path), root=str(self.root), pr=1)
+        config = cfg.load_config(self.config)
+
+        with self.assertRaises(ledger.LedgerError):
+            cli._evidence_ledger_record(args, config)
+        self.assertIsNone(cli._merge_ledger_record(args, config))
 
 
 if __name__ == "__main__":

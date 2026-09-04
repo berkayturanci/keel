@@ -1676,6 +1676,31 @@ def jury_panel_size(
     return max(counts) if counts else None
 
 
+def panel_verdict_posted(
+    pr_comments: list[dict[str, Any]] | None = None,
+    pr_reviews: list[dict[str, Any]] | None = None,
+    *,
+    head_sha: str | None = None,
+    enforced: bool = True,
+) -> bool:
+    """Is a head-pinned jury verdict already on this pull request? (#1066)
+
+    Proof that the panel *sat*, from the one place a bare CI runner can read it: the run
+    ledger and the jury artifact both live under the gitignored ``.keel/state/``, while PR
+    comments are always visible. A verification surface uses it to pin the contract to what
+    the ship measured rather than re-measuring the panel on its own machine — see
+    :func:`keel.cli._shipped_jury_availability`.
+
+    Distinct from :func:`jury_panel_size`, which answers *how many* ballots and is ``None``
+    for a verdict predating the ``panelists:`` field. Presence is the weaker question, and
+    the one that must not depend on an optional field.
+    """
+    return any(
+        _is_jury_verdict(item, head_sha=head_sha, enforced=enforced)
+        for item in [*(pr_comments or []), *(pr_reviews or [])]
+    )
+
+
 def _parse_vendor_count(raw: str | None) -> int | None:
     """Parse a declared vendor count, rejecting anything not a plain non-negative int."""
     if raw is None:

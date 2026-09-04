@@ -362,10 +362,30 @@ reintroduce it on keel's side.
 **Availability is measured, never asserted.** There is no flag that says "the panel is
 fine", and #1014's rule survives intact: what may not take the panel off is an operator's
 *preference*. Availability is a fact about the world, and it is allowed to change the
-outcome precisely because it is recorded. The consequence is that two machines can resolve
-the same tier differently — a CI runner with no agent CLI falls back where a workstation
-convenes the panel — and each says which it did rather than either quietly claiming the
-other's provenance.
+outcome precisely because it is recorded.
+
+**A surface that only verifies is pinned to what the ship measured.** The probe is right for
+a surface about to *dispatch* a panel and wrong for one checking evidence somebody else
+produced: `keel evidence-verify` and `keel merge` run wherever CI puts them, so re-measuring
+there would answer "could *this* runner convene a panel" when the question is "what was this
+change reviewed by". Both take the ship's decision instead, strongest source first:
+
+1. a head-pinned `keel.jury-verdict.v1` already posted on the pull request — the panel sat,
+   and the ballots prove it from the one place a bare runner can read;
+2. the `ship_run` ledger entry for that pull request (`run_context.jury_panel`), which
+   carries the decision the shipping run measured, fallback included.
+
+Only with neither does the verification surface probe on its own, which is what it did
+before. The published record says which it was: `availability.source` is `probe`,
+`pull-request` or `run-ledger`, and a pinned record carries `probed: false` — "we were told"
+and "we checked" are not the same claim.
+
+Two machines can still resolve the *same tier* differently when they are each about to
+dispatch — a CI runner with no agent CLI plans a fallback where a workstation plans the
+panel — and each says which it did rather than quietly claiming the other's provenance. What
+they can no longer do is disagree about a change that has already been reviewed. The residue
+is narrow and fails closed: a fallback-shipped change verified, with no readable ledger, on a
+machine that *can* staff the panel is held to the panel it did not run.
 
 **`config_hash`.** `on_unavailable` is absent from the canonical `team` block when it is
 unset, like every other optional field there, so a project that never names the setting

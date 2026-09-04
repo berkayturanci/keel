@@ -188,6 +188,11 @@ class Availability:
             "unavailable": [seat.as_dict() for seat in self.unavailable],
             "runner": self.runner.as_dict(),
             "inventory": self.inventory,
+            # This record was measured *here*. A verification surface republishing what the
+            # ship measured says so instead (:data:`SOURCE_PULL_REQUEST` /
+            # :data:`SOURCE_RUN_LEDGER`), because "we checked" and "we were told" are not
+            # the same claim.
+            "source": SOURCE_PROBE,
             "reason": self.reason,
         }
 
@@ -261,6 +266,65 @@ def _rows(document: Mapping[str, Any] | None, key: str) -> tuple[Any, ...] | Non
     if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)):
         return None
     return tuple(rows)
+
+
+#: Where a published availability record came from. A *probe* measured this machine; the
+#: other two are a verification surface reading what the ship measured, which is not the
+#: same claim and must not be published as if it were.
+SOURCE_PROBE = "probe"
+SOURCE_PULL_REQUEST = "pull-request"
+SOURCE_RUN_LEDGER = "run-ledger"
+
+
+def panel_sat(
+    *, min_vendors: int = DEFAULT_MIN_VENDORS, policy: str | None = None
+) -> dict[str, Any]:
+    """The panel demonstrably sat: a head-pinned jury verdict is on the pull request (#1066).
+
+    A verification surface must not answer "was the panel available" by asking *its own*
+    machine. ``keel evidence-verify`` and ``keel merge`` run wherever CI puts them, and a
+    change juried on a workstation and checked on a bare runner would otherwise have its
+    required evidence quietly rewritten — the panel item dropped, three host verdicts
+    demanded that nobody was ever asked to post. The ballots are already on the pull
+    request; that is the measurement, and it outranks anything this host can observe.
+
+    ``probed: False`` says plainly that nothing was measured here. Everything else keeps the
+    shape :meth:`Availability.as_dict` publishes, so every reader downstream is unchanged.
+    """
+    return {
+        "probed": False,
+        "staffable": True,
+        "decision": DECISION_AVAILABLE,
+        "on_unavailable": jury_on_unavailable(policy),
+        "required_vendors": max(1, min_vendors),
+        "available_vendors": [],
+        "unavailable": [],
+        "runner": {"command": JURY_RUNNER_COMMAND, "usable": True, "reason": "the panel sat"},
+        "inventory": SOURCE_PULL_REQUEST,
+        "source": SOURCE_PULL_REQUEST,
+        "reason": (
+            "jury panel staffable: a head-pinned jury verdict is posted on the pull "
+            "request, so the panel sat for this head; this surface did not re-probe"
+        ),
+    }
+
+
+def shipped(record: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """The panel decision the ship that produced this pull request measured, or ``None``.
+
+    Read out of that run's ``ship_run`` ledger entry at ``run_context.jury_panel``, which
+    :func:`keel.ledger.build_ship_run_record` writes for exactly this purpose. Total: a
+    record from before the field existed, or one whose run resolved no panel, reads as
+    ``None`` and leaves the caller to probe as it did before.
+    """
+    context = record.get("run_context") if isinstance(record, Mapping) else None
+    panel = context.get("jury_panel") if isinstance(context, Mapping) else None
+    if not isinstance(panel, Mapping) or panel.get("decision") not in (
+        DECISION_AVAILABLE,
+        DECISION_FALLBACK,
+    ):
+        return None
+    return {**dict(panel), "source": SOURCE_RUN_LEDGER}
 
 
 def refusal_message(availability: Mapping[str, Any], *, source: str) -> str:
