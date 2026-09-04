@@ -75,6 +75,15 @@ aborts the run), orchestrator-only-writes, and the #2036 attribution contract.
 **keel-core CLI surface** (deterministic ⇒ golden/snapshot-testable — satisfies the test
 phase):
 
+> **Aspirational sketch — not the shipped CLI.** The block below is the original design
+> sketch of the surface, kept as written for the historical record. Most of these spellings
+> were never implemented, and the ones that were do not take these flags: there is no
+> `keel config show`, `keel next-issue`, `keel branch`, `keel open-pr`, `keel ci-wait`,
+> `keel run-step` or `keel attribute` subcommand; `keel merge` has no `--window-check`
+> (the window is re-checked inside the merge lock unconditionally), and attribution is
+> `keel attribution`. `keel run-gates` takes a project config, not a PR number. For the
+> shipped surface, see [`docs/keel/cli.md`](../keel/cli.md) or `keel --help`.
+
 ```
 keel config show              # resolved project.yaml + flags + loaded extensions
 keel next-issue               # pick from queue

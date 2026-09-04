@@ -89,8 +89,9 @@ honestly in the report's Limitations). For each failing check run keep its concl
 name, start time, the run-page URL (for "sample run URLs"), and the test-report artifact URL if
 extractable.
 
-**Local-runs mode (fallback):** run `keel run-gates .keel/project.yaml --root .` `--runs`
-times on a clean tree and record per-run pass/fail.
+**Local-runs mode (fallback):** run `keel run-gates .keel/project.yaml --root .` on a clean
+tree N times — where N is the value of this command's own `--runs` argument, not a flag on
+`keel run-gates`, which has no such flag — and record per-run pass/fail.
 
 ## Step 2 — build per-test aggregates
 

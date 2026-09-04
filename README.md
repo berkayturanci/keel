@@ -92,6 +92,15 @@ Changing the backbone is a keel-core change. Projects only ever touch layers 2�
   a gate reviewer that is the implementer. The reviewer count and the jury mode are enforced by
   the evidence gate; the **gate review is emit-only** — core publishes the seat and the adapter
   dispatches it, with no evidence item behind it, the same boundary operator consent sits behind.
+- **Test-first when you want it** — `knobs.implement_mode: tdd` (or `--tdd` for a single run)
+  splits s4 into two phases: a **test-only commit** carrying the issue's acceptance criteria,
+  then the implementation. s8 gains the pure, blocking **`tdd-order`** gate, which checks that
+  commit order against the `policy_pack.test_groups` paths, so "tests first" is verified rather
+  than asserted. The resolved profile is published as `contract.implement_mode`
+  (`{"mode": "tdd", "gate": "tdd-order", "phases": ["tests", "implementation"], …}`) and
+  recorded in the ledger, and `--phase-implementer tests=…` / `implementation=…` records a run
+  where the two phases were written by different seats
+  ([reference](docs/keel/configuration.md#implement_mode)).
 - **Know which providers this machine can actually dispatch to** — `keel doctor --providers [--json]`
   probes every provider keel supports (agent CLIs, hosted APIs, local Ollama models, delegate profiles
   and registry entries) and reports `available` / `reason` / transport / capabilities / model list for

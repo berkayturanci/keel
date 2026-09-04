@@ -110,6 +110,46 @@ knobs:
     docs: agy:gemini-3.8-flash-high          # -> agy, model gemini-3.8-flash-high
 ```
 
+### 4. When the panel *is* the reviewer (`review: jury`)
+
+The seats above are **host reviewers**: named providers, one verdict each. A tier can
+instead hand its whole review to the cross-vendor panel by setting the tier's value to the
+string `jury` rather than a seat list:
+
+```yaml
+knobs:
+  team:
+    review:
+      by_tier:
+        "2": [{ provider: claude }, { provider: codex }]
+        "3": jury          # the panel is this tier's review — no host seats beside it
+    jury: { mode: gating, min_vendors: 2 }
+```
+
+On such a tier s7 dispatches [ai-jury](https://github.com/berkayturanci/ai-jury) **once**
+instead of running host readers beside it, and
+`keel review --from-jury <report.json>` turns the panel's JSON report
+(`jury --format json`, report schema 1.1+) into the run's public evidence: one head-pinned
+`keel.review-verdict.v1` per panelist ballot, carrying the `vendor:` and `model:` that
+produced *that* ballot, plus the panel's own `keel.jury-verdict.v1` consensus record — all
+in one call, so ballots and verdict are pinned to the same head SHA by construction. The
+required verdict count becomes the panel's own declared size, and `--json` returns a
+`panel` block whose **verified** consensus findings are the s9 fix-loop input, in the
+`{"findings": […]}` shape [`keel fixloop brief --findings`](cli.md) already reads.
+
+Adopt it deliberately. A panel tier has no host seats to fall back on, and nothing per-run
+can take the panel away: `--no-jury` and `--jury-advisory` are recorded and not applied
+(`--no-jury does not apply: this tier's review is the jury panel …`), because removing the
+panel there would leave the tier with no required review evidence at all.
+
+**keel itself has not adopted this for its own tier 3.** `projects/keel.yaml` staffs three
+named reviewer seats (`claude`, `agy`, `subagent:opus-reviewer`) with
+`jury: { mode: advisory }`, and says why in the file: the switch commits every tier-3 keel
+change to a panel run, so it waits until `keel review --from-jury` has been exercised on a
+real pull request. The mechanism above is what a *consumer* project configures; it is not
+what keel runs on itself. Full reference:
+[`configuration.md#team`](configuration.md#team).
+
 ### Who fixes a review finding
 
 `knobs.team.fix` names the seat that takes a review finding back. Its default is the

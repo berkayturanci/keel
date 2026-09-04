@@ -1,12 +1,21 @@
 # keel parameter reference
 
-This is the exhaustive per-flag reference for the `keel` CLI and the `/keel:ship` adapter
-argument grammar. [`cli.md`](cli.md) is the quick reference — per-command summaries with
-worked examples; this document goes one level deeper: every flag's type, allowed values,
+This is the per-flag reference for the `/keel:ship` adapter argument grammar and for the
+`keel` subcommands a ship run drives. [`cli.md`](cli.md) is the quick reference — it has a
+section for **every** subcommand, with per-command summaries and worked examples; this
+document goes one level deeper on the ones it covers: every flag's type, allowed values,
 default, the exact contract fields and gates it changes, its precedence and interaction
 rules, and what makes a command exit non-zero. Every claim here is grounded in
 `src/keel/cli.py` and the pure modules it calls (`ship.py`, `consent.py`, `classify.py`,
 `window.py`, `evidence.py`, `runcontrols.py`, `capture.py`, `checkpoint.py`).
+
+**What this document does not cover yet.** It is not a per-flag reference for the whole
+CLI. Eighteen subcommands have no section here and are documented in
+[`cli.md`](cli.md) only: `guard`, `consent-verify`, `close-reconcile`, `dryrun-verify`,
+`review-cycle-summary`, `render-report`, `verify-merge`, `scope-verify`, `verify-branch`,
+`scratch-dir`, `doctor`, `delegate`, `swarm-plan`, `swarm-status`, `swarm-run`, `canary`,
+`rollback` and `cost-report`. Treat a missing section as *not yet written*, never as
+*flagless*: `keel <cmd> --help` is authoritative for all of them.
 
 ## Shared flags
 
@@ -697,6 +706,104 @@ keel capture-reconcile .keel/project.yaml --root . \
   --merged-pr 456 --linked-issue 456=123 --capture-capability available --json
 ```
 
+## `keel review`
+
+Orchestrate a supplied review *evidence bundle* in one deterministic command: render the
+verdicts, post them idempotently, and optionally re-verify. It is **not** an agent spawner —
+the host (or the ai-jury panel) produces the review content; this command turns it into
+head-pinned public evidence.
+
+```
+keel review <project.yaml> --pr N (--reviews FILE | --from-jury FILE)
+            [--root DIR] [--issue N] [--closure FILE] [--reviewers 1|2|3]
+            [--jury] [--no-jury] [--jury-advisory] [--head-sha SHA]
+            [--changed-file PATH] [--run-id ID] [--verify]
+            [--dry-run] [--live] [--approve-scope SCOPE] [--operator ID]
+            [--consent-mode MODE] [--effort low|medium|high] [--team PROFILE] [--json]
+```
+
+| Flag | Type / values | Default | Effect |
+| --- | --- | --- | --- |
+| `--pr N` | int | **required** | Pull request the verdicts attach to. |
+| `--reviews FILE` | path to a JSON array of review objects (`reviewer`, `verdict`, optional `scope`, `findings`, `testing`, `vendor`, `model`) | — | The **host's** bundle. Each item renders through `keel.artifacts.render_review_verdict`, head-pinned, posted with the per-reviewer sub-key `<run-id>:rv-<reviewer-slug>`. |
+| `--from-jury FILE` | path to an ai-jury JSON report (`jury --format json`, report schema 1.1+) | — | The **panel's** bundle. See below. |
+| `--issue N` | int | inferred from the PR body | Linked issue; the `--closure` comment is posted there as well as on the PR. |
+| `--closure FILE` | path to a `ship_run`-shaped JSON record | `None` | Rendered by `keel.closure.render_closure_comment` and posted as the `closure-comment` artifact (sub-key `<run-id>:closure`). |
+| `--reviewers 1\|2\|3` | int | tier-derived | Overrides the required verdict count. |
+| `--jury` / `--no-jury` / `--jury-advisory` | flags | config | Shared review/jury family semantics. They move the **jury line only**, never the reviewer bench. |
+| `--head-sha SHA` | string | fetched via `gh` | Offline PR head SHA used to pin the verdicts. |
+| `--changed-file PATH` | repeatable string | fetched via `gh` | Offline changed-file fixture; the risk tier is derived from these. |
+| `--run-id ID` | string | `run` | Idempotency root; every post gets a stable sub-key under it. |
+| `--verify` | flag | off | Runs `evidence-verify` after posting against the contract *this* command resolved, and folds its pass/fail into the result and the exit code. |
+| `--effort` / `--team` | shared staffing flags | — | Same meaning as on `keel ship`; they staff the run whose review this is. |
+| `--root` / `--dry-run` / `--live` / consent flags / `--json` | shared | — | Shared semantics; **dry by default**. |
+
+### Details
+
+**Exactly one of `--reviews` and `--from-jury` is required.** The bundle is the host's or
+the panel's, never both and never neither; either mistake exits 1 with
+`exactly one of --reviews or --from-jury is required: the review bundle is either the
+host's or the jury panel's, never both`.
+
+**The required count is the tier's, resolved by `ship.resolve_review_contract`** — the same
+function `keel ship`, `keel plan`, `keel step-verify`, `keel evidence-verify` and
+`keel merge` use, and the resolved document is published as `review_contract` in `--json`
+so the surfaces can be checked against each other rather than assumed equal. Supplying
+fewer reviews than the tier requires exits 1
+(`supplied 1 review(s) but tier requires at least 2; refusing to under-post evidence`);
+an exact count or more is allowed. Pass a run's jury flags through to its `keel review`
+call — `keel ship --no-jury` followed by a bare `keel review --verify` asks two halves of
+one run for two different gates.
+
+### `--from-jury FILE` — the cross-vendor panel *is* the review
+
+`--from-jury` takes an ai-jury JSON report and maps it onto the same bundle:
+
+- one head-pinned `keel.review-verdict.v1` **per panelist ballot**, carrying the `vendor:`
+  and `model:` that produced that ballot (the chair is the consensus record, not a
+  panelist, and gets no verdict of its own);
+- the panel's own `keel.jury-verdict.v1` consensus comment, posted in the same call, so
+  ballots and verdict are pinned to the same head SHA by construction;
+- a `panel` block in `--json` — `ballots`, `size`, the distinct `vendors`, and the
+  **verified** consensus `findings` already mapped to keel severities and decisions
+  (`critical`/`major` ⇒ `block`). That block is a `{"findings": [...]}` envelope, which is
+  the shape [`keel fixloop brief --findings`](#keel-fixloop) reads as-is.
+
+Only what ai-jury's verification round upheld reaches `panel.findings`: a consensus group
+without `verification_status: verified` is reported by the panel and never gates. A report
+carrying no ballots is refused (exit 1) rather than posting a thinner review.
+
+On a tier whose `knobs.team.review.by_tier."<tier>"` is `jury`, `--from-jury` also declares
+the panel's size, and that size **is** the required verdict count — a measured tier-3 run
+with a four-ballot report resolves `required: 4`, `reviewers.panel: jury`,
+`reviewers.source: jury`, and `jury.reason: "team.review panel"` with
+`verified_consensus_gates: true`. On such a tier the panel outranks the flags:
+`--no-jury` / `--jury-advisory` are recorded and not applied, because removing the panel
+would leave the tier with no required review evidence at all. Below a panel tier the flags
+keep their usual meaning and `--from-jury` is orthogonal to them — it says *where the
+verdicts come from*, they say *whether the contract requires a jury verdict*.
+
+`scope` and `testing` are synthesised from the ballot itself (the files it named, and what
+the verification round upheld), because the JSON report carries no per-ballot prose; they
+are written to satisfy `verdict_substance` by construction.
+
+### Examples
+
+```bash
+# Dry by default: render and print what it WOULD post, fully offline.
+keel review .keel/project.yaml --root . --pr 456 --reviews reviews.json \
+  --head-sha abc123 --changed-file src/keel/ship.py --json
+
+# The panel's ballots are the review: one panel run, then one posting call.
+keel review .keel/project.yaml --root . --pr 456 --from-jury jury-report.json \
+  --run-id "$RUN_ID" --live --approve-scope github --operator "$USER"
+
+# Post the host bundle plus the closure, then re-verify the evidence.
+keel review .keel/project.yaml --root . --pr 456 --issue 123 \
+  --reviews reviews.json --closure ship-run.json --verify \
+  --live --approve-scope github --operator "$USER"
+```
+
 ## `keel evidence-verify`
 
 Verify that a PR carries the public, durable GitHub evidence the ship contract requires
@@ -883,6 +990,88 @@ keel runcontrols .keel/run/events.json --slot fixloop --action fix
 keel runcontrols .keel/run/events.json --step-cap fixloop=3 --json
 # Evaluate only, never write
 keel runcontrols .keel/run/events.json --dry-run --json
+```
+
+## `keel fixloop`
+
+Route review findings back to a fixer — the s9 half of the review loop. One subcommand,
+`brief`: it renders the round's fix brief and resolves **who fixes it**, both
+deterministically, so two hosts running the same round produce the same words and dispatch
+the same seat.
+
+```
+keel fixloop brief --findings FILE [--pr N] [--round K] [--budget N]
+             [--unavailable PROVIDER] [--issue N] [--head SHA] [--fix-sha SHA]
+             [--tier N] [--role LABEL] [--delegate TOKEN] [--host-agent NAME]
+             [--out FILE] [--cwd DIR] [--timeout S]
+             [--root DIR] [--project PATH | --no-project] [--json]
+```
+
+| Flag | Type / values | Default | Effect |
+| --- | --- | --- | --- |
+| `--findings FILE` | path to a JSON array of findings, **or** an object with a `findings` array | **required** | The round's input. Each finding takes `severity` (`critical`/`major`/`minor`/`nit`), `message`, and optionally `source`, `path`, `line`, `anchorable`, `reproduction`. The `panel` block of `keel review --from-jury --json` is already this shape. |
+| `--round K` | positive int | `1` | The 1-based fix round; it selects the ladder rung. |
+| `--budget N` | positive int | `3` | The review-fix round budget. It is **not** `keel ship --max-rounds`, which is the run budget. |
+| `--unavailable PROVIDER` | repeatable string | none | A provider that cannot take this round; it is skipped on the ladder rather than dispatched to. |
+| `--pr N` / `--issue N` / `--head SHA` / `--fix-sha SHA` | int / int / string / string | `None` | Context stamped into the brief's header and trailer. |
+| `--tier N` / `--role LABEL` / `--delegate TOKEN` / `--host-agent NAME` | int / string / string / string | `None` | The s5 tier, the issue's role label (which selects the team seat), an implementer override with `keel ship --delegate`'s grammar, and the host agent driving the run. |
+| `--out FILE` | path | `None` | Writes the rendered brief there — the fixer's `--prompt-file`. |
+| `--cwd DIR` / `--timeout S` | path / int | `None` | Worktree and timeout carried into the rendered `dispatch` argv. |
+| `--project PATH` / `--root DIR` | path | discovered | Where the `knobs.team` policy is read from. |
+| `--no-project` | flag | off | Deliberately resolve **without** a team policy, so the host agent fixes. |
+| `--json` | flag | off | Emit the structured document instead of the rendered brief alone. |
+
+### Details
+
+**The project config is required.** `knobs.team.fix` is what decides whether the round goes
+back to the provider that implemented or to the host, so a config the command cannot read
+is a **refusal** (`status: no-config`, exit 1) rather than a silent resolution against an
+empty policy — which would answer "the host fixes", the failure this command exists to
+prevent. `--no-project` is the explicit opt-out for a project that really has no team
+policy; it resolves the built-in default instead (measured: `fixer.name: claude`,
+`source: default`, `alias: implementer`).
+
+**The fixer is an escalation ladder**, a pure function of the round, provider availability
+and the budget:
+
+| round | seat | source |
+| --- | --- | --- |
+| 1 | `assignment.fix` | `knobs.team.fix`, defaulting to the alias `implementer` — whoever implemented this change |
+| 2 | `assignment.gate` | `knobs.team.gate`, the mandatory second opinion |
+| 3 | the host agent | the CLI driving the run |
+
+A rung repeating an earlier one is dropped — escalating to the seat that just failed the
+round is not an escalation — a provider named by `--unavailable` is skipped, and a round
+past the last rung stays with the last usable fixer. Past `--budget` there is no fixer and
+the command **exits 1** (`status: budget-exhausted`, or `no-fixer` when every rung is
+unavailable), so a spent loop cannot be mistaken for a round to run; a further round needs
+an explicit larger `--budget`.
+
+**Reviewer text is quoted data, never instructions.** The brief becomes the fixer's prompt
+file, and the findings are the one part of it keel did not write, so every
+reviewer-supplied string is rendered as a blockquote — one `> ` per line, the HTML-comment
+opener defanged, a leading `#` escaped, a line reading as one of the brief's trailer keys
+rendered as inline code, and the field capped.
+
+`--json` prints the whole document: `fixer`, the `ladder` with each rung's availability,
+the `hops` walked to reach this round (`start`, `round-failed`, `provider-unavailable`,
+`ladder-exhausted`), the finding `counts`, `re_review`, the rendered `brief`, and
+`dispatch` — the ready-made `keel delegate run --role fix` argv for the resolved seat.
+`dispatch` is `null` for a `kind: subagent` seat: a host subagent is run by the host agent
+and never reaches `keel delegate run`.
+
+### Examples
+
+```bash
+# Round 1 against the project's team policy; print the brief for the fixer.
+keel fixloop brief --findings findings.json --project .keel/project.yaml --root .
+
+# The panel's verified findings open round 2, written out as a prompt file.
+keel fixloop brief --pr 1042 --findings panel-findings.json --round 2 \
+  --issue 1016 --out fix-2.md --json
+
+# The implementer cannot take this round: skip it on the ladder.
+keel fixloop brief --findings findings.json --round 1 --unavailable codex --json
 ```
 
 ## `keel checkpoint`

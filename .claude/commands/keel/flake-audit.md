@@ -89,8 +89,9 @@ honestly in the report's Limitations). For each failing check run keep its concl
 name, start time, the run-page URL (for "sample run URLs"), and the test-report artifact URL if
 extractable.
 
-**Local-runs mode (fallback):** run `keel run-gates .keel/project.yaml --root .` `--runs`
-times on a clean tree and record per-run pass/fail.
+**Local-runs mode (fallback):** run `keel run-gates .keel/project.yaml --root .` on a clean
+tree N times — where N is the value of this command's own `--runs` argument, not a flag on
+`keel run-gates`, which has no such flag — and record per-run pass/fail.
 
 ## Step 2 — build per-test aggregates
 
@@ -189,4 +190,4 @@ the operator to spelunk the tracker after the fact.
   skipped.
 - Fail-soft · deterministic for identical inputs.
 
-<!-- keel-generated: surface=claude command=flake-audit keel_version=1.20.0 source_sha256=44a82be3a75ed0fe7654428a48890b459f03345b2e9a9195a50d0f4be61675cc generated_sha256=44a82be3a75ed0fe7654428a48890b459f03345b2e9a9195a50d0f4be61675cc -->
+<!-- keel-generated: surface=claude command=flake-audit keel_version=1.20.0 source_sha256=abcf0306e5758ec552ce0655680a186e0a6b842cec8b40d76063eb95669ab895 generated_sha256=abcf0306e5758ec552ce0655680a186e0a6b842cec8b40d76063eb95669ab895 -->

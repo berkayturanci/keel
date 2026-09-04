@@ -373,27 +373,45 @@ keel ship     &lt;cfg&gt; --root .  <span class="cm"># dry assessment → decisi
 
         <!-- Configuration -->
         <section class="view" id="view-config" data-view="config">
-          <div class="view-head"><p class="view-kicker brass">Layer 2 · values, not copied commands</p><h1>Configured with a small project.yaml</h1><p>A keel consumer is driven by values. Unknown keys are rejected by the bundled schema, so the reference is intentionally strict.</p></div>
+          <div class="view-head"><p class="view-kicker brass">Layer 2 · values, not copied commands</p><h1>Configured with a small project.yaml</h1><p>A keel consumer is driven by values. Unknown keys are rejected by the bundled schema, so the reference is intentionally strict. <code>knobs.team</code> states the whole team — who implements, who gives the mandatory gate review from a different vendor, who reviews at each risk tier (or <code>jury</code>, when the cross-vendor panel <b>is</b> the review) and who applies the findings — and <code>knobs.implement_mode: tdd</code> makes s4 test-first.</p></div>
           <div class="split">
             <div class="cfg-keys" id="cfg-keys"></div>
             <div class="codewrap">
               <button class="code-copy" type="button" data-copy="see docs" data-copy-target="#code-yaml" aria-label="Copy YAML example"><span>copy</span></button>
-              <pre class="code" id="code-yaml" tabindex="0" role="region" aria-label="Project YAML configuration example"><code><span class="k">core</span>: <span class="s">"^1.0"</span>
+              <pre class="code" id="code-yaml" tabindex="0" role="region" aria-label="Project YAML configuration example"><code><span class="k">extends</span>: <span class="s">keel</span>
+<span class="k">core_version</span>: <span class="s">"^1.0"</span>
 <span class="k">base_branch</span>: <span class="s">main</span>
 <span class="k">timezone</span>: <span class="s">Europe/Istanbul</span>
 <span class="k">merge_window</span>: <span class="s">"07:00-01:30"</span>
 
-<span class="k">gates</span>:
-  <span class="k">build</span>: <span class="s">make test</span>
-  <span class="k">lint</span>:  <span class="s">make lint</span>
+<span class="k">gates</span>: [<span class="s">build</span>, <span class="s">lint</span>]   <span class="cm"># gate names; the commands are knobs</span>
+
+<span class="k">knobs</span>:
+  <span class="k">build_gate_cmd</span>: <span class="s">make test</span>
+  <span class="k">lint_cmd</span>: <span class="s">make lint</span>
+  <span class="k">tier3_globs</span>: [<span class="s">"src/keel/orchestrator.py"</span>]
+  <span class="k">implement_mode</span>: <span class="s">tdd</span>  <span class="cm"># test-first s4 + tdd-order gate</span>
+  <span class="k">team</span>:               <span class="cm"># the whole team, as values</span>
+    <span class="k">implement</span>:
+      <span class="k">default</span>: { <span class="k">provider</span>: <span class="s">claude</span> }
+    <span class="k">gate</span>:            <span class="cm"># a different vendor, always</span>
+      <span class="k">provider</span>: <span class="s">codex</span>
+      <span class="k">distinct_from</span>: <span class="s">implementer</span>
+    <span class="k">review</span>:
+      <span class="k">by_tier</span>:
+        <span class="s">"2"</span>: [{ <span class="k">provider</span>: <span class="s">claude</span> }]
+        <span class="s">"3"</span>: <span class="s">jury</span>     <span class="cm"># the panel IS the review</span>
+    <span class="k">fix</span>: { <span class="k">provider</span>: <span class="s">implementer</span> }
 
 <span class="k">extensions</span>:          <span class="cm"># add-only Lego</span>
   <span class="k">pre-merge</span>:
     - <span class="s">design-parity-gate</span>
 
 <span class="k">policy_pack</span>:
-  <span class="k">labels</span>: [<span class="s">bug</span>, <span class="s">feature</span>, <span class="s">flake</span>]
-  <span class="k">tier3_globs</span>: [<span class="s">"src/keel/orchestrator.py"</span>]</code></pre>
+  <span class="k">name</span>: <span class="s">my-project</span>
+  <span class="k">labels</span>:
+    <span class="k">status</span>: [<span class="s">status:backlog</span>, <span class="s">status:in-progress</span>]
+    <span class="k">role</span>: [<span class="s">core</span>, <span class="s">docs</span>]</code></pre>
             </div>
           </div>
         </section>
