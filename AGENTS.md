@@ -169,6 +169,14 @@ the schema if the contract changes), not this prose.
   `guard`, `tester`, `test`, and `pre-merge`. The loader is fail-soft.
 - **Tests mirror modules.** Each `src/keel/<m>.py` has `tests/test_<m>.py`. New behaviour
   comes with tests that hold the core at 100 % line + branch.
+- **A re-exporting module declares `__all__`.** A name imported only so *other* modules
+  can read it from there is spelled `from .x import Y as Y` (which `ruff`'s F401 honours)
+  **and** listed in the module's `__all__`: CodeQL's `py/unused-import` counts same-module
+  uses only, so an undeclared re-export is reported as unused (#1070). `__all__` is then
+  the module's *whole* public surface, not the re-exports alone —
+  `tests/test_reexport_surface.py` discovers every re-exporting module and enforces both
+  directions. Do not answer that rule with a dismissal or a repo-wide silence; it catches
+  real defects (#1063).
 - **Dogfooding.** keel drives itself via `projects/keel.yaml`; CI runs `keel` on keel-core
   every push. `keel ship projects/keel.yaml --root .` is the full dry assessment (tier →
   reviewers, window, gates, decision).

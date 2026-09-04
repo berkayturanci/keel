@@ -65,6 +65,45 @@ from .vocab import EFFORT_VENDORS as EFFORT_VENDORS
 from .vocab import EFFORTS
 from .vocab import supports_effort as supports_effort
 
+#: The module's public surface, in definition order (#1070). It is declared because the
+#: ``X as X`` re-exports above are read only from *other* modules — a use CodeQL's
+#: ``py/unused-import`` cannot see, since it counts same-module uses only. A name listed
+#: in ``__all__`` is used by definition, so the declaration answers the scanner with the
+#: language's own statement of intent rather than with a dismissal. Being a real
+#: declaration it has to be the *whole* surface, not the re-exports alone;
+#: ``tests/test_reexport_surface.py`` holds it to that in both directions.
+__all__ = [
+    "EFFORT_VENDORS",
+    "EFFORTS",
+    "supports_effort",
+    "ROLES",
+    "READ_ONLY_ROLES",
+    "TRANSPORTS",
+    "STDIN_TEXT",
+    "STDIN_STREAM_JSON",
+    "DEFAULT_TIMEOUT_S",
+    "OLLAMA_GENERATE_URL",
+    "AGY_STREAM_ARGS",
+    "CLAUDE_ALLOWED_TOOLS",
+    "CODEX_EFFORT_CONFIG",
+    "ANTHROPIC_THINKING_BUDGET",
+    "GOOGLE_THINKING_BUDGET",
+    "THINKING_HEADROOM_TOKENS",
+    "DelegateError",
+    "Resolution",
+    "Effort",
+    "RunPlan",
+    "resolve_provider",
+    "is_safe_body_model_token",
+    "model_reaches_argv",
+    "model_token_issue",
+    "plan_run",
+    "stream_json_frame",
+    "parse_stream_json",
+    "parse_ollama_response",
+    "ollama_payload",
+]
+
 #: Roles a delegate can be dispatched for. ``chair`` is the jury's summariser; it reads
 #: reviews and writes nothing, so it sits with the read-only three.
 ROLES = ("implement", "fix", "review", "gate", "chair")
