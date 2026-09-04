@@ -948,7 +948,11 @@ class FixloopCommandCase(unittest.TestCase):
         self.assertTrue(document["blocked"])
         self.assertIsNone(document["fixer"])
         self.assertEqual(document["reason"], "no such file")
-        self.assertIn(".keel/project.yaml", document["config_path"])
+        # Compared against the same path object the fixture built, not a "/"-spelled
+        # substring: the command reports the resolved path with the platform's own
+        # separator, which is what an operator on that platform needs to see, and a
+        # hard-coded ".keel/project.yaml" only ever matched on POSIX.
+        self.assertEqual(document["config_path"], str(self.config))
         self.assertIn("--no-project", err)
 
     def test_an_invalid_config_is_the_same_refusal(self):

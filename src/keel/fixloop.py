@@ -567,8 +567,10 @@ def _finding_block(index: int, finding: findings_mod.Finding) -> list[str]:
     # gate message, for the same reason: line two onwards is often where the detail is.
     headline, *detail = message.splitlines() or [""]
     lines = [
-        f"{index}. **{finding.severity}** · `{_anchor(finding)}` · "
-        f"{_inline(headline, fallback='(no message)')}",
+        (
+            f"{index}. **{finding.severity}** · `{_anchor(finding)}` · "
+            f"{_inline(headline, fallback='(no message)')}"
+        ),
         f"   - reported by: {_inline(finding.source, fallback='an unnamed reviewer')}",
         f"   - decision: {findings_mod.decision_for(finding.severity)}",
     ]
@@ -627,17 +629,21 @@ def render_brief(
         "",
         f"# Fix round {round_number} of {budget} — PR {pr_label}",
         "",
-        f"You are the fixer for this round: `{provider}` (ladder stage `{stage}`, "
-        f"from `{source}`){alias_note}.",
+        (
+            f"You are the fixer for this round: `{provider}` (ladder stage `{stage}`, "
+            f"from `{source}`){alias_note}."
+        ),
     ]
     if isinstance(issue_number, int):
         lines.append(f"The change closes issue #{issue_number}.")
     lines.extend(
         [
             "",
-            "Fix the findings below in the run's worktree, then commit and push to the PR "
-            "branch. Do not open a new PR, do not re-scope the change, and do not fix "
-            "anything the reviewers did not raise.",
+            (
+                "Fix the findings below in the run's worktree, then commit and push to "
+                "the PR branch. Do not open a new PR, do not re-scope the change, and do "
+                "not fix anything the reviewers did not raise."
+            ),
             "",
             "## Findings",
             "",
@@ -661,12 +667,19 @@ def render_brief(
         [
             "## Rules for this round",
             "",
-            "- `critical`/`major` block the merge; `minor` is a gated suggestion — apply "
-            "it or obtain a recorded `keel.deferral.v1` deferral; `nit` is advisory.",
-            f"- This is round {round_number} of a {budget}-round budget. Exceeding it marks "
-            "the issue blocked with the outstanding findings quoted.",
-            "- Report what you changed and what you ran. A verification you did not run is "
-            "not evidence.",
+            (
+                "- `critical`/`major` block the merge; `minor` is a gated suggestion — "
+                "apply it or obtain a recorded `keel.deferral.v1` deferral; `nit` is "
+                "advisory."
+            ),
+            (
+                f"- This is round {round_number} of a {budget}-round budget. Exceeding it "
+                "marks the issue blocked with the outstanding findings quoted."
+            ),
+            (
+                "- Report what you changed and what you ran. A verification you did not "
+                "run is not evidence."
+            ),
             "",
             "## Re-review after your push",
             "",
