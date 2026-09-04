@@ -686,9 +686,23 @@ themselves stay and are skipped rather than judged.
 
 > **What the gate does not check.** It reads commit **order and paths**, and nothing else.
 > It never runs phase A's tests, so it cannot report that they were red, and it cannot tell
-> whether the committed tests assert anything — a first commit adding an empty file under
-> `tests/` satisfies rule 3. Those stay a reviewer's questions. The gate makes the *shape*
-> of a test-first run machine-checkable; it does not certify that the tests are good.
+> whether the committed tests assert anything. Three residuals follow, each a reviewer's
+> catch rather than a gate's:
+>
+> - a first commit adding an **empty file** under `tests/` satisfies rule 3 — and so does
+>   one that merely **renames an existing test** within the test paths, since the
+>   destination is present and is a test path;
+> - a test deleted inside a **merge from a side branch** is not judged. Merges are skipped
+>   deliberately: a test legitimately deleted on the base arrives through every branch that
+>   integrates it, and judging merges would block this implementer for someone else's
+>   change. The cost is that `git rm tests/test_a.py` on a side branch merged with
+>   `--no-ff` leaves no non-merge commit recording the deletion. Telling a base merge from
+>   a side merge is not something the commit list can do — both are just a second parent —
+>   so the gate declares the gap rather than guessing;
+> - nothing here says the tests are *good*.
+>
+> The gate makes the *shape* of a test-first run machine-checkable; it does not certify
+> that the tests are good.
 
 **Where the test paths come from.** The fallback is **whole-config, not per-group**, and
 that distinction matters when you write the config:

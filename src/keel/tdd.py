@@ -28,10 +28,18 @@ This module is the pure half — the mode resolution, the commit parser, and the
 
 **What this gate does not do.** It reads *commit order and paths*, and nothing else. It
 does not run phase A's tests, does not verify they were red, and cannot tell whether the
-committed tests assert anything at all — a first commit adding an empty file under
-``tests/`` satisfies it. Those are a reviewer's questions (and, for the red-then-green
-half, the implementer's brief). The gate exists to make the *shape* of a test-first run
-checkable by a machine, not to certify that the tests are good.
+committed tests assert anything at all. Three residuals follow from that, each a
+reviewer's catch rather than a gate's:
+
+* a first commit adding an empty file under ``tests/`` satisfies the "adds a test" rule,
+  and so does one that merely *renames* an existing test within the test paths;
+* a test deleted inside a **merge from a side branch** is not judged, because merges are
+  skipped so that a deletion made on the base is not blamed on this implementer (see the
+  comment at the merge skip in :func:`check_order`);
+* nothing here says the tests are good, only that the branch has the shape of a
+  test-first run.
+
+The red-then-green half is the implementer's brief and its PR body, not this gate.
 
 Pure and deterministic: no wall-clock, no randomness, no I/O, and — at module scope — no
 keel imports at all. The one git read the gate needs is :func:`keel.git.commit_log`, the
@@ -337,7 +345,10 @@ def removed_test(change: Change, globs: Sequence[str]) -> str | None:
 
     A rename **within** the test tree is an ordinary move and stays fine. A **copy**
     (``C``) is not a removal at all — its source still exists after the commit — so it is
-    excluded even when the destination lands outside the test tree.
+    excluded even when the destination lands outside the test tree. That exclusion is
+    **defensive only**: :func:`keel.git.commit_log` never passes ``-C``/``--find-copies``,
+    so git does not emit a ``C`` status for this gate's input and the branch is unreachable
+    from the real argv. It stays because the vocabulary is git's, not keel's.
     """
     if change.deleted:
         return change.path if is_test_path(change.path, globs) else None
@@ -378,8 +389,11 @@ def check_order(
 
     **The boundary.** This reads commit order and paths, and nothing else. It never runs
     phase A's tests, so it cannot report that they were red, and it cannot tell whether
-    the committed tests assert anything — an empty file under ``tests/`` satisfies rule 4.
-    Those remain a reviewer's questions; the gate makes the *shape* of a test-first run
+    the committed tests assert anything — an empty file under ``tests/`` satisfies rule 4,
+    and so does a rename of an existing test within the test paths. Rule 5 has its own
+    residual: a test deleted inside a merge from a side branch is never judged, because
+    merges are skipped (the comment at the skip says why, and what that costs). Those
+    remain a reviewer's questions; the gate makes the *shape* of a test-first run
     machine-checkable, not the quality of the tests.
     """
     globs = tuple(test_globs)
@@ -400,10 +414,20 @@ def check_order(
             "naming the paths the tests live in",
             test_globs=globs,
         )
-    # Merges are skipped throughout, which also means the deletion scan below never
-    # judges what a merge commit brought in. That is safe for the reason the skip itself
-    # is: a merge can be neither the tests commit nor the implementation commit, so the
-    # only paths it carries are the base's, already reviewed on their own way in.
+    # Merges are skipped throughout, so the deletion scan below never judges what a merge
+    # commit brought in. That is a deliberate trade-off, not a proof of safety, and the
+    # earlier claim here — "the only paths a merge carries are the base's" — was simply
+    # wrong. It holds for a merge *from the base*, which is the common case and the reason
+    # to skip: a test legitimately deleted on the base arrives through every branch that
+    # integrates it, and judging merges would block this implementer for someone else's
+    # work, on a change they did not make.
+    #
+    # The residual, named because it is real: a merge from a *side* branch carries that
+    # branch's paths, not the base's. `git rm tests/test_a.py` on a side branch merged
+    # with `--no-ff` removes the test with no non-merge commit recording the deletion, so
+    # rule 5 does not see it. A reviewer reading the diff does. Closing it would mean
+    # telling a base merge from a side merge, which the commit list alone cannot do —
+    # both are a second parent — so the gate declares the gap instead of guessing.
     work = [commit for commit in commits if not commit.merge]
     if not work:
         return OrderResult(
