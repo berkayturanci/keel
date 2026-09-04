@@ -1114,8 +1114,12 @@ def _review_assignment(
     # one pays nothing and behaves exactly as before — and not at all when the caller
     # already knows what the ship measured (`_shipped_jury_availability`), because a
     # surface that only verifies must be held to that run's decision, not to this host's.
-    availability = pinned if pinned is not None else providerprobe.jury_availability(
-        config, tier=tier, profile=getattr(args, "team_profile", None)
+    availability = (
+        pinned
+        if pinned is not None
+        else providerprobe.jury_availability(
+            config, tier=tier, profile=getattr(args, "team_profile", None)
+        )
     )
     return team.resolve_assignment(
         config.knobs.team,

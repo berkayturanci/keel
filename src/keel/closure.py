@@ -282,8 +282,7 @@ def _jury_panel(block: dict[str, Any]) -> list[str]:
         if decision == "fallback"
         else "the run was refused (knobs.team.jury.on_unavailable: block)"
     )
-    return [f"- **Jury panel:** {PANEL_UNAVAILABLE_LABEL} — {outcome}"
-            f"{_panel_detail(panel)}"]
+    return [f"- **Jury panel:** {PANEL_UNAVAILABLE_LABEL} — {outcome}{_panel_detail(panel)}"]
 
 
 def _panel_detail(panel: dict[str, Any]) -> str:

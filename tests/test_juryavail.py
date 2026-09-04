@@ -189,9 +189,10 @@ class TestTheRunnerIsPartOfTheQuestion(unittest.TestCase):
         self.assertEqual(seat.vendor, "ai-jury")
         self.assertEqual(seat.reason, "jury not found on PATH")
         # …so every surface that renders the seats names it without extra plumbing.
-        self.assertIn("jury: jury not found on PATH", juryavail.refusal_message(
-            verdict.as_dict(), source="team.review.by_tier.3"
-        ))
+        self.assertIn(
+            "jury: jury not found on PATH",
+            juryavail.refusal_message(verdict.as_dict(), source="team.review.by_tier.3"),
+        )
         self.assertIn(
             "jury: jury not found on PATH",
             closure.render_closure_comment({"run_context": {"jury_panel": verdict.as_dict()}}),
@@ -422,8 +423,10 @@ class TestTheRefusalMessage(unittest.TestCase):
 
     def test_malformed_fields_degrade_rather_than_raise(self):
         message = juryavail.refusal_message(
-            {"unavailable": ["not a seat", {"provider": "codex", "reason": "gone"}],
-             "available_vendors": "claude"},
+            {
+                "unavailable": ["not a seat", {"provider": "codex", "reason": "gone"}],
+                "available_vendors": "claude",
+            },
             source="team.review.default",
         )
 
@@ -477,9 +480,7 @@ class TestTheBenchTheProbeSeats(unittest.TestCase):
 
     def _resolve(self, report, *, policy=None, default_count=3, **kwargs):
         availability = (
-            None
-            if report is None
-            else _assess(report, min_vendors=2, policy=policy).as_dict()
+            None if report is None else _assess(report, min_vendors=2, policy=policy).as_dict()
         )
         return team_policy.resolve_assignment(
             self._policy(mode="gating"),
@@ -509,12 +510,8 @@ class TestTheBenchTheProbeSeats(unittest.TestCase):
         # …but the tier still *asked* for a panel, and the record says so.
         self.assertTrue(assignment["jury"]["panel_configured"])
         self.assertEqual(assignment["reviewer_source"], "jury-fallback")
-        self.assertEqual(
-            [seat["provider"] for seat in assignment["reviewers"]], ["claude"] * 3
-        )
-        self.assertEqual(
-            [seat["slot"] for seat in assignment["reviewers"]], ["A", "B", "C"]
-        )
+        self.assertEqual([seat["provider"] for seat in assignment["reviewers"]], ["claude"] * 3)
+        self.assertEqual([seat["slot"] for seat in assignment["reviewers"]], ["A", "B", "C"])
 
     def test_the_fallback_is_never_silent(self):
         assignment = self._resolve(UNSTAFFED)
@@ -777,7 +774,9 @@ class TestTheProbeAsksWhatTheResolverAsks(unittest.TestCase):
     call-site sweep because that site *was* handed a measurement.
     """
 
-    OVERLAY_PANEL = BENCH_CONFIG + """    profiles:
+    OVERLAY_PANEL = (
+        BENCH_CONFIG
+        + """    profiles:
       strict:
         review: jury
     by_difficulty:
@@ -787,6 +786,7 @@ class TestTheProbeAsksWhatTheResolverAsks(unittest.TestCase):
       mode: gating
       min_vendors: 2
 """
+    )
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -1059,9 +1059,7 @@ class TestTheRecordAReaderSees(unittest.TestCase):
         rendered = closure.render_closure_comment(
             {
                 "run_context": {
-                    "jury_panel": _assess(
-                        UNSTAFFED, min_vendors=2, policy="block"
-                    ).as_dict()
+                    "jury_panel": _assess(UNSTAFFED, min_vendors=2, policy="block").as_dict()
                 }
             }
         )
@@ -1585,9 +1583,7 @@ class TestTheContractIsPinnedToTheShipsMeasurement(unittest.TestCase):
     def test_a_ledger_record_that_says_nothing_about_the_panel_pins_nothing(self):
         for availability in (None, "nonsense", {"decision": "block"}):
             with self.subTest(availability=availability):
-                required = self._required(
-                    report=UNSTAFFED, ledger_jsonl=self._ledger(availability)
-                )
+                required = self._required(report=UNSTAFFED, ledger_jsonl=self._ledger(availability))
 
                 self.assertNotIn("jury-verdict", required)
 
@@ -1649,8 +1645,10 @@ class TestTheContractIsPinnedToTheShipsMeasurement(unittest.TestCase):
         record = {"run_context": {"jury_panel": _assess(UNSTAFFED, min_vendors=2).as_dict()}}
         artifacts = {
             "pr_comments": [
-                {"body": "keel.jury-verdict.v1\nhead: abc\nAI Jury LGTM",
-                 "author_association": "MEMBER"}
+                {
+                    "body": "keel.jury-verdict.v1\nhead: abc\nAI Jury LGTM",
+                    "author_association": "MEMBER",
+                }
             ],
             "pr_reviews": [],
             "head_sha": "abc",
@@ -1664,8 +1662,10 @@ class TestTheContractIsPinnedToTheShipsMeasurement(unittest.TestCase):
     def test_a_verdict_pinned_to_another_head_is_not_this_changes_panel(self):
         artifacts = {
             "pr_comments": [
-                {"body": "keel.jury-verdict.v1\nhead: stale\nAI Jury LGTM",
-                 "author_association": "MEMBER"}
+                {
+                    "body": "keel.jury-verdict.v1\nhead: stale\nAI Jury LGTM",
+                    "author_association": "MEMBER",
+                }
             ],
             "pr_reviews": [],
             "head_sha": "abc",
