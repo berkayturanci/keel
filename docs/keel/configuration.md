@@ -305,13 +305,20 @@ an agent CLI is not installed, is unauthenticated, or the account is out of quot
 tier would otherwise be simply stuck: the only review it has is one this machine cannot
 convene. A single-maintainer project hits that routinely.
 
-So **before s7 dispatches the panel, keel probes it.** The probe is the machinery
-`keel doctor --providers` already runs — one `PATH` lookup and one `--version` call per CLI
-vendor, an env-var *name* check per hosted API, one loopback request for Ollama — reused
-rather than re-implemented, so keel keeps one answer to "is this provider usable here"
-instead of two that drift. The panel is *staffable* when the probe finds at least
-`jury.min_vendors` distinct vendors available; two entries that shell out to the same CLI
-are one vendor and one opinion, exactly as they are everywhere else.
+So **before s7 dispatches the panel, keel probes it** — the panel s7 would actually
+dispatch, which is the `jury` binary and the agents *it* is configured with, not keel's own
+delegate list. The probe asks the runner first (`jury --doctor --json`, ai-jury's own
+readiness document): that establishes the binary is present and runnable, and reports which
+of its agents are usable. For a runner too old to answer, keel falls back to the inventory
+`keel doctor --providers` already collects — one `PATH` lookup and one `--version` call per
+CLI vendor, an env-var *name* check per hosted API, one loopback request for Ollama — so
+keel keeps one answer to "is this provider usable here" instead of two that drift.
+
+The panel is *staffable* when **both** halves hold: the `jury` runner is usable here, and
+at least `jury.min_vendors` distinct vendors are available to it. Two entries that shell out
+to the same CLI are one vendor and one opinion, exactly as they are everywhere else — and
+agent CLIs on `PATH` with no `jury` to convene them are an inventory, not a panel, so a host
+with `claude` and `codex` and no ai-jury installed is *not* staffable.
 
 `on_unavailable` is what happens when it is not:
 
@@ -319,6 +326,10 @@ are one vendor and one opinion, exactly as they are everywhere else.
 | --- | --- |
 | `fallback` *(default)* | Staff a **host bench of the same size the tier requires** — three seats at tier-3, exactly as a tier without a panel resolves — and record why. |
 | `block` | Refuse the run, with a message naming each unavailable provider and the reason the probe reported. |
+
+A missing runner is a seat like any other: it is listed first under
+`availability.unavailable` as `jury`, so the message an operator reads names the thing to
+install rather than sending them to chase a panelist that was never the problem.
 
 `fallback` is the sensible default for a solo project: the panel is the better review when
 it is available and should not become a wall when it is not. `block` preserves the strict
@@ -336,6 +347,8 @@ unavailable and why — and travels with the run:
   whole record; `assignment.reviewer_source` reads `jury-fallback` rather than `risk-tier`,
   so a fallback bench is distinguishable from a tier that never had a panel;
 - `assignment.warnings` names the unavailable seats in one sentence;
+- `availability.runner` says whether the `jury` binary itself was usable, and
+  `availability.inventory` says which of the two sources the vendor counts were read from;
 - the run ledger records it at `run_context.jury_panel`;
 - the closure comment renders a **Jury panel:** line saying the panel was unavailable and a
   host bench reviewed instead, listing the seats. A run whose panel convened, and every run

@@ -6,11 +6,20 @@ take the panel back off. That is right while the panel can run. When it cannot �
 CLI is not installed, is unauthenticated, or the account is out of quota — the tier has no
 way forward at all: the only review it has is one this machine cannot convene.
 
-This module is the pure half of the answer. The machine-dependent half is already written:
-:func:`keel.providerprobe.collect` is what ``keel doctor --providers`` prints, and it
-reports, per provider, whether it is usable *here, right now* and why not. Reusing it is
-deliberate — a second prober would be a second answer to a question keel already answers,
-and the two would drift.
+This module is the pure half of the answer. The question it has to answer is narrower than
+"are some agent CLIs installed": s7 does not convene a panel out of keel's delegate
+inventory, it runs the **``jury`` binary** (``src/keel/adapters/commands/ship.md``), and
+that binary holds its own configured panel. So the probe asks the runner first —
+``jury --doctor --json``, ai-jury's own readiness document, which reports both that the
+binary is there and which of *its* agents are usable — and only falls back to
+:func:`keel.providerprobe.collect` (what ``keel doctor --providers`` prints) for a runner
+that could not produce one. A machine with ``claude`` and ``codex`` on ``PATH`` and no
+``jury`` is **not** staffable, however healthy keel's own inventory looks: the panel s7
+would dispatch cannot run.
+
+Two answers to one question is what this ordering avoids. keel's delegate inventory is a
+proxy for the panel, ai-jury's is the panel; when the panel can speak for itself it is the
+authority, and the record says which inventory the verdict was read from.
 
 Three things the design holds to, all of them from the issue:
 
@@ -39,6 +48,20 @@ from dataclasses import dataclass
 from typing import Any
 
 from .team import DEFAULT_MIN_VENDORS, JURY_ON_UNAVAILABLE_DEFAULT, jury_on_unavailable
+
+#: The binary a jury-panel tier's s7 actually dispatches. Not a delegate keel runs itself:
+#: keel does not depend on ai-jury, and every path through this module stays total when it
+#: is absent — absent simply means the panel cannot sit here.
+JURY_RUNNER_COMMAND = "jury"
+
+#: The vendor the runner seat is attributed to, so a reader of ``unavailable`` can tell the
+#: missing *panel* apart from a missing *panelist*.
+JURY_RUNNER_VENDOR = "ai-jury"
+
+#: Where a verdict's vendor inventory was read from — recorded, because the two sources do
+#: not have to agree and a reader must not have to guess which one spoke.
+INVENTORY_RUNNER = f"{JURY_RUNNER_COMMAND} --doctor"
+INVENTORY_PROVIDERS = "keel doctor --providers"
 
 #: The panel is staffable — nothing changes, the ballots are the review.
 DECISION_AVAILABLE = "available"
@@ -70,6 +93,35 @@ class Seat:
 
 
 @dataclass(frozen=True)
+class Runner:
+    """The ``jury`` CLI itself: can s7 dispatch it here, and what panel does it hold?
+
+    Produced by :func:`keel.providerprobe.probe_jury_runner` — the thin-I/O half — and
+    consumed here. ``doctor`` is ai-jury's own ``jury --doctor --json`` document when the
+    binary produced a readable one; a runner that ran but could not report its panel is
+    still *usable*, and the verdict then reads keel's own delegate inventory instead.
+    """
+
+    usable: bool
+    reason: str
+    doctor: Mapping[str, Any] | None = None
+
+    @property
+    def panel_rows(self) -> tuple[Any, ...] | None:
+        """The agents ai-jury reports for its own panel, or ``None`` when it reported none."""
+        return _rows(self.doctor, "agents")
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"command": JURY_RUNNER_COMMAND, "usable": self.usable, "reason": self.reason}
+
+
+#: What an unprobed runner reads as. Fail-closed on purpose: the whole point of #1066
+#: round 2 is that a panel nobody established could run must not be reported staffable, so
+#: "we did not ask" and "we asked and it is fine" cannot share an answer.
+RUNNER_UNPROBED = Runner(False, f"the {JURY_RUNNER_COMMAND} runner was not probed")
+
+
+@dataclass(frozen=True)
 class Availability:
     """The probe's verdict on this tier's panel, ready to publish."""
 
@@ -78,15 +130,25 @@ class Availability:
     required_vendors: int
     #: Vendors the probe found usable here, in the probe's own (deterministic) order.
     available_vendors: tuple[str, ...]
-    #: Every provider the probe could not use, with the reason it reported.
+    #: Every seat the panel could not use, with the reason it reported. The ``jury`` runner
+    #: itself is one of them when it is the thing that is missing.
     unavailable: tuple[Seat, ...]
     #: ``fallback`` | ``block`` — the configured allowance, already defaulted.
     policy: str = JURY_ON_UNAVAILABLE_DEFAULT
+    #: The ``jury`` binary s7 dispatches. Unprobed reads as unusable, never as fine.
+    runner: Runner = RUNNER_UNPROBED
+    #: Which inventory the vendor counts came from — the runner's own, or keel's.
+    inventory: str = INVENTORY_PROVIDERS
 
     @property
     def staffable(self) -> bool:
-        """Can this machine convene a panel spanning ``required_vendors`` vendors?"""
-        return len(self.available_vendors) >= self.required_vendors
+        """Can this machine convene a panel spanning ``required_vendors`` vendors?
+
+        Both halves, because s7 needs both: the runner that dispatches the panel, and
+        enough distinct vendors for it to *be* a cross-vendor panel. Agent CLIs on ``PATH``
+        with no ``jury`` to convene them is not a panel, it is an inventory.
+        """
+        return self.runner.usable and len(self.available_vendors) >= self.required_vendors
 
     @property
     def decision(self) -> str:
@@ -96,17 +158,23 @@ class Availability:
     @property
     def reason(self) -> str:
         """One sentence a reader can act on, naming the seats that were unavailable."""
-        if self.staffable:
-            return (
-                f"jury panel staffable: {len(self.available_vendors)} vendor(s) available "
-                f"({', '.join(self.available_vendors)}), {self.required_vendors} required"
-            )
-        listed = ", ".join(f"{seat.provider} ({seat.reason})" for seat in self.unavailable)
-        return (
-            f"jury panel not staffable: {len(self.available_vendors)} vendor(s) available "
+        counted = (
+            f"{len(self.available_vendors)} vendor(s) available "
             f"({', '.join(self.available_vendors) or 'none'}), {self.required_vendors} "
-            f"required; unavailable: {listed or 'none probed'}"
+            f"required (per {self.inventory})"
         )
+        if self.staffable:
+            return f"jury panel staffable: {counted}, dispatched by {self.runner.reason}"
+        listed = ", ".join(f"{seat.provider} ({seat.reason})" for seat in self.unavailable)
+        # Named apart from the vendor shortfall, because the numbers alone mislead: a
+        # machine with two agent CLIs and no `jury` reads as "2 of 2 available" while the
+        # panel s7 would dispatch cannot run at all.
+        why = (
+            f"the {JURY_RUNNER_COMMAND} runner s7 dispatches is not usable here; {counted}"
+            if not self.runner.usable
+            else counted
+        )
+        return f"jury panel not staffable: {why}; unavailable: {listed or 'none probed'}"
 
     def as_dict(self) -> dict[str, Any]:
         """JSON-stable record — the shape the assignment and the contract publish."""
@@ -118,6 +186,8 @@ class Availability:
             "required_vendors": self.required_vendors,
             "available_vendors": list(self.available_vendors),
             "unavailable": [seat.as_dict() for seat in self.unavailable],
+            "runner": self.runner.as_dict(),
+            "inventory": self.inventory,
             "reason": self.reason,
         }
 
@@ -125,25 +195,38 @@ class Availability:
 def assess(
     report: Mapping[str, Any] | None,
     *,
+    runner: Runner = RUNNER_UNPROBED,
     min_vendors: int = DEFAULT_MIN_VENDORS,
     policy: str | None = None,
 ) -> Availability:
-    """Read a ``keel doctor --providers`` report into a panel verdict.
+    """Read the panel runner — and, failing that, keel's provider report — into a verdict.
 
-    ``report`` is :func:`keel.providerprobe.build_report`'s document. Every row is a
-    candidate seat: a panel spans *vendors*, so two entries that shell out to the same CLI
-    are one opinion (the same rule :func:`keel.providers.distinct_vendors` states), and a
-    hosted API with its key set is as real a panelist as a CLI on ``PATH``.
+    ``runner`` is :func:`keel.providerprobe.probe_jury_runner`'s answer about the ``jury``
+    binary s7 actually dispatches. It gates the whole verdict: no runner, no panel, whatever
+    keel's delegate inventory says. It defaults to :data:`RUNNER_UNPROBED` — unusable — so a
+    caller that forgets to probe it gets the conservative answer rather than a staffable
+    panel nobody checked.
 
-    Total by construction. A missing or malformed report yields *no* available vendors and
+    The vendor inventory is the runner's own when ``jury --doctor --json`` reported one:
+    ai-jury is the authority on the panel it would convene, and keel's delegate list is only
+    a proxy for it. ``report`` — :func:`keel.providerprobe.build_report`'s document — is the
+    fallback for an older or quieter runner. Either way a panel spans *vendors*, so two rows
+    that shell out to the same CLI are one opinion (the rule
+    :func:`keel.providers.distinct_vendors` states), and a hosted API with its key set is as
+    real a panelist as a CLI on ``PATH``.
+
+    Total by construction. A missing or malformed inventory yields *no* available vendors and
     *no* named seats, which reads as "not staffable" — the conservative answer, and the
     one that then goes through the project's own configured allowance rather than being
     quietly decided here.
     """
-    rows = report.get("providers") if isinstance(report, Mapping) else None
-    rows = rows if isinstance(rows, Sequence) and not isinstance(rows, (str, bytes)) else ()
+    rows, inventory = _inventory(runner, report)
     available: list[str] = []
     unavailable: list[Seat] = []
+    if not runner.usable:
+        # First in the list, because it is the first thing to fix: a reader who sees
+        # `codex not found on PATH` and installs codex has not made the panel runnable.
+        unavailable.append(Seat(JURY_RUNNER_COMMAND, JURY_RUNNER_VENDOR, runner.reason))
     for row in rows:
         if not isinstance(row, Mapping):
             continue
@@ -159,7 +242,25 @@ def assess(
         available_vendors=tuple(available),
         unavailable=tuple(unavailable),
         policy=jury_on_unavailable(policy),
+        runner=runner,
+        inventory=inventory,
     )
+
+
+def _inventory(runner: Runner, report: Mapping[str, Any] | None) -> tuple[tuple[Any, ...], str]:
+    """``(rows, where they came from)`` — the runner's own panel, or keel's providers."""
+    rows = runner.panel_rows
+    if rows is not None:
+        return rows, INVENTORY_RUNNER
+    return _rows(report, "providers") or (), INVENTORY_PROVIDERS
+
+
+def _rows(document: Mapping[str, Any] | None, key: str) -> tuple[Any, ...] | None:
+    """``document[key]`` as a tuple of rows, or ``None`` when it is not a list of them."""
+    rows = document.get(key) if isinstance(document, Mapping) else None
+    if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)):
+        return None
+    return tuple(rows)
 
 
 def refusal_message(availability: Mapping[str, Any], *, source: str) -> str:
@@ -186,9 +287,10 @@ def refusal_message(availability: Mapping[str, Any], *, source: str) -> str:
         f"{availability.get('required_vendors')} required.\n"
         f"Unavailable:\n{listed}\n"
         "knobs.team.jury.on_unavailable is 'block', so this run refuses rather than "
-        "reviewing with a bench the policy did not ask for. Install or authenticate the "
-        "missing providers (keel doctor --providers), or set on_unavailable: fallback to "
-        "let a host bench of the same size review instead."
+        "reviewing with a bench the policy did not ask for. Install or authenticate what "
+        f"is missing — the panel runner answers `{JURY_RUNNER_COMMAND} --doctor` and keel's "
+        "own delegates answer `keel doctor --providers` — or set on_unavailable: fallback "
+        "to let a host bench of the same size review instead."
     )
 
 

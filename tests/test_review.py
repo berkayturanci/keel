@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from keel import cli, closure, evidence, review, runtime
+from keel import cli, closure, evidence, juryavail, review, runtime
 from keel.runner import CommandResult
 
 #: A canned ``keel doctor --providers`` report in which the panel *is* staffable (#1066).
@@ -29,20 +29,31 @@ _STAFFED_PANEL_REPORT = {
     "total": 2,
 }
 
-_NO_REAL_PROVIDER_PROBE = None
+#: …and the `jury` binary s7 would dispatch, present and runnable. Both halves have to be
+#: answered from memory: the probe asks the runner as well as the inventory (#1066 round 2),
+#: and a suite that let the real `jury --doctor` run would resolve a different bench on a
+#: machine that happens to have ai-jury installed.
+_STAFFED_RUNNER = juryavail.Runner(True, "/usr/bin/jury (no readable --doctor report)")
+
+_NO_REAL_PROVIDER_PROBE: list = []
 
 
 def setUpModule():
     """Answer the s7 panel-availability probe from memory, never from this machine."""
-    global _NO_REAL_PROVIDER_PROBE
-    _NO_REAL_PROVIDER_PROBE = patch(
-        "keel.providerprobe.collect", lambda *_a, **_kw: dict(_STAFFED_PANEL_REPORT)
+    _NO_REAL_PROVIDER_PROBE.extend(
+        [
+            patch("keel.providerprobe.collect", lambda *_a, **_kw: dict(_STAFFED_PANEL_REPORT)),
+            patch("keel.providerprobe.probe_jury_runner", lambda **_kw: _STAFFED_RUNNER),
+        ]
     )
-    _NO_REAL_PROVIDER_PROBE.start()
+    for entry in _NO_REAL_PROVIDER_PROBE:
+        entry.start()
 
 
 def tearDownModule():
-    _NO_REAL_PROVIDER_PROBE.stop()
+    for entry in _NO_REAL_PROVIDER_PROBE:
+        entry.stop()
+    _NO_REAL_PROVIDER_PROBE.clear()
 
 
 PROJECTS = Path(__file__).resolve().parent.parent / "projects"

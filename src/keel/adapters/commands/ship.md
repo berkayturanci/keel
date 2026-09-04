@@ -747,10 +747,11 @@ post every ballot the panel returned, and let core decide. Do not fall back to h
 reviewers on your own; a tier's reviewers are what its config says they are.
 
 **When the panel cannot be staffed here, core has already decided — read the contract.**
-Before it publishes the bench, keel probes provider availability with the same machinery
-`keel doctor --providers` runs, and the verdict is on the contract at
-`review_merge_contract.jury.availability` (`null` when no panel was configured for this
-tier, so nothing was asked):
+Before it publishes the bench, keel probes the panel *you would dispatch*: it asks the
+`jury` runner itself (`jury --doctor --json` — is the binary there, and which of its agents
+are usable), and reads the `keel doctor --providers` inventory only when the runner is too
+old to answer. The verdict is on the contract at `review_merge_contract.jury.availability`
+(`null` when no panel was configured for this tier, so nothing was asked):
 
 ```json
 { "probed": true, "staffable": false, "decision": "fallback",
@@ -758,8 +759,14 @@ tier, so nothing was asked):
   "available_vendors": ["claude"],
   "unavailable": [ { "provider": "codex", "vendor": "codex",
                      "reason": "codex not found on PATH" } ],
+  "runner": { "command": "jury", "usable": true,
+              "reason": "/usr/bin/jury (ai-jury 1.16.0)" },
+  "inventory": "jury --doctor",
   "reason": "jury panel not staffable: 1 vendor(s) available (claude), 2 required; …" }
 ```
+
+`runner.usable: false` is its own answer, and it is listed first under `unavailable`: agent
+CLIs on `PATH` with no `jury` to convene them is an inventory, not a panel.
 
 - `decision: "available"` — dispatch the panel exactly as above. Nothing changes.
 - `decision: "fallback"` — `knobs.team.jury.on_unavailable` is `fallback` and the panel

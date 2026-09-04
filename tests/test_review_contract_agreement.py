@@ -40,7 +40,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from keel import cli
+from keel import cli, juryavail
 from keel.runner import CommandResult
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -109,6 +109,12 @@ def _staffed_panel_probe(_config=None, **_kwargs):
     return dict(STAFFED_PANEL_REPORT)
 
 
+#: …and the `jury` binary s7 would dispatch. The probe asks the runner as well as the
+#: inventory (#1066 round 2), so both halves come from memory or the bench would move with
+#: whether this machine happens to have ai-jury installed.
+STAFFED_RUNNER = juryavail.Runner(True, "/usr/bin/jury (no readable --doctor report)")
+
+
 def setUpModule():
     global _REAL_DETECT
     from keel import runtime
@@ -124,6 +130,7 @@ def setUpModule():
             patch("keel.git.run_argv", _recording_run_argv),
             patch("keel.github.run_argv", _recording_run_argv),
             patch("keel.providerprobe.collect", _staffed_panel_probe),
+            patch("keel.providerprobe.probe_jury_runner", lambda **_kw: STAFFED_RUNNER),
         ]
     )
     for entry in _PATCHES:
