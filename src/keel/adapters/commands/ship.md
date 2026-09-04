@@ -960,6 +960,15 @@ keel fixloop brief --project .keel/project.yaml --root . \
   --head "$HEAD_SHA" --issue <N> --out "$FIX_BRIEF" --cwd "$WORKTREE" --json
 ```
 
+**Where `<findings.json>` comes from on a panel tier.** When `reviewers.panel` is `jury`,
+s7 already produced it: write the `panel.findings` array from `keel review --from-jury
+--json` to a file and pass that file as `--findings` (the whole `panel` block works too —
+`--findings` reads a `{"findings": [...]}` envelope, so it needs no reshaping). That array
+is the panel's **verified** consensus already in keel's severity vocabulary, so
+`critical`/`major` open a round exactly as a host reviewer's findings do. Take them from
+there and never from the panel's prose — a claim its verification round did not uphold is
+not in that array, and must not hold a merge.
+
 **Always pass the project config.** `knobs.team.fix` is what decides whether this round
 goes back to the delegate that implemented or to the host, so the command **refuses**
 (`status: no-config`, non-zero) rather than guessing when it cannot read one — silently
