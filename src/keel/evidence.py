@@ -19,7 +19,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from . import agents, closure
+from . import agents, closure, juryavail
 from . import team as team_policy
 
 SCHEMA_VERSION = "keel.evidence.v1"
@@ -1547,9 +1547,13 @@ def _matches_head(item: dict[str, Any], body: str, head_sha: str | None) -> bool
     towards one, and :func:`jury_panel_size` feeds ``max(declared, minimum_vendors)``, so a
     stale ``panelists:`` can only ever raise the bar.
 
-    The exception is :func:`jury_participating_vendors`, whose count can downgrade a gating
-    jury to advisory (#1015) — a stale ``vendors:`` relaxes there, on a blank head and on a
-    matching one alike, so it is that function's own head-independence and not this rule's.
+    :func:`jury_participating_vendors` was the exception, and #1069 closed it rather than
+    changing this predicate: its count *can* downgrade a gating jury to advisory (#1015), so
+    it now asks :func:`keel.juryavail.is_pinnable_head` for itself before it reads anything.
+    Its head rule is its own, for the reason a pin's is — it removes a requirement — and the
+    two readers that do not remove one keep this reading. That is the whole distinction
+    between the three panel-shaped readers layered here, and it is a property of what each
+    one's answer can *do*, not of where it is read from.
 
     A *pin* is the case that cannot use this reading, because it does remove requirements —
     it takes ``review-verdict-1..3`` off the required set entirely. So the pin
@@ -1658,7 +1662,28 @@ def jury_participating_vendors(
 
     When several verdicts qualify, the largest declared count wins: a re-post
     correcting an earlier partial run should not be capped by the stale one.
+
+    **This one reader is held to an exact head, and its two siblings are not** (#1069).
+    Alone among the three panel-shaped readers here, this count can *remove* a
+    requirement: below ``jury.min_vendors`` it downgrades a gating jury to advisory
+    (:func:`keel.ship.resolve_jury`), which drops ``jury-verdict`` from the required
+    evidence entirely. So it asks :func:`keel.juryavail.is_pinnable_head` — the same
+    blank-head predicate the panel pins ask — before it reads a comment at all, and a
+    run that resolved no head declares nothing rather than inheriting the last verdict
+    on the pull request. Without the guard, `keel evidence-verify` run offline with no
+    ``--head-sha`` (its documented default) read a ``vendors: 1`` verdict posted against
+    an earlier head as this head's and relaxed the gate: a requirement removed by
+    evidence nobody re-checked. A *mismatched* head was already refused, by
+    :func:`_matches_head` — that predicate is exact once a head is known, and permissive
+    only when none is — so the guard closes the blank-head half and nothing else.
+
+    :func:`jury_panel_size` and :func:`panel_verdict_posted` deliberately keep the
+    permissive reading, because neither can relax anything: the first feeds
+    ``max(declared, minimum_vendors)`` and can only raise the bar, and the second is
+    already refused on a blank head by its caller, which owns the pin order.
     """
+    if not juryavail.is_pinnable_head(head_sha):
+        return None
     counts = [
         parsed
         for item in [*(pr_comments or []), *(pr_reviews or [])]
@@ -1677,8 +1702,8 @@ def jury_panel_size(
 ) -> int | None:
     """Return the panel size declared by a posted jury verdict, or ``None`` (#1015).
 
-    Reads the ``panelists: <N>`` field the same way
-    :func:`jury_participating_vendors` reads ``vendors:``, and for the same
+    Reads the ``panelists: <N>`` field off the same comment
+    :func:`jury_participating_vendors` reads ``vendors:`` from, and for the same
     reason: when the jury **is** the review panel, the number of ballots is the
     reviewer count the evidence gate must require, and a hosted runner can read
     it from nowhere else.
@@ -1687,6 +1712,14 @@ def jury_panel_size(
     rather than requiring nothing. The largest declared count wins, so a re-post
     that completes a partial panel raises the requirement instead of being capped
     by the stale verdict — the direction that fails closed.
+
+    **It does not share that sibling's head rule, and the asymmetry is deliberate**
+    (#1069). This count reaches :func:`keel.ship._jury_panel_size`, which answers
+    ``max(declared, minimum_vendors)`` — so a stale or blank-head ``panelists:`` can
+    only ever *raise* what the tier owes, never remove a requirement. Holding it to an
+    exact head would refuse a bar-raising reading inside a gate whose other half, with
+    no head resolved, is already unfiltered (:func:`_matches_head`). ``vendors:`` is the
+    one that can relax, so ``vendors:`` is the one that is pinned.
     """
     counts = [
         parsed
@@ -1720,8 +1753,14 @@ def panel_verdict_posted(
     **Call this only with a head you actually resolved.** Like every reader here it goes
     through :func:`_matches_head`, which reads a blank ``head_sha`` as "do not filter" —
     right for counting evidence, wrong for a pin, which is why the caller refuses a blank
-    head first (:func:`keel.juryavail.is_pinnable_head`) rather than this function carrying
-    a second rule its siblings do not share.
+    head first (:func:`keel.juryavail.is_pinnable_head`).
+
+    :func:`jury_participating_vendors` asks that same predicate *itself* rather than
+    leaving it to a caller (#1069), and the difference is about who the callers are: this
+    one is read from exactly one place, :func:`keel.juryavail.pin`, which owns the pin
+    order and so is the right place for the rule; the vendor count is read straight off
+    ``keel evidence-verify``'s argv-derived head, where there is no single owner to put it
+    in front of.
     """
     return any(
         _is_jury_verdict(item, head_sha=head_sha, enforced=enforced)

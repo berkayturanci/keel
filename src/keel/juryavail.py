@@ -593,10 +593,18 @@ def is_pinnable_head(head_sha: Any) -> bool:
     as this head's. Written twice, hardened once. It is written here now, and :func:`pin`
     — the one place the two sources are ranked — asks it before either is consulted.
 
-    ``keel.evidence``'s own rule is deliberately the other one and stays that way: it
-    filters *evidence items* inside a gate that, with no head resolved, runs head-agnostic
-    throughout — every review verdict counts too. Nothing there removes a requirement. A
-    pin does: it takes ``review-verdict-1..3`` off the required set entirely.
+    :func:`keel.evidence._matches_head` is deliberately the other rule and stays that way:
+    it filters *evidence items* inside a gate that, with no head resolved, runs
+    head-agnostic throughout — every review verdict counts too. Nothing reached through it
+    removes a requirement. A pin does: it takes ``review-verdict-1..3`` off the required
+    set entirely.
+
+    **The test is what the answer can do, not which module asks.** So this predicate has a
+    third caller that is not a pin: :func:`keel.evidence.jury_participating_vendors`, whose
+    count downgrades a gating jury to advisory below ``jury.min_vendors`` and thereby drops
+    ``jury-verdict`` from the required evidence (#1069). It removes a requirement, so it
+    takes this rule; its two panel-shaped siblings there cannot, so they keep the
+    permissive one.
     """
     return isinstance(head_sha, str) and bool(head_sha.strip())
 
