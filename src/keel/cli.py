@@ -1076,12 +1076,26 @@ def _shipped_jury_availability(
     resolves to anyway. The residue is a fallback-shipped change verified, with no readable
     ledger, on a machine that *can* staff the panel; that one is held to the panel it did not
     run, which fails closed rather than open.
+
+    **Neither source is consulted at all without a head** (#1068), which is why the guard
+    is one line above both rather than inside each. ``keel evidence-verify`` and ``keel
+    merge`` can reach here with no head resolved — a detached checkout, a pull request the
+    API answered without ``headRefOid`` — and the two pins then disagreed:
+    :func:`keel.juryavail.shipped` refused, while ``panel_verdict_posted`` fell through to
+    :func:`keel.evidence._matches_head`, which reads a blank head as *no head filter* and
+    so counted **any** trusted jury marker on the pull request as this head's. A verdict
+    from three heads ago could take ``review-verdict-1..3`` off the required set. With no
+    head this surface pins nothing and the caller measures its own machine — the same
+    answer a stale ledger record already got (:func:`keel.juryavail.is_pinnable_head`).
     """
+    head_sha = artifacts["head_sha"]
+    if not juryavail.is_pinnable_head(head_sha):
+        return None
     if evidence.panel_verdict_posted(
-        artifacts["pr_comments"], artifacts["pr_reviews"], head_sha=artifacts["head_sha"]
+        artifacts["pr_comments"], artifacts["pr_reviews"], head_sha=head_sha
     ):
         return juryavail.panel_sat()
-    return juryavail.shipped(ledger_record, head_sha=artifacts["head_sha"])
+    return juryavail.shipped(ledger_record, head_sha=head_sha)
 
 
 def _review_assignment(

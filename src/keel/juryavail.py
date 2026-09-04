@@ -355,13 +355,30 @@ def shipped(record: Mapping[str, Any] | None, *, head_sha: str | None) -> dict[s
     return {**dict(panel), "probed": False, "source": SOURCE_RUN_LEDGER}
 
 
-def _matches_head(record: Mapping[str, Any], head_sha: str | None) -> bool:
-    """Was this ledger record written for exactly ``head_sha``? A blank head never matches.
+def is_pinnable_head(head_sha: Any) -> bool:
+    """Is ``head_sha`` a head a pin may be taken against? (#1068)
 
-    The rule :func:`keel.ledger.gates_pass_for_head` already holds the merge gate to: an
-    unknown head must not be authorized by a record from some other commit.
+    **The one blank-head rule both panel pins read.** A pin republishes an earlier run's
+    panel decision in place of measuring this machine, so it may only ever be taken against
+    an exact commit: an unknown head must not be authorized by a record — or a comment —
+    from some other one. :func:`keel.ledger.gates_pass_for_head` already holds the merge
+    gate to this, and :func:`shipped` to the ledger pin; round 3 hardened those and left
+    the posted-verdict pin reading :func:`keel.evidence._matches_head`, which treats a
+    blank head as *unfiltered* and so counted any trusted jury marker on the pull request
+    as this head's. Written twice, hardened once. It is written here now, and
+    :func:`keel.cli._shipped_jury_availability` asks it before either source is consulted.
+
+    ``keel.evidence``'s own rule is deliberately the other one and stays that way: it
+    filters *evidence items* inside a gate that, with no head resolved, runs head-agnostic
+    throughout — every review verdict counts too. Nothing there removes a requirement. A
+    pin does: it takes ``review-verdict-1..3`` off the required set entirely.
     """
-    if not isinstance(head_sha, str) or not head_sha.strip():
+    return isinstance(head_sha, str) and bool(head_sha.strip())
+
+
+def _matches_head(record: Mapping[str, Any], head_sha: str | None) -> bool:
+    """Was this ledger record written for exactly ``head_sha``? A blank head never matches."""
+    if not is_pinnable_head(head_sha):
         return False
     git = record.get("git")
     recorded = git.get("head_sha") if isinstance(git, Mapping) else None

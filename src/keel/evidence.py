@@ -1536,6 +1536,27 @@ def _reviewer_key(item: dict[str, Any], body: str) -> str:
 
 
 def _matches_head(item: dict[str, Any], body: str, head_sha: str | None) -> bool:
+    """Does this comment answer for ``head_sha``? A blank head means *do not filter*.
+
+    **Deliberately not :func:`keel.juryavail.is_pinnable_head`'s rule, and the difference
+    is worth stating** (#1068). This one filters *evidence items* inside a gate that, with
+    no head resolved, is head-agnostic from end to end — every review verdict counts, so
+    holding jury verdicts alone to a head nobody knows would refuse a gate the rest of
+    which is already unfiltered. Nothing reached through here removes a requirement:
+    :func:`_review_evidence_keys` and :func:`_review_vendor_provenance` count verdicts
+    towards one, and :func:`jury_panel_size` feeds ``max(declared, minimum_vendors)``, so a
+    stale ``panelists:`` can only ever raise the bar.
+
+    The exception is :func:`jury_participating_vendors`, whose count can downgrade a gating
+    jury to advisory (#1015) — a stale ``vendors:`` relaxes there, on a blank head and on a
+    matching one alike, so it is that function's own head-independence and not this rule's.
+
+    A *pin* is the case that cannot use this reading, because it does remove requirements —
+    it takes ``review-verdict-1..3`` off the required set entirely. So the pin
+    (:func:`keel.cli._shipped_jury_availability`) refuses a blank head before it calls
+    :func:`panel_verdict_posted` at all, rather than this predicate changing under the
+    surfaces that need the permissive one.
+    """
     if not head_sha:
         return True
     fields = _fields(body)
@@ -1694,6 +1715,12 @@ def panel_verdict_posted(
     Distinct from :func:`jury_panel_size`, which answers *how many* ballots and is ``None``
     for a verdict predating the ``panelists:`` field. Presence is the weaker question, and
     the one that must not depend on an optional field.
+
+    **Call this only with a head you actually resolved.** Like every reader here it goes
+    through :func:`_matches_head`, which reads a blank ``head_sha`` as "do not filter" —
+    right for counting evidence, wrong for a pin, which is why the caller refuses a blank
+    head first (:func:`keel.juryavail.is_pinnable_head`) rather than this function carrying
+    a second rule its siblings do not share.
     """
     return any(
         _is_jury_verdict(item, head_sha=head_sha, enforced=enforced)

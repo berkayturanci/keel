@@ -1588,7 +1588,7 @@ class TestTheContractIsPinnedToTheShipsMeasurement(unittest.TestCase):
         )
         return str(path)
 
-    def _required(self, *, report, ledger_jsonl=None, comments=None):
+    def _required(self, *, report, ledger_jsonl=None, comments=None, head_sha="abc"):
         argv = [
             "evidence-verify",
             self.config,
@@ -1599,7 +1599,7 @@ class TestTheContractIsPinnedToTheShipsMeasurement(unittest.TestCase):
             "--changed-file",
             "src/a.py",
             "--head-sha",
-            "abc",
+            head_sha,
             "--pr-label",
             "keel:ship",
             "--pr-body-file",
@@ -1650,6 +1650,26 @@ class TestTheContractIsPinnedToTheShipsMeasurement(unittest.TestCase):
         )
 
         self.assertIn("jury-verdict", required)
+
+    def test_a_stale_verdict_cannot_pin_a_run_that_resolved_no_head(self):
+        """End to end for the #1068 minor, on the surface the fail-open reached.
+
+        A jury verdict for some earlier head sits on the pull request, and this run could
+        not resolve a head at all. The posted-verdict pin read that verdict as this head's
+        and published `jury-verdict` required with `review-verdict-1..3` dropped — the
+        panel item switched on by a panel that sat for a different commit. Unpinned, the
+        bare runner measures for itself and requires what it resolves.
+        """
+        required = self._required(
+            report=UNSTAFFED,
+            head_sha="",
+            comments=self._comments(
+                "keel.jury-verdict.v1\nhead: three-heads-ago\npanelists: 2\nAI Jury LGTM"
+            ),
+        )
+
+        self.assertNotIn("jury-verdict", required)
+        self.assertIn("review-verdict-3", required)
 
     def test_a_fallback_shipped_change_is_not_held_to_a_panel_it_never_ran(self):
         """The other direction, which fails the same way: the ship fell back, CI did not."""
@@ -1748,6 +1768,42 @@ class TestTheContractIsPinnedToTheShipsMeasurement(unittest.TestCase):
 
         self.assertEqual(pinned["source"], "pull-request")
         self.assertFalse(pinned["probed"], "a pin is not a measurement and must not claim to be")
+
+    def test_neither_pin_is_taken_without_a_head(self):
+        """The #1068 minor: one blank-head rule, read by both pins (#1068).
+
+        `juryavail.shipped` refused a blank head from round 3; the posted-verdict pin fell
+        through to `evidence._matches_head`, which reads a blank head as *no head filter*,
+        so any trusted jury marker anywhere on the pull request counted as this head's. A
+        verdict from three heads ago could take `review-verdict-1..3` off the required set
+        on any run — a detached checkout, an API answer with no `headRefOid` — that could
+        not resolve a head. Now neither source is consulted and the caller measures.
+        """
+        posted = [
+            {
+                "body": "keel.jury-verdict.v1\nhead: three-heads-ago\nAI Jury LGTM",
+                "author_association": "MEMBER",
+            }
+        ]
+        record = {
+            "git": {"head_sha": "three-heads-ago"},
+            "run_context": {"jury_panel": _assess(STAFFED, min_vendors=2).as_dict()},
+        }
+        for head_sha in (None, "", "   ", 0, ["abc"]):
+            with self.subTest(head_sha=head_sha):
+                artifacts = {"pr_comments": posted, "pr_reviews": [], "head_sha": head_sha}
+
+                self.assertIsNone(cli._shipped_jury_availability(artifacts, record))
+
+    def test_the_blank_head_rule_is_written_once(self):
+        """Both pins ask the same predicate, so hardening one cannot leave the other."""
+        for head_sha in (None, "", "  \t ", 0, ["abc"], b"abc"):
+            with self.subTest(head_sha=head_sha):
+                self.assertFalse(juryavail.is_pinnable_head(head_sha))
+                self.assertIsNone(
+                    juryavail.shipped({"git": {"head_sha": head_sha}}, head_sha=head_sha)
+                )
+        self.assertTrue(juryavail.is_pinnable_head("abc"))
 
     def test_a_verdict_pinned_to_another_head_is_not_this_changes_panel(self):
         artifacts = {

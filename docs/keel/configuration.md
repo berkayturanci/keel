@@ -391,6 +391,14 @@ before. The published record says which it was: `availability.source` is `probe`
 `pull-request` or `run-ledger`, and a pinned record carries `probed: false` — "we were told"
 and "we checked" are not the same claim.
 
+**Both sources are pinned to the exact head, and neither is read without one.** A pull
+request outlives its heads, so a ship of an earlier head may not answer for the head being
+verified now — that would be a stale run relaxing a live gate, since a pin can take
+`review-verdict-1..3` off the required set outright. A run that could not resolve a head at
+all — a detached checkout, an API answer with no `headRefOid` — therefore pins *nothing*
+from either source and measures its own machine, the same answer a record from another head
+already got.
+
 Two machines can still resolve the *same tier* differently when they are each about to
 dispatch — a CI runner with no agent CLI plans a fallback where a workstation plans the
 panel — and each says which it did rather than quietly claiming the other's provenance. What
