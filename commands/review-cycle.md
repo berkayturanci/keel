@@ -285,4 +285,4 @@ Do every read plus `keel validate` / `keel plan` / `keel run-gates` and the revi
 but redirect every state-changing `gh` write (comments, label) to a logged
 `DRY-RUN: <action>` line.
 
-<!-- keel-generated: surface=plugin command=review-cycle keel_version=1.19.3 source_sha256=362d8f38fd43903a92facb0669dc7f218ae5cd56cd2721a06b4e602c99e1b77b generated_sha256=362d8f38fd43903a92facb0669dc7f218ae5cd56cd2721a06b4e602c99e1b77b -->
+<!-- keel-generated: surface=plugin command=review-cycle keel_version=1.20.0 source_sha256=362d8f38fd43903a92facb0669dc7f218ae5cd56cd2721a06b4e602c99e1b77b generated_sha256=362d8f38fd43903a92facb0669dc7f218ae5cd56cd2721a06b4e602c99e1b77b -->

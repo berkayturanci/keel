@@ -6,6 +6,8 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.20.0] - 2026-09-05
+
 ### Added
 - **The jury is the tier-3 review panel: one dispatch, mapped onto the s7 verdicts** (#1015): s7 (N reviewers) and s8 (the `jury` gate) were separate mechanisms and `evidence.required_items` demanded *both* at tier-3 — three distinct reviewer verdicts **and** a jury verdict. A tier-3 pull request therefore paid for three host reviewers plus a four-agent panel reading the same diff, while the panel's per-reviewer ballots (which *are* the cross-vendor review) reached no gate at all: ai-jury posted one consensus comment and kept the ballots in its JSON report. On a tier whose `knobs.team` policy is `review: jury`, s7 now dispatches the panel **once** and its ballots become the review evidence.
   - **`keel review --from-jury <report.json>`** reads an ai-jury JSON report's per-reviewer ballots (`jury --format json`, report schema 1.1+) and posts one head-pinned `keel.review-verdict.v1` per panelist — carrying the `vendor:` and `model:` that actually produced that ballot — plus the panel's `keel.jury-verdict.v1` consensus record, in the same call, so both are pinned to the same head SHA by construction. `--reviews` and `--from-jury` are mutually exclusive: the bundle is the host's or the panel's, never both. A report carrying no ballots is refused with the command that produces one, rather than posting a thinner review.
