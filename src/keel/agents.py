@@ -16,29 +16,17 @@ from __future__ import annotations
 from . import team
 from .config import DELEGATE_PROFILE_VENDORS, DelegateProfile, ProjectConfig
 
+# The vendor vocabulary itself lives in the leaf :mod:`keel.vocab`, so the *validating*
+# half of keel (``keel.team``, ``keel.config``) can read it without importing dispatch
+# (#1050). Re-exported here under the original names: ``agents.CLI_VENDORS`` and friends
+# are what the rest of the package, the docs and the tests have always read.
+from .vocab import API_VENDORS as API_VENDORS
+from .vocab import BUILTIN_DELEGATE_VENDORS as BUILTIN_DELEGATE_VENDORS
+from .vocab import CLI_VENDORS as CLI_VENDORS
+from .vocab import LOCAL_VENDORS as LOCAL_VENDORS
+
 #: Default host agent when nothing else is resolved.
 HOST_DEFAULT = "claude"
-
-#: Hosted-API delegate vendors (#548, ``google-api`` added in #666): the vendor's
-#: real API keyed by an env token, no agent CLI installed. Same no-tools contract
-#: as ``ollama:`` — the
-#: orchestrator owns every git/PR step and delegates only code generation. The
-#: vendor names match ai-jury's hosted-adapter vocabulary so the value fits the
-#: existing first-colon ``vendor:model`` split unchanged.
-API_VENDORS = ("anthropic-api", "openai-api", "google-api")
-
-#: Agent-CLI delegate vendors keel drives as a subprocess. Hardcoded on purpose — not
-#: to be confused with the generic ``cli`` *profile* vendor (issue #659), which is the
-#: operator-configured escape hatch for every CLI that is not one of these three.
-CLI_VENDORS = ("claude", "codex", "agy")
-
-#: Local-model delegate vendors: no agent CLI, no hosted key, and no tools.
-LOCAL_VENDORS = ("ollama",)
-
-#: Every delegate name keel understands with no configuration at all. Name resolution
-#: is **fail-closed**: a ``knobs.delegate_profiles`` entry may not shadow one of these,
-#: and the attempt is a config error rather than a silent override (issue #659).
-BUILTIN_DELEGATE_VENDORS = CLI_VENDORS + LOCAL_VENDORS + API_VENDORS
 
 
 def split_delegate(value: str) -> tuple[str, str | None]:

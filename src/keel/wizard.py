@@ -41,6 +41,7 @@ from typing import Any
 
 from . import team
 from .team import Seat
+from .vocab import EFFORTS, supports_effort
 
 #: JSON-stable schema id of :meth:`Resolution.as_dict`.
 SCHEMA_VERSION = "keel.wizard.v1"
@@ -127,20 +128,16 @@ MAX_ATTEMPTS = 3
 def _effort_capable(vendor: str) -> bool:
     """Can ``vendor`` express a reasoning-effort request in its own spelling?
 
-    Local import for the same reason :func:`keel.team.team_issues` uses one:
-    :mod:`keel.delegate` imports :mod:`keel.config`, which imports :mod:`keel.team`,
-    so naming it at module scope would drag the whole config graph into
-    :mod:`keel.scaffold` — a module whose entire job is to run before a config exists.
+    Read from the leaf :mod:`keel.vocab` rather than from :mod:`keel.delegate`: the
+    answer is vocabulary, not dispatch, and importing the executor would drag the whole
+    config graph into :mod:`keel.scaffold` — a module whose entire job is to run before
+    a config exists. Until #1050 that cost a function-local import; now it does not.
     """
-    from .delegate import supports_effort
-
     return supports_effort(vendor)
 
 
 def _efforts() -> tuple[str, ...]:
     """keel's vendor-neutral effort vocabulary (see :func:`_effort_capable`)."""
-    from .delegate import EFFORTS
-
     return tuple(EFFORTS)
 
 

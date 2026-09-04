@@ -27,11 +27,13 @@ with two reserved spellings:
 ``implementer``      valid in ``fix.provider`` and ``gate.distinct_from`` only: *the
                      provider that implemented this change*, whatever it resolved to.
 
-Pure and deterministic: no wall-clock, no randomness, no I/O, and — at module scope —
-no keel imports at all. The provider vocabulary lives next to dispatch in
-:mod:`keel.agents` and :mod:`keel.delegate`, which both import :mod:`keel.config`, so
-:func:`team_issues` reaches for it through a local import rather than closing a cycle
-(the same pattern as :func:`keel.config._validate_delegate_profiles`).
+Pure and deterministic: no wall-clock, no randomness, no I/O, and exactly one keel
+import — the leaf :mod:`keel.vocab`, which owns the provider and effort vocabulary
+:func:`team_issues` validates against. That vocabulary used to live next to dispatch in
+:mod:`keel.agents` / :mod:`keel.delegate`, which both import :mod:`keel.config`, which
+imports this module for the policy type; validation therefore reached it through a
+function-local import. Moving the vocabulary instead of the import is what removed the
+cycle rather than hiding it (#1050).
 """
 
 from __future__ import annotations
@@ -39,6 +41,8 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
+
+from .vocab import BUILTIN_DELEGATE_VENDORS, EFFORTS, supports_effort
 
 #: Prefix that keeps the pre-#1014 Claude-subagent semantics of ``implementer_agents``.
 #: ``subagent:backend-developer`` is a subagent of the host agent, not a vendor keel
@@ -819,12 +823,6 @@ def team_issues(
     """
     if raw is None:
         return []
-    # Local import on purpose: `agents` and `delegate` both import `keel.config`, which
-    # imports this module for the policy type. Naming them at module scope would close a
-    # real cycle, so the import moves instead of the vocabulary (the pattern
-    # `keel.config._validate_delegate_profiles` already uses).
-    from .agents import BUILTIN_DELEGATE_VENDORS
-
     if not isinstance(raw, Mapping):
         return []  # the schema already reported the wrong shape
     profiles = dict(profiles or {})
@@ -868,8 +866,6 @@ def _effort_issues(
     subagent rule is deliberately *not* here: it applies to a bench effort alone, and
     :func:`_bench_effort_issues` says why.
     """
-    from .delegate import EFFORTS, supports_effort
-
     tail = "" if applies_to is None else f" (applied to the implementer at {applies_to})"
     if effort not in EFFORTS:
         return [f"{where}: unknown effort {effort!r}; valid: {', '.join(EFFORTS)}{tail}"]

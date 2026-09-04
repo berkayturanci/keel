@@ -57,15 +57,20 @@ from . import providers as providers_mod
 from .api_delegate import DEFAULT_MAX_TOKENS, OPENAI_COMPATIBLE
 from .config import DEFAULT_PROMPT_MODE, DelegateProfile
 
+# The effort vocabulary lives in the leaf :mod:`keel.vocab` so ``keel.team`` can validate
+# a seat's ``effort`` without importing the executor (#1050). ``EFFORT_VENDORS`` and
+# ``supports_effort`` are re-exported under the original names, which are what the rest
+# of the package and the tests read.
+from .vocab import EFFORT_VENDORS as EFFORT_VENDORS
+from .vocab import EFFORTS
+from .vocab import supports_effort as supports_effort
+
 #: Roles a delegate can be dispatched for. ``chair`` is the jury's summariser; it reads
 #: reviews and writes nothing, so it sits with the read-only three.
 ROLES = ("implement", "fix", "review", "gate", "chair")
 
 #: Roles invoked read-only / findings-only. Everything not listed here is tool-enabled.
 READ_ONLY_ROLES = ("review", "gate", "chair")
-
-#: Reasoning-effort levels, lowest first. Mapped per vendor by :func:`plan_run`.
-EFFORTS = ("low", "medium", "high")
 
 #: How the executor reaches a provider. ``cli`` is one of the three built-in agent CLIs,
 #: ``profile`` any other binary (a project ``delegate_profiles`` entry or a registry
@@ -116,21 +121,6 @@ THINKING_HEADROOM_TOKENS = 4096
 
 #: Suffixes agy spells reasoning effort with, e.g. ``gemini-3.8-flash-high``.
 _EFFORT_SUFFIXES = tuple(f"-{level}" for level in EFFORTS)
-
-#: Vendors that have a spelling for reasoning effort. Everything else reaches
-#: :func:`_apply_effort`'s fallback, where an ``--effort`` request becomes a warning plus
-#: ``effort_applied: false``. That is the right answer for a *run* — a flag that did not
-#: take effect must be visible, not fatal — but the wrong one for **config**: a
-#: ``knobs.team`` seat that pairs ``claude`` with ``effort: high`` is a policy stating
-#: something keel can never do, so :func:`keel.team.team_issues` rejects it up front. The
-#: tuple is asserted against ``_apply_effort`` itself by ``tests/test_delegate.py`` so the
-#: two cannot drift.
-EFFORT_VENDORS = ("agy", "codex", "anthropic-api", "openai-api", "google-api", OPENAI_COMPATIBLE)
-
-
-def supports_effort(vendor: str) -> bool:
-    """True when ``vendor`` can express a reasoning-effort request in its own spelling."""
-    return vendor in EFFORT_VENDORS
 
 
 class DelegateError(Exception):

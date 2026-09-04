@@ -39,16 +39,19 @@ from dataclasses import dataclass
 
 from . import config
 
+# The vendor whose endpoint and key-env name come from ``knobs.delegate_profiles``
+# instead of the hardcoded table below (#666). It moved to the leaf :mod:`keel.vocab`
+# with the rest of the shared vendor vocabulary (#1050) because
+# :data:`keel.vocab.EFFORT_VENDORS` names it; re-exported here, which is where the
+# package reads it.
+from .vocab import OPENAI_COMPATIBLE as OPENAI_COMPATIBLE
+
 #: Response cap for a single unattended completion; overridable per call.
 DEFAULT_MAX_TOKENS = 16384
 #: Per-request timeout in seconds; overridable per call.
 DEFAULT_TIMEOUT = 300
 
 _ANTHROPIC_VERSION = "2023-06-01"
-
-#: The one vendor whose endpoint and key-env name come from ``knobs.delegate_profiles``
-#: instead of the hardcoded table below (#666).
-OPENAI_COMPATIBLE = "openai-compatible"
 
 #: vendor -> (endpoint, env var carrying the key), matching ``agents.API_VENDORS``.
 #: Every URL here is a **hardcoded constant** — that is what keeps the SSRF story
