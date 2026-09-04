@@ -1806,17 +1806,34 @@ keel ship --wizard — resolved
   seats : implement=ollama:qwen2.5-coder · review=claude
 ```
 
+The `seats` line restates the flags in seat form; it never carries a value the flags do
+not, so there is nothing on it for an adapter to apply separately.
+
 Note what is *absent*: no `--jury`/`--no-jury`, because the jury question was not answered,
 so the tier and `knobs.team` still decide it. An answer naming a key this run never reaches
 (`review.3` in a run, `implement.model` for a provider that lists none) says so
 specifically, rather than being reported as a misspelling.
 
-The questions are `mode` (quick-start vs customize), `implement.provider`,
-`implement.model`, `implement.effort`, `gate.provider`, `jury`, `review` (the bench for
-this run: up to three seats, or `jury` when the panel *is* the review) and
-`review_comments`. `keel init --wizard` asks the same questions per risk tier instead,
-because a config names a bench per tier while a run has one — see
-[the team step](#init-team-step).
+A run is asked `mode` (quick-start vs customize), `implement.provider`,
+`implement.model`, `jury`, `review` (this run's bench, up to three seats) and
+`review_comments` — and **nothing else, because a run can carry nothing else**. Every
+one of those lands on a real flag; a question whose answer no flag could carry would be
+decorative, and an operator who answered it would be told one thing while the published
+contract said another. So two questions belong to `keel init --wizard` alone:
+
+| question | why a run cannot honour it |
+| --- | --- |
+| `gate.provider` | there is no `--gate`; the gate seat is `knobs.team.gate`, and `assignment.gate` is what the adapter dispatches at s7 |
+| `implement.effort` | there is no `--effort`; `--delegate` splits `provider:model` and stops there |
+
+The **jury panel** is a config answer for the same reason: `--reviewers` takes `1|2|3`
+and nothing on `keel ship` spells "the panel *is* the review", so `review=jury` is not
+offered in a run and is refused if passed to `--wizard-answer`. A tier whose *policy* is
+the panel still resolves to it — that comes from `knobs.team`, not from the wizard. (If
+a run flag ever learns to spell a panel, this is the line to revisit.)
+
+`keel init --wizard` asks the full set, per risk tier, because a config names a bench per
+tier while a run has one — see [the team step](#init-team-step).
 
 Output is the resolved flag set, echoed back for the adapter to pass on literally:
 

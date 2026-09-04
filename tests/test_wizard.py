@@ -63,6 +63,11 @@ def _catalog(report=None):
     return wizard.Catalog.from_report(PROBE if report is None else report)
 
 
+def _config_state(catalog=None, **kwargs):
+    """A config-scope state — the only scope that asks the gate/effort/panel questions."""
+    return wizard.start(catalog or _catalog(), scope=wizard.SCOPE_CONFIG, **kwargs)
+
+
 def _scripted(*answers):
     """An ``ask`` seam that replays ``answers``, then keeps returning the default."""
     remaining = list(answers)
@@ -155,6 +160,12 @@ class TestQuestion(unittest.TestCase):
         state = wizard.start(_catalog()).with_answer("mode", wizard.CUSTOMIZE)
         return next(q for q in state.questions() if q.key == key)
 
+    def _config_question(self, key, **answers):
+        state = _config_state().with_answer("mode", wizard.CUSTOMIZE)
+        for name, value in answers.items():
+            state = state.with_answer(name.replace("__", "."), value)
+        return next(q for q in state.questions() if q.key == key)
+
     def test_the_unavailable_provider_is_never_offered(self):
         self.assertEqual(self._question().values(), ("claude", "ollama"))
 
@@ -188,8 +199,7 @@ class TestQuestion(unittest.TestCase):
         self.assertIn("at most 2 value(s), got 3", error)
 
     def test_the_jury_panel_cannot_be_combined_with_named_seats(self):
-        state = wizard.start(_catalog(), jury="gating").with_answer("mode", wizard.CUSTOMIZE)
-        question = next(q for q in state.questions() if q.key == "review")
+        question = self._config_question("review.2", jury="gating")
         value, error = question.normalize("jury,claude")
         self.assertIsNone(value)
         self.assertIn("cannot be combined with named seats", error)
@@ -207,8 +217,18 @@ class TestWalk(unittest.TestCase):
         state = wizard.start(_catalog()).with_answer("mode", wizard.CUSTOMIZE)
         self.assertEqual(
             [q.key for q in state.questions()],
-            ["mode", "implement.provider", "gate.provider", "jury", "review", "review_comments"],
+            ["mode", "implement.provider", "jury", "review", "review_comments"],
         )
+
+    def test_a_run_is_never_asked_what_no_run_flag_can_carry(self):
+        """`keel ship` has no --gate and no --effort, so those stay config questions."""
+        run = wizard.start(_catalog()).with_answer("mode", wizard.CUSTOMIZE)
+        run_keys = [q.key for q in run.questions()]
+        for key in wizard.CONFIG_ONLY_KEYS:
+            self.assertNotIn(key, run_keys)
+        config = _config_state().with_answer("mode", wizard.CUSTOMIZE)
+        self.assertIn("gate.provider", [q.key for q in config.questions()])
+        self.assertIsNone(run.with_answer("gate.provider", "ollama").resolve().gate)
 
     def test_the_model_question_appears_only_for_a_provider_that_lists_models(self):
         state = wizard.start(_catalog()).with_answer("mode", wizard.CUSTOMIZE)
@@ -223,7 +243,7 @@ class TestWalk(unittest.TestCase):
         catalog = wizard.Catalog.from_report(
             {"providers": [_row("agy", models=("gemini-3.8-flash",)), _row("claude")]}
         )
-        state = wizard.start(catalog).with_answer("mode", wizard.CUSTOMIZE)
+        state = _config_state(catalog).with_answer("mode", wizard.CUSTOMIZE)
         state = state.with_answer("implement.model", "gemini-3.8-flash")
         self.assertIn("implement.effort", [q.key for q in state.questions()])
         answered = state.with_answer("implement.effort", "high").resolve()
@@ -239,41 +259,51 @@ class TestWalk(unittest.TestCase):
         policy = team.parse_team(
             {"implement": {"default": {"provider": "agy", "model": "x", "effort": "high"}}}
         )
-        state = wizard.start(catalog, policy=policy).with_answer("mode", wizard.CUSTOMIZE)
+        state = _config_state(catalog, policy=policy).with_answer("mode", wizard.CUSTOMIZE)
         state = state.with_answer("implement.model", wizard.NONE)
         self.assertNotIn("implement.effort", [q.key for q in state.questions()])
         self.assertIsNone(state.resolve().implement.effort)
 
     def test_a_vendor_with_no_listing_at_all_never_reaches_the_effort_question(self):
         catalog = wizard.Catalog.from_report({"providers": [_row("agy")]})
-        state = wizard.start(catalog).with_answer("mode", wizard.CUSTOMIZE)
+        state = _config_state(catalog).with_answer("mode", wizard.CUSTOMIZE)
         self.assertNotIn("implement.effort", [q.key for q in state.questions()])
         self.assertIsNone(state.resolve().implement.effort)
 
     def test_the_gate_never_offers_the_implementer(self):
-        state = wizard.start(_catalog()).with_answer("mode", wizard.CUSTOMIZE)
+        state = _config_state().with_answer("mode", wizard.CUSTOMIZE)
         gate = next(q for q in state.questions() if q.key == "gate.provider")
         self.assertEqual(gate.values(), (wizard.NONE, "ollama"))
 
-    def test_the_jury_panel_is_offered_as_a_review_only_when_the_jury_is_on(self):
-        def bench(state):
-            return next(q for q in state.questions() if q.key == "review").values()
+    def test_the_jury_panel_is_offered_as_a_review_only_when_the_jury_gates(self):
+        def bench(state, key="review.2"):
+            return next(q for q in state.questions() if q.key == key).values()
 
-        off = wizard.start(_catalog()).with_answer("mode", wizard.CUSTOMIZE)
+        off = _config_state().with_answer("mode", wizard.CUSTOMIZE)
         self.assertNotIn(team.JURY_PANEL, bench(off))
         self.assertIn(team.JURY_PANEL, bench(off.with_answer("jury", "gating")))
 
-    def test_a_jury_panel_review_stages_no_reviewer_flags(self):
+    def test_a_run_is_never_offered_the_panel_because_no_run_flag_spells_it(self):
+        """`--reviewers` takes 1|2|3; nothing on `keel ship` says "the panel is the review"."""
+        run = wizard.start(_catalog(), jury="gating").with_answer("mode", wizard.CUSTOMIZE)
+        run = run.with_answer("jury", "gating")
+        bench = next(q for q in run.questions() if q.key == "review")
+        self.assertNotIn(team.JURY_PANEL, bench.values())
+        self.assertIsNone(bench.normalize(team.JURY_PANEL)[0])
+        # And a value seated straight onto the state cannot smuggle it in either.
+        seated = run.with_answer("review", team.JURY_PANEL).resolve()
+        self.assertIsInstance(seated.review, tuple)
+
+    def test_a_jury_panel_tier_stages_no_reviewer_seats(self):
         state = (
-            wizard.start(_catalog())
+            _config_state()
             .with_answer("mode", wizard.CUSTOMIZE)
             .with_answer("jury", "gating")
-            .with_answer("review", team.JURY_PANEL)
+            .with_answer("review.3", team.JURY_PANEL)
         )
         resolution = state.resolve()
-        self.assertEqual(resolution.review, team.JURY_PANEL)
-        self.assertNotIn("--reviewers", resolution.flags())
-        self.assertIn("--jury", resolution.flags())
+        self.assertEqual(resolution.review_by_tier["3"], team.JURY_PANEL)
+        self.assertEqual(resolution.team_block()["review"]["by_tier"]["3"], team.JURY_PANEL)
 
     def test_an_answer_seated_outside_the_offer_falls_back_to_the_default(self):
         """Every seat is guarded, not just the implementer (#1018 round 2, finding 4).
@@ -361,17 +391,17 @@ class TestDefaultsComeFromThePolicy(unittest.TestCase):
                 "gate": {"provider": "ollama", "distinct_from": "implementer"},
             }
         )
-        resolution = wizard.start(_catalog(), policy=policy).resolve()
+        resolution = _config_state(policy=policy).resolve()
         self.assertEqual(resolution.gate.provider, "ollama")
         self.assertEqual(resolution.gate.distinct_from, team.IMPLEMENTER)
 
     def test_a_gate_that_would_be_the_implementer_is_dropped(self):
         policy = self._policy({"gate": {"provider": "claude"}})
-        self.assertIsNone(wizard.start(_catalog(), policy=policy).resolve().gate)
+        self.assertIsNone(_config_state(policy=policy).resolve().gate)
 
     def test_an_unavailable_gate_is_dropped(self):
         policy = self._policy({"gate": {"provider": "codex"}})
-        self.assertIsNone(wizard.start(_catalog(), policy=policy).resolve().gate)
+        self.assertIsNone(_config_state(policy=policy).resolve().gate)
 
     def test_a_policy_bench_is_filtered_to_what_is_available(self):
         policy = self._policy(
@@ -389,15 +419,20 @@ class TestDefaultsComeFromThePolicy(unittest.TestCase):
 
     def test_a_tier_whose_policy_is_the_jury_stays_the_jury_while_it_gates(self):
         policy = self._policy({"review": {"by_tier": {"2": "jury"}}, "jury": {"mode": "gating"}})
-        state = wizard.start(_catalog(), policy=policy, jury="gating")
-        self.assertEqual(state.resolve().review, team.JURY_PANEL)
+        state = _config_state(policy=policy, jury="gating")
+        self.assertEqual(state.resolve().review_by_tier["2"], team.JURY_PANEL)
 
     def test_a_jury_that_cannot_gate_never_leaves_a_panel_as_the_bench(self):
         """`team._review_issues` refuses an advisory jury beside a jury panel."""
         policy = self._policy({"review": {"by_tier": {"2": "jury"}}})
         for mode in ("advisory", wizard.JURY_OFF):
-            state = wizard.start(_catalog(), policy=policy, jury=mode)
-            self.assertNotEqual(state.resolve().review, team.JURY_PANEL)
+            state = _config_state(policy=policy, jury=mode)
+            self.assertNotEqual(state.resolve().review_by_tier["2"], team.JURY_PANEL)
+
+    def test_a_run_never_resolves_a_policy_jury_tier_to_the_panel(self):
+        policy = self._policy({"review": {"by_tier": {"2": "jury"}}, "jury": {"mode": "gating"}})
+        state = wizard.start(_catalog(), policy=policy, jury="gating")
+        self.assertIsInstance(state.resolve().review, tuple)
 
     def test_the_default_review_applies_where_no_tier_names_one(self):
         policy = self._policy({"review": {"default": [{"provider": "ollama"}]}})
@@ -486,29 +521,26 @@ class TestResolution(unittest.TestCase):
         catalog = wizard.Catalog.from_report(
             {"providers": [_row("agy", models=("gemini-3.8-flash",)), _row("claude")]}
         )
-        state = wizard.start(catalog).with_answer("mode", wizard.CUSTOMIZE)
+        state = _config_state(catalog).with_answer("mode", wizard.CUSTOMIZE)
         state = state.with_answer("implement.model", "gemini-3.8-flash")
         state = state.with_answer("implement.effort", "high").with_answer("gate.provider", "claude")
         rendered = wizard.render(state.resolve())
-        self.assertIn("  flags : --delegate agy:gemini-3.8-flash", rendered)
+        self.assertIn("--delegate agy:gemini-3.8-flash", rendered)
         self.assertIn("effort=high", rendered)
         self.assertIn("gate=claude (distinct from the implementer)", rendered)
-        self.assertIn("review=claude,agy", rendered)
+        self.assertIn("review[2]=claude,agy", rendered)
         # The bench was never answered, so it is reported but not forced onto the run.
         self.assertNotIn("--reviewers", rendered.splitlines()[0])
 
     def test_the_echo_names_a_jury_panel_and_every_tier(self):
         state = (
-            wizard.start(_catalog(), scope=wizard.SCOPE_CONFIG)
+            _config_state()
             .with_answer("mode", wizard.CUSTOMIZE)
             .with_answer("jury", "gating")
             .with_answer("review.3", team.JURY_PANEL)
         )
         rendered = wizard.render(state.resolve())
         self.assertIn("review[3]=jury", rendered)
-        run = wizard.start(_catalog()).with_answer("mode", wizard.CUSTOMIZE)
-        run = run.with_answer("jury", "gating").with_answer("review", team.JURY_PANEL)
-        self.assertIn("review=jury", wizard.render(run.resolve()))
 
     def test_as_dict_is_json_stable(self):
         payload = self._resolution().as_dict()
@@ -648,15 +680,32 @@ class TestApplyAnswers(unittest.TestCase):
         )
         self.assertIn("answer review.1 / review.2 / review.3", errors[0])
 
-    def test_an_unreachable_model_or_effort_key_says_which(self):
-        _, model_errors = wizard.apply_answers(
+    def test_an_unreachable_model_key_says_which(self):
+        _, errors = wizard.apply_answers(
             wizard.start(_catalog()), {"implement.provider": "claude", "implement.model": "x"}
         )
-        self.assertIn("lists no models", model_errors[0])
-        _, effort_errors = wizard.apply_answers(
-            wizard.start(_catalog()), {"implement.provider": "claude", "implement.effort": "high"}
+        self.assertIn("lists no models", errors[0])
+
+    def test_a_config_only_key_answered_in_a_run_says_no_run_flag_carries_it(self):
+        for key, value in (("implement.effort", "high"), ("gate.provider", "ollama")):
+            _, errors = wizard.apply_answers(wizard.start(_catalog()), {key: value})
+            self.assertIn("`keel init --wizard` question", errors[0])
+            self.assertIn("no flag that carries it", errors[0])
+
+    def test_an_effort_key_unreachable_in_a_config_says_the_provider_cannot(self):
+        _, errors = wizard.apply_answers(
+            _config_state(), {"implement.provider": "claude", "implement.effort": "high"}
         )
-        self.assertIn("no spelling for reasoning effort", effort_errors[0])
+        self.assertIn("no spelling for reasoning effort", errors[0])
+
+    def test_quick_start_explains_itself_rather_than_the_wrong_branch(self):
+        _, errors = wizard.apply_answers(
+            wizard.start(_catalog()),
+            {"mode": wizard.QUICK_START, "review": "claude", "implement.effort": "high"},
+        )
+        self.assertEqual(len(errors), 2)
+        for message in errors:
+            self.assertIn("you passed mode=quick-start, which answers nothing else", message)
 
     def test_any_answer_but_mode_implies_customize(self):
         """Otherwise quick-start ends the walk and every other answer is 'not asked'."""
@@ -887,7 +936,7 @@ class TestRunOptionWizard(unittest.TestCase):
 
     def test_an_answered_jury_question_does_write_its_flag(self):
         args = _ship_args()
-        _drive(args, _ask=_scripted(wizard.CUSTOMIZE, "", "", "gating"))
+        _drive(args, _ask=_scripted(wizard.CUSTOMIZE, "", "gating"))
         self.assertEqual((args.jury, args.no_jury, args.jury_advisory), (True, False, False))
 
     def test_a_command_without_the_delegate_flags_only_gets_what_it_has(self):
@@ -897,7 +946,7 @@ class TestRunOptionWizard(unittest.TestCase):
         code, out, _ = _drive(
             args,
             command="work-block",
-            _ask=_scripted(wizard.CUSTOMIZE, "ollama", "", "", "", "claude"),
+            _ask=_scripted(wizard.CUSTOMIZE, "ollama", "", "", "claude"),
         )
         self.assertEqual(code, 0)
         self.assertIn("keel work-block --wizard — resolved", out)
@@ -973,6 +1022,99 @@ class TestQuickStartChangesNothing(unittest.TestCase):
         _, assignment = self._assignment(wizarded, 3)
         self.assertEqual(wizarded.reviewers, 1)
         self.assertEqual(assignment["reviewer_count"], 1)
+
+
+class TestEveryRunQuestionIsHonoured(unittest.TestCase):
+    """No run-scope question may be decorative (#1018 round 3, findings 1 and 2).
+
+    `keel ship` carries the wizard's answers as flags, and it has no flag for a gate
+    seat or a reasoning effort, and none that spells "the panel *is* the review"
+    (`--reviewers` takes 1|2|3). Asking those in a run produced an answer that changed
+    nothing the command published: the echo named a gate while `assignment.gate` still
+    held the policy's — the same two-documents-disagree defect #1014 fixed for
+    reviewers. The run scope now asks only what a run can honour, and this walks every
+    question it does ask to prove each one lands on `args` and, where the bench is
+    involved, on the published assignment.
+    """
+
+    #: question -> (answers to feed, attribute it must move, expected value).
+    CASES = {
+        "implement.provider": ({"implement.provider": "ollama"}, "delegate", "ollama"),
+        "implement.model": (
+            {"implement.provider": "ollama", "implement.model": "qwen2.5-coder"},
+            "delegate",
+            "ollama:qwen2.5-coder",
+        ),
+        "jury": ({"jury": "gating"}, "jury", True),
+        "review": ({"review": "claude"}, "reviewers", 1),
+        "review_comments": ({"review_comments": "summary"}, "review_comments", "summary"),
+    }
+
+    def _config(self):
+        return cfg.parse_config(
+            {
+                "extends": "keel",
+                "core_version": "^1.0",
+                "repo": "tmp",
+                "base_branch": "main",
+                "gates": ["build"],
+                "knobs": {"build_gate_cmd": "true"},
+            },
+            source="fixture",
+        )
+
+    def _run_question_keys(self):
+        state = wizard.start(_catalog()).with_answer("mode", wizard.CUSTOMIZE)
+        # Answering the provider reveals the model question for a provider that lists one.
+        state = state.with_answer("implement.provider", "ollama")
+        return sorted(q.key for q in state.questions() if q.key != "mode")
+
+    def test_the_cases_cover_every_question_a_run_actually_asks(self):
+        self.assertEqual(self._run_question_keys(), sorted(self.CASES))
+
+    def test_every_run_question_moves_the_flag_the_command_acts_on(self):
+        config = self._config()
+        for key, (answers, attribute, expected) in self.CASES.items():
+            with self.subTest(question=key):
+                args = _ship_args(
+                    wizard_answer=["mode=customize", *(f"{k}={v}" for k, v in answers.items())]
+                )
+                code, out, err = _drive(args, config, _isatty=lambda: False)
+                self.assertEqual(code, 0, err)
+                self.assertEqual(getattr(args, attribute), expected)
+                self.assertNotIn("every option kept its default", out)
+
+    def test_a_bench_answer_reaches_the_published_assignment(self):
+        config = self._config()
+        baseline = _ship_args(wizard=False)
+        args = _ship_args(wizard_answer=["mode=customize", "review=claude"])
+        _drive(args, config, _isatty=lambda: False)
+        self.assertNotEqual(
+            cli._review_assignment(config, args, tier=3),
+            cli._review_assignment(config, baseline, tier=3),
+        )
+        self.assertEqual(cli._review_assignment(config, args, tier=3)["reviewer_count"], 1)
+
+    def test_an_implementer_answer_reaches_the_published_assignment(self):
+        config = self._config()
+        args = _ship_args(wizard_answer=["mode=customize", "implement.provider=ollama"])
+        _drive(args, config, _isatty=lambda: False)
+        assignment = cli._review_assignment(config, args, tier=2)
+        self.assertEqual(assignment["implementer"]["provider"], "ollama")
+
+    def test_a_gate_answer_is_refused_rather_than_silently_dropped(self):
+        args = _ship_args(wizard_answer=["mode=customize", "gate.provider=ollama"])
+        code, _, err = _drive(args, self._config(), _isatty=lambda: False)
+        self.assertEqual(code, 1)
+        self.assertIn("no flag that carries it", err)
+
+    def test_a_panel_answer_is_refused_rather_than_silently_dropped(self):
+        args = _ship_args(wizard_answer=["mode=customize", "jury=gating", "review=jury"])
+        code, _, err = _drive(args, self._config(), _isatty=lambda: False)
+        self.assertEqual(code, 1)
+        self.assertIn("is not on offer here", err)
+        # The run still resolves its bench from config + tier, untouched.
+        self.assertIsNone(args.reviewers)
 
 
 class TestEveryReachableConfigValidates(unittest.TestCase):

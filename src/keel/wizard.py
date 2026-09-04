@@ -88,6 +88,15 @@ RUN_BENCH_TIER = "2"
 #: tier 2, three at tier 3, clamped to the providers that are actually available.
 DEFAULT_BENCH = {"1": 1, "2": 2, "3": 3}
 
+#: Questions only :data:`SCOPE_CONFIG` asks, because they land in ``knobs.team`` and
+#: ``keel ship`` has **no flag that carries them**. The gate seat has no ``--gate``, and
+#: reasoning effort has no ``--effort`` (``--delegate`` splits ``provider:model`` and
+#: stops there). Asking them in a run produced an answer that changed nothing: the echo
+#: named a gate while the published ``assignment.gate`` still held the policy's — two
+#: documents disagreeing about the same seat, which is the defect #1014 round 2 fixed
+#: for reviewers. A question the run cannot honour is not asked.
+CONFIG_ONLY_KEYS = ("implement.effort", "gate.provider")
+
 #: Every key the planner can ask under any scope or branch. Used to tell a misspelled
 #: ``--wizard-answer`` from a correctly spelled one this run never reaches.
 #: ``tests/test_wizard.py`` walks the planner and fails if a question escapes this list.
@@ -408,8 +417,12 @@ class Resolution:
     scope: str
     implement: Seat
     gate: Seat | None = None
-    #: ``run`` scope: the bench for this run, or :data:`keel.team.JURY_PANEL`.
-    review: tuple[Seat, ...] | str = ()
+    #: ``run`` scope: the bench for this run. Always seats, never the jury sentinel —
+    #: `keel ship` spells a bench with ``--reviewers <1|2|3>`` and ``--review-delegate``,
+    #: and neither can say "the panel *is* the review", so a run cannot express one
+    #: (#1015 / #1046 may change that). A tier whose *policy* is the panel keeps it in
+    #: :attr:`review_by_tier`, which only the config scope writes.
+    review: tuple[Seat, ...] = ()
     #: ``config`` scope: tier -> bench (or the jury panel).
     review_by_tier: Mapping[str, tuple[Seat, ...] | str] = field(default_factory=dict)
     jury: str = JURY_OFF
@@ -435,7 +448,7 @@ class Resolution:
         flags: list[str] = []
         if {"implement.provider", "implement.model"} & self.answered:
             flags += ["--delegate", seat_token(self.implement)]
-        if "review" in self.answered and isinstance(self.review, tuple) and self.review:
+        if "review" in self.answered and self.review:
             flags += ["--reviewers", str(len(self.review))]
             for seat in self.review:
                 flags += ["--review-delegate", seat_token(seat)]
@@ -474,11 +487,7 @@ class Resolution:
             "flags": list(self.flags()),
             "implement": self.implement.as_dict(),
             "gate": None if self.gate is None else self.gate.as_dict(),
-            "review": (
-                self.review
-                if isinstance(self.review, str)
-                else [seat.as_dict() for seat in self.review]
-            ),
+            "review": [seat.as_dict() for seat in self.review],
             "review_by_tier": {
                 tier: value if isinstance(value, str) else [s.as_dict() for s in value]
                 for tier, value in sorted(self.review_by_tier.items())
@@ -540,11 +549,25 @@ def _default_bench(
     gate. Offering `jury` as the *default* beside an advisory jury would hand the
     operator a pre-filled answer `keel validate` refuses.
     """
+    if _configured_bench(state, tier) == team.JURY_PANEL and panel_allowed:
+        return team.JURY_PANEL
+    return _seat_bench(state, tier, implementer)
+
+
+def _configured_bench(state: State, tier: str) -> tuple[Seat, ...] | str | None:
+    """What the policy says about ``tier``: its own seats, ``review.default``'s, or nothing."""
     configured = state.policy.review_by_tier.get(tier)
-    if configured is None:
-        configured = state.policy.review
-    if configured == team.JURY_PANEL:
-        return team.JURY_PANEL if panel_allowed else _spread_bench(state, tier, implementer)
+    return state.policy.review if configured is None else configured
+
+
+def _seat_bench(state: State, tier: str, implementer: str) -> tuple[Seat, ...]:
+    """The policy's seats for ``tier``, filtered to this machine — **never** the panel.
+
+    The run scope's only bench source, and the config scope's whenever the jury cannot
+    gate: both need seats, and neither may fall back to a sentinel that one of them has
+    no spelling for and the other would fail validation on.
+    """
+    configured = _configured_bench(state, tier)
     if isinstance(configured, tuple):
         seats = tuple(seat for seat in configured if state.catalog.has(seat.provider))
         if seats:
@@ -578,9 +601,8 @@ def _seats_from(
     models: Mapping[str, str | None],
     *,
     catalog: Catalog,
-    fallback: tuple[Seat, ...] | str,
-    panel_allowed: bool,
-) -> tuple[Seat, ...] | str:
+    fallback: tuple[Seat, ...],
+) -> tuple[Seat, ...]:
     """Reviewer seats from a bench answer, dropping anything this machine cannot run.
 
     The third guard of the same shape as the implementer's and the gate's: `normalize`
@@ -589,13 +611,13 @@ def _seats_from(
     reviewer slot nobody can staff. An answer that filters down to nothing falls back
     to the bench this question offered as its default.
 
-    ``panel_allowed`` carries the same rule structurally rather than only through the
-    offered choices: a jury panel is a review **only when the jury gates**, because
-    `team._review_issues` refuses "the panel is the review" beside an advisory jury —
-    that tier would have no host reviewers and an advisory verdict requires nothing.
+    It never returns the jury sentinel. Whether a panel is allowed at all is the
+    caller's decision, taken structurally rather than only through the offered choices:
+    a run has no flag that spells one, and a config may name one only beside a *gating*
+    jury — an advisory panel leaves that tier with no host reviewers and no required
+    evidence, which `team._review_issues` refuses. An answer of ``jury`` reaching here
+    is therefore just a name no provider has, and falls back like any other.
     """
-    if value == team.JURY_PANEL:
-        return team.JURY_PANEL if panel_allowed else fallback
     seats = tuple(
         Seat(provider=name, model=models.get(name))
         for name in value.split(",")
@@ -646,6 +668,7 @@ def _walk(state: State) -> tuple[tuple[Question, ...], Resolution]:
     questions: list[Question] = []
     answered: set[str] = set()
     asking = True
+    config_scope = state.scope == SCOPE_CONFIG
 
     def ask(
         key: str,
@@ -716,12 +739,23 @@ def _walk(state: State) -> tuple[tuple[Question, ...], Resolution]:
             help=f"models {provider} lists for itself",
         )
         model = None if model_answer == NONE else model_answer
-    effort = implement_default.effort if provider == implement_default.provider else None
+    # A run carries no effort: `--delegate` splits `provider:model` and there is no
+    # `--effort` on `keel ship`, so an answer here would change nothing this command
+    # publishes. It stays a `knobs.team` question (see :data:`CONFIG_ONLY_KEYS`).
+    effort = (
+        implement_default.effort
+        if config_scope and provider == implement_default.provider
+        else None
+    )
     # A vendor that spells effort as a model suffix has nowhere to put one without a
     # model, and `keel validate` says so (`team.effort_needs_model`). Asking anyway
     # would let the wizard write a config keel then refuses to load — the one thing a
     # scaffolder must never do.
-    if candidate.effort and not (team.effort_needs_model(candidate.vendor) and model is None):
+    if (
+        config_scope
+        and candidate.effort
+        and not (team.effort_needs_model(candidate.vendor) and model is None)
+    ):
         effort_answer = ask(
             "implement.effort",
             "Implementer reasoning effort",
@@ -730,31 +764,35 @@ def _walk(state: State) -> tuple[tuple[Question, ...], Resolution]:
             help=f"{provider} can express this in its own spelling",
         )
         effort = None if effort_answer == NONE else effort_answer
-    elif team.effort_needs_model(candidate.vendor):
+    elif config_scope and team.effort_needs_model(candidate.vendor):
         # A policy default that carried an effort loses it along with the model it
         # was a suffix of; keeping it would write exactly the pair keel rejects.
         effort = None
     implement = Seat(provider=provider, model=model, effort=effort)
 
-    gate_default = _default_gate(state, provider)
-    gate_answer = ask(
-        "gate.provider",
-        "Gate reviewer",
-        (
-            Choice(NONE, "no mandatory second opinion"),
-            *_provider_choices(state.catalog, skip=provider),
-        ),
-        gate_default.provider if gate_default is not None else NONE,
-        help="one mandatory second opinion, never the seat that wrote the change",
-    )
-    if gate_answer != NONE and not _offerable_gate(state, gate_answer, provider):
-        # Same guard as the implementer's, for the same reason: an answer seated
-        # directly on `State` bypasses `normalize`, and a gate naming an unusable
-        # provider — or the implementer itself — is one `keel validate` refuses.
-        gate_answer = gate_default.provider if gate_default is not None else NONE
-    gate = (
-        None if gate_answer == NONE else Seat(provider=gate_answer, distinct_from=team.IMPLEMENTER)
-    )
+    gate = None
+    if config_scope:
+        gate_default = _default_gate(state, provider)
+        gate_answer = ask(
+            "gate.provider",
+            "Gate reviewer",
+            (
+                Choice(NONE, "no mandatory second opinion"),
+                *_provider_choices(state.catalog, skip=provider),
+            ),
+            gate_default.provider if gate_default is not None else NONE,
+            help="one mandatory second opinion, never the seat that wrote the change",
+        )
+        if gate_answer != NONE and not _offerable_gate(state, gate_answer, provider):
+            # Same guard as the implementer's, for the same reason: an answer seated
+            # directly on `State` bypasses `normalize`, and a gate naming an unusable
+            # provider — or the implementer itself — is one `keel validate` refuses.
+            gate_answer = gate_default.provider if gate_default is not None else NONE
+        gate = (
+            None
+            if gate_answer == NONE
+            else Seat(provider=gate_answer, distinct_from=team.IMPLEMENTER)
+        )
 
     jury = ask(
         "jury",
@@ -768,7 +806,11 @@ def _walk(state: State) -> tuple[tuple[Question, ...], Resolution]:
         help="the cross-vendor panel",
     )
 
-    panel_allowed = jury == "gating"
+    # `keel ship` spells the bench with `--reviewers <1|2|3>` and `--review-delegate`;
+    # neither can say "the panel *is* the review", so a run-scope `jury` answer emitted
+    # no flags at all and silently did nothing. It stays a `knobs.team` answer until a
+    # run flag can express it (#1015 / #1046).
+    panel_allowed = jury == "gating" and config_scope
     bench_choices = _provider_choices(state.catalog)
     if panel_allowed:
         # Only a *gating* jury may be the review. "The panel is the review" plus "the
@@ -782,10 +824,11 @@ def _walk(state: State) -> tuple[tuple[Question, ...], Resolution]:
         )
     max_seats = min(team.MAX_REVIEW_SEATS, len(state.catalog.candidates))
     seat_models = _policy_models(state.policy)
-    review: tuple[Seat, ...] | str = ()
+    review: tuple[Seat, ...] = ()
     review_by_tier: dict[str, tuple[Seat, ...] | str] = {}
-    if state.scope == SCOPE_RUN:
-        run_bench = _default_bench(state, RUN_BENCH_TIER, provider, panel_allowed=panel_allowed)
+    if not config_scope:
+        # Seats, never the sentinel: `_seat_bench` and `_seats_from` cannot produce one.
+        run_bench = _seat_bench(state, RUN_BENCH_TIER, provider)
         review = _seats_from(
             ask(
                 "review",
@@ -799,25 +842,28 @@ def _walk(state: State) -> tuple[tuple[Question, ...], Resolution]:
             seat_models,
             catalog=state.catalog,
             fallback=run_bench,
-            panel_allowed=panel_allowed,
         )
     else:
         for tier in team.TIERS:
             tier_bench = _default_bench(state, tier, provider, panel_allowed=panel_allowed)
-            review_by_tier[tier] = _seats_from(
-                ask(
-                    f"review.{tier}",
-                    f"Reviewers for tier {tier}",
-                    bench_choices,
-                    _bench_answer(tier_bench),
-                    help=f"knobs.team.review.by_tier.{quoted(tier)}",
-                    multi=True,
-                    max_values=max_seats,
-                ),
-                seat_models,
-                catalog=state.catalog,
-                fallback=tier_bench,
-                panel_allowed=panel_allowed,
+            answer = ask(
+                f"review.{tier}",
+                f"Reviewers for tier {tier}",
+                bench_choices,
+                _bench_answer(tier_bench),
+                help=f"knobs.team.review.by_tier.{quoted(tier)}",
+                multi=True,
+                max_values=max_seats,
+            )
+            review_by_tier[tier] = (
+                team.JURY_PANEL
+                if answer == team.JURY_PANEL and panel_allowed
+                else _seats_from(
+                    answer,
+                    seat_models,
+                    catalog=state.catalog,
+                    fallback=_seat_bench(state, tier, provider),
+                )
             )
 
     review_comments = ask(
@@ -908,6 +954,13 @@ def _unused_answer_issues(state: State, remaining: Mapping[str, str]) -> list[st
 
 
 def _unreachable_reason(state: State, key: str) -> str:
+    if state.answers.get("mode") == QUICK_START:
+        return "you passed mode=quick-start, which answers nothing else"
+    if state.scope == SCOPE_RUN and key in CONFIG_ONLY_KEYS:
+        return (
+            f"{key} is a `keel init --wizard` question: it lands in knobs.team, and "
+            "`keel ship` has no flag that carries it, so a run could not honour an answer"
+        )
     if state.scope == SCOPE_RUN and key.startswith("review."):
         return (
             f"{key} is a `keel init --wizard` question (one bench per risk tier); a run "
@@ -973,9 +1026,7 @@ def render(resolution: Resolution) -> str:
         seats.append(f"effort={resolution.implement.effort}")
     if resolution.gate is not None:
         seats.append(f"gate={seat_token(resolution.gate)} (distinct from the implementer)")
-    if isinstance(resolution.review, str):
-        seats.append(f"review={resolution.review}")
-    elif resolution.review:
+    if resolution.review:
         seats.append("review=" + ",".join(seat_token(s) for s in resolution.review))
     for tier, bench in sorted(resolution.review_by_tier.items()):
         rendered = bench if isinstance(bench, str) else ",".join(seat_token(s) for s in bench)

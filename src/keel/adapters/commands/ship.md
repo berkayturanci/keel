@@ -1126,10 +1126,14 @@ survive it.
 
 First question is a **Quick-start vs Customize** fast path (Quick-start resolves every
 option to its default and only still asks for Issues). Every question shows its
-`(default)` option first with a one-line description. The questions are `mode`,
-`implement.provider`, `implement.model`, `implement.effort`, `gate.provider`, `jury`,
-`review` (this run's bench, or `jury` when the panel *is* the review) and
-`review_comments`.
+`(default)` option first with a one-line description. A run is asked `mode`,
+`implement.provider`, `implement.model`, `jury`, `review` (this run's bench) and
+`review_comments` — and nothing else, because every one of those lands on a real
+`keel ship` flag. The gate seat, the reasoning effort and the jury-as-panel are
+`keel init --wizard` questions: no run flag carries them (`--delegate` splits
+`provider:model`; `--reviewers` takes `1|2|3`), so a run neither asks them nor accepts
+them via `--wizard-answer`. The gate you dispatch at s7 is `assignment.gate`, exactly as
+before.
 
 Core echoes the resolved **flag set**; pass those flags on literally and proceed to s1:
 
@@ -1139,12 +1143,12 @@ keel ship --wizard — resolved
   seats : implement=ollama:qwen2.5-coder · gate=claude (distinct from the implementer) · review=claude
 ```
 
-The `seats` line carries what has no `keel ship` flag: the implementer's reasoning effort
-(pass it to `keel delegate run --effort` at s4) and the gate seat (dispatch it as the s7
-gate review, as `assignment.gate` already directs). A `flags` line reading `(none — every
-option kept its default …)` is the normal quick-start outcome, not a failure: pass no
-flags and proceed. A malformed or unofferable `--wizard-answer` exits 1 before any gate
-runs — surface that to the operator rather than retrying with a guess.
+The `seats` line restates the flags in seat form; it never carries a value the flags do
+not, so there is nothing on it to apply separately — read `assignment` for the gate seat
+and any per-seat effort, as you already do. A `flags` line reading `(none — every option
+kept its default …)` is the normal quick-start outcome, not a failure: pass no flags and
+proceed. A malformed or unofferable `--wizard-answer` exits 1 before any gate runs —
+surface that to the operator rather than retrying with a guess.
 
 ## Invariants (always)
 
