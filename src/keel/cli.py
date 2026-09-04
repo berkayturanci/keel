@@ -2989,8 +2989,8 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
         # project fails its own gate forever: ship publishes zero reviewer slots and
         # this side demands review-verdict-1..3.
         assignment=_review_assignment(config, args, tier=tier),
-        # `or None` keeps the knob tri-state: an unset knob and an unset flag resolve
-        # from the tier, while --require-distinct-vendors forces it on.
+        # `or None` keeps the knob tri-state: an unset knob and an unset flag leave the
+        # claim unmade, while --require-distinct-vendors forces it on.
         require_distinct_vendors=(
             True
             if args.require_distinct_vendors
