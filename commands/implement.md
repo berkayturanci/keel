@@ -190,4 +190,4 @@ review / CI / merge.
 Fail over to the host agent on delegate quota errors; attribute the **effective**
 agent.
 
-<!-- keel-generated: surface=plugin command=implement keel_version=1.19.3 source_sha256=4d1b6a23af0cb08e75d705ea0cbf142dea7373530823900007558233787c36ce generated_sha256=4d1b6a23af0cb08e75d705ea0cbf142dea7373530823900007558233787c36ce -->
+<!-- keel-generated: surface=plugin command=implement keel_version=1.20.0 source_sha256=4d1b6a23af0cb08e75d705ea0cbf142dea7373530823900007558233787c36ce generated_sha256=4d1b6a23af0cb08e75d705ea0cbf142dea7373530823900007558233787c36ce -->
