@@ -29,6 +29,7 @@ from .capabilities import validate_names
 # cycle (gates names config in its TYPE_CHECKING imports). SLOTS: source of truth for
 # the named slots; DEFAULT_GATE_TIMEOUT_S: shared with the gate planner and runner.
 from .model import DEFAULT_GATE_TIMEOUT_S, DEFAULT_JURY_TIMEOUT_S, SLOTS
+from .vocab import BUILTIN_DELEGATE_VENDORS
 
 SCHEMA_PATH = Path(__file__).parent / "schema" / "project.schema.json"
 
@@ -628,12 +629,6 @@ def _validate_delegate_profiles(profiles: Any, *, source: str) -> list[str]:
     this owns the *meaning*: which vendors exist, what each vendor requires, and the
     fail-closed rule that a profile may never shadow a built-in delegate vendor.
     """
-    # Local import on purpose: ``agents`` imports this module for ``ProjectConfig``, so
-    # naming it at module scope would close a real config <-> agents cycle. The vendor
-    # vocabulary belongs next to the dispatch logic in ``agents``, so the import moves
-    # instead of the constant (same pattern as ``runtime._api_token_capability``).
-    from .agents import BUILTIN_DELEGATE_VENDORS
-
     errors: list[str] = []
     if not isinstance(profiles, dict):
         return errors  # the schema already reported the wrong shape
