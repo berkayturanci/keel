@@ -519,6 +519,64 @@ def _availability_reason(availability: Mapping[str, Any] | None) -> str:
     return reason if isinstance(reason, str) and reason.strip() else "the probe reported no detail"
 
 
+def configured_review(
+    policy: TeamPolicy,
+    *,
+    tier: int | None,
+    benches: Sequence[tuple[Bench, str]] = (),
+) -> tuple[tuple[Seat, ...] | str | None, str | None]:
+    """The review policy in force for this run, and the config path it came from.
+
+    The tier's own (:meth:`TeamPolicy.review_for`), overlaid by the first bench that names
+    a review — a ``--team`` profile, else the difficulty band — exactly as
+    :meth:`TeamPolicy.benches_for` orders them.
+
+    **One reading of "what is this run's review", shared by everything that asks.** The
+    resolver that seats the bench (:func:`_review_seats`) and the probe that measures the
+    panel before it (:func:`keel.providerprobe.jury_availability`) had this written twice,
+    and the copies drifted: the probe read ``review_for`` alone, so a project whose
+    ``profiles.strict.review`` or ``by_difficulty.hard.review`` named the panel resolved
+    ``review_panel: jury`` with ``availability: null`` — the panel published on a machine
+    that was never asked whether it could convene one, which is #1066 reached by a second
+    route. A predicate this one depends on may only be written here.
+    """
+    for bench, bench_source in benches:
+        if bench.review is not None:
+            return bench.review, f"{bench_source}.review"
+    return policy.review_for(tier)
+
+
+def panel_review_source(
+    policy: TeamPolicy,
+    *,
+    tier: int | None,
+    difficulty: str | None = None,
+    profile: str | None = None,
+    any_difficulty: bool = False,
+) -> str | None:
+    """The config path that makes the cross-vendor panel this run's review, or ``None``.
+
+    ``None`` means no route to the panel exists for these coordinates, so the panel probe
+    has nothing to measure and a project that never convenes one pays nothing.
+
+    ``any_difficulty`` is for a caller that cannot name the band yet:
+    :func:`keel.swarm.build_swarm_plan` scores each cluster's difficulty *while* it
+    partitions, so the probe runs before any band exists. It then asks the wider question —
+    *could* any band this policy configures make the panel the review — and the answer is a
+    deliberate superset. That matches what the record already is: availability is a fact
+    about the machine, not about a cluster, which is why
+    :func:`keel.providerprobe.jury_availability_for_any_tier` sweeps tiers the same way.
+    """
+    bands = (None, *DIFFICULTY_BANDS) if any_difficulty else (difficulty,)
+    for band in bands:
+        configured, source = configured_review(
+            policy, tier=tier, benches=policy.benches_for(difficulty=band, profile=profile)
+        )
+        if configured == JURY_PANEL:
+            return source
+    return None
+
+
 def _review_seats(
     policy: TeamPolicy,
     *,
@@ -563,11 +621,7 @@ def _review_seats(
     get to remove the only review that tier has. :func:`keel.ship.resolve_jury` keeps the
     verdict required for the same reason.
     """
-    configured, source = policy.review_for(tier)
-    for bench, bench_source in benches:
-        if bench.review is not None:
-            configured, source = bench.review, f"{bench_source}.review"
-            break
+    configured, source = configured_review(policy, tier=tier, benches=benches)
     warnings: list[str] = []
     fell_back = configured == JURY_PANEL and _panel_falls_back(jury_availability)
     if fell_back:

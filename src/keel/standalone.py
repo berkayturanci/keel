@@ -206,9 +206,12 @@ def cmd_standalone(args: argparse.Namespace) -> int:
         review_delegates=review_delegates,
         effort=effort,
         team_profile=team_profile,
-        # A standalone command resolves no risk tier, so only a `review.default: jury`
-        # reaches the probe here — the same rule the preflight contract follows (#1066).
-        jury_availability=providerprobe.jury_availability(config, tier=None),
+        # A standalone command resolves no risk tier, so only a `review.default: jury` —
+        # or the `--team` profile's own `review` — reaches the probe here; the same rule
+        # the preflight contract follows (#1066).
+        jury_availability=providerprobe.jury_availability(
+            config, tier=None, profile=team_profile
+        ),
     )
     consent_ok, consent_message = consent.assert_operator_consent(contract["operator_consent"])
     result = contracts.standalone_result_as_dict(

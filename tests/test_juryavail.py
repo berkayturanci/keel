@@ -764,6 +764,165 @@ class TestTheProbeIsOnlyRunWhenItMatters(unittest.TestCase):
         self.assertIsNone(result)
 
 
+class TestTheProbeAsksWhatTheResolverAsks(unittest.TestCase):
+    """The probe's predicate is the resolver's overlay, not `review.by_tier` alone (#1068).
+
+    `_review_seats` resolves the review from the tier's policy *overlaid* by
+    `TeamPolicy.benches_for` — a `--team` profile, else the difficulty band — and both
+    overlays may name the panel (`team_issues` accepts them as panel policy). A probe that
+    read `review_for` alone was narrower than the resolver it guards: with
+    `profiles.strict.review: jury` over a host-bench tier, `jury_availability` returned
+    `None`, the resolver published `review_panel: jury`, and the assignment carried
+    `availability: null` — #1066's bug reached by a second route, and invisible to the
+    call-site sweep because that site *was* handed a measurement.
+    """
+
+    OVERLAY_PANEL = BENCH_CONFIG + """    profiles:
+      strict:
+        review: jury
+    by_difficulty:
+      hard:
+        review: jury
+    jury:
+      mode: gating
+      min_vendors: 2
+"""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        path = pathlib.Path(self._tmp.name) / "project.yaml"
+        path.write_text(self.OVERLAY_PANEL, encoding="utf-8")
+        self.config = cfg.load_config(str(path))
+
+    def _availability(self, **kwargs):
+        return providerprobe.jury_availability(
+            self.config,
+            tier=3,
+            _probe=lambda _c: UNSTAFFED,
+            _runner_probe=_runner_probe(NO_RUNNER),
+            **kwargs,
+        )
+
+    def test_the_profile_route_is_measured(self):
+        record = self._availability(profile="strict")
+
+        self.assertEqual(record["decision"], "fallback")
+        self.assertFalse(record["staffable"])
+
+    def test_the_difficulty_route_is_measured(self):
+        record = self._availability(difficulty="hard")
+
+        self.assertEqual(record["decision"], "fallback")
+
+    def test_neither_route_selected_leaves_the_host_bench_tier_unprobed(self):
+        """The tier's own review is host seats, so with no overlay there is nothing to ask."""
+        result = providerprobe.jury_availability(
+            self.config,
+            tier=3,
+            _probe=lambda _c: self.fail("probed a run whose review is a host bench"),
+            _runner_probe=lambda: self.fail("probed the runner for a host-bench run"),
+        )
+
+        self.assertIsNone(result)
+
+    def test_the_bench_it_seats_agrees_with_what_was_measured(self):
+        """The whole point: the resolver and the probe answer the same question."""
+        for kwargs, resolved in (
+            ({"profile": "strict"}, {"team_profile": "strict"}),
+            ({"difficulty": "hard"}, {"difficulty": "hard"}),
+        ):
+            with self.subTest(**kwargs):
+                record = self._availability(**kwargs)
+                assignment = team_policy.resolve_assignment(
+                    self.config.knobs.team,
+                    tier=3,
+                    default_count=3,
+                    jury_availability=record,
+                    **resolved,
+                )
+
+                self.assertEqual(assignment["review_panel"], "reviewers")
+                self.assertTrue(assignment["jury"]["panel_configured"])
+                self.assertEqual(assignment["jury"]["availability"]["decision"], "fallback")
+                self.assertEqual(assignment["reviewer_count"], 3)
+
+    def test_a_blocking_project_refuses_through_either_overlay(self):
+        """…and names the overlay's own config path, not the tier's."""
+        path = pathlib.Path(self._tmp.name) / "block.yaml"
+        path.write_text(
+            self.OVERLAY_PANEL.replace(
+                "      min_vendors: 2\n", "      min_vendors: 2\n      on_unavailable: block\n"
+            ),
+            encoding="utf-8",
+        )
+        config = cfg.load_config(str(path))
+        for kwargs, named in (
+            ({"profile": "strict"}, "team.profiles.strict.review"),
+            ({"difficulty": "hard"}, "team.by_difficulty.hard.review"),
+        ):
+            with self.subTest(**kwargs):
+                with self.assertRaises(juryavail.JuryUnavailableError) as raised:
+                    providerprobe.jury_availability(
+                        config,
+                        tier=3,
+                        _probe=lambda _c: UNSTAFFED,
+                        _runner_probe=_runner_probe(NO_RUNNER),
+                        **kwargs,
+                    )
+
+                self.assertIn(named, str(raised.exception))
+
+    def test_a_many_tier_surface_cannot_name_the_band_so_it_asks_about_every_one(self):
+        """The swarm scores difficulty inside the partition this record is measured for."""
+        record = providerprobe.jury_availability_for_any_tier(
+            self.config, _probe=lambda _c: UNSTAFFED, _runner_probe=_runner_probe(NO_RUNNER)
+        )
+
+        self.assertEqual(record["decision"], "fallback")
+
+    def test_a_many_tier_surface_still_probes_nothing_when_no_route_names_the_panel(self):
+        path = pathlib.Path(self._tmp.name) / "bench.yaml"
+        path.write_text(BENCH_CONFIG, encoding="utf-8")
+
+        result = providerprobe.jury_availability_for_any_tier(
+            cfg.load_config(str(path)),
+            profile="strict",
+            _probe=lambda _c: self.fail("probed a project that names no panel"),
+            _runner_probe=lambda: self.fail("probed the runner for a project with no panel"),
+        )
+
+        self.assertIsNone(result)
+
+    def test_the_profile_outranks_the_band_exactly_as_the_resolver_orders_them(self):
+        """A profile that names host seats wins over a band that names the panel."""
+        path = pathlib.Path(self._tmp.name) / "seated.yaml"
+        path.write_text(
+            self.OVERLAY_PANEL.replace(
+                """      strict:
+        review: jury
+""",
+                """      strict:
+        review:
+          - { provider: claude }
+          - { provider: codex }
+""",
+            ),
+            encoding="utf-8",
+        )
+
+        result = providerprobe.jury_availability(
+            cfg.load_config(str(path)),
+            tier=3,
+            difficulty="hard",
+            profile="strict",
+            _probe=lambda _c: self.fail("probed a run the profile seats from the host"),
+            _runner_probe=lambda: self.fail("probed the runner for a host-bench run"),
+        )
+
+        self.assertIsNone(result)
+
+
 class TestEverySiteThatResolvesABenchSeesTheProbe(unittest.TestCase):
     """The seventh resolver was missed once; this is the rule, not the site (#1066).
 

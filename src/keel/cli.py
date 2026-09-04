@@ -361,7 +361,9 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         # (#1066) — the same measurement `_review_assignment` hands the other six
         # surfaces, so `keel plan` cannot publish a panel the run it plans could not
         # staff.
-        jury_availability=providerprobe.jury_availability(config, tier=args.review_tier),
+        jury_availability=providerprobe.jury_availability(
+            config, tier=args.review_tier, profile=args.team_profile
+        ),
         # `plan` accepts these, so `plan` has to resolve them. Accepting a flag and then
         # not threading it published an assignment that disagreed with the one `ship`
         # renders from the identical command line — two answers to the one question this
@@ -1107,7 +1109,7 @@ def _review_assignment(
     # already knows what the ship measured (`_shipped_jury_availability`), because a
     # surface that only verifies must be held to that run's decision, not to this host's.
     availability = pinned if pinned is not None else providerprobe.jury_availability(
-        config, tier=tier
+        config, tier=tier, profile=getattr(args, "team_profile", None)
     )
     return team.resolve_assignment(
         config.knobs.team,
@@ -1217,8 +1219,11 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         tdd_override=args.tdd,
         # The preflight contract is built before s5 classifies, so its tier is
         # unresolved and no tier's policy can be the panel yet; this probes only when
-        # a `review.default: jury` makes the panel the review at every tier (#1066).
-        jury_availability=providerprobe.jury_availability(config, tier=None),
+        # a `review.default: jury` — or the `--team` profile's own `review` — makes the
+        # panel the review whatever the tier turns out to be (#1066).
+        jury_availability=providerprobe.jury_availability(
+            config, tier=None, profile=args.team_profile
+        ),
     )
     consent_ok, consent_message = consent.assert_operator_consent(contract["operator_consent"])
     if not consent_ok:
@@ -5789,17 +5794,21 @@ def _cmd_swarm_plan(args: argparse.Namespace) -> int:
             )
         )
 
+    overrides = _swarm_overrides(args)
     plan = swarm.build_swarm_plan(
         scopes,
         swarm_id=args.swarm_id,
         config=config,
-        overrides=_swarm_overrides(args),
-        # The seventh resolver (#1066). A swarm scores each cluster's tier while it
-        # partitions, so the tier cannot be named before the plan exists — but every
-        # cluster in it resolves a bench, and without this a panel project's tier-3
-        # cluster published `review_panel: jury` while the child `keel ship` launched
-        # on the same machine seated three host reviewers.
-        jury_availability=providerprobe.jury_availability_for_any_tier(config),
+        overrides=overrides,
+        # The seventh resolver (#1066). A swarm scores each cluster's tier *and* its
+        # difficulty band while it partitions, so neither can be named before the plan
+        # exists — but every cluster in it resolves a bench, and without this a panel
+        # project's tier-3 cluster published `review_panel: jury` while the child `keel
+        # ship` launched on the same machine seated three host reviewers. The `--team`
+        # profile is known, and carries its own `review`, so it goes with the question.
+        jury_availability=providerprobe.jury_availability_for_any_tier(
+            config, profile=overrides.team_profile
+        ),
     )
 
     if args.json:
@@ -5895,17 +5904,21 @@ def _cmd_swarm_run(args: argparse.Namespace) -> int:
             )
         )
 
+    overrides = _swarm_overrides(args)
     plan = swarm.build_swarm_plan(
         scopes,
         swarm_id=args.swarm_id,
         config=config,
-        overrides=_swarm_overrides(args),
-        # The seventh resolver (#1066). A swarm scores each cluster's tier while it
-        # partitions, so the tier cannot be named before the plan exists — but every
-        # cluster in it resolves a bench, and without this a panel project's tier-3
-        # cluster published `review_panel: jury` while the child `keel ship` launched
-        # on the same machine seated three host reviewers.
-        jury_availability=providerprobe.jury_availability_for_any_tier(config),
+        overrides=overrides,
+        # The seventh resolver (#1066). A swarm scores each cluster's tier *and* its
+        # difficulty band while it partitions, so neither can be named before the plan
+        # exists — but every cluster in it resolves a bench, and without this a panel
+        # project's tier-3 cluster published `review_panel: jury` while the child `keel
+        # ship` launched on the same machine seated three host reviewers. The `--team`
+        # profile is known, and carries its own `review`, so it goes with the question.
+        jury_availability=providerprobe.jury_availability_for_any_tier(
+            config, profile=overrides.team_profile
+        ),
     )
 
     from . import swarm_runtime
@@ -6117,12 +6130,15 @@ def _cmd_swarm_land(args: argparse.Namespace) -> int:
             )
         )
 
+    overrides = _swarm_overrides(args)
     plan = swarm.build_swarm_plan(
         scopes,
         swarm_id=swarm_id,
         config=config,
-        overrides=_swarm_overrides(args),
-        jury_availability=providerprobe.jury_availability_for_any_tier(config),
+        overrides=overrides,
+        jury_availability=providerprobe.jury_availability_for_any_tier(
+            config, profile=overrides.team_profile
+        ),
     )
 
     from . import swarm_landing

@@ -344,14 +344,35 @@ def _doctor_report(text: str) -> dict[str, object] | None:
 
 
 def jury_availability(
-    config, *, tier: int | None, _probe=None, _runner_probe=None
+    config,
+    *,
+    tier: int | None,
+    difficulty: str | None = None,
+    profile: str | None = None,
+    any_difficulty: bool = False,
+    _probe=None,
+    _runner_probe=None,
 ) -> dict[str, object] | None:
-    """Can this machine convene the panel this tier's review policy names? (#1066)
+    """Can this machine convene the panel this run's review policy names? (#1066)
 
-    ``None`` when the question does not arise — the tier's review is a host bench, so
+    ``None`` when the question does not arise — this run's review is a host bench, so
     nothing about the panel can change the answer and nothing is spent asking. That keeps
     the whole feature inert for every project that has not made the panel its review,
     keel's own ``projects/keel.yaml`` included.
+
+    *This run's* review, not the tier's: ``team.by_difficulty.<band>.review`` and
+    ``team.profiles.<name>.review`` may each name the panel, and the resolver applies them
+    over the tier's policy. So the predicate is :func:`keel.team.panel_review_source` — the
+    same overlay :func:`keel.team._review_seats` resolves the bench with, asked once and in
+    one place. Read from ``review.by_tier`` alone it was narrower than the resolver it
+    guards: ``keel ship --team-profile strict`` on an unstaffable host published
+    ``review_panel: jury`` with ``availability: null`` and was stuck exactly as the issue
+    describes, and the call-site sweep could not see it because that site *was* handed a
+    measurement — a ``None`` one.
+
+    ``difficulty`` and ``profile`` are the run's own coordinates, the ones handed to
+    :func:`keel.team.resolve_assignment`. ``any_difficulty`` is for a caller that cannot
+    name the band yet; see :func:`jury_availability_for_any_tier`.
 
     On a panel tier it asks the panel runner first (:func:`probe_jury_runner`), because the
     runner is what s7 dispatches and it holds the configured panel. Its own report is the
@@ -373,8 +394,14 @@ def jury_availability(
     is :func:`keel.cli._shipped_jury_availability`'s question, not this one's: it pins to
     what the ship measured rather than re-measuring on a different machine.
     """
-    seats, source = config.knobs.team.review_for(tier)
-    if seats != team.JURY_PANEL:
+    source = team.panel_review_source(
+        config.knobs.team,
+        tier=tier,
+        difficulty=difficulty,
+        profile=profile,
+        any_difficulty=any_difficulty,
+    )
+    if source is None:
         return None
     jury_runner = (probe_jury_runner if _runner_probe is None else _runner_probe)()
     probe = collect if _probe is None else _probe
@@ -392,13 +419,13 @@ def jury_availability(
         # measurement is taken, so it is the only place that cannot be forgotten. A check
         # copied to seven resolution sites is seven chances for a new surface to review a
         # jury tier with a bench the project's policy refused.
-        raise juryavail.JuryUnavailableError(
-            juryavail.refusal_message(record, source=source or "team.review")
-        )
+        raise juryavail.JuryUnavailableError(juryavail.refusal_message(record, source=source))
     return record
 
 
-def jury_availability_for_any_tier(config, **kwargs) -> dict[str, object] | None:
+def jury_availability_for_any_tier(
+    config, *, profile: str | None = None, **kwargs
+) -> dict[str, object] | None:
     """The panel probe for a surface that resolves *several* tiers in one call (#1066).
 
     :func:`keel.swarm.build_swarm_plan` scores each cluster's risk tier while it partitions,
@@ -412,11 +439,19 @@ def jury_availability_for_any_tier(config, **kwargs) -> dict[str, object] | None
     whether the question arises. So this asks it once, for the first tier whose review policy
     names the panel, and hands the one record to every cluster. A project with no panel at
     any tier probes nothing, exactly as before — :func:`jury_availability` returns ``None``
-    without measuring when the tier's review is a host bench, so the loop below costs a
+    without measuring when the run's review is a host bench, so the loop below costs a
     config lookup per tier and no subprocess at all.
+
+    The difficulty band is unknowable here for the same reason the tier is — the scorer runs
+    inside the partition this record is being measured *for* — so the sweep widens the same
+    way: ``any_difficulty`` asks whether any band this policy configures could make the panel
+    the review. ``profile`` is the operator's ``--team``, which *is* known, and is passed so
+    the profile's own precedence over the band holds here exactly as it does in the resolver.
     """
     for tier in (None, *(int(name) for name in team.TIERS)):
-        record = jury_availability(config, tier=tier, **kwargs)
+        record = jury_availability(
+            config, tier=tier, profile=profile, any_difficulty=True, **kwargs
+        )
         if record is not None:
             return record
     return None
