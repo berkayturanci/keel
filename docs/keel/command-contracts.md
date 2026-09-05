@@ -549,12 +549,24 @@ claim raises, so `denied` keeps meaning "held by another owner" for callers that
 and retry on it. A failure *after* the claim directory is created — an unwritable `.keel`,
 a full disk — unwinds the half-built claim before the error propagates, because a claim
 directory with no `owner.json` reads as held by `<unknown>`, denies every later claim, and
-nothing releases it (#1077). That unwind is best-effort and owner-scoped: it never touches
-a claim that by then names a different owner, and a cleanup it cannot finish — the
-directory unwritable, a stray file the failed step left behind — leaves the claim in place
-just as an unmaskable kill (`SIGKILL`, container teardown, power loss) does. Clearing
-whatever is left is the caller-owned stale recovery — `keel release <resource>` with no
-`--owner` is the deliberate any-owner escape, for both cases.
+nothing releases it (#1077).
+
+That unwind removes **only the directory the failing call itself created**. It cannot go by
+the owner name — an owner is a name, not a claim id, so a claim taken behind us can carry
+the same one — nor by "the claim is ownerless", which is also how another caller's claim
+reads between its `mkdir` and its finished `owner.json`. The claim directory's identity
+(`st_dev`, `st_ino`, and the birth time where the platform reports one) is recorded right
+after the `mkdir` and re-checked before anything is removed, with the directory held open
+meanwhile so its inode cannot be recycled; a claim that by then names a different owner is
+left alone as well. On Windows, where a directory cannot be held open, the check rests on
+`stat` alone. This is a single-host primitive, not a distributed lock.
+
+The unwind is best-effort, so a claim can still be left held by `<unknown>`: an unmaskable
+kill (`SIGKILL`, container teardown, power loss) where no handler runs, a cleanup that
+cannot finish (the directory unwritable, a stray file the failed step left behind), or one
+the handler declines because the path no longer answers with the identity it recorded.
+Clearing whatever is left is the caller-owned stale recovery — `keel release <resource>`
+with no `--owner` is the deliberate any-owner escape, in all three cases.
 
 The existing merge lock keeps its previous public behavior: it still raises `LockError`
 when the merge resource is already held, while internally using the same claim/release

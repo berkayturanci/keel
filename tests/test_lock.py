@@ -206,6 +206,163 @@ class TestResourceClaims(unittest.TestCase):
             self.assertFalse(contended.granted)
             self.assertEqual(contended.holder, "agent-b")
 
+    def test_unwind_leaves_a_same_named_claim_taken_meanwhile(self):
+        # An owner is a *name*, not a claim id: merge_lock always claims as "merge-lock"
+        # and `keel merge` derives one name per PR, so the claim the unwind must not touch
+        # commonly carries the same string. Same interleaving as above — released by the
+        # any-owner recovery, re-claimed behind us — but under agent-a's own name. Only
+        # the directory's identity separates the two, and it must survive.
+        with tempfile.TemporaryDirectory() as d:
+            path = lk.resource_path(d, "merge")
+
+            def _released_and_reclaimed_under_the_same_name(artifact_path):
+                lk.release_resource(d, "merge")
+                Path(artifact_path).mkdir(parents=True)
+                lk._write_owner(Path(artifact_path), "agent-a")
+                raise PermissionError("read-only .keel")
+
+            with mock.patch.object(
+                lk.workspace,
+                "ensure_runtime_gitignore_for",
+                side_effect=_released_and_reclaimed_under_the_same_name,
+            ):
+                with self.assertRaises(PermissionError):
+                    lk.claim_resource(d, "merge", owner="agent-a")
+
+            self.assertTrue(path.exists())
+            self.assertEqual(lk._holder(path), "agent-a")
+            contended = lk.claim_resource(d, "merge", owner="agent-c")
+            self.assertFalse(contended.granted)
+            self.assertEqual(contended.holder, "agent-a")
+
+    def test_unwind_leaves_a_claim_that_has_only_been_created(self):
+        # The ownerless window is not ours alone: between another caller's mkdir and its
+        # finished owner.json its live claim reads as <unknown> too. Deleting "whatever is
+        # ownerless" would hand the resource to a third run while that caller believes it
+        # holds it.
+        with tempfile.TemporaryDirectory() as d:
+            path = lk.resource_path(d, "merge")
+
+            def _released_then_only_mkdir_by_b(artifact_path):
+                lk.release_resource(d, "merge")
+                Path(artifact_path).mkdir(parents=True)
+                raise PermissionError("read-only .keel")
+
+            with mock.patch.object(
+                lk.workspace,
+                "ensure_runtime_gitignore_for",
+                side_effect=_released_then_only_mkdir_by_b,
+            ):
+                with self.assertRaises(PermissionError):
+                    lk.claim_resource(d, "merge", owner="agent-a")
+
+            self.assertTrue(path.exists())
+            self.assertEqual(lk._holder(path), lk.UNKNOWN_HOLDER)
+            contended = lk.claim_resource(d, "merge", owner="agent-c")
+            self.assertFalse(contended.granted)
+
+    def test_unwind_leaves_a_claim_whose_owner_file_is_half_written(self):
+        # The same window's other half: `_write_owner` is a plain write_text, so a torn
+        # owner.json also reads as <unknown> while the writer is live.
+        with tempfile.TemporaryDirectory() as d:
+            path = lk.resource_path(d, "merge")
+
+            def _released_then_torn_owner_by_b(artifact_path):
+                lk.release_resource(d, "merge")
+                Path(artifact_path).mkdir(parents=True)
+                (Path(artifact_path) / "owner.json").write_text(
+                    '{"owner": "agen', encoding="utf-8"
+                )
+                raise PermissionError("read-only .keel")
+
+            with mock.patch.object(
+                lk.workspace,
+                "ensure_runtime_gitignore_for",
+                side_effect=_released_then_torn_owner_by_b,
+            ):
+                with self.assertRaises(PermissionError):
+                    lk.claim_resource(d, "merge", owner="agent-a")
+
+            self.assertTrue(path.exists())
+            self.assertEqual(lk._holder(path), lk.UNKNOWN_HOLDER)
+            self.assertTrue((path / "owner.json").exists())
+
+    def test_unwind_is_a_no_op_when_the_claim_was_already_recovered(self):
+        # The operator cleared the ownerless directory and nothing took the resource. The
+        # unwind finds no directory to identify and simply does nothing — no crash, and the
+        # resource stays free.
+        with tempfile.TemporaryDirectory() as d:
+            path = lk.resource_path(d, "merge")
+
+            def _released_by_the_operator(artifact_path):
+                lk.release_resource(d, "merge")
+                raise PermissionError("read-only .keel")
+
+            with mock.patch.object(
+                lk.workspace,
+                "ensure_runtime_gitignore_for",
+                side_effect=_released_by_the_operator,
+            ):
+                with self.assertRaises(PermissionError):
+                    lk.claim_resource(d, "merge", owner="agent-a")
+
+            self.assertFalse(path.exists())
+            self.assertTrue(lk.claim_resource(d, "merge", owner="agent-b").granted)
+
+    def test_unwind_declines_when_the_directory_cannot_be_identified(self):
+        # Fail closed: with no identity recorded (the stat right after mkdir failed) the
+        # unwind removes nothing. A leaked claim an operator can release beats deleting a
+        # directory we cannot prove is ours.
+        with tempfile.TemporaryDirectory() as d:
+            path = lk.resource_path(d, "merge")
+            with mock.patch.object(lk, "_identity", return_value=None):
+                with mock.patch.object(
+                    lk.workspace,
+                    "ensure_runtime_gitignore_for",
+                    side_effect=PermissionError("read-only .keel"),
+                ):
+                    with self.assertRaises(PermissionError):
+                        lk.claim_resource(d, "merge", owner="agent-a")
+
+            self.assertTrue(path.exists())
+            self.assertEqual(lk._holder(path), lk.UNKNOWN_HOLDER)
+            # Recoverable the documented way.
+            self.assertEqual(lk.release_resource(d, "merge").status, "released")
+
+    def test_the_unwind_still_runs_where_the_directory_cannot_be_pinned(self):
+        # Windows cannot open a directory, so there is no descriptor to hold the inode
+        # with. The identity check falls back to what stat alone reports and the unwind
+        # still has to happen — the pin narrows a window, it is not the guard.
+        with tempfile.TemporaryDirectory() as d:
+            path = lk.resource_path(d, "merge")
+            with mock.patch.object(lk.os, "open", side_effect=PermissionError("no dir fd")):
+                with mock.patch.object(
+                    lk.workspace,
+                    "ensure_runtime_gitignore_for",
+                    side_effect=PermissionError("read-only .keel"),
+                ):
+                    with self.assertRaises(PermissionError):
+                        lk.claim_resource(d, "merge", owner="agent-a")
+
+            self.assertFalse(path.exists())
+            self.assertTrue(lk.claim_resource(d, "merge", owner="agent-b").granted)
+
+    def test_unwind_leaves_our_own_directory_once_it_names_someone_else(self):
+        # The owner check is the second condition, not a leftover: a directory that still
+        # is the one we created but by now records another owner is left alone too.
+        def _stamp_another_owner_then_fail(path, owner):
+            (path / "owner.json").write_text('{"owner": "agent-b"}\n', encoding="utf-8")
+            raise OSError("no space left on device")
+
+        with tempfile.TemporaryDirectory() as d:
+            path = lk.resource_path(d, "merge")
+            with mock.patch.object(lk, "_write_owner", side_effect=_stamp_another_owner_then_fail):
+                with self.assertRaises(OSError):
+                    lk.claim_resource(d, "merge", owner="agent-a")
+
+            self.assertTrue(path.exists())
+            self.assertEqual(lk._holder(path), "agent-b")
+
     def test_resource_claim_context_releases_granted_claim_only(self):
         with tempfile.TemporaryDirectory() as d:
             with lk.resource_claim(d, "shared", owner="agent-a") as first:
