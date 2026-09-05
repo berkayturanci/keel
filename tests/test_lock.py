@@ -145,7 +145,7 @@ class TestResourceClaims(unittest.TestCase):
 
     def test_a_failed_owner_write_leaves_no_claim_behind(self):
         # The half-written owner.json goes too, so the retry does not inherit it.
-        def _tear_the_owner_file(path, owner):
+        def _tear_the_owner_file(path, owner, **_kw):
             (path / "owner.json").write_text('{"owner":', encoding="utf-8")
             raise OSError("no space left on device")
 
@@ -349,7 +349,7 @@ class TestResourceClaims(unittest.TestCase):
         # Without a descriptor no unlink is bound to an inode, so the unpinned unwind
         # removes no file: a directory holding our own owner file stays as the
         # documented leak rather than risk a by-name unlink of somebody else's.
-        def _write_then_fail(path, owner):
+        def _write_then_fail(path, owner, **_kw):
             (path / "owner.json").write_text('{"owner": "agent-a"}', encoding="utf-8")
             raise OSError("no space left on device")
 
@@ -419,11 +419,62 @@ class TestResourceClaims(unittest.TestCase):
             scaffold.assert_not_called()
             self.assertEqual(lk._holder(path), "agent-a")
 
-    def test_an_unlistable_directory_is_still_claimed(self):
+    def test_an_unlistable_directory_is_an_io_failure_not_a_claim(self):
+        # Round-5 finding: reading "could not list" as "empty" adopted a stranger's
+        # claim. It is an I/O failure now: it raises, and nothing is unwound.
         with tempfile.TemporaryDirectory() as d:
+            path = lk.resource_path(d, "merge")
             with mock.patch.object(lk.os, "listdir", side_effect=PermissionError("no read")):
-                result = lk.claim_resource(d, "merge", owner="agent-a")
-            self.assertTrue(result.granted)
+                with self.assertRaises(PermissionError):
+                    lk.claim_resource(d, "merge", owner="agent-a")
+            self.assertTrue(path.exists())
+
+    def test_a_claim_taken_during_the_scaffold_is_never_overwritten(self):
+        # Round-5 finding: the write that finishes a claim was by name, so a claim
+        # taken underneath while the scaffold ran was overwritten and ours reported
+        # granted. Through the pin the exclusive create lands in the directory this
+        # call made — which the operator has removed — so it fails instead.
+        def _released_and_reclaimed_by_b(artifact_path):
+            path = Path(artifact_path)
+            path.rmdir()
+            path.mkdir()
+            lk._write_owner(path, "agent-b")
+
+        with tempfile.TemporaryDirectory() as d:
+            path = lk.resource_path(d, "merge")
+            with mock.patch.object(
+                lk.workspace,
+                "ensure_runtime_gitignore_for",
+                side_effect=_released_and_reclaimed_by_b,
+            ):
+                with self.assertRaises(FileNotFoundError):
+                    lk.claim_resource(d, "merge", owner="agent-a")
+
+            self.assertEqual(lk._holder(path), "agent-b")
+
+    def test_the_unpinned_claim_reports_contention_instead_of_overwriting(self):
+        # Without a descriptor the create is by name but exclusive: the stranger's
+        # owner file makes it fail, and that is reported as contention, not granted.
+        def _released_and_reclaimed_by_b(artifact_path):
+            path = Path(artifact_path)
+            path.rmdir()
+            path.mkdir()
+            lk._write_owner(path, "agent-b")
+
+        with tempfile.TemporaryDirectory() as d:
+            path = lk.resource_path(d, "merge")
+            with mock.patch.object(lk.os, "open", side_effect=PermissionError("no dir fd")):
+                with mock.patch.object(
+                    lk.workspace,
+                    "ensure_runtime_gitignore_for",
+                    side_effect=_released_and_reclaimed_by_b,
+                ):
+                    result = lk.claim_resource(d, "merge", owner="agent-a")
+
+            self.assertFalse(result.granted)
+            self.assertEqual(result.reason, "resource-already-claimed")
+            self.assertEqual(result.holder, "agent-b")
+            self.assertEqual(lk._holder(path), "agent-b")
 
     def test_a_swap_between_the_owner_unlink_and_the_rmdir_is_caught(self):
         # The by-name ``rmdir`` re-reads the identity right before it runs. Answer it
@@ -455,7 +506,7 @@ class TestResourceClaims(unittest.TestCase):
     def test_unwind_leaves_our_own_directory_once_it_names_someone_else(self):
         # The owner check is the second condition, not a leftover: a directory that still
         # is the one we created but by now records another owner is left alone too.
-        def _stamp_another_owner_then_fail(path, owner):
+        def _stamp_another_owner_then_fail(path, owner, **_kw):
             (path / "owner.json").write_text('{"owner": "agent-b"}\n', encoding="utf-8")
             raise OSError("no space left on device")
 

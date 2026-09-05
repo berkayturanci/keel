@@ -161,7 +161,17 @@ def _claim_path(path: Path, *, resource: str, owner: str) -> ClaimResult:
     # nothing that does not answer with that same identity.
     pin = _pin(path)
     identity = _identity(path)
-    if _has_entries(path, pin):
+    try:
+        taken = _has_entries(path, pin)
+    except OSError:
+        # Unable to tell whether the directory the pin latched is ours, and unable to
+        # prove it either way, this is an I/O failure and not contention: it raises, as
+        # every other I/O failure here does, and unwinds nothing — a leaked *empty*
+        # directory an operator can release is recoverable, a stranger's deleted lock
+        # is not (round 5 of #1077).
+        _unpin(pin)
+        raise
+    if taken:
         # Between the ``mkdir`` and the pin the path can already have been retargeted:
         # the any-owner recovery removed our empty directory and somebody claimed the
         # resource behind it, and what the pin latched is *their* directory — under the
@@ -182,7 +192,28 @@ def _claim_path(path: Path, *, resource: str, owner: str) -> ClaimResult:
         )
     try:
         workspace.ensure_runtime_gitignore_for(path)
-        _write_owner(path, clean_owner)
+        try:
+            _write_owner(path, clean_owner, pin=pin)
+        except FileExistsError:
+            # The owner file is created *exclusively*, through the pin where there is
+            # one. A directory of ours has no owner file at this point, so one already
+            # there means the claim was taken underneath us while the scaffold ran —
+            # released by the any-owner recovery and re-claimed, under the same name as
+            # often as not (round 5 of #1077). Report contention and unwind nothing: the
+            # live claim is theirs. A pinned directory that was *removed* underneath
+            # surfaces as ``FileNotFoundError`` from the same create, an I/O failure
+            # that propagates below; the unwind then finds no directory and leaves it.
+            _unpin(pin)
+            return ClaimResult(
+                schema_version=SCHEMA_VERSION,
+                resource=resource,
+                owner=clean_owner,
+                path=str(path),
+                granted=False,
+                status="denied",
+                reason="resource-already-claimed",
+                holder=_holder(path),
+            )
     except BaseException:
         # Left in place, the half-built claim is worse than the error that caused it —
         # it is held forever by ``UNKNOWN_HOLDER``, denies every later claim, and nothing
@@ -369,13 +400,11 @@ def _has_entries(path: Path, pin: int | None) -> bool:
     """True when the claim directory already holds something.
 
     Read through the pin where there is one, so the answer is about the inode the
-    unwind would later act on. Unreadable counts as empty: the claim then proceeds
-    exactly as before this check existed, and the identity check still guards the unwind.
+    unwind would later act on. An unreadable directory raises: the caller treats that
+    as the I/O failure it is, because "could not look" must not be read as "empty" —
+    that reading adopted a stranger's claim as ours (round 5 of #1077).
     """
-    try:
-        entries = os.listdir(pin) if pin is not None else os.listdir(path)
-    except OSError:
-        return False
+    entries = os.listdir(pin) if pin is not None else os.listdir(path)
     return bool(entries)
 
 
@@ -428,11 +457,28 @@ def _unpin(pin: int | None) -> None:
         os.close(pin)
 
 
-def _write_owner(path: Path, owner: str) -> None:
-    (path / "owner.json").write_text(
-        json.dumps({"owner": owner}, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+def _write_owner(path: Path, owner: str, *, pin: int | None = None) -> None:
+    """Create ``owner.json`` for a claim — exclusively, and through ``pin`` if given.
+
+    ``O_EXCL`` is what makes a claim taken underneath us visible: a directory this call
+    made has no owner file, so an existing one is somebody else's live claim and the
+    create fails with ``FileExistsError`` instead of overwriting it. Through the pinned
+    descriptor the create is bound to the inode this call created, so it cannot land in
+    a directory that replaced ours at the same path; if ours was removed underneath, it
+    fails with ``FileNotFoundError`` rather than writing anywhere. Without a descriptor
+    the create is by name but still exclusive (#1077, round 5).
+
+    The write itself is still not atomic: a caller killed between the create and the
+    write leaves a torn file, which :func:`_holder` reads as :data:`UNKNOWN_HOLDER`.
+    """
+    payload = json.dumps({"owner": owner}, sort_keys=True) + "\n"
+    if pin is not None:
+        fd = os.open("owner.json", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644, dir_fd=pin)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(payload)
+        return
+    with open(path / "owner.json", "x", encoding="utf-8") as handle:
+        handle.write(payload)
 
 
 def _holder(path: Path) -> str:

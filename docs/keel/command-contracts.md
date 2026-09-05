@@ -564,9 +564,13 @@ by name with the identity re-read right before it — what that last instant can
 another caller's *empty* claim directory created between the two calls, since `rmdir` refuses
 a non-empty one. The same floor applies between the `mkdir` and the pin: anything already in
 the directory the pin latched is treated as contention (`denied`, nothing unwound), and only an
-empty stranger's directory taken in that instant cannot be told from ours. On Windows, where a
-directory cannot be held open, the check rests on `stat` alone and the unwind removes no file —
-only an empty directory — so a torn owner file of our own stays as the documented leak. This is a single-host primitive, not a distributed lock.
+empty stranger's directory taken in that instant cannot be told from ours. The owner file itself is created exclusively through that descriptor, so a claim taken
+underneath while the directory is being initialised is never overwritten: the create fails and
+the caller sees contention (a file already there) or the original I/O failure (our directory
+gone). A directory that cannot be listed is an I/O failure too, not an empty one. On Windows,
+where a directory cannot be held open, the check rests on `stat` alone, the create is by name
+but still exclusive, and the unwind removes no file — only an empty directory — so a torn owner
+file of our own stays as the documented leak. This is a single-host primitive, not a distributed lock.
 
 The unwind is best-effort, so a claim can still be left held by `<unknown>`: an unmaskable
 kill (`SIGKILL`, container teardown, power loss) where no handler runs, a cleanup that
