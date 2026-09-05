@@ -264,6 +264,40 @@ class TestValidate(unittest.TestCase):
                 self.assertIn("INVALID", out)
                 self.assertIn(needle, out)
 
+    def test_a_zero_length_window_is_invalid(self):
+        # #1091: this printed OK, and every `keel ship` then deferred at the merge gate
+        # for ever — `is_merge_open` reads `opens <= now < closes`, empty when equal.
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+            f.write(
+                "extends: keel\ncore_version: '^1.0'\nbase_branch: main\n"
+                "timezone: Etc/UTC\nmerge_window: '09:00-09:00'\n"
+                "knobs:\n  build_gate_cmd: 'true'\n"
+            )
+            bad = f.name
+        self.addCleanup(os.unlink, bad)
+        rc, out, _ = run(["validate", bad])
+        self.assertEqual(rc, 1)
+        self.assertIn("INVALID", out)
+        self.assertIn("$.merge_window", out)
+        self.assertIn("never open", out)
+
+    def test_the_windows_a_zero_length_one_is_a_typo_of_are_still_valid(self):
+        # The neighbouring minute and a wrap-around window: refusing either would have
+        # made the fix worse than the bug it closes.
+        for spec in ("09:00-09:01", "22:00-06:00"):
+            with self.subTest(window=spec):
+                with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+                    f.write(
+                        "extends: keel\ncore_version: '^1.0'\nbase_branch: main\n"
+                        f"timezone: Etc/UTC\nmerge_window: '{spec}'\n"
+                        "knobs:\n  build_gate_cmd: 'true'\n"
+                    )
+                    good = f.name
+                self.addCleanup(os.unlink, good)
+                rc, out, _ = run(["validate", good])
+                self.assertEqual(rc, 0)
+                self.assertIn("OK", out)
+
     def test_strict_extensions_missing_root(self):
         # example-flutter references extension files not present in this repo -> strict fail.
         rc, out, _ = run(
