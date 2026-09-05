@@ -549,9 +549,12 @@ claim raises, so `denied` keeps meaning "held by another owner" for callers that
 and retry on it. A failure *after* the claim directory is created — an unwritable `.keel`,
 a full disk — unwinds the half-built claim before the error propagates, because a claim
 directory with no `owner.json` reads as held by `<unknown>`, denies every later claim, and
-nothing releases it (#1077). Only an unmaskable kill (`SIGKILL`, container teardown, power
-loss) can still leave one behind; clearing that is the caller-owned stale recovery —
-`keel release <resource>` with no `--owner` is the deliberate any-owner escape.
+nothing releases it (#1077). That unwind is best-effort and owner-scoped: it never touches
+a claim that by then names a different owner, and a cleanup it cannot finish — the
+directory unwritable, a stray file the failed step left behind — leaves the claim in place
+just as an unmaskable kill (`SIGKILL`, container teardown, power loss) does. Clearing
+whatever is left is the caller-owned stale recovery — `keel release <resource>` with no
+`--owner` is the deliberate any-owner escape, for both cases.
 
 The existing merge lock keeps its previous public behavior: it still raises `LockError`
 when the merge resource is already held, while internally using the same claim/release

@@ -25,9 +25,11 @@ SCHEMA_VERSION = "keel.resource-claim.v1"
 #: unreadable, or the wrong shape. Deliberately *not* ``None``: the claim directory
 #: exists, so the resource **is** held; we simply cannot name by whom. The window is
 #: narrow but real, because :func:`_claim_path` creates the directory before it writes
-#: the owner file. An *error* in that window now unwinds the half-built claim (#1077);
-#: what remains is the unmaskable case — ``SIGKILL``, container teardown, power loss —
-#: where no handler of ours ever runs and the lock is left held but ownerless.
+#: the owner file. An *error* in that window is now unwound on a **best-effort** basis
+#: (#1077), which leaves two ways to end up here: the unmaskable one — ``SIGKILL``,
+#: container teardown, power loss — where no handler of ours ever runs, and a cleanup
+#: the handler cannot finish, such as an unwritable directory or a stray file the failed
+#: step left behind. ``keel release <resource>`` with no ``--owner`` recovers both.
 UNKNOWN_HOLDER = "<unknown>"
 
 
@@ -75,9 +77,10 @@ def claim_resource(root: str | Path, resource: str, *, owner: str) -> ClaimResul
     Contention is structured feedback: a resource already held comes back as a ``denied``
     result, never an exception. An **I/O failure** is not contention and still raises, the
     same way :func:`release_resource` propagates one — ``denied`` has to keep meaning
-    "somebody else holds this" for callers that back off and retry on it. What the raise
-    guarantees is that no claim survives it: a failure after the directory is created
-    unwinds it, so the resource is left free rather than held by nobody.
+    "somebody else holds this" for callers that back off and retry on it. A failure after
+    the directory is created unwinds the half-built claim, so a raise normally leaves the
+    resource free rather than held by nobody; that unwind is best-effort and owner-scoped
+    (see :func:`_discard_partial_claim`).
     """
     path = resource_path(root, resource)
     return _claim_path(path, resource=_clean(resource, "unknown-resource"), owner=owner)
@@ -152,12 +155,14 @@ def _claim_path(path: Path, *, resource: str, owner: str) -> ClaimResult:
         workspace.ensure_runtime_gitignore_for(path)
         _write_owner(path, clean_owner)
     except BaseException:
-        # Everything past the ``mkdir`` is initialisation of a claim *this* call owns:
-        # a directory that already existed left through ``FileExistsError`` above, so
-        # unwinding here can never delete somebody else's live claim. Left in place, the
-        # half-built claim is worse than the error that caused it — it is held forever by
-        # ``UNKNOWN_HOLDER``, denies every later claim, and nothing releases it (#1077).
-        _discard_partial_claim(path)
+        # Left in place, the half-built claim is worse than the error that caused it —
+        # it is held forever by ``UNKNOWN_HOLDER``, denies every later claim, and nothing
+        # releases it (#1077). The unwind is scoped by *owner* rather than by "this call
+        # created a directory here": between the ``mkdir`` and this handler an operator
+        # can have run the any-owner recovery on the ownerless claim and somebody else
+        # can have claimed the same resource, so the cleanup refuses to touch a claim
+        # that now names another owner.
+        _discard_partial_claim(path, owner=clean_owner)
         raise
     return ClaimResult(
         schema_version=SCHEMA_VERSION,
@@ -224,15 +229,28 @@ def _release_path(
     )
 
 
-def _discard_partial_claim(path: Path) -> None:
-    """Unwind a claim directory whose initialisation failed.
+def _discard_partial_claim(path: Path, *, owner: str) -> None:
+    """Unwind a claim directory whose initialisation failed — if it is still ours.
 
-    Best-effort by design: the caller re-raises the failure that got us here, and that
-    error is the one worth reporting. If the cleanup itself cannot finish — the directory
-    is unwritable, or the failed step left a file behind that ``rmdir`` refuses — masking
-    the original cause with the cleanup's own ``OSError`` would hide *why* the claim
-    failed and leave the operator with the leaked directory either way.
+    That this call created *a* directory at ``path`` does not prove the path still
+    denotes that directory. The documented any-owner recovery (``keel release
+    <resource>`` with no ``--owner``) can have removed the ownerless half-built claim
+    while this call was stalled, and another owner can have claimed the resource behind
+    it. So the owner is read back the way :func:`_holder` reads it, and a claim naming a
+    *different* owner is left completely alone: the original failure still propagates,
+    it just takes nothing live with it. Only an ``owner.json`` that is missing,
+    unreadable, or names this call's own owner is removed, and only then the directory.
+
+    The removal is best-effort: the caller re-raises the failure that got us here, and
+    that error is the one worth reporting. If the cleanup itself cannot finish — the
+    directory is unwritable, or the failed step left a file behind that ``rmdir``
+    refuses — masking the original cause with the cleanup's own ``OSError`` would hide
+    *why* the claim failed and leave the operator with the leaked directory either way.
+    Clearing what is left over is then the same caller-owned stale recovery as for a
+    claim orphaned by an unmaskable kill.
     """
+    if _holder(path) not in (UNKNOWN_HOLDER, owner):
+        return
     try:
         owner_file = path / "owner.json"
         if owner_file.exists():

@@ -177,6 +177,35 @@ class TestResourceClaims(unittest.TestCase):
 
             self.assertTrue(path.exists())
 
+    def test_unwind_leaves_a_claim_another_owner_took_meanwhile(self):
+        # The dangerous interleaving: agent-a stalls mid-initialisation, an operator runs
+        # the any-owner recovery on the ownerless directory, agent-b claims the resource,
+        # and only then does agent-a reach its handler. The unwind must not delete b's
+        # live claim just because a created *a* directory at that path.
+        with tempfile.TemporaryDirectory() as d:
+            path = lk.resource_path(d, "merge")
+
+            def _released_and_reclaimed_by_b(artifact_path):
+                lk.release_resource(d, "merge")
+                Path(artifact_path).mkdir(parents=True)
+                lk._write_owner(Path(artifact_path), "agent-b")
+                raise PermissionError("read-only .keel")
+
+            with mock.patch.object(
+                lk.workspace,
+                "ensure_runtime_gitignore_for",
+                side_effect=_released_and_reclaimed_by_b,
+            ):
+                with self.assertRaises(PermissionError):
+                    lk.claim_resource(d, "merge", owner="agent-a")
+
+            self.assertTrue(path.exists())
+            self.assertTrue((path / "owner.json").exists())
+            self.assertEqual(lk._holder(path), "agent-b")
+            contended = lk.claim_resource(d, "merge", owner="agent-c")
+            self.assertFalse(contended.granted)
+            self.assertEqual(contended.holder, "agent-b")
+
     def test_resource_claim_context_releases_granted_claim_only(self):
         with tempfile.TemporaryDirectory() as d:
             with lk.resource_claim(d, "shared", owner="agent-a") as first:
