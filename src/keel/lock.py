@@ -161,6 +161,25 @@ def _claim_path(path: Path, *, resource: str, owner: str) -> ClaimResult:
     # nothing that does not answer with that same identity.
     pin = _pin(path)
     identity = _identity(path)
+    if _has_entries(path, pin):
+        # Between the ``mkdir`` and the pin the path can already have been retargeted:
+        # the any-owner recovery removed our empty directory and somebody claimed the
+        # resource behind it, and what the pin latched is *their* directory — under the
+        # same owner name, as often as not. A directory of ours is empty at this point,
+        # so anything in it is proof the claim is not ours: report contention and touch
+        # nothing. An empty stranger's directory taken in that same gap cannot be told
+        # from ours — that is the by-name floor the docs state (#1077).
+        _unpin(pin)
+        return ClaimResult(
+            schema_version=SCHEMA_VERSION,
+            resource=resource,
+            owner=clean_owner,
+            path=str(path),
+            granted=False,
+            status="denied",
+            reason="resource-already-claimed",
+            holder=_holder(path),
+        )
     try:
         workspace.ensure_runtime_gitignore_for(path)
         _write_owner(path, clean_owner)
@@ -287,7 +306,10 @@ def _discard_partial_claim(
     swapped in between those two calls survives if it holds anything — ``rmdir`` refuses a
     non-empty directory — so the residual exposure is another caller's *empty* claim
     directory created in that same instant, which its own ``_write_owner`` would then
-    fail on and which it would unwind itself. Nor anything on a platform that cannot pin.
+    fail on and which it would unwind itself. Nor the gap between the ``mkdir`` and the
+    pin: a stranger's directory taken *there* is what the pin latches, so anything already
+    in it is treated as contention and nothing is unwound, while an empty one cannot be
+    told from ours. Nor anything on a platform that cannot pin.
     Windows answers no
     descriptor, and there this rests on ``stat`` alone — an NTFS file id whose sequence
     number is bumped on reuse, plus ``st_birthtime`` on 3.12+. It also does not survive
@@ -326,19 +348,35 @@ def _discard_partial_claim(
         return
     try:
         if pin is not None:
+            # Bound to our inode: this is our directory's owner file or nothing.
             try:
                 os.unlink("owner.json", dir_fd=pin)
             except FileNotFoundError:
                 pass
-        else:
-            owner_file = path / "owner.json"
-            if owner_file.exists():
-                owner_file.unlink()
+        # Without a descriptor there is no unlink that is bound to an inode, and a
+        # by-name unlink after a by-name check is the very defect this exists to close —
+        # so the unpinned path removes no file at all. The ``rmdir`` below then refuses a
+        # directory holding our own torn ``owner.json``, which stays as the documented
+        # leak, and equally refuses a stranger's live claim.
         if _identity(path) != identity:
             return
         path.rmdir()
     except OSError:
         pass
+
+
+def _has_entries(path: Path, pin: int | None) -> bool:
+    """True when the claim directory already holds something.
+
+    Read through the pin where there is one, so the answer is about the inode the
+    unwind would later act on. Unreadable counts as empty: the claim then proceeds
+    exactly as before this check existed, and the identity check still guards the unwind.
+    """
+    try:
+        entries = os.listdir(pin) if pin is not None else os.listdir(path)
+    except OSError:
+        return False
+    return bool(entries)
 
 
 def _identity(path: Path) -> tuple[int, int, float | None] | None:

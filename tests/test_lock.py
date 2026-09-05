@@ -270,9 +270,7 @@ class TestResourceClaims(unittest.TestCase):
             def _released_then_torn_owner_by_b(artifact_path):
                 lk.release_resource(d, "merge")
                 Path(artifact_path).mkdir(parents=True)
-                (Path(artifact_path) / "owner.json").write_text(
-                    '{"owner": "agen', encoding="utf-8"
-                )
+                (Path(artifact_path) / "owner.json").write_text('{"owner": "agen', encoding="utf-8")
                 raise PermissionError("read-only .keel")
 
             with mock.patch.object(
@@ -347,9 +345,10 @@ class TestResourceClaims(unittest.TestCase):
             self.assertFalse(path.exists())
             self.assertTrue(lk.claim_resource(d, "merge", owner="agent-b").granted)
 
-    def test_the_unpinned_unwind_still_removes_a_written_owner_file(self):
-        # Without a descriptor the owner file is removed by path, so the branch that
-        # unlinks an existing ``owner.json`` that way has to be exercised too.
+    def test_the_unpinned_unwind_removes_no_file_and_leaves_a_written_owner_file(self):
+        # Without a descriptor no unlink is bound to an inode, so the unpinned unwind
+        # removes no file: a directory holding our own owner file stays as the
+        # documented leak rather than risk a by-name unlink of somebody else's.
         def _write_then_fail(path, owner):
             (path / "owner.json").write_text('{"owner": "agent-a"}', encoding="utf-8")
             raise OSError("no space left on device")
@@ -361,7 +360,70 @@ class TestResourceClaims(unittest.TestCase):
                     with self.assertRaises(OSError):
                         lk.claim_resource(d, "merge", owner="agent-a")
 
-            self.assertFalse(path.exists())
+            self.assertTrue(path.exists())
+            self.assertEqual(lk._holder(path), "agent-a")
+
+    def test_the_unpinned_unwind_never_unlinks_a_strangers_owner_file(self):
+        # Round-4 finding: a by-name unlink after a single matching stat is the same
+        # check-then-act defect. Swap in a stranger's live claim right after the first
+        # identity read of the unwind; its owner file must survive.
+        real = lk._identity
+        reads: list[int] = []
+
+        def _swap_after_the_first_unwind_read(path):
+            reads.append(1)
+            answer = real(path)
+            if len(reads) == 2:
+                path.rmdir()  # ours is empty here; rmtree would need the patched os.open
+                path.mkdir()
+                lk._write_owner(path, "agent-b")
+            return answer
+
+        with tempfile.TemporaryDirectory() as d:
+            path = lk.resource_path(d, "merge")
+            with mock.patch.object(lk.os, "open", side_effect=PermissionError("no dir fd")):
+                with mock.patch.object(
+                    lk, "_identity", side_effect=_swap_after_the_first_unwind_read
+                ):
+                    with mock.patch.object(
+                        lk.workspace,
+                        "ensure_runtime_gitignore_for",
+                        side_effect=PermissionError("read-only .keel"),
+                    ):
+                        with self.assertRaises(PermissionError):
+                            lk.claim_resource(d, "merge", owner="agent-a")
+
+            self.assertEqual(lk._holder(path), "agent-b")
+
+    def test_a_claim_taken_between_the_mkdir_and_the_pin_is_not_adopted(self):
+        # Round-4 finding: the pin latches whatever sits at the path, which can already
+        # be a stranger's claim under the same owner name. Anything in the directory is
+        # proof it is not ours: contention is reported and nothing is unwound.
+        real_pin = lk._pin
+
+        def _retarget_then_pin(path):
+            path.rmdir()
+            path.mkdir()
+            lk._write_owner(path, "agent-a")
+            return real_pin(path)
+
+        with tempfile.TemporaryDirectory() as d:
+            path = lk.resource_path(d, "merge")
+            with mock.patch.object(lk, "_pin", side_effect=_retarget_then_pin):
+                with mock.patch.object(lk.workspace, "ensure_runtime_gitignore_for") as scaffold:
+                    result = lk.claim_resource(d, "merge", owner="agent-a")
+
+            self.assertFalse(result.granted)
+            self.assertEqual(result.reason, "resource-already-claimed")
+            self.assertEqual(result.holder, "agent-a")
+            scaffold.assert_not_called()
+            self.assertEqual(lk._holder(path), "agent-a")
+
+    def test_an_unlistable_directory_is_still_claimed(self):
+        with tempfile.TemporaryDirectory() as d:
+            with mock.patch.object(lk.os, "listdir", side_effect=PermissionError("no read")):
+                result = lk.claim_resource(d, "merge", owner="agent-a")
+            self.assertTrue(result.granted)
 
     def test_a_swap_between_the_owner_unlink_and_the_rmdir_is_caught(self):
         # The by-name ``rmdir`` re-reads the identity right before it runs. Answer it
