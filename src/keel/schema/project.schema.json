@@ -34,7 +34,7 @@
     "merge_window": {
       "type": "string",
       "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]-([01][0-9]|2[0-3]):[0-5][0-9]$",
-      "description": "Open merge window HH:MM-HH:MM, hours 00-23 (the complement is the night no-merge window). Requires 'timezone': the pair is all-or-nothing."
+      "description": "Open merge window HH:MM-HH:MM, hours 00-23 (the complement is the night no-merge window); it may wrap midnight, but the two ends must differ - a window that opens and closes at the same minute is never open. Requires 'timezone': the pair is all-or-nothing."
     },
     "merge_window_mode": {
       "enum": ["freeze", "pause"],

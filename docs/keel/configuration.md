@@ -27,7 +27,7 @@ declared through `required_capabilities`, `policy_pack`, or extension docs.
 | `repo` | string | | GitHub repo |
 | `platform` | string | | free-form tag for the consumer's runtime family |
 | `timezone` | string | | IANA tz for the merge window (`Europe/Istanbul`, `Etc/GMT-3`); required with `merge_window` |
-| `merge_window` | string `HH:MM-HH:MM` | | open merge window (hours `00`-`23`); the complement is the night no-merge window; required with `timezone` |
+| `merge_window` | string `HH:MM-HH:MM` | | open merge window (hours `00`-`23`, the two ends must differ); the complement is the night no-merge window; required with `timezone` |
 | `merge_window_mode` | `freeze` \| `pause` | `freeze` | outside the window: `freeze` blocks the merge but keeps gates/CI running; `pause` halts the pipeline |
 | `consent_mode` | `explicit` \| `standing` \| `agent` | `explicit` | default live-run consent mode for every command |
 | `gates` | string[] | | built-in gates to run: any of `build`, `lint`, `jury` |
@@ -82,6 +82,14 @@ Both values are also checked for meaning, not just shape, at `keel validate` tim
 (`29:00-01:00` is rejected), and `timezone` must resolve as an IANA zone on this machine
 (`Definitely/Nowhere` is rejected). Both used to be accepted and then raised out of the
 middle of a `keel ship` run instead.
+
+A window's two ends must also **differ**. `09:00-09:00` is a `ConfigError`: the window is
+evaluated as `opens <= now < closes`, which is empty when the two are equal, so such a
+window is closed at every instant of every day — `keel validate` printed `OK` and every
+`keel ship` then deferred at the merge gate for ever, which is the same silent-and-permanent
+failure as the missing half above. Only the degenerate equal case is refused; a window may
+still **wrap midnight** (`22:00-06:00` is the all-night window it reads as), and the
+neighbouring minute (`09:00-09:01`) is a real, if narrow, window.
 
 `keel init --wizard` therefore asks for the pair as [one question](cli.md#init-wizard),
 never two: it cannot scaffold half of it.
