@@ -60,3 +60,7 @@
 ## 2026-08-18 - Restore a flashed label to a constant, never to a captured one
 **Learning:** Adding the `aria-label` (2026-06-15) and updating it on state change (2026-08-10) still leaves the third step wrong. A handler that captures the label to restore by reading the element's *current* value reads whatever is there at that moment — so a second click inside the flash window captures the transient "Copied to clipboard" and its timer restores that. The visible text recovers, because the next click re-reads it; the accessible name does not, so it announces "copied" until a re-render. A `|| "Copy…"` fallback cannot help: `getAttribute` returns the mutated string, not null.
 **Action:** Restore both the text and the `aria-label` to constants the markup ships with, not to values read at flash time, and clear any pending restore timer before arming a new one. If a capture is genuinely needed, take it once at bind time or guard re-entry before reading anything.
+
+## 2025-03-05 - Accessible button groups
+**Learning:** Using `role="radiogroup"` and `aria-hidden="true"` on the visual prefix label provides a cleaner screen reader experience than redundant text for inline toggle button groups.
+**Action:** Apply this pattern when building compact segmented controls or speed toggles that look like buttons but act like radio choices.
