@@ -315,6 +315,32 @@ class TestWizardMergeWindowPair(unittest.TestCase):
         self.assertEqual(config.merge_window, "09:00-18:00")
         self.assertEqual(warnings, [cfg.merge_window_issue("9:00-18:00")])
 
+    def test_a_zero_length_window_is_re_asked_not_written(self):
+        # #1091: the wizard checks each answer with `config.merge_window_issue`, so the
+        # window that validates and then never opens is refused on entry too — the whole
+        # point of the wizard borrowing the validator's function rather than its own rule.
+        config, warnings = self._run(
+            {
+                "Configure a merge window": "y",
+                "Timezone": "Etc/GMT-3",
+                "Merge window": _scripted(["09:00-09:00", "09:00-18:00"]),
+            }
+        )
+        self.assertEqual(config.merge_window, "09:00-18:00")
+        self.assertEqual(warnings, [cfg.merge_window_issue("09:00-09:00")])
+
+    def test_a_wrap_around_answer_is_taken_as_given(self):
+        # The rule refuses the degenerate case only; an all-night window is written as-is.
+        config, warnings = self._run(
+            {
+                "Configure a merge window": "y",
+                "Timezone": "Etc/GMT-3",
+                "Merge window": "22:00-06:00",
+            }
+        )
+        self.assertEqual(config.merge_window, "22:00-06:00")
+        self.assertEqual(warnings, [])
+
     def test_the_reviewers_scripted_run_scaffolds_a_config_that_parses(self):
         # Verbatim from the gate review on #1087: this answer sheet wrote a project.yaml
         # `parse_config` rejected on the schema pattern. Whatever the wizard settles on,

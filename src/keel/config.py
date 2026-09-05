@@ -15,6 +15,7 @@ import os
 import re
 import socket
 from dataclasses import dataclass, field
+from datetime import time
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -335,7 +336,7 @@ def merge_window_pattern() -> re.Pattern[str]:
 def merge_window_issue(merge_window: str) -> str | None:
     """Why ``merge_window`` is not a window keel accepts, or ``None`` if it is.
 
-    Unprefixed for the same reason as :func:`timezone_issue`. Two rules, both of which
+    Unprefixed for the same reason as :func:`timezone_issue`. Three rules, all of which
     ``keel validate`` applies to a hand-written config, so every caller — the wizard
     included — accepts exactly what the validator accepts:
 
@@ -344,27 +345,52 @@ def merge_window_issue(merge_window: str) -> str | None:
       asks. Today the pattern is the stricter of the two and subsumes it; the call
       stays because the schema is a contract that may be relaxed, and the day it is,
       a window that will raise mid-ship must still be refused here rather than written.
+    * the **span**: the two ends must differ. :func:`keel.window.is_merge_open` answers
+      ``opens <= now < closes`` for a forward window, an interval that is empty when the
+      two are equal — so ``09:00-09:00`` passed both rules above, ``keel validate``
+      printed ``OK``, and every ``keel ship`` then deferred at the merge gate at every
+      instant of every day, silently and for ever (#1091).
+
+    The span rule is the one a ``pattern`` cannot state — a regex relates no capture to
+    another — which is why the schema cannot own it and this function must. Only the
+    degenerate equal case is refused: a **wrap-around** window is untouched, so
+    ``22:00-06:00`` stays the all-night window it reads as, and ``09:00-09:01`` stays a
+    one-minute window somebody may well have meant.
 
     Normalising ``9:00`` to ``09:00`` was the alternative and was rejected: it would
     quietly rewrite the operator's answer, and it would leave the wizard and
     ``keel validate`` still disagreeing about what a valid window *is*.
     """
-    if merge_window_pattern().fullmatch(merge_window) is None or not _parses(merge_window):
+    times = _parsed(merge_window)
+    if merge_window_pattern().fullmatch(merge_window) is None or times is None:
         return (
             f"{merge_window!r} is not a valid window; give "
             "'HH:MM-HH:MM' with two-digit hours 00-23 and minutes 00-59 "
             "(it may wrap midnight)"
         )
+    opens, closes = times
+    if opens == closes:
+        return (
+            f"{merge_window!r} opens and closes at the same minute, so it is never open "
+            "and every merge would defer as outside the merge window, for ever; give a "
+            "range instead — a window may wrap midnight, so '09:00-08:59' is every "
+            "minute but that one — or drop 'merge_window' and 'timezone' to configure "
+            "no window at all"
+        )
     return None
 
 
-def _parses(merge_window: str) -> bool:
-    """True if :func:`keel.window.parse_window` can read ``merge_window``."""
+def _parsed(merge_window: str) -> tuple[time, time] | None:
+    """The ``(opens, closes)`` pair :func:`keel.window.parse_window` reads, or ``None``.
+
+    ``None`` is "``parse_window`` cannot read this", which is what the shape rule needs;
+    the pair is what the span rule needs. One call answers both, so the two rules cannot
+    end up reading a different window from the same string.
+    """
     try:
-        parse_window(merge_window)
+        return parse_window(merge_window)
     except ValueError:
-        return False
-    return True
+        return None
 
 
 def _merge_window_issues(data: dict) -> list[str]:
@@ -384,6 +410,9 @@ def _merge_window_issues(data: dict) -> list[str]:
       both survived to :func:`keel.window.is_merge_open`, where they raised
       ``ValueError`` / ``ZoneInfoNotFoundError`` out of the middle of a ship run
       instead of the :class:`ConfigError` every other malformed knob produces.
+    * The window must **have a span.** ``09:00-09:00`` evaluates perfectly well and
+      answers *closed* at every instant there is, so it validated and then deferred
+      every merge for ever (#1091). See :func:`merge_window_issue`.
 
     Neither check restates a rule of its own: the timezone one asks ``ZoneInfo``, and
     the window one asks the schema's own ``pattern`` and then ``parse_window``
