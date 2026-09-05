@@ -31,8 +31,8 @@ agents, or migrate a repository onto keel without copying command bodies.
    keel setup --root .
    ```
 
-   Use `--wizard` when the project should choose base branch, build command, timezone, or
-   merge window interactively. Use `--adapter-target claude` or `--adapter-target skills`
+   Use `--wizard` when the project should choose base branch, build command, or the merge
+   window (timezone + hours, asked as one question) interactively. Use `--adapter-target claude` or `--adapter-target skills`
    only when the user wants one surface. Use `--force` only when intentionally replacing
    existing generated config and adapter files; it still must not delete or rewrite
    `.keel/extensions/*`.

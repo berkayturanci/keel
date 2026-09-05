@@ -159,25 +159,35 @@ class TestDefaultConfig(unittest.TestCase):
         self.assertIn("gates: [build]", scaffold.default_config("cobol"))
 
 
+def _scripted(answers):
+    """An ``ask`` seam replaying ``answers`` in order, then accepting every default."""
+    remaining = iter(answers)
+    return lambda _prompt, default: next(remaining, default)
+
+
+def _answering(replies):
+    """An ``ask`` seam keyed on prompt text: first matching key wins, else the default."""
+
+    def ask(prompt, default):
+        for key, value in replies.items():
+            if key in prompt:
+                return value(prompt, default) if callable(value) else value
+        return default
+
+    return ask
+
+
 class TestWizard(unittest.TestCase):
     def test_sets_window_and_validates(self):
         import yaml
 
-        answers = iter(
-            [
-                "develop",
-                "Etc/GMT-3",
-                "09:00-18:00",
-                "agent",
-                "pytest",
-                "ruff check .",
-            ]
+        text = scaffold.wizard(
+            "python",
+            _scripted(
+                ["develop", "y", "Etc/GMT-3", "09:00-18:00", "agent", "pytest", "ruff check ."]
+            ),
+            repo="demo",
         )
-
-        def ask(prompt, default):
-            return next(answers)
-
-        text = scaffold.wizard("python", ask, repo="demo")
         config = cfg.parse_config(yaml.safe_load(text))
         self.assertEqual(config.base_branch, "develop")
         self.assertEqual(config.timezone, "Etc/GMT-3")
@@ -189,25 +199,150 @@ class TestWizard(unittest.TestCase):
     def test_blank_answers_skip_optional(self):
         import yaml
 
-        def ask(prompt, default):
-            if any(k in prompt for k in ("Timezone", "Merge window", "Lint")):
-                return ""  # user clears optional fields
-            return default
-
-        text = scaffold.wizard("generic", ask, repo="demo")
+        text = scaffold.wizard(
+            "generic",
+            _answering({"Configure a merge window": "n", "Lint": ""}),
+            repo="demo",
+        )
         config = cfg.parse_config(yaml.safe_load(text))
         self.assertIsNone(config.timezone)
         self.assertIsNone(config.merge_window)
         self.assertEqual(config.gates, ("build",))
 
     def test_invalid_consent_mode_rejected(self):
-        def ask(prompt, default):
-            if "Consent mode" in prompt:
-                return "maybe"
-            return default
-
         with self.assertRaises(ValueError):
-            scaffold.wizard("python", ask, repo="demo")
+            scaffold.wizard("python", _answering({"Consent mode": "maybe"}), repo="demo")
+
+
+class TestWizardMergeWindowPair(unittest.TestCase):
+    """`timezone` + `merge_window` are one all-or-nothing decision in the wizard (#1082).
+
+    They are all-or-nothing in `parse_config` since #1076, so the property under test is
+    the same on every path: whatever the operator answers, the scaffolded config parses.
+    """
+
+    def _run(self, replies):
+        import yaml
+
+        warnings = []
+        text = scaffold.wizard("python", _answering(replies), repo="demo", notify=warnings.append)
+        return cfg.parse_config(yaml.safe_load(text)), warnings
+
+    def test_yes_with_valid_values_writes_both(self):
+        config, warnings = self._run(
+            {
+                "Configure a merge window": "y",
+                "Timezone": "Etc/GMT-3",
+                "Merge window": "09:00-18:00",
+            }
+        )
+        self.assertEqual(config.timezone, "Etc/GMT-3")
+        self.assertEqual(config.merge_window, "09:00-18:00")
+        self.assertEqual(warnings, [])
+
+    def test_blank_yes_keeps_the_defaults(self):
+        # Enter through the wizard still scaffolds the night no-merge window it always did.
+        config, _ = self._run({"Lint": ""})
+        self.assertEqual(config.timezone, "Europe/Istanbul")
+        self.assertEqual(config.merge_window, "07:00-01:30")
+
+    def test_no_writes_neither_key(self):
+        config, warnings = self._run({"Configure a merge window": "no"})
+        self.assertIsNone(config.timezone)
+        self.assertIsNone(config.merge_window)
+        self.assertEqual(warnings, [])
+
+    def test_unparsable_answer_to_the_gate_means_no(self):
+        config, _ = self._run({"Configure a merge window": "later"})
+        self.assertIsNone(config.timezone)
+        self.assertIsNone(config.merge_window)
+
+    def test_bad_timezone_is_reported_then_asked_again(self):
+        config, warnings = self._run(
+            {
+                "Configure a merge window": "y",
+                "Timezone": _scripted(["Definitely/Nowhere", "Etc/GMT-3"]),
+                "Merge window": "09:00-18:00",
+            }
+        )
+        self.assertEqual(config.timezone, "Etc/GMT-3")
+        self.assertEqual(config.merge_window, "09:00-18:00")
+        # The wording is the validator's own, so prompt and ConfigError cannot drift.
+        self.assertEqual(warnings, [cfg.timezone_issue("Definitely/Nowhere")])
+
+    def test_bad_window_is_reported_then_asked_again(self):
+        config, warnings = self._run(
+            {
+                "Configure a merge window": "y",
+                "Timezone": "Etc/GMT-3",
+                "Merge window": _scripted(["29:00-01:00", "09:00-18:00"]),
+            }
+        )
+        self.assertEqual(config.merge_window, "09:00-18:00")
+        self.assertEqual(warnings, [cfg.merge_window_issue("29:00-01:00")])
+
+    def test_timezone_never_answered_drops_the_pair(self):
+        config, warnings = self._run(
+            {"Configure a merge window": "y", "Timezone": "Definitely/Nowhere"}
+        )
+        self.assertIsNone(config.timezone)
+        self.assertIsNone(config.merge_window)
+        self.assertIn("all-or-nothing", warnings[-1])
+
+    def test_window_never_answered_drops_the_zone_too(self):
+        config, warnings = self._run(
+            {
+                "Configure a merge window": "y",
+                "Timezone": "Etc/GMT-3",
+                "Merge window": "29:00-01:00",
+            }
+        )
+        self.assertIsNone(config.timezone)
+        self.assertIsNone(config.merge_window)
+        self.assertIn("all-or-nothing", warnings[-1])
+
+    def test_a_single_digit_hour_is_re_asked_not_written(self):
+        # The window the wizard used to take and `keel validate` then refused: the shape
+        # check was `parse_window`, which reads '9:00-18:00', while the schema pattern
+        # wants two-digit hours. Both ends ask the same question now (#1082).
+        config, warnings = self._run(
+            {
+                "Configure a merge window": "y",
+                "Timezone": "Etc/GMT-3",
+                "Merge window": _scripted(["9:00-18:00", "09:00-18:00"]),
+            }
+        )
+        self.assertEqual(config.merge_window, "09:00-18:00")
+        self.assertEqual(warnings, [cfg.merge_window_issue("9:00-18:00")])
+
+    def test_the_reviewers_scripted_run_scaffolds_a_config_that_parses(self):
+        # Verbatim from the gate review on #1087: this answer sheet wrote a project.yaml
+        # `parse_config` rejected on the schema pattern. Whatever the wizard settles on,
+        # the file it writes has to parse — here that means no window rather than a bad one.
+        import yaml
+
+        warnings = []
+        text = scaffold.wizard(
+            "python",
+            _scripted(["develop", "y", "Etc/GMT-3", "9:00-18:00", "explicit", "pytest", ""]),
+            repo="demo",
+            notify=warnings.append,
+        )
+        config = cfg.parse_config(yaml.safe_load(text))
+        self.assertIsNone(config.timezone)
+        self.assertIsNone(config.merge_window)
+        self.assertIn("9:00-18:00", warnings[0])
+        self.assertIn("all-or-nothing", warnings[-1])
+
+    def test_a_wizard_with_no_notify_still_survives_a_bad_answer(self):
+        import yaml
+
+        text = scaffold.wizard(
+            "python",
+            _answering({"Timezone": _scripted(["Definitely/Nowhere", "Etc/GMT-3"])}),
+            repo="demo",
+        )
+        self.assertEqual(cfg.parse_config(yaml.safe_load(text)).timezone, "Etc/GMT-3")
 
 
 class TestRenderConfig(unittest.TestCase):
@@ -221,6 +356,14 @@ class TestRenderConfig(unittest.TestCase):
     def test_invalid_consent_mode_rejected(self):
         with self.assertRaises(ValueError):
             scaffold.render_config(repo="x", consent_mode="maybe")
+
+    def test_half_a_merge_window_pair_is_refused(self):
+        # #1076 made the pair all-or-nothing in parse_config; the scaffolder must not be
+        # able to write a file that validation refuses, from the wizard or anywhere else.
+        for kwargs in ({"timezone": "Etc/GMT-3"}, {"merge_window": "09:00-18:00"}):
+            with self.subTest(**kwargs), self.assertRaises(ValueError) as caught:
+                scaffold.render_config(repo="x", **kwargs)
+            self.assertIn("all-or-nothing", str(caught.exception))
 
     def test_interpolated_scalars_cannot_inject_yaml_keys(self):
         import yaml

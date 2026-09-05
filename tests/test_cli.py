@@ -11061,7 +11061,8 @@ class TestInit(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             (Path(d) / "pyproject.toml").write_text("x", encoding="utf-8")
             # The trailing "" is the team step's quick-start answer (#1018).
-            answers = ["develop", "Etc/GMT-3", "09:00-18:00", "explicit", "pytest", "", ""]
+            # "y" opens the merge-window pair, which is one decision now (#1082).
+            answers = ["develop", "y", "Etc/GMT-3", "09:00-18:00", "explicit", "pytest", "", ""]
             with patch("builtins.input", side_effect=answers):
                 rc, out, _ = run(["init", "--root", d, "--wizard"])
             self.assertEqual(rc, 0)
@@ -11085,6 +11086,7 @@ class TestInit(unittest.TestCase):
             scripted = iter(
                 [
                     "develop",
+                    "y",
                     "Etc/GMT-3",
                     "09:00-18:00",
                     "explicit",
@@ -11112,7 +11114,7 @@ class TestInit(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as d:
             (Path(d) / "pyproject.toml").write_text("x", encoding="utf-8")
-            answers = ["develop", "Etc/GMT-3", "09:00-18:00", "maybe", "pytest", "", ""]
+            answers = ["develop", "y", "Etc/GMT-3", "09:00-18:00", "maybe", "pytest", "", ""]
             with patch("builtins.input", side_effect=answers):
                 rc, _, err = run(["init", "--root", d, "--wizard"])
             self.assertEqual(rc, 1)
@@ -11229,7 +11231,8 @@ class TestSetup(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             (Path(d) / "pyproject.toml").write_text("x", encoding="utf-8")
             # The trailing "" is the team step's quick-start answer (#1018).
-            answers = ["develop", "Etc/GMT-3", "09:00-18:00", "explicit", "pytest", "", ""]
+            # "y" opens the merge-window pair, which is one decision now (#1082).
+            answers = ["develop", "y", "Etc/GMT-3", "09:00-18:00", "explicit", "pytest", "", ""]
             with patch("builtins.input", side_effect=answers):
                 rc, out, err = run(["setup", "--root", d, "--wizard"])
             self.assertEqual(rc, 0, err)
@@ -11247,7 +11250,7 @@ class TestSetup(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as d:
             (Path(d) / "pyproject.toml").write_text("x", encoding="utf-8")
-            answers = ["develop", "Etc/GMT-3", "09:00-18:00", "maybe", "pytest", "", ""]
+            answers = ["develop", "y", "Etc/GMT-3", "09:00-18:00", "maybe", "pytest", "", ""]
             with patch("builtins.input", side_effect=answers):
                 rc, _, err = run(["setup", "--root", d, "--wizard"])
             self.assertEqual(rc, 1)

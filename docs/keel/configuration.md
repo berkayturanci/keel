@@ -83,6 +83,9 @@ Both values are also checked for meaning, not just shape, at `keel validate` tim
 (`Definitely/Nowhere` is rejected). Both used to be accepted and then raised out of the
 middle of a `keel ship` run instead.
 
+`keel init --wizard` therefore asks for the pair as [one question](cli.md#init-wizard),
+never two: it cannot scaffold half of it.
+
 #### `merge_window_mode`
 
 Controls behavior outside the merge window:

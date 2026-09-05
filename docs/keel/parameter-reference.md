@@ -1809,7 +1809,7 @@ keel init [--root DIR] [--force] [--wizard] [--auto]
 | --- | --- | --- | --- |
 | `--root DIR` | path | `.` | Repo root to scaffold into. |
 | `--force` | flag | off | Overwrite an existing config (warning printed; `.keel/extensions/` untouched). |
-| `--wizard` | flag | off | Prompt interactively (base branch, timezone, merge window `HH:MM-HH:MM`, build/lint commands), then run the **team step**: `knobs.team` seats built from the `keel doctor --providers` probe, per risk tier. Enter accepts the stack default. |
+| `--wizard` | flag | off | Prompt interactively (base branch, the [merge-window question](cli.md#init-wizard) — one y/n gate, then `timezone` + `merge_window` together or neither, since the pair is all-or-nothing — consent mode, build/lint commands), then run the **team step**: `knobs.team` seats built from the `keel doctor --providers` probe, per risk tier. Enter accepts the stack default, and every answer is checked with the function `keel validate` checks it with, so the scaffolded config always parses. |
 | `--auto` | flag | off | Detect stack, base branch, and test/lint gates without prompting. |
 
 ### Details

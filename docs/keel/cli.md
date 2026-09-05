@@ -2190,16 +2190,42 @@ Use it only when intentionally regenerating project config.
 keel init                 # scaffold .keel/project.yaml for the detected stack
 keel init --auto          # smart auto-detect stack, base branch, and test/lint gates without prompts
 keel init --root ../app   # scaffold elsewhere
-keel init --wizard        # prompt for base branch, merge-window hours, timezone, commands, team
+keel init --wizard        # prompt for base branch, merge window, commands, team
 ```
 
 With `--auto`, keel inspects project marker files, detects the primary base branch from git
 (`main`, `develop`, `master`, `trunk`), selects recommended test and lint commands, and prints a
 structured summary report.
 
-With `--wizard`, keel prompts for each value (base branch, timezone, **merge window
-`HH:MM-HH:MM`**, build/lint commands); press Enter to accept the stack default, or leave a
-field blank to skip it. The result still passes `keel validate`.
+With `--wizard`, keel prompts for each value (base branch, the merge window, consent mode,
+build/lint commands); press Enter to accept the default shown for each. The result always
+passes `keel validate`.
+
+<a id="init-wizard"></a>
+
+### The merge-window question
+
+`timezone` and `merge_window` are [all-or-nothing](configuration.md#timezone-and-merge_window)
+— exactly one of them is a `ConfigError` — so the wizard asks for them as **one** decision
+rather than as two independently skippable prompts:
+
+```text
+Configure a merge window (timezone + hours)? (y/n) [y]:
+Timezone (IANA) [Europe/Istanbul]:
+Merge window HH:MM-HH:MM [07:00-01:30]:
+```
+
+Answer `n` and neither key is written — a project with no window, which is a valid config.
+Answer `y` and neither half is skippable: each answer is checked on entry with the very
+checks `keel validate` will apply — `ZoneInfo` for the zone, and for the hours the
+bundled schema's own `merge_window` pattern (two-digit hours `00`–`23`, minutes `00`–`59`)
+plus `parse_window` — and a value that will not evaluate is reported in the validator's
+own words and asked for again, up to three times. Give up on either half and the wizard
+drops the *pair* — it never writes one key without the other.
+
+The shape rule is read out of `project.schema.json` rather than restated, so the prompt
+cannot accept what the schema refuses: `9:00-18:00` parses fine as a time but is not a
+window keel writes, and the wizard asks again instead of scaffolding it.
 
 <a id="init-team-step"></a>
 

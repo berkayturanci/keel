@@ -1,8 +1,10 @@
 """Unit tests for keel project-config loading + validation."""
 
 import copy
+import re
 import unittest
 from pathlib import Path
+from unittest import mock
 from zoneinfo import ZoneInfoNotFoundError
 
 from keel import config as cfg
@@ -115,6 +117,31 @@ class TestMergeWindowIsEvaluable(unittest.TestCase):
                 errors = cfg.validate_data({**VALID, "merge_window": spec})
                 self.assertTrue(any("merge_window" in e for e in errors), errors)
 
+    def test_merge_window_issue_answers_exactly_what_the_schema_pattern_answers(self):
+        # #1082: the helper asked `parse_window` alone, which reads the single-digit hour
+        # in '9:00-18:00' that the schema pattern refuses — so `keel init --wizard`
+        # accepted a value the next `keel validate` rejected. One question, one answer.
+        pattern = cfg.merge_window_pattern()
+        self.assertEqual(
+            pattern.pattern, cfg.load_schema()["properties"]["merge_window"]["pattern"]
+        )
+        for spec in ("9:00-18:00", "24:00-01:00", "07:60-01:30", "07:00-01:30"):
+            with self.subTest(window=spec):
+                accepted_by_pattern = pattern.fullmatch(spec) is not None
+                self.assertEqual(cfg.merge_window_issue(spec) is None, accepted_by_pattern)
+                self.assertEqual(
+                    cfg.validate_data({**VALID, "merge_window": spec}) == [], accepted_by_pattern
+                )
+
+    def test_a_relaxed_pattern_would_still_not_get_an_unevaluable_window_through(self):
+        # The pattern subsumes `parse_window` today, so the second check only earns its
+        # keep the day the schema — a contract, and therefore relaxable — stops being the
+        # stricter of the two. With an all-permitting pattern the hour `is_merge_open`
+        # raises on is still refused here, before it can be written to a project.yaml.
+        with mock.patch.object(cfg, "merge_window_pattern", lambda: re.compile(r".*")):
+            self.assertIsNone(cfg.merge_window_issue("07:00-01:30"))
+            self.assertIn("29:00-01:00", cfg.merge_window_issue("29:00-01:00"))
+
     def test_no_config_can_carry_these_shapes_into_the_window_evaluator(self):
         """The three downstream outcomes the guard exists to make unreachable."""
         # 1. The silent one: `assess` reads a missing half as "no window configured"
@@ -139,6 +166,7 @@ class TestMergeWindowIsEvaluable(unittest.TestCase):
             {"merge_window": "00:00-00:01"},
             {"timezone": "Europe/Istanbul"},
             {"timezone": "Europe/Istanbul", "merge_window": "29:00-01:00"},
+            {"timezone": "Europe/Istanbul", "merge_window": "9:00-18:00"},
             {"timezone": "Definitely/Nowhere", "merge_window": "07:00-01:30"},
         ):
             with self.subTest(shape=shape):

@@ -12,8 +12,10 @@ import hashlib
 import ipaddress
 import json
 import os
+import re
 import socket
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -297,6 +299,74 @@ class ProjectConfig:
         return self.extensions.get(name, ())
 
 
+def timezone_issue(timezone: str) -> str | None:
+    """Why ``timezone`` cannot be evaluated on this machine, or ``None`` if it can.
+
+    The sentence carries no ``$.`` path so that both callers can frame it themselves:
+    :func:`_merge_window_issues` prefixes ``$.timezone`` for the :class:`ConfigError`,
+    and ``keel init --wizard`` prints it as-is before asking the question again (#1082).
+    One wording in one place is the point — a wizard that phrased the rule in its own
+    words would drift away from the validator that actually decides.
+    """
+    try:
+        ZoneInfo(timezone)
+    except (ValueError, ZoneInfoNotFoundError):
+        return (
+            f"{timezone!r} is not a zone this machine can resolve; give an "
+            "IANA name such as 'Europe/Istanbul' or 'Etc/GMT-3'"
+        )
+    return None
+
+
+@lru_cache(maxsize=1)
+def merge_window_pattern() -> re.Pattern[str]:
+    """The bundled schema's own ``merge_window`` ``pattern``, compiled.
+
+    Read out of ``project.schema.json`` instead of restated here, because a second
+    spelling of the same rule is a second rule waiting to disagree with the first: the
+    schema said two-digit hours while :func:`keel.window.parse_window` happily read
+    ``9:00-18:00``, so ``keel init --wizard`` accepted a value ``keel validate``
+    immediately refused (#1082). Cached because the answer is package data that cannot
+    change inside a run, and :func:`merge_window_issue` is asked once per config load.
+    """
+    return re.compile(load_schema()["properties"]["merge_window"]["pattern"])
+
+
+def merge_window_issue(merge_window: str) -> str | None:
+    """Why ``merge_window`` is not a window keel accepts, or ``None`` if it is.
+
+    Unprefixed for the same reason as :func:`timezone_issue`. Two rules, both of which
+    ``keel validate`` applies to a hand-written config, so every caller — the wizard
+    included — accepts exactly what the validator accepts:
+
+    * the **shape**, :func:`merge_window_pattern`, taken from the schema itself;
+    * the **meaning**, :func:`keel.window.parse_window` — the function evaluation time
+      asks. Today the pattern is the stricter of the two and subsumes it; the call
+      stays because the schema is a contract that may be relaxed, and the day it is,
+      a window that will raise mid-ship must still be refused here rather than written.
+
+    Normalising ``9:00`` to ``09:00`` was the alternative and was rejected: it would
+    quietly rewrite the operator's answer, and it would leave the wizard and
+    ``keel validate`` still disagreeing about what a valid window *is*.
+    """
+    if merge_window_pattern().fullmatch(merge_window) is None or not _parses(merge_window):
+        return (
+            f"{merge_window!r} is not a valid window; give "
+            "'HH:MM-HH:MM' with two-digit hours 00-23 and minutes 00-59 "
+            "(it may wrap midnight)"
+        )
+    return None
+
+
+def _parses(merge_window: str) -> bool:
+    """True if :func:`keel.window.parse_window` can read ``merge_window``."""
+    try:
+        parse_window(merge_window)
+    except ValueError:
+        return False
+    return True
+
+
 def _merge_window_issues(data: dict) -> list[str]:
     """Semantic errors for the ``timezone`` + ``merge_window`` pair (empty == valid).
 
@@ -315,10 +385,12 @@ def _merge_window_issues(data: dict) -> list[str]:
       ``ValueError`` / ``ZoneInfoNotFoundError`` out of the middle of a ship run
       instead of the :class:`ConfigError` every other malformed knob produces.
 
-    Both checks re-derive the answer from the functions that will be asked at
-    evaluation time — ``parse_window`` and ``ZoneInfo`` — rather than restating their
-    rules, so the schema pattern and this validator cannot drift apart. The pattern is
-    kept tight anyway: it is the contract consumers read, and it fails earlier.
+    Neither check restates a rule of its own: the timezone one asks ``ZoneInfo``, and
+    the window one asks the schema's own ``pattern`` and then ``parse_window``
+    (:func:`merge_window_issue`), so the contract consumers read and the validator that
+    decides cannot drift apart — which they had, over the single-digit hour in
+    ``9:00-18:00``: ``parse_window`` read it, the schema refused it, and the wizard
+    believed ``parse_window`` (#1082).
     """
     errors: list[str] = []
     timezone = data.get("timezone")
@@ -335,21 +407,13 @@ def _merge_window_issues(data: dict) -> list[str]:
             "own gates nothing — add 'merge_window: HH:MM-HH:MM' or drop 'timezone'"
         )
     if isinstance(timezone, str):
-        try:
-            ZoneInfo(timezone)
-        except (ValueError, ZoneInfoNotFoundError):
-            errors.append(
-                f"$.timezone: {timezone!r} is not a zone this machine can resolve; give an "
-                "IANA name such as 'Europe/Istanbul' or 'Etc/GMT-3'"
-            )
+        issue = timezone_issue(timezone)
+        if issue is not None:
+            errors.append(f"$.timezone: {issue}")
     if isinstance(merge_window, str):
-        try:
-            parse_window(merge_window)
-        except ValueError:
-            errors.append(
-                f"$.merge_window: {merge_window!r} is not an evaluable window; give "
-                "'HH:MM-HH:MM' with hours 00-23 and minutes 00-59 (it may wrap midnight)"
-            )
+        issue = merge_window_issue(merge_window)
+        if issue is not None:
+            errors.append(f"$.merge_window: {issue}")
     return errors
 
 
