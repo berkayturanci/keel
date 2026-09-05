@@ -258,7 +258,8 @@ six commands must resolve to the block this run published.
   never to produce. On a tier whose review policy **is** the panel, `--no-jury` and
   `--jury-advisory` are recorded in `assignment.warnings` and not applied: the panel is
   the only review that tier has, so its verdict stays required.
-- `--hotfix` — audited merge-window bypass (s10). Use sparingly.
+- `--hotfix` — audited bypass of the merge window **and** the gates-SHA requirement
+  (s10), and of nothing else. Use sparingly.
 - `--dry-run` — read-only rehearsal (see `--dry-run` section).
 - `--wizard` — interactive opt-in only; runs `keel ship --wizard`, the guided pre-s1
   option picker (see `--wizard` section). In any non-interactive context it degrades to a

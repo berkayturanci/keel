@@ -8161,6 +8161,66 @@ class TestCoreMerge(unittest.TestCase):
         self.assertEqual(data["hotfix_justification"]["kind"], "matched-rule")
         read_mock.assert_not_called()
 
+    def test_the_hotfix_contract_lists_what_this_command_actually_bypasses(self):
+        """Read the published contract's hotfix lists back off a real run (#1078).
+
+        `ship.resolve_review_contract` published `hotfix_bypasses_window_only: True`
+        beside the `--hotfix` path above, which also skips the gates-SHA requirement —
+        so a consumer trusting the contract treated a hotfix merge as gates-verified
+        when no gates-pass ledger record had ever been matched. Deriving the list from
+        the merge record here is what stops the two halves drifting apart again: add a
+        bypass to `_cmd_merge` without naming it in the contract and this fails.
+        """
+        fake_report = _merge_capability_report()
+        with (
+            patch("keel.cli.runtime.detect", return_value=fake_report),
+            patch(
+                "keel.cli.github.pr_merge_snapshot",
+                return_value=_json_result(
+                    {
+                        "headRefOid": "head-new",
+                        "mergeStateStatus": "CLEAN",
+                        "statusCheckRollup": [{"conclusion": "SUCCESS"}],
+                    }
+                ),
+            ),
+            patch(
+                "keel.cli._verify_merge_evidence",
+                return_value={
+                    "enforced": True,
+                    "verification": {"status": "pass", "missing": []},
+                },
+            ),
+            patch(
+                "keel.cli.github.issue_facts",
+                return_value=_proc(
+                    json.dumps({"title": "boot loop", "labels": [{"name": "blocker"}]})
+                ),
+            ),
+        ):
+            argv = _merge_args(json_out=True, dry_run=True)
+            argv += ["--hotfix", "--blocker-rule", "blocker-label", "--issue", "42"]
+            rc, out, _ = run(argv)
+
+        self.assertEqual(rc, 0)
+        payload = json.loads(out)
+        recorded_bypasses = sorted(
+            key
+            for key, value in payload.items()
+            if isinstance(value, dict) and value.get("bypassed") is True
+        )
+        merge_gate = ship.resolve_review_contract(tier=3)["merge_gate"]
+        self.assertEqual(merge_gate["hotfix_bypasses"], recorded_bypasses)
+        # Everything the contract promises still runs is in the same record, present
+        # and un-bypassed …
+        for name in merge_gate["hotfix_never_bypasses"]:
+            if name in payload:
+                self.assertIsInstance(payload[name], dict)
+                self.assertIsNot(payload[name].get("bypassed"), True, name)
+        # … except `findings`, which blocks at the review verdict, before this command
+        # is ever reached, and so has no key of its own here.
+        self.assertEqual(set(merge_gate["hotfix_never_bypasses"]) - set(payload), {"findings"})
+
     def test_merge_reports_invalid_ledger_during_gates_check(self):
         fake_report = _merge_capability_report()
         with (
