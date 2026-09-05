@@ -41,8 +41,8 @@ keel setup --root .
 | `validate` | strict-validates config and extension references |
 | `plan` | renders the resolved backbone before any live workflow run |
 
-Use `--wizard` when the default base branch, build command, timezone, merge window, or the
-**team** should be chosen interactively:
+Use `--wizard` when the default base branch, build command, [merge
+window](cli.md#init-wizard), or the **team** should be chosen interactively:
 
 ```bash
 keel setup --root . --wizard

@@ -297,6 +297,41 @@ class ProjectConfig:
         return self.extensions.get(name, ())
 
 
+def timezone_issue(timezone: str) -> str | None:
+    """Why ``timezone`` cannot be evaluated on this machine, or ``None`` if it can.
+
+    The sentence carries no ``$.`` path so that both callers can frame it themselves:
+    :func:`_merge_window_issues` prefixes ``$.timezone`` for the :class:`ConfigError`,
+    and ``keel init --wizard`` prints it as-is before asking the question again (#1082).
+    One wording in one place is the point — a wizard that phrased the rule in its own
+    words would drift away from the validator that actually decides.
+    """
+    try:
+        ZoneInfo(timezone)
+    except (ValueError, ZoneInfoNotFoundError):
+        return (
+            f"{timezone!r} is not a zone this machine can resolve; give an "
+            "IANA name such as 'Europe/Istanbul' or 'Etc/GMT-3'"
+        )
+    return None
+
+
+def merge_window_issue(merge_window: str) -> str | None:
+    """Why ``merge_window`` cannot be evaluated, or ``None`` if it can.
+
+    Unprefixed for the same reason as :func:`timezone_issue`, and derived the same way:
+    by asking :func:`keel.window.parse_window` — the function evaluation time asks.
+    """
+    try:
+        parse_window(merge_window)
+    except ValueError:
+        return (
+            f"{merge_window!r} is not an evaluable window; give "
+            "'HH:MM-HH:MM' with hours 00-23 and minutes 00-59 (it may wrap midnight)"
+        )
+    return None
+
+
 def _merge_window_issues(data: dict) -> list[str]:
     """Semantic errors for the ``timezone`` + ``merge_window`` pair (empty == valid).
 
@@ -335,21 +370,13 @@ def _merge_window_issues(data: dict) -> list[str]:
             "own gates nothing — add 'merge_window: HH:MM-HH:MM' or drop 'timezone'"
         )
     if isinstance(timezone, str):
-        try:
-            ZoneInfo(timezone)
-        except (ValueError, ZoneInfoNotFoundError):
-            errors.append(
-                f"$.timezone: {timezone!r} is not a zone this machine can resolve; give an "
-                "IANA name such as 'Europe/Istanbul' or 'Etc/GMT-3'"
-            )
+        issue = timezone_issue(timezone)
+        if issue is not None:
+            errors.append(f"$.timezone: {issue}")
     if isinstance(merge_window, str):
-        try:
-            parse_window(merge_window)
-        except ValueError:
-            errors.append(
-                f"$.merge_window: {merge_window!r} is not an evaluable window; give "
-                "'HH:MM-HH:MM' with hours 00-23 and minutes 00-59 (it may wrap midnight)"
-            )
+        issue = merge_window_issue(merge_window)
+        if issue is not None:
+            errors.append(f"$.merge_window: {issue}")
     return errors
 
 
