@@ -230,6 +230,40 @@ class TestValidate(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("INVALID", out)
 
+    def test_a_merge_window_with_no_timezone_is_invalid(self):
+        # #1076: this printed OK, and `assess` then reported the window open at every
+        # hour — the night no-merge window, silently defeated by a missing key.
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+            f.write(
+                "extends: keel\ncore_version: '^1.0'\nbase_branch: main\n"
+                "merge_window: '00:00-00:01'\nknobs:\n  build_gate_cmd: 'true'\n"
+            )
+            bad = f.name
+        self.addCleanup(os.unlink, bad)
+        rc, out, _ = run(["validate", bad])
+        self.assertEqual(rc, 1)
+        self.assertIn("INVALID", out)
+        self.assertIn("$.merge_window", out)
+        self.assertIn("'timezone' is not", out)
+
+    def test_an_unevaluable_window_or_zone_is_invalid(self):
+        for line, needle in (
+            ("timezone: Europe/Istanbul\nmerge_window: '29:00-01:00'\n", "merge_window"),
+            ("timezone: Definitely/Nowhere\nmerge_window: '07:00-01:30'\n", "$.timezone"),
+        ):
+            with self.subTest(line=line):
+                with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+                    f.write(
+                        "extends: keel\ncore_version: '^1.0'\nbase_branch: main\n"
+                        f"{line}knobs:\n  build_gate_cmd: 'true'\n"
+                    )
+                    bad = f.name
+                self.addCleanup(os.unlink, bad)
+                rc, out, _ = run(["validate", bad])
+                self.assertEqual(rc, 1)
+                self.assertIn("INVALID", out)
+                self.assertIn(needle, out)
+
     def test_strict_extensions_missing_root(self):
         # example-flutter references extension files not present in this repo -> strict fail.
         rc, out, _ = run(
