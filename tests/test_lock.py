@@ -1,5 +1,6 @@
 """Unit tests for mkdir-based resource claims and merge lock compatibility."""
 
+import os
 import tempfile
 import unittest
 import unittest.mock as mock
@@ -143,6 +144,9 @@ class TestResourceClaims(unittest.TestCase):
             self.assertTrue(reclaimed.granted)
             self.assertEqual(reclaimed.holder, "agent-b")
 
+    @unittest.skipIf(
+        os.name == "nt", "no directory descriptor: the unpinned unwind removes no file"
+    )
     def test_a_failed_owner_write_leaves_no_claim_behind(self):
         # The half-written owner.json goes too, so the retry does not inherit it.
         def _tear_the_owner_file(path, owner, **_kw):
@@ -429,6 +433,9 @@ class TestResourceClaims(unittest.TestCase):
                     lk.claim_resource(d, "merge", owner="agent-a")
             self.assertTrue(path.exists())
 
+    @unittest.skipIf(
+        os.name == "nt", "no directory descriptor: the unpinned create reports contention"
+    )
     def test_a_claim_taken_during_the_scaffold_is_never_overwritten(self):
         # Round-5 finding: the write that finishes a claim was by name, so a claim
         # taken underneath while the scaffold ran was overwritten and ours reported
@@ -474,6 +481,7 @@ class TestResourceClaims(unittest.TestCase):
             self.assertEqual(result.holder, "agent-b")
             self.assertEqual(lk._holder(path), "agent-b")
 
+    @unittest.skipIf(os.name == "nt", "no directory descriptor: the identity rests on stat alone")
     def test_the_identity_is_the_pinned_inode_not_the_path(self):
         # Round-7 finding: the identity was read by path after the pin, so a path
         # retargeted in between recorded the stranger's inode as ours and the unwind

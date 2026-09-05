@@ -159,54 +159,21 @@ def _claim_path(path: Path, *, resource: str, owner: str) -> ClaimResult:
     # allocated for as long as this call runs, so the identity recorded here cannot be
     # handed to a directory somebody else creates at this path; the unwind below touches
     # nothing that does not answer with that same identity.
-    pin = _pin(path)
-    # Read through the pin where there is one: the identity must be the inode the pin
-    # holds, not whatever the path denotes by now (round 7 of #1077 — the two can differ
-    # as soon as the path is retargeted, and a path-read identity then names the stranger).
-    identity = _identity(path, pin)
-    try:
-        taken = _has_entries(path, pin)
-    except OSError:
-        # Unable to tell whether the directory the pin latched is ours, and unable to
-        # prove it either way, this is an I/O failure and not contention: it raises, as
-        # every other I/O failure here does, and unwinds nothing — a leaked *empty*
-        # directory an operator can release is recoverable, a stranger's deleted lock
-        # is not (round 5 of #1077).
-        _unpin(pin)
-        raise
-    if taken:
-        # Between the ``mkdir`` and the pin the path can already have been retargeted:
-        # the any-owner recovery removed our empty directory and somebody claimed the
-        # resource behind it, and what the pin latched is *their* directory — under the
-        # same owner name, as often as not. A directory of ours is empty at this point,
-        # so anything in it is proof the claim is not ours: report contention and touch
-        # nothing. An empty stranger's directory taken in that same gap cannot be told
-        # from ours — that is the by-name floor the docs state (#1077).
-        _unpin(pin)
-        return ClaimResult(
-            schema_version=SCHEMA_VERSION,
-            resource=resource,
-            owner=clean_owner,
-            path=str(path),
-            granted=False,
-            status="denied",
-            reason="resource-already-claimed",
-            holder=_holder(path),
-        )
-    try:
-        workspace.ensure_runtime_gitignore_for(path)
-        try:
-            _write_owner(path, clean_owner, pin=pin)
-        except FileExistsError:
-            # The owner file is created *exclusively*, through the pin where there is
-            # one. A directory of ours has no owner file at this point, so one already
-            # there means the claim was taken underneath us while the scaffold ran —
-            # released by the any-owner recovery and re-claimed, under the same name as
-            # often as not (round 5 of #1077). Report contention and unwind nothing: the
-            # live claim is theirs. A pinned directory that was *removed* underneath
-            # surfaces as ``FileNotFoundError`` from the same create, an I/O failure
-            # that propagates below; the unwind then finds no directory and leaves it.
-            # The pin is released by the ``finally`` below, once, on this path too.
+    with _pinned(path) as pin:
+        # Read through the pin where there is one: the identity must be the inode the pin
+        # holds, not whatever the path denotes by now (round 7 of #1077 — the two can
+        # differ as soon as the path is retargeted, and a path-read identity then names
+        # the stranger). An unlistable directory raises out of here as the I/O failure it
+        # is, unwinding nothing (round 5): "could not look" must not read as "empty".
+        identity = _identity(path, pin)
+        if _has_entries(path, pin):
+            # Between the ``mkdir`` and the pin the path can already have been
+            # retargeted: the any-owner recovery removed our empty directory and somebody
+            # claimed the resource behind it, and what the pin latched is *their*
+            # directory — under the same owner name, as often as not. A directory of ours
+            # is empty at this point, so anything in it is proof the claim is not ours:
+            # report contention and touch nothing. An empty stranger's directory taken in
+            # that same gap cannot be told from ours — the by-name floor the docs state.
             return ClaimResult(
                 schema_version=SCHEMA_VERSION,
                 resource=resource,
@@ -217,19 +184,38 @@ def _claim_path(path: Path, *, resource: str, owner: str) -> ClaimResult:
                 reason="resource-already-claimed",
                 holder=_holder(path),
             )
-    except BaseException:
-        # Left in place, the half-built claim is worse than the error that caused it —
-        # it is held forever by ``UNKNOWN_HOLDER``, denies every later claim, and nothing
-        # releases it (#1077). Between the ``mkdir`` and this handler an operator can have
-        # run the any-owner recovery on the ownerless claim and somebody else can have
-        # claimed the resource behind it — under the *same* owner name, since an owner is
-        # a name and not a claim id — so the unwind identifies the directory rather than
-        # trusting either the path or the recorded name.
-        _discard_partial_claim(path, owner=clean_owner, identity=identity, pin=pin)
-        raise
-    finally:
-        # After the handler, so the inode stays pinned for the whole comparison above.
-        _unpin(pin)
+        try:
+            workspace.ensure_runtime_gitignore_for(path)
+            try:
+                _write_owner(path, clean_owner, pin=pin)
+            except FileExistsError:
+                # The owner file is created *exclusively*, through the pin where there
+                # is one. A directory of ours has no owner file at this point, so one
+                # already there means the claim was taken underneath us while the
+                # scaffold ran — released by the any-owner recovery and re-claimed, under
+                # the same name as often as not (round 5 of #1077). Report contention and
+                # unwind nothing: the live claim is theirs. A pinned directory that was
+                # *removed* underneath surfaces as ``FileNotFoundError`` from the same
+                # create, an I/O failure that propagates below; the unwind then finds no
+                # directory and leaves it. The pin is released by the context, once.
+                return ClaimResult(
+                    schema_version=SCHEMA_VERSION,
+                    resource=resource,
+                    owner=clean_owner,
+                    path=str(path),
+                    granted=False,
+                    status="denied",
+                    reason="resource-already-claimed",
+                    holder=_holder(path),
+                )
+        except BaseException:
+            # Left in place, the half-built claim is worse than the error that caused it
+            # — it is held forever by ``UNKNOWN_HOLDER``, denies every later claim, and
+            # nothing releases it (#1077). The unwind identifies the directory rather
+            # than trusting either the path or the recorded name; see
+            # :func:`_discard_partial_claim`.
+            _discard_partial_claim(path, owner=clean_owner, identity=identity, pin=pin)
+            raise
     return ClaimResult(
         schema_version=SCHEMA_VERSION,
         resource=resource,
@@ -386,7 +372,7 @@ def _discard_partial_claim(
             try:
                 os.unlink("owner.json", dir_fd=pin)
             except FileNotFoundError:
-                pass
+                pass  # the failing step never got as far as writing one
         # Without a descriptor there is no unlink that is bound to an inode, and a
         # by-name unlink after a by-name check is the very defect this exists to close —
         # so the unpinned path removes no file at all. The ``rmdir`` below then refuses a
@@ -396,7 +382,7 @@ def _discard_partial_claim(
             return
         path.rmdir()
     except OSError:
-        pass
+        pass  # best effort: the caller re-raises the failure that brought us here
 
 
 def _has_entries(path: Path, pin: int | None) -> bool:
@@ -457,10 +443,21 @@ def _pin(path: Path) -> int | None:
         return None
 
 
-def _unpin(pin: int | None) -> None:
-    """Drop a descriptor from :func:`_pin`, if there was one to take."""
-    if pin is not None:
-        os.close(pin)
+@contextmanager
+def _pinned(path: Path) -> Iterator[int | None]:
+    """Hold ``path`` open for the block (:func:`_pin`), releasing it exactly once.
+
+    Every exit from the block — granted, denied at the pin, denied at the create, an
+    exception on the way — closes the descriptor here and nowhere else; round 6 of
+    #1077 was a second close on the contention path turning a denied result into
+    ``EBADF``.
+    """
+    pin = _pin(path)
+    try:
+        yield pin
+    finally:
+        if pin is not None:
+            os.close(pin)
 
 
 def _write_owner(path: Path, owner: str, *, pin: int | None = None) -> None:
@@ -479,7 +476,7 @@ def _write_owner(path: Path, owner: str, *, pin: int | None = None) -> None:
     """
     payload = json.dumps({"owner": owner}, sort_keys=True) + "\n"
     if pin is not None:
-        fd = os.open("owner.json", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644, dir_fd=pin)
+        fd = os.open("owner.json", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=pin)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(payload)
         return
