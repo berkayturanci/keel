@@ -3,9 +3,10 @@
 import copy
 import unittest
 from pathlib import Path
+from zoneinfo import ZoneInfoNotFoundError
 
 from keel import config as cfg
-from keel import contracts
+from keel import contracts, findings, ship, window
 from keel import team as team_policy
 
 PROJECTS_DIR = Path(__file__).resolve().parent.parent / "projects"
@@ -33,6 +34,116 @@ class TestMergeWindowMode(unittest.TestCase):
         data["merge_window_mode"] = "nope"
         with self.assertRaises(cfg.ConfigError):
             cfg.parse_config(data)
+
+
+class TestMergeWindowIsEvaluable(unittest.TestCase):
+    """`timezone` + `merge_window` must be a pair that `is_merge_open` can answer (#1076).
+
+    All three shapes below used to pass `keel validate` and then fail somewhere worse:
+    the half-configured pair silently opened the window, and the two unevaluable values
+    raised out of the middle of a ship run.
+    """
+
+    @staticmethod
+    def _config(**overrides):
+        data = copy.deepcopy(VALID)
+        data.update(overrides)
+        return data
+
+    def test_both_absent_is_a_project_that_asked_for_no_window(self):
+        config = cfg.parse_config(self._config())
+        self.assertIsNone(config.timezone)
+        self.assertIsNone(config.merge_window)
+
+    def test_both_present_and_evaluable_parses(self):
+        config = cfg.parse_config(
+            self._config(timezone="Europe/Istanbul", merge_window="07:00-01:30")
+        )
+        self.assertEqual(config.timezone, "Europe/Istanbul")
+        self.assertEqual(config.merge_window, "07:00-01:30")
+
+    def test_merge_window_without_timezone_is_rejected(self):
+        with self.assertRaises(cfg.ConfigError) as ctx:
+            cfg.parse_config(self._config(merge_window="00:00-00:01"))
+        message = str(ctx.exception)
+        self.assertIn("$.merge_window", message)
+        self.assertIn("'timezone' is not", message)
+
+    def test_timezone_without_merge_window_is_rejected(self):
+        with self.assertRaises(cfg.ConfigError) as ctx:
+            cfg.parse_config(self._config(timezone="Europe/Istanbul"))
+        message = str(ctx.exception)
+        self.assertIn("$.timezone", message)
+        self.assertIn("'merge_window' is not", message)
+
+    def test_the_hours_the_old_pattern_let_through_are_rejected(self):
+        # `^[0-2][0-9]:...` accepted 20-29; `is_merge_open` then raised
+        # "hour must be in 0..23" from inside the pipeline.
+        for spec in ("24:00-01:00", "29:00-01:00", "07:00-24:00"):
+            with self.subTest(window=spec):
+                with self.assertRaises(cfg.ConfigError) as ctx:
+                    cfg.parse_config(self._config(timezone="Europe/Istanbul", merge_window=spec))
+                self.assertIn("merge_window", str(ctx.exception))
+
+    def test_out_of_range_minutes_are_rejected(self):
+        with self.assertRaises(cfg.ConfigError) as ctx:
+            cfg.parse_config(self._config(timezone="Europe/Istanbul", merge_window="07:60-01:30"))
+        self.assertIn("merge_window", str(ctx.exception))
+
+    def test_an_unknown_timezone_is_rejected(self):
+        with self.assertRaises(cfg.ConfigError) as ctx:
+            cfg.parse_config(
+                self._config(timezone="Definitely/Nowhere", merge_window="07:00-01:30")
+            )
+        message = str(ctx.exception)
+        self.assertIn("$.timezone", message)
+        self.assertIn("Definitely/Nowhere", message)
+
+    def test_a_timezone_that_is_not_even_a_zone_key_is_rejected(self):
+        # ZoneInfo raises ValueError, not ZoneInfoNotFoundError, for a key it refuses
+        # to look up at all (absolute paths, `..` components).
+        with self.assertRaises(cfg.ConfigError) as ctx:
+            cfg.parse_config(self._config(timezone="/etc/localtime", merge_window="07:00-01:30"))
+        self.assertIn("$.timezone", str(ctx.exception))
+
+    def test_the_schema_pattern_rejects_the_out_of_range_hours_on_its_own(self):
+        # The semantic check is defence in depth; the published contract consumers read
+        # has to refuse these too, and it is what a caller passing its own `schema=` gets.
+        self.assertEqual(cfg.validate_data({**VALID, "merge_window": "07:00-01:30"}), [])
+        for spec in ("24:00-01:00", "29:00-01:00", "07:00-29:00", "07:60-01:30"):
+            with self.subTest(window=spec):
+                errors = cfg.validate_data({**VALID, "merge_window": spec})
+                self.assertTrue(any("merge_window" in e for e in errors), errors)
+
+    def test_no_config_can_carry_these_shapes_into_the_window_evaluator(self):
+        """The three downstream outcomes the guard exists to make unreachable."""
+        # 1. The silent one: `assess` reads a missing half as "no window configured"
+        #    and reports the window *open* at every hour, with no bypass recorded.
+        vacuous = ship.assess(
+            changed_files=["README.md"],
+            gate_verdict=findings.summarize([]),
+            timezone=None,
+            merge_window="00:00-00:01",
+        )
+        self.assertTrue(vacuous.window_open)
+        self.assertFalse(vacuous.bypassed_window)
+        # 2. + 3. The loud ones: an out-of-range hour and an unknown zone raise out of
+        #    the middle of a ship run rather than at config time.
+        with self.assertRaises(ValueError):
+            window.is_merge_open("Europe/Istanbul", "29:00-01:00")
+        with self.assertRaises(ZoneInfoNotFoundError):
+            window.is_merge_open("Definitely/Nowhere", "07:00-01:30")
+        # None of the three is reachable from a config any more: every shape that
+        # produced them is refused before a `ProjectConfig` exists.
+        for shape in (
+            {"merge_window": "00:00-00:01"},
+            {"timezone": "Europe/Istanbul"},
+            {"timezone": "Europe/Istanbul", "merge_window": "29:00-01:00"},
+            {"timezone": "Definitely/Nowhere", "merge_window": "07:00-01:30"},
+        ):
+            with self.subTest(shape=shape):
+                with self.assertRaises(cfg.ConfigError):
+                    cfg.parse_config(self._config(**shape))
 
 
 class TestEvidenceGateLabel(unittest.TestCase):
@@ -455,6 +566,7 @@ class TestParse(unittest.TestCase):
 
     def test_bad_merge_window_pattern(self):
         bad = copy.deepcopy(VALID)
+        bad["timezone"] = "Europe/Istanbul"
         bad["merge_window"] = "7-1"
         with self.assertRaises(cfg.ConfigError) as ctx:
             cfg.parse_config(bad)

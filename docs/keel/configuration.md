@@ -26,8 +26,8 @@ declared through `required_capabilities`, `policy_pack`, or extension docs.
 | `owner` | string | | GitHub owner |
 | `repo` | string | | GitHub repo |
 | `platform` | string | | free-form tag for the consumer's runtime family |
-| `timezone` | string | | IANA tz for the merge window (`Europe/Istanbul`, `Etc/GMT-3`) |
-| `merge_window` | string `HH:MM-HH:MM` | | open merge window; the complement is the night no-merge window |
+| `timezone` | string | | IANA tz for the merge window (`Europe/Istanbul`, `Etc/GMT-3`); required with `merge_window` |
+| `merge_window` | string `HH:MM-HH:MM` | | open merge window (hours `00`-`23`); the complement is the night no-merge window; required with `timezone` |
 | `merge_window_mode` | `freeze` \| `pause` | `freeze` | outside the window: `freeze` blocks the merge but keeps gates/CI running; `pause` halts the pipeline |
 | `consent_mode` | `explicit` \| `standing` \| `agent` | `explicit` | default live-run consent mode for every command |
 | `gates` | string[] | | built-in gates to run: any of `build`, `lint`, `jury` |
@@ -70,6 +70,18 @@ specific product.
 `timezone` is an IANA timezone used to evaluate `merge_window`. `merge_window` is the open
 merge interval in `HH:MM-HH:MM` format and may wrap midnight. `keel window` and `keel ship`
 use both values to decide whether a merge may proceed.
+
+The two are **all-or-nothing**: set both, or neither. A config that sets exactly one is a
+`ConfigError`, because the half-configured pair cannot be evaluated — every surface reads
+a missing half as "no window configured" and reports the window *open*, so a project that
+declared `merge_window` and forgot `timezone` used to merge straight through the night it
+meant to block.
+
+Both values are also checked for meaning, not just shape, at `keel validate` time:
+`merge_window` must parse as `HH:MM-HH:MM` with hours `00`-`23` and minutes `00`-`59`
+(`29:00-01:00` is rejected), and `timezone` must resolve as an IANA zone on this machine
+(`Definitely/Nowhere` is rejected). Both used to be accepted and then raised out of the
+middle of a `keel ship` run instead.
 
 #### `merge_window_mode`
 

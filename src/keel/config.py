@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from . import jsonschema_min
 from . import tdd as tdd_mode
@@ -30,6 +31,7 @@ from .capabilities import validate_names
 # the named slots; DEFAULT_GATE_TIMEOUT_S: shared with the gate planner and runner.
 from .model import DEFAULT_GATE_TIMEOUT_S, DEFAULT_JURY_TIMEOUT_S, SLOTS
 from .vocab import BUILTIN_DELEGATE_VENDORS
+from .window import parse_window
 
 SCHEMA_PATH = Path(__file__).parent / "schema" / "project.schema.json"
 
@@ -295,6 +297,62 @@ class ProjectConfig:
         return self.extensions.get(name, ())
 
 
+def _merge_window_issues(data: dict) -> list[str]:
+    """Semantic errors for the ``timezone`` + ``merge_window`` pair (empty == valid).
+
+    The schema owns the *shape* of each key on its own; this owns the *meaning* of the
+    two together, which is the part that decides whether the ``window_gate`` invariant
+    can be evaluated at all (#1076):
+
+    * They are **all-or-nothing.** Both absent is a project that has not asked for a
+      window. Exactly one present is a project that asked and will not get one:
+      :func:`keel.ship.assess` and ``keel window`` both read a missing half as "no
+      window configured" and report the window *open*, so a config declaring
+      ``merge_window`` and forgetting ``timezone`` merged straight through the night
+      it meant to block, silently and with no warning anywhere.
+    * Each half must **actually evaluate.** ``29:00-01:00`` and ``Definitely/Nowhere``
+      both survived to :func:`keel.window.is_merge_open`, where they raised
+      ``ValueError`` / ``ZoneInfoNotFoundError`` out of the middle of a ship run
+      instead of the :class:`ConfigError` every other malformed knob produces.
+
+    Both checks re-derive the answer from the functions that will be asked at
+    evaluation time — ``parse_window`` and ``ZoneInfo`` — rather than restating their
+    rules, so the schema pattern and this validator cannot drift apart. The pattern is
+    kept tight anyway: it is the contract consumers read, and it fails earlier.
+    """
+    errors: list[str] = []
+    timezone = data.get("timezone")
+    merge_window = data.get("merge_window")
+    if isinstance(merge_window, str) and timezone is None:
+        errors.append(
+            f"$.merge_window: {merge_window!r} is set but 'timezone' is not; the merge "
+            "window is evaluated in the project timezone, and with none configured every "
+            "hour reads as open — add an IANA 'timezone' or drop 'merge_window'"
+        )
+    if isinstance(timezone, str) and merge_window is None:
+        errors.append(
+            f"$.timezone: {timezone!r} is set but 'merge_window' is not; a timezone on its "
+            "own gates nothing — add 'merge_window: HH:MM-HH:MM' or drop 'timezone'"
+        )
+    if isinstance(timezone, str):
+        try:
+            ZoneInfo(timezone)
+        except (ValueError, ZoneInfoNotFoundError):
+            errors.append(
+                f"$.timezone: {timezone!r} is not a zone this machine can resolve; give an "
+                "IANA name such as 'Europe/Istanbul' or 'Etc/GMT-3'"
+            )
+    if isinstance(merge_window, str):
+        try:
+            parse_window(merge_window)
+        except ValueError:
+            errors.append(
+                f"$.merge_window: {merge_window!r} is not an evaluable window; give "
+                "'HH:MM-HH:MM' with hours 00-23 and minutes 00-59 (it may wrap midnight)"
+            )
+    return errors
+
+
 def _build(data: dict) -> ProjectConfig:
     k = data["knobs"]
     knobs = Knobs(
@@ -371,6 +429,7 @@ def parse_config(data: Any, *, source: str = "<dict>", schema: dict | None = Non
     if not isinstance(data, dict):
         raise ConfigError(source, [f"$: expected an object (got {type(data).__name__})"])
     errors = validate_data(data, schema)
+    errors.extend(_merge_window_issues(data))
     if isinstance(data, dict) and isinstance(data.get("knobs"), dict):
         knobs = data["knobs"]
         errors.extend(
