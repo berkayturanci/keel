@@ -84,16 +84,54 @@ class OfflineResolver:
         return self._real(host, port, *args, **kwargs)
 
 
+class RecordingConnector:
+    """Stands in for ``socket.create_connection``: records, never connects.
+
+    The guard's pinned connect is ``socket.create_connection((literal, port))``
+    looked up in the ``socket`` module namespace, so patching it there is the
+    narrowest seam that still sees the address the guard chose.
+
+    Standing in for it is what makes the *allowed* cases offline. Reaching a
+    real ``connect`` was how they used to end — a public literal such as
+    ``93.184.216.34`` got an outbound SYN on every run and the suite waited out
+    its timeout, and the failure was then read as "not a policy refusal"
+    (#1084). Refusing here instead costs nothing and says more: the address is
+    recorded, so the claim becomes *the connection goes where the check looked*
+    rather than *it failed for some other reason*.
+    """
+
+    def __init__(self):
+        self.addresses: list[tuple] = []
+
+    def __call__(self, address, *args, **kwargs):
+        self.addresses.append(tuple(address))
+        raise ConnectionRefusedError("the offline suite opens no sockets")
+
+
+def attempt(env, resolve, url="http://name.example/"):
+    """Open ``url`` through the guard without letting a socket out.
+
+    Returns ``(error, addresses)``: the GuardedAddressError the guard raised or
+    None, and every address it handed to :class:`RecordingConnector`. A refusal
+    never reaches the connector, so its ``addresses`` is empty; an allowed host
+    reaches it exactly once, with the literal that was checked.
+    """
+    connector = RecordingConnector()
+    with patch.object(socket, "create_connection", connector):
+        opener = build_http_only_opener(_env=env, _resolve=resolve)
+        try:
+            opener.open(urllib.request.Request(url), timeout=1)
+            error = None  # pragma: no cover - the connector always raises
+        except urllib.error.URLError as exc:
+            error = exc.reason if isinstance(exc.reason, GuardedAddressError) else None
+        except OSError as exc:  # pragma: no cover - direct raise path
+            error = exc if isinstance(exc, GuardedAddressError) else None
+    return error, connector.addresses
+
+
 def refusal(env, resolve, url="http://name.example/"):
     """The GuardedAddressError raised opening ``url``, or None if none was."""
-    opener = build_http_only_opener(_env=env, _resolve=resolve)
-    try:
-        opener.open(urllib.request.Request(url), timeout=1)
-    except urllib.error.URLError as exc:
-        return exc.reason if isinstance(exc.reason, GuardedAddressError) else None
-    except OSError as exc:  # pragma: no cover - direct raise path
-        return exc if isinstance(exc, GuardedAddressError) else None
-    return None  # pragma: no cover - nothing here reaches a real server
+    return attempt(env, resolve, url)[0]
 
 
 class AHostnameCannotReachWhatItsLiteralCannot(unittest.TestCase):
@@ -115,7 +153,9 @@ class AHostnameCannotReachWhatItsLiteralCannot(unittest.TestCase):
 
     def test_the_internal_opt_in_permits_your_own_network(self):
         """Otherwise the guard would refuse the case the opt-in exists for."""
-        self.assertIsNone(refusal(INTERNAL, one("10.0.0.5")))
+        error, addresses = attempt(INTERNAL, one("10.0.0.5"))
+        self.assertIsNone(error)
+        self.assertEqual(addresses, [("10.0.0.5", 80)])
 
     def test_a_literal_loopback_endpoint_still_connects(self):
         """`http://localhost:11434` is the default-allowed local model server.
@@ -123,10 +163,14 @@ class AHostnameCannotReachWhatItsLiteralCannot(unittest.TestCase):
         A guard that refused loopback outright would pass every test above and
         break the most common configuration keel has.
         """
-        self.assertIsNone(refusal(REMOTE, one("127.0.0.1"), url="http://localhost/"))
+        error, addresses = attempt(REMOTE, one("127.0.0.1"), url="http://localhost/")
+        self.assertIsNone(error)
+        self.assertEqual(addresses, [("127.0.0.1", 80)])
 
     def test_a_public_address_is_not_refused(self):
-        self.assertIsNone(refusal(REMOTE, one("93.184.216.34")))
+        error, addresses = attempt(REMOTE, one("93.184.216.34"))
+        self.assertIsNone(error)
+        self.assertEqual(addresses, [("93.184.216.34", 80)])
 
 
 class TheConnectionGoesWhereTheCheckLooked(unittest.TestCase):
