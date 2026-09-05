@@ -25,11 +25,15 @@ import socket
 import unittest
 import urllib.error
 import urllib.request
+from unittest.mock import patch
 
 from keel.api_delegate import GuardedAddressError, build_http_only_opener
 
 REMOTE = {"KEEL_ALLOW_REMOTE_ENDPOINT": "1"}
 INTERNAL = {"KEEL_ALLOW_REMOTE_ENDPOINT": "1", "KEEL_ALLOW_INTERNAL_ENDPOINT": "1"}
+
+#: The host the pinning fixture below hands to an *unpinned* ``connect``.
+FIXTURE_HOST = "unresolvable.invalid"
 
 
 def one(ip: str):
@@ -51,6 +55,33 @@ def counting(*ips: str):
         return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, port))]
 
     return resolve, calls
+
+
+class OfflineResolver:
+    """Stands in for ``socket.getaddrinfo``: :data:`FIXTURE_HOST` never resolves.
+
+    RFC 2606 reserves ``.invalid`` so that it cannot resolve, and resolvers
+    ignore that: home routers, captive portals, search-domain suffixing and
+    ISPs with wildcard NXDOMAIN redirection all hand back an address for it.
+    Asking the machine's own resolver therefore made this fixture depend on
+    which network the suite ran on, and `make test` is the **offline** suite
+    (#1079) — so the fixture host fails here, deterministically, without a
+    query leaving the process.
+
+    Every other host is delegated to the real ``getaddrinfo``, which the guard
+    only ever asks about the IP literal it pinned — parsing a literal is not a
+    lookup, so the delegation stays offline too.
+    """
+
+    def __init__(self):
+        self.hosts: list[str] = []
+        self._real = socket.getaddrinfo
+
+    def __call__(self, host, port, *args, **kwargs):
+        self.hosts.append(host)
+        if host == FIXTURE_HOST:
+            raise socket.gaierror(socket.EAI_NONAME, "nodename nor servname provided")
+        return self._real(host, port, *args, **kwargs)
 
 
 def refusal(env, resolve, url="http://name.example/"):
@@ -99,6 +130,19 @@ class AHostnameCannotReachWhatItsLiteralCannot(unittest.TestCase):
 
 
 class TheConnectionGoesWhereTheCheckLooked(unittest.TestCase):
+    def setUp(self):
+        """Both tests below run against the same stand-in for the OS resolver.
+
+        `socket.create_connection` — what an unpinned guard would reach for —
+        looks `getaddrinfo` up in the `socket` module namespace, so patching it
+        there is what puts this resolver on the path a rebinding connection
+        would take.
+        """
+        self.resolver = OfflineResolver()
+        patcher = patch.object(socket, "getaddrinfo", self.resolver)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_the_socket_goes_to_the_checked_address(self):
         """The rebinding case, asserted on where the socket actually went.
 
@@ -108,11 +152,11 @@ class TheConnectionGoesWhereTheCheckLooked(unittest.TestCase):
         and the test passes against no protection at all. That mutation did
         exactly that here before this was rewritten.
 
-        So the fixture uses a host name that does not resolve in reality and a
-        resolver that answers with a real listening socket. Pinned, the
-        connection reaches the listener and DNS is never consulted. Unpinned,
-        `connect` is handed the unresolvable name and fails with `gaierror` —
-        which is the signal this asserts against.
+        So the fixture uses a host name the stand-in resolver refuses and an
+        injected resolver that answers with a real listening socket. Pinned, the
+        connection reaches the listener and the resolver is never consulted about
+        that name. Unpinned, `connect` is handed the unresolvable name and fails
+        with `gaierror` — which is the signal this asserts against.
         """
         listener = socket.socket()
         self.addCleanup(listener.close)
@@ -125,7 +169,7 @@ class TheConnectionGoesWhereTheCheckLooked(unittest.TestCase):
 
         opener = build_http_only_opener(_env=INTERNAL, _resolve=resolve)
         try:
-            opener.open(urllib.request.Request(f"http://unresolvable.invalid:{port}/"), timeout=0.3)
+            opener.open(urllib.request.Request(f"http://{FIXTURE_HOST}:{port}/"), timeout=0.3)
             reason: BaseException | None = None  # pragma: no cover - silent listener
         except urllib.error.URLError as exc:
             reason = exc.reason if isinstance(exc.reason, BaseException) else exc
@@ -141,14 +185,31 @@ class TheConnectionGoesWhereTheCheckLooked(unittest.TestCase):
             "the connection resolved the host name itself, so the address that "
             "was checked is not the address it went to",
         )
+        self.assertNotIn(
+            FIXTURE_HOST,
+            self.resolver.hosts,
+            "the pinned connection still asked the resolver about the name",
+        )
 
     def test_the_fixture_host_really_does_not_resolve(self):
-        """Vacuity: the test above only means something if DNS would fail.
+        """Vacuity: the test above only means something if resolution would fail.
 
-        `.invalid` is reserved by RFC 2606 precisely so it cannot resolve.
+        Asked of the machine's own resolver this was not offline and not even
+        reliably true — `.invalid` is reserved by RFC 2606 and resolvers answer
+        for it anyway (#1079). Asked of the stand-in the test above runs
+        against, it is both: `socket.create_connection` is exactly what an
+        unpinned guard falls through to, and handing it the fixture host raises
+        `gaierror` through the patched resolver — proved by the call this
+        records, so the vacuity check cannot itself go vacuous by being patched
+        out of the path.
         """
         with self.assertRaises(socket.gaierror):
-            socket.getaddrinfo("unresolvable.invalid", 80)
+            socket.create_connection((FIXTURE_HOST, 80), timeout=0.3)
+        self.assertEqual(
+            self.resolver.hosts,
+            [FIXTURE_HOST],
+            "the stand-in resolver is not on the path connect takes",
+        )
 
 
 class HttpsIsGuardedToo(unittest.TestCase):
