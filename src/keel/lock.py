@@ -172,7 +172,7 @@ def _claim_path(path: Path, *, resource: str, owner: str) -> ClaimResult:
         # claimed the resource behind it — under the *same* owner name, since an owner is
         # a name and not a claim id — so the unwind identifies the directory rather than
         # trusting either the path or the recorded name.
-        _discard_partial_claim(path, owner=clean_owner, identity=identity)
+        _discard_partial_claim(path, owner=clean_owner, identity=identity, pin=pin)
         raise
     finally:
         # After the handler, so the inode stays pinned for the whole comparison above.
@@ -243,7 +243,11 @@ def _release_path(
 
 
 def _discard_partial_claim(
-    path: Path, *, owner: str, identity: tuple[int, int, float | None] | None
+    path: Path,
+    *,
+    owner: str,
+    identity: tuple[int, int, float | None] | None,
+    pin: int | None = None,
 ) -> None:
     """Unwind a claim directory whose initialisation failed — if it is still the one we made.
 
@@ -276,7 +280,15 @@ def _discard_partial_claim(
     a pinned inode is not recycled, so within that window the pair names one directory and
     only one.
 
-    What it does **not** prove: anything on a platform that cannot pin. Windows answers no
+    What it does **not** prove: that nothing can change between the last identity read
+    and the ``rmdir`` itself. ``owner.json`` is unlinked through the pinned descriptor, so
+    that removal is bound to our inode; a directory has no by-descriptor removal in POSIX,
+    so the ``rmdir`` is by name and the identity is re-read right before it. A directory
+    swapped in between those two calls survives if it holds anything — ``rmdir`` refuses a
+    non-empty directory — so the residual exposure is another caller's *empty* claim
+    directory created in that same instant, which its own ``_write_owner`` would then
+    fail on and which it would unwind itself. Nor anything on a platform that cannot pin.
+    Windows answers no
     descriptor, and there this rests on ``stat`` alone — an NTFS file id whose sequence
     number is bumped on reuse, plus ``st_birthtime`` on 3.12+. It also does not survive
     something that removes and re-creates the directory *and* reproduces its recorded
@@ -298,14 +310,32 @@ def _discard_partial_claim(
         # Unable to prove the directory is ours, we leave it: a leaked claim an operator
         # can release is recoverable, another run's deleted lock is not.
         return
-    if _identity(path) != identity:
-        return
     if _holder(path) not in (UNKNOWN_HOLDER, owner):
         return
+    # Everything that removes is kept as close to the identity check as the platform
+    # allows, and bound to the pinned inode where it can be (round 3 of #1077): the
+    # owner file is unlinked *through the pin* (``dir_fd``), so it is our directory's
+    # ``owner.json`` or nothing, whatever the path denotes by now. ``rmdir`` has no such
+    # form — POSIX removes directories by name, never by descriptor — so the identity is
+    # re-read immediately before it and the remaining window is the two syscalls in
+    # between. A directory swapped in *there* survives if it has anything in it
+    # (``rmdir`` refuses a non-empty directory), so what that window can still take is
+    # another caller's empty, just-``mkdir``-ed claim in the same instant. That is the
+    # honest floor of a by-name primitive, and the docs state it.
+    if _identity(path) != identity:
+        return
     try:
-        owner_file = path / "owner.json"
-        if owner_file.exists():
-            owner_file.unlink()
+        if pin is not None:
+            try:
+                os.unlink("owner.json", dir_fd=pin)
+            except FileNotFoundError:
+                pass
+        else:
+            owner_file = path / "owner.json"
+            if owner_file.exists():
+                owner_file.unlink()
+        if _identity(path) != identity:
+            return
         path.rmdir()
     except OSError:
         pass

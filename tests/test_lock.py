@@ -347,6 +347,49 @@ class TestResourceClaims(unittest.TestCase):
             self.assertFalse(path.exists())
             self.assertTrue(lk.claim_resource(d, "merge", owner="agent-b").granted)
 
+    def test_the_unpinned_unwind_still_removes_a_written_owner_file(self):
+        # Without a descriptor the owner file is removed by path, so the branch that
+        # unlinks an existing ``owner.json`` that way has to be exercised too.
+        def _write_then_fail(path, owner):
+            (path / "owner.json").write_text('{"owner": "agent-a"}', encoding="utf-8")
+            raise OSError("no space left on device")
+
+        with tempfile.TemporaryDirectory() as d:
+            path = lk.resource_path(d, "merge")
+            with mock.patch.object(lk.os, "open", side_effect=PermissionError("no dir fd")):
+                with mock.patch.object(lk, "_write_owner", side_effect=_write_then_fail):
+                    with self.assertRaises(OSError):
+                        lk.claim_resource(d, "merge", owner="agent-a")
+
+            self.assertFalse(path.exists())
+
+    def test_a_swap_between_the_owner_unlink_and_the_rmdir_is_caught(self):
+        # The by-name ``rmdir`` re-reads the identity right before it runs. Answer it
+        # with a foreign identity on that read alone and the directory must survive.
+        real = lk._identity
+        reads: list[int] = []
+
+        def _foreign_on_the_last_read(path):
+            reads.append(1)
+            answer = real(path)
+            if len(reads) == 3 and answer is not None:
+                return (answer[0], answer[1] + 1, answer[2])
+            return answer
+
+        with tempfile.TemporaryDirectory() as d:
+            path = lk.resource_path(d, "merge")
+            with mock.patch.object(lk, "_identity", side_effect=_foreign_on_the_last_read):
+                with mock.patch.object(
+                    lk.workspace,
+                    "ensure_runtime_gitignore_for",
+                    side_effect=PermissionError("read-only .keel"),
+                ):
+                    with self.assertRaises(PermissionError):
+                        lk.claim_resource(d, "merge", owner="agent-a")
+
+            self.assertEqual(len(reads), 3)
+            self.assertTrue(path.exists())
+
     def test_unwind_leaves_our_own_directory_once_it_names_someone_else(self):
         # The owner check is the second condition, not a leftover: a directory that still
         # is the one we created but by now records another owner is left alone too.

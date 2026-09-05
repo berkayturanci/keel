@@ -558,7 +558,11 @@ reads between its `mkdir` and its finished `owner.json`. The claim directory's i
 (`st_dev`, `st_ino`, and the birth time where the platform reports one) is recorded right
 after the `mkdir` and re-checked before anything is removed, with the directory held open
 meanwhile so its inode cannot be recycled; a claim that by then names a different owner is
-left alone as well. On Windows, where a directory cannot be held open, the check rests on
+left alone as well. The owner file is unlinked through that open descriptor, so it is bound
+to the recorded inode; a directory has no by-descriptor removal in POSIX, so the `rmdir` is
+by name with the identity re-read right before it — what that last instant can still take is
+another caller's *empty* claim directory created between the two calls, since `rmdir` refuses
+a non-empty one. On Windows, where a directory cannot be held open, the check rests on
 `stat` alone. This is a single-host primitive, not a distributed lock.
 
 The unwind is best-effort, so a claim can still be left held by `<unknown>`: an unmaskable
