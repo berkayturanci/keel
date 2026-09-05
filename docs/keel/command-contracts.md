@@ -543,6 +543,42 @@ The block records:
 - statuses: `granted`, `denied`, `released`, `missing`, and `not-owner`
 - `merge_lock_consumer: true`
 
+`deny_mode: structured-feedback` covers **contention**, not I/O: a resource someone else
+holds comes back as a `denied` result, while a filesystem failure taking or releasing a
+claim raises, so `denied` keeps meaning "held by another owner" for callers that back off
+and retry on it. A failure *after* the claim directory is created — an unwritable `.keel`,
+a full disk — unwinds the half-built claim before the error propagates, because a claim
+directory with no `owner.json` reads as held by `<unknown>`, denies every later claim, and
+nothing releases it (#1077).
+
+That unwind removes **only the directory the failing call itself created**. It cannot go by
+the owner name — an owner is a name, not a claim id, so a claim taken behind us can carry
+the same one — nor by "the claim is ownerless", which is also how another caller's claim
+reads between its `mkdir` and its finished `owner.json`. The claim directory's identity
+(`st_dev`, `st_ino`, and the birth time where the platform reports one) is recorded right
+after the `mkdir` and re-checked before anything is removed, with the directory held open
+meanwhile so its inode cannot be recycled; a claim that by then names a different owner is
+left alone as well. The owner file is unlinked through that open descriptor, so it is bound
+to the recorded inode; a directory has no by-descriptor removal in POSIX, so the `rmdir` is
+by name with the identity re-read right before it — what that last instant can still take is
+another caller's *empty* claim directory created between the two calls, since `rmdir` refuses
+a non-empty one. The same floor applies between the `mkdir` and the pin: anything already in
+the directory the pin latched is treated as contention (`denied`, nothing unwound), and only an
+empty stranger's directory taken in that instant cannot be told from ours. The owner file itself is created exclusively through that descriptor, so a claim taken
+underneath while the directory is being initialised is never overwritten: the create fails and
+the caller sees contention (a file already there) or the original I/O failure (our directory
+gone). A directory that cannot be listed is an I/O failure too, not an empty one. On Windows,
+where a directory cannot be held open, the check rests on `stat` alone, the create is by name
+but still exclusive, and the unwind removes no file — only an empty directory — so a torn owner
+file of our own stays as the documented leak. This is a single-host primitive, not a distributed lock.
+
+The unwind is best-effort, so a claim can still be left held by `<unknown>`: an unmaskable
+kill (`SIGKILL`, container teardown, power loss) where no handler runs, a cleanup that
+cannot finish (the directory unwritable, a stray file the failed step left behind), or one
+the handler declines because the path no longer answers with the identity it recorded.
+Clearing whatever is left is the caller-owned stale recovery — `keel release <resource>`
+with no `--owner` is the deliberate any-owner escape, in all three cases.
+
 The existing merge lock keeps its previous public behavior: it still raises `LockError`
 when the merge resource is already held, while internally using the same claim/release
 primitive. Stale recovery remains caller-owned because keel does not assume a distributed
