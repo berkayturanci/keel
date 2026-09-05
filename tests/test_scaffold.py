@@ -301,6 +301,39 @@ class TestWizardMergeWindowPair(unittest.TestCase):
         self.assertIsNone(config.merge_window)
         self.assertIn("all-or-nothing", warnings[-1])
 
+    def test_a_single_digit_hour_is_re_asked_not_written(self):
+        # The window the wizard used to take and `keel validate` then refused: the shape
+        # check was `parse_window`, which reads '9:00-18:00', while the schema pattern
+        # wants two-digit hours. Both ends ask the same question now (#1082).
+        config, warnings = self._run(
+            {
+                "Configure a merge window": "y",
+                "Timezone": "Etc/GMT-3",
+                "Merge window": _scripted(["9:00-18:00", "09:00-18:00"]),
+            }
+        )
+        self.assertEqual(config.merge_window, "09:00-18:00")
+        self.assertEqual(warnings, [cfg.merge_window_issue("9:00-18:00")])
+
+    def test_the_reviewers_scripted_run_scaffolds_a_config_that_parses(self):
+        # Verbatim from the gate review on #1087: this answer sheet wrote a project.yaml
+        # `parse_config` rejected on the schema pattern. Whatever the wizard settles on,
+        # the file it writes has to parse — here that means no window rather than a bad one.
+        import yaml
+
+        warnings = []
+        text = scaffold.wizard(
+            "python",
+            _scripted(["develop", "y", "Etc/GMT-3", "9:00-18:00", "explicit", "pytest", ""]),
+            repo="demo",
+            notify=warnings.append,
+        )
+        config = cfg.parse_config(yaml.safe_load(text))
+        self.assertIsNone(config.timezone)
+        self.assertIsNone(config.merge_window)
+        self.assertIn("9:00-18:00", warnings[0])
+        self.assertIn("all-or-nothing", warnings[-1])
+
     def test_a_wizard_with_no_notify_still_survives_a_bad_answer(self):
         import yaml
 

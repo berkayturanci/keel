@@ -2217,10 +2217,15 @@ Merge window HH:MM-HH:MM [07:00-01:30]:
 
 Answer `n` and neither key is written — a project with no window, which is a valid config.
 Answer `y` and neither half is skippable: each answer is checked on entry with the very
-function `keel validate` will check it with (`ZoneInfo` for the zone, `parse_window` for the
-hours), and a value that will not evaluate is reported in the validator's own words and
-asked for again, up to three times. Give up on either half and the wizard drops the
-*pair* — it never writes one key without the other.
+checks `keel validate` will apply — `ZoneInfo` for the zone, and for the hours the
+bundled schema's own `merge_window` pattern (two-digit hours `00`–`23`, minutes `00`–`59`)
+plus `parse_window` — and a value that will not evaluate is reported in the validator's
+own words and asked for again, up to three times. Give up on either half and the wizard
+drops the *pair* — it never writes one key without the other.
+
+The shape rule is read out of `project.schema.json` rather than restated, so the prompt
+cannot accept what the schema refuses: `9:00-18:00` parses fine as a time but is not a
+window keel writes, and the wizard asks again instead of scaffolding it.
 
 <a id="init-team-step"></a>
 
