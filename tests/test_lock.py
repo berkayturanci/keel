@@ -452,6 +452,28 @@ class TestResourceClaims(unittest.TestCase):
 
             self.assertEqual(lk._holder(path), "agent-b")
 
+    def test_an_owner_file_that_appears_in_our_pinned_directory_is_contention(self):
+        # Round-6 finding: this arm released the pin itself and the ``finally`` released
+        # it again, so the denied result was replaced by EBADF. The exclusive create
+        # through the pin finds a stranger's owner file in the still-linked directory
+        # this call made; that is reported as contention, once, with the pin closed once.
+        def _stamp_b_into_our_directory(artifact_path):
+            lk._write_owner(Path(artifact_path), "agent-b")
+
+        with tempfile.TemporaryDirectory() as d:
+            path = lk.resource_path(d, "merge")
+            with mock.patch.object(
+                lk.workspace,
+                "ensure_runtime_gitignore_for",
+                side_effect=_stamp_b_into_our_directory,
+            ):
+                result = lk.claim_resource(d, "merge", owner="agent-a")
+
+            self.assertFalse(result.granted)
+            self.assertEqual(result.reason, "resource-already-claimed")
+            self.assertEqual(result.holder, "agent-b")
+            self.assertEqual(lk._holder(path), "agent-b")
+
     def test_the_unpinned_claim_reports_contention_instead_of_overwriting(self):
         # Without a descriptor the create is by name but exclusive: the stranger's
         # owner file makes it fail, and that is reported as contention, not granted.

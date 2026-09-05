@@ -203,7 +203,7 @@ def _claim_path(path: Path, *, resource: str, owner: str) -> ClaimResult:
             # live claim is theirs. A pinned directory that was *removed* underneath
             # surfaces as ``FileNotFoundError`` from the same create, an I/O failure
             # that propagates below; the unwind then finds no directory and leaves it.
-            _unpin(pin)
+            # The pin is released by the ``finally`` below, once, on this path too.
             return ClaimResult(
                 schema_version=SCHEMA_VERSION,
                 resource=resource,
