@@ -367,7 +367,7 @@ def _discard_partial_claim(
     if _identity(path) != identity:
         return
     try:
-        if pin is not None:
+        if pin is not None:  # pragma: no cover - needs a directory descriptor (POSIX)
             # Bound to our inode: this is our directory's owner file or nothing.
             try:
                 os.unlink("owner.json", dir_fd=pin)
@@ -456,7 +456,7 @@ def _pinned(path: Path) -> Iterator[int | None]:
     try:
         yield pin
     finally:
-        if pin is not None:
+        if pin is not None:  # pragma: no cover - needs a directory descriptor (POSIX)
             os.close(pin)
 
 
@@ -475,7 +475,7 @@ def _write_owner(path: Path, owner: str, *, pin: int | None = None) -> None:
     write leaves a torn file, which :func:`_holder` reads as :data:`UNKNOWN_HOLDER`.
     """
     payload = json.dumps({"owner": owner}, sort_keys=True) + "\n"
-    if pin is not None:
+    if pin is not None:  # pragma: no cover - needs a directory descriptor (POSIX)
         fd = os.open("owner.json", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=pin)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(payload)
