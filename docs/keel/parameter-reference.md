@@ -413,7 +413,7 @@ keel merge <project.yaml> --pr N [--root DIR] [--issue N] [--method squash|merge
 | `--issue N` | positive int | `None` | Linked issue for evidence verification; otherwise inferred from the PR body's `Closes #N`. |
 | `--method` | `squash` \| `merge` \| `rebase` | `squash` | GitHub merge method passed to `gh`. |
 | `--owner ID` | string | `keel-merge-pr-<N>` | Merge-lock claim owner id. |
-| `--hotfix` | flag | off | Audited merge-window bypass (window check skipped; recorded as `window: {bypassed: true, reason: "hotfix"}`). |
+| `--hotfix` | flag | off | Audited bypass of the merge window **and** the gates-SHA requirement (recorded as `window: {bypassed: true, reason: "hotfix"}` and `gates_sha: {bypassed: true, reason: "hotfix"}`). Requires a justification — see below. |
 | `--dry-run` | flag | off | Run every check stage, stop before the merge (exit 0). |
 | `--approve-scope` / `--operator` / `--consent-mode` | shared | — | Consent for side effects `git_worktree` + `merge` (scopes `filesystem`, `git`, `github`). |
 | `--risk-tier` | `tier-1` \| `tier-2` \| `tier-3` | `tier-1` | Risk input to the deterministic escalation evaluation. |
@@ -434,12 +434,22 @@ operator escalation required with an unapproved escalation scope; lock denied
 snapshot; PR merge state not in `CLEAN`/`HAS_HOOKS`/`UNKNOWN`; CI rollup not `pass`
 (failure-before-pending precedence: any failing check fails the rollup even with pending
 checks); evidence gate not enforced (`evidence gate is not enforced` — a PR without ship
-provenance cannot pass through `keel merge`); missing evidence artifacts; and finally a
-failed `gh` merge. The lock is always released in a `finally` block.
+provenance cannot pass through `keel merge`); missing evidence artifacts; no gates-pass
+ledger record for the current head (unless `--hotfix`); an uncovered checkpoint when
+checkpointing is configured; and finally a failed `gh` merge. The lock is always released
+in a `finally` block.
 
-**`--hotfix`** bypasses *only* the window check. It never bypasses the lock, CI rollup,
-or evidence verification, and the bypass is recorded in the JSON payload (`window:
-{bypassed: true, reason: "hotfix"}`) for audit.
+**`--hotfix`** bypasses two checks, and only those two: the **merge window** and the
+**gates-SHA requirement** (the ledger record proving the gates passed on this exact head).
+Both bypasses are recorded in the JSON payload for audit — `window: {bypassed: true,
+reason: "hotfix"}` and `gates_sha: {bypassed: true, reason: "hotfix"}` — and the run needs
+a recorded justification (`--blocker-rule` or `--operator-override`) before either
+happens. It never bypasses the merge lock, the CI rollup, evidence verification, the
+checkpoint gate, or blocking findings.
+
+The same two lists are published machine-readably on every review contract as
+`review_merge_contract.merge_gate.hotfix_bypasses` and `…hotfix_never_bypasses`, so a
+consumer can ask what a hotfix merge did *not* check without reading this page.
 
 **Escalation** (`consent.evaluate_escalation`) is deterministic: side-effecting commands
 always trigger `irreversible-or-side-effecting`; the required escalation scopes must be
@@ -2032,7 +2042,7 @@ positionals are all rejected as user error.
 | `--review-comments` | `inline` \| `summary` | `inline` | How reviewer findings post in s7. |
 | `--reviewers` | `1` \| `2` \| `3` | auto (from `knobs.team.review`, else the tier) | Override the resolved reviewer count. On a tier whose `team.review` policy is `jury` it is reported in `assignment.warnings` instead: the panel is the review, and there are no host slots to size. |
 | `--jury` / `--no-jury` / `--jury-advisory` | flags | tier-driven | Cross-vendor jury gate control (s8). Precedence: a `knobs.team` jury-panel tier > `--no-jury` > `--jury` > tier-3 auto > off. **None of them changes the reviewer bench**; on a panel tier they are recorded in `assignment.warnings` and not applied, because the panel is that tier's only review. |
-| `--hotfix` | flag | off | Audited merge-window bypass at s10. |
+| `--hotfix` | flag | off | Audited bypass of the merge window and the gates-SHA requirement at s10. |
 | `--dry-run` | flag | off | Read-only rehearsal of s0–s8. |
 | `--wizard` | flag | off | Interactive pre-s1 config collector (interactive contexts only). |
 
@@ -2202,10 +2212,12 @@ is posted through `keel post-comment --artifact jury-verdict`.
 
 ### `--hotfix`
 
-Promotes the issue to a window-bypassing blocker. At s10 the bypass happens *inside*
-`keel merge --hotfix`: it skips only the window check — the merge lock, CI rollup,
-evidence verification, and consent scopes all still apply, and the bypass is recorded in
-the merge payload and the run ledger for audit. Blocker status can also be
+Promotes the issue to a blocker that may merge outside the window. At s10 the bypass
+happens *inside* `keel merge --hotfix`, and it skips exactly two checks: the merge window
+and the gates-SHA requirement. The merge lock, CI rollup, evidence verification, the
+checkpoint gate, blocking findings, and the consent scopes all still apply, and both
+bypasses are recorded in the merge payload and the run ledger for audit. Blocker status
+can also be
 auto-detected at s3 (alert labels, word-boundary blocker regex on title/body,
 high-priority + urgent keyword, or a red gating workflow on `base_branch`); `--hotfix`
 is the explicit human override. Use sparingly.

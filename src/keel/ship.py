@@ -30,6 +30,22 @@ POSTING_MODES = frozenset({"inline", "summary"})
 # that did not complete cleanly never gates" falls out of the same comparison.
 MINIMUM_JURY_VENDORS = 2
 
+#: What ``keel merge --hotfix`` actually skips, named by the keys the ``keel.merge.v1``
+#: record marks ``{"bypassed": true, "reason": "hotfix"}``.
+#:
+#: The contract used to publish a single ``hotfix_bypasses_window_only: True``, which
+#: has been false since the gates-SHA bypass landed: a consumer reading it would treat a
+#: hotfix merge as gates-verified when no gates-pass ledger record was ever matched
+#: (#1078). Keep this tuple derived from :func:`keel.cli._cmd_merge` — the agreement is
+#: pinned by ``tests/test_cli.py``, which reads it back off a real ``--hotfix`` run.
+HOTFIX_BYPASSES = ("gates_sha", "window")
+
+#: What ``--hotfix`` never skips. All but ``findings`` are keys of the same merge record,
+#: present and un-bypassed on a hotfix run. ``findings`` blocks earlier — at the review
+#: verdict this contract's ``finding_policy`` block governs — so a blocked change never
+#: reaches the merge command to have a key there at all.
+HOTFIX_NEVER_BYPASSES = ("checkpoint_gate", "ci", "evidence", "findings", "lock")
+
 REVIEW_FOCUS_A = (
     "logic correctness",
     "null safety",
@@ -445,8 +461,8 @@ def resolve_review_contract(
             "merge_window_applies_to": "literal-merge-only",
             "merge_lock_scope": "literal-merge-only",
             "final_mergeability_recheck_inside_lock": True,
-            "hotfix_bypasses_window_only": True,
-            "hotfix_never_bypasses_findings_or_ci": True,
+            "hotfix_bypasses": list(HOTFIX_BYPASSES),
+            "hotfix_never_bypasses": list(HOTFIX_NEVER_BYPASSES),
             "pr_merged_state_authoritative": True,
         },
         "closeout": {
