@@ -543,6 +543,16 @@ The block records:
 - statuses: `granted`, `denied`, `released`, `missing`, and `not-owner`
 - `merge_lock_consumer: true`
 
+`deny_mode: structured-feedback` covers **contention**, not I/O: a resource someone else
+holds comes back as a `denied` result, while a filesystem failure taking or releasing a
+claim raises, so `denied` keeps meaning "held by another owner" for callers that back off
+and retry on it. A failure *after* the claim directory is created — an unwritable `.keel`,
+a full disk — unwinds the half-built claim before the error propagates, because a claim
+directory with no `owner.json` reads as held by `<unknown>`, denies every later claim, and
+nothing releases it (#1077). Only an unmaskable kill (`SIGKILL`, container teardown, power
+loss) can still leave one behind; clearing that is the caller-owned stale recovery —
+`keel release <resource>` with no `--owner` is the deliberate any-owner escape.
+
 The existing merge lock keeps its previous public behavior: it still raises `LockError`
 when the merge resource is already held, while internally using the same claim/release
 primitive. Stale recovery remains caller-owned because keel does not assume a distributed

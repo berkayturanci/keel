@@ -2,6 +2,7 @@
 
 import tempfile
 import unittest
+import unittest.mock as mock
 from pathlib import Path
 
 from keel import lock as lk
@@ -123,6 +124,58 @@ class TestResourceClaims(unittest.TestCase):
 
             (path / "extra").unlink()
             lk.release_resource(d, "shared", owner="agent-a")
+
+    def test_a_failed_gitignore_scaffold_leaves_no_claim_behind(self):
+        # #1077: the directory is created before the claim is initialised. A failure in
+        # between used to leave it there — held by <unknown>, released by nobody.
+        with tempfile.TemporaryDirectory() as d:
+            path = lk.resource_path(d, "merge")
+            with mock.patch.object(
+                lk.workspace,
+                "ensure_runtime_gitignore_for",
+                side_effect=PermissionError("read-only .keel"),
+            ):
+                with self.assertRaises(PermissionError):
+                    lk.claim_resource(d, "merge", owner="agent-a")
+
+            self.assertFalse(path.exists())
+            reclaimed = lk.claim_resource(d, "merge", owner="agent-b")
+            self.assertTrue(reclaimed.granted)
+            self.assertEqual(reclaimed.holder, "agent-b")
+
+    def test_a_failed_owner_write_leaves_no_claim_behind(self):
+        # The half-written owner.json goes too, so the retry does not inherit it.
+        def _tear_the_owner_file(path, owner):
+            (path / "owner.json").write_text('{"owner":', encoding="utf-8")
+            raise OSError("no space left on device")
+
+        with tempfile.TemporaryDirectory() as d:
+            path = lk.resource_path(d, "merge")
+            with mock.patch.object(lk, "_write_owner", side_effect=_tear_the_owner_file):
+                with self.assertRaises(OSError):
+                    lk.claim_resource(d, "merge", owner="agent-a")
+
+            self.assertFalse(path.exists())
+            reclaimed = lk.claim_resource(d, "merge", owner="agent-b")
+            self.assertTrue(reclaimed.granted)
+            self.assertEqual(reclaimed.holder, "agent-b")
+
+    def test_unremovable_partial_claim_still_reports_the_original_failure(self):
+        # Cleanup is best-effort: when it cannot finish, the caller must still see the
+        # failure that started it rather than the rmdir's own OSError.
+        def _litter_then_fail(artifact_path):
+            (Path(artifact_path) / "stray").write_text("x", encoding="utf-8")
+            raise PermissionError("read-only .keel")
+
+        with tempfile.TemporaryDirectory() as d:
+            path = lk.resource_path(d, "merge")
+            with mock.patch.object(
+                lk.workspace, "ensure_runtime_gitignore_for", side_effect=_litter_then_fail
+            ):
+                with self.assertRaises(PermissionError):
+                    lk.claim_resource(d, "merge", owner="agent-a")
+
+            self.assertTrue(path.exists())
 
     def test_resource_claim_context_releases_granted_claim_only(self):
         with tempfile.TemporaryDirectory() as d:

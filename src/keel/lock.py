@@ -24,9 +24,10 @@ SCHEMA_VERSION = "keel.resource-claim.v1"
 #: Holder of a claim whose owner cannot be read — ``owner.json`` missing, corrupt,
 #: unreadable, or the wrong shape. Deliberately *not* ``None``: the claim directory
 #: exists, so the resource **is** held; we simply cannot name by whom. The window is
-#: ordinary rather than exotic, because :func:`_claim_path` creates the directory
-#: before it writes the owner file, so any crash, kill, or container teardown in
-#: between leaves the lock held but ownerless.
+#: narrow but real, because :func:`_claim_path` creates the directory before it writes
+#: the owner file. An *error* in that window now unwinds the half-built claim (#1077);
+#: what remains is the unmaskable case — ``SIGKILL``, container teardown, power loss —
+#: where no handler of ours ever runs and the lock is left held but ownerless.
 UNKNOWN_HOLDER = "<unknown>"
 
 
@@ -69,7 +70,15 @@ def contract_as_dict() -> dict[str, Any]:
 
 
 def claim_resource(root: str | Path, resource: str, *, owner: str) -> ClaimResult:
-    """Claim a named resource under ``root`` for exactly one owner."""
+    """Claim a named resource under ``root`` for exactly one owner.
+
+    Contention is structured feedback: a resource already held comes back as a ``denied``
+    result, never an exception. An **I/O failure** is not contention and still raises, the
+    same way :func:`release_resource` propagates one — ``denied`` has to keep meaning
+    "somebody else holds this" for callers that back off and retry on it. What the raise
+    guarantees is that no claim survives it: a failure after the directory is created
+    unwinds it, so the resource is left free rather than held by nobody.
+    """
     path = resource_path(root, resource)
     return _claim_path(path, resource=_clean(resource, "unknown-resource"), owner=owner)
 
@@ -139,8 +148,17 @@ def _claim_path(path: Path, *, resource: str, owner: str) -> ClaimResult:
             reason="resource-already-claimed",
             holder=_holder(path),
         )
-    workspace.ensure_runtime_gitignore_for(path)
-    _write_owner(path, clean_owner)
+    try:
+        workspace.ensure_runtime_gitignore_for(path)
+        _write_owner(path, clean_owner)
+    except BaseException:
+        # Everything past the ``mkdir`` is initialisation of a claim *this* call owns:
+        # a directory that already existed left through ``FileExistsError`` above, so
+        # unwinding here can never delete somebody else's live claim. Left in place, the
+        # half-built claim is worse than the error that caused it — it is held forever by
+        # ``UNKNOWN_HOLDER``, denies every later claim, and nothing releases it (#1077).
+        _discard_partial_claim(path)
+        raise
     return ClaimResult(
         schema_version=SCHEMA_VERSION,
         resource=resource,
@@ -204,6 +222,24 @@ def _release_path(
         reason="claim-released",
         holder=holder,
     )
+
+
+def _discard_partial_claim(path: Path) -> None:
+    """Unwind a claim directory whose initialisation failed.
+
+    Best-effort by design: the caller re-raises the failure that got us here, and that
+    error is the one worth reporting. If the cleanup itself cannot finish — the directory
+    is unwritable, or the failed step left a file behind that ``rmdir`` refuses — masking
+    the original cause with the cleanup's own ``OSError`` would hide *why* the claim
+    failed and leave the operator with the leaked directory either way.
+    """
+    try:
+        owner_file = path / "owner.json"
+        if owner_file.exists():
+            owner_file.unlink()
+        path.rmdir()
+    except OSError:
+        pass
 
 
 def _write_owner(path: Path, owner: str) -> None:
