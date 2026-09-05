@@ -553,18 +553,12 @@ class TestClaudeCodePlugin(unittest.TestCase):
     """Lock the repo-level Claude Code plugin packaging (issue #135)."""
 
     def _read_manifest(self) -> dict:
-        import json
-
         return json.loads((REPO_ROOT / install.PLUGIN_MANIFEST).read_text(encoding="utf-8"))
 
     def _read_marketplace(self) -> dict:
-        import json
-
         return json.loads((REPO_ROOT / install.PLUGIN_MARKETPLACE).read_text(encoding="utf-8"))
 
     def _read_codex_manifest(self) -> dict:
-        import json
-
         return json.loads((REPO_ROOT / install.CODEX_PLUGIN_MANIFEST).read_text(encoding="utf-8"))
 
     def test_plugin_files_render_from_adapter_bodies(self):
