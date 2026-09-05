@@ -160,7 +160,10 @@ def _claim_path(path: Path, *, resource: str, owner: str) -> ClaimResult:
     # handed to a directory somebody else creates at this path; the unwind below touches
     # nothing that does not answer with that same identity.
     pin = _pin(path)
-    identity = _identity(path)
+    # Read through the pin where there is one: the identity must be the inode the pin
+    # holds, not whatever the path denotes by now (round 7 of #1077 — the two can differ
+    # as soon as the path is retargeted, and a path-read identity then names the stranger).
+    identity = _identity(path, pin)
     try:
         taken = _has_entries(path, pin)
     except OSError:
@@ -408,11 +411,14 @@ def _has_entries(path: Path, pin: int | None) -> bool:
     return bool(entries)
 
 
-def _identity(path: Path) -> tuple[int, int, float | None] | None:
+def _identity(path: Path, pin: int | None = None) -> tuple[int, int, float | None] | None:
     """Return ``(st_dev, st_ino, birth time)`` for ``path``, or ``None`` if unknowable.
 
     ``None`` is the fail-closed answer — the directory is gone, or its metadata cannot be
-    read — and callers treat it as "not the directory I am looking for".
+    read — and callers treat it as "not the directory I am looking for". With ``pin`` the
+    answer is ``fstat`` of the held descriptor: the inode this call created, whatever the
+    path denotes by the time it is asked. The unwind then compares the *path's* identity
+    against it, so a path retargeted to somebody else's directory never matches.
 
     The device and inode pair is the portable half, and :func:`_pin` is what makes it
     conclusive. ``st_birthtime`` is added where the platform reports one (macOS/APFS, the
@@ -424,7 +430,7 @@ def _identity(path: Path) -> tuple[int, int, float | None] | None:
     exactly the failure this cleanup exists for.
     """
     try:
-        info = path.stat()
+        info = os.fstat(pin) if pin is not None else path.stat()
     except OSError:
         return None
     return (info.st_dev, info.st_ino, getattr(info, "st_birthtime", None))

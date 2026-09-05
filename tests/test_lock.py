@@ -370,9 +370,9 @@ class TestResourceClaims(unittest.TestCase):
         real = lk._identity
         reads: list[int] = []
 
-        def _swap_after_the_first_unwind_read(path):
+        def _swap_after_the_first_unwind_read(path, pin=None):
             reads.append(1)
-            answer = real(path)
+            answer = real(path, pin)
             if len(reads) == 2:
                 path.rmdir()  # ours is empty here; rmtree would need the patched os.open
                 path.mkdir()
@@ -474,6 +474,35 @@ class TestResourceClaims(unittest.TestCase):
             self.assertEqual(result.holder, "agent-b")
             self.assertEqual(lk._holder(path), "agent-b")
 
+    def test_the_identity_is_the_pinned_inode_not_the_path(self):
+        # Round-7 finding: the identity was read by path after the pin, so a path
+        # retargeted in between recorded the stranger's inode as ours and the unwind
+        # deleted their empty claim. Read through the pin, the identity is our inode
+        # and the stranger's directory never matches it.
+        real = lk._identity
+        reads: list[int] = []
+
+        def _retarget_on_the_first_read(path, pin=None):
+            reads.append(1)
+            if len(reads) == 1:
+                path.rmdir()
+                path.mkdir()
+            return real(path, pin)
+
+        with tempfile.TemporaryDirectory() as d:
+            path = lk.resource_path(d, "merge")
+            with mock.patch.object(lk, "_identity", side_effect=_retarget_on_the_first_read):
+                with mock.patch.object(
+                    lk.workspace,
+                    "ensure_runtime_gitignore_for",
+                    side_effect=PermissionError("read-only .keel"),
+                ):
+                    with self.assertRaises(PermissionError):
+                        lk.claim_resource(d, "merge", owner="agent-a")
+
+            self.assertTrue(path.exists())
+            self.assertFalse(lk.claim_resource(d, "merge", owner="agent-c").granted)
+
     def test_the_unpinned_claim_reports_contention_instead_of_overwriting(self):
         # Without a descriptor the create is by name but exclusive: the stranger's
         # owner file makes it fail, and that is reported as contention, not granted.
@@ -504,9 +533,9 @@ class TestResourceClaims(unittest.TestCase):
         real = lk._identity
         reads: list[int] = []
 
-        def _foreign_on_the_last_read(path):
+        def _foreign_on_the_last_read(path, pin=None):
             reads.append(1)
-            answer = real(path)
+            answer = real(path, pin)
             if len(reads) == 3 and answer is not None:
                 return (answer[0], answer[1] + 1, answer[2])
             return answer
