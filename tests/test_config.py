@@ -3,6 +3,7 @@
 import copy
 import re
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest import mock
 from zoneinfo import ZoneInfoNotFoundError
@@ -39,11 +40,12 @@ class TestMergeWindowMode(unittest.TestCase):
 
 
 class TestMergeWindowIsEvaluable(unittest.TestCase):
-    """`timezone` + `merge_window` must be a pair that `is_merge_open` can answer (#1076).
+    """`timezone` + `merge_window` must be a pair `is_merge_open` can answer *usefully*.
 
-    All three shapes below used to pass `keel validate` and then fail somewhere worse:
-    the half-configured pair silently opened the window, and the two unevaluable values
-    raised out of the middle of a ship run.
+    Three shapes used to pass `keel validate` and then fail somewhere worse (#1076): the
+    half-configured pair silently opened the window, and the two unevaluable values raised
+    out of the middle of a ship run. A fourth evaluates fine and answers uselessly (#1091):
+    a zero-length window is closed at every instant there is.
     """
 
     @staticmethod
@@ -117,10 +119,11 @@ class TestMergeWindowIsEvaluable(unittest.TestCase):
                 errors = cfg.validate_data({**VALID, "merge_window": spec})
                 self.assertTrue(any("merge_window" in e for e in errors), errors)
 
-    def test_merge_window_issue_answers_exactly_what_the_schema_pattern_answers(self):
+    def test_merge_window_issue_takes_its_shape_rule_from_the_schema_pattern(self):
         # #1082: the helper asked `parse_window` alone, which reads the single-digit hour
         # in '9:00-18:00' that the schema pattern refuses — so `keel init --wizard`
         # accepted a value the next `keel validate` rejected. One question, one answer.
+        # The span rule below is the one place the two deliberately diverge (#1091).
         pattern = cfg.merge_window_pattern()
         self.assertEqual(
             pattern.pattern, cfg.load_schema()["properties"]["merge_window"]["pattern"]
@@ -131,6 +134,52 @@ class TestMergeWindowIsEvaluable(unittest.TestCase):
                 self.assertEqual(cfg.merge_window_issue(spec) is None, accepted_by_pattern)
                 self.assertEqual(
                     cfg.validate_data({**VALID, "merge_window": spec}) == [], accepted_by_pattern
+                )
+
+    def test_a_zero_length_window_is_rejected(self):
+        # #1091: '09:00-09:00' cleared the pattern, `parse_window` and the pair rule, so
+        # `keel validate` printed OK — and `is_merge_open` then answered False at every
+        # instant, deferring every `keel ship` at the merge gate for ever.
+        with self.assertRaises(cfg.ConfigError) as ctx:
+            cfg.parse_config(self._config(timezone="Etc/UTC", merge_window="09:00-09:00"))
+        message = str(ctx.exception)
+        self.assertIn("$.merge_window", message)
+        self.assertIn("09:00-09:00", message)
+        # The message says what the window would have *done*, not merely that it is refused.
+        self.assertIn("never open", message)
+
+    def test_a_zero_length_window_is_closed_at_every_instant_and_the_pattern_cannot_say_so(self):
+        # The repro from the issue, kept as the reason the rule exists.
+        self.assertFalse(
+            any(
+                window.is_merge_open("Etc/UTC", "09:00-09:00", now=datetime(2026, 1, 1, hh, mm))
+                for hh in range(24)
+                for mm in (0, 30)
+            )
+        )
+        # A regex relates no capture to another, so the published contract takes the shape
+        # on its own: comparing the two ends is something only the semantic layer can do,
+        # which is why this rule sits beside the all-or-nothing one rather than in the schema.
+        self.assertIsNotNone(cfg.merge_window_pattern().fullmatch("09:00-09:00"))
+        self.assertEqual(cfg.validate_data({**VALID, "merge_window": "09:00-09:00"}), [])
+        for spec in ("00:00-00:00", "09:00-09:00", "23:59-23:59"):
+            with self.subTest(window=spec):
+                self.assertIn(spec, cfg.merge_window_issue(spec))
+
+    def test_a_one_minute_window_and_a_wrap_around_window_stay_valid(self):
+        # Only the degenerate equal case is refused. Both of these are open *somewhere*
+        # in the day, which is the property the span rule is really asking about.
+        for spec in ("09:00-09:01", "22:00-06:00"):
+            with self.subTest(window=spec):
+                self.assertIsNone(cfg.merge_window_issue(spec))
+                config = cfg.parse_config(self._config(timezone="Etc/UTC", merge_window=spec))
+                self.assertEqual(config.merge_window, spec)
+                self.assertTrue(
+                    any(
+                        window.is_merge_open("Etc/UTC", spec, now=datetime(2026, 1, 1, hh, mm))
+                        for hh in range(24)
+                        for mm in (0, 1, 30)
+                    )
                 )
 
     def test_a_relaxed_pattern_would_still_not_get_an_unevaluable_window_through(self):
