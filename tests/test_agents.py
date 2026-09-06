@@ -3,7 +3,7 @@
 import unittest
 from unittest import mock
 
-from keel import agents, contracts, swarm
+from keel import agents, contracts, swarm, team
 from keel import config as cfg
 
 CONFIG = cfg.parse_config(
@@ -62,18 +62,103 @@ class TestSplitDelegate(unittest.TestCase):
         self.assertEqual(agents.split_delegate("ollama:"), ("ollama", None))
 
 
-class TestResolveAgent(unittest.TestCase):
-    def test_delegate_wins(self):
-        self.assertEqual(agents.resolve_agent(CONFIG, role="mobile", delegate="codex"), "codex")
+#: `CONFIG`'s routing, said in the vocabulary that replaced `knobs.implementer_agents`.
+#: A deprecated value is a bare subagent name; `keel.team.legacy_seats` is what gives it
+#: the explicit `subagent:` prefix a migrated config writes out.
+MIGRATED_CONFIG = cfg.parse_config(
+    {
+        "extends": "keel",
+        "core_version": "^0.1",
+        "base_branch": "main",
+        "knobs": {
+            "build_gate_cmd": "make test",
+            "team": {
+                "implement": {
+                    "by_role": {
+                        "mobile": {"provider": "subagent:flutter-developer"},
+                        "backend": {"provider": "subagent:supabase-developer"},
+                    }
+                }
+            },
+        },
+    }
+)
 
-    def test_role_mapping(self):
-        self.assertEqual(agents.resolve_agent(CONFIG, role="mobile"), "flutter-developer")
 
-    def test_unknown_role_falls_back_to_host(self):
-        self.assertEqual(agents.resolve_agent(CONFIG, role="desktop", host_agent="agy"), "agy")
+class TestOneImplementerResolver(unittest.TestCase):
+    """The implementer rule lives in :mod:`keel.team`, and only there (#1099).
 
-    def test_default_host(self):
-        self.assertEqual(agents.resolve_agent(CONFIG), "claude")
+    ``agents.resolve_agent`` used to answer "who implements this role?" from
+    ``knobs.implementer_agents`` alone — the spelling the schema deprecates — so a project
+    that had migrated to ``knobs.team.implement.by_role`` got a different answer from the
+    published helper than from every path that actually ships. It is retired rather than
+    repaired: the rule resolves a :class:`keel.team.Seat` *and* the config path it came
+    from, and a helper flattening that back to a bare string would have been a second,
+    lossier statement of the same precedence — two rules again, which is the defect.
+    Nothing but this test ever called it.
+    """
+
+    def implementer(self, config, **kwargs):
+        """The seat :func:`keel.team.resolve_assignment` staffs, as a record."""
+        assignment = team.resolve_assignment(
+            config.knobs.team, legacy=agents.legacy_team_seats(config), **kwargs
+        )
+        return assignment["implementer"]
+
+    def test_agents_publishes_no_second_implementer_resolver(self):
+        self.assertNotIn("resolve_agent", agents.__all__)
+        self.assertFalse(hasattr(agents, "resolve_agent"))
+
+    def test_both_role_spellings_resolve_to_the_same_seat(self):
+        deprecated = self.implementer(CONFIG, role="mobile")
+        current = self.implementer(MIGRATED_CONFIG, role="mobile")
+
+        self.assertEqual(current["name"], "flutter-developer")
+        self.assertEqual(current["kind"], "subagent")
+        for field in ("provider", "name", "kind", "model", "effort"):
+            with self.subTest(field=field):
+                self.assertEqual(deprecated[field], current[field])
+
+    def test_the_resolver_still_says_which_spelling_answered(self):
+        # Same seat, different provenance: a deprecation is only reportable while the
+        # resolver keeps naming the key it read.
+        self.assertEqual(
+            self.implementer(CONFIG, role="mobile")["source"],
+            "knobs.implementer_agents.mobile (deprecated)",
+        )
+        self.assertEqual(
+            self.implementer(MIGRATED_CONFIG, role="mobile")["source"],
+            "team.implement.by_role.mobile",
+        )
+
+    def test_an_unknown_role_falls_back_to_the_host_agent(self):
+        for config in (CONFIG, MIGRATED_CONFIG):
+            with self.subTest(config=config):
+                seat = self.implementer(config, role="desktop", host_agent="agy")
+                self.assertEqual(seat["provider"], "agy")
+                self.assertEqual(seat["source"], "host")
+
+    def test_an_explicit_delegate_still_wins(self):
+        for config in (CONFIG, MIGRATED_CONFIG):
+            with self.subTest(config=config):
+                seat = self.implementer(config, role="mobile", delegate="codex")
+                self.assertEqual(seat["provider"], "codex")
+                self.assertEqual(seat["source"], "flag:--delegate")
+
+    def test_every_legacy_delegate_token_still_passes_through_unchanged(self):
+        # What `test_resolve_agent_is_unchanged` guarded, asked of the resolver that
+        # survived: `--delegate` is the caller's word and keel does not reinterpret it.
+        for value, (vendor, model) in LEGACY_DELEGATES:
+            with self.subTest(delegate=value):
+                seat = self.implementer(PROFILE_CONFIG, role="mobile", delegate=value)
+                self.assertEqual(seat["provider"], vendor)
+                self.assertEqual(seat["model"], model)
+                self.assertEqual(seat["name"], vendor)
+
+    def test_a_profile_name_is_just_a_delegate_token(self):
+        seat = self.implementer(PROFILE_CONFIG, role="mobile", delegate="cursor")
+        self.assertEqual(seat["provider"], "cursor")
+        self.assertEqual(seat["source"], "flag:--delegate")
 
 
 class TestModelBase(unittest.TestCase):
@@ -263,12 +348,6 @@ class TestResolveDelegateProfile(unittest.TestCase):
         self.assertFalse(agents.is_profile_delegate(PROFILE_CONFIG, "codex"))
         self.assertFalse(agents.is_profile_delegate(PROFILE_CONFIG, "aider"))
 
-    def test_profile_name_passes_through_resolve_agent(self):
-        # A profile name is just a delegate token; precedence is unchanged.
-        self.assertEqual(
-            agents.resolve_agent(PROFILE_CONFIG, role="mobile", delegate="cursor"), "cursor"
-        )
-
 
 class TestProfileAttribution(unittest.TestCase):
     def test_profile_with_model(self):
@@ -387,13 +466,6 @@ class TestExistingDelegateFormsUnchanged(unittest.TestCase):
                 self.assertEqual(a["agent_label"], f"agent:{vendor}")
                 self.assertEqual(a["system"], value)
                 self.assertNotIn("profile", a)  # only profile runs carry that key
-
-    def test_resolve_agent_is_unchanged(self):
-        for value, _ in LEGACY_DELEGATES:
-            with self.subTest(delegate=value):
-                self.assertEqual(
-                    agents.resolve_agent(PROFILE_CONFIG, role="mobile", delegate=value), value
-                )
 
 
 class TestAttributionLabels(unittest.TestCase):

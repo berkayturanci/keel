@@ -2,11 +2,16 @@
 
 The backbone dispatches agentic steps (implement / review / extensions) to a
 configured agent: the **host agent** by default, a per-run **delegate** override,
-or a per-role agent from ``knobs.implementer_agents``. A delegate is either a
-built-in vendor (:data:`BUILTIN_DELEGATE_VENDORS`) or the name of a generic
-``knobs.delegate_profiles`` entry — built-ins always win. Attribution records the
-*effective* implementer as labels (``agent:<vendor>`` + a versionless
-``model:<base>``), reusing the ship #2036 stripping algorithm.
+or a per-role seat from ``knobs.team.implement.by_role``. *Which* seat that is, is
+:func:`keel.team.resolve_assignment`'s single answer — this module owns the delegate
+vocabulary that feeds it and the attribution written afterwards, not a second copy of
+the precedence rule (#1099). :func:`legacy_team_seats` is the bridge: it reads the
+deprecated ``knobs.implementer_agents`` as ``by_role`` seats so the one resolver can
+fall back to it. A delegate is either a built-in vendor
+(:data:`BUILTIN_DELEGATE_VENDORS`) or the name of a generic ``knobs.delegate_profiles``
+entry — built-ins always win. Attribution records the *effective* implementer as labels
+(``agent:<vendor>`` + a versionless ``model:<base>``), reusing the ship #2036 stripping
+algorithm.
 
 All functions here are pure and deterministic — no subprocess, no network.
 """
@@ -43,7 +48,6 @@ __all__ = [
     "is_api_delegate",
     "resolve_delegate_profile",
     "is_profile_delegate",
-    "resolve_agent",
     "provider_names",
     "legacy_team_seats",
     "known_roles",
@@ -109,25 +113,6 @@ def resolve_delegate_profile(config: ProjectConfig, name: str) -> DelegateProfil
 def is_profile_delegate(config: ProjectConfig, name: str) -> bool:
     """True when ``--delegate <name>`` dispatches to a generic delegate profile."""
     return resolve_delegate_profile(config, name) is not None
-
-
-def resolve_agent(
-    config: ProjectConfig,
-    *,
-    role: str | None = None,
-    delegate: str | None = None,
-    host_agent: str = HOST_DEFAULT,
-) -> str:
-    """Resolve which agent runs a step.
-
-    Precedence: explicit ``delegate`` > per-role ``implementer_agents`` mapping >
-    ``host_agent`` default.
-    """
-    if delegate:
-        return delegate
-    if role and role in config.knobs.implementer_agents:
-        return config.knobs.implementer_agents[role]
-    return host_agent
 
 
 def provider_names(config: ProjectConfig) -> frozenset[str]:
