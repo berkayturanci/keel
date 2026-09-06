@@ -355,13 +355,7 @@ def extract_issue_scope(
             resolved_role = label.removeprefix("area:")
             break
 
-    # Both role vocabularies: `team.implement.by_role` (#1014) is where a role lives now,
-    # and the deprecated `implementer_agents` still routes for a project that has not
-    # migrated. Reading only the old one silently stopped narrowing the role for any
-    # project that adopted `team` — including keel itself.
-    known_roles: set[str] = set()
-    if config:
-        known_roles = {*config.knobs.implementer_agents, *config.knobs.team.implement_by_role}
+    known_roles = agents.known_roles(config) if config else frozenset()
     if known_roles and resolved_role not in known_roles:
         resolved_role = "core" if "core" in known_roles else resolved_role
 

@@ -50,6 +50,7 @@ __all__ = [
     "is_profile_delegate",
     "provider_names",
     "legacy_team_seats",
+    "known_roles",
     "LOCAL_TRANSPORTS",
     "strip_transport",
     "model_base",
@@ -128,6 +129,30 @@ def legacy_team_seats(config: ProjectConfig) -> dict[str, team.Seat]:
     and gets the explicit ``subagent:`` prefix.
     """
     return team.legacy_seats(config.knobs.implementer_agents, provider_names=provider_names(config))
+
+
+def known_roles(config: ProjectConfig) -> frozenset[str]:
+    """Every role name this project's routing can be keyed on, in **either** vocabulary.
+
+    ``team.implement.by_role`` (#1014) is where a role lives now, and the deprecated
+    ``knobs.implementer_agents`` still routes for a project that has not migrated — so a
+    role may be spelled in either, and the set of role names is the union of both key
+    sets. Reading only the old one silently stopped narrowing the role for any project
+    that had adopted ``team``, including keel itself; #1014 had to correct that in two
+    files at once, and this is the one place it is now stated, so a third vocabulary — or
+    the day the deprecated knob is finally dropped — is one edit and not a search (#1107).
+
+    It sits beside :func:`legacy_team_seats`, the other bridge from the deprecated knob
+    into the current vocabulary, because :mod:`keel.team` — where the rest of the team
+    policy lives — takes exactly one keel import (the leaf :mod:`keel.vocab`) and cannot
+    read a :class:`~keel.config.ProjectConfig` without :mod:`keel.config` importing it
+    back (#1050).
+
+    The rule is *which spellings name a role*, and only that: a caller that needs an
+    order imposes its own. The ``implement`` contract sorts the result for its
+    ``routing_keys`` because the contract's ordering is the contract's business.
+    """
+    return frozenset({*config.knobs.implementer_agents, *config.knobs.team.implement_by_role})
 
 
 #: Transports that run a model on the operator's own hardware. Named separately
