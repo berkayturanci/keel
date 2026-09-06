@@ -951,8 +951,11 @@ Verify a persisted step handoff before an adapter advances the ship backbone. Th
 must be the JSON object produced by `keel.stepverifier.build_handoff`; the evidence report
 must be the JSON verification block from `keel evidence-verify` (or an equivalent report
 with `results`). The whole published handoff schema is checked, not a prefix of it: the
-command exits non-zero when any declared field is missing, null, of the wrong type or
-blank — naming it, as `handoff field missing: summary` — when the status is not
+command exits non-zero when any declared field is missing, of the wrong type, or null or
+blank where that field's schema entry does not permit it — naming it, as `handoff field
+missing: summary`. Each field carries its own `nullable` and blank rule, so `next_step`
+and `producer` are legitimately absent on a step that has neither, while `summary` is not
+— when the status is not
 `complete`, when `rendered` is not the canonical rendering of the handoff's own fields,
 when `provenance` is not an untrusted-output tag bound to this step, when a completed
 handoff does not claim the evidence ids its step requires, or when those ids are not `ok`
