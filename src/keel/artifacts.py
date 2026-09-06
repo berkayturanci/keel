@@ -156,8 +156,8 @@ def render_review_verdict(
     (#926). That is deliberate: 75 of 75 verdicts across 25 pull requests were
     this template with the defaults left in, and the gate could not tell them
     apart from a review that caught a blocker. Give the scope a path, a symbol,
-    or a "checked X, Y and Z" clause — a genuinely clean review stays
-    expressible, it just has to say what it looked at.
+    or a review clause (checked / traced / read / …) — a genuinely clean
+    review stays expressible, it just has to say what it looked at.
     """
     lines = [
         evidence.REVIEW_VERDICT_MARKER,

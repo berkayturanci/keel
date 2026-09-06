@@ -6,6 +6,11 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **`review-verdict-insubstantial` no longer refuses a review for punctuation** (#1106). `_VERDICT_ANCHORS` accepted `module.function()` with the parentheses, a path only when it carried an extension, and the escape clause only when it used the literal word "checked". A real gate verdict on [ai-jury#753](https://github.com/berkayturanci/ai-jury/pull/753) named eleven symbols, four call sites and three test classes (`cache.cache_key`, `docs/CHANGELOG`, "Traced …", "Ran unittest on TheHintsBlockIsPartOfTheKey …") and was refused as a receipt. The rule exists to refuse rubber stamps, not to demand `()` on a symbol the reviewer is not calling.
+  - **The widening is structural.** A dotted identifier no longer needs parentheses (`module.symbol`, `Class.method`); each side of the dot is two characters so `e.g.` / `i.e.` do not count. A path may omit its extension (`docs/CHANGELOG`, `.github/workflows`); short slash-pairs (`pass/fail`, `and/or`) stay out because the second component has to be six characters, or the path has to start with a dot-directory. Several bare `snake_case` / `CamelCase` names of length ≥ 6 count as an anchor; one does not — the #926 stamps already contain `api_key_env`. The review-clause verbs are `checked`, `traced`, `read`, `ran`, `inspected`, `verified`. `reviewed` is deliberately absent: that is how the receipt opens.
+  - **The bar is the same.** `_VERDICT_NOVELTY_FLOOR` is untouched and still catches a title restated as a verdict. The #926 shape `Reviewed <PR title>: <generic affirmation>` still fails on the anchor set alone, with an unrelated title, so the novelty floor is not doing the work. Measured against the three unique verdicts on ai-jury#753 (the refused grok gate now passes; the lead and agy gate still pass) and the three verbatim #926 stamps (still refused).
+
 ## [1.21.0] - 2026-09-06
 
 ### Fixed

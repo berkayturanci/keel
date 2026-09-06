@@ -79,6 +79,54 @@ class ARealReviewPasses(unittest.TestCase):
         )
         self.assertTrue(ok)
 
+    def test_a_dotted_identifier_does_not_need_parentheses(self):
+        """Reviewers name symbols they are not calling without ``()`` (#1106)."""
+        ok, _ = evidence.verdict_substance(
+            HEADER + "cache.cache_key is the run identity, not a call site.",
+            pr_title=TITLE,
+        )
+        self.assertTrue(ok)
+
+    def test_an_extensionless_path_is_an_anchor(self):
+        ok, _ = evidence.verdict_substance(
+            HEADER + "The release note in docs/CHANGELOG names the three issues.",
+            pr_title=TITLE,
+        )
+        self.assertTrue(ok)
+
+    def test_a_dot_directory_path_is_an_anchor(self):
+        ok, _ = evidence.verdict_substance(
+            HEADER + "The workflow under .github/workflows is the only deploy path.",
+            pr_title=TITLE,
+        )
+        self.assertTrue(ok)
+
+    def test_several_bare_identifiers_are_an_anchor(self):
+        ok, _ = evidence.verdict_substance(
+            HEADER + "TheHintsBlockIsPartOfTheKey and PromptModeIsPartOfTheRunIdentity "
+            "pin the identity split.",
+            pr_title=TITLE,
+        )
+        self.assertTrue(ok)
+
+    def test_one_bare_identifier_is_not_enough(self):
+        """#926 stamps already contain ``api_key_env``. One name is cheap talk."""
+        ok, reason = evidence.verdict_substance(
+            HEADER + "Implementation is robust and well bounded around api_key_env.",
+            pr_title="chore: unrelated",
+        )
+        self.assertFalse(ok)
+        self.assertIn("nothing concrete", reason)
+
+    def test_short_snake_case_pairs_do_not_count(self):
+        """``a_b`` matches the identifier shape but is below the length floor."""
+        ok, reason = evidence.verdict_substance(
+            HEADER + "a_b and id_x are mentioned only as names.",
+            pr_title="chore: unrelated",
+        )
+        self.assertFalse(ok)
+        self.assertIn("nothing concrete", reason)
+
     def test_a_genuinely_clean_review_stays_expressible(self):
         """The escape hatch the issue insists on.
 
@@ -92,6 +140,116 @@ class ARealReviewPasses(unittest.TestCase):
             pr_title=TITLE,
         )
         self.assertTrue(ok)
+
+    def test_other_review_verbs_are_the_same_escape(self):
+        for verb in ("Traced", "Read", "Ran", "Inspected", "Verified"):
+            with self.subTest(verb=verb):
+                ok, _ = evidence.verdict_substance(
+                    HEADER + f"{verb} the denylist ordering and the prefix match.",
+                    pr_title=TITLE,
+                )
+                self.assertTrue(ok)
+
+
+class TheNineTwoSixRubberStampStillFails(unittest.TestCase):
+    """Widening the anchors must not let the #926 receipt through.
+
+    The observed shape is ``Reviewed <PR title>: <generic affirmation>``.
+    It has no identifiers, no path, and opens with ``Reviewed``, which is
+    deliberately not a review verb. ``_VERDICT_NOVELTY_FLOOR`` would catch
+    the title-restated case on its own; this test uses an unrelated title
+    so only the anchor set is under examination.
+    """
+
+    def test_reviewed_title_generic_affirmation(self):
+        ok, reason = evidence.verdict_substance(
+            HEADER + "Reviewed fix(evidence): widen verdict anchors: looks correct and complete.",
+            pr_title="chore: unrelated",
+        )
+        self.assertFalse(ok)
+        self.assertIn("nothing concrete", reason)
+
+    def test_reviewed_is_not_a_review_verb(self):
+        ok, reason = evidence.verdict_substance(
+            HEADER + "Reviewed the change and found it sound.",
+            pr_title="chore: unrelated",
+        )
+        self.assertFalse(ok)
+        self.assertIn("nothing concrete", reason)
+
+    def test_latin_abbreviations_are_not_dotted_identifiers(self):
+        for prose in (
+            "Looks good, e.g. the approach is sound.",
+            "The idea is fine, i.e. nothing further to add.",
+        ):
+            with self.subTest(prose=prose):
+                ok, reason = evidence.verdict_substance(HEADER + prose, pr_title="chore: unrelated")
+                self.assertFalse(ok)
+                self.assertIn("nothing concrete", reason)
+
+    def test_short_slash_pairs_are_not_paths(self):
+        ok, reason = evidence.verdict_substance(
+            HEADER + "The outcome is pass/fail and that is enough.",
+            pr_title="chore: unrelated",
+        )
+        self.assertFalse(ok)
+        self.assertIn("nothing concrete", reason)
+
+
+class TheAiJurySevenFiveThreeGateVerdictPasses(unittest.TestCase):
+    """The false reject that opened #1106, quoted from ai-jury#753.
+
+    Three unique verdicts sat on that PR. The lead and the agy gate already
+    passed (backticks / ``src/ai_jury/cache.py``). The grok gate named
+    eleven symbols, four call sites and three test classes, opened with
+    ``Traced``, and was refused because none of that matched the old
+    punctuation. All three must pass; the #926 stamps above must not.
+    """
+
+    TITLE = (
+        "fix(config): put the hints block, prompt_mode and the routing "
+        "vocabulary in the run identity"
+    )
+    GROK_GATE = (
+        "Scope reviewed: Traced #745/#746/#747 from the PR claims through "
+        "cache.cache_key, cli hints_block wiring (collect_static_hints → "
+        "cache_key and both run_jury/review_diff), orchestrator.run_jury "
+        "(context-mode filter then join), config.config_hash / "
+        "validate_config / JuryConfig.__post_init__ / _from_dict, "
+        "adapters.GenericCLIAdapter._prompt_mode/build_argv/_stdin_for, "
+        "load_config callers (cli main, jury config, run-agent, doctor), "
+        "and docs/CHANGELOG. Ran unittest on TheHintsBlockIsPartOfTheKey, "
+        "PromptModeIsPartOfTheRunIdentity, RoutingValidation, plus "
+        "DocumentedExamplesAreStrictClean, test_cache, test_tiered_routing, "
+        "test_metadata, test_cli_contract."
+    )
+    FABLE_LEAD = (
+        "Scope reviewed: Read the diff across all eight files. #745: "
+        "cache_key gains a keyword-only `hints` and folds hints_sha256 "
+        "into the payload only when the block is non-empty."
+    )
+    AGY_GATE = (
+        "Scope reviewed: Reviewed PR #753 diff and PR description against "
+        "main across all changed files: src/ai_jury/cache.py (cache_key), "
+        "src/ai_jury/cli.py (main), src/ai_jury/config.py."
+    )
+
+    def test_the_refused_gate_verdict_now_passes(self):
+        ok, reason = evidence.verdict_substance(HEADER + self.GROK_GATE, pr_title=self.TITLE)
+        self.assertTrue(ok, reason)
+
+    def test_the_sibling_verdicts_on_that_pr_still_pass(self):
+        for prose in (self.FABLE_LEAD, self.AGY_GATE):
+            with self.subTest(prose=prose[:40]):
+                ok, reason = evidence.verdict_substance(HEADER + prose, pr_title=self.TITLE)
+                self.assertTrue(ok, reason)
+
+    def test_the_nine_two_six_stamps_stay_refused_against_this_title(self):
+        for prose in OBSERVED:
+            with self.subTest(prose=prose[:48]):
+                ok, reason = evidence.verdict_substance(HEADER + prose, pr_title=self.TITLE)
+                self.assertFalse(ok)
+                self.assertIn("nothing concrete", reason)
 
 
 class TitleRestatementIsRefusedEvenWhenItLooksAnchored(unittest.TestCase):

@@ -1438,21 +1438,39 @@ def _attribution_finding(
     }
 
 
-#: A concrete thing a review can point at: a path, a ``path:line``, a backticked
-#: symbol, or a dotted/called identifier. Presence of *structure*, never a
+#: A concrete thing a review can point at. Presence of *structure*, never a
 #: judgement about whether the review was good — the same line ai-jury's
-#: ``emitted_findings_block()`` draws.
+#: ``emitted_findings_block()`` draws. Parentheses are not required on a dotted
+#: name: ``cache.cache_key`` is how you write a symbol you are not calling
+#: (#1106). Each side of the dot is two characters so ``e.g.`` / ``i.e.`` do
+#: not count.
 _VERDICT_ANCHORS = (
     re.compile(r"[\w./-]+\.[A-Za-z0-9]{1,5}:\d+"),  # path/to/file.py:42
     re.compile(r"[\w-]+/[\w./-]+\.[A-Za-z0-9]{1,5}\b"),  # src/keel/thing.py
+    # .github/workflows, docs/CHANGELOG — no extension. The 6-char floor on
+    # the second component keeps and/or, pass/fail, min/max out.
+    re.compile(r"(?:\.[A-Za-z][\w-]*/[\w./-]+|\b[A-Za-z][\w-]{2,}/[A-Za-z._-]{6,})"),
     re.compile(r"`[^`\n]{2,}`"),  # `a_symbol`, `--a-flag`
-    re.compile(r"\b\w+\.\w+\(\)"),  # module.function()
+    # module.symbol or module.function() — called or not.
+    re.compile(r"\b[A-Za-z_][A-Za-z0-9_]+\.[A-Za-z_][A-Za-z0-9_]+"),
 )
 
-#: The escape hatch the issue insists on: a genuinely clean review must stay
-#: expressible. "Checked X, Y and Z; found nothing" is a real review outcome and
-#: must not be forced to invent an anchor.
-_VERDICT_CHECKED_CLAUSE = re.compile(r"\bchecked\b[^.\n]{8,}", re.IGNORECASE)
+#: Escape hatch: a genuinely clean review must stay expressible. The verb
+#: names an act of review; the rest of the clause has to say what was looked
+#: at. "Reviewed <title>: <affirmation>" is not this — ``reviewed`` is
+#: deliberately absent (#926, #1106).
+_VERDICT_REVIEW_CLAUSE = re.compile(
+    r"\b(?:checked|traced|read|ran|inspected|verified)\b[^.\n]{8,}",
+    re.IGNORECASE,
+)
+
+#: A single bare identifier is cheap talk (the #926 stamps already contain
+#: ``api_key_env``); several is a reviewer naming the things they looked at.
+_BARE_IDENTIFIER = re.compile(
+    r"\b(?:[A-Za-z_][A-Za-z0-9]*_[A-Za-z0-9]+|[A-Z][a-zA-Z0-9]*[A-Z][a-zA-Z0-9]+)\b"
+)
+_BARE_IDENTIFIER_MIN_LEN = 6
+_BARE_IDENTIFIER_FLOOR = 2
 
 #: Below this share of novel words, the prose is the PR title said again. The
 #: observed shape was `Reviewed <title>: <generic affirmation>` — 75 of 75
@@ -1480,6 +1498,23 @@ def _verdict_prose(body: str) -> str:
     return "\n".join(kept)
 
 
+def _verdict_is_anchored(prose: str) -> bool:
+    """Whether the prose points at something concrete.
+
+    Structure only. A path, a symbol, a dotted name, several bare
+    identifiers, or a clause that names a review act. Not a judgement
+    about whether the review was good.
+    """
+    if any(pattern.search(prose) for pattern in _VERDICT_ANCHORS):
+        return True
+    if _VERDICT_REVIEW_CLAUSE.search(prose):
+        return True
+    named = {
+        token for token in _BARE_IDENTIFIER.findall(prose) if len(token) >= _BARE_IDENTIFIER_MIN_LEN
+    }
+    return len(named) >= _BARE_IDENTIFIER_FLOOR
+
+
 def verdict_substance(body: str, *, pr_title: str = "") -> tuple[bool, str]:
     """Whether a verdict engages with the diff at all. ``(ok, reason)``.
 
@@ -1492,13 +1527,17 @@ def verdict_substance(body: str, *, pr_title: str = "") -> tuple[bool, str]:
 
     Two mechanical requirements, both content-agnostic beyond structure:
 
-    * **An anchor.** A path, a ``path:line``, a backticked symbol, or a called
-      identifier — or an explicit "checked …" clause, because a genuinely clean
-      review must stay expressible and forcing it to invent a file reference
-      would make the check worse than nothing.
+    * **An anchor.** A path (with or without an extension), a ``path:line``, a
+      backticked token, a dotted identifier with or without parentheses, or
+      several bare ``snake_case`` / ``CamelCase`` names — or a clause that
+      names a review act (checked, traced, read, ran, inspected, verified).
+      A genuinely clean review must stay expressible; forcing it to invent a
+      file reference, or to add ``()`` to a symbol it is not calling, would
+      make the check worse than nothing (#1106).
     * **Novelty against the title.** Prose that is substantially the PR title
       restated is the observed shape, and it survives the anchor test whenever
-      the title happens to contain a path.
+      the title happens to contain a path. This floor is independent of the
+      anchor set.
 
     This says nothing about whether a review was *good*. It cannot, and trying
     would make the gate a critic. It distinguishes a review from a receipt.
@@ -1507,11 +1546,10 @@ def verdict_substance(body: str, *, pr_title: str = "") -> tuple[bool, str]:
     if not prose.strip():
         return False, "verdict has no prose beyond its header"
 
-    anchored = any(pattern.search(prose) for pattern in _VERDICT_ANCHORS)
-    if not anchored and not _VERDICT_CHECKED_CLAUSE.search(prose):
+    if not _verdict_is_anchored(prose):
         return False, (
             "verdict names nothing concrete — no file, line, symbol, or "
-            "'checked …' clause, so it cannot be told apart from a receipt"
+            "review clause, so it cannot be told apart from a receipt"
         )
 
     title_words = set(_WORD.findall(pr_title.lower()))
