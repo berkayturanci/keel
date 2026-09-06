@@ -598,9 +598,63 @@ The block records:
 - `schema_version: keel.step-verification.v1`
 - `fail_closed: true`
 - `no_premature_termination: true`
-- `handoff_schema`: required handoff fields, renderer, and marker
+- `handoff_schema`: the required handoff fields with their JSON types, the renderer, the
+  marker, and the two rules that go past the field list —
+  `rendered_body_matches_fields` and `completed_step_claims_required_evidence`
 - `steps`: every `s0`–`s12` backbone step with the evidence ids that must be `ok`
   before that step can transition as successful
+
+### The handoff schema is checked whole
+
+`handoff_schema.required_fields` and `handoff_schema.fields` are rendered from
+`keel.stepverifier.HANDOFF_FIELDS`, the single declaration
+`keel.stepverifier.build_handoff` builds the document from. Producer, published contract,
+and verifier read one list, so the verifier cannot fall behind the schema — it once checked
+`schema_version` and `step_id` while the renderer emitted ten fields, which let a handoff
+carrying nothing but a constant and a step id pass (#1101).
+
+| field | type | null allowed | notes |
+| --- | --- | --- | --- |
+| `schema_version` | string | no | must equal `keel.step-handoff.v1` |
+| `step_id` | string | no | must equal the step being verified |
+| `step_name` | string | no | must equal the backbone's own name for that step |
+| `status` | string | no | a step transitions as success only on `complete` |
+| `summary` | string | no | non-blank |
+| `evidence_ids` | array | no | every entry a non-blank string; see below |
+| `next_step` | string | yes | |
+| `producer` | string | yes | when named, must equal `provenance.source.agent_id` |
+| `provenance` | object | no | a canonical `keel.agent-output-provenance.v1` tag |
+| `rendered` | string | no | see below |
+
+A missing, null, wrongly-typed, or blank field is refused **by name**
+(`handoff field missing: summary`), so the refusal says what to fix.
+
+Three checks go past presence:
+
+- **`rendered` must be the canonical rendering of the handoff's own fields.** The marker is
+  a substring an agent can type; the rendering of *these* fields is not. `keel step-verify`
+  re-renders the handoff through `keel.artifacts.render_step_handoff` and compares, which
+  refuses a body pasted from another step, or one whose prose disagrees with the structured
+  fields.
+- **`provenance` must be a canonical untrusted-output tag bound to this step** — the
+  `keel.agent-output-provenance.v1` schema, the untrusted role,
+  `trusted_as_instructions: false`, `can_expand_capabilities: false`, and `source.step_id`
+  equal to the step. `source.agent_id` must name someone — a non-blank string — whether or
+  not the handoff sets `producer`, and must equal `producer` when it does. **Canonical
+  means the whole shape `keel.provenance.source_tag` emits**, so the tag also carries
+  `source.vendor` and `source.model` (a string or `null`) and
+  `capability_scope.allowed_capabilities` and `.unknown_capabilities` (lists, possibly
+  empty); a tag missing any of them is refused by name. Values beyond those types are not
+  checked, and *extra* members are allowed through — a tag carrying a key this version has
+  not heard of is a newer producer, not a forgery. A producer written in another language
+  can build the tag from this paragraph alone. The evidence chain downstream reads it; an
+  arbitrary object under `provenance` answers "who says so?" with nothing.
+- **A `complete` handoff must claim every evidence id its step requires.** The
+  required-evidence check reads a separately supplied report; this one binds the handoff to
+  it, so a step cannot report finished work while naming no evidence for it. Each unclaimed
+  id is named (`handoff claims no evidence id: review-verdict-2`). A step the contract
+  requires no public evidence from — every backbone step except `s7`, `s8` and `s12` —
+  legitimately carries an empty list, and the canonical renderer emits one.
 
 The required evidence ids are derived from the same `review_merge_contract` and public
 evidence contract used by `keel evidence-verify`. Review verdict evidence is attached to
@@ -612,8 +666,9 @@ handoff, so a generated command cannot silently terminate a step *it claims to h
 canonical handoff JSON and run the verifier before advancing each backbone transition.
 
 **What the verifier does and does not prove.** It is **per-step and stateless across
-steps**: it validates the handoff it is given — schema, status, markers — plus mapped
-public evidence for `s7`/`s8`/`s12`. It does **not** check that earlier steps happened.
+steps**: it validates the handoff it is given — every field of the schema above, its
+status, its rendering, and its provenance — plus mapped public evidence for
+`s7`/`s8`/`s12`. It does **not** check that earlier steps happened.
 `keel step-verify --step s10` returns `pass` against a well-formed s10 handoff with **no
 s7 or s8 handoff in existence**, and the handoff is written by the same agent invoking the
 check. So *ordering* — "s10 cannot be reached without s7 and s8" — is enforced by adapter
