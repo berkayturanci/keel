@@ -3,9 +3,9 @@
 import copy
 import re
 import unittest
+import unittest.mock as mock
 from datetime import datetime
 from pathlib import Path
-from unittest import mock
 from zoneinfo import ZoneInfoNotFoundError
 
 from keel import config as cfg
@@ -1392,15 +1392,11 @@ class TestSwarmReviewEvidenceKnob(unittest.TestCase):
     """#828: the swarm review gate defaults on; the opt-out is explicit config."""
 
     def test_defaults_on(self):
-        from keel import config as cfg
-
         knobs = cfg.Knobs(build_gate_cmd="true")
         self.assertTrue(knobs.swarm_review_evidence)
 
     def test_yaml_opt_out_parses(self):
         import tempfile
-
-        from keel import config as cfg
 
         with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as tf:
             tf.write(
