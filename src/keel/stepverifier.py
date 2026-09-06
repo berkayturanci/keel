@@ -196,7 +196,7 @@ def build_handoff(
         # field — rejected a document this very function had produced. A producer
         # that can emit what its own verifier refuses is the synchronisation this
         # change is about, pointing the other way.
-        "summary": summary.strip() or "No summary recorded.",
+        "summary": (summary or "").strip() or "No summary recorded.",
         "evidence_ids": list(clean_evidence),
         "next_step": next_step,
         "producer": producer,
