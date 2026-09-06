@@ -429,6 +429,27 @@ class TestHandoffClaimsItsEvidence(unittest.TestCase):
         self.assertIn("handoff evidence ids are not all named", report["missing"])
 
 
+class TestTheProducerCannotEmitWhatTheVerifierRefuses(unittest.TestCase):
+    """Whatever `build_handoff` produces must verify, for every backbone step."""
+
+    def test_a_blank_summary_takes_the_default_like_an_empty_one(self):
+        for summary in ("", "   ", "\n\t"):
+            with self.subTest(summary=repr(summary)):
+                handoff = stepverifier.build_handoff(step_id="s4", summary=summary, producer="a")
+
+                self.assertEqual(handoff["summary"], "No summary recorded.")
+                self.assertTrue(stepverifier._check_handoff_schema("s4", handoff)["ok"])
+
+    def test_every_step_round_trips_with_a_blank_summary(self):
+        for step in model.SLOT_DEFINITIONS:
+            with self.subTest(step=step.step_id):
+                handoff = stepverifier.build_handoff(
+                    step_id=step.step_id, summary="  ", producer="a"
+                )
+
+                self.assertTrue(stepverifier._check_handoff_schema(step.step_id, handoff)["ok"])
+
+
 class TestHandoffProvenance(unittest.TestCase):
     def _handoff(self, **overrides) -> dict:
         handoff = stepverifier.build_handoff(
