@@ -7,7 +7,14 @@ body (prompt or command). The contract (see ``docs/proposals/keel-architecture.m
   :data:`keel.model.SLOTS`; it can never remove/reorder/replace a backbone step.
 * **Fail-soft.** A broken extension degrades to a no-op (``strict=False`` returns
   the problems instead of raising) — unless it declares itself a hard gate
-  (``on_fail: block``, valid only in the ``pre-merge`` slot).
+  (``on_fail: block``, valid only in the slots :data:`keel.model.SLOT_DEFINITIONS`
+  marks ``may_block``: ``guard``, ``tester``, ``test`` and ``pre-merge``). This named
+  ``pre-merge`` alone until #1100 — a restriction :func:`parse_extension` never had, and
+  the direction of error that costs a reader work: an author who wants a blocking
+  ``guard`` believes the slot cannot block and builds a workaround for nothing. Prose
+  cannot compute the set, so ``tests/test_docs_claims.py`` reads the names back out of
+  this sentence and compares them to ``may_block`` — here and in every doc that
+  restates them.
 * **Agent-neutral.** Each extension declares its ``agent`` (default ``inherit``).
 """
 
