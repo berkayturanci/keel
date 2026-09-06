@@ -934,8 +934,14 @@ keel step-verify --step sN --handoff-file FILE --evidence-report FILE
 
 No project config is read — the review contract is resolved purely from the flags
 (`tier=None`), which is why `--reviewers`/`--jury` should mirror the values the ship run
-actually used. The command exits 1 when the handoff schema/status/renderer marker is
-invalid or when the step's required evidence ids are not ok in the report. A failed step
+actually used. The command exits 1 when any declared handoff field is missing, of the
+wrong type, or null or blank where its schema entry does not permit it; when the status is
+not `complete`; when `rendered` is not the canonical rendering of the handoff's own
+fields; when `provenance` is not a canonical untrusted-output tag bound to this step; when
+a completed handoff does not claim the evidence ids its step requires; or when those ids
+are not ok in the report. The field list is published in the ship contract's
+`step_verification.handoff_schema` block — see
+[cli.md](cli.md) and [command-contracts.md](command-contracts.md#the-handoff-schema-is-checked-whole). A failed step
 verification is a backbone BLOCKER for adapters: do not advance, merge, or mark the step
 complete from chat prose alone.
 
