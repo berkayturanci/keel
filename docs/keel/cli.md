@@ -764,7 +764,12 @@ which is the point — an explicit operator act stays distinguishable from armin
 - the required count of distinct posted s7 reviewer verdicts from PR comments or reviews
   carrying `keel.review-verdict.v1`, `reviewer: <stable-id>`, and the current
   `head: <sha>` (formal PR reviews may use GitHub's review `commit_id` as the head
-  binding), posted by a trusted GitHub actor. Verdicts may additionally carry
+  binding), posted by a trusted GitHub actor. A verdict must also name
+  something concrete — a path, a symbol, several identifiers, or a review
+  clause (checked / traced / read / ran / inspected / verified). The
+  ``Reviewed <title>: <generic affirmation>`` receipt is refused (#926);
+  parentheses on a dotted name, a file extension, and the literal word
+  "checked" are not required (#1106). Verdicts may additionally carry
   `vendor: <id>` / `model: <id>` provenance; with `--require-distinct-vendors` (or the
   `evidence_require_distinct_vendors` knob) the verifier requires each required verdict to
   declare a vendor and that no two share one — a missing or duplicate vendor fails with a
