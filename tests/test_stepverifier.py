@@ -2,7 +2,7 @@
 
 import unittest
 
-from keel import evidence, model, stepverifier
+from keel import evidence, model, provenance, stepverifier
 
 
 def _review_contract(*, reviewers: int = 2, jury: bool = False) -> dict:
@@ -471,6 +471,42 @@ class TestHandoffProvenance(unittest.TestCase):
         report = _verify(self._handoff(source={"agent_id": "opus-implementer", "step_id": "s7"}))
 
         self.assertIn("handoff provenance step mismatch", report["missing"])
+
+    def test_a_tag_missing_canonical_members_is_refused_by_name(self):
+        """ "Canonical" has to mean the shape `source_tag` emits.
+
+        A tag carrying only the members this check happens to read is not the tag
+        the renderer builds, and accepting it claims a check that was not made.
+        The required keys are derived from `source_tag`, so a member added there
+        fails this rather than going unchecked.
+        """
+        # Only the nested members are testable by removal: every top-level key has a
+        # check of its own above, which is the point — this guard is what catches a
+        # member added to `source_tag` later that nothing else reads.
+        self.assertEqual(
+            stepverifier._canonical_provenance_keys()[0],
+            frozenset(provenance.source_tag(source_agent="a", step_id="s")),
+        )
+        cases = {
+            "provenance.source": ("vendor", "model"),
+            "provenance.capability_scope": ("allowed_capabilities", "unknown_capabilities"),
+        }
+        for where, dropped in cases.items():
+            with self.subTest(where=where):
+                handoff = self._handoff()
+                tag = handoff["provenance"]
+                target = tag
+                for part in where.split(".")[1:]:
+                    target = target[part]
+                for key in dropped:
+                    target.pop(key)
+
+                report = _verify(handoff)
+
+                detail = " ".join(report["missing"])
+                self.assertIn(f"{where} missing", detail)
+                for key in dropped:
+                    self.assertIn(key, detail)
 
     def test_provenance_naming_no_agent_is_refused_even_with_no_producer(self):
         """The source has to say who, whether or not the handoff names a producer.

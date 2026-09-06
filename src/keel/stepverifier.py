@@ -324,6 +324,22 @@ def _render_from(handoff: dict[str, Any]) -> str:
     )
 
 
+def _canonical_provenance_keys() -> tuple[frozenset[str], frozenset[str], frozenset[str]]:
+    """The key sets ``provenance.source_tag`` emits: tag, ``source``, ``capability_scope``.
+
+    Derived from the producer rather than retyped, for the same reason
+    :data:`HANDOFF_FIELDS` is: a field added to the tag must not be able to go
+    unchecked here. The *keys* are required, not their values — ``vendor`` and
+    ``model`` are legitimately ``None`` when the caller knows neither.
+    """
+    tag = provenance.source_tag(source_agent="a", step_id="s")
+    return (
+        frozenset(tag),
+        frozenset(tag["source"]),
+        frozenset(tag["capability_scope"]),
+    )
+
+
 def _check_handoff_provenance(step_id: str, handoff: dict[str, Any] | None) -> dict[str, Any]:
     """Check that the provenance tag is a canonical one, bound to this step.
 
@@ -363,6 +379,26 @@ def _check_handoff_provenance(step_id: str, handoff: dict[str, Any] | None) -> d
     named = producer.strip() if isinstance(producer, str) else ""
     if named and agent_id != named:
         return _check("handoff_provenance", False, "handoff provenance producer mismatch")
+    # Last, so a specific violation is still reported specifically. "Canonical" has to
+    # mean the shape the renderer emits, or the word is doing no work: a tag carrying
+    # only the members the checks above happen to read is not the tag `source_tag`
+    # builds, and accepting it claims a check that was never made.
+    # "Canonical" has to mean the shape the renderer emits, or the word is doing no
+    # work: a tag carrying only the members this function happens to read is not the
+    # tag `source_tag` builds, and accepting it claims a check that was not made.
+    tag_keys, source_keys, scope_keys = _canonical_provenance_keys()
+    for present, required, where in (
+        (tag, tag_keys, "provenance"),
+        (source, source_keys, "provenance.source"),
+        (scope, scope_keys, "provenance.capability_scope"),
+    ):
+        missing = sorted(required - set(present))
+        if missing:
+            return _check(
+                "handoff_provenance",
+                False,
+                f"handoff provenance is not canonical, {where} missing: {', '.join(missing)}",
+            )
     return _check("handoff_provenance", True)
 
 
