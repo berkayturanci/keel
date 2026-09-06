@@ -472,6 +472,30 @@ class TestHandoffProvenance(unittest.TestCase):
 
         self.assertIn("handoff provenance step mismatch", report["missing"])
 
+    def test_provenance_naming_no_agent_is_refused_even_with_no_producer(self):
+        """The source has to say who, whether or not the handoff names a producer.
+
+        ``source_tag`` always writes ``agent_id`` — ``unknown-agent`` when the caller
+        names nobody — so a tag without the key did not come from the renderer. The
+        check used to read it only when ``producer`` was a non-blank string, so a
+        handoff with ``producer: null`` passed by answering "who says so?" with nothing.
+        """
+        for source in ({"step_id": "s4"}, {"step_id": "s4", "agent_id": "  "}):
+            with self.subTest(source=source):
+                handoff = self._handoff(source=source)
+                handoff["producer"] = None
+
+                report = _verify(handoff)
+
+                self.assertIn("handoff provenance names no agent", report["missing"])
+
+    def test_the_renderers_unknown_agent_default_still_verifies(self):
+        """A handoff built with no producer is legitimate and must stay verifiable."""
+        handoff = stepverifier.build_handoff(step_id="s4", summary="Done.", producer=None)
+
+        self.assertEqual(handoff["provenance"]["source"]["agent_id"], "unknown-agent")
+        self.assertNotIn("handoff provenance names no agent", _verify(handoff)["missing"])
+
     def test_provenance_naming_a_different_producer_is_refused(self):
         report = _verify(self._handoff(source={"agent_id": "someone-else", "step_id": "s4"}))
 

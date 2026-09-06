@@ -350,9 +350,18 @@ def _check_handoff_provenance(step_id: str, handoff: dict[str, Any] | None) -> d
         return _check("handoff_provenance", False, "handoff provenance names no source")
     if source.get("step_id") != step_id:
         return _check("handoff_provenance", False, "handoff provenance step mismatch")
+    # Required unconditionally, not only when ``producer`` names someone. ``source_tag``
+    # always writes this key — ``unknown-agent`` when the caller passes no agent — so a
+    # tag that omits it was not built by the renderer, and the one field answering "who
+    # says so?" is exactly the field a fabricated tag has no reason to fill in. Gating it
+    # on a named ``producer`` let a handoff with ``producer: null`` clear the check by
+    # naming nobody, which is the shape of defect this whole verifier exists to refuse.
+    agent_id = source.get("agent_id")
+    if not (isinstance(agent_id, str) and agent_id.strip()):
+        return _check("handoff_provenance", False, "handoff provenance names no agent")
     producer = handoff.get("producer")
     named = producer.strip() if isinstance(producer, str) else ""
-    if named and source.get("agent_id") != named:
+    if named and agent_id != named:
         return _check("handoff_provenance", False, "handoff provenance producer mismatch")
     return _check("handoff_provenance", True)
 
