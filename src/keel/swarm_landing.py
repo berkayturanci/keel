@@ -176,7 +176,12 @@ def rebase_and_heal_cluster_branch(
                     resolved = resolve_fn(text)
                     if resolved is not None:
                         file_path.write_text(resolved, encoding="utf-8")
-                        run(["git", "add", rel_path], repo_root)
+                        # `--` first: the path comes out of `git status` for a
+                        # tree the cluster's agents wrote, so a file named `-i`
+                        # or `--renormalize` would otherwise be read as an
+                        # option rather than a path (#1097). git's own pathspec
+                        # separator settles it without a name check here.
+                        run(["git", "add", "--", rel_path], repo_root)
                     else:
                         healed_all = False
                         break
