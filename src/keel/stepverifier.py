@@ -383,9 +383,6 @@ def _check_handoff_provenance(step_id: str, handoff: dict[str, Any] | None) -> d
     # mean the shape the renderer emits, or the word is doing no work: a tag carrying
     # only the members the checks above happen to read is not the tag `source_tag`
     # builds, and accepting it claims a check that was never made.
-    # "Canonical" has to mean the shape the renderer emits, or the word is doing no
-    # work: a tag carrying only the members this function happens to read is not the
-    # tag `source_tag` builds, and accepting it claims a check that was not made.
     tag_keys, source_keys, scope_keys = _canonical_provenance_keys()
     for present, required, where in (
         (tag, tag_keys, "provenance"),
