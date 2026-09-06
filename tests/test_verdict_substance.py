@@ -163,8 +163,7 @@ class TheNineTwoSixRubberStampStillFails(unittest.TestCase):
 
     def test_reviewed_title_generic_affirmation(self):
         ok, reason = evidence.verdict_substance(
-            HEADER + "Reviewed fix(evidence): widen verdict anchors: "
-            "looks correct and complete.",
+            HEADER + "Reviewed fix(evidence): widen verdict anchors: looks correct and complete.",
             pr_title="chore: unrelated",
         )
         self.assertFalse(ok)
@@ -184,9 +183,7 @@ class TheNineTwoSixRubberStampStillFails(unittest.TestCase):
             "The idea is fine, i.e. nothing further to add.",
         ):
             with self.subTest(prose=prose):
-                ok, reason = evidence.verdict_substance(
-                    HEADER + prose, pr_title="chore: unrelated"
-                )
+                ok, reason = evidence.verdict_substance(HEADER + prose, pr_title="chore: unrelated")
                 self.assertFalse(ok)
                 self.assertIn("nothing concrete", reason)
 
@@ -238,25 +235,19 @@ class TheAiJurySevenFiveThreeGateVerdictPasses(unittest.TestCase):
     )
 
     def test_the_refused_gate_verdict_now_passes(self):
-        ok, reason = evidence.verdict_substance(
-            HEADER + self.GROK_GATE, pr_title=self.TITLE
-        )
+        ok, reason = evidence.verdict_substance(HEADER + self.GROK_GATE, pr_title=self.TITLE)
         self.assertTrue(ok, reason)
 
     def test_the_sibling_verdicts_on_that_pr_still_pass(self):
         for prose in (self.FABLE_LEAD, self.AGY_GATE):
             with self.subTest(prose=prose[:40]):
-                ok, reason = evidence.verdict_substance(
-                    HEADER + prose, pr_title=self.TITLE
-                )
+                ok, reason = evidence.verdict_substance(HEADER + prose, pr_title=self.TITLE)
                 self.assertTrue(ok, reason)
 
     def test_the_nine_two_six_stamps_stay_refused_against_this_title(self):
         for prose in OBSERVED:
             with self.subTest(prose=prose[:48]):
-                ok, reason = evidence.verdict_substance(
-                    HEADER + prose, pr_title=self.TITLE
-                )
+                ok, reason = evidence.verdict_substance(HEADER + prose, pr_title=self.TITLE)
                 self.assertFalse(ok)
                 self.assertIn("nothing concrete", reason)
 

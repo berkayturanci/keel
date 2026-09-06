@@ -1510,9 +1510,7 @@ def _verdict_is_anchored(prose: str) -> bool:
     if _VERDICT_REVIEW_CLAUSE.search(prose):
         return True
     named = {
-        token
-        for token in _BARE_IDENTIFIER.findall(prose)
-        if len(token) >= _BARE_IDENTIFIER_MIN_LEN
+        token for token in _BARE_IDENTIFIER.findall(prose) if len(token) >= _BARE_IDENTIFIER_MIN_LEN
     }
     return len(named) >= _BARE_IDENTIFIER_FLOOR
 
