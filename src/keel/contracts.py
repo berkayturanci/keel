@@ -1079,11 +1079,9 @@ def standalone_result_as_dict(
             "implementer": {
                 "source": "delegate" if delegate else "project-routing-or-host",
                 "selected": delegate,
-                # Both vocabularies: `team.implement.by_role` is where roles live now,
-                # and a project that has not migrated still routes on the deprecated knob.
-                "routing_keys": sorted(
-                    {*config.knobs.implementer_agents, *config.knobs.team.implement_by_role}
-                ),
+                # Sorted here, not in the rule: the contract's ordering is the contract's
+                # business. Which spellings name a role is `agents.known_roles`'.
+                "routing_keys": sorted(agents.known_roles(config)),
             },
             "handoff": {
                 "opens_pr": True,

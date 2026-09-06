@@ -1,8 +1,9 @@
 """Unit tests for agent dispatch + attribution."""
 
 import unittest
+from unittest import mock
 
-from keel import agents
+from keel import agents, contracts, swarm
 from keel import config as cfg
 
 CONFIG = cfg.parse_config(
@@ -460,6 +461,87 @@ class TestAttributionLabels(unittest.TestCase):
             [label for label in agents.attribution_labels(config) if label.startswith("model:")],
             [],
         )
+
+
+class TestOneRoleVocabulary(unittest.TestCase):
+    """#1107 — *which spellings name a role* is stated once, in ``agents.known_roles``."""
+
+    #: A role in each vocabulary, plus ``core`` in both, so the union has to deduplicate.
+    BOTH = cfg.parse_config(
+        {
+            "extends": "keel",
+            "core_version": "^0.1",
+            "base_branch": "main",
+            "knobs": {
+                "build_gate_cmd": "make test",
+                "implementer_agents": {"backend": "codex", "core": "claude"},
+                "team": {
+                    "implement": {
+                        "by_role": {"core": {"provider": "agy"}, "docs": {"provider": "codex"}}
+                    }
+                },
+            },
+        }
+    )
+
+    TEAM_ONLY = cfg.parse_config(
+        {
+            "extends": "keel",
+            "core_version": "^0.1",
+            "base_branch": "main",
+            "knobs": {
+                "build_gate_cmd": "make test",
+                "team": {"implement": {"by_role": {"cli": {"provider": "codex"}}}},
+            },
+        }
+    )
+
+    def test_the_union_is_both_vocabularies_deduplicated(self):
+        self.assertEqual(agents.known_roles(self.BOTH), frozenset({"backend", "core", "docs"}))
+
+    def test_either_vocabulary_alone_still_names_its_own_roles(self):
+        self.assertEqual(agents.known_roles(CONFIG), frozenset({"backend", "mobile"}))
+        self.assertEqual(agents.known_roles(self.TEAM_ONLY), frozenset({"cli"}))
+
+    def test_a_project_that_routes_no_role_names_none(self):
+        self.assertEqual(agents.known_roles(PROFILE_CONFIG), frozenset())
+
+    def test_both_call_sites_read_the_one_helper(self):
+        # Patching the *rule* rather than the config is what makes this a single-source
+        # test: two call sites that each spelled the union out again would be unmoved by
+        # it, and would keep answering with ``CONFIG``'s own roles. The controls below
+        # pin that unpatched answer, so the patched run cannot pass by coincidence.
+        control_record = contracts.standalone_result_as_dict(
+            command="implement", config=CONFIG, target="issue #7"
+        )
+        control_scope = swarm.extract_issue_scope(
+            7, title="Some work", labels=["role:mole"], config=CONFIG
+        )
+        self.assertEqual(control_record["implementer"]["routing_keys"], ["backend", "mobile"])
+        self.assertEqual(control_scope.role, "mole")
+
+        with mock.patch.object(
+            agents, "known_roles", return_value=frozenset({"core", "zebra"})
+        ) as rule:
+            record = contracts.standalone_result_as_dict(
+                command="implement", config=CONFIG, target="issue #7"
+            )
+            scope = swarm.extract_issue_scope(
+                7, title="Some work", labels=["role:mole"], config=CONFIG
+            )
+
+        self.assertEqual(record["implementer"]["routing_keys"], ["core", "zebra"])
+        self.assertEqual(scope.role, "core")
+        self.assertEqual(rule.call_args_list, [mock.call(CONFIG), mock.call(CONFIG)])
+
+    def test_the_contract_sorts_what_the_rule_returns(self):
+        # ``sorted()`` stays at the contract's call site: the contract's ordering is the
+        # contract's business, not the rule's.
+        with mock.patch.object(agents, "known_roles", return_value=("zebra", "core", "aardvark")):
+            record = contracts.standalone_result_as_dict(
+                command="implement", config=CONFIG, target="issue #7"
+            )
+        self.assertEqual(record["implementer"]["routing_keys"], ["aardvark", "core", "zebra"])
 
 
 if __name__ == "__main__":
