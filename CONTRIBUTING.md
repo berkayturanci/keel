@@ -16,7 +16,8 @@ By participating you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 - **Pure core + thin I/O.** Put deterministic logic in a pure, unit-tested function; keep
   subprocess/network/prompting in a thin wrapper with an injectable `_run` seam.
 - **Add-only backbone.** Extensions snap into named slots; they never remove, reorder, or
-  replace a backbone step. `on_fail: block` is valid only in the `pre-merge` slot.
+  replace a backbone step. `on_fail: block` is permitted only in documented blocking slots:
+  `guard`, `tester`, `test`, and `pre-merge`.
 - **Single runtime dependency.** PyYAML only on Linux/macOS. Dev-only tools (`ruff`,
   `coverage`, `build`) live in the `dev` extra. The one platform exception is `tzdata` on
   Windows (`sys_platform == 'win32'`), where the stdlib `zoneinfo` has no system IANA

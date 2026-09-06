@@ -74,6 +74,7 @@ _SLOT_ROW = re.compile(r"(?m)^\|(?P<slots>[^|]*)\|[^|]*\|[^|]*\|(?P<blocks>[^|]*
 _BLOCKING_CLAIMS = (
     ("src/keel/extensions.py", re.compile(r"``on_fail: block``, valid only in([^)]+)\)")),
     ("AGENTS.md", re.compile(r"`on_fail: block` is permitted only in[^:]+:([^.]+)\.")),
+    ("CONTRIBUTING.md", re.compile(r"`on_fail: block` is permitted only in[^:]+:([^.]+)\.")),
     ("docs/keel/extensions.md", re.compile(r"\*\*`block` is only allowed in([^*]+)\*\*")),
     (
         "docs/proposals/keel-architecture.md",
