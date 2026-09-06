@@ -639,8 +639,16 @@ Three checks go past presence:
 - **`provenance` must be a canonical untrusted-output tag bound to this step** — the
   `keel.agent-output-provenance.v1` schema, the untrusted role,
   `trusted_as_instructions: false`, `can_expand_capabilities: false`, and `source.step_id`
-  equal to the step. The evidence chain downstream reads this tag; an arbitrary object
-  under `provenance` answers "who says so?" with nothing.
+  equal to the step. `source.agent_id` must name someone — a non-blank string — whether or
+  not the handoff sets `producer`, and must equal `producer` when it does. **Canonical
+  means the whole shape `keel.provenance.source_tag` emits**, so the tag also carries
+  `source.vendor` and `source.model` (a string or `null`) and
+  `capability_scope.allowed_capabilities` and `.unknown_capabilities` (lists, possibly
+  empty); a tag missing any of them is refused by name. Values beyond those types are not
+  checked, and *extra* members are allowed through — a tag carrying a key this version has
+  not heard of is a newer producer, not a forgery. A producer written in another language
+  can build the tag from this paragraph alone. The evidence chain downstream reads it; an
+  arbitrary object under `provenance` answers "who says so?" with nothing.
 - **A `complete` handoff must claim every evidence id its step requires.** The
   required-evidence check reads a separately supplied report; this one binds the handoff to
   it, so a step cannot report finished work while naming no evidence for it. Each unclaimed
