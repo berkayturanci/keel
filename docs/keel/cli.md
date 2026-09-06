@@ -950,8 +950,21 @@ and offline CI harnesses can supply every fact directly with `--offline` plus `-
 Verify a persisted step handoff before an adapter advances the ship backbone. The handoff
 must be the JSON object produced by `keel.stepverifier.build_handoff`; the evidence report
 must be the JSON verification block from `keel evidence-verify` (or an equivalent report
-with `results`). The command exits non-zero when the handoff schema/status/renderer marker
-is missing or when the step's required evidence ids are not ok.
+with `results`). The whole published handoff schema is checked, not a prefix of it: the
+command exits non-zero when any declared field is missing, of the wrong type, or null or
+blank where that field's schema entry does not permit it — naming it, as `handoff field
+missing: summary` — when the status is not `complete`, when `rendered` is not the
+canonical rendering of the handoff's own fields, when `provenance` is not a canonical
+untrusted-output tag bound to this step, when a completed handoff does not claim the
+evidence ids its step requires, or when those ids are not `ok` in the report.
+
+Every declared field must be **present**; what varies is what it may hold. Each carries
+its own `nullable` and blank rule, so `next_step` and `producer` may be `null` on a step
+that has neither, while `summary` may be neither null nor blank. Omitting a key is not the
+same as setting it to `null`: a producer that skips `next_step` gets `handoff field
+missing: next_step`. The field list is published in the `step_verification.handoff_schema` block
+of the ship contract; [command-contracts.md](command-contracts.md#the-handoff-schema-is-checked-whole)
+documents each field.
 
 ```bash
 keel step-verify --step s7 \
