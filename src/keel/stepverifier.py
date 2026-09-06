@@ -396,6 +396,24 @@ def _check_handoff_provenance(step_id: str, handoff: dict[str, Any] | None) -> d
                 False,
                 f"handoff provenance is not canonical, {where} missing: {', '.join(missing)}",
             )
+    # Types, not values. `vendor` and `model` are free-form strings the producer
+    # copies from the run, so there is nothing here to compare them against; what can
+    # be said is that a list is a list. Extra keys are deliberately allowed — a tag
+    # carrying a member this version has not heard of is a newer producer, not a
+    # forgery, and refusing it would make the verifier the reason a handoff cannot
+    # cross a version boundary.
+    for key in ("vendor", "model"):
+        if source[key] is not None and not isinstance(source[key], str):
+            return _check(
+                "handoff_provenance", False, f"handoff provenance source.{key} is not a string"
+            )
+    for key in ("allowed_capabilities", "unknown_capabilities"):
+        if not isinstance(scope[key], list):
+            return _check(
+                "handoff_provenance",
+                False,
+                f"handoff provenance capability_scope.{key} is not a list",
+            )
     return _check("handoff_provenance", True)
 
 

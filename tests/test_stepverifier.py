@@ -472,6 +472,33 @@ class TestHandoffProvenance(unittest.TestCase):
 
         self.assertIn("handoff provenance step mismatch", report["missing"])
 
+    def test_canonical_members_of_the_wrong_type_are_refused(self):
+        """Types, not values: `vendor`/`model` are free-form, a list is a list."""
+        cases = (
+            ("source", "vendor", 7, "source.vendor is not a string"),
+            ("source", "model", [], "source.model is not a string"),
+            (
+                "capability_scope",
+                "allowed_capabilities",
+                "all",
+                "allowed_capabilities is not a list",
+            ),
+            ("capability_scope", "unknown_capabilities", {}, "unknown_capabilities is not a list"),
+        )
+        for section, key, value, expected in cases:
+            with self.subTest(key=f"{section}.{key}"):
+                handoff = self._handoff()
+                handoff["provenance"][section][key] = value
+
+                self.assertIn(expected, " ".join(_verify(handoff)["missing"]))
+
+    def test_an_unknown_extra_member_is_allowed_through(self):
+        """A newer producer is not a forgery; refusing it would break the boundary."""
+        handoff = self._handoff()
+        handoff["provenance"]["source"]["region"] = "eu"
+
+        self.assertNotIn("provenance", " ".join(_verify(handoff)["missing"]))
+
     def test_a_tag_missing_canonical_members_is_refused_by_name(self):
         """ "Canonical" has to mean the shape `source_tag` emits.
 
