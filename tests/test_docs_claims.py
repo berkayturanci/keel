@@ -41,7 +41,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from keel import cli, install, model
+from keel import cli, extensions, install, model
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SITE = REPO_ROOT / "website"
@@ -56,6 +56,41 @@ _CLI_SECTION = re.compile(r"(?m)^#{2,3} `keel ([a-z][a-z0-9-]*)")
 #: A `knobs` key as configuration.md spells it: a table row and a detail heading.
 _KNOB_ROW = re.compile(r"(?m)^\| `([a-z0-9_]+)` \|")
 _KNOB_HEADING = re.compile(r"(?m)^#### `([a-z0-9_]+)`")
+
+EXTENSIONS_DOC = REPO_ROOT / "docs" / "keel" / "extensions.md"
+
+#: Any backticked token, single or double — Markdown and reStructuredText in one pattern.
+_TICKED = re.compile(r"`{1,2}([^`]+)`{1,2}")
+
+#: A row of the slot table in extensions.md: `| slots | step | mode | may block? | use |`.
+_SLOT_ROW = re.compile(r"(?m)^\|(?P<slots>[^|]*)\|[^|]*\|[^|]*\|(?P<blocks>[^|]*)\|[^|]*\|\s*$")
+
+#: Every prose restatement of "which slots may declare `on_fail: block`", with the
+#: pattern that captures the fragment naming them. The rule itself is
+#: `keel.model.SLOT_DEFINITIONS`' `may_block` flag, which `extensions.parse_extension`
+#: enforces; each entry here is a *claim about* that flag, and #1100 is what one costs
+#: when it drifts — the module docstring said `pre-merge` alone, so an author who wanted
+#: a blocking `guard` read a restriction the validator never had.
+_BLOCKING_CLAIMS = (
+    ("src/keel/extensions.py", re.compile(r"``on_fail: block``, valid only in([^)]+)\)")),
+    ("AGENTS.md", re.compile(r"`on_fail: block` is permitted only in[^:]+:([^.]+)\.")),
+    ("CONTRIBUTING.md", re.compile(r"`on_fail: block` is permitted only in[^:]+:([^.]+)\.")),
+    ("docs/keel/extensions.md", re.compile(r"\*\*`block` is only allowed in([^*]+)\*\*")),
+    (
+        "docs/proposals/keel-architecture.md",
+        re.compile(r"`on_fail: block`, only valid in([^)]+)\)"),
+    ),
+)
+
+
+def _blocking_slots() -> set[str]:
+    """The slots that may declare `on_fail: block`, from the backbone itself."""
+    return {slot.name for slot in model.SLOT_DEFINITIONS if slot.may_block}
+
+
+def _named_slots(fragment: str) -> set[str]:
+    """The slot names a prose fragment backticks; anything else in it is ignored."""
+    return {name for name in _TICKED.findall(fragment) if name in model.SLOTS}
 
 
 def _subcommands() -> set[str]:
@@ -676,6 +711,65 @@ class TestTheIntegrationsCatalogRunsWhatItShows(unittest.TestCase):
             r"(?:pipx|pip) install keel(?![-\w])",
             "the PyPI distribution is `keel-workflow`; a bare `keel` installs someone else's",
         )
+
+
+class TestTheDocumentedBlockingSlotsAreTheBlockingSlots(unittest.TestCase):
+    """Every place that names the blocking slots names `may_block`'s (#1100).
+
+    `on_fail: block` is the one frontmatter value that changes what a failing Lego piece
+    does to the run, so its restriction is the sentence a piece author reads hardest —
+    and a *documented* restriction the code does not have is the expensive direction to
+    be wrong in: the reader builds a workaround for nothing. Prose cannot compute the
+    set, so the comparison lives here, against the flag rather than against a list
+    retyped in a test.
+    """
+
+    def texts(self):
+        """Each claim's label, the text carrying it, and the pattern that finds it."""
+        for label, pattern in _BLOCKING_CLAIMS:
+            if label == "src/keel/extensions.py":
+                # The *imported* docstring, which is what `help(keel.extensions)` prints.
+                yield label, extensions.__doc__, pattern
+            else:
+                yield label, (REPO_ROOT / label).read_text(encoding="utf-8"), pattern
+
+    def test_every_prose_restatement_names_them(self):
+        expected = _blocking_slots()
+        for label, text, pattern in self.texts():
+            with self.subTest(claim=label):
+                match = pattern.search(text)
+                self.assertIsNotNone(
+                    match, f"{label}: no `on_fail: block` restriction found to check"
+                )
+                self.assertEqual(
+                    _named_slots(match.group(1)),
+                    expected,
+                    f"{label} names the wrong blocking slots",
+                )
+
+    def test_the_slot_table_agrees_with_the_flag(self):
+        """extensions.md's `may block?` column, row by row, against `may_block`."""
+        documented: set[str] = set()
+        tabled: set[str] = set()
+        for row in _SLOT_ROW.finditer(EXTENSIONS_DOC.read_text(encoding="utf-8")):
+            slots = _named_slots(row["slots"])
+            if not slots:  # the header and its `---` separator name no slot
+                continue
+            answer = row["blocks"].strip()
+            if answer == "no":
+                blocking: set[str] = set()
+            elif answer == "yes":
+                blocking = set(slots)
+            else:
+                blocking = _named_slots(answer)
+            with self.subTest(slots=sorted(slots)):
+                self.assertLessEqual(
+                    blocking, slots, f"the `may block?` answer {answer!r} names another row's slot"
+                )
+            tabled |= slots
+            documented |= blocking
+        self.assertEqual(tabled, set(model.SLOTS), "the slot table is missing a backbone slot")
+        self.assertEqual(documented, _blocking_slots())
 
 
 if __name__ == "__main__":
