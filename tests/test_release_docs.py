@@ -665,10 +665,56 @@ class TestThePublishWorkflowRunsTheGuards(unittest.TestCase):
         self.assertLessEqual(
             attempts * seconds, 900, "a job that waits this long reports nothing in time"
         )
-        # The numbers are load-bearing rather than decorative: the loop reads them.
+        # The numbers are load-bearing rather than decorative: the loops read them.
         script = self._verify_script()
         self.assertIn('for attempt in $(seq 1 "$PYPI_WAIT_ATTEMPTS"); do', script)
         self.assertIn('sleep "$PYPI_WAIT_SECONDS"', script)
+        # Two gates share the bound: JSON+simple readiness, then the install
+        # itself. A single loop that only watched the JSON API is #1111.
+        self.assertEqual(
+            script.count('for attempt in $(seq 1 "$PYPI_WAIT_ATTEMPTS"); do'),
+            2,
+        )
+
+    def test_the_wait_polls_the_simple_index_not_only_the_json_api(self):
+        """`pip install` resolves through the simple index (#1111).
+
+        v1.21.0 listed both distributions on the JSON API on attempt 1, with
+        matching digests, while `pip` still only offered 1.20.0. The wait must
+        not proceed until the surface the install actually reads lists the
+        version. The JSON document stays — it is what the digest cross-check
+        reads — but it is no longer sufficient on its own.
+        """
+        script = self._verify_script()
+        code = self._code(script)
+
+        self.assertIn("https://pypi.org/pypi/keel-workflow/${version}/json", script)
+        self.assertIn("python -m pip index versions keel-workflow", code)
+        self.assertIn("--index-url https://pypi.org/simple/", code)
+        self.assertIn("--no-cache-dir", code)
+        self.assertIn("simple_ready", code)
+        self.assertIn("json_ready", code)
+        # A miss on only one surface must still fail, and name which.
+        self.assertIn("::error title=Simple index never listed the version::", script)
+        self.assertIn("::error title=PyPI never served both distributions::", script)
+
+    def test_the_install_retries_on_the_wait_budget(self):
+        """A not-yet-visible index is a wait, not a result (#1111).
+
+        The first `pip install` after the index wait can still lose a remaining
+        race. Treating that as terminal is how a healthy release filed
+        `release-broken`. Retry on the same bound; fail only when it is spent.
+        """
+        script = self._verify_script()
+        code = self._code(script)
+
+        self.assertIn('pip" install', code)
+        self.assertIn("--no-cache-dir", code)
+        self.assertIn("installed_ok", code)
+        self.assertIn("::error title=Install never resolved::", script)
+        # The failure handler still keys on `failure()`, so `release-broken`
+        # cannot fire until this step exits 1 — after the budget, not before.
+        self.assertIn('if [ "$attempt" -eq "$PYPI_WAIT_ATTEMPTS" ]; then', code)
 
     def test_the_installed_package_must_report_the_tag(self):
         """A wheel built from the wrong commit installs and runs perfectly."""
@@ -782,6 +828,9 @@ class TestTheRunbookCannotGoStale(unittest.TestCase):
     def test_the_runbook_documents_the_post_publish_verification(self):
         self.assertIn("release-broken", self.runbook)
         self.assertIn("scripts/release_smoke.py", self.runbook)
+        # The wait's second surface: without this the runbook would describe
+        # only the JSON API, which is the #1111 defect in prose.
+        self.assertIn("simple index", self.runbook)
 
 
 class TestContributingDocumentsTheGuards(unittest.TestCase):

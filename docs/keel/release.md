@@ -303,10 +303,16 @@ The release upload also carries `overwrite_files: false`, matching PyPI's `skip-
 **This is automatic.** `publish.yml`'s `verify` job runs after the publish job, on the tag,
 and does all of it (#1024):
 
-- waits until PyPI's release document (`https://pypi.org/pypi/keel-workflow/<version>/json`)
-  lists **both** distributions — a wheel is indexed before the sdist, and a check that
-  proceeds on "something is served" verifies half a release. Bounded at five minutes
-  (`PYPI_WAIT_ATTEMPTS` × `PYPI_WAIT_SECONDS` in the job's `env:`), then it fails;
+- waits until **both** surfaces the job reads are ready, on one five-minute bound
+  (`PYPI_WAIT_ATTEMPTS` × `PYPI_WAIT_SECONDS` in the job's `env:`). The JSON
+  document (`https://pypi.org/pypi/keel-workflow/<version>/json`) must list both
+  distributions — a wheel is indexed before the sdist, and a check that proceeds
+  on "something is served" verifies half a release. The **simple index**
+  (`pip index versions keel-workflow`, the surface `pip install` actually
+  resolves through) must list the version. Those two converge independently:
+  v1.21.0 listed both files on the JSON API on attempt 1, with matching digests,
+  while `pip` still only offered 1.20.0 (#1111). The wait is not too short; it
+  used to be pointed at the wrong endpoint. Then it fails;
 - downloads each artifact from that document's own `urls[]` and checks the bytes against
   the `digests.sha256` PyPI computed on upload. **This is the primary comparison**, because
   PyPI is the record of what was actually published: `skip-existing: true` means no later
@@ -315,7 +321,10 @@ and does all of it (#1024):
   setuptools into an isolated build environment to learn a filename the document states;
 - installs `keel-workflow==<version>` from PyPI into a clean virtualenv and requires
   `keel version` to print the tag's version — a wheel built from the wrong commit installs
-  and runs perfectly while reporting a different one. `keel doctor` runs log-only
+  and runs perfectly while reporting a different one. The install itself retries on the
+  same `PYPI_WAIT_*` bound: a remaining race between `pip index versions` and
+  `pip install` is a wait, not a result, and `release-broken` is filed only after
+  that budget is spent. `keel doctor` runs log-only
   (deliberately not `--strict`: outside a keel checkout it correctly warns that no adapter
   surfaces are present, which is not a release defect);
 - runs `python scripts/release_smoke.py --requirement "keel-workflow==<version>"` — the
