@@ -305,6 +305,9 @@ jobs:
       LOG: ${{ github.workspace }}/verify.log
       # The bound on the index wait, named rather than inlined so a test can assert
       # the number instead of matching the loop's text. 20 x 15s = five minutes.
+      # Spent on *both* surfaces the job reads — PyPI's JSON API (digest
+      # cross-check) and the simple index (`pip install` resolves through the
+      # latter; the JSON document can list a version tens of seconds earlier).
       PYPI_WAIT_ATTEMPTS: "20"
       PYPI_WAIT_SECONDS: "15"
     steps:
@@ -336,18 +339,48 @@ jobs:
             mkdir -p "$pypi"
 
             echo "== waiting for PyPI to serve both distributions of ${version} =="
-            # "Something is served" is not the condition worth waiting for: the wheel
-            # is indexed before the sdist, and the digest cross-check below would then
-            # compare one artifact and pass having verified half a release. Wait until
-            # the release's own JSON document lists both package types.
+            # Two surfaces, one budget. The JSON document is what the digest
+            # cross-check reads, and "something is served" is not enough: the
+            # wheel is indexed before the sdist, and proceeding on that would
+            # verify half a release. The simple index is what `pip install`
+            # actually resolves through. They converge independently — v1.21.0
+            # listed both files on the JSON API on attempt 1, with matching
+            # digests, while `pip` still only offered 1.20.0 (#1111). Wait until
+            # *both* are ready, then spend the same bound retrying the install
+            # itself rather than treating the first miss as terminal.
+            json_ready=""
+            simple_ready=""
             for attempt in $(seq 1 "$PYPI_WAIT_ATTEMPTS"); do
-              if curl -fsSL "https://pypi.org/pypi/keel-workflow/${version}/json" -o "$meta" \
-                && [ "$(jq -r '[.urls[].packagetype] | unique | join(",")' "$meta")" = "bdist_wheel,sdist" ]; then
-                echo "both distributions listed on attempt ${attempt}"
+              if [ -z "$json_ready" ]; then
+                if curl -fsSL "https://pypi.org/pypi/keel-workflow/${version}/json" -o "$meta" \
+                  && [ "$(jq -r '[.urls[].packagetype] | unique | join(",")' "$meta")" = "bdist_wheel,sdist" ]; then
+                  json_ready=1
+                  echo "both distributions listed on the JSON API on attempt ${attempt}"
+                fi
+              fi
+              if [ -z "$simple_ready" ]; then
+                # `--no-cache-dir` so a miss does not pin a stale simple page for
+                # the next attempt. `--index-url` names the surface, not a mirror.
+                if python -m pip index versions keel-workflow \
+                    --disable-pip-version-check --no-cache-dir \
+                    --index-url https://pypi.org/simple/ 2>/dev/null \
+                  | sed -n 's/^Available versions: //p' \
+                  | tr ',' '\n' \
+                  | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
+                  | grep -qx "$version"; then
+                  simple_ready=1
+                  echo "simple index lists ${version} on attempt ${attempt}"
+                fi
+              fi
+              if [ -n "$json_ready" ] && [ -n "$simple_ready" ]; then
                 break
               fi
               if [ "$attempt" -eq "$PYPI_WAIT_ATTEMPTS" ]; then
-                echo "::error title=PyPI never served both distributions::${req} did not have a wheel and an sdist on the index within the bounded wait"
+                if [ -z "$json_ready" ]; then
+                  echo "::error title=PyPI never served both distributions::${req} did not have a wheel and an sdist on the JSON API within the bounded wait"
+                else
+                  echo "::error title=Simple index never listed the version::${req} was on the JSON API but pip could not resolve it from the simple index within the bounded wait"
+                fi
                 exit 1
               fi
               sleep "$PYPI_WAIT_SECONDS"
@@ -389,7 +422,27 @@ jobs:
 
             echo "== clean venv: install, keel version =="
             python -m venv "${RUNNER_TEMP}/verify-venv"
-            "${RUNNER_TEMP}/verify-venv/bin/pip" install --disable-pip-version-check "$req"
+            # The simple-index wait above is the gate; this is the assertion.
+            # A remaining race between `pip index versions` and `pip install`
+            # is still a wait, not a result — retry on the same bound, and
+            # only then fail. `--no-cache-dir` so a miss cannot reuse the
+            # page that did not yet list this version.
+            installed_ok=""
+            for attempt in $(seq 1 "$PYPI_WAIT_ATTEMPTS"); do
+              if "${RUNNER_TEMP}/verify-venv/bin/pip" install \
+                  --disable-pip-version-check --no-cache-dir "$req"; then
+                installed_ok=1
+                echo "installed ${req} on attempt ${attempt}"
+                break
+              fi
+              if [ "$attempt" -eq "$PYPI_WAIT_ATTEMPTS" ]; then
+                echo "::error title=Install never resolved::${req} was not installable from the simple index within the bounded wait"
+                exit 1
+              fi
+              echo "simple index does not yet resolve ${req} (attempt ${attempt}/${PYPI_WAIT_ATTEMPTS}); retrying in ${PYPI_WAIT_SECONDS}s"
+              sleep "$PYPI_WAIT_SECONDS"
+            done
+            [ -n "$installed_ok" ]
             installed="$("${RUNNER_TEMP}/verify-venv/bin/keel" version)"
             echo "keel version -> ${installed}"
             # The tag is the claim; this is the package's answer to it. A wheel built

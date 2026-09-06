@@ -6,6 +6,9 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **`publish.yml`'s verify job waits on the simple index, not only the JSON API** (#1111). The wait polled `https://pypi.org/pypi/keel-workflow/<version>/json` until both distributions were listed, then installed via `pip install keel-workflow==<version>`, which resolves through the simple index. Those surfaces converge independently: on v1.21.0 both files were listed and the digests matched on attempt 1, and ~25s later pip still only offered through 1.20.0. The job failed and filed `release-broken: v1.21.0`; a plain re-run passed. The five-minute `PYPI_WAIT_*` budget was spent watching a surface that was already ready. The wait now requires the JSON document *and* `pip index versions` (against `https://pypi.org/simple/`, `--no-cache-dir`) before anything is compared, the install itself retries on the same bound rather than treating the first miss as terminal, and `release-broken` is still filed only when the verify step exits 1 — after that budget, not before. The JSON digest cross-check is unchanged. Failure stays loud when the budget is genuinely exhausted (JSON never listed both files, the simple index never listed the version, or the install never resolved).
+
 ## [1.21.0] - 2026-09-06
 
 ### Fixed
