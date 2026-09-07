@@ -1534,7 +1534,10 @@ _VERDICT_ANCHORS = (
 #: mention is not the spelling of one token but how many the verdict has: prose
 #: mentions a product in passing, a review that walked the change names more
 #: than one thing, or names one inside a clause that says it looked
-#: (:data:`_VERDICT_NAMED_REVIEW_ACT`, where the verb supplies the other half).
+#: (:data:`_VERDICT_NAMED_REVIEW_ACT`, whose object takes the same bar — an
+#: anchor, or two of these — because "Ran the Node.js suite" is a mention
+#: with a verb in front of it and reads no differently from "Read
+#: evidence.py". The verb says the looking happened; it does not say what at.
 #:
 #: Measured over every verdict posted across keel and ai-jury: corroboration
 #: refuses all four ``*.js`` product names and all four capitalised hostnames,
