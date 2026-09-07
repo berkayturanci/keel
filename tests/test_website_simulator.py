@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from html.parser import HTMLParser
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -37,6 +38,96 @@ class TestWebsiteSwarmSimulator(unittest.TestCase):
         self.assertIn(".swarm-sandbox", styles_css)
         self.assertIn(".sim-dag-layout", styles_css)
         self.assertIn(".sim-metrics-bar", styles_css)
+
+
+class _AccessibleName(HTMLParser):
+    """The text a screen reader announces for one element, by id.
+
+    `aria-hidden` subtrees are skipped, because that is what the browser does:
+    the `↻` glyph in the replay button is decorative and contributes nothing to
+    the accessible name. Nothing else here is a general implementation of the
+    accessible-name algorithm — it reads one button in one file.
+    """
+
+    def __init__(self, element_id: str):
+        super().__init__()
+        self.element_id = element_id
+        self.attrs: dict[str, str] = {}
+        self.text: list[str] = []
+        self._depth = 0
+        self._hidden = 0
+
+    def handle_starttag(self, tag, attrs):
+        got = dict(attrs)
+        if self._depth:
+            self._depth += 1
+            if got.get("aria-hidden") == "true" or self._hidden:
+                self._hidden += 1
+        elif got.get("id") == self.element_id:
+            self.attrs = got
+            self._depth = 1
+
+    def handle_endtag(self, tag):
+        if self._depth:
+            if self._hidden:
+                self._hidden -= 1
+            self._depth -= 1
+
+    def handle_data(self, data):
+        if self._depth and not self._hidden:
+            self.text.append(data)
+
+    @property
+    def visible(self) -> str:
+        return " ".join("".join(self.text).split())
+
+
+class TestReplayButtonAccessibleName(unittest.TestCase):
+    """WCAG 2.5.3 Label in Name: the accessible name must contain the visible text.
+
+    The replay button carries an `aria-label` that adds the context its visible
+    text leaves out — that what is replayed is the animation above it. An
+    `aria-label` *overrides* the visible text as the accessible name, so the two
+    can then diverge silently: change the button's words and a screen reader, and
+    any speech-input user saying "click replay the run", still gets the old label.
+
+    That divergence class is already in this repository's `.jules/palette.md`
+    (2026-08-18), where a handler restored an `aria-label` to a captured value and
+    left the button announcing "copied" while its visible text had recovered.
+    Nothing pinned the relationship then. This pins it.
+    """
+
+    def _button(self, element_id: str) -> _AccessibleName:
+        parser = _AccessibleName(element_id)
+        parser.feed((REPO_ROOT / "website" / "index.html").read_text(encoding="utf-8"))
+        self.assertTrue(parser.attrs, f"no element with id={element_id!r} in index.html")
+        return parser
+
+    def test_the_visible_text_survives_inside_the_accessible_name(self):
+        button = self._button("replay")
+        label = button.attrs.get("aria-label", "")
+
+        self.assertTrue(label, "the replay button has no aria-label")
+        self.assertIn(
+            button.visible.lower(),
+            label.lower(),
+            f"aria-label {label!r} does not contain the visible text "
+            f"{button.visible!r}, so speech input cannot activate this button",
+        )
+
+    def test_the_accessible_name_starts_with_the_visible_text(self):
+        """Stronger than 2.5.3 requires, and the shape it recommends.
+
+        A visible label at the *start* of the accessible name is what lets a
+        speech-input user say the words they can see and be understood.
+        """
+        button = self._button("replay")
+
+        self.assertTrue(button.attrs["aria-label"].lower().startswith(button.visible.lower()))
+
+    def test_the_decorative_glyph_is_not_part_of_the_name(self):
+        """If the `↻` ever loses `aria-hidden`, the assertions above stop holding."""
+        self.assertNotIn("\u21bb", self._button("replay").visible)
 
 
 class TestCopyButtonFlash(unittest.TestCase):
