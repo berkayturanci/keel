@@ -1583,8 +1583,15 @@ _VERDICT_CHECKED_CLAUSE = re.compile(
 #: — they report a conclusion, not a thing done. The object may sit on the next
 #: line as a bullet, because "Traced:\n- …" is the same clause with a list under
 #: it, and refusing it was the punctuation pedantry #1106 is about.
+#: The object stops at the end of its own sentence. A period inside a filename is
+#: not a sentence end — ``evidence.py`` has to survive — so the boundary is a
+#: period followed by space or line end, not any period. Running to the end of
+#: the line instead let a later sentence supply the naming: "Read the whole diff.
+#: See cli.py for context." earned the clause with a token the verb never
+#: governed.
 _VERDICT_NAMED_REVIEW_ACT = re.compile(
-    rf"\b(?:traced|read|ran|inspected|verified)\b{_VERDICT_CLAUSE_TAIL}([^\n]{{8,}})",
+    rf"\b(?:traced|read|ran|inspected|verified)\b{_VERDICT_CLAUSE_TAIL}"
+    rf"((?:[^.\n]|\.(?!\s|$)){{8,}})",
     re.IGNORECASE,
 )
 
@@ -1704,8 +1711,10 @@ def verdict_substance(body: str, *, pr_title: str = "") -> tuple[bool, str]:
     )
     if not anchored and not _review_act_clause(prose):
         return False, (
-            "verdict names nothing concrete — no file, line, symbol, or "
-            "'checked …' clause, so it cannot be told apart from a receipt"
+            "verdict names nothing concrete — no file, line, symbol, no two "
+            "of a filename/dotted name/identifier, and no 'checked|traced|read|"
+            "ran|inspected|verified …' clause naming what was looked at, so it "
+            "cannot be told apart from a receipt"
         )
 
     title_words = set(_WORD.findall(pr_title.lower()))

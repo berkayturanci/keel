@@ -571,6 +571,67 @@ class TheEscapeClauseNamesAnActOfReview(unittest.TestCase):
         self.assertIn("nothing concrete", reason)
 
 
+class TheVerbGovernsOnlyItsOwnSentence(unittest.TestCase):
+    """An added verb's object ended at the line, not at the sentence (#1106 review).
+
+    The capture ran to the end of the line, so a token in a *later* sentence
+    earned the clause for a verb that never governed it — "Read the whole diff"
+    is the receipt the object requirement exists to refuse, and a following
+    "See cli.py for context." handed it the naming anyway.
+    """
+
+    def test_a_later_sentence_does_not_name_what_the_verb_read(self):
+        ok, reason = evidence.verdict_substance(
+            HEADER + "Read the whole diff. See cli.py for context.", pr_title=TITLE
+        )
+
+        self.assertFalse(ok)
+        self.assertIn("names nothing concrete", reason)
+
+    def test_a_dot_inside_a_filename_does_not_end_the_sentence(self):
+        """The boundary is a period followed by space, or the rule loses `.py`."""
+        for body in (
+            "Read src/keel/evidence.py end to end and the union is stated once.",
+            "Traced:\n- `cache.cache_key` through cli.py and the key folds the block.",
+        ):
+            with self.subTest(body=body[:32]):
+                ok, _ = evidence.verdict_substance(HEADER + body, pr_title=TITLE)
+
+                self.assertTrue(ok)
+
+
+class TwoProductNamesInOneSentenceAreTheKnownResidual(unittest.TestCase):
+    """Stated, not fixed — and the reason is the rule working as designed.
+
+    Two corroborators anchor because naming two things is what a review does;
+    `Node.js` and `evidence.py` are spelled identically, so any counting that
+    lets `evidence.py` + `contracts.py` through also lets `Node.js` +
+    `Next.js` through. Closing it needs a list of product names, which needs a
+    new entry per product and is the losing game #1106 declined twice.
+
+    This gate refuses *rubber stamps*, not an adversary: anyone willing to type
+    a backtick can satisfy it. The test records the limit so the next reader
+    meets a decision rather than an oversight, and no corpus verdict of the
+    1,323 measured exhibits the shape.
+    """
+
+    def test_two_product_names_still_corroborate(self):
+        ok, _ = evidence.verdict_substance(
+            HEADER + "The Node.js and Next.js sides are unchanged and it looks fine.",
+            pr_title=TITLE,
+        )
+
+        self.assertTrue(ok)
+
+    def test_one_product_name_does_not(self):
+        ok, _ = evidence.verdict_substance(
+            HEADER + "The Node.js side of this is unchanged and everything looks fine.",
+            pr_title=TITLE,
+        )
+
+        self.assertFalse(ok)
+
+
 class TheNineTwoSixReceiptShapeStaysRefused(unittest.TestCase):
     """The calibration the widening is measured against.
 

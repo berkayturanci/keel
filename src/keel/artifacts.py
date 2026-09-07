@@ -165,9 +165,13 @@ def render_review_verdict(
       ``evidence.py`` are spelled the same way and so are ``GitHub.com`` and
       ``Config.parse``; naming two things is what a review does and a mention
       does not;
-    * a "checked/traced/read/ran/inspected/verified X, Y and Z" clause that
-      names X, Y and Z, where one such token is enough because the verb says
-      the looking happened.
+    * a "traced/read/ran/inspected/verified X" clause where X names something —
+      one such token is enough there, because the verb says the looking
+      happened, and the naming has to sit in the verb's own sentence. "Checked"
+      is the exception and keeps a free-form object: it predates this rule and
+      the corpus has real reviews under it that name their objects in English
+      ("Checked the formula syntax, the version URL and the checksum
+      placeholder").
 
     A genuinely clean review stays expressible; it just has to say what it
     looked at.
