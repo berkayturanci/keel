@@ -141,8 +141,45 @@ def bounded_seconds(code: str, env: dict[str, str]) -> int:
     return total
 
 
-def network_calls(code: str) -> list[list[str]]:
-    """Each command in `code` whose head is a tool in REQUIRED_FLAGS, wrappers kept."""
+#: Shell words that stand in front of a command without being one. Skipping
+#: these is not cosmetic: the first cut of this scanner read `if curl …` as a
+#: call to `if` and `python -m pip install` as a call to `python`, so neither
+#: matched REQUIRED_FLAGS and both were dropped. The test then passed by looking
+#: at nothing — for the two call shapes #1116 is mostly about. Found by both
+#: gate seats on the pull request that introduced it.
+KEYWORDS = frozenset({"if", "elif", "then", "else", "while", "until", "do", "!", "("})
+
+
+def head_tool(tokens: list[str]) -> tuple[str, int] | None:
+    """The tool this command actually runs, and the index its name sits at.
+
+    Returns `None` when the command runs nothing in REQUIRED_FLAGS. `python -m
+    pip` resolves to `pip`, because that is what opens the connection — reading
+    the head token alone reports the interpreter.
+    """
+    index = 0
+    while index < len(tokens) and (
+        tokens[index] in KEYWORDS
+        or tokens[index] in WRAPPERS
+        or tokens[index].isdigit()
+        or "=" in tokens[index]
+        or tokens[index].startswith("-")
+    ):
+        index += 1
+    if index >= len(tokens):
+        return None
+    name = Path(tokens[index].strip("\"'$(){}")).name
+    if name in {"python", "python3"} and tokens[index + 1 : index + 3] == ["-m", "pip"]:
+        return "pip", index + 2
+    if name.startswith("pip") or name.endswith("pip"):
+        return "pip", index
+    if name in REQUIRED_FLAGS:
+        return name, index
+    return None
+
+
+def network_calls(code: str) -> list[tuple[str, list[str]]]:
+    """Every command in `code` that talks to the network, as (tool, tokens)."""
     calls = []
     for chunk in re.split(r"[;&|]{1,2}|\n", code):
         # `sums="$(timeout 60 gh release view …` puts the assignment, the command
@@ -152,21 +189,9 @@ def network_calls(code: str) -> list[list[str]]:
         tokens = chunk.split()
         if not tokens:
             continue
-        head = 0
-        while head < len(tokens) and (
-            tokens[head] in WRAPPERS
-            or tokens[head].isdigit()
-            or "=" in tokens[head]
-            or tokens[head].startswith("-")
-        ):
-            head += 1
-        if head >= len(tokens):
-            continue
-        name = Path(tokens[head].strip('"$(){}')).name
-        if name.startswith("pip") or name.endswith("pip"):
-            name = "pip"
-        if name in REQUIRED_FLAGS:
-            calls.append(tokens)
+        found = head_tool(tokens)
+        if found:
+            calls.append((found[0], tokens))
     return calls
 
 
@@ -206,24 +231,56 @@ class ThePublishWorkflow(unittest.TestCase):
 class EveryNetworkCallInAReleaseIsBounded(ThePublishWorkflow):
     """A job ceiling cannot name what stalled; a per-call bound can."""
 
-    def test_each_call_carries_its_own_bound(self):
-        unbounded = []
+    def _calls(self) -> list[tuple[str, str, list[str]]]:
+        found = []
         for job, body in self.jobs.items():
             for step in body["steps"]:
-                if not step.get("run"):
-                    continue
-                for tokens in network_calls(code_of(step["run"])):
-                    name = next(
-                        n for n in REQUIRED_FLAGS if n in " ".join(tokens[:4]).replace("/", " ")
-                    )
-                    wanted = REQUIRED_FLAGS[name]
-                    if wanted:
-                        missing = [f for f in wanted if f not in tokens]
-                        if missing:
-                            unbounded.append(f"{job}: {' '.join(tokens)[:70]} lacks {missing}")
-                    elif "timeout" not in tokens:
-                        unbounded.append(f"{job}: {' '.join(tokens)[:70]} has no timeout wrapper")
+                if step.get("run"):
+                    for tool, tokens in network_calls(code_of(step["run"])):
+                        found.append((job, tool, tokens))
+        return found
+
+    def test_each_call_carries_its_own_bound(self):
+        unbounded = []
+        for job, tool, tokens in self._calls():
+            wanted = REQUIRED_FLAGS[tool]
+            if wanted:
+                missing = [f for f in wanted if f not in tokens]
+                if missing:
+                    unbounded.append(f"{job}: {' '.join(tokens)[:70]} lacks {missing}")
+            elif "timeout" not in tokens:
+                unbounded.append(f"{job}: {' '.join(tokens)[:70]} has no timeout wrapper")
         self.assertEqual(unbounded, [], f"unbounded network calls: {unbounded}")
+
+    def test_the_scan_finds_all_three_tools(self):
+        """A scan that sees nothing passes the assertion above by looking away.
+
+        This is the assertion that would have caught the first cut: it read
+        `if curl` as a call to `if` and `python -m pip` as a call to `python`,
+        so it found four calls where the file has thirteen — and reported every
+        `curl` and every `pip` in the release as bounded without reading one.
+        """
+        found = self._calls()
+        tools = {tool for _, tool, _ in found}
+
+        self.assertEqual(tools, {"curl", "pip", "gh"}, f"tools seen: {sorted(tools)}")
+        self.assertGreaterEqual(len(found), 12, f"only {len(found)} calls found")
+
+    def test_a_conditional_does_not_hide_a_call(self):
+        """`if curl …` and `if ! curl …` are calls to curl, not to `if`."""
+        for code in ("if curl -fsSL x; then", "if ! curl -fsSL x; then"):
+            with self.subTest(code=code):
+                self.assertEqual([t for t, _ in network_calls(code)], ["curl"])
+
+    def test_an_interpreter_does_not_hide_the_installer(self):
+        """`python -m pip install` opens the connection; `python` does not."""
+        self.assertEqual([t for t, _ in network_calls("python -m pip install x")], ["pip"])
+        self.assertEqual([t for t, _ in network_calls("python scripts/smoke.py")], [])
+
+    def test_wrappers_and_assignments_do_not_hide_the_tool(self):
+        """More than three words may stand before the executable."""
+        tokens = network_calls("timeout 900 env FOO=1 BAR=2 gh issue list")
+        self.assertEqual([t for t, _ in tokens], ["gh"])
 
 
 class TheVerifyCeilingIsAboveItsOwnWaits(ThePublishWorkflow):
