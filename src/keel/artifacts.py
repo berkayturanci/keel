@@ -155,13 +155,22 @@ def render_review_verdict(
     :func:`keel.evidence.verdict_substance` refuses a verdict that names nothing
     (#926). That is deliberate: 75 of 75 verdicts across 25 pull requests were
     this template with the defaults left in, and the gate could not tell them
-    apart from a review that caught a blocker. Give the scope a path, a file, a
-    symbol — ``module.symbol`` reads as one, parentheses not required (#1106) —
-    or a "checked/traced/read/ran/inspected/verified X, Y and Z" clause that
-    names X, Y and Z: a genuinely clean review stays expressible, it just has to
-    say what it looked at. A dotted token has to look like code rather than like
-    a hostname, and a bare identifier is read by its underscore, so ``cache_key``
-    and ``Config.reload`` count where "GitHub" and ``pypi.org`` do not.
+    apart from a review that caught a blocker. Any one of these is enough:
+
+    * a path (``src/keel/evidence.py``), a ``file.py:42``, a backticked token,
+      or a called ``module.function()``;
+    * **two** of the unbackticked forms — a bare filename, a dotted
+      ``module.symbol`` (parentheses not required, #1106), a ``snake_case``
+      identifier. One alone does not count, because ``Node.js`` and
+      ``evidence.py`` are spelled the same way and so are ``GitHub.com`` and
+      ``Config.parse``; naming two things is what a review does and a mention
+      does not;
+    * a "checked/traced/read/ran/inspected/verified X, Y and Z" clause that
+      names X, Y and Z, where one such token is enough because the verb says
+      the looking happened.
+
+    A genuinely clean review stays expressible; it just has to say what it
+    looked at.
     """
     lines = [
         evidence.REVIEW_VERDICT_MARKER,

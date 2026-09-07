@@ -126,17 +126,38 @@ class TheAnchorSetReadsHowReviewersActuallyWrite(unittest.TestCase):
     def test_a_dotted_identifier_without_parentheses(self):
         # Adding parentheses to something you are not calling is worse prose.
         ok, _ = evidence.verdict_substance(
-            HEADER + "The payload folds cache.cache_key in only when the block is non-empty.",
+            HEADER + "The payload folds cache.cache_key in only when "
+            "collect_static_hints returned a block.",
             pr_title=TITLE,
         )
         self.assertTrue(ok)
 
-    def test_a_class_and_its_method(self):
-        ok, _ = evidence.verdict_substance(
+    def test_a_class_and_its_method_corroborates(self):
+        """``Config.reload`` reads, but not alone — ``GitHub.com`` is its shape.
+
+        A bare dotted token is a token with a dot in it. Backticks, a directory
+        separator, a ``:42`` or a ``()`` are the author pointing at something; a
+        capital letter is not, which is why this form asks for a second token or
+        a mark.
+        """
+        alone, reason = evidence.verdict_substance(
             HEADER + "Config.reload picks the value up on the next run.",
             pr_title=TITLE,
         )
-        self.assertTrue(ok)
+        self.assertFalse(alone)
+        self.assertIn("nothing concrete", reason)
+
+        corroborated, _ = evidence.verdict_substance(
+            HEADER + "Config.reload picks the value up before validate_config runs.",
+            pr_title=TITLE,
+        )
+        self.assertTrue(corroborated)
+
+        backticked, _ = evidence.verdict_substance(
+            HEADER + "`Config.reload` picks the value up on the next run.",
+            pr_title=TITLE,
+        )
+        self.assertTrue(backticked)
 
     def test_an_abbreviation_is_not_a_dotted_identifier(self):
         """Both sides of the dot need two characters, or every "e.g." anchors."""
@@ -164,12 +185,30 @@ class TheAnchorSetReadsHowReviewersActuallyWrite(unittest.TestCase):
         self.assertTrue(ok)
 
     def test_a_bare_source_file_is_read_without_its_directory(self):
-        """``evidence.py`` is a file; the path anchors only saw ``a/evidence.py``."""
-        ok, _ = evidence.verdict_substance(
+        """``evidence.py`` is a file the path anchors never saw — but it corroborates.
+
+        One filename in a sentence of prose is ``Node.js``. Two of them, or one
+        inside a clause that says an act of review happened, is a review.
+        """
+        alone, reason = evidence.verdict_substance(
             HEADER + "The new branch in evidence.py is unreachable from the CLI.",
             pr_title="chore: unrelated",
         )
-        self.assertTrue(ok)
+        self.assertFalse(alone)
+        self.assertIn("nothing concrete", reason)
+
+        two_files, _ = evidence.verdict_substance(
+            HEADER + "The new branch in evidence.py is unreachable from the CLI, "
+            "and contracts.py never reaches it either.",
+            pr_title="chore: unrelated",
+        )
+        self.assertTrue(two_files)
+
+        inside_a_clause, _ = evidence.verdict_substance(
+            HEADER + "Read evidence.py end to end and found nothing.",
+            pr_title="chore: unrelated",
+        )
+        self.assertTrue(inside_a_clause)
 
     def test_camel_case_class_names_need_a_dot_or_backticks(self):
         """Bare CamelCase is a product name as often as it is a class.
@@ -256,11 +295,12 @@ class ADotIsNotEnoughToMakeASymbol(unittest.TestCase):
         self.assertIn("nothing concrete", reason)
 
     def test_the_marked_forms_still_read(self):
+        """Each marked token corroborates; a review that walked the change has two."""
         for prose in (
-            "cache.cache_key folds the block in only when it is non-empty",
-            "JuryConfig.__post_init__ raises before the adapter is built",
-            "subprocess.DEVNULL is passed for stdin now",
-            "The rewrite touches CHANGELOG.md and nothing else",
+            "cache.cache_key folds the block in only when collect_static_hints ran",
+            "JuryConfig.__post_init__ raises before validate_config builds the adapter",
+            "subprocess.DEVNULL is passed for stdin now and _stdin_for stops guessing",
+            "The rewrite touches CHANGELOG.md and evidence.py and nothing else",
         ):
             with self.subTest(prose=prose[:40]):
                 ok, _ = evidence.verdict_substance(HEADER + prose, pr_title="chore: unrelated")
@@ -293,6 +333,127 @@ class TwoProductNamesAreNotTwoIdentifiers(unittest.TestCase):
         )
 
         self.assertTrue(ok)
+
+    def test_bare_camel_case_is_not_read_as_an_identifier(self):
+        """The shipped rule refuses ``TheHintsBlockIsPartOfTheKey``, alone or paired.
+
+        The first draft of #1106 read CamelCase and its pull request body said
+        so; the corpus took it back out, because a floor of two then admitted
+        "The GitHub and GitLab side of this is unchanged". This pins the shipped
+        behaviour against the description, so the claim cannot come back.
+        """
+        for prose in (
+            "TheHintsBlockIsPartOfTheKey is part of the frozen key",
+            "TheHintsBlockIsPartOfTheKey and RoutingValidation both pin the frozen key",
+        ):
+            with self.subTest(prose=prose[:40]):
+                ok, reason = evidence.verdict_substance(HEADER + prose, pr_title="chore: unrelated")
+
+                self.assertFalse(ok)
+                self.assertIn("nothing concrete", reason)
+
+    def test_wrapping_underscores_are_not_a_joining_underscore(self):
+        """Two alphanumeric segments are the rule; wrapping underscores are not.
+
+        The comment on ``_VERDICT_BARE_IDENTIFIER`` offered ``_private`` and
+        ``__dunder__`` as things it matches. Neither has a second segment, so
+        neither ever matched; what matches in ``__post_init__`` is ``post_init``.
+        """
+        ok, reason = evidence.verdict_substance(
+            HEADER + "The _private flag and the __dunder__ hook are both unchanged here",
+            pr_title="chore: unrelated",
+        )
+
+        self.assertFalse(ok)
+        self.assertIn("nothing concrete", reason)
+
+        joined, _ = evidence.verdict_substance(
+            HEADER + "The __post_init__ hook and the _is_allowed guard are both unchanged",
+            pr_title="chore: unrelated",
+        )
+
+        self.assertTrue(joined)
+
+
+class ABareDottedTokenCorroboratesRatherThanAnchors(unittest.TestCase):
+    """Round three of "the widening admits a non-symbol", answered by shape.
+
+    Twice the fix was a finer character class, and twice the next token that
+    class admits turned up: ``claude.ai`` in a tool footer, then ``GitHub`` as
+    bare CamelCase, then ``Node.js`` and ``GitHub.com``. That sequence does not
+    end, because ``Node.js`` and ``evidence.py`` are one shape and so are
+    ``GitHub.com`` and ``Config.parse`` — and a blocklist of products or TLDs
+    cannot be finished, because anyone can register the next one.
+
+    So the count carries it instead of the spelling. Prose mentions a product
+    once in passing; a review that walked the change names more than one thing,
+    or names one inside a clause that says it looked. The forms whose
+    *punctuation* is the author pointing — backticks, a directory separator, a
+    ``:42``, a ``()`` — still anchor on their own.
+    """
+
+    def test_a_js_product_name_is_not_a_source_file(self):
+        for prose in (
+            "The Node.js side of this is unchanged and everything looks fine.",
+            "The Next.js side of this is unchanged and everything looks fine.",
+            "The Vue.js side of this is unchanged and everything looks fine.",
+            "The D3.js side of this is unchanged and everything looks fine.",
+        ):
+            with self.subTest(prose=prose[:24]):
+                ok, reason = evidence.verdict_substance(HEADER + prose, pr_title="chore: unrelated")
+
+                self.assertFalse(ok)
+                self.assertIn("nothing concrete", reason)
+
+    def test_a_capitalised_hostname_is_not_a_dotted_symbol(self):
+        """``[A-Z][a-z]`` made any capitalised first segment a symbol."""
+        for prose in (
+            "See GitHub.com for context; the rest looks fine to me.",
+            "See GitLab.com for context; the rest looks fine to me.",
+            "See OpenAI.com for context; the rest looks fine to me.",
+            "See SourceForge.net for context; the rest looks fine to me.",
+        ):
+            with self.subTest(prose=prose[:24]):
+                ok, reason = evidence.verdict_substance(HEADER + prose, pr_title="chore: unrelated")
+
+                self.assertFalse(ok)
+                self.assertIn("nothing concrete", reason)
+
+    def test_a_real_javascript_file_still_reads_beside_a_second_token(self):
+        """``.js`` stays in the extension list — it is a real source extension.
+
+        Dropping it to refuse four product names would refuse the reviews in
+        the record that name ``content.js`` and ``board.html``.
+        """
+        ok, _ = evidence.verdict_substance(
+            HEADER + "content.js drops the paragraph and render_board.js is untouched.",
+            pr_title="chore: unrelated",
+        )
+
+        self.assertTrue(ok)
+
+    def test_one_written_token_is_one_piece_of_evidence(self):
+        """``cache.cache_key`` is read by two patterns and still counts once.
+
+        Counting the whole token and its second half separately would let a
+        single token clear a floor that exists to require two.
+        """
+        self.assertEqual(
+            evidence._verdict_corroborators("cache.cache_key folds the block in"),
+            {"cache.cache_key"},
+        )
+        self.assertEqual(
+            evidence._verdict_corroborators("evidence.py, evidence.py and evidence.py"),
+            {"evidence.py"},
+        )
+
+        ok, reason = evidence.verdict_substance(
+            HEADER + "cache.cache_key folds the block in when it is non-empty.",
+            pr_title="chore: unrelated",
+        )
+
+        self.assertFalse(ok)
+        self.assertIn("nothing concrete", reason)
 
 
 class AnExtensionlessPathIsNotAnAnchor(unittest.TestCase):
