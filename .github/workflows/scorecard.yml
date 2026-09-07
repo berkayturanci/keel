@@ -19,6 +19,8 @@ jobs:
   analysis:
     name: Scorecard analysis
     runs-on: ubuntu-latest
+    # measured 0.7 min; the analysis reaches several external services.
+    timeout-minutes: 30
     permissions:
       # Needed to publish results to the OpenSSF REST API (OIDC).
       id-token: write

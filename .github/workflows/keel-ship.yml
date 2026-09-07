@@ -89,6 +89,8 @@ jobs:
     # it. Only the evidence gate needs to re-read the PR when a verdict lands.
     if: ${{ github.event_name != 'issue_comment' }}
     runs-on: ubuntu-latest
+    # measured 1.4 min; it runs keel against a live pull request.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -142,6 +144,8 @@ jobs:
     # indistinguishable to branch protection, which matches by name.
     name: keel evidence (verify)
     runs-on: ubuntu-latest
+    # measured 0.3 min; it calls the GitHub API repeatedly and publishes a check-run.
+    timeout-minutes: 25
     # Ordered after `ship` on purpose. Arming falls through to the ship-assessment
     # comment for any branch outside evidence._SHIP_BRANCH_RE, and that comment is
     # written by the `ship` job — running the two in parallel let this gate read the

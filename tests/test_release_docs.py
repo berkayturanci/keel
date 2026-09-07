@@ -269,7 +269,12 @@ class TestReleaseDocs(unittest.TestCase):
                 )
                 self.assertIsNotNone(pinned, f"{tool} must be == pinned with a sha256")
         self.assertIn("python -m build --no-isolation", workflow)
-        self.assertIn("python -m pip install --no-deps dist/*.whl", workflow)
+        # Bounded by a `timeout` wrapper and pip's socket timeout since #1116;
+        # what this asserts is unchanged — the SBOM install must carry
+        # `--no-deps`, so it reads the wheel and resolves nothing from the index.
+        self.assertIn(
+            "timeout 60 python -m pip install --timeout 30 --no-deps dist/*.whl", workflow
+        )
         self.assertNotIn("python -m pip install dist/*.whl", workflow)
         self.assertGreaterEqual(lockfile.count("--hash=sha256:"), 31)
 
@@ -522,10 +527,16 @@ class TestThePublishWorkflowRunsTheGuards(unittest.TestCase):
         return "\n".join(line for line in script.splitlines() if not line.lstrip().startswith("#"))
 
     def test_the_release_guards_run_before_the_build(self):
-        self.assertIn("scripts/release_check.py --tag", self.workflow)
+        # Through `_code`, which this test used to skip while its siblings used
+        # it. A comment added to the job header mentioning `python -m build`
+        # made the raw text match above the guard, and the assertion reported
+        # the guard as running last — failing on prose, which is exactly what
+        # `_code` exists to prevent (#1116).
+        code = self._code(self.workflow)
+        self.assertIn("scripts/release_check.py --tag", code)
         self.assertLess(
-            self.workflow.index("scripts/release_check.py"),
-            self.workflow.index("python -m build"),
+            code.index("scripts/release_check.py"),
+            code.index("python -m build"),
             "the guards must run before anything is built or uploaded",
         )
 
