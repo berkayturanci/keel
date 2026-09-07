@@ -546,6 +546,30 @@ class OnlyCheckedOpensACleanReviewWithoutNamingASymbol(unittest.TestCase):
         self.assertFalse(ok)
 
 
+class TheCheckedObjectEndsAtASentence(unittest.TestCase):
+    """What replacing `[^.\\n]{8,}` with a sentence buys and what it costs.
+
+    Both directions pinned, because the trade is the whole reason the clause
+    changed and neither half was asserted before.
+    """
+
+    def test_it_buys_a_filename(self):
+        """`[^.\\n]` stopped at the dot, so the object could not hold `a.py`."""
+        ok, _ = evidence.verdict_substance(
+            HEADER + "Checked a.py today and everything looks correct here.", pr_title=TITLE
+        )
+
+        self.assertTrue(ok)
+
+    def test_it_costs_a_trailing_semicolon_clause(self):
+        """Accepted on `main`; refused here. No corpus verdict is written this way."""
+        ok, _ = evidence.verdict_substance(
+            HEADER + "Checked config; found nothing of concern in the rest.", pr_title=TITLE
+        )
+
+        self.assertFalse(ok)
+
+
 class TheDottedBranchIsPinnedOnItsOwn(unittest.TestCase):
     """The headline tests reach the dotted rule through other tokens too.
 
