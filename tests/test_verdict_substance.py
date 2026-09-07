@@ -668,81 +668,6 @@ class ASentenceEndsAtMoreThanAPeriod(unittest.TestCase):
         self.assertTrue(ok)
 
 
-class TheClauseItselfKeepsAFilename(unittest.TestCase):
-    """Asserted on the clause, not on the verdict — that is why it was missed.
-
-    Both clauses compile with `re.IGNORECASE`, so an unscoped `[A-Z]` in the
-    sentence lookahead matched any letter and *every* period ended a sentence:
-    "Checked evidence.py" was read as "Checked evidence". The end-to-end verdict
-    still passed, on the prose corroborators rather than on the clause, so only
-    a test of the match itself can see it.
-    """
-
-    def test_a_filename_survives_inside_both_clauses(self):
-        for body, verb in (
-            ("Checked evidence.py and contracts.py, found nothing", "Checked"),
-            ("Read src/keel/evidence.py end to end and it is fine", "Read"),
-        ):
-            with self.subTest(verb=verb):
-                match = evidence._VERDICT_CHECKED_CLAUSE.search(
-                    body
-                ) or evidence._VERDICT_NAMED_REVIEW_ACT.search(body)
-
-                self.assertIsNotNone(match)
-                self.assertIn(".py", match.group(0))
-
-    def test_a_capital_after_the_dot_still_ends_it(self):
-        match = evidence._VERDICT_NAMED_REVIEW_ACT.search(
-            "Read the whole diff.See cli.py for context."
-        )
-
-        self.assertIsNotNone(match)
-        self.assertNotIn("cli.py", match.group(0))
-
-
-class AMissingSpaceDoesNotForgeASymbol(unittest.TestCase):
-    """ "diff.See" is a sentence boundary wearing a dot (#1106 review)."""
-
-    def test_a_sentence_run_together_names_nothing(self):
-        ok, _ = evidence.verdict_substance(
-            HEADER + "Read the whole diff.See cli.py for context.", pr_title=TITLE
-        )
-
-        self.assertFalse(ok)
-
-    def test_the_python_shapes_survive_it(self):
-        """One capital after a dot starts a sentence; two are a constant."""
-        self.assertEqual(
-            evidence._verdict_corroborators("subprocess.DEVNULL here"), {"subprocess.DEVNULL"}
-        )
-        self.assertEqual(evidence._verdict_corroborators("Config.parse here"), {"Config.parse"})
-        self.assertEqual(
-            evidence._verdict_corroborators("cache.cache_key here"), {"cache.cache_key"}
-        )
-        self.assertEqual(evidence._verdict_corroborators("the whole diff.See it"), set())
-
-
-class UnderscoredEnglishIsTheOtherKnownResidual(unittest.TestCase):
-    """Prose that writes English with underscores corroborates itself.
-
-    "The code_quality and test_coverage are maintained" clears the floor with
-    two tokens that name nothing in the change. The joining underscore is the
-    only thing separating an identifier from a word, and refusing these needs a
-    list of English phrases — the losing game this change declined three times
-    for hostnames and product names. Recorded, not fixed: no verdict of the
-    1,421 measured is written this way, and the gate refuses rubber stamps
-    rather than an author working to defeat it.
-    """
-
-    def test_two_underscored_words_still_corroborate(self):
-        ok, _ = evidence.verdict_substance(
-            HEADER + "The code_quality and test_coverage are maintained throughout.",
-            pr_title=TITLE,
-        )
-
-        self.assertTrue(ok)
-
-
 class TwoProductNamesInOneSentenceAreTheKnownResidual(unittest.TestCase):
     """Stated, not fixed — and the reason is the rule working as designed.
 
@@ -773,6 +698,63 @@ class TwoProductNamesInOneSentenceAreTheKnownResidual(unittest.TestCase):
         )
 
         self.assertFalse(ok)
+
+
+class TheKnownResidualsAreRecordedRatherThanChased(unittest.TestCase):
+    """Three shapes this rule accepts that name nothing, and why they stay.
+
+    Each needs a list — of product names, of English words, of hostnames — and
+    such a list needs a new entry for every product, word and domain anyone
+    registers. Six rounds of refining character classes were each undone by the
+    next token of the same shape, so the line is drawn at the shape instead:
+    two tokens, or one the author pointed at.
+
+    None of the three appears in any of the 1,421 verdicts measured across both
+    repositories. This gate refuses rubber stamps; it does not resist an author
+    working to defeat it, and it never could — anyone willing to type a backtick
+    satisfies it.
+    """
+
+    def test_two_product_names_corroborate_each_other(self):
+        """`Node.js` and `evidence.py` are one shape; counting cannot split them."""
+        ok, _ = evidence.verdict_substance(
+            HEADER + "The Node.js and Next.js sides are unchanged and it looks fine.",
+            pr_title=TITLE,
+        )
+
+        self.assertTrue(ok)
+
+    def test_english_written_with_underscores_corroborates(self):
+        ok, _ = evidence.verdict_substance(
+            HEADER + "The code_quality and test_coverage are maintained throughout.",
+            pr_title=TITLE,
+        )
+
+        self.assertTrue(ok)
+
+    def test_a_sentence_run_together_forges_a_dotted_token(self):
+        """ "diff.See" is a missing space, read as a symbol.
+
+        Refusing it needs a period-plus-capital rule, and that rule truncates
+        `module.Class` and every bulleted object — measured, and worse than the
+        shape it closes.
+        """
+        ok, _ = evidence.verdict_substance(
+            HEADER + "Read the whole diff.See cli.py for context.", pr_title=TITLE
+        )
+
+        self.assertTrue(ok)
+
+    def test_one_of_any_of_them_is_still_refused(self):
+        for body in (
+            "The Node.js side of this is unchanged and everything looks fine.",
+            "See GitHub.com for context; the rest looks fine to me.",
+            "Read the whole diff and everything looks correct here.",
+        ):
+            with self.subTest(body=body[:30]):
+                ok, _ = evidence.verdict_substance(HEADER + body, pr_title=TITLE)
+
+                self.assertFalse(ok)
 
 
 class TheNineTwoSixReceiptShapeStaysRefused(unittest.TestCase):

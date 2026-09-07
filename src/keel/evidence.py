@@ -1470,17 +1470,8 @@ _VERDICT_SOURCE_FILE = re.compile(
 #:
 #: Both sides of the dot still need two characters, so "e.g." and "i.e." are not
 #: identifiers whatever else they carry.
-#: The mark has to sit **before the first dot**, or be an underscore anywhere.
-#: Scanning the whole token let a missing space forge one: "the whole diff.See
-#: cli.py" reads ``diff.See`` as a symbol on the strength of a capital that is
-#: only there because a sentence started. ``Config.parse`` keeps its mark in
-#: ``Config``; ``cache.cache_key`` keeps an underscore; ``subprocess.DEVNULL``
-#: keeps a run of capitals, which is a constant and not a sentence starting —
-#: ``See`` is one capital followed by lowercase, which is what a new sentence
-#: looks like. A lowercase ``Class.Method`` is not a Python shape and is not
-#: bought back.
 _VERDICT_DOTTED_SYMBOL = re.compile(
-    r"\b(?=\w*(?:_|[a-z0-9][A-Z]|[A-Z]{2}|[A-Z][a-z])|[\w.]*(?:_|[A-Z]{2}))"
+    r"\b(?=[\w.]*(?:_|[a-z0-9][A-Z]|[A-Z]{2}|[A-Z][a-z]))"
     r"[A-Za-z_]\w+(?:\.[A-Za-z_]\w+)+"
 )
 
@@ -1532,12 +1523,9 @@ _VERDICT_ANCHORS = (
 #: and ``Config.parse``. No character class ends that sequence and no blocklist
 #: of products or hostnames can be finished. What separates a review from a
 #: mention is not the spelling of one token but how many the verdict has: prose
-#: mentions a product in passing; a review that walked the change names more
-#: than one thing. A clause that says an act of review happened
-#: (:data:`_VERDICT_NAMED_REVIEW_ACT`) does not lower that bar: "Ran the
-#: Node.js suite" is a mention with a verb in front of it and reads no
-#: differently from "Read evidence.py". The verb says the looking happened; it
-#: does not say what at.
+#: mentions a product in passing, a review that walked the change names more
+#: than one thing, or names one inside a clause that says it looked
+#: (:data:`_VERDICT_NAMED_REVIEW_ACT`, where the verb supplies the other half).
 #:
 #: Measured over every verdict posted across keel and ai-jury: corroboration
 #: refuses all four ``*.js`` product names and all four capitalised hostnames,
@@ -1565,20 +1553,11 @@ _VERDICT_CORROBORATION_FLOOR = 2
 _VERDICT_CLAUSE_TAIL = r"[ \t]*:?[ \t]*(?:\r?\n[ \t]*[-*][ \t]*)?"
 
 #: One sentence's worth of characters. A sentence ends at `.!?;` or an ellipsis
-#: followed by a space, a line end, **or a capital letter** — a period inside
-#: `evidence.py` is followed by a lowercase letter and is not a sentence end,
-#: because the filename has to survive inside an object. The capital covers the
-#: missing space: "Read the whole diff.See cli.py" is one keystroke from
-#: inverting the rule, and `.S` is not a thing filenames do. Both clauses read
-#: this, so "Checked evidence.py and contracts.py" is no longer truncated at the
-#: first dot, which was the punctuation pedantry this change is about.
-#: The capital is matched **case-sensitively** — ``(?-i:…)`` — because both
-#: clauses that embed this are compiled with ``re.IGNORECASE``, and without the
-#: scoped flag ``[A-Z]`` there matches any letter, so *every* period ends a
-#: sentence and ``evidence.py`` is truncated to ``evidence``. The end-to-end
-#: verdict still passed on the prose corroborators, so only a test of the clause
-#: itself sees this; there is one.
-_VERDICT_SENTENCE = r"(?:[^.!?;\u2026\n]|[.!?;\u2026](?!\s|(?-i:[A-Z])|$))"
+#: **followed by space or line end** — a period inside `evidence.py` is not a
+#: sentence end, and the filename has to survive inside an object. Both clauses
+#: read it, so "Checked evidence.py and contracts.py" is no longer truncated at
+#: the first dot, which was the punctuation pedantry this change is about.
+_VERDICT_SENTENCE = r"(?:[^.!?;\u2026\n]|[.!?;\u2026](?!\s|$))"
 
 #: The escape hatch the issue insists on: a genuinely clean review must stay
 #: expressible. "Checked X, Y and Z; found nothing" is a real review outcome and
@@ -1677,7 +1656,7 @@ def _verdict_corroborators(text: str) -> set[str]:
 
 
 def _names_something(text: str) -> bool:
-    """Whether ``text`` points at anything — one anchor, or two bare tokens.
+    """Whether ``text`` points at anything at all — one anchor, or one token.
 
     An **anchor** is enough on its own — the backticks, the slash or the
     parentheses are the author pointing, and the verb in front says the looking
