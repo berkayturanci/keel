@@ -1607,7 +1607,21 @@ _WORD = re.compile(r"[a-z0-9]+")
 
 
 def _verdict_prose(body: str) -> str:
-    """The verdict's own words: header block, markers and HTML comments removed."""
+    """The verdict's own words: header block, marker line and HTML comments removed.
+
+    The marker is matched as a *whole line*, never as a substring. It is rendered
+    on its own bare line, so the header slice above has already dropped it; a
+    substring test therefore only ever reached prose that *quotes* the marker,
+    and deleted it. That cost the review of #1119 its entire scope — a
+    1,700-character line naming four files was dropped because it named the
+    marker it was documenting, and the verdict was then refused for naming
+    nothing (#1120).
+
+    This is the rule :func:`marker_in_header` already states earlier in this
+    module: a marker below the header is prose, and ``MARKER in body`` cannot
+    tell the two apart (#1026). This function was the one place that substring
+    test survived.
+    """
     lines = body.splitlines()
     start = 0
     for index, raw in enumerate(lines):
@@ -1619,7 +1633,7 @@ def _verdict_prose(body: str) -> str:
         for line in lines[start:]
         if line.strip()
         and not line.strip().startswith("<!--")
-        and REVIEW_VERDICT_MARKER not in line
+        and line.strip() != REVIEW_VERDICT_MARKER
     ]
     return "\n".join(kept)
 

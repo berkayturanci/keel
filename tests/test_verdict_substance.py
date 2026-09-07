@@ -761,6 +761,71 @@ class TheCanonicalTemplateDoesNotSatisfyTheGateByDefault(unittest.TestCase):
         self.assertTrue(ok)
 
 
+class AQuotedMarkerDoesNotDeleteTheLineThatQuotesIt(unittest.TestCase):
+    """#1120: the marker is matched as a line, not as a substring.
+
+    Every other test here hands the checker a bare string, so none of them could
+    see that `_verdict_prose` was deleting whole lines out of a real rendered
+    body. The review of #1119 lost a 1,700-character scope naming four files,
+    because the paragraph named the marker it was documenting — and the gate then
+    refused it for naming nothing. This is the rule `marker_in_header` already
+    states: a marker below the header is prose (#1026).
+    """
+
+    MARKER = evidence.REVIEW_VERDICT_MARKER
+
+    def test_a_scope_that_quotes_the_marker_still_counts(self):
+        """The regression, at the public surface and through the real renderer."""
+        body = artifacts.render_review_verdict(
+            reviewer="r",
+            head_sha="abc123",
+            scope=(
+                f"`docs/keel/cli.md` documented the {self.MARKER} marker and the "
+                "head pin, and said nothing about the substance check."
+            ),
+        )
+
+        ok, reason = evidence.verdict_substance(body, pr_title=TITLE)
+
+        self.assertTrue(ok, f"the scope names a file and was still refused: {reason}")
+
+    def test_the_quoting_line_survives_the_prose(self):
+        """Pinned on the mechanism, so a future rewrite cannot lose it quietly."""
+        body = artifacts.render_review_verdict(
+            reviewer="r",
+            head_sha="abc123",
+            scope=f"The {self.MARKER} handling in `src/keel/evidence.py`.",
+        )
+
+        prose = evidence._verdict_prose(body)
+
+        self.assertIn("src/keel/evidence.py", prose)
+        self.assertIn(self.MARKER, prose)
+
+    def test_the_marker_line_itself_is_still_removed(self):
+        """A body with no blank line keeps `start` at 0, so the filter still runs.
+
+        That fallback is the only thing the substring test was doing correctly,
+        and narrowing it to a whole-line match has to keep it.
+        """
+        body = f"{self.MARKER}\nVerdict: LGTM after reading `src/keel/evidence.py`."
+
+        prose = evidence._verdict_prose(body)
+
+        self.assertNotIn(self.MARKER, prose)
+        self.assertIn("src/keel/evidence.py", prose)
+
+    def test_a_marker_in_an_html_comment_is_still_removed(self):
+        body = (
+            f"{self.MARKER}\nreviewer: r\nhead: abc123\n\n"
+            f"<!-- {self.MARKER} -->\nVerdict: LGTM, read `src/keel/evidence.py`."
+        )
+
+        prose = evidence._verdict_prose(body)
+
+        self.assertNotIn(self.MARKER, prose)
+
+
 class TheGateHoldsWithAReason(unittest.TestCase):
     """#926: report the rejection as a hold with a reason, not a silent pass —
     and not a silent *drop* either, which would read as "missing"."""
