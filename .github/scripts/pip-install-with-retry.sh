@@ -107,7 +107,15 @@ interval="$((10#$interval))"
 started="$(date +%s)"
 
 for attempt in $(seq 1 "$attempts"); do
-  if "$installer" install --disable-pip-version-check "$requirement"; then
+  # `--no-cache-dir`, or the retry is decorative. PyPI serves the simple index
+  # with `cache-control: max-age=600, public`, and pip's HTTP cache honours that
+  # without revalidating — so attempt 1 records the very version list that is
+  # missing the release, and every attempt inside the next ten minutes reads
+  # that failure back off local disk without opening a connection. The whole
+  # budget here is 285 s, comfortably inside the window, so the loop would have
+  # retried the answer instead of the question. It also means each attempt is a
+  # real download, which is the thing this job claims to be verifying.
+  if "$installer" install --no-cache-dir --disable-pip-version-check "$requirement"; then
     echo "installed ${requirement} on attempt ${attempt}/${attempts}"
     exit 0
   fi

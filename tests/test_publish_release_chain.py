@@ -247,7 +247,7 @@ class TheVerifyJobWaitsOnTheSurfaceItAsserts(TheWorkflow):
         """Vacuity: the sweep above passes on a job it cannot read."""
         self.assertIsNotNone(
             self.DIRECT_INSTALL.search(
-                '"${RUNNER_TEMP}/verify-venv/bin/pip" install --disable-pip-version-check "$req"'
+                '"${RUNNER_TEMP}/verify-venv/bin/pip" install --no-cache-dir "$req"'
             )
         )
 

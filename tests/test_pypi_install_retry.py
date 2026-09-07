@@ -191,7 +191,26 @@ class AnIndexThatIsReadyIsInstalledFromOnce(AgainstAStubInstaller):
         """Vacuity guard for every count above: the stub is really being run."""
         run = self.run_install(failures=0, attempts="20")
 
-        self.assertEqual(run.argv, [f"install --disable-pip-version-check {REQUIREMENT}"])
+        self.assertEqual(
+            run.argv, [f"install --no-cache-dir --disable-pip-version-check {REQUIREMENT}"]
+        )
+
+    def test_every_attempt_bypasses_pips_http_cache(self):
+        """Without `--no-cache-dir` the retry asks local disk, not PyPI.
+
+        PyPI serves `/simple/<project>/` with `cache-control: max-age=600,
+        public`, and pip's HTTP cache honours a fresh response without
+        revalidating. Attempt 1 during index lag therefore records the version
+        list that is *missing* the release, and every attempt inside the next
+        ten minutes reads it back off disk. The whole budget is 285 s, so all
+        twenty attempts would have sat inside that window — the loop would have
+        retried its own answer.
+        """
+        run = self.run_install(failures=2, attempts="20")
+
+        self.assertEqual(len(run.argv), 3)
+        for call in run.argv:
+            self.assertIn("--no-cache-dir", call)
 
 
 class AnIndexThatLagsIsWaitedOutRatherThanFailed(AgainstAStubInstaller):
