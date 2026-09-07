@@ -668,6 +668,49 @@ class ASentenceEndsAtMoreThanAPeriod(unittest.TestCase):
         self.assertTrue(ok)
 
 
+class AMissingSpaceDoesNotForgeASymbol(unittest.TestCase):
+    """ "diff.See" is a sentence boundary wearing a dot (#1106 review)."""
+
+    def test_a_sentence_run_together_names_nothing(self):
+        ok, _ = evidence.verdict_substance(
+            HEADER + "Read the whole diff.See cli.py for context.", pr_title=TITLE
+        )
+
+        self.assertFalse(ok)
+
+    def test_the_python_shapes_survive_it(self):
+        """One capital after a dot starts a sentence; two are a constant."""
+        self.assertEqual(
+            evidence._verdict_corroborators("subprocess.DEVNULL here"), {"subprocess.DEVNULL"}
+        )
+        self.assertEqual(evidence._verdict_corroborators("Config.parse here"), {"Config.parse"})
+        self.assertEqual(
+            evidence._verdict_corroborators("cache.cache_key here"), {"cache.cache_key"}
+        )
+        self.assertEqual(evidence._verdict_corroborators("the whole diff.See it"), set())
+
+
+class UnderscoredEnglishIsTheOtherKnownResidual(unittest.TestCase):
+    """Prose that writes English with underscores corroborates itself.
+
+    "The code_quality and test_coverage are maintained" clears the floor with
+    two tokens that name nothing in the change. The joining underscore is the
+    only thing separating an identifier from a word, and refusing these needs a
+    list of English phrases — the losing game this change declined three times
+    for hostnames and product names. Recorded, not fixed: no verdict of the
+    1,421 measured is written this way, and the gate refuses rubber stamps
+    rather than an author working to defeat it.
+    """
+
+    def test_two_underscored_words_still_corroborate(self):
+        ok, _ = evidence.verdict_substance(
+            HEADER + "The code_quality and test_coverage are maintained throughout.",
+            pr_title=TITLE,
+        )
+
+        self.assertTrue(ok)
+
+
 class TwoProductNamesInOneSentenceAreTheKnownResidual(unittest.TestCase):
     """Stated, not fixed — and the reason is the rule working as designed.
 
