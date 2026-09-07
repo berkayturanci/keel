@@ -1525,10 +1525,10 @@ _VERDICT_ANCHORS = (
 #: mention is not the spelling of one token but how many the verdict has: prose
 #: mentions a product in passing; a review that walked the change names more
 #: than one thing. A clause that says an act of review happened
-#: (:data:`_VERDICT_NAMED_REVIEW_ACT`) does not lower that bar: "Ran the
-#: Node.js suite" is a mention with a verb in front of it and reads no
-#: differently from "Read evidence.py". The verb says the looking happened; it
-#: does not say what at.
+#: (:data:`_VERDICT_CHECKED_CLAUSE`) is the one exception, and only for
+#: "checked": see there for why the other verbs could not be given the same
+#: latitude, and why judging their object by this same test made the branch
+#: inert.
 #:
 #: Measured over every verdict posted across keel and ai-jury: corroboration
 #: refuses all four ``*.js`` product names and all four capitalised hostnames,
@@ -1565,44 +1565,23 @@ _VERDICT_SENTENCE = r"(?:[^.!?;\u2026\n]|[.!?;\u2026](?!\s|$))"
 #: The escape hatch the issue insists on: a genuinely clean review must stay
 #: expressible. "Checked X, Y and Z; found nothing" is a real review outcome and
 #: must not be forced to invent an anchor. Its object stays free-form, as it has
-#: been since #926 — see :data:`_VERDICT_NAMED_REVIEW_ACT` for why the verbs
-#: added after it do not get the same latitude.
+#: been since #926: 35 verdicts in the corpus pass on this clause and nothing
+#: else, saying things like "Checked the formula syntax, the version URL and the
+#: checksum placeholder" — English objects, naming no symbol.
+#:
+#: **#1106 tried to widen this to traced/read/ran/inspected/verified and the
+#: widening turned out inert.** Those verbs could not keep a free-form object —
+#: "Read the whole diff and everything looks correct" is the #926 receipt with a
+#: synonym at the front — so their object was made to name something. But
+#: "names something" is the same test the whole prose already takes, and the
+#: object is part of the prose, so a verdict that satisfied the clause had
+#: always satisfied the anchor check first: across 1,421 verdicts the branch
+#: decided **zero** of them. Dead code with a docstring explaining what it did
+#: is worse than neither, so it is gone. Widening the vocabulary needs the
+#: object to be judged by something other than the prose test, which #1106 did
+#: not find.
 _VERDICT_CHECKED_CLAUSE = re.compile(
     rf"\bchecked\b{_VERDICT_CLAUSE_TAIL}{_VERDICT_SENTENCE}{{8,}}", re.IGNORECASE
-)
-
-#: The verbs #1106 added beside "checked", each naming an *act of inspection*.
-#: Their object is captured, because here it has to be earned: a verb with a
-#: free-form tail is the #926 receipt with a synonym at the front. "Reviewed the
-#: whole diff and everything looks correct here" was already refused; "Read the
-#: whole diff and everything looks correct here" was not, and the two say the
-#: same nothing. So an added verb anchors only when what follows it
-#: :func:`_names_something` — "Read src/keel/evidence.py end to end" passes,
-#: "Read the whole diff" does not.
-#:
-#: "Checked" keeps its free-form tail because it is the incumbent and it has a
-#: record: holding it to the same requirement refuses 13 real reviews in the
-#: corpus that say "Checked the formula syntax, the version URL and the checksum
-#: placeholder" — English objects, naming no symbol. The asymmetry is the
-#: measurement, not a preference: one verb is calibrated, five are new.
-#:
-#: "Reviewed" is not here and will not be: ``Reviewed <PR title>:
-#: <affirmation>`` is the receipt itself, and the default
-#: ``render_review_verdict`` template's scope line opens "Scope reviewed:".
-#: "Confirmed" and "assessed" are out for the weaker version of the same reason
-#: — they report a conclusion, not a thing done. The object may sit on the next
-#: line as a bullet, because "Traced:\n- …" is the same clause with a list under
-#: it, and refusing it was the punctuation pedantry #1106 is about.
-#: The object stops at the end of its own sentence. A period inside a filename is
-#: not a sentence end — ``evidence.py`` has to survive — so the boundary is a
-#: period followed by space or line end, not any period. Running to the end of
-#: the line instead let a later sentence supply the naming: "Read the whole diff.
-#: See cli.py for context." earned the clause with a token the verb never
-#: governed.
-_VERDICT_NAMED_REVIEW_ACT = re.compile(
-    rf"\b(?:traced|read|ran|inspected|verified)\b{_VERDICT_CLAUSE_TAIL}"
-    rf"({_VERDICT_SENTENCE}{{8,}})",
-    re.IGNORECASE,
 )
 
 #: Below this share of novel words, the prose is the PR title said again. The
@@ -1658,33 +1637,9 @@ def _verdict_corroborators(text: str) -> set[str]:
     return {token for _, _, token in kept}
 
 
-def _names_something(text: str) -> bool:
-    """Whether ``text`` points at anything at all — one anchor, or one token.
-
-    An **anchor** is enough on its own — the backticks, the slash or the
-    parentheses are the author pointing, and the verb in front says the looking
-    happened. A corroborator is not: ``Node.js`` and ``evidence.py`` are spelled
-    the same way, so "Ran the Node.js suite and everything is fine" would
-    otherwise be a receipt wearing a verb. Two of them still count, because
-    naming two things is what a review does — "Checked evidence.py and
-    contracts.py" is a real review and stays one.
-
-    The cost is an unbackticked lone token: "traced cache_key" no longer
-    qualifies where "traced ``cache_key``" does. Measured on the corpus rather
-    than assumed; see the CHANGELOG entry for #1106.
-    """
-    return any(pattern.search(text) for pattern in _VERDICT_ANCHORS) or (
-        len(_verdict_corroborators(text)) >= _VERDICT_CORROBORATION_FLOOR
-    )
-
-
 def _review_act_clause(prose: str) -> bool:
     """Whether ``prose`` says an act of review was performed on something."""
-    if _VERDICT_CHECKED_CLAUSE.search(prose):
-        return True
-    return any(
-        _names_something(match.group(1)) for match in _VERDICT_NAMED_REVIEW_ACT.finditer(prose)
-    )
+    return bool(_VERDICT_CHECKED_CLAUSE.search(prose))
 
 
 def verdict_substance(body: str, *, pr_title: str = "") -> tuple[bool, str]:

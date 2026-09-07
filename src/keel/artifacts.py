@@ -165,15 +165,15 @@ def render_review_verdict(
       ``evidence.py`` are spelled the same way and so are ``GitHub.com`` and
       ``Config.parse``; naming two things is what a review does and a mention
       does not;
-    * a "traced/read/ran/inspected/verified X" clause whose X carries one of the
-      anchors above, or two of the unbackticked forms — the same bar as prose,
-      because "Ran the Node.js suite" is a mention behind a verb and reads no
-      differently from "Read evidence.py". The naming has to sit in the verb's
-      own sentence, which ends at ``.!?;`` or an ellipsis followed by a space,
-      so a filename's dot does not end it. "Checked" is the exception and keeps
-      a free-form object: it predates this rule and the corpus has real reviews
-      under it naming their objects in English ("Checked the formula syntax, the
-      version URL and the checksum placeholder").
+    * a "Checked X, Y and Z" clause. That one verb keeps a free-form object,
+      because it predates the rule and the corpus has real reviews under it
+      naming their objects in English ("Checked the formula syntax, the
+      version URL and the checksum placeholder"). #1106 tried to widen it to
+      traced/read/ran/inspected/verified; those could not keep a free-form
+      object without readmitting the receipt, and requiring their object to
+      name something made the branch decide nothing at all — the object is
+      part of the prose, which already takes that test. So they are ordinary
+      prose: name two things, or one in backticks.
 
     A genuinely clean review stays expressible; it just has to say what it
     looked at.

@@ -489,58 +489,43 @@ class AnExtensionlessPathIsNotAnAnchor(unittest.TestCase):
         self.assertIn("nothing concrete", reason)
 
 
-class TheEscapeClauseNamesAnActOfReview(unittest.TestCase):
-    """ "Checked" alone was one verb's worth of vocabulary (#1106)."""
+class OnlyCheckedOpensACleanReviewWithoutNamingASymbol(unittest.TestCase):
+    """#1106 tried to widen this vocabulary and the widening was inert.
 
-    def test_every_added_verb_opens_a_clean_review_that_names_what_it_read(self):
-        for verb in ("Traced", "Read", "Ran", "Inspected", "Verified"):
-            with self.subTest(verb=verb):
-                ok, _ = evidence.verdict_substance(
-                    HEADER + f"{verb} the `cache_key` ordering and the prefix match, "
-                    "and found nothing.",
-                    pr_title=TITLE,
-                )
-                self.assertTrue(ok)
-
-    def test_an_added_verb_needs_an_object_that_names_something(self):
-        """The #926 receipt reopened under a synonym (#1106 review).
-
-        ``test_reviewed_is_not_one_of_the_verbs`` pinned that "Reviewed the whole
-        diff and everything looks correct here" is refused. Swapping the first
-        word for one of the five verbs this rule added made the same sentence
-        pass, because the clause asked for a verb and eight characters and never
-        for an object. It asks for the object now.
-        """
-        for verb in ("Read", "Traced", "Ran", "Inspected", "Verified"):
-            with self.subTest(verb=verb):
-                ok, reason = evidence.verdict_substance(
-                    HEADER + f"{verb} the whole diff and everything looks correct here",
-                    pr_title="chore: unrelated",
-                )
-
-                self.assertFalse(ok)
-                self.assertIn("nothing concrete", reason)
-
-    def test_an_added_verb_reads_a_path_as_its_object(self):
-        ok, _ = evidence.verdict_substance(
-            HEADER + "Read src/keel/evidence.py end to end and found nothing.",
-            pr_title="chore: unrelated",
-        )
-        self.assertTrue(ok)
+    "Checked X, Y and Z; found nothing" has to stay expressible — 35 verdicts in
+    the corpus pass on that clause and nothing else. The five verbs added beside
+    it could not keep a free-form object, because "Read the whole diff and
+    everything looks correct" is the #926 receipt with a synonym at the front.
+    Requiring their object to name something made the branch dead instead: the
+    object is part of the prose, and naming something is the test the prose
+    already takes, so across 1,421 verdicts it decided none of them. The branch
+    is gone; these tests pin what is left.
+    """
 
     def test_checked_keeps_a_free_form_object(self):
-        """The incumbent verb is calibrated; the five added ones are not.
-
-        Holding "checked" to the same requirement refuses 13 real reviews in the
-        corpus — "Checked the formula syntax, the version URL and the checksum
-        placeholder" names three things in English and no symbol. That latitude
-        is what the record supports for this verb and only this verb.
-        """
         ok, _ = evidence.verdict_substance(
-            HEADER + "Checked the ordering, the prefix match and the case handling.",
+            HEADER + "Checked the formula syntax, the version URL and the checksum "
+            "placeholder, and found nothing.",
             pr_title=TITLE,
         )
+
         self.assertTrue(ok)
+
+    def test_the_other_verbs_get_no_latitude_of_their_own(self):
+        """They pass when their prose names something, like any other prose."""
+        for verb in ("Traced", "Read", "Ran", "Inspected", "Verified"):
+            with self.subTest(verb=verb):
+                bare, _ = evidence.verdict_substance(
+                    HEADER + f"{verb} the whole diff and everything looks correct here.",
+                    pr_title=TITLE,
+                )
+                named, _ = evidence.verdict_substance(
+                    HEADER + f"{verb} `cache_key` through the reader and found nothing.",
+                    pr_title=TITLE,
+                )
+
+                self.assertFalse(bare)
+                self.assertTrue(named)
 
     def test_the_object_may_sit_on_the_next_line_as_a_bullet(self):
         """ "Checked:" with the list under it is the same clause, laid out."""
@@ -548,38 +533,17 @@ class TheEscapeClauseNamesAnActOfReview(unittest.TestCase):
             HEADER + "Checked:\n- the denylist ordering, and found nothing",
             pr_title=TITLE,
         )
+
         self.assertTrue(ok)
 
-        # An added verb still needs an anchor or two tokens in its object, so the
-        # layout is what this asserts, not the floor: the bullet is the object.
-        added, _ = evidence.verdict_substance(
-            HEADER + "Traced:\n- `cache_key` through the wiring, and found nothing",
+    def test_reviewed_is_not_one_of_them(self):
+        """``Reviewed <title>: <affirmation>`` is the receipt itself."""
+        ok, _ = evidence.verdict_substance(
+            HEADER + "Reviewed the whole diff and everything looks correct here.",
             pr_title=TITLE,
         )
-        self.assertTrue(added)
-
-    def test_a_verb_with_no_object_is_not_a_clause(self):
-        ok, reason = evidence.verdict_substance(
-            HEADER + "Checked. Verified. Read.", pr_title="chore: unrelated"
-        )
 
         self.assertFalse(ok)
-        self.assertIn("nothing concrete", reason)
-
-    def test_reviewed_is_not_one_of_the_verbs(self):
-        """Admitting it would admit the receipt itself.
-
-        The #926 shape opens with the word, and so does the default template's
-        "Scope reviewed:" line — on the record, adding it would have passed all
-        75 rubber stamps and all ten default templates.
-        """
-        ok, reason = evidence.verdict_substance(
-            HEADER + "Reviewed the whole diff and everything looks correct here",
-            pr_title="chore: unrelated",
-        )
-
-        self.assertFalse(ok)
-        self.assertIn("nothing concrete", reason)
 
 
 class TheVerbGovernsOnlyItsOwnSentence(unittest.TestCase):
@@ -666,38 +630,6 @@ class ASentenceEndsAtMoreThanAPeriod(unittest.TestCase):
         )
 
         self.assertTrue(ok)
-
-
-class TwoProductNamesInOneSentenceAreTheKnownResidual(unittest.TestCase):
-    """Stated, not fixed — and the reason is the rule working as designed.
-
-    Two corroborators anchor because naming two things is what a review does;
-    `Node.js` and `evidence.py` are spelled identically, so any counting that
-    lets `evidence.py` + `contracts.py` through also lets `Node.js` +
-    `Next.js` through. Closing it needs a list of product names, which needs a
-    new entry per product and is the losing game #1106 declined twice.
-
-    This gate refuses *rubber stamps*, not an adversary: anyone willing to type
-    a backtick can satisfy it. The test records the limit so the next reader
-    meets a decision rather than an oversight, and no corpus verdict of the
-    1,323 measured exhibits the shape.
-    """
-
-    def test_two_product_names_still_corroborate(self):
-        ok, _ = evidence.verdict_substance(
-            HEADER + "The Node.js and Next.js sides are unchanged and it looks fine.",
-            pr_title=TITLE,
-        )
-
-        self.assertTrue(ok)
-
-    def test_one_product_name_does_not(self):
-        ok, _ = evidence.verdict_substance(
-            HEADER + "The Node.js side of this is unchanged and everything looks fine.",
-            pr_title=TITLE,
-        )
-
-        self.assertFalse(ok)
 
 
 class TheKnownResidualsAreRecordedRatherThanChased(unittest.TestCase):
