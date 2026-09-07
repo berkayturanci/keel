@@ -6,6 +6,8 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.21.1] - 2026-09-07
+
 ### Fixed
 - **A verdict is no longer judged on a document the checker silently truncated** (#1120). `_verdict_prose` dropped every line containing `keel.review-verdict.v1` as a *substring*. The marker is rendered on its own bare first line, so the header slice above that filter had already removed it; the substring test therefore only ever reached prose that **quotes** the marker — the words a reviewer writes when the change under review is the evidence protocol itself. The review of #1119 lost its entire scope this way: a 1,700-character line naming `docs/keel/cli.md`, `src/keel/evidence.py`, `cache.cache_key` and `review-vendor-distinctness` in backticks was deleted whole, leaving 72 characters of template boilerplate, and the gate refused the verdict for naming nothing — on the pull request that documents the naming rule. The marker is now matched as a whole line.
   - **This is #1026's bug, surviving in one function.** That issue replaced `MARKER in body` everywhere else and wrote down why in `marker_in_header`: a marker below the header is prose, and a reviewer quoting one is not filing one. `_verdict_prose` is the single place the substring test was left, in the same module, under a docstring that claimed it removed the header block.
