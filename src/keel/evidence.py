@@ -1569,7 +1569,13 @@ _VERDICT_CLAUSE_TAIL = r"[ \t]*:?[ \t]*(?:\r?\n[ \t]*[-*][ \t]*)?"
 #: inverting the rule, and `.S` is not a thing filenames do. Both clauses read
 #: this, so "Checked evidence.py and contracts.py" is no longer truncated at the
 #: first dot, which was the punctuation pedantry this change is about.
-_VERDICT_SENTENCE = r"(?:[^.!?;\u2026\n]|[.!?;\u2026](?![\s A-Z]|$))"
+#: The capital is matched **case-sensitively** — ``(?-i:…)`` — because both
+#: clauses that embed this are compiled with ``re.IGNORECASE``, and without the
+#: scoped flag ``[A-Z]`` there matches any letter, so *every* period ends a
+#: sentence and ``evidence.py`` is truncated to ``evidence``. The end-to-end
+#: verdict still passed on the prose corroborators, so only a test of the clause
+#: itself sees this; there is one.
+_VERDICT_SENTENCE = r"(?:[^.!?;\u2026\n]|[.!?;\u2026](?!\s|(?-i:[A-Z])|$))"
 
 #: The escape hatch the issue insists on: a genuinely clean review must stay
 #: expressible. "Checked X, Y and Z; found nothing" is a real review outcome and

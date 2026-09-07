@@ -668,6 +668,38 @@ class ASentenceEndsAtMoreThanAPeriod(unittest.TestCase):
         self.assertTrue(ok)
 
 
+class TheClauseItselfKeepsAFilename(unittest.TestCase):
+    """Asserted on the clause, not on the verdict — that is why it was missed.
+
+    Both clauses compile with `re.IGNORECASE`, so an unscoped `[A-Z]` in the
+    sentence lookahead matched any letter and *every* period ended a sentence:
+    "Checked evidence.py" was read as "Checked evidence". The end-to-end verdict
+    still passed, on the prose corroborators rather than on the clause, so only
+    a test of the match itself can see it.
+    """
+
+    def test_a_filename_survives_inside_both_clauses(self):
+        for body, verb in (
+            ("Checked evidence.py and contracts.py, found nothing", "Checked"),
+            ("Read src/keel/evidence.py end to end and it is fine", "Read"),
+        ):
+            with self.subTest(verb=verb):
+                match = evidence._VERDICT_CHECKED_CLAUSE.search(
+                    body
+                ) or evidence._VERDICT_NAMED_REVIEW_ACT.search(body)
+
+                self.assertIsNotNone(match)
+                self.assertIn(".py", match.group(0))
+
+    def test_a_capital_after_the_dot_still_ends_it(self):
+        match = evidence._VERDICT_NAMED_REVIEW_ACT.search(
+            "Read the whole diff.See cli.py for context."
+        )
+
+        self.assertIsNotNone(match)
+        self.assertNotIn("cli.py", match.group(0))
+
+
 class AMissingSpaceDoesNotForgeASymbol(unittest.TestCase):
     """ "diff.See" is a sentence boundary wearing a dot (#1106 review)."""
 
