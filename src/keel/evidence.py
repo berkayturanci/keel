@@ -1552,13 +1552,20 @@ _VERDICT_CORROBORATION_FLOOR = 2
 #: Layout only — it says nothing about what the object has to be.
 _VERDICT_CLAUSE_TAIL = r"[ \t]*:?[ \t]*(?:\r?\n[ \t]*[-*][ \t]*)?"
 
+#: One sentence's worth of characters. A sentence ends at `.!?;` or an ellipsis
+#: **followed by space or line end** — a period inside `evidence.py` is not a
+#: sentence end, and the filename has to survive inside an object. Both clauses
+#: read it, so "Checked evidence.py and contracts.py" is no longer truncated at
+#: the first dot, which was the punctuation pedantry this change is about.
+_VERDICT_SENTENCE = r"(?:[^.!?;\u2026\n]|[.!?;\u2026](?!\s|$))"
+
 #: The escape hatch the issue insists on: a genuinely clean review must stay
 #: expressible. "Checked X, Y and Z; found nothing" is a real review outcome and
 #: must not be forced to invent an anchor. Its object stays free-form, as it has
 #: been since #926 — see :data:`_VERDICT_NAMED_REVIEW_ACT` for why the verbs
 #: added after it do not get the same latitude.
 _VERDICT_CHECKED_CLAUSE = re.compile(
-    rf"\bchecked\b{_VERDICT_CLAUSE_TAIL}[^.\n]{{8,}}", re.IGNORECASE
+    rf"\bchecked\b{_VERDICT_CLAUSE_TAIL}{_VERDICT_SENTENCE}{{8,}}", re.IGNORECASE
 )
 
 #: The verbs #1106 added beside "checked", each naming an *act of inspection*.
@@ -1591,7 +1598,7 @@ _VERDICT_CHECKED_CLAUSE = re.compile(
 #: governed.
 _VERDICT_NAMED_REVIEW_ACT = re.compile(
     rf"\b(?:traced|read|ran|inspected|verified)\b{_VERDICT_CLAUSE_TAIL}"
-    rf"((?:[^.\n]|\.(?!\s|$)){{8,}})",
+    rf"({_VERDICT_SENTENCE}{{8,}})",
     re.IGNORECASE,
 )
 
@@ -1651,13 +1658,20 @@ def _verdict_corroborators(text: str) -> set[str]:
 def _names_something(text: str) -> bool:
     """Whether ``text`` points at anything at all — one anchor, or one token.
 
-    The floor is *one* here, where :data:`_VERDICT_CORROBORATION_FLOOR` is two,
-    because the verb in front of it supplies the other half of the evidence: a
-    reviewer who wrote "traced ``cache_key``" has said both that they looked and
-    what they looked at, where a lone ``cache_key`` in prose has said neither.
+    An **anchor** is enough on its own — the backticks, the slash or the
+    parentheses are the author pointing, and the verb in front says the looking
+    happened. A corroborator is not: ``Node.js`` and ``evidence.py`` are spelled
+    the same way, so "Ran the Node.js suite and everything is fine" would
+    otherwise be a receipt wearing a verb. Two of them still count, because
+    naming two things is what a review does — "Checked evidence.py and
+    contracts.py" is a real review and stays one.
+
+    The cost is an unbackticked lone token: "traced cache_key" no longer
+    qualifies where "traced ``cache_key``" does. Measured on the corpus rather
+    than assumed; see the CHANGELOG entry for #1106.
     """
-    return any(pattern.search(text) for pattern in _VERDICT_ANCHORS) or bool(
-        _verdict_corroborators(text)
+    return any(pattern.search(text) for pattern in _VERDICT_ANCHORS) or (
+        len(_verdict_corroborators(text)) >= _VERDICT_CORROBORATION_FLOOR
     )
 
 

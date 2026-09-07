@@ -187,8 +187,11 @@ class TheAnchorSetReadsHowReviewersActuallyWrite(unittest.TestCase):
     def test_a_bare_source_file_is_read_without_its_directory(self):
         """``evidence.py`` is a file the path anchors never saw — but it corroborates.
 
-        One filename in a sentence of prose is ``Node.js``. Two of them, or one
-        inside a clause that says an act of review happened, is a review.
+        One filename in a sentence of prose is ``Node.js``, and one behind a
+        verb is ``Ran the Node.js suite`` — the same shape, so neither counts.
+        Two of them is a review; so is one that the author pointed at with
+        backticks. On ``main`` a bare ``evidence.py`` was read by nothing at
+        all, so none of this refuses a verdict that used to pass.
         """
         alone, reason = evidence.verdict_substance(
             HEADER + "The new branch in evidence.py is unreachable from the CLI.",
@@ -204,11 +207,17 @@ class TheAnchorSetReadsHowReviewersActuallyWrite(unittest.TestCase):
         )
         self.assertTrue(two_files)
 
-        inside_a_clause, _ = evidence.verdict_substance(
+        one_behind_a_verb, _ = evidence.verdict_substance(
             HEADER + "Read evidence.py end to end and found nothing.",
             pr_title="chore: unrelated",
         )
-        self.assertTrue(inside_a_clause)
+        self.assertFalse(one_behind_a_verb)
+
+        pointed_at, _ = evidence.verdict_substance(
+            HEADER + "Read `evidence.py` end to end and found nothing.",
+            pr_title="chore: unrelated",
+        )
+        self.assertTrue(pointed_at)
 
     def test_camel_case_class_names_need_a_dot_or_backticks(self):
         """Bare CamelCase is a product name as often as it is a class.
@@ -487,7 +496,7 @@ class TheEscapeClauseNamesAnActOfReview(unittest.TestCase):
         for verb in ("Traced", "Read", "Ran", "Inspected", "Verified"):
             with self.subTest(verb=verb):
                 ok, _ = evidence.verdict_substance(
-                    HEADER + f"{verb} the cache_key ordering and the prefix match, "
+                    HEADER + f"{verb} the `cache_key` ordering and the prefix match, "
                     "and found nothing.",
                     pr_title=TITLE,
                 )
@@ -541,8 +550,10 @@ class TheEscapeClauseNamesAnActOfReview(unittest.TestCase):
         )
         self.assertTrue(ok)
 
+        # An added verb still needs an anchor or two tokens in its object, so the
+        # layout is what this asserts, not the floor: the bullet is the object.
         added, _ = evidence.verdict_substance(
-            HEADER + "Traced:\n- cache_key through the wiring, and found nothing",
+            HEADER + "Traced:\n- `cache_key` through the wiring, and found nothing",
             pr_title=TITLE,
         )
         self.assertTrue(added)
@@ -598,6 +609,63 @@ class TheVerbGovernsOnlyItsOwnSentence(unittest.TestCase):
                 ok, _ = evidence.verdict_substance(HEADER + body, pr_title=TITLE)
 
                 self.assertTrue(ok)
+
+
+class AVerbNeedsAnAnchorOrTwoTokensToGovern(unittest.TestCase):
+    """One corroborator behind a verb was a receipt wearing a verb (#1106 review).
+
+    `Node.js` and `evidence.py` are spelled the same way, so a floor of one let
+    "Ran the Node.js suite and everything is fine" through under the verbs this
+    change added. An anchor is still enough on its own — the backticks, the
+    slash or the parentheses are the author pointing.
+    """
+
+    def test_one_product_shaped_token_does_not_govern(self):
+        for body in (
+            "Ran the Node.js suite and everything is fine.",
+            "Traced the GitHub.com integration and it is fine.",
+        ):
+            with self.subTest(body=body[:28]):
+                ok, _ = evidence.verdict_substance(HEADER + body, pr_title=TITLE)
+
+                self.assertFalse(ok)
+
+    def test_an_anchor_or_two_tokens_still_governs(self):
+        for body in (
+            "Traced `cache_key` through the reader and it is fine.",
+            "Read src/keel/evidence.py end to end and it is fine.",
+            "Checked evidence.py and contracts.py; the union is stated once now.",
+        ):
+            with self.subTest(body=body[:28]):
+                ok, _ = evidence.verdict_substance(HEADER + body, pr_title=TITLE)
+
+                self.assertTrue(ok)
+
+
+class ASentenceEndsAtMoreThanAPeriod(unittest.TestCase):
+    """`!`, `?`, `;` and an ellipsis end a sentence too (#1106 review).
+
+    Bounding the object at `.` alone still let a later sentence supply the
+    naming, and those marks never appear inside `evidence.py`.
+    """
+
+    def test_no_mark_lets_a_later_sentence_name_the_object(self):
+        for mark in (".", "!", "?", ";"):
+            with self.subTest(mark=mark):
+                ok, _ = evidence.verdict_substance(
+                    HEADER + f"Read the whole diff{mark} See cli.py for context.",
+                    pr_title=TITLE,
+                )
+
+                self.assertFalse(ok)
+
+    def test_the_incumbent_verb_reads_a_filename_too(self):
+        """`checked` died at the first period, so it could not name a `.py` file."""
+        ok, _ = evidence.verdict_substance(
+            HEADER + "Checked evidence.py and contracts.py; stated once now.", pr_title=TITLE
+        )
+
+        self.assertTrue(ok)
 
 
 class TwoProductNamesInOneSentenceAreTheKnownResidual(unittest.TestCase):
