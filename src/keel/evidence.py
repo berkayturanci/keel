@@ -1480,7 +1480,9 @@ _VERDICT_DOTTED_SYMBOL = re.compile(
 #: **The joining underscore is the whole rule** — two lowercase alphanumeric
 #: segments with an underscore between them. Lowercase deliberately: `My_Thing`
 #: is prose with a connector, and CamelCase is read only when dotted or
-#: backticked, for the reason :data:`_VERDICT_DOTTED_SYMBOL` gives. Underscores that merely wrap a name are
+#: backticked, for the reason :data:`_VERDICT_DOTTED_SYMBOL` gives.
+#:
+#: Underscores that merely wrap a name are
 #: decoration, so a lone ``_private`` or ``__dunder__`` is *not* read; it is
 #: ``post_init`` inside ``__post_init__`` that matches.
 #:
