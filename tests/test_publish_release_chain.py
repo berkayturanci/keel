@@ -27,6 +27,7 @@ present.
 
 from __future__ import annotations
 
+import re
 import unittest
 from pathlib import Path
 
@@ -38,6 +39,10 @@ WORKFLOW = REPO_ROOT / ".github" / "workflows" / "publish.yml"
 #: The step that produces the formula, selected by what it *does* — it is the one
 #: that reads the template — rather than by its name, which has changed twice.
 TEMPLATE = "packaging/homebrew/keel.rb.template"
+
+#: The install that waits for the index it resolves through, rather than for the
+#: JSON API it does not (#1111). Its own shell runs in test_pypi_install_retry.py.
+RETRY_SCRIPT = ".github/scripts/pip-install-with-retry.sh"
 
 #: Every way the retired design wrote to this repository after the tag. Each was
 #: a real step at some point in #842/#984/#986.
@@ -186,6 +191,108 @@ class TheFormulaIsRenderedFromWhatTheTagProduced(TheWorkflow):
             with self.subTest(after=uses):
                 consumer = next(i for i, s in enumerate(steps) if uses in (s.get("uses") or ""))
                 self.assertLess(rendered, consumer)
+
+
+class TheVerifyJobWaitsOnTheSurfaceItAsserts(TheWorkflow):
+    """The wait and the install read different surfaces of PyPI (#1111).
+
+    The wait polls the JSON API; `pip` resolves through the simple index, which
+    is a different cache and lags behind it. Cutting v1.21.0 both distributions
+    were listed on attempt 1 and both digests matched, and the install failed
+    twenty-five seconds later against a version list ending at 1.20.0 — so the
+    five-minute budget had been spent on a surface that was already ready and
+    the surface that was not ready got one attempt. The job filed
+    `release-broken: v1.21.0` (#1110) against a release a plain re-run then
+    verified unchanged.
+
+    These pin the shape that fixes it and the two things it must not cost: the
+    digest cross-check against the JSON API, which is useful and was never the
+    broken part, and a failure that is still loud once the budget is spent.
+    `tests/test_pypi_install_retry.py` runs the wrapper's own shell.
+    """
+
+    #: A direct resolve of the published requirement — what the wrapper replaced.
+    DIRECT_INSTALL = re.compile(r'\binstall\b[^\n]*"\$req"')
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.job = cls.jobs["verify"]
+        steps = [step for step in cls.job["steps"] if "verify-venv" in (step.get("run") or "")]
+        assert len(steps) == 1, f"expected one install step, found {len(steps)}"
+        cls.step = steps[0]
+        cls.code = code_of(cls.step["run"])
+
+    def test_the_install_goes_through_the_retrying_wrapper(self):
+        self.assertIn(RETRY_SCRIPT, self.code)
+        self.assertTrue(
+            (REPO_ROOT / RETRY_SCRIPT).is_file(),
+            f"the step calls {RETRY_SCRIPT}, which is not in the tree",
+        )
+
+    def test_the_wrapper_is_told_which_pip_and_which_requirement(self):
+        self.assertIn('INSTALLER="${RUNNER_TEMP}/verify-venv/bin/pip"', self.code)
+        self.assertIn('REQUIREMENT="$req"', self.code)
+
+    def test_nothing_in_the_job_resolves_the_requirement_without_it(self):
+        """A reintroduced bare install is the whole defect, back again."""
+        for (job, name), code in self.runs.items():
+            if job != "verify":
+                continue
+            for line in code.splitlines():
+                with self.subTest(step=name, line=line.strip()):
+                    self.assertIsNone(self.DIRECT_INSTALL.search(line))
+
+    def test_the_pattern_would_have_caught_the_line_that_was_there(self):
+        """Vacuity: the sweep above passes on a job it cannot read."""
+        self.assertIsNotNone(
+            self.DIRECT_INSTALL.search(
+                '"${RUNNER_TEMP}/verify-venv/bin/pip" install --disable-pip-version-check "$req"'
+            )
+        )
+
+    def test_both_waits_read_one_pair_of_variables(self):
+        """Named in the job, so one edit moves the poll and the install together."""
+        env = self.job["env"]
+        self.assertIn("PYPI_WAIT_ATTEMPTS", env)
+        self.assertIn("PYPI_WAIT_SECONDS", env)
+        self.assertGreater(int(env["PYPI_WAIT_ATTEMPTS"]), 1)
+        self.assertGreater(int(env["PYPI_WAIT_SECONDS"]), 0)
+        self.assertIn("PYPI_WAIT_ATTEMPTS", (REPO_ROOT / RETRY_SCRIPT).read_text("utf-8"))
+        self.assertNotIn(
+            "PYPI_WAIT_ATTEMPTS=",
+            self.code,
+            "the step gives the install a budget of its own",
+        )
+
+    def test_the_json_wait_still_holds_out_for_both_distributions(self):
+        """Kept: it is what finds the digests, and half a release passes without it."""
+        self.assertIn("bdist_wheel,sdist", self.code)
+        self.assertIn("::error title=PyPI never served both distributions::", self.code)
+
+    def test_the_digest_cross_check_against_pypi_survives(self):
+        """The genuinely useful half, and not the part that was broken."""
+        self.assertIn("digests.sha256", self.code)
+        self.assertIn("::error title=Corrupt artifact::", self.code)
+        self.assertIn("::error title=Nothing compared::", self.code)
+
+    def test_the_release_broken_report_can_only_run_after_a_failure(self):
+        """So the budget is spent before anything is filed, by construction."""
+        filing = [
+            step
+            for step in self.job["steps"]
+            if "gh issue create" in code_of(step.get("run") or "")
+        ]
+        self.assertEqual(len(filing), 1)
+        self.assertEqual(filing[0]["if"], "failure()")
+
+    def test_the_report_comes_after_the_install_it_reports_on(self):
+        steps = self.job["steps"]
+        installed = steps.index(self.step)
+        filed = next(
+            i for i, s in enumerate(steps) if "gh issue create" in code_of(s.get("run") or "")
+        )
+        self.assertLess(installed, filed)
 
 
 class TheTapReportCannotFailTheRelease(TheWorkflow):

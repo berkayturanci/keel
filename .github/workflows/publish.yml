@@ -303,8 +303,13 @@ jobs:
     env:
       TAG: ${{ github.ref_name }}
       LOG: ${{ github.workspace }}/verify.log
-      # The bound on the index wait, named rather than inlined so a test can assert
-      # the number instead of matching the loop's text. 20 x 15s = five minutes.
+      # The bound on the index waits, named rather than inlined so a test can
+      # assert the number instead of matching a loop's text. 20 x 15s = five
+      # minutes, and BOTH waits below read these: the JSON-API poll that finds
+      # the digests, and the install that resolves through the simple index.
+      # They are separate surfaces with separate lag (#1111), so each gets the
+      # budget rather than sharing one that the first can spend on the second's
+      # behalf — but out of one pair of variables, so an edit moves both.
       PYPI_WAIT_ATTEMPTS: "20"
       PYPI_WAIT_SECONDS: "15"
     steps:
@@ -389,7 +394,24 @@ jobs:
 
             echo "== clean venv: install, keel version =="
             python -m venv "${RUNNER_TEMP}/verify-venv"
-            "${RUNNER_TEMP}/verify-venv/bin/pip" install --disable-pip-version-check "$req"
+            # The wait above proves the JSON API knows this version. `pip` does
+            # not resolve through the JSON API — it reads the simple index,
+            # served from a different cache that lags behind it. Cutting v1.21.0
+            # that gap was twenty-five seconds wide: both distributions listed on
+            # attempt 1, both digests matched, and `pip` then reported a version
+            # list ending at 1.20.0. The five-minute budget above had been spent
+            # watching a surface that was already ready, so the surface that was
+            # not ready got one attempt, and `release-broken: v1.21.0` (#1110)
+            # was filed against a release a plain re-run then verified unchanged.
+            #
+            # So the install gets the budget too, out of the same two variables:
+            # it is the assertion, and an index that cannot resolve the version
+            # yet is a wait rather than a result. The script reads
+            # PYPI_WAIT_ATTEMPTS/PYPI_WAIT_SECONDS from this job's env, exits
+            # non-zero once they are spent, and is exercised against a stub
+            # installer in tests/test_pypi_install_retry.py (#1111).
+            INSTALLER="${RUNNER_TEMP}/verify-venv/bin/pip" REQUIREMENT="$req" \
+              .github/scripts/pip-install-with-retry.sh
             installed="$("${RUNNER_TEMP}/verify-venv/bin/keel" version)"
             echo "keel version -> ${installed}"
             # The tag is the claim; this is the package's answer to it. A wheel built
@@ -409,6 +431,14 @@ jobs:
             (cd "${RUNNER_TEMP}" && "${RUNNER_TEMP}/verify-venv/bin/keel" doctor)
 
             echo "== release_smoke.py against the published package =="
+            # This builds its own venv and resolves "$req" from the index a
+            # second time. It carries no retry of its own and does not need one:
+            # the install above is the canary, and it does not return until this
+            # runner has resolved this version through the simple index at least
+            # once — after which pip's own HTTP cache answers the second resolve
+            # from the same page. A first miss here would mean the index served
+            # this runner two different answers seconds apart, which is a
+            # different defect from the lag #1111 is about.
             python scripts/release_smoke.py --requirement "$req"
 
             echo "== secondary: the GitHub Release SHA256SUMS =="
