@@ -155,9 +155,30 @@ def render_review_verdict(
     :func:`keel.evidence.verdict_substance` refuses a verdict that names nothing
     (#926). That is deliberate: 75 of 75 verdicts across 25 pull requests were
     this template with the defaults left in, and the gate could not tell them
-    apart from a review that caught a blocker. Give the scope a path, a symbol,
-    or a "checked X, Y and Z" clause — a genuinely clean review stays
-    expressible, it just has to say what it looked at.
+    apart from a review that caught a blocker. Any one of these is enough:
+
+    * a path (``src/keel/evidence.py``), a ``file.py:42``, a backticked token,
+      or a called ``module.function()``;
+    * **two** of the unbackticked forms — a bare filename; a dotted
+      ``module.symbol`` that carries a mark prose does not use (an underscore,
+      an internal capital, a run of capitals, or a capitalised segment), so
+      ``Config.parse`` and ``cache.cache_key`` read and ``foo.bar`` does not;
+      or a lowercase ``snake_case`` identifier. One alone does not count, because ``Node.js`` and
+      ``evidence.py`` are spelled the same way and so are ``GitHub.com`` and
+      ``Config.parse``; naming two things is what a review does and a mention
+      does not;
+    * a "Checked X, Y and Z" clause. That one verb keeps a free-form object,
+      because it predates the rule and the corpus has real reviews under it
+      naming their objects in English ("Checked the formula syntax, the
+      version URL and the checksum placeholder"). #1106 tried to widen it to
+      traced/read/ran/inspected/verified; those could not keep a free-form
+      object without readmitting the receipt, and requiring their object to
+      name something made the branch decide nothing at all — the object is
+      part of the prose, which already takes that test. So they are ordinary
+      prose: name two things, or one in backticks.
+
+    A genuinely clean review stays expressible; it just has to say what it
+    looked at.
     """
     lines = [
         evidence.REVIEW_VERDICT_MARKER,
