@@ -315,7 +315,14 @@ and does all of it (#1024):
   setuptools into an isolated build environment to learn a filename the document states;
 - installs `keel-workflow==<version>` from PyPI into a clean virtualenv and requires
   `keel version` to print the tag's version — a wheel built from the wrong commit installs
-  and runs perfectly while reporting a different one. `keel doctor` runs log-only
+  and runs perfectly while reporting a different one. The install is **retried** on the
+  same `PYPI_WAIT_*` budget as the wait above, because the wait and the install read
+  different surfaces: the wait polls the JSON document, `pip` resolves through the simple
+  index, and the index lags behind it. v1.21.0 failed here on a release that was correct,
+  with both distributions listed and both digests matching, and passed on a plain re-run
+  (#1111). Each attempt passes `--no-cache-dir`, or the retry would read the lagging
+  index's answer back out of pip's HTTP cache — PyPI serves that page with
+  `max-age=600`, longer than the whole budget — and retry itself rather than PyPI. `keel doctor` runs log-only
   (deliberately not `--strict`: outside a keel checkout it correctly warns that no adapter
   surfaces are present, which is not a release defect);
 - runs `python scripts/release_smoke.py --requirement "keel-workflow==<version>"` — the
