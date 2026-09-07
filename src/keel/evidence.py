@@ -1477,8 +1477,10 @@ _VERDICT_DOTTED_SYMBOL = re.compile(
 
 #: A **bare** identifier: ``cache_key``, ``_prompt_mode``, ``__post_init__``.
 #:
-#: **The joining underscore is the whole rule** — two alphanumeric segments
-#: with an underscore between them. Underscores that merely wrap a name are
+#: **The joining underscore is the whole rule** — two lowercase alphanumeric
+#: segments with an underscore between them. Lowercase deliberately: `My_Thing`
+#: is prose with a connector, and CamelCase is read only when dotted or
+#: backticked, for the reason :data:`_VERDICT_DOTTED_SYMBOL` gives. Underscores that merely wrap a name are
 #: decoration, so a lone ``_private`` or ``__dunder__`` is *not* read; it is
 #: ``post_init`` inside ``__post_init__`` that matches.
 #:
@@ -1557,9 +1559,11 @@ _VERDICT_CLAUSE_TAIL = r"[ \t]*:?[ \t]*(?:\r?\n[ \t]*[-*][ \t]*)?"
 
 #: One sentence's worth of characters. A sentence ends at `.!?;` or an ellipsis
 #: **followed by space or line end** — a period inside `evidence.py` is not a
-#: sentence end, and the filename has to survive inside an object. Both clauses
-#: read it, so "Checked evidence.py and contracts.py" is no longer truncated at
-#: the first dot, which was the punctuation pedantry this change is about.
+#: sentence end, and the filename has to survive inside an object, so "Checked
+#: evidence.py and contracts.py" is no longer truncated at the first dot —
+#: the punctuation pedantry this change is about. Only
+#: :data:`_VERDICT_CHECKED_CLAUSE` reads this; the second clause that did was
+#: removed with the verb widening.
 _VERDICT_SENTENCE = r"(?:[^.!?;\u2026\n]|[.!?;\u2026](?!\s|$))"
 
 #: The escape hatch the issue insists on: a genuinely clean review must stay
@@ -1570,11 +1574,12 @@ _VERDICT_SENTENCE = r"(?:[^.!?;\u2026\n]|[.!?;\u2026](?!\s|$))"
 #: checksum placeholder" — English objects, naming no symbol.
 #:
 #: The object now ends at a *sentence* rather than at any period, which is a
-#: change from `[^.\n]{8,}`: it costs the object a trailing `;`, `!` or `?`
-#: clause, and buys it a filename, since `evidence.py` no longer truncates to
-#: `evidence`. Measured across 1,421 verdicts, that trade takes nothing away —
-#: no verdict that passes on `main` is refused — but it is a change to this
-#: clause's reading and is written down rather than left to be discovered.
+#: change from `[^.\n]{8,}`: it buys a filename, since `evidence.py` no longer
+#: truncates to `evidence`, and it costs a trailing `;`, `!` or `?` clause —
+#: "Checked config; found nothing of concern in the rest" passes on `main` and
+#: is refused here. No verdict in the 1,421 measured is written that way, which
+#: is why the corpus shows no regression; that is a weaker claim than "takes
+#: nothing away" and is the one the evidence supports.
 #:
 #: **#1106 tried to widen this to traced/read/ran/inspected/verified and the
 #: widening turned out inert.** Those verbs could not keep a free-form object —

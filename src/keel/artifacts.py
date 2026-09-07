@@ -159,9 +159,11 @@ def render_review_verdict(
 
     * a path (``src/keel/evidence.py``), a ``file.py:42``, a backticked token,
       or a called ``module.function()``;
-    * **two** of the unbackticked forms — a bare filename, a dotted
-      ``module.symbol`` (parentheses not required, #1106), a ``snake_case``
-      identifier. One alone does not count, because ``Node.js`` and
+    * **two** of the unbackticked forms — a bare filename; a dotted
+      ``module.symbol`` that carries a mark prose does not use (an underscore,
+      an internal capital, a run of capitals, or a capitalised segment), so
+      ``Config.parse`` and ``cache.cache_key`` read and ``foo.bar`` does not;
+      or a lowercase ``snake_case`` identifier. One alone does not count, because ``Node.js`` and
       ``evidence.py`` are spelled the same way and so are ``GitHub.com`` and
       ``Config.parse``; naming two things is what a review does and a mention
       does not;

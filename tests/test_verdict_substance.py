@@ -546,6 +546,29 @@ class OnlyCheckedOpensACleanReviewWithoutNamingASymbol(unittest.TestCase):
         self.assertFalse(ok)
 
 
+class TheDottedBranchIsPinnedOnItsOwn(unittest.TestCase):
+    """The headline tests reach the dotted rule through other tokens too.
+
+    `cache.cache_key` sits beside `collect_static_hints` in them, so removing
+    the dotted branch would not fail those tests. These assert the branch by
+    itself, on prose with no other corroborator in it.
+    """
+
+    def test_a_marked_dotted_pair_is_read(self):
+        self.assertEqual(
+            evidence._verdict_corroborators("checked Config.parse and cache.cacheKey"),
+            {"Config.parse", "cache.cacheKey"},
+        )
+
+    def test_an_unmarked_dotted_pair_is_not(self):
+        """`foo.bar` is `github.com` with different letters."""
+        self.assertEqual(evidence._verdict_corroborators("checked foo.bar and baz.qux"), set())
+
+    def test_camel_case_joined_by_an_underscore_is_prose(self):
+        """The bare-identifier rule is lowercase; `My_Thing` is a connector."""
+        self.assertEqual(evidence._verdict_corroborators("checked My_Thing and Other_Thing"), set())
+
+
 class TheKnownResidualsAreRecordedRatherThanChased(unittest.TestCase):
     """Three shapes this rule accepts that name nothing, and why they stay.
 
