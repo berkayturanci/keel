@@ -769,11 +769,15 @@ which is the point — an explicit operator act stays distinguishable from armin
   `file.py:42`, a backticked token, or a called `module.function()` — or two of the
   unbackticked forms (a bare filename, a dotted `module.symbol` carrying an
   underscore or a capital, a lowercase `snake_case` identifier), or a free-form
-  "Checked X, Y and Z" clause. Since #1106 the parentheses on a dotted name and the
-  extension on a path are no longer required, so a review that writes
-  `cache.cache_key` rather than `` `cache.cache_key` `` is read as one; a single
-  unbackticked token is not, because `Node.js` and `evidence.py` are spelled the
-  same way. Verdicts may additionally carry
+  "Checked X, Y and Z" clause. What #1106 changed is that an unbackticked name is
+  *read at all*: before it, `cache.cache_key` and `evidence.py` counted for
+  nothing, so a review naming eleven symbols in plain prose was refused as naming
+  none. They count now — but as **corroborators**, two of which are needed,
+  because `Node.js` and `evidence.py` are spelled the same way and one of either
+  is as likely a mention as a reference. What still makes a *single* token enough
+  is the author pointing at it: backticks, a slash and an extension
+  (`src/keel/evidence.py`), a `:line`, or the parentheses on
+  `module.function()`. Verdicts may additionally carry
   `vendor: <id>` / `model: <id>` provenance; with `--require-distinct-vendors` (or the
   `evidence_require_distinct_vendors` knob) the verifier requires each required verdict to
   declare a vendor and that no two share one — a missing or duplicate vendor fails with a
