@@ -15,6 +15,23 @@ jobs:
   build-n-publish:
     name: Build, Publish, and Release
     runs-on: ubuntu-latest
+    # A backstop, not *the* bound. Every command below that talks to the network
+    # carries a bound of its own, because a ceiling here cannot tell a stalled
+    # download from a slow job and cannot fail with a message naming what
+    # stalled. But per-command bounds only cover the commands somebody looked
+    # at, and this job also runs six actions whose HTTP is theirs and
+    # `python -m build`, which shells out to pip. So the job gets a ceiling too,
+    # and it caps the *next* unbounded command as well as the ones already
+    # found. Without it the ceiling is GitHub's six-hour default, in a job that
+    # sits between a PyPI upload and the GitHub Release — where a hang is the
+    # half-made release this file exists to prevent.
+    #
+    # Sized above the sum of this job's own bounds, not by feel: the build-deps
+    # install (300s), the wheel install (60s) and the archive fetch
+    # (10 x (10s + 30s + `sleep 6`) = 460s) come to 820s, and twenty measured
+    # runs put the whole job at 0.9 minutes at worst. The remainder is headroom
+    # for the six actions, which carry no bound this file can count.
+    timeout-minutes: 30
     permissions:
       id-token: write       # PyPI trusted publishing (OIDC) + provenance attestation
       contents: write       # create the GitHub Release and upload assets
@@ -51,7 +68,12 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          python -m pip install \
+          # `timeout`, not pip's `--timeout`: that one bounds a single quiet
+          # read, so a peer dripping a byte inside it holds the call open for as
+          # long as it likes. Both are set — the socket timeout fails faster on
+          # an ordinary stall, the wrapper is what actually bounds the command.
+          timeout 300 python -m pip install \
+            --timeout 30 \
             --only-binary=:all: \
             --require-hashes \
             -r .github/requirements/publish-tools.txt
@@ -118,7 +140,7 @@ jobs:
       # ships with the GitHub Release.
       - name: Generate CycloneDX SBOM
         run: |
-          python -m pip install --no-deps dist/*.whl
+          timeout 60 python -m pip install --timeout 30 --no-deps dist/*.whl
           mkdir -p release
           cyclonedx-py environment --output-format JSON --output-file release/sbom.cdx.json
 
@@ -187,7 +209,9 @@ jobs:
 
           fetched=""
           for attempt in $(seq 1 "$ARCHIVE_WAIT_ATTEMPTS"); do
-            if curl -fsSL "$url" -o "$archive"; then
+            # Both flags, not one: `--connect-timeout` bounds reaching the peer
+            # and leaves a peer that connects and then goes quiet unbounded.
+            if curl -fsSL --connect-timeout 10 --max-time 30 "$url" -o "$archive"; then
               fetched=1
               echo "fetched the tag archive on attempt ${attempt}"
               break
@@ -297,6 +321,34 @@ jobs:
     needs: build-n-publish
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    # Sixty, because a job stopped by `timeout-minutes` is *cancelled*: the
+    # `if: failure()` step below does not run and no `release-broken` issue is
+    # filed, for a release that is already public. So the ceiling has to sit
+    # above the sum of this job's own bounds *and* leave room for the report,
+    # or the mechanism that tells a maintainer is the thing the ceiling kills.
+    # All of them, in order:
+    #
+    #   - the JSON-API wait: 20 x (`--connect-timeout 10` + `--max-time 25`
+    #     + `sleep 15`) = 1000s. The connect timeout is counted on top of the
+    #     max time rather than inside it: an over-estimate, deliberately, since
+    #     the number this guards is a ceiling;
+    #   - the two artifact downloads: 2 x (10s + 120s) = 260s;
+    #   - the install retry, wrapped whole at 900s — its own budget is
+    #     20 x (attempt + `sleep 15`), and only the wrapper is countable
+    #     because pip's `--timeout` bounds a read rather than a call;
+    #   - `release_smoke.py`, wrapped at 300s: it builds a venv and resolves
+    #     from the index a second time;
+    #   - the release cross-check: `timeout 120` + `timeout 60` = 180s;
+    #   - the `if: failure()` report: four `timeout 60` `gh` calls = 240s.
+    #
+    # That is 2880s. `tests/test_workflow_ceilings.py` recomputes it from this
+    # file rather than reading this comment, and checks the other two jobs the
+    # same way, so a wait added later cannot quietly outgrow its ceiling.
+    # Twenty measured runs put the job at 0.3 minutes when nothing waits; the
+    # ceiling is sized for the case where everything does. It stays a last
+    # resort and not the mechanism: a step that fails on its own bound fails
+    # the job, names what stalled, and files the report.
+    timeout-minutes: 60
     permissions:
       contents: read   # checkout + `gh release download` of the SHA256SUMS asset
       issues: write    # open or update `release-broken: <tag>` when this fails
@@ -346,7 +398,7 @@ jobs:
             # compare one artifact and pass having verified half a release. Wait until
             # the release's own JSON document lists both package types.
             for attempt in $(seq 1 "$PYPI_WAIT_ATTEMPTS"); do
-              if curl -fsSL "https://pypi.org/pypi/keel-workflow/${version}/json" -o "$meta" \
+              if curl -fsSL --connect-timeout 10 --max-time 25 "https://pypi.org/pypi/keel-workflow/${version}/json" -o "$meta" \
                 && [ "$(jq -r '[.urls[].packagetype] | unique | join(",")' "$meta")" = "bdist_wheel,sdist" ]; then
                 echo "both distributions listed on attempt ${attempt}"
                 break
@@ -374,7 +426,7 @@ jobs:
             # this document already states.
             checked=0
             while read -r name url want; do
-              curl -fsSL "$url" -o "${pypi}/${name}"
+              curl -fsSL --connect-timeout 10 --max-time 120 "$url" -o "${pypi}/${name}"
               got="$(sha256sum "${pypi}/${name}" | cut -d" " -f1)"
               echo "${name}"
               echo "  pypi declares: ${want}"
@@ -410,7 +462,16 @@ jobs:
             # PYPI_WAIT_ATTEMPTS/PYPI_WAIT_SECONDS from this job's env, exits
             # non-zero once they are spent, and is exercised against a stub
             # installer in tests/test_pypi_install_retry.py (#1111).
-            INSTALLER="${RUNNER_TEMP}/verify-venv/bin/pip" REQUIREMENT="$req" \
+            # Wrapped here rather than inside the script: it runs `"$installer"`
+            # as a single word, and `timeout(1)` is GNU coreutils that
+            # `macos-latest` does not ship — so a bound added inside would have
+            # to be skipped on the very runners `tests/test_pypi_install_retry.py`
+            # executes the real script on. The whole loop is what needs bounding
+            # anyway. 900s: the loop's own waiting is 19 x 15s = 285s and a
+            # resolve of two wheels takes seconds, so this is more than twice
+            # any honest run and still stops a hung pip a quarter of an hour in.
+            timeout 900 env \
+              INSTALLER="${RUNNER_TEMP}/verify-venv/bin/pip" REQUIREMENT="$req" \
               .github/scripts/pip-install-with-retry.sh
             installed="$("${RUNNER_TEMP}/verify-venv/bin/keel" version)"
             echo "keel version -> ${installed}"
@@ -444,7 +505,7 @@ jobs:
             # mean the index answered the same runner two different ways seconds
             # apart — a regression, not the lag #1111 is about, and one that
             # should fail the release loudly rather than be waited out.
-            python scripts/release_smoke.py --requirement "$req"
+            timeout 300 python scripts/release_smoke.py --requirement "$req"
 
             echo "== secondary: the GitHub Release SHA256SUMS =="
             # Secondary, and tolerant of exactly one history. Both sides now refuse to
@@ -463,9 +524,11 @@ jobs:
             # to a warning, which is worse than the bug it was meant to fix. GitHub
             # bumps updatedAt only when an asset is *replaced*; on a first upload the
             # two timestamps are equal, so this asks the exact question.
-            gh release download "$TAG" --pattern SHA256SUMS --dir "${RUNNER_TEMP}/ghrel" --clobber
+            # `gh` has no request timeout of its own — not a flag, not an
+            # environment variable — so the wrapper is the only bound available.
+            timeout 120 gh release download "$TAG" --pattern SHA256SUMS --dir "${RUNNER_TEMP}/ghrel" --clobber
             cat "${RUNNER_TEMP}/ghrel/SHA256SUMS"
-            sums="$(gh release view "$TAG" --json assets \
+            sums="$(timeout 60 gh release view "$TAG" --json assets \
               --jq '.assets[] | select(.name == "SHA256SUMS") | "\(.createdAt) \(.updatedAt)"')"
             sums_created="$(date -u -d "$(echo "$sums" | cut -d" " -f1)" +%s)"
             sums_updated="$(date -u -d "$(echo "$sums" | cut -d" " -f2)" +%s)"
@@ -529,18 +592,18 @@ jobs:
             "Last 100 lines of the verify log (token shapes masked):" \
             "$logtail")"
 
-          existing="$(gh issue list --state open --search "\"${title}\" in:title" \
+          existing="$(timeout 60 gh issue list --state open --search "\"${title}\" in:title" \
             --json number,title \
             --jq "map(select(.title == \"${title}\")) | .[0].number // empty")"
 
           if [ -n "$existing" ]; then
-            gh issue comment "$existing" --body "$body"
+            timeout 60 gh issue comment "$existing" --body "$body"
             echo "commented on #${existing}"
           else
             # Labels are best effort: a missing label must not swallow the report.
-            gh issue create --title "$title" --body "$body" \
+            timeout 60 gh issue create --title "$title" --body "$body" \
               --label "type:bug" --label "priority:high" --label "role:core" \
-              || gh issue create --title "$title" --body "$body"
+              || timeout 60 gh issue create --title "$title" --body "$body"
           fi
 
   tap-status:
@@ -560,6 +623,10 @@ jobs:
     needs: build-n-publish
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    # One bounded `curl` and some `grep`; twenty measured runs put it at 0.2
+    # minutes. Fifteen is a ceiling for the checkout and the runner, not for
+    # this job's work, which cannot legitimately approach it.
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -570,7 +637,7 @@ jobs:
           # The contents API, not raw.githubusercontent.com: `raw` is CDN-cached
           # for minutes, so right after a sync it serves the previous formula and
           # this step would report a tap that is already current as behind.
-          if ! curl -fsSL -H "Accept: application/vnd.github.raw" \
+          if ! curl -fsSL --connect-timeout 10 --max-time 30 -H "Accept: application/vnd.github.raw" \
               "https://api.github.com/repos/${tap}/contents/Formula/keel.rb" \
               -o "${RUNNER_TEMP}/tap-keel.rb"; then
             echo "::notice::could not read ${tap}; it syncs on its own schedule"

@@ -17,6 +17,8 @@ jobs:
   description:
     name: PR has a real description + linked issue
     runs-on: ubuntu-latest
+    # measured 0.1 min; one API read and some string checks.
+    timeout-minutes: 10
     steps:
       # Checkout so the check can read the PR template and discount any line the
       # author left verbatim (placeholders, checklists) — comparing against the

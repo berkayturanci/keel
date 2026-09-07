@@ -19,6 +19,8 @@ jobs:
   analyze:
     name: Analyze (Python)
     runs-on: ubuntu-latest
+    # measured 2.0 min; CodeQL's own database build is the part that can grow.
+    timeout-minutes: 30
     permissions:
       security-events: write
       actions: read

@@ -19,6 +19,8 @@ jobs:
   build-n-publish:
     name: Build, Publish, and Release keel-visual
     runs-on: ubuntu-latest
+    # measured 0.9 min; it is a publish job, so it is sized like one.
+    timeout-minutes: 30
     permissions:
       id-token: write       # PyPI trusted publishing (OIDC) + provenance attestation
       contents: write       # create the GitHub Release and upload assets

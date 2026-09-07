@@ -12,6 +12,8 @@ jobs:
   test:
     name: test (py${{ matrix.python }} / ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    # measured 4.8 min at worst (py3.12 on windows), the slowest job in the repository.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -69,6 +71,8 @@ jobs:
     # something asserts it.
     name: Format (ruff)
     runs-on: ubuntu-latest
+    # measured 0.2 min; nothing here touches the network after the install.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
@@ -92,6 +96,8 @@ jobs:
     # contradict what PyPI has published.
     name: external promises
     runs-on: ubuntu-latest
+    # measured 0.5 min; it reaches external URLs, so the ceiling is the bound that exists.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
@@ -119,6 +125,8 @@ jobs:
     # thing: same OS, same Python, same flags as publish.yml, minus the install.
     name: release lockfiles resolve
     runs-on: ubuntu-latest
+    # measured 0.3 min; the ceiling is for the hash-locked resolve, which is network.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
@@ -139,6 +147,8 @@ jobs:
   test-visual:
     name: test-visual (py${{ matrix.python }} / ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    # measured 1.7 min at worst over 20 runs, on the slowest of nine matrix legs.
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
